@@ -75,14 +75,14 @@ Systematic website testing: browse with Playwright, speak questions about each p
 
 - Schema: `src/schemas/checklist.ts`
 - Categories: `src/schemas/qa-categories.ts` (6 categories, 31 checks)
-- Report: `src/report.ts` → `~/.golems/reports/qa-{date}-{id}.md`
+- Report: `src/report.ts` → `~/.voicelayer/reports/qa-{date}-{id}.md`
 
 ### Discovery Mode
 Client call assistant: track unknowns, whisper follow-up suggestions, detect red flags, generate project brief.
 
 - Schema: `src/schemas/discovery.ts`
 - Categories: `src/schemas/discovery-categories.ts` (7 categories, 23 questions)
-- Brief: `src/brief.ts` → `~/.golems/briefs/discovery-{date}-{id}.md`
+- Brief: `src/brief.ts` → `~/.voicelayer/briefs/discovery-{date}-{id}.md`
 
 ## How It Works
 
@@ -160,7 +160,7 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate (per-mode defaults: announce +10%, brief -10%, consult +5%, converse +0%). Auto-slows for long text. |
 | `QA_VOICE_SILENCE_SECONDS` | `2` | Default silence seconds (converse overrides to 5) |
 | `QA_VOICE_SILENCE_THRESHOLD` | `500` | RMS energy threshold for silence (0-32767) |
-| `QA_VOICE_THINK_FILE` | `/tmp/golems-qa-thinking.md` | Live thinking log path |
+| `QA_VOICE_THINK_FILE` | `/tmp/voicelayer-thinking.md` | Live thinking log path |
 
 ## File Structure
 
@@ -194,10 +194,10 @@ voicelayer/
 
 | Type | Path |
 |------|------|
-| Sessions (JSON) | `~/.golems/sessions/{id}.json` |
-| QA Reports (MD) | `~/.golems/reports/{id}.md` |
-| Discovery Briefs (MD) | `~/.golems/briefs/{id}.md` |
-| Thinking Log | `/tmp/golems-qa-thinking.md` |
+| Sessions (JSON) | `~/.voicelayer/sessions/{id}.json` |
+| QA Reports (MD) | `~/.voicelayer/reports/{id}.md` |
+| Discovery Briefs (MD) | `~/.voicelayer/briefs/{id}.md` |
+| Thinking Log | `/tmp/voicelayer-thinking.md` |
 | Session Lock | `/tmp/voicelayer-session.lock` |
 | Stop Signal | `/tmp/voicelayer-stop` |
 | Recording (temp) | `/tmp/voicelayer-recording-{pid}-{ts}.wav` |

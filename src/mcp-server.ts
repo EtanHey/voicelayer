@@ -32,12 +32,12 @@ import {
   clearStopSignal,
 } from "./session-booking";
 
-const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/golems-qa-thinking.md";
+const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const CONVERSE_SILENCE_SECONDS = 5; // longer silence for converse mode (user pauses to think)
 
 const server = new Server(
-  { name: "qa-voice", version: "2.1.0" },
+  { name: "voicelayer", version: "1.0.0" },
   { capabilities: { tools: {} } }
 );
 
@@ -418,16 +418,16 @@ async function main() {
   try {
     await getBackend();
   } catch (err: unknown) {
-    console.error(`[qa-voice] Warning: no STT backend available — converse mode will fail`);
-    console.error(`[qa-voice]   ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`[voicelayer] Warning: no STT backend available — converse mode will fail`);
+    console.error(`[voicelayer]   ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[qa-voice] MCP server v2.1 running — 4 modes: announce, brief, consult, converse");
+  console.error("[voicelayer] MCP server v1.0 running — 4 modes: announce, brief, consult, converse");
 }
 
 main().catch((err) => {
-  console.error("[qa-voice] Fatal:", err);
+  console.error("[voicelayer] Fatal:", err);
   process.exit(1);
 });

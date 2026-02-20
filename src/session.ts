@@ -2,8 +2,8 @@
  * Session lifecycle manager.
  *
  * Handles creating, saving, and loading QA and discovery sessions.
- * Sessions are JSON files stored in ~/.golems/sessions/.
- * Reports/briefs are markdown files in ~/.golems/reports/ or ~/.golems/briefs/.
+ * Sessions are JSON files stored in ~/.voicelayer/sessions/.
+ * Reports/briefs are markdown files in ~/.voicelayer/reports/ or ~/.voicelayer/briefs/.
  */
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
@@ -16,7 +16,7 @@ import { renderBrief } from "./brief";
 // Read HOME at call time (not module load) to support test overrides
 function getDir(subdir: string): string {
   const home = process.env.HOME || "/tmp";
-  return join(home, ".golems", subdir);
+  return join(home, ".voicelayer", subdir);
 }
 
 function ensureDir(dir: string): void {

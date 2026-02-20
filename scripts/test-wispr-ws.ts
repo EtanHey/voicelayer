@@ -1,6 +1,6 @@
 /**
  * Standalone test: Connect to Wispr Flow WebSocket, send a few seconds of mic audio, see what comes back.
- * Usage: bun run packages/qa-voice/scripts/test-wispr-ws.ts
+ * Usage: bun run scripts/test-wispr-ws.ts
  */
 
 const API_KEY = process.env.QA_VOICE_WISPR_KEY;

@@ -9,7 +9,7 @@
 
 VOICE="${QA_VOICE_TTS_VOICE:-en-US-JennyNeural}"
 RATE="${QA_VOICE_TTS_RATE:-+0%}"
-TTS_FILE="/tmp/golems-tts-$$.mp3"
+TTS_FILE="/tmp/voicelayer-tts-$$.mp3"
 
 # Get text from args or stdin
 if [ $# -gt 0 ]; then

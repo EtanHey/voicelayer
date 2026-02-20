@@ -108,7 +108,7 @@ Auto-detection: whisper.cpp if available, else Wispr Flow. Override with `QA_VOI
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate (per-mode rates applied on top) |
 | `QA_VOICE_SILENCE_SECONDS` | `2` | Silence seconds before end (converse uses 5) |
 | `QA_VOICE_SILENCE_THRESHOLD` | `500` | RMS energy threshold (0-32767) |
-| `QA_VOICE_THINK_FILE` | `/tmp/golems-qa-thinking.md` | Live thinking log path |
+| `QA_VOICE_THINK_FILE` | `/tmp/voicelayer-thinking.md` | Live thinking log path |
 
 ## Testing
 

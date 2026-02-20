@@ -3,7 +3,7 @@ import { existsSync, rmSync, mkdirSync } from "fs";
 import { join } from "path";
 
 // Override HOME to use temp dir for tests
-const TEST_HOME = "/tmp/golems-qa-voice-test-home";
+const TEST_HOME = "/tmp/voicelayer-test-home";
 process.env.HOME = TEST_HOME;
 
 import {
@@ -70,7 +70,7 @@ describe("session lifecycle", () => {
 
     const reportPath = generateQAReport(session);
     expect(existsSync(reportPath)).toBe(true);
-    expect(reportPath).toContain(".golems/reports/");
+    expect(reportPath).toContain(".voicelayer/reports/");
     expect(reportPath).toEndWith(".md");
   });
 
@@ -99,12 +99,12 @@ describe("session lifecycle", () => {
 
     const briefPath = generateDiscoveryBrief(session);
     expect(existsSync(briefPath)).toBe(true);
-    expect(briefPath).toContain(".golems/briefs/");
+    expect(briefPath).toContain(".voicelayer/briefs/");
     expect(briefPath).toEndWith(".md");
   });
 
   it("creates directories automatically", () => {
-    const sessionsDir = join(TEST_HOME, ".golems", "sessions");
+    const sessionsDir = join(TEST_HOME, ".voicelayer", "sessions");
     expect(existsSync(sessionsDir)).toBe(false);
 
     const session = createSession("https://example.com");

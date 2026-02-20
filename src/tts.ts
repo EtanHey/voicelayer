@@ -61,7 +61,7 @@ export async function speak(
   // Auto-slow for long text
   rate = adjustRateForLength(rate, text.length);
 
-  const ttsFile = `/tmp/golems-tts-${process.pid}-${ttsCounter++}.mp3`;
+  const ttsFile = `/tmp/voicelayer-tts-${process.pid}-${ttsCounter++}.mp3`;
 
   try {
     // Generate speech via Python edge-tts CLI
