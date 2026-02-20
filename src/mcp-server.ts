@@ -30,7 +30,7 @@ import {
   isVoiceBooked,
   clearStopSignal,
 } from "./session-booking";
-import { STOP_FILE } from "./paths";
+
 
 const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 const CONVERSE_SILENCE_SECONDS = 5; // longer silence for converse mode (user pauses to think)

@@ -16,9 +16,15 @@ const STOP_POLL_MS = 300;
 
 let ttsCounter = 0;
 
-/** Get platform-appropriate audio player command. */
+/** Get platform-appropriate audio player command for MP3 files. */
 function getAudioPlayer(): string {
-  return platform() === "darwin" ? "afplay" : "aplay";
+  if (platform() === "darwin") return "afplay";
+  // Linux: aplay only supports WAV — need mpv, ffplay, or mpg123 for MP3
+  for (const player of ["mpv", "ffplay", "mpg123"]) {
+    const check = Bun.spawnSync(["which", player]);
+    if (check.exitCode === 0) return player;
+  }
+  return "mpg123"; // fallback — will give clear error if missing
 }
 
 /** Per-mode default rates. Announce is snappy, brief is slow for digestion. */
