@@ -1,19 +1,25 @@
 /**
- * TTS module — Python edge-tts CLI → afplay.
+ * TTS module — Python edge-tts CLI → platform audio player.
  *
- * Synthesizes speech via edge-tts (Python CLI), plays via afplay.
+ * Synthesizes speech via edge-tts (Python CLI), plays via afplay (macOS) or aplay (Linux).
  * Supports per-call rate override, auto-slowdown for long text,
  * and stop-signal monitoring during playback.
  */
 
 import { existsSync, unlinkSync } from "fs";
+import { platform } from "os";
+import { STOP_FILE, ttsFilePath } from "./paths";
 
 const VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
-const STOP_SIGNAL = "/tmp/voicelayer-stop";
 const STOP_POLL_MS = 300;
 
 let ttsCounter = 0;
+
+/** Get platform-appropriate audio player command. */
+function getAudioPlayer(): string {
+  return platform() === "darwin" ? "afplay" : "aplay";
+}
 
 /** Per-mode default rates. Announce is snappy, brief is slow for digestion. */
 export const MODE_RATES: Record<string, string> = {
@@ -61,7 +67,7 @@ export async function speak(
   // Auto-slow for long text
   rate = adjustRateForLength(rate, text.length);
 
-  const ttsFile = `/tmp/voicelayer-tts-${process.pid}-${ttsCounter++}.mp3`;
+  const ttsFile = ttsFilePath(process.pid, ttsCounter++);
 
   try {
     // Generate speech via Python edge-tts CLI
@@ -78,16 +84,16 @@ export async function speak(
     }
 
     // Play audio — monitor stop signal so user can interrupt
-    const play = Bun.spawn(["afplay", ttsFile]);
+    const play = Bun.spawn([getAudioPlayer(), ttsFile]);
 
     // Poll for stop signal during playback — clean up signal file after kill
     let stoppedByUser = false;
     const stopPoll = setInterval(() => {
-      if (existsSync(STOP_SIGNAL)) {
+      if (existsSync(STOP_FILE)) {
         stoppedByUser = true;
         play.kill("SIGTERM");
         clearInterval(stopPoll);
-        try { unlinkSync(STOP_SIGNAL); } catch {}
+        try { unlinkSync(STOP_FILE); } catch {}
       }
     }, STOP_POLL_MS);
 
@@ -95,7 +101,7 @@ export async function speak(
       const playExit = await play.exited;
       // Non-zero exit is expected when user stops playback via signal
       if (playExit !== 0 && !stoppedByUser) {
-        throw new Error(`afplay failed with exit code ${playExit}`);
+        throw new Error(`Audio playback failed with exit code ${playExit}. Player: ${getAudioPlayer()}`);
       }
     } finally {
       clearInterval(stopPoll);

@@ -9,9 +9,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-
-const LOCK_FILE = "/tmp/voicelayer-session.lock";
-const STOP_FILE = "/tmp/voicelayer-stop";
+import { LOCK_FILE, STOP_FILE } from "./paths";
 
 export interface SessionLock {
   pid: number;
@@ -27,9 +25,10 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch (err: any) {
+  } catch (err: unknown) {
     // ESRCH means process doesn't exist — it's dead
-    if (err?.code === "ESRCH") return false;
+    const code = err instanceof Object && "code" in err ? (err as { code: string }).code : undefined;
+    if (code === "ESRCH") return false;
     // EPERM means process exists but we can't signal it — it's alive
     return true;
   }
@@ -100,16 +99,17 @@ export function bookVoiceSession(sessionId?: string): {
     // Use 'wx' flag for atomic exclusive create — prevents TOCTOU race
     writeFileSync(LOCK_FILE, JSON.stringify(lock, null, 2), { flag: "wx" });
     return { success: true, lock };
-  } catch (err: any) {
+  } catch (err: unknown) {
     // Another process grabbed the lock between our check and write
-    if (err?.code === "EEXIST") {
+    const code = err instanceof Object && "code" in err ? (err as { code: string }).code : undefined;
+    if (code === "EEXIST") {
       const winner = readLock();
       return {
         success: false,
         error: `Line is busy — voice booked by session ${winner?.sessionId ?? "unknown"} (race condition)`,
       };
     }
-    throw err;
+    throw err instanceof Error ? err : new Error(String(err));
   }
 }
 

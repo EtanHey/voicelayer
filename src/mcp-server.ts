@@ -1,5 +1,5 @@
 /**
- * QA Voice MCP Server — 4 voice modes + silent think tool.
+ * VoiceLayer MCP Server — 4 voice modes + silent think tool.
  *
  * Modes:
  *   announce  — fire-and-forget TTS (status updates, narration)
@@ -27,18 +27,32 @@ import { waitForInput, clearInput } from "./input";
 import { getBackend } from "./stt";
 import {
   bookVoiceSession,
-  releaseVoiceSession,
   isVoiceBooked,
   clearStopSignal,
 } from "./session-booking";
+import { STOP_FILE } from "./paths";
 
 const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
-const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes
 const CONVERSE_SILENCE_SECONDS = 5; // longer silence for converse mode (user pauses to think)
 
 const server = new Server(
-  { name: "voicelayer", version: "1.0.0" },
-  { capabilities: { tools: {} } }
+  {
+    name: "voicelayer",
+    version: "1.0.0",
+  },
+  {
+    capabilities: { tools: {} },
+    instructions:
+      "VoiceLayer provides voice I/O for AI coding assistants via 5 modes:\n" +
+      "- announce: fire-and-forget TTS (status updates)\n" +
+      "- brief: one-way TTS explanation (summaries, decisions)\n" +
+      "- consult: speak a checkpoint, user MAY respond (non-blocking)\n" +
+      "- converse: speak + record + transcribe (BLOCKING, requires mic)\n" +
+      "- think: silent markdown log (no audio)\n\n" +
+      "Stop signal: touch /tmp/voicelayer-stop to end playback or recording.\n" +
+      "Session booking: converse mode auto-books the mic; other sessions see 'line busy'.\n" +
+      "Prerequisites: python3 + edge-tts (TTS), sox (recording), whisper.cpp or Wispr Flow (STT).",
+  }
 );
 
 // --- Tool definitions ---
@@ -52,17 +66,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Speak a message aloud via TTS without waiting for a response. " +
         "Fire-and-forget — use for status updates, narration, task completion alerts. " +
         "Does NOT require voice session booking. " +
-        "User can stop playback: touch /tmp/voicelayer-stop",
+        "User can stop playback: touch /tmp/voicelayer-stop\n\n" +
+        "Returns: text confirmation of what was spoken.\n" +
+        "Errors: edge-tts not installed (pip3 install edge-tts), audio player missing, empty message.\n" +
+        "Prerequisites: python3 + edge-tts, audio player (afplay on macOS, aplay on Linux).",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The message to speak aloud",
+            description: "The message to speak aloud (must be non-empty after trimming)",
           },
           rate: {
             type: "string",
-            description: "Speech rate override (e.g. '-10%', '+5%'). Default: +10% for announce. Auto-slows for long text.",
+            description: "Speech rate as percent string (e.g. '-10%', '+5%'). Default: +10% for announce. Auto-slows for long text.",
+            pattern: "^[+-]\\d+%$",
+            default: "+10%",
           },
         },
         required: ["message"],
@@ -76,17 +95,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Use for reading back decisions, summarizing findings, explaining plans. " +
         "Longer content than announce — Claude explains, user listens. " +
         "Speaks SLOWER than announce (auto-adjusted for text length). " +
-        "User can stop playback: touch /tmp/voicelayer-stop",
+        "User can stop playback: touch /tmp/voicelayer-stop\n\n" +
+        "Returns: text confirmation of what was spoken.\n" +
+        "Errors: same as announce (edge-tts, audio player).\n" +
+        "Prerequisites: python3 + edge-tts, audio player (afplay on macOS, aplay on Linux).",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The explanation or summary to speak aloud",
+            description: "The explanation or summary to speak aloud (must be non-empty after trimming)",
           },
           rate: {
             type: "string",
-            description: "Speech rate override (e.g. '-15%', '+0%'). Default: -10% for brief. Auto-slows further for long text.",
+            description: "Speech rate as percent string (e.g. '-15%', '+0%'). Default: -10% for brief. Auto-slows further for long text.",
+            pattern: "^[+-]\\d+%$",
+            default: "-10%",
           },
         },
         required: ["message"],
@@ -99,17 +123,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         "Speak a checkpoint message — the user MAY want to respond. Non-blocking. " +
         "Use for preemptive checkpoints: 'about to commit, want to review?' " +
         "Returns immediately. If user input is needed, follow up with qa_voice_converse. " +
-        "User can stop playback: touch /tmp/voicelayer-stop",
+        "User can stop playback: touch /tmp/voicelayer-stop\n\n" +
+        "Returns: confirmation text; does not collect voice input.\n" +
+        "Errors: same as announce (edge-tts, audio player).\n" +
+        "Prerequisites: python3 + edge-tts, audio player (afplay on macOS, aplay on Linux).",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The checkpoint question or status to speak",
+            description: "The checkpoint question or status to speak (must be non-empty after trimming)",
           },
           rate: {
             type: "string",
-            description: "Speech rate override (e.g. '-5%', '+10%'). Default: +5% for consult.",
+            description: "Speech rate as percent string (e.g. '-5%', '+10%'). Default: +5% for consult.",
+            pattern: "^[+-]\\d+%$",
+            default: "+5%",
           },
         },
         required: ["message"],
@@ -120,22 +149,32 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "qa_voice_converse",
       description:
         "Speak a question aloud and wait for the user's voice response. BLOCKING. " +
-        "Records mic audio, streams to STT, returns transcription. " +
+        "Records mic audio, transcribes via STT, returns transcription text. " +
         "User-controlled stop: touch /tmp/voicelayer-stop to end recording. " +
         "Silence detection (5s) is fallback only. " +
-        "Requires voice session booking — other sessions see 'line busy'. " +
-        "Use for interactive Q&A, drilling sessions, interviews.",
+        "Requires voice session booking — other sessions see 'line busy' (isError: true). " +
+        "Use for interactive Q&A, drilling sessions, interviews.\n\n" +
+        "Returns: on success, the user's transcribed text (plain string). " +
+        "On timeout/no speech: status message '[converse] No response received...' " +
+        "On busy: error with isError: true.\n" +
+        "Errors: line busy (another session has mic), sox not installed, mic permission denied, " +
+        "no STT backend (install whisper-cpp or set QA_VOICE_WISPR_KEY).\n" +
+        "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS). " +
+        "STT may be local (whisper.cpp) or cloud (Wispr Flow) depending on config; " +
+        "avoid cloud mode for sensitive audio.",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The question or prompt to speak aloud",
+            description: "The question or prompt to speak aloud (must be non-empty after trimming)",
           },
           timeout_seconds: {
             type: "number",
-            description: "How long to wait for a response (default: 300 seconds)",
+            description: "How long to wait for a response in seconds. Clamped to 10-3600. Default: 300.",
             default: 300,
+            minimum: 10,
+            maximum: 3600,
           },
         },
         required: ["message"],
@@ -147,7 +186,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description:
         "Append a thought or insight to the live thinking log (markdown file). " +
         "Use during discovery calls to silently take notes the user can glance at. " +
-        "Does NOT speak — writes to a file that can be open in a split screen.",
+        "Does NOT speak — writes to a file that can be open in a split screen. " +
+        `Writes to QA_VOICE_THINK_FILE (default: /tmp/voicelayer-thinking.md).\n\n` +
+        "Returns: confirmation text with the noted thought.\n" +
+        "Errors: file write failure (rare).",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -157,8 +199,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           category: {
             type: "string",
-            description: "Category: insight, question, red-flag, checklist-update",
+            description: "Category: insight, question, red-flag, checklist-update. Defaults to insight.",
             enum: ["insight", "question", "red-flag", "checklist-update"],
+            default: "insight",
           },
         },
         required: ["thought"],
@@ -168,7 +211,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "qa_voice_say",
       description:
-        "ALIAS for qa_voice_announce. Speak a message aloud without waiting for a response.",
+        "Backward-compat alias for qa_voice_announce. Prefer qa_voice_announce for new code. " +
+        "Same contract: fire-and-forget TTS, no response. " +
+        "Stop playback: touch /tmp/voicelayer-stop.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -183,7 +228,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "qa_voice_ask",
       description:
-        "ALIAS for qa_voice_converse. Speak a question and wait for voice response.",
+        "Backward-compat alias for qa_voice_converse. Prefer qa_voice_converse for new code. " +
+        "Same contract: BLOCKING voice Q&A with session booking, user-controlled stop, " +
+        "returns transcription on success or status/error on failure.",
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -193,8 +240,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           timeout_seconds: {
             type: "number",
-            description: "How long to wait for a response (default: 300 seconds)",
+            description: "How long to wait for a response in seconds. Clamped to 10-3600. Default: 300.",
             default: 300,
+            minimum: 10,
+            maximum: 3600,
           },
         },
         required: ["message"],
@@ -245,76 +294,115 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+// --- Arg validation helpers ---
+
+interface TtsArgs { message: string; rate?: string }
+interface ConverseArgs { message: string; timeout_seconds?: number }
+interface ThinkArgs { thought: string; category?: string }
+
+const THINK_CATEGORIES = ["insight", "question", "red-flag", "checklist-update"] as const;
+type ThinkCategory = typeof THINK_CATEGORIES[number];
+
+function validateTtsArgs(args: unknown): TtsArgs | null {
+  if (!args || typeof args !== "object") return null;
+  const a = args as Record<string, unknown>;
+  const message = typeof a.message === "string" ? a.message.trim() : "";
+  if (!message) return null;
+  const rate = typeof a.rate === "string" ? a.rate : undefined;
+  return { message, rate };
+}
+
+function validateConverseArgs(args: unknown): ConverseArgs | null {
+  if (!args || typeof args !== "object") return null;
+  const a = args as Record<string, unknown>;
+  const message = typeof a.message === "string" ? a.message.trim() : "";
+  if (!message) return null;
+  const timeout_seconds = typeof a.timeout_seconds === "number" && isFinite(a.timeout_seconds)
+    ? a.timeout_seconds
+    : undefined;
+  return { message, timeout_seconds };
+}
+
+function validateThinkArgs(args: unknown): ThinkArgs | null {
+  if (!args || typeof args !== "object") return null;
+  const a = args as Record<string, unknown>;
+  const thought = typeof a.thought === "string" ? a.thought.trim() : "";
+  if (!thought) return null;
+  const raw = typeof a.category === "string" ? a.category : "insight";
+  const category = (THINK_CATEGORIES as readonly string[]).includes(raw) ? raw : "insight";
+  return { thought, category };
+}
+
 // --- Mode Handlers ---
 
-async function handleAnnounce(args: any) {
-  const message = args?.message;
-  if (!message) {
+async function handleAnnounce(args: unknown) {
+  const validated = validateTtsArgs(args);
+  if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required: message" }],
+      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
       isError: true,
     };
   }
 
-  await speak(message, { mode: "announce", rate: args?.rate });
+  await speak(validated.message, { mode: "announce", rate: validated.rate });
 
   return {
-    content: [{ type: "text" as const, text: `[announce] Spoke: "${message}"` }],
+    content: [{ type: "text" as const, text: `[announce] Spoke: "${validated.message}"` }],
   };
 }
 
-async function handleBrief(args: any) {
-  const message = args?.message;
-  if (!message) {
+async function handleBrief(args: unknown) {
+  const validated = validateTtsArgs(args);
+  if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required: message" }],
+      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
       isError: true,
     };
   }
 
-  await speak(message, { mode: "brief", rate: args?.rate });
+  await speak(validated.message, { mode: "brief", rate: validated.rate });
 
   return {
-    content: [{ type: "text" as const, text: `[brief] Explained: "${message}"` }],
+    content: [{ type: "text" as const, text: `[brief] Explained: "${validated.message}"` }],
   };
 }
 
-async function handleConsult(args: any) {
-  const message = args?.message;
-  if (!message) {
+async function handleConsult(args: unknown) {
+  const validated = validateTtsArgs(args);
+  if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required: message" }],
+      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
       isError: true,
     };
   }
 
-  await speak(message, { mode: "consult", rate: args?.rate });
+  await speak(validated.message, { mode: "consult", rate: validated.rate });
 
   return {
     content: [
       {
         type: "text" as const,
         text:
-          `[consult] Spoke: "${message}"\n` +
+          `[consult] Spoke: "${validated.message}"\n` +
           "User may want to respond. Use qa_voice_converse to collect voice input if needed.",
       },
     ],
   };
 }
 
-async function handleConverse(args: any) {
-  const message = args?.message;
-  const timeoutSeconds = Math.min(
-    Math.max(Number(args?.timeout_seconds) || 300, 10),
-    3600,
-  );
-
-  if (!message) {
+async function handleConverse(args: unknown) {
+  const validated = validateConverseArgs(args);
+  if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required: message" }],
+      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
       isError: true,
     };
   }
+
+  const timeoutSeconds = Math.min(
+    Math.max(validated.timeout_seconds ?? 300, 10),
+    3600,
+  );
 
   // Session booking — auto-book if not already booked
   const booking = isVoiceBooked();
@@ -329,6 +417,7 @@ async function handleConverse(args: any) {
             "Fall back to text input, or wait for the other session to finish.",
         },
       ],
+      isError: true,
     };
   }
 
@@ -348,7 +437,7 @@ async function handleConverse(args: any) {
   clearStopSignal();
 
   // Speak the question aloud
-  await speak(message, { mode: "converse" });
+  await speak(validated.message, { mode: "converse" });
 
   // Record mic audio, then transcribe with selected STT backend
   // Uses longer silence threshold (5s) — user may pause to think
@@ -373,16 +462,16 @@ async function handleConverse(args: any) {
   };
 }
 
-async function handleThink(args: any) {
-  const thought = args?.thought;
-  const category = args?.category || "insight";
-
-  if (!thought) {
+async function handleThink(args: unknown) {
+  const validated = validateThinkArgs(args);
+  if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required: thought" }],
+      content: [{ type: "text" as const, text: "Missing or empty required parameter: thought" }],
       isError: true,
     };
   }
+
+  const { thought, category } = validated;
 
   const timestamp = new Date().toLocaleTimeString("en-US", {
     hour: "2-digit",

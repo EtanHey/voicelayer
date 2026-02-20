@@ -5,6 +5,8 @@
     "moduleResolution": "bundler",
     "types": ["bun-types"],
     "strict": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitReturns": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "dist"
