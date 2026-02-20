@@ -18,6 +18,7 @@
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { hasStopSignal, clearStopSignal } from "./session-booking";
 import { getBackend } from "./stt";
+import { recordingFilePath } from "./paths";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -29,23 +30,10 @@ const CHUNK_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_DURATION_S; // 32000 b
 const SILENCE_THRESHOLD = Number(process.env.QA_VOICE_SILENCE_THRESHOLD) || 500;
 const DEFAULT_SILENCE_SECONDS = Number(process.env.QA_VOICE_SILENCE_SECONDS) || 2;
 
-/**
- * Calculate RMS energy of a 16-bit signed PCM audio buffer.
- * Used for voice activity / silence detection.
- */
-export function calculateRMS(buffer: Uint8Array): number {
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
-  const numSamples = Math.floor(buffer.byteLength / BYTES_PER_SAMPLE);
-  if (numSamples === 0) return 0;
-
-  let sumSquares = 0;
-  for (let i = 0; i < numSamples; i++) {
-    const sample = view.getInt16(i * BYTES_PER_SAMPLE, true); // little-endian
-    sumSquares += sample * sample;
-  }
-
-  return Math.sqrt(sumSquares / numSamples);
-}
+// Re-export calculateRMS from audio-utils for backward compat (was originally defined here)
+export { calculateRMS } from "./audio-utils";
+// Also import locally for use in this module
+import { calculateRMS } from "./audio-utils";
 
 /**
  * Create a WAV file buffer from raw PCM data.
@@ -105,8 +93,10 @@ export async function recordToBuffer(
   const which = Bun.spawnSync(["which", "rec"]);
   if (which.exitCode !== 0) {
     throw new Error(
-      "sox not installed. Run: brew install sox\n" +
-      "Also grant microphone access to your terminal app in System Settings > Privacy > Microphone."
+      "sox not installed. Install:\n" +
+      "  macOS: brew install sox\n" +
+      "  Linux: apt install sox / dnf install sox\n" +
+      "Also grant microphone access to your terminal app (macOS: System Settings > Privacy > Microphone)."
     );
   }
 
@@ -174,7 +164,7 @@ export async function recordToBuffer(
         return;
       }
 
-      console.error("[qa-voice] Listening... speak now");
+      console.error("[voicelayer] Listening... speak now");
 
       const reader = (recorder.stdout as ReadableStream<Uint8Array>).getReader();
 
@@ -218,14 +208,14 @@ export async function recordToBuffer(
             // Check for user-initiated stop signal
             if (hasSpeech && hasStopSignal()) {
               clearStopSignal();
-              console.error("[qa-voice] Stop signal received — ending recording");
+              console.error("[voicelayer] Stop signal received — ending recording");
               finish();
               return;
             }
 
             // Silence-based stop (only after speech was detected)
             if (hasSpeech && silentChunks >= effectiveSilence) {
-              console.error("[qa-voice] Silence detected — ending recording");
+              console.error("[voicelayer] Silence detected — ending recording");
               finish();
               return;
             }
@@ -258,16 +248,16 @@ export async function waitForInput(
   if (!pcmData) return null;
 
   // Save as WAV to temp file
-  const wavPath = `/tmp/voicelayer-recording-${process.pid}-${Date.now()}.wav`;
+  const wavPath = recordingFilePath(process.pid, Date.now());
   try {
     const wavData = createWavBuffer(pcmData);
     writeFileSync(wavPath, wavData);
 
     // Transcribe with selected backend
     const backend = await getBackend();
-    console.error(`[qa-voice] Transcribing with ${backend.name}...`);
+    console.error(`[voicelayer] Transcribing with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
-    console.error(`[qa-voice] Transcription (${result.durationMs}ms): ${result.text}`);
+    console.error(`[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`);
 
     return result.text || null;
   } finally {

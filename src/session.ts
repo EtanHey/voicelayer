@@ -7,6 +7,7 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import type { QASession } from "./schemas/checklist";
 import type { DiscoverySession } from "./schemas/discovery";
@@ -14,8 +15,9 @@ import { renderReport } from "./report";
 import { renderBrief } from "./brief";
 
 // Read HOME at call time (not module load) to support test overrides
+// Use process.env.HOME first — os.homedir() may cache the value at process start
 function getDir(subdir: string): string {
-  const home = process.env.HOME || "/tmp";
+  const home = process.env.HOME || homedir();
   return join(home, ".voicelayer", subdir);
 }
 
@@ -42,7 +44,12 @@ export function saveQASession(session: QASession): string {
 export function loadQASession(sessionId: string): QASession | null {
   const path = join(getDir("sessions"), `${sessionId}.json`);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf-8"));
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as QASession;
+  } catch {
+    console.error(`[voicelayer] Failed to parse QA session: ${path}`);
+    return null;
+  }
 }
 
 /**
@@ -76,7 +83,12 @@ export function loadDiscoverySession(
 ): DiscoverySession | null {
   const path = join(getDir("sessions"), `${sessionId}.json`);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, "utf-8"));
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as DiscoverySession;
+  } catch {
+    console.error(`[voicelayer] Failed to parse discovery session: ${path}`);
+    return null;
+  }
 }
 
 /**
