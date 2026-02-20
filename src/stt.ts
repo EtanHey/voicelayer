@@ -14,7 +14,7 @@
 import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { calculateRMS } from "./input";
+import { calculateRMS } from "./audio-utils";
 
 // --- Types ---
 
@@ -48,10 +48,6 @@ function findWhisperBinary(): string | null {
   if (result.exitCode === 0) {
     return result.stdout.toString().trim();
   }
-  // Check common homebrew path directly
-  if (existsSync("/opt/homebrew/bin/whisper-cpp")) {
-    return "/opt/homebrew/bin/whisper-cpp";
-  }
   return null;
 }
 
@@ -61,7 +57,7 @@ function findModel(): string | null {
   const envModel = process.env.QA_VOICE_WHISPER_MODEL;
   if (envModel) {
     if (existsSync(envModel)) return envModel;
-    console.error(`[qa-voice] Warning: QA_VOICE_WHISPER_MODEL path does not exist: ${envModel}`);
+    console.error(`[voicelayer] Warning: QA_VOICE_WHISPER_MODEL path does not exist: ${envModel}`);
   }
 
   // 2. Search standard paths
@@ -111,7 +107,9 @@ export class WhisperCppBackend implements STTBackend {
 
     if (!this.binaryPath) {
       throw new Error(
-        "whisper-cpp binary not found. Install: brew install whisper-cpp"
+        "whisper-cpp binary not found. Install:\n" +
+        "  macOS: brew install whisper-cpp\n" +
+        "  Linux: build from source — https://github.com/ggerganov/whisper.cpp"
       );
     }
     if (!this.modelPath) {
@@ -126,7 +124,10 @@ export class WhisperCppBackend implements STTBackend {
     const start = Date.now();
 
     // Build env with Metal shader path if available
-    const env: Record<string, string> = { ...process.env as Record<string, string> };
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (typeof v === "string") env[k] = v;
+    }
     const brewPrefix = getBrewPrefix();
     if (brewPrefix) {
       env.GGML_METAL_PATH_RESOURCES = join(brewPrefix, "share", "whisper-cpp");
@@ -225,7 +226,7 @@ export class WisprFlowBackend implements STTBackend {
         ws.send(JSON.stringify({
           type: "auth",
           language: ["en"],
-          context: { app: { name: "QA Voice", type: "ai" } },
+          context: { app: { name: "VoiceLayer", type: "ai" } },
         }));
       });
 
@@ -302,8 +303,6 @@ export class WisprFlowBackend implements STTBackend {
   }
 }
 
-// RMS calculation uses calculateRMS imported from ./input
-
 // --- Backend Detection ---
 
 let cachedBackend: STTBackend | null = null;
@@ -325,7 +324,7 @@ export async function getBackend(): Promise<STTBackend> {
     }
     throw new Error(
       "whisper backend requested but not available. " +
-      "Install: brew install whisper-cpp && download a model to ~/.cache/whisper/"
+      "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/"
     );
   }
 
@@ -344,20 +343,22 @@ export async function getBackend(): Promise<STTBackend> {
   const whisper = new WhisperCppBackend();
   if (await whisper.isAvailable()) {
     cachedBackend = whisper;
-    console.error(`[qa-voice] STT backend: whisper.cpp (${whisper.getModelInfo().model})`);
+    console.error(`[voicelayer] STT backend: whisper.cpp (${whisper.getModelInfo().model})`);
     return whisper;
   }
 
   const wispr = new WisprFlowBackend();
   if (await wispr.isAvailable()) {
     cachedBackend = wispr;
-    console.error("[qa-voice] STT backend: Wispr Flow (cloud fallback)");
+    console.error("[voicelayer] STT backend: Wispr Flow (cloud fallback)");
     return wispr;
   }
 
   throw new Error(
     "No STT backend available. Options:\n" +
-    "  1. Install whisper.cpp: brew install whisper-cpp\n" +
+    "  1. Install whisper.cpp:\n" +
+    "     macOS: brew install whisper-cpp\n" +
+    "     Linux: build from source — https://github.com/ggerganov/whisper.cpp\n" +
     "     Download model: curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
     "       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin\n" +
     "  2. Set QA_VOICE_WISPR_KEY for cloud STT (Wispr Flow)"
