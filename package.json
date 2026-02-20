@@ -1,0 +1,41 @@
+{
+  "name": "voicelayer-mcp",
+  "version": "1.0.0",
+  "description": "Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.",
+  "type": "module",
+  "bin": {
+    "voicelayer-mcp": "./src/mcp-server.ts"
+  },
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "test": "bun test",
+    "start": "bun run src/mcp-server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "voice",
+    "tts",
+    "stt",
+    "claude-code",
+    "ai-assistant",
+    "speech-to-text",
+    "text-to-speech",
+    "whisper",
+    "edge-tts"
+  ],
+  "author": "Etan Heyman <etan@heyman.net>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EtanHey/voicelayer.git"
+  },
+  "homepage": "https://github.com/EtanHey/voicelayer#readme",
+  "bugs": {
+    "url": "https://github.com/EtanHey/voicelayer/issues"
+  }
+}
