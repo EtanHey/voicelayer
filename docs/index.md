@@ -56,8 +56,6 @@ Claude Code  ─── MCP ───>  VoiceLayer
 ```bash
 brew install sox whisper-cpp
 pip3 install edge-tts
-git clone https://github.com/EtanHey/voicelayer.git
-cd voicelayer && bun install
 ```
 
 Then add to your `.mcp.json`:
@@ -65,9 +63,9 @@ Then add to your `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"]
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"]
     }
   }
 }
