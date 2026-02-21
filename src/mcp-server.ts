@@ -299,7 +299,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 interface TtsArgs { message: string; rate?: string }
 interface ConverseArgs { message: string; timeout_seconds?: number }
-interface ThinkArgs { thought: string; category?: string }
+interface ThinkArgs { thought: string; category: string }
 
 const THINK_CATEGORIES = ["insight", "question", "red-flag", "checklist-update"] as const;
 type ThinkCategory = typeof THINK_CATEGORIES[number];
