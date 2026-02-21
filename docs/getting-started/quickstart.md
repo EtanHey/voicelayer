@@ -1,59 +1,43 @@
 # Quick Start
 
-Get VoiceLayer running with Claude Code in under 5 minutes.
+Get VoiceLayer running with Claude Code in 5 minutes.
 
-## Prerequisites
+## 1. Install Prerequisites
 
-### macOS
+=== "macOS (one block)"
 
-```bash
-# Recording (required)
-brew install sox
+    ```bash
+    brew install sox whisper-cpp
+    pip3 install edge-tts
+    curl -fsSL https://bun.sh/install | bash
+    ```
 
-# Text-to-speech (required)
-pip3 install edge-tts
+=== "Linux (one block)"
 
-# Speech-to-text (recommended — local, fast)
-brew install whisper-cpp
-```
+    ```bash
+    sudo apt install sox mpv
+    pip3 install edge-tts
+    curl -fsSL https://bun.sh/install | bash
+    ```
 
-### Linux
+Need details? See the full [Prerequisites](prerequisites.md) page.
 
-```bash
-# Recording
-sudo apt install sox  # or: dnf install sox
+## 2. Download a Whisper Model
 
-# Text-to-speech
-pip3 install edge-tts
-
-# Audio playback (one of these)
-sudo apt install mpv  # or: mpg123, ffplay
-
-# Speech-to-text — build from source
-# See https://github.com/ggerganov/whisper.cpp
-```
-
-## Download a Whisper Model
-
-whisper.cpp needs a GGML model file for local transcription:
+whisper.cpp needs a model file for local speech-to-text:
 
 ```bash
 mkdir -p ~/.cache/whisper
-
-# Large v3 Turbo (recommended — fast + accurate on Apple Silicon)
 curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
-
-# Or use a smaller model for faster startup:
-# curl -L -o ~/.cache/whisper/ggml-base.en.bin \
-#   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-VoiceLayer auto-detects models in `~/.cache/whisper/` — no config needed.
+!!! tip "This is a ~1.5 GB download"
+    For a smaller model (~142 MB, English only): replace `ggml-large-v3-turbo.bin` with `ggml-base.en.bin`.
 
-## Configure Claude Code
+## 3. Add to Claude Code
 
-Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json`):
+Add VoiceLayer to your MCP config. Open (or create) `.mcp.json` in your project root or `~/.claude/.mcp.json` for global access:
 
 ```json
 {
@@ -66,8 +50,7 @@ Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json
 }
 ```
 
-!!! note "Requires Bun"
-    VoiceLayer runs on [Bun](https://bun.sh). Install with: `curl -fsSL https://bun.sh/install | bash`
+That's it. The next time you start Claude Code, VoiceLayer will be available.
 
 ??? info "Alternative: install from source"
     ```bash
@@ -75,7 +58,7 @@ Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json
     cd voicelayer && bun install
     ```
 
-    Then use this MCP config:
+    Then use this MCP config instead:
 
     ```json
     {
@@ -90,13 +73,13 @@ Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json
 
     The `args` path must be absolute — MCP servers don't inherit your shell's working directory.
 
-## Grant Microphone Access
+## 4. Grant Microphone Access (macOS)
 
-On macOS, grant mic access to your terminal app:
+On macOS, your terminal app needs mic permission:
 
 **System Settings > Privacy & Security > Microphone** — enable your terminal (iTerm2, Terminal.app, Warp, etc.)
 
-## Verify It Works
+## 5. Test It
 
 Start a Claude Code session and try:
 
@@ -104,16 +87,17 @@ Start a Claude Code session and try:
 Claude, announce "VoiceLayer is working"
 ```
 
-You should hear the message spoken aloud through your speakers.
-
-For full voice Q&A:
+You should hear the message spoken aloud. For full voice conversation:
 
 ```
-Claude, use converse mode to ask me about the UI
+Claude, use converse mode to ask me how the UI looks
 ```
 
-## Next Steps
+Claude will speak the question, record your voice response, and continue the conversation.
 
-- [Configuration](configuration.md) — environment variables, voice selection, rate tuning
-- [Voice Modes](../modes/overview.md) — understand the 5 modes
-- [MCP Tools Reference](../tools-reference.md) — full tool API
+## What's Next?
+
+- **[What is VoiceLayer?](../what-is-voicelayer.md)** — non-technical overview with examples
+- **[Voice Modes](../modes/overview.md)** — when to use announce vs. brief vs. converse
+- **[Configuration](configuration.md)** — change the voice, speech rate, STT backend
+- **[MCP Tools Reference](../tools-reference.md)** — full tool API with parameters

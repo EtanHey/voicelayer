@@ -67,9 +67,9 @@ To use QA testing, your Claude Code session needs both VoiceLayer and Playwright
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"]
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"]
     },
     "playwright": {
       "command": "npx",

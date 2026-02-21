@@ -89,7 +89,9 @@ Or in your MCP config:
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"],
       "env": {
         "QA_VOICE_WISPR_KEY": "your-api-key"
       }
