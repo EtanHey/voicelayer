@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.etanhey/voicelayer",
+  "title": "VoiceLayer — Voice I/O for AI Coding Assistants",
+  "description": "Voice input/output layer for Claude Code via MCP. 5 modes: announce, brief, consult, converse, think. Local TTS (edge-tts), local STT (whisper.cpp), session booking.",
+  "version": "1.0.0",
+  "repository": {
+    "url": "https://github.com/EtanHey/voicelayer",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://www.npmjs.com",
+      "identifier": "voicelayer-mcp",
+      "version": "1.0.0",
+      "runtimeHint": "bunx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [],
+      "environmentVariables": [
+        {
+          "name": "QA_VOICE_STT_BACKEND",
+          "description": "STT backend: whisper (local, default), wispr (cloud), or auto",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "QA_VOICE_WISPR_KEY",
+          "description": "Wispr Flow API key for cloud STT fallback",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "QA_VOICE_TTS_VOICE",
+          "description": "edge-tts voice ID (default: en-US-JennyNeural)",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "QA_VOICE_WHISPER_MODEL",
+          "description": "Path to whisper.cpp GGML model file (auto-detected from ~/.cache/whisper/)",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}
