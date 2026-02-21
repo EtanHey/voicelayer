@@ -40,9 +40,15 @@ function isProcessAlive(pid: number): boolean {
 function readLock(): SessionLock | null {
   if (!existsSync(LOCK_FILE)) return null;
   try {
-    const data = JSON.parse(readFileSync(LOCK_FILE, "utf-8"));
-    if (data.pid && data.sessionId && data.startedAt) {
-      return data as SessionLock;
+    const raw: unknown = JSON.parse(readFileSync(LOCK_FILE, "utf-8"));
+    if (
+      typeof raw === "object" && raw !== null &&
+      "pid" in raw && typeof (raw as Record<string, unknown>).pid === "number" &&
+      "sessionId" in raw && typeof (raw as Record<string, unknown>).sessionId === "string" &&
+      "startedAt" in raw && typeof (raw as Record<string, unknown>).startedAt === "string"
+    ) {
+      const r = raw as Record<string, unknown>;
+      return { pid: r.pid as number, sessionId: r.sessionId as string, startedAt: r.startedAt as string };
     }
     return null;
   } catch {
