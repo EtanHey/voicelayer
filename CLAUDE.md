@@ -168,9 +168,11 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 voicelayer/
 ├── src/
 │   ├── mcp-server.ts          # MCP server (5 modes + 2 aliases)
-│   ├── tts.ts                 # edge-tts (Python CLI) + afplay
+│   ├── tts.ts                 # edge-tts (Python CLI) + cross-platform audio player
 │   ├── input.ts               # Mic recording + STT transcription pipeline
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
+│   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
+│   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based voice session mutex
 │   ├── session.ts             # Session lifecycle (save/load/generate)
 │   ├── report.ts              # QA report renderer (JSON → markdown)
@@ -186,6 +188,8 @@ voicelayer/
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
 ├── package.json
 ├── tsconfig.json
+├── LICENSE
+├── CONTRIBUTING.md
 ├── CLAUDE.md                  # This file
 └── README.md
 ```
@@ -207,5 +211,5 @@ voicelayer/
 - `@modelcontextprotocol/sdk` — MCP server SDK
 - `edge-tts` (Python) — Microsoft neural TTS (free, no API key)
 - `sox` (system) — Audio recording via `rec` command
-- `afplay` (macOS built-in) — Audio playback
+- `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
 - `whisper-cpp` (system, optional) — Local STT engine
