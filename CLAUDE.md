@@ -113,20 +113,38 @@ curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
 
 ### Setup
 
-Add to `.mcp.json`:
+Add to `.mcp.json` (via npm/bunx — recommended):
 ```json
 {
-  "qa-voice": {
+  "voicelayer": {
+    "command": "bunx",
+    "args": ["voicelayer-mcp"]
+  }
+}
+```
+
+Or from source:
+```json
+{
+  "voicelayer": {
     "command": "bun",
-    "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"],
+    "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"]
+  }
+}
+```
+
+For Wispr Flow cloud STT (only if whisper.cpp not installed), add env:
+```json
+{
+  "voicelayer": {
+    "command": "bunx",
+    "args": ["voicelayer-mcp"],
     "env": {
       "QA_VOICE_WISPR_KEY": "your-api-key-here"
     }
   }
 }
 ```
-
-Note: `QA_VOICE_WISPR_KEY` is only needed if whisper.cpp is not installed (cloud fallback).
 
 Grant microphone access to your terminal app (System Settings > Privacy > Microphone).
 

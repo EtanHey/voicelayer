@@ -22,23 +22,44 @@ mkdir -p ~/.cache/whisper
 curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 
-# 3. Clone and install
-git clone https://github.com/EtanHey/voicelayer.git
-cd voicelayer && bun install
-
-# 4. Add to your .mcp.json
+# 3. Add to your Claude Code .mcp.json
 ```
 
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"]
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"]
     }
   }
 }
 ```
+
+> **Requires [Bun](https://bun.sh).** Install with: `curl -fsSL https://bun.sh/install | bash`
+
+<details>
+<summary>Alternative: install from source</summary>
+
+```bash
+git clone https://github.com/EtanHey/voicelayer.git
+cd voicelayer && bun install
+```
+
+Then use this MCP config instead:
+
+```json
+{
+  "mcpServers": {
+    "voicelayer": {
+      "command": "bun",
+      "args": ["run", "/absolute/path/to/voicelayer/src/mcp-server.ts"]
+    }
+  }
+}
+```
+
+</details>
 
 Grant microphone access to your terminal (macOS: System Settings > Privacy > Microphone).
 

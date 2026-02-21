@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 /**
  * VoiceLayer MCP Server — 4 voice modes + silent think tool.
  *
