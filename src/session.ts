@@ -45,11 +45,49 @@ export function loadQASession(sessionId: string): QASession | null {
   const path = join(getDir("sessions"), `${sessionId}.json`);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as QASession;
+    const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (!isQASession(raw)) {
+      console.error(`[voicelayer] Invalid QA session shape: ${path}`);
+      return null;
+    }
+    return raw;
   } catch {
     console.error(`[voicelayer] Failed to parse QA session: ${path}`);
     return null;
   }
+}
+
+/** Validate that parsed JSON has the shape of a QASession. */
+function isQASession(raw: unknown): raw is QASession {
+  if (typeof raw !== "object" || raw === null) return false;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.session !== "object" || obj.session === null) return false;
+  const s = obj.session as Record<string, unknown>;
+  return (
+    typeof s.id === "string" &&
+    s.mode === "qa" &&
+    typeof s.url === "string" &&
+    typeof s.started === "string" &&
+    Array.isArray(obj.pages) &&
+    typeof obj.summary === "object" && obj.summary !== null
+  );
+}
+
+/** Validate that parsed JSON has the shape of a DiscoverySession. */
+function isDiscoverySession(raw: unknown): raw is DiscoverySession {
+  if (typeof raw !== "object" || raw === null) return false;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.session !== "object" || obj.session === null) return false;
+  const s = obj.session as Record<string, unknown>;
+  return (
+    typeof s.id === "string" &&
+    s.mode === "discovery" &&
+    typeof s.client_name === "string" &&
+    typeof s.started === "string" &&
+    Array.isArray(obj.checklist) &&
+    Array.isArray(obj.red_flags) &&
+    typeof obj.brief === "object" && obj.brief !== null
+  );
 }
 
 /**
@@ -84,7 +122,12 @@ export function loadDiscoverySession(
   const path = join(getDir("sessions"), `${sessionId}.json`);
   if (!existsSync(path)) return null;
   try {
-    return JSON.parse(readFileSync(path, "utf-8")) as DiscoverySession;
+    const raw: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    if (!isDiscoverySession(raw)) {
+      console.error(`[voicelayer] Invalid discovery session shape: ${path}`);
+      return null;
+    }
+    return raw;
   } catch {
     console.error(`[voicelayer] Failed to parse discovery session: ${path}`);
     return null;
