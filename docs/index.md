@@ -71,7 +71,7 @@ Then add to your `.mcp.json`:
 }
 ```
 
-See the full [Quick Start guide](getting-started/quickstart.md) for details.
+See the full [Quick Start guide](getting-started/quickstart.md) for details, or read [What is VoiceLayer?](what-is-voicelayer.md) for a non-technical overview.
 
 ## Platform Support
 

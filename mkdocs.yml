@@ -33,11 +33,13 @@ theme:
 
 nav:
   - Home: index.md
+  - What is VoiceLayer?: what-is-voicelayer.md
   - Getting Started:
     - Quick Start: getting-started/quickstart.md
+    - Prerequisites: getting-started/prerequisites.md
     - Configuration: getting-started/configuration.md
   - Voice Modes:
-    - Overview: modes/overview.md
+    - Guide: modes/overview.md
     - Announce: modes/announce.md
     - Brief: modes/brief.md
     - Consult: modes/consult.md
