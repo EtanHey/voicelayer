@@ -231,3 +231,13 @@ voicelayer/
 - `sox` (system) — Audio recording via `rec` command
 - `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
 - `whisper-cpp` (system, optional) — Local STT engine
+
+## Naming Convention Decision
+
+**Tool prefix:** `qa_voice_*` (kept for v2, rename to `voicelayer_*` planned for v3).
+
+The MCP server name is `"voicelayer"` but all 7 tool names use the `qa_voice_*` prefix. This is intentional for v2:
+
+- **Why not rename now:** The golems repo references `mcp__qa-voice__qa_voice_*` in 12+ agent/rule/skill files. Renaming tools requires updating the `.mcp.json` key from `qa-voice` to `voicelayer`, which changes the Claude Code tool namespace and breaks all existing references.
+- **v3 migration plan:** Add `voicelayer_*` aliases alongside `qa_voice_*`, update all consumers, then switch defaults with a deprecation period.
+- **Environment variables:** Similarly, `QA_VOICE_*` env vars will be aliased to `VOICELAYER_*` in v3.
