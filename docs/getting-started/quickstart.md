@@ -51,14 +51,6 @@ curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
 
 VoiceLayer auto-detects models in `~/.cache/whisper/` — no config needed.
 
-## Install VoiceLayer
-
-```bash
-git clone https://github.com/EtanHey/voicelayer.git
-cd voicelayer
-bun install
-```
-
 ## Configure Claude Code
 
 Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json`):
@@ -66,15 +58,36 @@ Add VoiceLayer to your `.mcp.json` (project-level or global `~/.claude/.mcp.json
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/absolute/path/to/voicelayer/src/mcp-server.ts"]
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"]
     }
   }
 }
 ```
 
-!!! warning "Use absolute paths"
+!!! note "Requires Bun"
+    VoiceLayer runs on [Bun](https://bun.sh). Install with: `curl -fsSL https://bun.sh/install | bash`
+
+??? info "Alternative: install from source"
+    ```bash
+    git clone https://github.com/EtanHey/voicelayer.git
+    cd voicelayer && bun install
+    ```
+
+    Then use this MCP config:
+
+    ```json
+    {
+      "mcpServers": {
+        "voicelayer": {
+          "command": "bun",
+          "args": ["run", "/absolute/path/to/voicelayer/src/mcp-server.ts"]
+        }
+      }
+    }
+    ```
+
     The `args` path must be absolute — MCP servers don't inherit your shell's working directory.
 
 ## Grant Microphone Access
