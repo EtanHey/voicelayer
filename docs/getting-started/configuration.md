@@ -82,9 +82,9 @@ You can override per-call by passing the `rate` parameter to any TTS tool.
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"]
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"]
     }
   }
 }
@@ -95,9 +95,9 @@ You can override per-call by passing the `rate` parameter to any TTS tool.
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"],
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"],
       "env": {
         "QA_VOICE_TTS_VOICE": "en-GB-SoniaNeural",
         "QA_VOICE_STT_BACKEND": "whisper",

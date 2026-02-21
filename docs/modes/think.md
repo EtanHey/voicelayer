@@ -75,9 +75,9 @@ To persist the log across reboots, set `QA_VOICE_THINK_FILE` to a non-`/tmp` pat
 ```json
 {
   "mcpServers": {
-    "qa-voice": {
-      "command": "bun",
-      "args": ["run", "/path/to/voicelayer/src/mcp-server.ts"],
+    "voicelayer": {
+      "command": "bunx",
+      "args": ["voicelayer-mcp"],
       "env": {
         "QA_VOICE_THINK_FILE": "/Users/me/notes/voicelayer-thinking.md"
       }
