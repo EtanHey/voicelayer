@@ -249,7 +249,7 @@ export class WisprFlowBackend implements STTBackend {
                   packets: [Buffer.from(chunk).toString("base64")],
                   volumes: [rms],
                   packet_duration: 1,
-                  audio_encoding: "pcm",
+                  audio_encoding: "pcm_s16le",
                   byte_encoding: "base64",
                 },
               }));
