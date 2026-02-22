@@ -5,10 +5,16 @@ All notable changes to VoiceLayer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.2] - 2026-02-22
 
 ### Fixed
-- **Wispr STT broken** — Wispr API dropped raw PCM chunking support. Now sends full WAV file as single packet with `audio_encoding: "wav"` ([#9](https://github.com/EtanHey/voicelayer/pull/9))
+- **whisper.cpp not detected on macOS** — Homebrew v1.8.3+ renamed binary from `whisper-cpp` to `whisper-cli`. Now checks both names, preferring `whisper-cli`. This was the root cause of STT failures — local backend was never activating, forcing fallback to Wispr cloud.
+- **Wispr Flow cloud fallback** — Fixed `audio_encoding` from deprecated `"pcm"` to `"wav"`. Restored 1-second PCM chunking (prevents timeout on long recordings). Wispr is now a reliable cloud fallback when whisper.cpp is unavailable.
+
+## [1.0.1] - 2026-02-22
+
+### Fixed
+- **Wispr STT broken** — Wispr API dropped raw PCM support. Switched to `audio_encoding: "wav"` ([#9](https://github.com/EtanHey/voicelayer/pull/9))
 
 ## [1.0.0] - 2026-02-21
 

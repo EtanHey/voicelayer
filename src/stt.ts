@@ -42,11 +42,16 @@ const MODEL_SEARCH_PATHS = [
   () => join(homedir(), ".cache", "whisper", "ggml-small.bin"),
 ];
 
+/** Known binary names in preference order (v1.8.3+ renamed to whisper-cli) */
+const WHISPER_BINARY_NAMES = ["whisper-cli", "whisper-cpp"];
+
 /** Find whisper-cpp binary path. Returns null if not found. */
 function findWhisperBinary(): string | null {
-  const result = Bun.spawnSync(["which", "whisper-cpp"]);
-  if (result.exitCode === 0) {
-    return result.stdout.toString().trim();
+  for (const name of WHISPER_BINARY_NAMES) {
+    const result = Bun.spawnSync(["which", name]);
+    if (result.exitCode === 0) {
+      return result.stdout.toString().trim();
+    }
   }
   return null;
 }
@@ -107,7 +112,7 @@ export class WhisperCppBackend implements STTBackend {
 
     if (!this.binaryPath) {
       throw new Error(
-        "whisper-cpp binary not found. Install:\n" +
+        "whisper-cpp binary not found (looked for: whisper-cli, whisper-cpp). Install:\n" +
         "  macOS: brew install whisper-cpp\n" +
         "  Linux: build from source — https://github.com/ggerganov/whisper.cpp"
       );
@@ -234,25 +239,30 @@ export class WisprFlowBackend implements STTBackend {
           const msg = JSON.parse(String(event.data));
 
           if (msg.status === "auth") {
-            // Auth confirmed — send full WAV as a single packet
-            // Wispr API requires audio_encoding: "wav" with WAV-formatted data
-            const rms = calculateRMS(audioBytes.slice(44)); // RMS of PCM data
-            const durationSec = (audioBytes.length - 44) / (16000 * 2); // 16kHz, 16-bit mono
-            ws.send(JSON.stringify({
-              type: "append",
-              position: 0,
-              audio_packets: {
-                packets: [Buffer.from(audioBytes).toString("base64")],
-                volumes: [rms],
-                packet_duration: durationSec,
-                audio_encoding: "wav",
-                byte_encoding: "base64",
-              },
-            }));
+            // Auth confirmed — send audio in 1-second chunks
+            // Skip WAV header (44 bytes) to get raw PCM for chunking
+            const CHUNK_SIZE = 32000; // 1 second of 16kHz 16-bit mono
+            const pcmData = audioBytes.slice(44);
+            let packetIndex = 0;
+            for (let offset = 0; offset < pcmData.length; offset += CHUNK_SIZE) {
+              const chunk = pcmData.slice(offset, offset + CHUNK_SIZE);
+              const rms = calculateRMS(chunk);
+              ws.send(JSON.stringify({
+                type: "append",
+                position: packetIndex++,
+                audio_packets: {
+                  packets: [Buffer.from(chunk).toString("base64")],
+                  volumes: [rms],
+                  packet_duration: 1,
+                  audio_encoding: "wav",
+                  byte_encoding: "base64",
+                },
+              }));
+            }
             // Commit — signal end of audio
             ws.send(JSON.stringify({
               type: "commit",
-              total_packets: 1,
+              total_packets: packetIndex,
             }));
           }
 
