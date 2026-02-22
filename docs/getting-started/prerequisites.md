@@ -123,7 +123,7 @@ Run these to verify everything is ready:
 bun --version          # Should print 1.x.x+
 rec --version          # Should print sox version info
 python3 -m edge_tts -h # Should print help text
-whisper-cpp --help     # Should print help (optional)
+whisper-cli --help     # Should print help (optional, v1.8.3+ binary name)
 ```
 
 If all commands work, head to the [Quick Start](quickstart.md) to connect VoiceLayer to Claude Code.
