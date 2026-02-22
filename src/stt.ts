@@ -205,13 +205,11 @@ export class WisprFlowBackend implements STTBackend {
     const audioData = await Bun.file(audioPath).arrayBuffer();
     const audioBytes = new Uint8Array(audioData);
 
-    // Send recorded audio to Wispr Flow WebSocket in chunks
+    // Send recorded audio to Wispr Flow WebSocket
     const wsUrl = `wss://platform-api.wisprflow.ai/api/v1/dash/ws?api_key=Bearer%20${apiKey}`;
-    const CHUNK_SIZE = 32000; // 1 second of 16kHz 16-bit mono
 
     return new Promise<STTResult>((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
-      let packetIndex = 0;
       let resolved = false;
 
       const timer = setTimeout(() => {
@@ -236,28 +234,25 @@ export class WisprFlowBackend implements STTBackend {
           const msg = JSON.parse(String(event.data));
 
           if (msg.status === "auth") {
-            // Auth confirmed — send all audio chunks
-            // Skip WAV header (44 bytes) to get raw PCM
-            const pcmData = audioBytes.slice(44);
-            for (let offset = 0; offset < pcmData.length; offset += CHUNK_SIZE) {
-              const chunk = pcmData.slice(offset, offset + CHUNK_SIZE);
-              const rms = calculateRMS(chunk);
-              ws.send(JSON.stringify({
-                type: "append",
-                position: packetIndex++,
-                audio_packets: {
-                  packets: [Buffer.from(chunk).toString("base64")],
-                  volumes: [rms],
-                  packet_duration: 1,
-                  audio_encoding: "pcm",
-                  byte_encoding: "base64",
-                },
-              }));
-            }
+            // Auth confirmed — send full WAV as a single packet
+            // Wispr API requires audio_encoding: "wav" with WAV-formatted data
+            const rms = calculateRMS(audioBytes.slice(44)); // RMS of PCM data
+            const durationSec = (audioBytes.length - 44) / (16000 * 2); // 16kHz, 16-bit mono
+            ws.send(JSON.stringify({
+              type: "append",
+              position: 0,
+              audio_packets: {
+                packets: [Buffer.from(audioBytes).toString("base64")],
+                volumes: [rms],
+                packet_duration: durationSec,
+                audio_encoding: "wav",
+                byte_encoding: "base64",
+              },
+            }));
             // Commit — signal end of audio
             ws.send(JSON.stringify({
               type: "commit",
-              total_packets: packetIndex,
+              total_packets: 1,
             }));
           }
 
