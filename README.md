@@ -9,6 +9,8 @@
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
 
+**Local-first, free, open-source.** All processing happens on your machine — no cloud APIs required. TTS via edge-tts (free), STT via whisper.cpp (local). Optional cloud fallback via Wispr Flow for machines without whisper.cpp.
+
 ## Quick Start
 
 ```bash
