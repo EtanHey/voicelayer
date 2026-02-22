@@ -24,8 +24,10 @@ Pluggable speech-to-text with auto-detection:
 
 | Backend | Type | Speed (5s clip) | Setup |
 |---------|------|-----------------|-------|
-| **whisper.cpp** | Local (default) | ~200-400ms on M1 Pro | `brew install whisper-cpp` + download model |
+| **whisper.cpp** | Local (default, free) | ~200-400ms on M1 Pro | `brew install whisper-cpp` + download model |
 | **Wispr Flow** | Cloud (fallback) | ~500ms + network | Set `QA_VOICE_WISPR_KEY` |
+
+**Binary detection:** v1.8.3+ renamed binary from `whisper-cpp` to `whisper-cli`. VoiceLayer checks both names.
 
 Auto-detection priority:
 1. `QA_VOICE_STT_BACKEND=whisper` → force whisper.cpp
