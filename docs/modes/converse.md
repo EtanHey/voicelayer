@@ -57,7 +57,7 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 | Line busy | Another session has the mic | Wait or fall back to text |
 | sox not installed | `rec` command not found | `brew install sox` |
 | Mic permission denied | Terminal not authorized | macOS: System Settings > Privacy > Microphone |
-| No STT backend | Neither whisper.cpp nor Wispr available | Install whisper-cpp or set `QA_VOICE_WISPR_KEY` |
+| No STT backend | Neither whisper.cpp nor Wispr available | `brew install whisper-cpp` (binary: `whisper-cli`) or set `QA_VOICE_WISPR_KEY` |
 
 ## Behavior
 

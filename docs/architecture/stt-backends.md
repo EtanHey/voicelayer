@@ -16,6 +16,11 @@ VoiceLayer supports two speech-to-text backends with automatic detection. Local 
 
 ## whisper.cpp (Recommended)
 
+Local-first, free, open-source. All processing on your machine — no cloud APIs, no data leaves your device.
+
+!!! note "Binary name change in v1.8.3+"
+    Homebrew v1.8.3+ installs the binary as `whisper-cli` (was `whisper-cpp`). VoiceLayer auto-detects both names.
+
 ### Installation
 
 ```bash
@@ -24,8 +29,9 @@ brew install whisper-cpp
 
 # Linux — build from source
 git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp && make
-sudo cp main /usr/local/bin/whisper-cpp
+cd whisper.cpp
+cmake -B build && cmake --build build -j --config Release
+sudo cp build/bin/whisper-cli /usr/local/bin/whisper-cli
 ```
 
 ### Model Download
