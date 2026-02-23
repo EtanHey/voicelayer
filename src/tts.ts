@@ -1,7 +1,11 @@
 /**
- * TTS module — Python edge-tts CLI → platform audio player.
+ * TTS module — three-tier voice synthesis with ring buffer replay.
  *
- * Synthesizes speech via edge-tts (Python CLI), plays via afplay (macOS) or mpv/ffplay/mpg123 (Linux).
+ * Tier 1: Cloned voices → Qwen3-TTS daemon (localhost:8880)
+ * Tier 2: Preset/default → edge-tts (Python CLI)
+ * Tier 3: Text-only fallback (when no audio output possible)
+ *
+ * Plays via afplay (macOS) or mpv/ffplay/mpg123 (Linux).
  * Supports per-call rate override, auto-slowdown for long text,
  * and non-blocking playback (returns immediately after synthesis).
  *
@@ -11,9 +15,22 @@
 // AIDEV-NOTE: Barge-in (interrupting TTS to start recording) explicitly not implemented.
 // skhd hotkey (ctrl+alt-s → pkill afplay) is the stop UX. See Phase 2 spec.
 
-import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
+import {
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  copyFileSync,
+  unlinkSync,
+} from "fs";
 import { platform } from "os";
-import { STOP_FILE, ttsFilePath, TTS_HISTORY_FILE, ttsHistoryFilePath, TTS_DISABLED_FILE } from "./paths";
+import {
+  STOP_FILE,
+  ttsFilePath,
+  TTS_HISTORY_FILE,
+  ttsHistoryFilePath,
+  TTS_DISABLED_FILE,
+} from "./paths";
+import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -22,8 +39,8 @@ const RING_BUFFER_SIZE = 20;
 // --- Voice Profiles ---
 
 interface VoiceProfile {
-  engine: string;        // "edge-tts" | "kokoro" | future engines
-  voice: string;         // edge-tts voice name (e.g., "en-US-JennyNeural")
+  engine: string; // "edge-tts" | "kokoro" | future engines
+  voice: string; // edge-tts voice name (e.g., "en-US-JennyNeural")
 }
 
 const VOICES_FILE = `${process.env.HOME}/.voicelayer/voices.json`;
@@ -44,36 +61,67 @@ function loadVoiceProfiles(): Record<string, VoiceProfile> {
 }
 
 /**
- * Resolve a voice name to an edge-tts voice string.
- * Accepts either a profile name ("andrew") or a raw edge-tts name ("en-US-AndrewNeural").
- * Returns { voice, warning? } — warning if profile not found (falls back to default).
+ * Resolve a voice name for TTS synthesis.
+ *
+ * Three-tier resolution:
+ *   1. Cloned voice profile (profile.yaml in ~/.voicelayer/voices/{name}/) → engine: "cloned"
+ *   2. Preset voice profile (voices.json) or raw edge-tts name → engine: "edge-tts"
+ *   3. Unknown → default edge-tts with warning
+ *
+ * Returns { voice, engine, warning?, fallbackVoice? }.
  */
-export function resolveVoice(name?: string): { voice: string; warning?: string } {
-  if (!name) return { voice: DEFAULT_VOICE };
+export function resolveVoice(name?: string): {
+  voice: string;
+  engine: "cloned" | "edge-tts";
+  warning?: string;
+  fallbackVoice?: string;
+} {
+  if (!name) return { voice: DEFAULT_VOICE, engine: "edge-tts" };
 
-  // Check profiles first
+  // Tier 1: Check for cloned voice profile (profile.yaml)
+  if (hasClonedProfile(name)) {
+    const profile = loadProfile(name);
+    return {
+      voice: name,
+      engine: "cloned",
+      fallbackVoice: profile?.fallback || DEFAULT_VOICE,
+    };
+  }
+
+  // Tier 2: Check preset profiles (voices.json)
   const profiles = loadVoiceProfiles();
   const profile = profiles[name.toLowerCase()];
   if (profile) {
     if (profile.engine !== "edge-tts") {
-      return { voice: DEFAULT_VOICE, warning: `Voice profile "${name}" uses engine "${profile.engine}" which is not yet supported. Using default.` };
+      return {
+        voice: DEFAULT_VOICE,
+        engine: "edge-tts",
+        warning: `Voice profile "${name}" uses engine "${profile.engine}" which is not yet supported. Using default.`,
+      };
     }
-    return { voice: profile.voice };
+    return { voice: profile.voice, engine: "edge-tts" };
   }
 
-  // If it looks like a raw edge-tts voice name (contains hyphen pattern like en-US-*), use directly
+  // Tier 2b: Raw edge-tts voice name (e.g., "en-US-AndrewNeural")
   if (/^[a-z]{2}-[A-Z]{2}-/i.test(name)) {
-    return { voice: name };
+    return { voice: name, engine: "edge-tts" };
   }
 
   // Unknown name — fallback with warning
-  return { voice: DEFAULT_VOICE, warning: `Unknown voice "${name}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.` };
+  return {
+    voice: DEFAULT_VOICE,
+    engine: "edge-tts",
+    warning: `Unknown voice "${name}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.`,
+  };
 }
 
 let ttsCounter = 0;
 
 /** Currently playing audio process — stored for stop/cleanup. */
-let currentPlayback: { proc: ReturnType<typeof Bun.spawn>; pid: number } | null = null;
+let currentPlayback: {
+  proc: ReturnType<typeof Bun.spawn>;
+  pid: number;
+} | null = null;
 
 /** Get platform-appropriate audio player command for MP3 files. */
 function getAudioPlayer(): string {
@@ -114,11 +162,11 @@ function adjustRateForLength(baseRate: string, textLength: number): string {
 // --- Ring Buffer ---
 
 export interface TTSHistoryEntry {
-  id: number;          // 0-19 circular
-  file: string;        // /tmp/voicelayer-history-N.mp3
-  text: string;        // original message
-  voice: string;       // which voice was used
-  timestamp: number;   // Date.now()
+  id: number; // 0-19 circular
+  file: string; // /tmp/voicelayer-history-N.mp3
+  text: string; // original message
+  voice: string; // which voice was used
+  timestamp: number; // Date.now()
 }
 
 let ringIndex = 0;
@@ -162,7 +210,7 @@ function addToHistory(text: string, audioFile: string, voice: string): void {
   };
 
   // Find existing entry with same id and replace, or push new
-  const existingIdx = entries.findIndex(e => e.id === id);
+  const existingIdx = entries.findIndex((e) => e.id === id);
   if (existingIdx >= 0) {
     entries[existingIdx] = entry;
   } else {
@@ -190,7 +238,9 @@ export function isTTSDisabled(): boolean {
 }
 
 /** Play an audio file non-blocking. Returns the spawned process. */
-export function playAudioNonBlocking(audioFile: string): ReturnType<typeof Bun.spawn> {
+export function playAudioNonBlocking(
+  audioFile: string,
+): ReturnType<typeof Bun.spawn> {
   const player = getAudioPlayer();
   const proc = Bun.spawn([player, audioFile], {
     stdout: "ignore",
@@ -223,7 +273,10 @@ export function stopPlayback(): boolean {
 }
 
 /**
- * Speak text aloud via edge-tts (Python) → afplay.
+ * Speak text aloud via three-tier TTS:
+ *   1. Cloned voice → Qwen3-TTS daemon (localhost:8880)
+ *   2. Preset/default → edge-tts (Python CLI)
+ *   3. Text-only (on failure)
  *
  * NON-BLOCKING: Returns as soon as synthesis is done. Audio plays in background.
  * The audio file is saved to the ring buffer for replay.
@@ -236,7 +289,12 @@ export function stopPlayback(): boolean {
  */
 export async function speak(
   text: string,
-  options?: { rate?: string; mode?: string; voice?: string; waitForPlayback?: boolean },
+  options?: {
+    rate?: string;
+    mode?: string;
+    voice?: string;
+    waitForPlayback?: boolean;
+  },
 ): Promise<{ warning?: string }> {
   if (!text?.trim()) return {};
 
@@ -246,13 +304,58 @@ export async function speak(
     return {};
   }
 
-  // Resolve voice: profile name → edge-tts voice name
-  const { voice: resolvedVoice, warning: voiceWarning } = resolveVoice(options?.voice);
+  // Resolve voice — determines engine (cloned vs edge-tts)
+  const resolved = resolveVoice(options?.voice);
 
+  // Tier 1: Cloned voice → try Qwen3-TTS daemon
+  if (resolved.engine === "cloned") {
+    const audioBuffer = await synthesizeCloned(text, resolved.voice);
+    if (audioBuffer) {
+      // Write MP3 buffer to temp file for playback
+      const ttsFile = ttsFilePath(process.pid, ttsCounter++);
+      writeFileSync(ttsFile, audioBuffer);
+
+      addToHistory(text, ttsFile, `cloned:${resolved.voice}`);
+      const proc = playAudioNonBlocking(ttsFile);
+      proc.exited.then(() => {
+        try {
+          unlinkSync(ttsFile);
+        } catch {}
+      });
+      if (options?.waitForPlayback) await proc.exited;
+      return { warning: resolved.warning };
+    }
+
+    // Daemon unavailable — fall back to edge-tts with profile's fallback voice
+    console.error(
+      `[voicelayer] Cloned voice "${resolved.voice}" daemon unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
+    );
+    return speakWithEdgeTTS(
+      text,
+      resolved.fallbackVoice || DEFAULT_VOICE,
+      options,
+    );
+  }
+
+  // Tier 2: Preset/default → edge-tts
+  return speakWithEdgeTTS(text, resolved.voice, options, resolved.warning);
+}
+
+/**
+ * Synthesize and play via edge-tts (Python CLI).
+ * Extracted from speak() to allow fallback from cloned voice failure.
+ */
+async function speakWithEdgeTTS(
+  text: string,
+  voice: string,
+  options?: { rate?: string; mode?: string; waitForPlayback?: boolean },
+  warning?: string,
+): Promise<{ warning?: string }> {
   // Determine rate: explicit > mode default > env default
-  let rate = options?.rate
-    ?? (options?.mode ? MODE_RATES[options.mode] : undefined)
-    ?? DEFAULT_RATE;
+  let rate =
+    options?.rate ??
+    (options?.mode ? MODE_RATES[options.mode] : undefined) ??
+    DEFAULT_RATE;
 
   // Auto-slow for long text
   rate = adjustRateForLength(rate, text.length);
@@ -261,26 +364,36 @@ export async function speak(
 
   // Generate speech via Python edge-tts CLI (must complete — we need the file)
   const synth = Bun.spawn([
-    "python3", "-m", "edge_tts",
-    "--text", text,
-    "--voice", resolvedVoice,
-    "--rate", rate,
-    "--write-media", ttsFile,
+    "python3",
+    "-m",
+    "edge_tts",
+    "--text",
+    text,
+    "--voice",
+    voice,
+    "--rate",
+    rate,
+    "--write-media",
+    ttsFile,
   ]);
   const synthExit = await synth.exited;
   if (synthExit !== 0) {
-    throw new Error(`edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`);
+    throw new Error(
+      `edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`,
+    );
   }
 
   // Save to ring buffer before playback
-  addToHistory(text, ttsFile, resolvedVoice);
+  addToHistory(text, ttsFile, voice);
 
   // Play audio — NON-BLOCKING (returns immediately)
   const proc = playAudioNonBlocking(ttsFile);
 
   // Clean up TTS temp file after playback finishes (not blocking)
   proc.exited.then(() => {
-    try { unlinkSync(ttsFile); } catch {}
+    try {
+      unlinkSync(ttsFile);
+    } catch {}
   });
 
   // For converse mode: wait for playback to finish before recording starts
@@ -288,5 +401,5 @@ export async function speak(
     await proc.exited;
   }
 
-  return { warning: voiceWarning };
+  return { warning };
 }
