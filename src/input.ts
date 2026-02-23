@@ -42,6 +42,13 @@ const BYTES_PER_SAMPLE = 2;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 
+/**
+ * Pre-speech timeout: if no speech is detected within this many seconds,
+ * stop recording early and return null. Prevents long silent waits.
+ * Only applies to VAD mode (not PTT).
+ */
+const PRE_SPEECH_TIMEOUT_SECONDS = 15;
+
 // Re-export calculateRMS from audio-utils for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS } from "./audio-utils";
 
@@ -122,6 +129,11 @@ export async function recordToBuffer(
     ? Infinity
     : silenceChunksForMode(silenceMode);
 
+  // Pre-speech timeout: max chunks before giving up if no speech detected
+  const preSpeechChunks = pressToTalk
+    ? Infinity
+    : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
+
   // Check that rec (sox) is available
   const which = Bun.spawnSync(["which", "rec"]);
   if (which.exitCode !== 0) {
@@ -143,6 +155,7 @@ export async function recordToBuffer(
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
     let consecutiveSilentChunks = 0;
+    let totalChunksProcessed = 0;
     let hasSpeech = false;
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
@@ -201,12 +214,35 @@ export async function recordToBuffer(
           "-q", // quiet (no progress)
           "-", // output to stdout
         ],
-        { stdout: "pipe", stderr: "ignore" },
+        { stdout: "pipe", stderr: "pipe" },
       );
 
       if (!recorder.stdout) {
         finish(new Error("rec: stdout not available"));
         return;
+      }
+
+      // Capture stderr for diagnostics — rec errors (permissions, no device) go here
+      if (recorder.stderr) {
+        const stderrReader = (
+          recorder.stderr as ReadableStream<Uint8Array>
+        ).getReader();
+        (async () => {
+          const chunks: Uint8Array[] = [];
+          try {
+            while (true) {
+              const { value, done } = await stderrReader.read();
+              if (done) break;
+              if (value) chunks.push(value);
+            }
+          } catch {}
+          if (chunks.length > 0) {
+            const text = Buffer.concat(chunks).toString("utf-8").trim();
+            if (text) {
+              console.error(`[voicelayer] rec stderr: ${text}`);
+            }
+          }
+        })();
       }
 
       console.error(
@@ -246,6 +282,7 @@ export async function recordToBuffer(
             // Always accumulate audio data
             pcmChunks.push(chunk);
             totalPcmBytes += chunk.byteLength;
+            totalChunksProcessed++;
 
             if (pressToTalk) {
               // PTT mode: no VAD, only stop on user signal or timeout
@@ -269,8 +306,10 @@ export async function recordToBuffer(
                 consecutiveSilentChunks++;
               }
 
-              // Check for user-initiated stop signal
-              if (hasSpeech && hasStopSignal()) {
+              // Check for user-initiated stop signal — ALWAYS, regardless of speech state
+              // AIDEV-NOTE: Previously gated on hasSpeech, which meant user couldn't
+              // stop recording before speaking. Fixed: stop signal is unconditional.
+              if (hasStopSignal()) {
                 clearStopSignal();
                 console.error(
                   "[voicelayer] Stop signal received — ending recording",
@@ -283,6 +322,15 @@ export async function recordToBuffer(
               if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
                 console.error(
                   `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
+                );
+                finish();
+                return;
+              }
+
+              // Pre-speech timeout: if no speech detected within N seconds, give up
+              if (!hasSpeech && totalChunksProcessed >= preSpeechChunks) {
+                console.error(
+                  `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
                 );
                 finish();
                 return;
