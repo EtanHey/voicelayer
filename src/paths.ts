@@ -46,3 +46,6 @@ export const TTS_DISABLED_FILE = tmpPath(".claude_tts_disabled");
 
 /** Mic disabled flag file — when present, mic recording is suppressed. */
 export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
+
+/** Combined voice disabled flag — checked by CC PreToolUse hook to block all voice tools. */
+export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
