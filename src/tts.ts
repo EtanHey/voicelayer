@@ -1,20 +1,28 @@
 /**
  * TTS module — Python edge-tts CLI → platform audio player.
  *
- * Synthesizes speech via edge-tts (Python CLI), plays via afplay (macOS) or aplay (Linux).
+ * Synthesizes speech via edge-tts (Python CLI), plays via afplay (macOS) or mpv/ffplay/mpg123 (Linux).
  * Supports per-call rate override, auto-slowdown for long text,
- * and stop-signal monitoring during playback.
+ * and non-blocking playback (returns immediately after synthesis).
+ *
+ * Ring buffer: last 20 synthesized audio files are cached for replay.
  */
 
-import { existsSync, unlinkSync } from "fs";
+// AIDEV-NOTE: Barge-in (interrupting TTS to start recording) explicitly not implemented.
+// skhd hotkey (ctrl+alt-s → pkill afplay) is the stop UX. See Phase 2 spec.
+
+import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } from "fs";
 import { platform } from "os";
-import { STOP_FILE, ttsFilePath } from "./paths";
+import { STOP_FILE, ttsFilePath, TTS_HISTORY_FILE, ttsHistoryFilePath, TTS_DISABLED_FILE } from "./paths";
 
 const VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
-const STOP_POLL_MS = 300;
+const RING_BUFFER_SIZE = 20;
 
 let ttsCounter = 0;
+
+/** Currently playing audio process — stored for stop/cleanup. */
+let currentPlayback: { proc: ReturnType<typeof Bun.spawn>; pid: number } | null = null;
 
 /** Get platform-appropriate audio player command for MP3 files. */
 function getAudioPlayer(): string {
@@ -52,18 +60,139 @@ function adjustRateForLength(baseRate: string, textLength: number): string {
   return `${final >= 0 ? "+" : ""}${final}%`;
 }
 
+// --- Ring Buffer ---
+
+export interface TTSHistoryEntry {
+  id: number;          // 0-19 circular
+  file: string;        // /tmp/voicelayer-history-N.mp3
+  text: string;        // original message
+  voice: string;       // which voice was used
+  timestamp: number;   // Date.now()
+}
+
+let ringIndex = 0;
+
+/** Load ring buffer from disk. Returns empty array if file missing/corrupt. */
+export function loadHistory(): TTSHistoryEntry[] {
+  if (!existsSync(TTS_HISTORY_FILE)) return [];
+  try {
+    const raw: unknown = JSON.parse(readFileSync(TTS_HISTORY_FILE, "utf-8"));
+    if (!Array.isArray(raw)) return [];
+    return raw as TTSHistoryEntry[];
+  } catch {
+    return [];
+  }
+}
+
+/** Save ring buffer to disk. */
+function saveHistory(entries: TTSHistoryEntry[]): void {
+  writeFileSync(TTS_HISTORY_FILE, JSON.stringify(entries, null, 2));
+}
+
+/** Add an entry to the ring buffer. Overwrites oldest when full. */
+function addToHistory(text: string, audioFile: string, voice: string): void {
+  const entries = loadHistory();
+  const id = ringIndex % RING_BUFFER_SIZE;
+  const historyFile = ttsHistoryFilePath(id);
+
+  // Copy audio file to persistent ring buffer slot
+  try {
+    copyFileSync(audioFile, historyFile);
+  } catch {
+    return; // If copy fails, skip history entry
+  }
+
+  const entry: TTSHistoryEntry = {
+    id,
+    file: historyFile,
+    text,
+    voice,
+    timestamp: Date.now(),
+  };
+
+  // Find existing entry with same id and replace, or push new
+  const existingIdx = entries.findIndex(e => e.id === id);
+  if (existingIdx >= 0) {
+    entries[existingIdx] = entry;
+  } else {
+    entries.push(entry);
+  }
+
+  saveHistory(entries);
+  ringIndex++;
+}
+
+/** Get a history entry by recency index (0 = most recent). */
+export function getHistoryEntry(index: number = 0): TTSHistoryEntry | null {
+  const entries = loadHistory();
+  if (entries.length === 0) return null;
+
+  // Sort by timestamp descending (most recent first)
+  const sorted = [...entries].sort((a, b) => b.timestamp - a.timestamp);
+  if (index < 0 || index >= sorted.length) return null;
+  return sorted[index];
+}
+
+/** Check if TTS is disabled via flag file. */
+export function isTTSDisabled(): boolean {
+  return existsSync(TTS_DISABLED_FILE);
+}
+
+/** Play an audio file non-blocking. Returns the spawned process. */
+export function playAudioNonBlocking(audioFile: string): ReturnType<typeof Bun.spawn> {
+  const player = getAudioPlayer();
+  const proc = Bun.spawn([player, audioFile], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  currentPlayback = { proc, pid: proc.pid };
+
+  // Clean up reference when playback finishes
+  proc.exited.then(() => {
+    if (currentPlayback?.pid === proc.pid) {
+      currentPlayback = null;
+    }
+  });
+
+  return proc;
+}
+
+/** Stop current playback if any. */
+export function stopPlayback(): boolean {
+  if (currentPlayback) {
+    try {
+      currentPlayback.proc.kill("SIGTERM");
+      currentPlayback = null;
+      return true;
+    } catch {
+      currentPlayback = null;
+    }
+  }
+  return false;
+}
+
 /**
  * Speak text aloud via edge-tts (Python) → afplay.
+ *
+ * NON-BLOCKING: Returns as soon as synthesis is done. Audio plays in background.
+ * The audio file is saved to the ring buffer for replay.
  *
  * @param text - Text to speak
  * @param options.rate - Rate override (e.g., "-10%", "+5%"). If omitted, uses DEFAULT_RATE.
  * @param options.mode - Voice mode name for auto-rate selection (announce/brief/consult/converse).
+ * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
 export async function speak(
   text: string,
-  options?: { rate?: string; mode?: string },
+  options?: { rate?: string; mode?: string; waitForPlayback?: boolean },
 ): Promise<void> {
   if (!text?.trim()) return;
+
+  // Check if TTS is disabled
+  if (isTTSDisabled()) {
+    console.error("[voicelayer] TTS disabled via flag file — skipping speech");
+    return;
+  }
 
   // Determine rate: explicit > mode default > env default
   let rate = options?.rate
@@ -75,46 +204,32 @@ export async function speak(
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
 
-  try {
-    // Generate speech via Python edge-tts CLI
-    const synth = Bun.spawn([
-      "python3", "-m", "edge_tts",
-      "--text", text,
-      "--voice", VOICE,
-      "--rate", rate,
-      "--write-media", ttsFile,
-    ]);
-    const synthExit = await synth.exited;
-    if (synthExit !== 0) {
-      throw new Error(`edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`);
-    }
+  // Generate speech via Python edge-tts CLI (must complete — we need the file)
+  const synth = Bun.spawn([
+    "python3", "-m", "edge_tts",
+    "--text", text,
+    "--voice", VOICE,
+    "--rate", rate,
+    "--write-media", ttsFile,
+  ]);
+  const synthExit = await synth.exited;
+  if (synthExit !== 0) {
+    throw new Error(`edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`);
+  }
 
-    // Play audio — monitor stop signal so user can interrupt
-    const play = Bun.spawn([getAudioPlayer(), ttsFile]);
+  // Save to ring buffer before playback
+  addToHistory(text, ttsFile, VOICE);
 
-    // Poll for stop signal during playback — clean up signal file after kill
-    let stoppedByUser = false;
-    const stopPoll = setInterval(() => {
-      if (existsSync(STOP_FILE)) {
-        stoppedByUser = true;
-        play.kill("SIGTERM");
-        clearInterval(stopPoll);
-        try { unlinkSync(STOP_FILE); } catch {}
-      }
-    }, STOP_POLL_MS);
+  // Play audio — NON-BLOCKING (returns immediately)
+  const proc = playAudioNonBlocking(ttsFile);
 
-    try {
-      const playExit = await play.exited;
-      // Non-zero exit is expected when user stops playback via signal
-      if (playExit !== 0 && !stoppedByUser) {
-        throw new Error(`Audio playback failed with exit code ${playExit}. Player: ${getAudioPlayer()}`);
-      }
-    } finally {
-      clearInterval(stopPoll);
-    }
-  } finally {
-    try {
-      unlinkSync(ttsFile);
-    } catch {}
+  // Clean up TTS temp file after playback finishes (not blocking)
+  proc.exited.then(() => {
+    try { unlinkSync(ttsFile); } catch {}
+  });
+
+  // For converse mode: wait for playback to finish before recording starts
+  if (options?.waitForPlayback) {
+    await proc.exited;
   }
 }

@@ -32,3 +32,17 @@ export function ttsFilePath(pid: number, counter: number): string {
 export function recordingFilePath(pid: number, timestamp: number): string {
   return tmpPath(`voicelayer-recording-${pid}-${timestamp}.wav`);
 }
+
+/** Ring buffer history file — JSON array of last 20 TTS entries. */
+export const TTS_HISTORY_FILE = tmpPath("voicelayer-history.json");
+
+/** Ring buffer audio file — persistent MP3 for replay. */
+export function ttsHistoryFilePath(index: number): string {
+  return tmpPath(`voicelayer-history-${index}.mp3`);
+}
+
+/** TTS disabled flag file — when present, TTS output is suppressed. */
+export const TTS_DISABLED_FILE = tmpPath(".claude_tts_disabled");
+
+/** Mic disabled flag file — when present, mic recording is suppressed. */
+export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");

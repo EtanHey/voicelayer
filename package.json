@@ -1,6 +1,6 @@
 {
   "name": "voicelayer-mcp",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "description": "Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "src/",
     "scripts/",
+    "models/",
     "README.md",
     "LICENSE"
   ],
@@ -24,7 +25,8 @@
     "bun": ">=1.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "onnxruntime-node": "^1.24.2"
   },
   "keywords": [
     "mcp",
