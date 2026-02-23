@@ -51,18 +51,14 @@ const server = new Server(
   {
     capabilities: { tools: {} },
     instructions:
-      "VoiceLayer provides voice I/O for AI coding assistants via 5 modes:\n" +
-      "- announce: fire-and-forget TTS (status updates) — NON-BLOCKING\n" +
-      "- brief: one-way TTS explanation (summaries, decisions) — NON-BLOCKING\n" +
-      "- consult: speak a checkpoint, user MAY respond — NON-BLOCKING\n" +
-      "- converse: speak + record + transcribe (BLOCKING, requires mic)\n" +
-      "- think: silent markdown log (no audio)\n" +
-      "- replay: replay a recently spoken message\n" +
-      "- toggle: enable/disable TTS and/or mic\n\n" +
-      "Stop TTS: skhd hotkey (ctrl+alt-s) or `pkill afplay`.\n" +
-      "Stop recording: touch /tmp/voicelayer-stop to end recording.\n" +
-      "Session booking: converse mode auto-books the mic; other sessions see 'line busy'.\n" +
-      "VAD: Silero VAD neural network — detects real speech, ignores background noise.\n" +
+      "VoiceLayer provides voice I/O for AI coding assistants.\n" +
+      "2 tools: voice_speak (output) and voice_ask (input).\n" +
+      "voice_speak auto-detects mode: 'insight:'/'note:'→think, '?'/about to→consult, >280 chars→brief, default→announce.\n" +
+      "voice_speak also handles replay (replay_index param) and toggle (enabled param).\n" +
+      "voice_ask speaks a question then records+transcribes the user's voice response (BLOCKING).\n" +
+      "All TTS is NON-BLOCKING — returns instantly, audio plays in background.\n" +
+      "Stop playback: skhd hotkey (ctrl+alt-s) or pkill afplay.\n" +
+      "Stop recording: touch /tmp/voicelayer-stop.\n" +
       "Prerequisites: python3 + edge-tts (TTS), sox (recording), whisper.cpp or Wispr Flow (STT).",
   }
 );
@@ -71,125 +67,92 @@ const server = new Server(
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
-    // --- Voice Mode: Announce ---
+    // === NEW CONSOLIDATED TOOLS (Phase 4) ===
+
+    // --- voice_speak: unified output tool ---
     {
-      name: "qa_voice_announce",
+      name: "voice_speak",
       description:
-        "Speak a message aloud via TTS without waiting for a response. " +
-        "NON-BLOCKING — returns instantly, audio plays in background. " +
-        "Use for status updates, narration, task completion alerts. " +
-        "Does NOT require voice session booking. " +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s)\n\n" +
-        "Returns: text confirmation of what was spoken.\n" +
-        "Errors: edge-tts not installed (pip3 install edge-tts), audio player missing, empty message.\n" +
+        "Speak a message aloud or log it silently. NON-BLOCKING — returns instantly.\n\n" +
+        "Modes (auto-detected from message if omitted):\n" +
+        "- announce: fast TTS for status updates (default for short messages)\n" +
+        "- brief: slower TTS for explanations (auto for messages > 280 chars)\n" +
+        "- consult: checkpoint — speaks, hints user may respond\n" +
+        "- think: silent markdown log, no audio (auto for 'insight:', 'note:', 'TODO:')\n\n" +
+        "Also supports: replay (index param) and toggle (enabled param).\n\n" +
+        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s).\n" +
         "Prerequisites: python3 + edge-tts, audio player (afplay on macOS).",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The message to speak aloud (must be non-empty after trimming)",
+            description: "The message to speak or log (must be non-empty after trimming)",
+          },
+          mode: {
+            type: "string",
+            description: "Output mode. Auto-detected from message content if omitted.",
+            enum: ["announce", "brief", "consult", "think", "auto"],
+            default: "auto",
           },
           rate: {
             type: "string",
-            description: "Speech rate as percent string (e.g. '-10%', '+5%'). Default: +10% for announce. Auto-slows for long text.",
+            description: "Speech rate override (e.g. '+10%', '-5%'). Each mode has sensible defaults.",
             pattern: "^[+-]\\d+%$",
-            default: "+10%",
+          },
+          category: {
+            type: "string",
+            description: "Category for think mode: insight, question, red-flag, checklist-update.",
+            enum: ["insight", "question", "red-flag", "checklist-update"],
+            default: "insight",
+          },
+          replay_index: {
+            type: "number",
+            description: "Replay a cached message instead of speaking new text. 0 = most recent. Ignores message param.",
+            minimum: 0,
+            maximum: 19,
+          },
+          enabled: {
+            type: "boolean",
+            description: "Toggle voice on/off. When set, acts as toggle instead of speaking.",
+          },
+          scope: {
+            type: "string",
+            description: "Toggle scope: 'all' (default), 'tts', or 'mic'. Only used with enabled param.",
+            enum: ["all", "tts", "mic"],
+            default: "all",
           },
         },
         required: ["message"],
       },
     },
-    // --- Voice Mode: Brief ---
+    // --- voice_ask: unified input tool ---
     {
-      name: "qa_voice_brief",
+      name: "voice_ask",
       description:
-        "Speak a one-way explanation aloud via TTS. No response expected. " +
-        "NON-BLOCKING — returns instantly, audio plays in background. " +
-        "Use for reading back decisions, summarizing findings, explaining plans. " +
-        "Speaks SLOWER than announce (auto-adjusted for text length). " +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s)\n\n" +
-        "Returns: text confirmation of what was spoken.\n" +
-        "Errors: same as announce (edge-tts, audio player).\n" +
-        "Prerequisites: python3 + edge-tts, audio player (afplay on macOS).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The explanation or summary to speak aloud (must be non-empty after trimming)",
-          },
-          rate: {
-            type: "string",
-            description: "Speech rate as percent string (e.g. '-15%', '+0%'). Default: -10% for brief. Auto-slows further for long text.",
-            pattern: "^[+-]\\d+%$",
-            default: "-10%",
-          },
-        },
-        required: ["message"],
-      },
-    },
-    // --- Voice Mode: Consult ---
-    {
-      name: "qa_voice_consult",
-      description:
-        "Speak a checkpoint message — the user MAY want to respond. Non-blocking. " +
-        "Use for preemptive checkpoints: 'about to commit, want to review?' " +
-        "Returns immediately. If user input is needed, follow up with qa_voice_converse. " +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s)\n\n" +
-        "Returns: confirmation text; does not collect voice input.\n" +
-        "Errors: same as announce (edge-tts, audio player).\n" +
-        "Prerequisites: python3 + edge-tts, audio player (afplay on macOS).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The checkpoint question or status to speak (must be non-empty after trimming)",
-          },
-          rate: {
-            type: "string",
-            description: "Speech rate as percent string (e.g. '-5%', '+10%'). Default: +5% for consult.",
-            pattern: "^[+-]\\d+%$",
-            default: "+5%",
-          },
-        },
-        required: ["message"],
-      },
-    },
-    // --- Voice Mode: Converse ---
-    {
-      name: "qa_voice_converse",
-      description:
-        "Speak a question aloud and wait for the user's voice response. BLOCKING. " +
-        "Records mic audio, transcribes via STT, returns transcription text. " +
-        "User-controlled stop: touch /tmp/voicelayer-stop to end recording. " +
-        "Silero VAD silence detection with configurable mode (quick/standard/thoughtful). " +
-        "Requires voice session booking — other sessions see 'line busy' (isError: true). " +
-        "Use for interactive Q&A, drilling sessions, interviews.\n\n" +
-        "Returns: on success, the user's transcribed text (plain string). " +
-        "On timeout/no speech: status message '[converse] No response received...' " +
-        "On busy: error with isError: true.\n" +
-        "Errors: line busy (another session has mic), sox not installed, mic permission denied, " +
-        "no STT backend (install whisper-cpp or set QA_VOICE_WISPR_KEY).\n" +
+        "Speak a question aloud and wait for the user's voice response. BLOCKING.\n\n" +
+        "Records mic audio, transcribes via Silero VAD + whisper.cpp/Wispr Flow.\n" +
+        "User-controlled stop: touch /tmp/voicelayer-stop to end recording.\n" +
+        "Requires voice session booking — other sessions see 'line busy'.\n\n" +
+        "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       inputSchema: {
         type: "object" as const,
         properties: {
           message: {
             type: "string",
-            description: "The question or prompt to speak aloud (must be non-empty after trimming)",
+            description: "The question to speak aloud before recording",
           },
           timeout_seconds: {
             type: "number",
-            description: "How long to wait for a response in seconds. Clamped to 10-3600. Default: 300.",
+            description: "Max wait time in seconds. Clamped to 10-3600. Default: 300.",
             default: 300,
             minimum: 10,
             maximum: 3600,
           },
           silence_mode: {
             type: "string",
-            description: "How long to wait after speech stops: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default for converse).",
+            description: "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default).",
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
           },
@@ -197,133 +160,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         required: ["message"],
       },
     },
-    // --- Silent: Think ---
-    {
-      name: "qa_voice_think",
-      description:
-        "Append a thought or insight to the live thinking log (markdown file). " +
-        "Use during discovery calls to silently take notes the user can glance at. " +
-        "Does NOT speak — writes to a file that can be open in a split screen. " +
-        `Writes to QA_VOICE_THINK_FILE (default: /tmp/voicelayer-thinking.md).\n\n` +
-        "Returns: confirmation text with the noted thought.\n" +
-        "Errors: file write failure (rare).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          thought: {
-            type: "string",
-            description: "The insight, suggestion, or note to append",
-          },
-          category: {
-            type: "string",
-            description: "Category: insight, question, red-flag, checklist-update. Defaults to insight.",
-            enum: ["insight", "question", "red-flag", "checklist-update"],
-            default: "insight",
-          },
-        },
-        required: ["thought"],
-      },
-    },
-    // --- Replay ---
-    {
-      name: "qa_voice_replay",
-      description:
-        "Replay a recently spoken message from the ring buffer. " +
-        "NON-BLOCKING — returns instantly, audio plays in background. " +
-        "The ring buffer holds the last 20 spoken messages. " +
-        "Index 0 = most recent, 1 = second-most-recent, etc.\n\n" +
-        "Returns: text of what was replayed, or error if index out of range.\n" +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          index: {
-            type: "number",
-            description: "Recency index: 0 = most recent (default), 1 = second-most-recent, etc. Max 19.",
-            default: 0,
-            minimum: 0,
-            maximum: 19,
-          },
-        },
-      },
-    },
-    // --- Toggle Voice ---
-    {
-      name: "qa_voice_toggle",
-      description:
-        "Enable or disable voice output and/or mic input via flag files. " +
-        "When disabled, TTS calls return silently and mic recording returns null. " +
-        "Use to mute during meetings, quiet hours, or when audio isn't wanted.\n\n" +
-        "Scope:\n" +
-        "- 'all': disables both TTS and mic (default)\n" +
-        "- 'tts': disables speech output only\n" +
-        "- 'mic': disables microphone recording only\n\n" +
-        "Returns: confirmation of new state.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          enabled: {
-            type: "boolean",
-            description: "true = enable voice, false = disable voice",
-          },
-          scope: {
-            type: "string",
-            description: "What to toggle: 'all' (default), 'tts', or 'mic'.",
-            enum: ["all", "tts", "mic"],
-            default: "all",
-          },
-        },
-        required: ["enabled"],
-      },
-    },
-    // --- Aliases (backward compat) ---
-    {
-      name: "qa_voice_say",
-      description:
-        "Backward-compat alias for qa_voice_announce. Prefer qa_voice_announce for new code. " +
-        "Same contract: NON-BLOCKING fire-and-forget TTS, no response. " +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s).",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to speak aloud",
-          },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_ask",
-      description:
-        "Backward-compat alias for qa_voice_converse. Prefer qa_voice_converse for new code. " +
-        "Same contract: BLOCKING voice Q&A with session booking, user-controlled stop, " +
-        "Silero VAD silence detection, returns transcription on success or status/error on failure.",
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The question or message to speak aloud",
-          },
-          timeout_seconds: {
-            type: "number",
-            description: "How long to wait for a response in seconds. Clamped to 10-3600. Default: 300.",
-            default: 300,
-            minimum: 10,
-            maximum: 3600,
-          },
-          silence_mode: {
-            type: "string",
-            description: "How long to wait after speech stops: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default).",
-            enum: ["quick", "standard", "thoughtful"],
-            default: "thoughtful",
-          },
-        },
-        required: ["message"],
-      },
-    },
+
+    // === BACKWARD-COMPAT ALIASES (old tool names still work) ===
+
+    { name: "qa_voice_announce", description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+10%" } }, required: ["message"] } },
+    { name: "qa_voice_brief", description: "Alias for voice_speak(mode='brief'). NON-BLOCKING TTS, slower rate.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "-10%" } }, required: ["message"] } },
+    { name: "qa_voice_consult", description: "Alias for voice_speak(mode='consult'). NON-BLOCKING checkpoint.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+5%" } }, required: ["message"] } },
+    { name: "qa_voice_converse", description: "Alias for voice_ask. BLOCKING voice Q&A.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The question to speak" }, timeout_seconds: { type: "number", default: 300, minimum: 10, maximum: 3600 }, silence_mode: { type: "string", enum: ["quick", "standard", "thoughtful"], default: "thoughtful" } }, required: ["message"] } },
+    { name: "qa_voice_think", description: "Alias for voice_speak(mode='think'). Silent markdown log.", inputSchema: { type: "object" as const, properties: { thought: { type: "string", description: "The thought to log" }, category: { type: "string", enum: ["insight", "question", "red-flag", "checklist-update"], default: "insight" } }, required: ["thought"] } },
+    { name: "qa_voice_replay", description: "Alias for voice_speak(replay_index=N). Replay cached audio.", inputSchema: { type: "object" as const, properties: { index: { type: "number", default: 0, minimum: 0, maximum: 19 } } } },
+    { name: "qa_voice_toggle", description: "Alias for voice_speak(enabled=bool). Toggle voice on/off.", inputSchema: { type: "object" as const, properties: { enabled: { type: "boolean" }, scope: { type: "string", enum: ["all", "tts", "mic"], default: "all" } }, required: ["enabled"] } },
+    { name: "qa_voice_say", description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" } }, required: ["message"] } },
+    { name: "qa_voice_ask", description: "Alias for voice_ask. BLOCKING voice Q&A.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The question to speak" }, timeout_seconds: { type: "number", default: 300, minimum: 10, maximum: 3600 }, silence_mode: { type: "string", enum: ["quick", "standard", "thoughtful"], default: "thoughtful" } }, required: ["message"] } },
   ],
 }));
 
@@ -334,7 +182,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   try {
     switch (name) {
-      // Core modes
+      // === Phase 4 consolidated tools ===
+      case "voice_speak":
+        return await handleVoiceSpeak(args);
+      case "voice_ask":
+        return await handleVoiceAsk(args);
+      // === Backward-compat aliases ===
       case "qa_voice_announce":
         return await handleAnnounce(args);
       case "qa_voice_brief":
@@ -437,6 +290,74 @@ function validateToggleArgs(args: unknown): ToggleArgs | null {
     ? rawScope as "all" | "tts" | "mic"
     : "all";
   return { enabled: a.enabled, scope };
+}
+
+// --- Auto-detection for voice_speak ---
+
+const THINK_SIGNALS = [/^insight:/i, /^note:/i, /^TODO:/i, /^red.?flag:/i, /^question:/i];
+const CONSULT_SIGNALS = [/\?$/, /\babout to\b/i, /\bshould I\b/i, /\bready to\b/i, /\bbefore I\b/i];
+
+function detectMode(message: string): "announce" | "brief" | "consult" | "think" {
+  if (THINK_SIGNALS.some(r => r.test(message.trim()))) return "think";
+  if (CONSULT_SIGNALS.some(r => r.test(message.trim()))) return "consult";
+  if (message.length > 280) return "brief";
+  return "announce";
+}
+
+// --- Unified handlers for Phase 4 tools ---
+
+async function handleVoiceSpeak(args: unknown) {
+  if (!args || typeof args !== "object") {
+    return { content: [{ type: "text" as const, text: "Missing arguments" }], isError: true };
+  }
+  const a = args as Record<string, unknown>;
+
+  // Toggle mode — enabled param present
+  if (typeof a.enabled === "boolean") {
+    return handleToggle({ enabled: a.enabled, scope: a.scope ?? "all" });
+  }
+
+  // Replay mode — replay_index present
+  if (typeof a.replay_index === "number") {
+    return handleReplay({ index: a.replay_index });
+  }
+
+  // Speech/think mode
+  const message = typeof a.message === "string" ? a.message.trim() : "";
+  if (!message) {
+    return { content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }], isError: true };
+  }
+
+  const requestedMode = typeof a.mode === "string" ? a.mode : "auto";
+  const mode = requestedMode === "auto" ? detectMode(message) : requestedMode;
+  const rate = typeof a.rate === "string" ? a.rate : undefined;
+
+  switch (mode) {
+    case "think": {
+      const category = typeof a.category === "string" ? a.category : "insight";
+      return handleThink({ thought: message, category });
+    }
+    case "announce":
+      return handleAnnounce({ message, rate });
+    case "brief":
+      return handleBrief({ message, rate });
+    case "consult":
+      return handleConsult({ message, rate });
+    default:
+      return handleAnnounce({ message, rate });
+  }
+}
+
+async function handleVoiceAsk(args: unknown) {
+  if (!args || typeof args !== "object") {
+    return { content: [{ type: "text" as const, text: "Missing arguments" }], isError: true };
+  }
+  const a = args as Record<string, unknown>;
+  return handleConverse({
+    message: a.message,
+    timeout_seconds: a.timeout_seconds,
+    silence_mode: a.silence_mode,
+  });
 }
 
 // --- Mode Handlers ---
