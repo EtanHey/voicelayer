@@ -10,7 +10,8 @@ Speak a checkpoint message — the user **may** want to respond, but no mic reco
 
 ## MCP Tool
 
-**Name:** `qa_voice_consult`
+**Tool:** `voice_speak` with `mode: "consult"` (or auto-selected for messages with "?" or "about to")
+**Alias:** `qa_voice_consult`
 
 ### Parameters
 
@@ -25,7 +26,7 @@ Speak a checkpoint message — the user **may** want to respond, but no mic reco
 {
   "content": [{
     "type": "text",
-    "text": "[consult] Spoke: \"your message\"\nUser may want to respond. Use qa_voice_converse to collect voice input if needed."
+    "text": "[consult] Spoke: \"your message\"\nUser may want to respond. Use voice_ask to collect voice input if needed."
   }]
 }
 ```
@@ -38,22 +39,22 @@ Same as [Announce](announce.md#errors) — edge-tts or audio player issues.
 
 1. Text is spoken aloud via edge-tts (same as announce/brief)
 2. Returns immediately — **no mic recording**
-3. The return text hints that the agent should follow up with `converse` if input is needed
+3. The return text hints that the agent should follow up with `voice_ask` if input is needed
 
-Consult is a "heads up" — it doesn't block. If the user says nothing (types nothing), the agent can proceed. If the user wants to respond verbally, the agent should call `qa_voice_converse` as a follow-up.
+Consult is a "heads up" — it doesn't block. If the user says nothing (types nothing), the agent can proceed. If the user wants to respond verbally, the agent should call `voice_ask` as a follow-up.
 
 ## Speech Rate
 
 Default: **+5%** (slightly faster than natural — checkpoints should be brisk).
 
-## When to Follow Up with Converse
+## When to Follow Up with voice_ask
 
 The consult tool's response includes a hint:
 
-> *"User may want to respond. Use qa_voice_converse to collect voice input if needed."*
+> *"User may want to respond. Use voice_ask to collect voice input if needed."*
 
 The agent should decide based on context whether to:
 
 1. **Wait for text input** — if the user typically types
-2. **Call converse** — if in a voice session and input is expected
+2. **Call voice_ask** — if in a voice session and input is expected
 3. **Proceed** — if the checkpoint was informational only

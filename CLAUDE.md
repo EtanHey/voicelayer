@@ -8,15 +8,10 @@
 Claude Code session
   ├── Playwright MCP (browser snapshots, --extension for co-browsing)
   ├── VoiceLayer MCP (this repo)
-  │   ├── qa_voice_announce(message) → NON-BLOCKING fire-and-forget TTS
-  │   ├── qa_voice_brief(message) → NON-BLOCKING one-way explanation TTS
-  │   ├── qa_voice_consult(message) → NON-BLOCKING speak + hint user may respond
-  │   ├── qa_voice_converse(message) → speak + record mic → Silero VAD → STT → transcription
-  │   ├── qa_voice_think(thought) → writes to live thinking log (silent)
-  │   ├── qa_voice_replay(index?) → replay from ring buffer (last 20 audio files)
-  │   ├── qa_voice_toggle(enabled, scope?) → enable/disable TTS and/or mic
-  │   ├── qa_voice_say(message) → ALIAS for announce
-  │   └── qa_voice_ask(message) → ALIAS for converse
+  │   ├── voice_speak(message, mode?) → NON-BLOCKING TTS (auto-selects announce/brief/consult/think)
+  │   │   Also: replay_index, enabled (toggle)
+  │   ├── voice_ask(message) → BLOCKING speak + record + transcribe
+  │   └── qa_voice_* → backward-compat aliases (announce, brief, consult, converse, think, say, ask, replay, toggle)
   └── Supabase MCP (data persistence)
 ```
 
@@ -80,7 +75,7 @@ All TTS modes (announce, brief, consult) return **instantly** after synthesis. A
 
 ### Ring Buffer Replay
 
-Last 20 synthesized audio files are cached in `/tmp/voicelayer-history-{N}.mp3` with metadata in `/tmp/voicelayer-history.json`. Use `qa_voice_replay(index)` to replay (0 = most recent).
+Last 20 synthesized audio files are cached in `/tmp/voicelayer-history-{N}.mp3` with metadata in `/tmp/voicelayer-history.json`. Use `voice_speak(replay_index=N)` to replay (0 = most recent).
 
 ### User-Controlled Stop (converse mode)
 
@@ -118,7 +113,7 @@ Client call assistant: track unknowns, whisper follow-up suggestions, detect red
 
 Single terminal — no companion script needed.
 
-1. Claude calls `qa_voice_converse("question")` via MCP
+1. Claude calls `voice_ask("question")` via MCP
 2. Session booking checked/acquired (lockfile)
 3. edge-tts speaks the question aloud via afplay (blocking for converse, non-blocking for others)
 4. Audio saved to ring buffer (last 20 entries) for replay
@@ -182,17 +177,12 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 
 ## MCP Tools
 
-| Tool | Mode | Returns |
-|------|------|---------|
-| `qa_voice_announce` | NON-BLOCKING fire-and-forget TTS | Confirmation |
-| `qa_voice_brief` | NON-BLOCKING one-way explanation TTS | Confirmation |
-| `qa_voice_consult` | NON-BLOCKING speak + follow-up hint | Confirmation + hint |
-| `qa_voice_converse` | Speak + Silero VAD + wait for voice | Transcribed text |
-| `qa_voice_think` | Silent log to file | Confirmation |
-| `qa_voice_replay` | Replay from ring buffer | Confirmation + text |
-| `qa_voice_toggle` | Enable/disable TTS and/or mic | Confirmation |
-| `qa_voice_say` | ALIAS → announce | Confirmation |
-| `qa_voice_ask` | ALIAS → converse | Transcribed text |
+| Tool | What It Does | Returns |
+|------|--------------|---------|
+| `voice_speak` | NON-BLOCKING TTS — auto-selects announce/brief/consult/think from message | Confirmation |
+| `voice_ask` | BLOCKING — speak question, record + transcribe response | Transcribed text |
+
+Old `qa_voice_*` names still work as backward-compat aliases.
 
 ## Scripts
 
@@ -217,7 +207,7 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 ```text
 voicelayer/
 ├── src/
-│   ├── mcp-server.ts          # MCP server (5 modes + replay + toggle + 2 aliases)
+│   ├── mcp-server.ts          # MCP server (voice_speak + voice_ask + aliases)
 │   ├── tts.ts                 # Non-blocking TTS + ring buffer (20 entries)
 │   ├── input.ts               # Mic recording + Silero VAD + STT transcription
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
@@ -272,12 +262,10 @@ voicelayer/
 - `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
 - `whisper-cpp` (system, optional) — Local STT engine
 
-## Naming Convention Decision
+## Naming Convention
 
-**Tool prefix:** `qa_voice_*` (kept for v2, rename to `voicelayer_*` planned for v3).
+**Primary tools:** `voice_speak` (output), `voice_ask` (input).
 
-The MCP server name is `"voicelayer"` but all 9 tool names use the `qa_voice_*` prefix. This is intentional for v2:
+**Backward compat:** Old `qa_voice_*` names (announce, brief, consult, converse, think, say, ask, replay, toggle) still work as aliases.
 
-- **Why not rename now:** The golems repo references `mcp__qa-voice__qa_voice_*` in 12+ agent/rule/skill files. Renaming tools requires updating the `.mcp.json` key from `qa-voice` to `voicelayer`, which changes the Claude Code tool namespace and breaks all existing references.
-- **v3 migration plan:** Add `voicelayer_*` aliases alongside `qa_voice_*`, update all consumers, then switch defaults with a deprecation period.
-- **Environment variables:** Similarly, `QA_VOICE_*` env vars will be aliased to `VOICELAYER_*` in v3.
+**Environment variables:** `QA_VOICE_*` env vars (aliasing to `VOICELAYER_*` planned for v3).
