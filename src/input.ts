@@ -5,9 +5,11 @@
  * saves to WAV, then transcribes with the selected STT backend
  * (whisper.cpp local or Wispr Flow cloud).
  *
+ * Voice activity detection uses Silero VAD (neural network) — NOT energy/amplitude.
+ *
  * Stops recording on:
  *   1. User stop signal (touch /tmp/voicelayer-stop) — PRIMARY
- *   2. Silence detection (configurable seconds of silence) — FALLBACK
+ *   2. Silero VAD silence detection (configurable mode) — FALLBACK
  *   3. Timeout — SAFETY NET
  *
  * Prerequisites:
@@ -18,22 +20,24 @@
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import { hasStopSignal, clearStopSignal } from "./session-booking";
 import { getBackend } from "./stt";
-import { recordingFilePath } from "./paths";
+import { recordingFilePath, MIC_DISABLED_FILE } from "./paths";
+import {
+  processVADChunk,
+  isSpeech,
+  resetVAD,
+  silenceChunksForMode,
+  VAD_CHUNK_BYTES,
+  VAD_CHUNK_SAMPLES,
+  type SilenceMode,
+} from "./vad";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
-const CHUNK_DURATION_S = 1;
-const CHUNK_SIZE = SAMPLE_RATE * BYTES_PER_SAMPLE * CHUNK_DURATION_S; // 32000 bytes
 
-const SILENCE_THRESHOLD = Number(process.env.QA_VOICE_SILENCE_THRESHOLD) || 500;
-const DEFAULT_SILENCE_SECONDS = Number(process.env.QA_VOICE_SILENCE_SECONDS) || 2;
-
-// Re-export calculateRMS from audio-utils for backward compat (was originally defined here)
+// Re-export calculateRMS from audio-utils for backward compat (used by stt.ts Wispr backend)
 export { calculateRMS } from "./audio-utils";
-// Also import locally for use in this module
-import { calculateRMS } from "./audio-utils";
 
 /**
  * Create a WAV file buffer from raw PCM data.
@@ -78,16 +82,27 @@ function writeString(view: DataView, offset: number, str: string): void {
   }
 }
 
+/** Check if mic recording is disabled via flag file. */
+function isMicDisabled(): boolean {
+  return existsSync(MIC_DISABLED_FILE);
+}
+
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
- * Handles stop signal, silence detection, and timeout.
+ * Handles stop signal, Silero VAD silence detection, and timeout.
  */
 export async function recordToBuffer(
   timeoutMs: number,
-  silenceSeconds?: number,
+  silenceMode: SilenceMode = "standard",
 ): Promise<Uint8Array | null> {
-  const effectiveSilence = silenceSeconds ?? DEFAULT_SILENCE_SECONDS;
+  // Check mic disabled flag
+  if (isMicDisabled()) {
+    console.error("[voicelayer] Mic disabled via flag file — skipping recording");
+    return null;
+  }
+
+  const silenceChunksNeeded = silenceChunksForMode(silenceMode);
 
   // Check that rec (sox) is available
   const which = Bun.spawnSync(["which", "rec"]);
@@ -100,11 +115,14 @@ export async function recordToBuffer(
     );
   }
 
+  // Reset VAD state for fresh recording
+  await resetVAD();
+
   // Clear any leftover stop signal from previous recording
   clearStopSignal();
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
-    let silentChunks = 0;
+    let consecutiveSilentChunks = 0;
     let hasSpeech = false;
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
@@ -164,7 +182,7 @@ export async function recordToBuffer(
         return;
       }
 
-      console.error("[voicelayer] Listening... speak now");
+      console.error("[voicelayer] Listening... speak now (Silero VAD active)");
 
       const reader = (recorder.stdout as ReadableStream<Uint8Array>).getReader();
 
@@ -174,12 +192,12 @@ export async function recordToBuffer(
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
 
-          // Append incoming bytes to read buffer (O(1) push, not O(n) concat)
+          // Append incoming bytes to read buffer
           readBuffer.push(value);
           readBufferLen += value.length;
 
-          // Process complete 1-second chunks
-          while (readBufferLen >= CHUNK_SIZE && !resolved) {
+          // Process VAD-sized chunks (512 samples = 1024 bytes = 32ms)
+          while (readBufferLen >= VAD_CHUNK_BYTES && !resolved) {
             // Flatten only when needed
             const flat = new Uint8Array(readBufferLen);
             let off = 0;
@@ -187,18 +205,20 @@ export async function recordToBuffer(
               flat.set(buf, off);
               off += buf.length;
             }
-            const chunk = flat.slice(0, CHUNK_SIZE);
-            const remainder = flat.slice(CHUNK_SIZE);
+            const chunk = flat.slice(0, VAD_CHUNK_BYTES);
+            const remainder = flat.slice(VAD_CHUNK_BYTES);
             readBuffer = remainder.length > 0 ? [remainder] : [];
             readBufferLen = remainder.length;
 
-            const rms = calculateRMS(chunk);
+            // Run Silero VAD on this chunk
+            const speechProb = await processVADChunk(chunk);
+            const speechDetected = isSpeech(speechProb);
 
-            if (rms >= SILENCE_THRESHOLD) {
+            if (speechDetected) {
               hasSpeech = true;
-              silentChunks = 0;
+              consecutiveSilentChunks = 0;
             } else {
-              silentChunks++;
+              consecutiveSilentChunks++;
             }
 
             // Always accumulate audio data
@@ -213,9 +233,9 @@ export async function recordToBuffer(
               return;
             }
 
-            // Silence-based stop (only after speech was detected)
-            if (hasSpeech && silentChunks >= effectiveSilence) {
-              console.error("[voicelayer] Silence detected — ending recording");
+            // VAD-based silence stop (only after speech was detected)
+            if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
+              console.error(`[voicelayer] Silence detected (${silenceMode} mode) — ending recording`);
               finish();
               return;
             }
@@ -237,14 +257,14 @@ export async function recordToBuffer(
  * Returns the transcribed text, or null on timeout / no speech.
  *
  * @param timeoutMs - Max wait time in milliseconds
- * @param silenceSeconds - Seconds of silence before auto-stop (default from env or 2)
+ * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
  */
 export async function waitForInput(
   timeoutMs: number,
-  silenceSeconds?: number,
+  silenceMode: SilenceMode = "standard",
 ): Promise<string | null> {
   // Record audio to buffer
-  const pcmData = await recordToBuffer(timeoutMs, silenceSeconds);
+  const pcmData = await recordToBuffer(timeoutMs, silenceMode);
   if (!pcmData) return null;
 
   // Save as WAV to temp file

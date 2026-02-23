@@ -143,7 +143,7 @@ export class WhisperCppBackend implements STTBackend {
       "-m", this.modelPath,
       "-f", audioPath,
       "--no-timestamps",
-      "-l", "en",
+      "-l", process.env.QA_VOICE_WHISPER_LANG || "auto",
       "--no-prints",  // suppress progress output
     ];
 

@@ -1,6 +1,6 @@
 # VoiceLayer
 
-> Voice I/O layer for AI coding assistants. MCP server with 4 voice modes + silent thinking.
+> Voice I/O layer for AI coding assistants. MCP server with 4 voice modes + silent thinking + replay + toggle.
 
 ## Architecture
 
@@ -8,11 +8,13 @@
 Claude Code session
   ├── Playwright MCP (browser snapshots, --extension for co-browsing)
   ├── VoiceLayer MCP (this repo)
-  │   ├── qa_voice_announce(message) → fire-and-forget TTS
-  │   ├── qa_voice_brief(message) → one-way explanation TTS
-  │   ├── qa_voice_consult(message) → speak + hint user may respond
-  │   ├── qa_voice_converse(message) → speak + record mic → local STT → transcription
+  │   ├── qa_voice_announce(message) → NON-BLOCKING fire-and-forget TTS
+  │   ├── qa_voice_brief(message) → NON-BLOCKING one-way explanation TTS
+  │   ├── qa_voice_consult(message) → NON-BLOCKING speak + hint user may respond
+  │   ├── qa_voice_converse(message) → speak + record mic → Silero VAD → STT → transcription
   │   ├── qa_voice_think(thought) → writes to live thinking log (silent)
+  │   ├── qa_voice_replay(index?) → replay from ring buffer (last 20 audio files)
+  │   ├── qa_voice_toggle(enabled, scope?) → enable/disable TTS and/or mic
   │   ├── qa_voice_say(message) → ALIAS for announce
   │   └── qa_voice_ask(message) → ALIAS for converse
   └── Supabase MCP (data persistence)
@@ -45,21 +47,47 @@ curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
 
 Model search order: `QA_VOICE_WHISPER_MODEL` env var → `~/.cache/whisper/ggml-large-v3-turbo.bin` → any `ggml-*.bin` in `~/.cache/whisper/`.
 
+## Voice Activity Detection (VAD)
+
+Uses **Silero VAD** (neural network ONNX model, ~2.3MB) instead of energy/amplitude-based silence detection. Benefits:
+- Detects actual speech vs. noise (typing, fans, etc.)
+- Much more reliable silence detection
+- Configurable silence modes:
+
+| Mode | Duration | Use Case |
+|------|----------|----------|
+| **quick** | 0.5s | Fast responses, short answers |
+| **standard** | 1.5s | Normal conversation |
+| **thoughtful** | 2.5s | User pauses to think (default for converse) |
+
+Model location: `models/silero_vad.onnx` (included in repo + npm package).
+
 ## Voice Modes
 
 | Mode | Voice Out | User Response | Blocking | Use Case |
 |------|-----------|---------------|----------|----------|
-| **announce** | Yes | None | No | Status updates, narration, "task complete" |
-| **brief** | Yes | None | No | One-way explanation, reading back decisions |
-| **consult** | Yes | None (hint to follow up) | No | Checkpoint: "about to commit, want to review?" |
-| **converse** | Yes | Voice (user-controlled stop) | Yes | Full interactive Q&A, drilling sessions |
+| **announce** | Yes | None | **No** (non-blocking) | Status updates, narration, "task complete" |
+| **brief** | Yes | None | **No** (non-blocking) | One-way explanation, reading back decisions |
+| **consult** | Yes | None (hint to follow up) | **No** (non-blocking) | Checkpoint: "about to commit, want to review?" |
+| **converse** | Yes | Voice (Silero VAD stop) | Yes | Full interactive Q&A, drilling sessions |
 | **think** | No | None | No | Silent markdown log |
+| **replay** | Yes (cached) | None | **No** (non-blocking) | Replay last spoken message from ring buffer |
+| **toggle** | — | — | No | Enable/disable TTS and/or mic |
+
+### Non-Blocking TTS (Phase 2)
+
+All TTS modes (announce, brief, consult) return **instantly** after synthesis. Audio plays in a detached background process. Stop with `pkill afplay` or skhd hotkey `ctrl+alt-s`.
+
+### Ring Buffer Replay
+
+Last 20 synthesized audio files are cached in `/tmp/voicelayer-history-{N}.mp3` with metadata in `/tmp/voicelayer-history.json`. Use `qa_voice_replay(index)` to replay (0 = most recent).
 
 ### User-Controlled Stop (converse mode)
 
 - **Primary:** Touch `/tmp/voicelayer-stop` to end recording
-- **Fallback:** 5s silence detection (longer than default — users pause to think)
+- **Fallback:** Silero VAD silence detection (configurable: quick/standard/thoughtful)
 - **Timeout:** 300s default, configurable per call
+- **skhd hotkey:** `ctrl+alt-s` → kills afplay (stops TTS playback)
 
 ### Session Booking
 
@@ -92,12 +120,14 @@ Single terminal — no companion script needed.
 
 1. Claude calls `qa_voice_converse("question")` via MCP
 2. Session booking checked/acquired (lockfile)
-3. edge-tts speaks the question aloud via afplay
-4. Mic recording starts via `rec` (sox) — 16kHz 16-bit mono PCM to buffer
-5. Stop when: user touches `/tmp/voicelayer-stop`, OR 5s silence detected
-6. Recorded audio saved as WAV, sent to STT backend (whisper.cpp or Wispr Flow)
-7. STT returns the transcription
-8. Claude receives the text and continues
+3. edge-tts speaks the question aloud via afplay (blocking for converse, non-blocking for others)
+4. Audio saved to ring buffer (last 20 entries) for replay
+5. Mic recording starts via `rec` (sox) — 16kHz 16-bit mono PCM to buffer
+6. Silero VAD processes 32ms chunks, detects real speech vs noise
+7. Stop when: user touches `/tmp/voicelayer-stop`, OR VAD-confirmed silence (configurable mode)
+8. Recorded audio saved as WAV, sent to STT backend (whisper.cpp or Wispr Flow)
+9. STT returns the transcription
+10. Claude receives the text and continues
 
 ## Quick Start
 
@@ -154,11 +184,13 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 
 | Tool | Mode | Returns |
 |------|------|---------|
-| `qa_voice_announce` | Fire-and-forget TTS | Confirmation |
-| `qa_voice_brief` | One-way explanation TTS | Confirmation |
-| `qa_voice_consult` | Speak + follow-up hint | Confirmation + hint |
-| `qa_voice_converse` | Speak + wait for voice | Transcribed text |
+| `qa_voice_announce` | NON-BLOCKING fire-and-forget TTS | Confirmation |
+| `qa_voice_brief` | NON-BLOCKING one-way explanation TTS | Confirmation |
+| `qa_voice_consult` | NON-BLOCKING speak + follow-up hint | Confirmation + hint |
+| `qa_voice_converse` | Speak + Silero VAD + wait for voice | Transcribed text |
 | `qa_voice_think` | Silent log to file | Confirmation |
+| `qa_voice_replay` | Replay from ring buffer | Confirmation + text |
+| `qa_voice_toggle` | Enable/disable TTS and/or mic | Confirmation |
 | `qa_voice_say` | ALIAS → announce | Confirmation |
 | `qa_voice_ask` | ALIAS → converse | Transcribed text |
 
@@ -178,8 +210,6 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 | `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate (per-mode defaults: announce +10%, brief -10%, consult +5%, converse +0%). Auto-slows for long text. |
-| `QA_VOICE_SILENCE_SECONDS` | `2` | Default silence seconds (converse overrides to 5) |
-| `QA_VOICE_SILENCE_THRESHOLD` | `500` | RMS energy threshold for silence (0-32767) |
 | `QA_VOICE_THINK_FILE` | `/tmp/voicelayer-thinking.md` | Live thinking log path |
 
 ## File Structure
@@ -187,9 +217,10 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 ```text
 voicelayer/
 ├── src/
-│   ├── mcp-server.ts          # MCP server (5 modes + 2 aliases)
-│   ├── tts.ts                 # edge-tts (Python CLI) + cross-platform audio player
-│   ├── input.ts               # Mic recording + STT transcription pipeline
+│   ├── mcp-server.ts          # MCP server (5 modes + replay + toggle + 2 aliases)
+│   ├── tts.ts                 # Non-blocking TTS + ring buffer (20 entries)
+│   ├── input.ts               # Mic recording + Silero VAD + STT transcription
+│   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
 │   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
 │   ├── paths.ts               # Centralized /tmp path constants
@@ -202,7 +233,9 @@ voicelayer/
 │   │   ├── qa-categories.ts   # 6 QA categories (31 checks)
 │   │   ├── discovery.ts       # Discovery session schema + helpers
 │   │   └── discovery-categories.ts  # 7 discovery categories (23 questions)
-│   └── __tests__/             # 75 tests, 178 expect() calls
+│   └── __tests__/             # 101 tests, 226 expect() calls
+├── models/
+│   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
@@ -225,10 +258,15 @@ voicelayer/
 | Session Lock | `/tmp/voicelayer-session.lock` |
 | Stop Signal | `/tmp/voicelayer-stop` |
 | Recording (temp) | `/tmp/voicelayer-recording-{pid}-{ts}.wav` |
+| Ring Buffer History | `/tmp/voicelayer-history.json` |
+| Ring Buffer Audio | `/tmp/voicelayer-history-{0-19}.mp3` |
+| TTS Disabled Flag | `/tmp/.claude_tts_disabled` |
+| Mic Disabled Flag | `/tmp/.claude_mic_disabled` |
 
 ## Dependencies
 
 - `@modelcontextprotocol/sdk` — MCP server SDK
+- `onnxruntime-node` — ONNX Runtime for Silero VAD inference
 - `edge-tts` (Python) — Microsoft neural TTS (free, no API key)
 - `sox` (system) — Audio recording via `rec` command
 - `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
@@ -238,7 +276,7 @@ voicelayer/
 
 **Tool prefix:** `qa_voice_*` (kept for v2, rename to `voicelayer_*` planned for v3).
 
-The MCP server name is `"voicelayer"` but all 7 tool names use the `qa_voice_*` prefix. This is intentional for v2:
+The MCP server name is `"voicelayer"` but all 9 tool names use the `qa_voice_*` prefix. This is intentional for v2:
 
 - **Why not rename now:** The golems repo references `mcp__qa-voice__qa_voice_*` in 12+ agent/rule/skill files. Renaming tools requires updating the `.mcp.json` key from `qa-voice` to `voicelayer`, which changes the Claude Code tool namespace and breaks all existing references.
 - **v3 migration plan:** Add `voicelayer_*` aliases alongside `qa_voice_*`, update all consumers, then switch defaults with a deprecation period.
