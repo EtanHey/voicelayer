@@ -75,24 +75,21 @@ Claude Code  ─── MCP ───>  VoiceLayer
                             └── Returns transcription to Claude
 ```
 
-1. Claude calls `qa_voice_converse("How does the nav look on mobile?")`
+1. Claude calls `voice_ask("How does the nav look on mobile?")`
 2. VoiceLayer speaks the question aloud via edge-tts
 3. Mic recording starts — user speaks their response
 4. Recording ends when user touches `/tmp/voicelayer-stop` or after 5s silence
 5. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
 6. Claude receives the transcribed text and continues
 
-## Voice Modes
+## Voice Tools
 
-| Mode | Tool | What It Does | Blocking |
-|------|------|-------------|----------|
-| **announce** | `qa_voice_announce` | Fire-and-forget TTS (status updates, narration) | No |
-| **brief** | `qa_voice_brief` | One-way explanation (reading back decisions) | No |
-| **consult** | `qa_voice_consult` | Speak + hint user may respond | No |
-| **converse** | `qa_voice_converse` | Full Q&A — speak + record + transcribe | Yes |
-| **think** | `qa_voice_think` | Silent notes to markdown log | No |
+| Tool | What It Does | Blocking |
+|------|-------------|----------|
+| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think from message content | No |
+| **voice_ask** | Blocking voice Q&A — speak question, record + transcribe response | Yes |
 
-**Aliases:** `qa_voice_say` -> announce, `qa_voice_ask` -> converse
+Old `qa_voice_*` names still work as backward-compat aliases.
 
 ### User-Controlled Stop
 
@@ -159,7 +156,7 @@ bun test    # 75 tests, 178 assertions
 ```
 voicelayer/
 ├── src/
-│   ├── mcp-server.ts          # MCP server (5 modes + 2 aliases)
+│   ├── mcp-server.ts          # MCP server (voice_speak + voice_ask + aliases)
 │   ├── tts.ts                 # edge-tts + cross-platform audio player
 │   ├── input.ts               # Mic recording + STT pipeline
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)

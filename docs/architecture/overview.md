@@ -62,7 +62,7 @@ Claude Code Session
 The most complex mode — full round-trip voice Q&A:
 
 ```
-1. Agent calls qa_voice_converse("How does it look?")
+1. Agent calls voice_ask("How does it look?")
                 │
 2. Session booking check (lockfile)
                 │

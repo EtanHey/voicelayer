@@ -13,8 +13,8 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 ## MCP Tool
 
-**Name:** `qa_voice_converse`
-**Alias:** `qa_voice_ask`
+**Tool:** `voice_ask` (blocking voice Q&A)
+**Alias:** `qa_voice_converse`, `qa_voice_ask`
 
 ### Parameters
 
@@ -82,14 +82,14 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 ## Session Booking
 
-Converse mode requires exclusive mic access. The first `converse` call auto-books a session:
+Converse mode requires exclusive mic access. The first `voice_ask` call auto-books a session:
 
 - **Lockfile:** `/tmp/voicelayer-session.lock`
 - **Contains:** PID, session ID, start timestamp
 - **Stale lock cleanup:** dead PIDs are auto-detected and removed
 - **Race condition safe:** uses atomic exclusive file creation (`wx` flag)
 
-Other Claude Code sessions that try to use `converse` see "line busy" and should fall back to text input.
+Other Claude Code sessions that try to use `voice_ask` see "line busy" and should fall back to text input.
 
 The lock is released when the MCP server process exits (SIGTERM/SIGINT/exit handlers).
 

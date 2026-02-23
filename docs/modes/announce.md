@@ -10,8 +10,8 @@ Fire-and-forget text-to-speech. The agent speaks a short message aloud — no re
 
 ## MCP Tool
 
-**Name:** `qa_voice_announce`
-**Alias:** `qa_voice_say`
+**Tool:** `voice_speak` with `mode: "announce"` (or omit mode — short messages default to announce)
+**Alias:** `qa_voice_announce`, `qa_voice_say`
 
 ### Parameters
 
@@ -58,7 +58,7 @@ Auto-adjusted for long text:
 Override with the `rate` parameter:
 
 ```
-qa_voice_announce({ message: "Important update", rate: "-10%" })
+voice_speak({ message: "Important update", mode: "announce", rate: "-10%" })
 ```
 
 ## Stop Signal
