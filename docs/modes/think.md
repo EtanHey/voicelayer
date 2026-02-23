@@ -10,13 +10,14 @@ Silent note-taking to a markdown log file. No audio, no mic — the agent captur
 
 ## MCP Tool
 
-**Name:** `qa_voice_think`
+**Tool:** `voice_speak` with `mode: "think"` (or auto-selected for "insight:", "note:", "TODO:")
+**Alias:** `qa_voice_think` (uses `thought` param; voice_speak uses `message`)
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `thought` | string | Yes | — | The insight, suggestion, or note to append |
+| `message` / `thought` | string | Yes | — | The insight, suggestion, or note to append |
 | `category` | string | No | `insight` | One of: `insight`, `question`, `red-flag`, `checklist-update` |
 
 ### Returns

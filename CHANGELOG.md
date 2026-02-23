@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Session booking with lockfile mutex ("line busy" for concurrent sessions)
 - User-controlled stop (touch `/tmp/voicelayer-stop`)
 - MCP server with 7 tools (`qa_voice_announce`, `qa_voice_brief`, `qa_voice_consult`, `qa_voice_converse`, `qa_voice_think`, `qa_voice_say`, `qa_voice_ask`)
+- Note: These tools were later consolidated into `voice_speak` and `voice_ask` (aliases still supported).
 - Published to npm as `voicelayer-mcp`
 - MkDocs Material documentation site (16 pages)
 - GitHub Actions CI (lint, typecheck, test)

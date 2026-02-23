@@ -1,10 +1,10 @@
 # MCP Tools Reference
 
-Complete reference for all VoiceLayer MCP tools. VoiceLayer exposes 7 tools (5 modes + 2 backward-compat aliases).
+VoiceLayer exposes 2 primary tools. Backward-compat aliases are listed below.
 
-## qa_voice_announce
+## voice_speak
 
-Fire-and-forget text-to-speech. Speaks a message aloud without waiting for a response.
+Non-blocking text-to-speech. Speaks a message aloud or logs it silently. Auto-detects mode from message content if `mode` is omitted.
 
 | Property | Value |
 |----------|-------|
@@ -16,61 +16,25 @@ Fire-and-forget text-to-speech. Speaks a message aloud without waiting for a res
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
-| `message` | `string` | Yes | — | Text to speak (must be non-empty after trimming) |
-| `rate` | `string` | No | `+10%` | Speech rate (e.g., `-10%`, `+5%`). Pattern: `^[+-]\d+%$` |
+| `message` | `string` | Yes | — | Text to speak or log (must be non-empty after trimming) |
+| `mode` | `string` | No | `auto` | `announce`, `brief`, `consult`, `think`, or `auto` (auto-detect from content) |
+| `voice` | `string` | No | `jenny` | Profile name or raw edge-tts voice ID |
+| `rate` | `string` | No | (per-mode) | Speech rate (e.g., `-10%`, `+5%`). Pattern: `^[+-]\d+%$` |
+| `category` | `string` | No | `insight` | For think mode: `insight`, `question`, `red-flag`, `checklist-update` |
+| `replay_index` | `number` | No | — | Replay cached message (0 = most recent). Ignores message. |
+| `enabled` | `boolean` | No | — | Toggle voice on/off instead of speaking |
+| `scope` | `string` | No | `all` | Toggle scope: `all`, `tts`, or `mic` (only with `enabled`) |
 
-**Returns:** `[announce] Spoke: "message"`
+**Mode auto-detection:** `insight:`, `note:`, `TODO:` → think; `?` or "about to" → consult; >280 chars → brief; default → announce.
+
+**Returns:** `[mode] Spoke: "message"` or `Noted (category): thought` for think mode.
 **Errors:** Empty message, edge-tts not installed, audio player missing
 
 ---
 
-## qa_voice_brief
+## voice_ask
 
-One-way explanation via TTS. Slower default rate for longer content.
-
-| Property | Value |
-|----------|-------|
-| **Blocking** | No |
-| **Requires mic** | No |
-| **Session booking** | No |
-
-**Parameters:**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `message` | `string` | Yes | — | Explanation or summary to speak (must be non-empty) |
-| `rate` | `string` | No | `-10%` | Speech rate override |
-
-**Returns:** `[brief] Explained: "message"`
-**Errors:** Same as announce
-
----
-
-## qa_voice_consult
-
-Speak a checkpoint. User may want to respond — follow up with converse if needed.
-
-| Property | Value |
-|----------|-------|
-| **Blocking** | No |
-| **Requires mic** | No |
-| **Session booking** | No |
-
-**Parameters:**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `message` | `string` | Yes | — | Checkpoint question or status (must be non-empty) |
-| `rate` | `string` | No | `+5%` | Speech rate override |
-
-**Returns:** `[consult] Spoke: "message"\nUser may want to respond. Use qa_voice_converse to collect voice input if needed.`
-**Errors:** Same as announce
-
----
-
-## qa_voice_converse
-
-Full voice Q&A. Speaks a question, records mic, transcribes, returns text. **Blocking.**
+Blocking voice Q&A. Speaks a question aloud, records mic, transcribes via Silero VAD + whisper.cpp/Wispr Flow, returns text.
 
 | Property | Value |
 |----------|-------|
@@ -84,6 +48,7 @@ Full voice Q&A. Speaks a question, records mic, transcribes, returns text. **Blo
 |------|------|----------|---------|-------------|
 | `message` | `string` | Yes | — | Question to speak aloud (must be non-empty) |
 | `timeout_seconds` | `number` | No | `300` | Max wait time (clamped to 10-3600) |
+| `silence_mode` | `string` | No | `thoughtful` | `quick`, `standard`, or `thoughtful` |
 
 **Returns (success):** The user's transcribed text (plain string)
 **Returns (timeout):** `[converse] No response received within N seconds.`
@@ -100,48 +65,19 @@ Full voice Q&A. Speaks a question, records mic, transcribes, returns text. **Blo
 
 ---
 
-## qa_voice_think
+## Backward-Compat Aliases
 
-Silent note-taking to a markdown log. No audio.
-
-| Property | Value |
-|----------|-------|
-| **Blocking** | No |
-| **Requires mic** | No |
-| **Session booking** | No |
-
-**Parameters:**
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `thought` | `string` | Yes | — | Insight, suggestion, or note to append |
-| `category` | `string` | No | `insight` | One of: `insight`, `question`, `red-flag`, `checklist-update` |
-
-**Returns:** `Noted (category): thought text`
-**Errors:** Empty thought, file write failure
-
-**Output file:** `QA_VOICE_THINK_FILE` (default: `/tmp/voicelayer-thinking.md`)
-
----
-
-## qa_voice_say (alias)
-
-Backward-compatible alias for `qa_voice_announce`. Same behavior, same parameters (minus `rate`).
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `message` | `string` | Yes | Text to speak |
-
----
-
-## qa_voice_ask (alias)
-
-Backward-compatible alias for `qa_voice_converse`. Same behavior, same parameters.
-
-| Name | Type | Required | Default | Description |
-|------|------|----------|---------|-------------|
-| `message` | `string` | Yes | — | Question to speak |
-| `timeout_seconds` | `number` | No | `300` | Max wait time (10-3600) |
+| Alias | Maps To |
+|-------|---------|
+| `qa_voice_announce` | `voice_speak(mode='announce')` |
+| `qa_voice_brief` | `voice_speak(mode='brief')` |
+| `qa_voice_consult` | `voice_speak(mode='consult')` |
+| `qa_voice_think` | `voice_speak(mode='think')` (uses `thought` param) |
+| `qa_voice_say` | `voice_speak(mode='announce')` |
+| `qa_voice_replay` | `voice_speak(replay_index=N)` |
+| `qa_voice_toggle` | `voice_speak(enabled=bool)` |
+| `qa_voice_converse` | `voice_ask` |
+| `qa_voice_ask` | `voice_ask` |
 
 ---
 
@@ -162,6 +98,6 @@ Tools never throw exceptions — all errors are caught and returned as structure
 
 | Tool | Depends On |
 |------|-----------|
-| announce, brief, consult | `python3` + `edge-tts`, audio player |
-| converse | All of the above + `sox`, STT backend (whisper.cpp or Wispr) |
-| think | None (file system only) |
+| voice_speak (TTS modes) | `python3` + `edge-tts`, audio player |
+| voice_ask | All of the above + `sox`, STT backend (whisper.cpp or Wispr) |
+| voice_speak (think mode) | None (file system only) |
