@@ -13,17 +13,17 @@ Use VoiceLayer as a client discovery call assistant. The agent asks structured q
 ## Typical Session Flow
 
 ```
-Agent: qa_voice_announce("Starting discovery call for the e-commerce project")
-Agent: qa_voice_converse("Can you walk me through the main goals for this project?")
+Agent: voice_speak({ message: "Starting discovery call for the e-commerce project", mode: "announce" })
+Agent: voice_ask({ message: "Can you walk me through the main goals for this project?" })
 User:  "We need a Shopify replacement. Current store is too slow and we want custom checkout."
-Agent: qa_voice_think({ thought: "Shopify migration, performance + custom checkout are key drivers", category: "insight" })
-Agent: qa_voice_converse("What's your timeline looking like?")
+Agent: voice_speak({ message: "Shopify migration, performance + custom checkout are key drivers", mode: "think", category: "insight" })
+Agent: voice_ask({ message: "What's your timeline looking like?" })
 User:  "We need it live by April, there's a big sale event"
-Agent: qa_voice_think({ thought: "Hard deadline April - sale event. Tight timeline.", category: "red-flag" })
-Agent: qa_voice_converse("How many products are in your current catalog?")
+Agent: voice_speak({ message: "Hard deadline April - sale event. Tight timeline.", mode: "think", category: "red-flag" })
+Agent: voice_ask({ message: "How many products are in your current catalog?" })
 User:  "Around 5000 SKUs with variants"
-Agent: qa_voice_think({ thought: "5000 SKUs + variants = significant data migration", category: "insight" })
-Agent: qa_voice_brief("Great conversation. Key takeaways: Shopify migration focused on performance and custom checkout, 5000 SKUs to migrate, hard April deadline for a sale event.")
+Agent: voice_speak({ message: "5000 SKUs + variants = significant data migration", mode: "think", category: "insight" })
+Agent: voice_speak({ message: "Great conversation. Key takeaways: Shopify migration focused on performance and custom checkout, 5000 SKUs to migrate, hard April deadline for a sale event.", mode: "brief" })
 ```
 
 ## Discovery Categories
@@ -88,6 +88,6 @@ This lets you glance at the agent's observations without interrupting the conver
 ## Tips
 
 - **Don't rush** — set longer `timeout_seconds` (600+) for discovery calls
-- **Use think for red flags** — the `red-flag` category makes concerns easy to find later
-- **Consult before ending** — "I think we've covered the main topics. Anything else?" via consult mode
+- **Use think for red flags** — `voice_speak({ message: "...", mode: "think", category: "red-flag" })` makes concerns easy to find later
+- **Consult before ending** — "I think we've covered the main topics. Anything else?" via `voice_speak({ message: "...", mode: "consult" })`
 - **Review the thinking log** after the call — it often catches things you missed

@@ -13,15 +13,15 @@ Use VoiceLayer with Playwright for hands-free website testing. The agent browses
 ## Typical Session Flow
 
 ```
-Agent: qa_voice_announce("Starting QA session for the checkout page")
+Agent: voice_speak({ message: "Starting QA session for the checkout page", mode: "announce" })
 Agent: [navigates to /checkout with Playwright]
-Agent: qa_voice_converse("How does the form layout look?")
+Agent: voice_ask({ message: "How does the form layout look?" })
 User:  "The credit card fields are misaligned, the expiry date wraps to a second line"
-Agent: qa_voice_think({ thought: "CC fields misaligned, expiry wraps", category: "red-flag" })
-Agent: qa_voice_converse("What about the submit button?")
+Agent: voice_speak({ message: "CC fields misaligned, expiry wraps", mode: "think", category: "red-flag" })
+Agent: voice_ask({ message: "What about the submit button?" })
 User:  "Looks good, centered, correct color"
-Agent: qa_voice_think({ thought: "Submit button: PASS", category: "checklist-update" })
-Agent: qa_voice_brief("Session complete. Found 1 issue: credit card field alignment on the checkout form.")
+Agent: voice_speak({ message: "Submit button: PASS", mode: "think", category: "checklist-update" })
+Agent: voice_speak({ message: "Session complete. Found 1 issue: credit card field alignment on the checkout form.", mode: "brief" })
 ```
 
 ## QA Categories
@@ -81,7 +81,7 @@ To use QA testing, your Claude Code session needs both VoiceLayer and Playwright
 
 ## Tips
 
-- **Use think mode liberally** — silent notes don't interrupt the testing flow
+- **Use think mode liberally** — `voice_speak({ message: "...", mode: "think" })` for silent notes that don't interrupt the flow
 - **Start with announce** — give context before diving into questions
 - **End with brief** — summarize findings so the user has a verbal recap
 - **Keep questions specific** — "How does the form look?" works better than "Any issues?"

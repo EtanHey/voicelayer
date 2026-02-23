@@ -25,22 +25,21 @@ Claude Code  ─── MCP ───>  VoiceLayer
                             └── Returns transcription to Claude
 ```
 
-1. Claude calls `qa_voice_converse("How does the nav look on mobile?")`
+1. Claude calls `voice_ask("How does the nav look on mobile?")`
 2. VoiceLayer speaks the question aloud via edge-tts
 3. Mic recording starts — user speaks their response
 4. Recording ends when user touches `/tmp/voicelayer-stop` or after 5s silence
 5. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
 6. Claude receives the transcribed text and continues
 
-## 5 Voice Modes
+## Voice Tools
 
-| Mode | Tool | What It Does | Blocking |
-|------|------|-------------|----------|
-| **[Announce](modes/announce.md)** | `qa_voice_announce` | Fire-and-forget TTS (status updates) | No |
-| **[Brief](modes/brief.md)** | `qa_voice_brief` | One-way explanation (reading back decisions) | No |
-| **[Consult](modes/consult.md)** | `qa_voice_consult` | Speak checkpoint, user may respond | No |
-| **[Converse](modes/converse.md)** | `qa_voice_converse` | Full voice Q&A — speak + record + transcribe | Yes |
-| **[Think](modes/think.md)** | `qa_voice_think` | Silent notes to markdown log | No |
+| Tool | What It Does | Blocking |
+|------|-------------|----------|
+| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think from message | No |
+| **voice_ask** | Blocking voice Q&A — speak question, record + transcribe response | Yes |
+
+Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), [Consult](modes/consult.md), [Converse](modes/converse.md), [Think](modes/think.md). Old `qa_voice_*` names still work as backward-compat aliases.
 
 ## Key Features
 

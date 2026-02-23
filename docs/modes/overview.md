@@ -1,16 +1,16 @@
 # Voice Modes Guide
 
-VoiceLayer has 5 modes. Each controls whether Claude speaks, listens, or just takes notes.
+VoiceLayer has 2 tools: **voice_speak** (output) and **voice_ask** (input). voice_speak supports 5 modes — auto-detected from message content or set explicitly.
 
 ## Quick Reference
 
-| Mode | Claude Speaks | You Speak | Use For |
-|------|:---:|:---:|---------|
-| [Announce](announce.md) | Yes | No | Status updates, notifications |
-| [Brief](brief.md) | Yes | No | Explanations, reading back findings |
-| [Consult](consult.md) | Yes | No | Checkpoints before actions |
-| [Converse](converse.md) | Yes | **Yes** | Interactive Q&A, discussions |
-| [Think](think.md) | No | No | Silent notes to a log file |
+| Mode | Tool | Claude Speaks | You Speak | Use For |
+|------|------|:---:|:---:|---------|
+| [Announce](announce.md) | voice_speak | Yes | No | Status updates, notifications |
+| [Brief](brief.md) | voice_speak | Yes | No | Explanations, reading back findings |
+| [Consult](consult.md) | voice_speak | Yes | No | Checkpoints before actions |
+| [Converse](converse.md) | voice_ask | Yes | **Yes** | Interactive Q&A, discussions |
+| [Think](think.md) | voice_speak | No | No | Silent notes to a log file |
 
 ## Choosing the Right Mode
 
@@ -35,7 +35,7 @@ Use **consult** before important actions:
 > "I'm about to push to main and create a PR. Want me to go ahead?"
 > "The test suite has 3 failures. Should I fix them or skip for now?"
 
-Consult is one-way — Claude speaks but doesn't record your mic. If you want to respond by voice, tell Claude to follow up with **converse**.
+Consult is one-way — Claude speaks but doesn't record your mic. If you want to respond by voice, tell Claude to follow up with **voice_ask**.
 
 ### "We need to have a conversation"
 
@@ -96,9 +96,4 @@ See [Session Booking](../architecture/session-booking.md) for details.
 
 ## Aliases
 
-Two shorthand tools are available for convenience:
-
-| Alias | Maps To |
-|-------|---------|
-| `qa_voice_say` | `qa_voice_announce` |
-| `qa_voice_ask` | `qa_voice_converse` |
+Old `qa_voice_*` names still work as backward-compat aliases (e.g. `qa_voice_say` → announce, `qa_voice_ask` → voice_ask).
