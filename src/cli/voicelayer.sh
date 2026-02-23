@@ -11,14 +11,26 @@ case "${1:-}" in
         shift
         exec python3 "$SCRIPT_DIR/extract.py" "$@"
         ;;
+    clone)
+        shift
+        exec python3 "$SCRIPT_DIR/clone.py" "$@"
+        ;;
+    daemon)
+        shift
+        exec python3 "$SCRIPT_DIR/../tts_daemon.py" "$@"
+        ;;
     --help|-h|"")
         echo "Usage: voicelayer <command> [options]"
         echo ""
         echo "Commands:"
         echo "  extract    Extract voice samples from YouTube for voice cloning"
+        echo "  clone      Create a voice profile from extracted samples"
+        echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
         echo ""
         echo "Examples:"
         echo "  voicelayer extract --source 'https://youtube.com/@t3dotgg' --name theo --count 20"
+        echo "  voicelayer clone --name theo"
+        echo "  voicelayer daemon --port 8880"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."
         ;;

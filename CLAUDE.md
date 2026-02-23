@@ -8,11 +8,45 @@
 Claude Code session
   ├── Playwright MCP (browser snapshots, --extension for co-browsing)
   ├── VoiceLayer MCP (this repo)
-  │   ├── voice_speak(message, mode?) → NON-BLOCKING TTS (auto-selects announce/brief/consult/think)
+  │   ├── voice_speak(message, mode?, voice?) → NON-BLOCKING TTS
+  │   │   Three-tier routing:
+  │   │     1. Cloned voice (profile.yaml) → Qwen3-TTS daemon (port 8880)
+  │   │     2. Preset voice → edge-tts (default)
+  │   │     3. Fallback → text-only
   │   │   Also: replay_index, enabled (toggle)
   │   ├── voice_ask(message) → BLOCKING speak + record + transcribe
-  │   └── qa_voice_* → backward-compat aliases (announce, brief, consult, converse, think, say, ask, replay, toggle)
+  │   └── qa_voice_* → backward-compat aliases
   └── Supabase MCP (data persistence)
+```
+
+## TTS Backends (Three-Tier)
+
+| Tier | Engine | Use Case | Latency | Setup |
+|------|--------|----------|---------|-------|
+| 1 | **Qwen3-TTS** (MLX 4-bit) | Cloned voices (zero-shot) | 200-500ms | `pip install mlx-audio` + quantize |
+| 2 | **edge-tts** | Preset/default voices | 300-800ms | `pip3 install edge-tts` |
+| 3 | Text-only | Fallback when no audio | 0ms | — |
+
+### Voice Cloning Setup (Qwen3-TTS)
+
+```bash
+pip install mlx-audio fastapi uvicorn
+python3 -m mlx_audio.quantize --model "Qwen/Qwen3-TTS" --q-bits 4 \
+  --out-path ~/.voicelayer/models/qwen3-tts-4bit
+voicelayer daemon  # starts FastAPI on port 8880
+```
+
+### Voice Profile (profile.yaml)
+
+Cloned voices store their config at `~/.voicelayer/voices/{name}/profile.yaml`:
+```yaml
+name: theo
+engine: qwen3-tts
+reference_clips:
+  - path: ~/.voicelayer/voices/theo/samples/clip-003.wav
+    text: "transcript of the reference audio"
+reference_clip: ~/.voicelayer/voices/theo/samples/clip-003.wav
+fallback: en-US-AndrewNeural
 ```
 
 ## STT Backends
@@ -215,6 +249,24 @@ Key flags:
 
 Output: `~/.voicelayer/voices/{name}/samples/*.wav` + `metadata.json` + `profile.yaml`
 
+### Voice Cloning
+
+Create a voice profile from extracted samples (zero-shot, no training):
+
+```bash
+voicelayer clone --name theo --source "https://youtube.com/@t3dotgg"
+```
+
+Selects best 3 reference clips (~18.5s total), transcribes them via whisper.cpp, writes `profile.yaml`.
+
+### TTS Daemon
+
+Start the Qwen3-TTS voice cloning daemon:
+
+```bash
+voicelayer daemon --port 8880
+```
+
 ## Scripts
 
 | Script | Purpose |
@@ -239,7 +291,10 @@ Output: `~/.voicelayer/voices/{name}/samples/*.wav` + `metadata.json` + `profile
 voicelayer/
 ├── src/
 │   ├── mcp-server.ts          # MCP server (voice_speak + voice_ask + aliases)
-│   ├── tts.ts                 # Non-blocking TTS + ring buffer (20 entries)
+│   ├── tts.ts                 # Three-tier TTS routing + ring buffer (20 entries)
+│   ├── tts/
+│   │   └── qwen3.ts           # Qwen3-TTS HTTP bridge (daemon client + profile.yaml loader)
+│   ├── tts_daemon.py          # Python FastAPI daemon for Qwen3-TTS (port 8880)
 │   ├── input.ts               # Mic recording + Silero VAD + STT transcription
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
@@ -256,10 +311,12 @@ voicelayer/
 │   │   └── discovery-categories.ts  # 7 discovery categories (23 questions)
 │   ├── cli/
 │   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
-│   │   └── voicelayer.sh      # CLI wrapper (routes subcommands)
-│   └── __tests__/             # 101 tests, 226 expect() calls
+│   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
+│   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
+│   └── __tests__/             # 114 tests, 264 expect() calls
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
+├── com.golems.tts-daemon.plist  # macOS launchd plist for TTS daemon
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
@@ -290,12 +347,16 @@ voicelayer/
 | Voice Metadata | `~/.voicelayer/voices/{name}/metadata.json` |
 | Voice Profile | `~/.voicelayer/voices/{name}/profile.yaml` |
 | yt-dlp Archive | `~/.voicelayer/voices/{name}/.archive` |
+| Qwen3-TTS Model | `~/.voicelayer/models/qwen3-tts-4bit/` |
+| TTS Daemon Logs | `/tmp/voicelayer-tts-daemon.{stdout,stderr}.log` |
 
 ## Dependencies
 
 - `@modelcontextprotocol/sdk` — MCP server SDK
 - `onnxruntime-node` — ONNX Runtime for Silero VAD inference
 - `edge-tts` (Python) — Microsoft neural TTS (free, no API key)
+- `mlx-audio` (Python, for cloning) — MLX-native TTS (Qwen3-TTS + Kokoro)
+- `fastapi` + `uvicorn` (Python, for cloning) — TTS daemon HTTP server
 - `sox` (system) — Audio recording via `rec` command
 - `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
 - `whisper-cpp` (system, optional) — Local STT engine
