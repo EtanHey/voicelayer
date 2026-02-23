@@ -153,7 +153,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "voice_ask",
       description:
         "Speak a question aloud and wait for the user's voice response. BLOCKING.\n\n" +
-        "Records mic audio, transcribes via Silero VAD + whisper.cpp/Wispr Flow.\n" +
+        "Two recording modes:\n" +
+        "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
+        "- Push-to-talk (press_to_talk=true): Records until stop signal — best for noisy environments\n\n" +
         "User-controlled stop: touch /tmp/voicelayer-stop to end recording.\n" +
         "Requires voice session booking — other sessions see 'line busy'.\n\n" +
         "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
@@ -176,9 +178,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           silence_mode: {
             type: "string",
             description:
-              "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default).",
+              "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default). Ignored in PTT mode.",
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
+          },
+          press_to_talk: {
+            type: "boolean",
+            description:
+              "Push-to-talk mode. When true, recording runs until user sends stop signal " +
+              "(touch /tmp/voicelayer-stop). No VAD silence detection. " +
+              "Recommended for loud/noisy environments.",
+            default: false,
           },
         },
         required: ["message"],
@@ -251,6 +261,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "string",
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
+          },
+          press_to_talk: {
+            type: "boolean",
+            description:
+              "Push-to-talk mode. No VAD, stop via /tmp/voicelayer-stop.",
+            default: false,
           },
         },
         required: ["message"],
@@ -331,6 +347,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
           },
+          press_to_talk: {
+            type: "boolean",
+            description:
+              "Push-to-talk mode. No VAD, stop via /tmp/voicelayer-stop.",
+            default: false,
+          },
         },
         required: ["message"],
       },
@@ -401,6 +423,7 @@ interface ConverseArgs {
   message: string;
   timeout_seconds?: number;
   silence_mode?: SilenceMode;
+  press_to_talk?: boolean;
 }
 interface ThinkArgs {
   thought: string;
@@ -447,7 +470,9 @@ function validateConverseArgs(args: unknown): ConverseArgs | null {
     rawMode && (SILENCE_MODES as string[]).includes(rawMode)
       ? (rawMode as SilenceMode)
       : undefined;
-  return { message, timeout_seconds, silence_mode };
+  const press_to_talk =
+    typeof a.press_to_talk === "boolean" ? a.press_to_talk : undefined;
+  return { message, timeout_seconds, silence_mode, press_to_talk };
 }
 
 function validateThinkArgs(args: unknown): ThinkArgs | null {
@@ -580,6 +605,7 @@ async function handleVoiceAsk(args: unknown) {
     message: a.message,
     timeout_seconds: a.timeout_seconds,
     silence_mode: a.silence_mode,
+    press_to_talk: a.press_to_talk,
   });
 }
 
@@ -727,15 +753,22 @@ async function handleConverse(args: unknown) {
   });
 
   // Record mic audio, then transcribe with selected STT backend
-  // Uses Silero VAD with configurable silence mode
-  const response = await waitForInput(timeoutSeconds * 1000, silenceMode);
+  // Uses Silero VAD with configurable silence mode (or PTT if press_to_talk=true)
+  const pressToTalk = validated.press_to_talk ?? false;
+  const response = await waitForInput(
+    timeoutSeconds * 1000,
+    silenceMode,
+    pressToTalk,
+  );
 
   if (response === null) {
     return {
       content: [
         {
           type: "text" as const,
-          text: `[converse] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`,
+          text: pressToTalk
+            ? `[converse/PTT] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`
+            : `[converse] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`,
         },
       ],
     };

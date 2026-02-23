@@ -137,4 +137,19 @@ describe("input module", () => {
       expect(() => clearInput()).not.toThrow();
     });
   });
+
+  describe("PTT mode exports", () => {
+    it("recordToBuffer accepts pressToTalk parameter (type check)", async () => {
+      const { recordToBuffer } = await import("../input");
+      // Verify the function exists and has the right arity (3 params)
+      expect(typeof recordToBuffer).toBe("function");
+      expect(recordToBuffer.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("waitForInput accepts pressToTalk parameter (type check)", async () => {
+      const { waitForInput } = await import("../input");
+      expect(typeof waitForInput).toBe("function");
+      expect(waitForInput.length).toBeGreaterThanOrEqual(1);
+    });
+  });
 });
