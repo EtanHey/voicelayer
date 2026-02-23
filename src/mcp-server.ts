@@ -27,7 +27,12 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
-import { speak, getHistoryEntry, playAudioNonBlocking, resolveVoice } from "./tts";
+import {
+  speak,
+  getHistoryEntry,
+  playAudioNonBlocking,
+  resolveVoice,
+} from "./tts";
 import { waitForInput, clearInput } from "./input";
 import { getBackend } from "./stt";
 import {
@@ -35,10 +40,15 @@ import {
   isVoiceBooked,
   clearStopSignal,
 } from "./session-booking";
-import { TTS_DISABLED_FILE, MIC_DISABLED_FILE, VOICE_DISABLED_FILE } from "./paths";
+import {
+  TTS_DISABLED_FILE,
+  MIC_DISABLED_FILE,
+  VOICE_DISABLED_FILE,
+} from "./paths";
 import type { SilenceMode } from "./vad";
 
-const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
+const THINK_FILE =
+  process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 
 /** Map converse silence_mode to SilenceMode. Default: thoughtful (2.5s for conversation). */
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
@@ -51,16 +61,16 @@ const server = new Server(
   {
     capabilities: { tools: {} },
     instructions:
-      "VoiceLayer provides voice I/O for AI coding assistants.\n" +
-      "2 tools: voice_speak (output) and voice_ask (input).\n" +
-      "voice_speak auto-detects mode: 'insight:'/'note:'→think, '?'/about to→consult, >280 chars→brief, default→announce.\n" +
-      "voice_speak also handles replay (replay_index param) and toggle (enabled param).\n" +
-      "voice_ask speaks a question then records+transcribes the user's voice response (BLOCKING).\n" +
-      "All TTS is NON-BLOCKING — returns instantly, audio plays in background.\n" +
-      "Stop playback: skhd hotkey (ctrl+alt-s) or pkill afplay.\n" +
-      "Stop recording: touch /tmp/voicelayer-stop.\n" +
-      "Prerequisites: python3 + edge-tts (TTS), sox (recording), whisper.cpp or Wispr Flow (STT).",
-  }
+      "Voice I/O layer for Claude Code. 2 tools:\n" +
+      "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
+      "- voice_ask(message): BLOCKING. Speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch /tmp/voicelayer-stop OR 5s silence.\n" +
+      'Auto-mode detection: ends with ? → consult. length > 280 → brief. starts with "insight:" → think. default → announce.\n' +
+      "voice_speak returns immediately (non-blocking). Audio plays in background via detached process.\n" +
+      "replay=true on voice_ask speaks back last transcription before recording.\n" +
+      "noise_floor param (default 0) filters low-confidence STT artifacts.\n" +
+      "Voice is disabled by default; user enables via /mcp or toggle tool.\n" +
+      "All qa_voice_* tool names still work (backward compat aliases).",
+  },
 );
 
 // --- Tool definitions ---
@@ -87,42 +97,50 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           message: {
             type: "string",
-            description: "The message to speak or log (must be non-empty after trimming)",
+            description:
+              "The message to speak or log (must be non-empty after trimming)",
           },
           mode: {
             type: "string",
-            description: "Output mode. Auto-detected from message content if omitted.",
+            description:
+              "Output mode. Auto-detected from message content if omitted.",
             enum: ["announce", "brief", "consult", "think", "auto"],
             default: "auto",
           },
           voice: {
             type: "string",
-            description: "Voice name — profile name (e.g. 'andrew') or raw edge-tts voice (e.g. 'en-US-AndrewNeural'). Default: jenny.",
+            description:
+              "Voice name — profile name (e.g. 'andrew') or raw edge-tts voice (e.g. 'en-US-AndrewNeural'). Default: jenny.",
           },
           rate: {
             type: "string",
-            description: "Speech rate override (e.g. '+10%', '-5%'). Each mode has sensible defaults.",
+            description:
+              "Speech rate override (e.g. '+10%', '-5%'). Each mode has sensible defaults.",
             pattern: "^[+-]\\d+%$",
           },
           category: {
             type: "string",
-            description: "Category for think mode: insight, question, red-flag, checklist-update.",
+            description:
+              "Category for think mode: insight, question, red-flag, checklist-update.",
             enum: ["insight", "question", "red-flag", "checklist-update"],
             default: "insight",
           },
           replay_index: {
             type: "number",
-            description: "Replay a cached message instead of speaking new text. 0 = most recent. Ignores message param.",
+            description:
+              "Replay a cached message instead of speaking new text. 0 = most recent. Ignores message param.",
             minimum: 0,
             maximum: 19,
           },
           enabled: {
             type: "boolean",
-            description: "Toggle voice on/off. When set, acts as toggle instead of speaking.",
+            description:
+              "Toggle voice on/off. When set, acts as toggle instead of speaking.",
           },
           scope: {
             type: "string",
-            description: "Toggle scope: 'all' (default), 'tts', or 'mic'. Only used with enabled param.",
+            description:
+              "Toggle scope: 'all' (default), 'tts', or 'mic'. Only used with enabled param.",
             enum: ["all", "tts", "mic"],
             default: "all",
           },
@@ -149,14 +167,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           },
           timeout_seconds: {
             type: "number",
-            description: "Max wait time in seconds. Clamped to 10-3600. Default: 300.",
+            description:
+              "Max wait time in seconds. Clamped to 10-3600. Default: 300.",
             default: 300,
             minimum: 10,
             maximum: 3600,
           },
           silence_mode: {
             type: "string",
-            description: "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default).",
+            description:
+              "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default).",
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
           },
@@ -167,15 +187,154 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
     // === BACKWARD-COMPAT ALIASES (old tool names still work) ===
 
-    { name: "qa_voice_announce", description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+10%" } }, required: ["message"] } },
-    { name: "qa_voice_brief", description: "Alias for voice_speak(mode='brief'). NON-BLOCKING TTS, slower rate.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "-10%" } }, required: ["message"] } },
-    { name: "qa_voice_consult", description: "Alias for voice_speak(mode='consult'). NON-BLOCKING checkpoint.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" }, rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+5%" } }, required: ["message"] } },
-    { name: "qa_voice_converse", description: "Alias for voice_ask. BLOCKING voice Q&A.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The question to speak" }, timeout_seconds: { type: "number", default: 300, minimum: 10, maximum: 3600 }, silence_mode: { type: "string", enum: ["quick", "standard", "thoughtful"], default: "thoughtful" } }, required: ["message"] } },
-    { name: "qa_voice_think", description: "Alias for voice_speak(mode='think'). Silent markdown log.", inputSchema: { type: "object" as const, properties: { thought: { type: "string", description: "The thought to log" }, category: { type: "string", enum: ["insight", "question", "red-flag", "checklist-update"], default: "insight" } }, required: ["thought"] } },
-    { name: "qa_voice_replay", description: "Alias for voice_speak(replay_index=N). Replay cached audio.", inputSchema: { type: "object" as const, properties: { index: { type: "number", default: 0, minimum: 0, maximum: 19 } } } },
-    { name: "qa_voice_toggle", description: "Alias for voice_speak(enabled=bool). Toggle voice on/off.", inputSchema: { type: "object" as const, properties: { enabled: { type: "boolean" }, scope: { type: "string", enum: ["all", "tts", "mic"], default: "all" } }, required: ["enabled"] } },
-    { name: "qa_voice_say", description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The message to speak aloud" } }, required: ["message"] } },
-    { name: "qa_voice_ask", description: "Alias for voice_ask. BLOCKING voice Q&A.", inputSchema: { type: "object" as const, properties: { message: { type: "string", description: "The question to speak" }, timeout_seconds: { type: "number", default: 300, minimum: 10, maximum: 3600 }, silence_mode: { type: "string", enum: ["quick", "standard", "thoughtful"], default: "thoughtful" } }, required: ["message"] } },
+    {
+      name: "qa_voice_announce",
+      description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to speak aloud",
+          },
+          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+10%" },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "qa_voice_brief",
+      description:
+        "Alias for voice_speak(mode='brief'). NON-BLOCKING TTS, slower rate.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to speak aloud",
+          },
+          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "-10%" },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "qa_voice_consult",
+      description:
+        "Alias for voice_speak(mode='consult'). NON-BLOCKING checkpoint.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to speak aloud",
+          },
+          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+5%" },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "qa_voice_converse",
+      description: "Alias for voice_ask. BLOCKING voice Q&A.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: { type: "string", description: "The question to speak" },
+          timeout_seconds: {
+            type: "number",
+            default: 300,
+            minimum: 10,
+            maximum: 3600,
+          },
+          silence_mode: {
+            type: "string",
+            enum: ["quick", "standard", "thoughtful"],
+            default: "thoughtful",
+          },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "qa_voice_think",
+      description: "Alias for voice_speak(mode='think'). Silent markdown log.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          thought: { type: "string", description: "The thought to log" },
+          category: {
+            type: "string",
+            enum: ["insight", "question", "red-flag", "checklist-update"],
+            default: "insight",
+          },
+        },
+        required: ["thought"],
+      },
+    },
+    {
+      name: "qa_voice_replay",
+      description:
+        "Alias for voice_speak(replay_index=N). Replay cached audio.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          index: { type: "number", default: 0, minimum: 0, maximum: 19 },
+        },
+      },
+    },
+    {
+      name: "qa_voice_toggle",
+      description: "Alias for voice_speak(enabled=bool). Toggle voice on/off.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          enabled: { type: "boolean" },
+          scope: {
+            type: "string",
+            enum: ["all", "tts", "mic"],
+            default: "all",
+          },
+        },
+        required: ["enabled"],
+      },
+    },
+    {
+      name: "qa_voice_say",
+      description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to speak aloud",
+          },
+        },
+        required: ["message"],
+      },
+    },
+    {
+      name: "qa_voice_ask",
+      description: "Alias for voice_ask. BLOCKING voice Q&A.",
+      inputSchema: {
+        type: "object" as const,
+        properties: {
+          message: { type: "string", description: "The question to speak" },
+          timeout_seconds: {
+            type: "number",
+            default: 300,
+            minimum: 10,
+            maximum: 3600,
+          },
+          silence_mode: {
+            type: "string",
+            enum: ["quick", "standard", "thoughtful"],
+            default: "thoughtful",
+          },
+        },
+        required: ["message"],
+      },
+    },
   ],
 }));
 
@@ -233,13 +392,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // --- Arg validation helpers ---
 
-interface TtsArgs { message: string; rate?: string; voice?: string }
-interface ConverseArgs { message: string; timeout_seconds?: number; silence_mode?: SilenceMode }
-interface ThinkArgs { thought: string; category: string }
-interface ReplayArgs { index: number }
-interface ToggleArgs { enabled: boolean; scope: "all" | "tts" | "mic" }
+interface TtsArgs {
+  message: string;
+  rate?: string;
+  voice?: string;
+}
+interface ConverseArgs {
+  message: string;
+  timeout_seconds?: number;
+  silence_mode?: SilenceMode;
+}
+interface ThinkArgs {
+  thought: string;
+  category: string;
+}
+interface ReplayArgs {
+  index: number;
+}
+interface ToggleArgs {
+  enabled: boolean;
+  scope: "all" | "tts" | "mic";
+}
 
-const THINK_CATEGORIES = ["insight", "question", "red-flag", "checklist-update"] as const;
+const THINK_CATEGORIES = [
+  "insight",
+  "question",
+  "red-flag",
+  "checklist-update",
+] as const;
 const SILENCE_MODES: SilenceMode[] = ["quick", "standard", "thoughtful"];
 
 function validateTtsArgs(args: unknown): TtsArgs | null {
@@ -257,13 +437,16 @@ function validateConverseArgs(args: unknown): ConverseArgs | null {
   const a = args as Record<string, unknown>;
   const message = typeof a.message === "string" ? a.message.trim() : "";
   if (!message) return null;
-  const timeout_seconds = typeof a.timeout_seconds === "number" && isFinite(a.timeout_seconds)
-    ? a.timeout_seconds
-    : undefined;
-  const rawMode = typeof a.silence_mode === "string" ? a.silence_mode : undefined;
-  const silence_mode = rawMode && (SILENCE_MODES as string[]).includes(rawMode)
-    ? rawMode as SilenceMode
-    : undefined;
+  const timeout_seconds =
+    typeof a.timeout_seconds === "number" && isFinite(a.timeout_seconds)
+      ? a.timeout_seconds
+      : undefined;
+  const rawMode =
+    typeof a.silence_mode === "string" ? a.silence_mode : undefined;
+  const silence_mode =
+    rawMode && (SILENCE_MODES as string[]).includes(rawMode)
+      ? (rawMode as SilenceMode)
+      : undefined;
   return { message, timeout_seconds, silence_mode };
 }
 
@@ -273,16 +456,19 @@ function validateThinkArgs(args: unknown): ThinkArgs | null {
   const thought = typeof a.thought === "string" ? a.thought.trim() : "";
   if (!thought) return null;
   const raw = typeof a.category === "string" ? a.category : "insight";
-  const category = (THINK_CATEGORIES as readonly string[]).includes(raw) ? raw : "insight";
+  const category = (THINK_CATEGORIES as readonly string[]).includes(raw)
+    ? raw
+    : "insight";
   return { thought, category };
 }
 
 function validateReplayArgs(args: unknown): ReplayArgs {
   if (!args || typeof args !== "object") return { index: 0 };
   const a = args as Record<string, unknown>;
-  const index = typeof a.index === "number" && isFinite(a.index)
-    ? Math.max(0, Math.min(19, Math.floor(a.index)))
-    : 0;
+  const index =
+    typeof a.index === "number" && isFinite(a.index)
+      ? Math.max(0, Math.min(19, Math.floor(a.index)))
+      : 0;
   return { index };
 }
 
@@ -291,20 +477,36 @@ function validateToggleArgs(args: unknown): ToggleArgs | null {
   const a = args as Record<string, unknown>;
   if (typeof a.enabled !== "boolean") return null;
   const rawScope = typeof a.scope === "string" ? a.scope : "all";
-  const scope = (["all", "tts", "mic"] as const).includes(rawScope as "all" | "tts" | "mic")
-    ? rawScope as "all" | "tts" | "mic"
+  const scope = (["all", "tts", "mic"] as const).includes(
+    rawScope as "all" | "tts" | "mic",
+  )
+    ? (rawScope as "all" | "tts" | "mic")
     : "all";
   return { enabled: a.enabled, scope };
 }
 
 // --- Auto-detection for voice_speak ---
 
-const THINK_SIGNALS = [/^insight:/i, /^note:/i, /^TODO:/i, /^red.?flag:/i, /^question:/i];
-const CONSULT_SIGNALS = [/\?$/, /\babout to\b/i, /\bshould I\b/i, /\bready to\b/i, /\bbefore I\b/i];
+const THINK_SIGNALS = [
+  /^insight:/i,
+  /^note:/i,
+  /^TODO:/i,
+  /^red.?flag:/i,
+  /^question:/i,
+];
+const CONSULT_SIGNALS = [
+  /\?$/,
+  /\babout to\b/i,
+  /\bshould I\b/i,
+  /\bready to\b/i,
+  /\bbefore I\b/i,
+];
 
-function detectMode(message: string): "announce" | "brief" | "consult" | "think" {
-  if (THINK_SIGNALS.some(r => r.test(message.trim()))) return "think";
-  if (CONSULT_SIGNALS.some(r => r.test(message.trim()))) return "consult";
+function detectMode(
+  message: string,
+): "announce" | "brief" | "consult" | "think" {
+  if (THINK_SIGNALS.some((r) => r.test(message.trim()))) return "think";
+  if (CONSULT_SIGNALS.some((r) => r.test(message.trim()))) return "consult";
   if (message.length > 280) return "brief";
   return "announce";
 }
@@ -313,7 +515,10 @@ function detectMode(message: string): "announce" | "brief" | "consult" | "think"
 
 async function handleVoiceSpeak(args: unknown) {
   if (!args || typeof args !== "object") {
-    return { content: [{ type: "text" as const, text: "Missing arguments" }], isError: true };
+    return {
+      content: [{ type: "text" as const, text: "Missing arguments" }],
+      isError: true,
+    };
   }
   const a = args as Record<string, unknown>;
 
@@ -330,7 +535,15 @@ async function handleVoiceSpeak(args: unknown) {
   // Speech/think mode
   const message = typeof a.message === "string" ? a.message.trim() : "";
   if (!message) {
-    return { content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }], isError: true };
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: message",
+        },
+      ],
+      isError: true,
+    };
   }
 
   const requestedMode = typeof a.mode === "string" ? a.mode : "auto";
@@ -357,7 +570,10 @@ async function handleVoiceSpeak(args: unknown) {
 
 async function handleVoiceAsk(args: unknown) {
   if (!args || typeof args !== "object") {
-    return { content: [{ type: "text" as const, text: "Missing arguments" }], isError: true };
+    return {
+      content: [{ type: "text" as const, text: "Missing arguments" }],
+      isError: true,
+    };
   }
   const a = args as Record<string, unknown>;
   return handleConverse({
@@ -373,13 +589,24 @@ async function handleAnnounce(args: unknown) {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: message",
+        },
+      ],
       isError: true,
     };
   }
 
-  const { warning } = await speak(validated.message, { mode: "announce", rate: validated.rate, voice: validated.voice });
-  const text = `[announce] Spoke: "${validated.message}"` + (warning ? `\nWarning: ${warning}` : "");
+  const { warning } = await speak(validated.message, {
+    mode: "announce",
+    rate: validated.rate,
+    voice: validated.voice,
+  });
+  const text =
+    `[announce] Spoke: "${validated.message}"` +
+    (warning ? `\nWarning: ${warning}` : "");
 
   return { content: [{ type: "text" as const, text }] };
 }
@@ -388,13 +615,24 @@ async function handleBrief(args: unknown) {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: message",
+        },
+      ],
       isError: true,
     };
   }
 
-  const { warning } = await speak(validated.message, { mode: "brief", rate: validated.rate, voice: validated.voice });
-  const text = `[brief] Explained: "${validated.message}"` + (warning ? `\nWarning: ${warning}` : "");
+  const { warning } = await speak(validated.message, {
+    mode: "brief",
+    rate: validated.rate,
+    voice: validated.voice,
+  });
+  const text =
+    `[brief] Explained: "${validated.message}"` +
+    (warning ? `\nWarning: ${warning}` : "");
 
   return { content: [{ type: "text" as const, text }] };
 }
@@ -403,13 +641,23 @@ async function handleConsult(args: unknown) {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: message",
+        },
+      ],
       isError: true,
     };
   }
 
-  const { warning } = await speak(validated.message, { mode: "consult", rate: validated.rate, voice: validated.voice });
-  const text = `[consult] Spoke: "${validated.message}"\n` +
+  const { warning } = await speak(validated.message, {
+    mode: "consult",
+    rate: validated.rate,
+    voice: validated.voice,
+  });
+  const text =
+    `[consult] Spoke: "${validated.message}"\n` +
     "User may want to respond. Use voice_ask to collect voice input if needed." +
     (warning ? `\nWarning: ${warning}` : "");
 
@@ -420,7 +668,12 @@ async function handleConverse(args: unknown) {
   const validated = validateConverseArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing or empty required parameter: message" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: message",
+        },
+      ],
       isError: true,
     };
   }
@@ -467,14 +720,15 @@ async function handleConverse(args: unknown) {
   // Speak the question aloud — BLOCKING for converse (need to finish before recording)
   // Converse accepts voice from the wrapping voice_ask handler
   const voiceName = (args as Record<string, unknown>)?.voice;
-  await speak(validated.message, { mode: "converse", waitForPlayback: true, voice: typeof voiceName === "string" ? voiceName : undefined });
+  await speak(validated.message, {
+    mode: "converse",
+    waitForPlayback: true,
+    voice: typeof voiceName === "string" ? voiceName : undefined,
+  });
 
   // Record mic audio, then transcribe with selected STT backend
   // Uses Silero VAD with configurable silence mode
-  const response = await waitForInput(
-    timeoutSeconds * 1000,
-    silenceMode,
-  );
+  const response = await waitForInput(timeoutSeconds * 1000, silenceMode);
 
   if (response === null) {
     return {
@@ -496,7 +750,12 @@ async function handleThink(args: unknown) {
   const validated = validateThinkArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing or empty required parameter: thought" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing or empty required parameter: thought",
+        },
+      ],
       isError: true,
     };
   }
@@ -526,7 +785,9 @@ async function handleThink(args: unknown) {
   appendFileSync(THINK_FILE, line);
 
   return {
-    content: [{ type: "text" as const, text: `Noted (${category}): ${thought}` }],
+    content: [
+      { type: "text" as const, text: `Noted (${category}): ${thought}` },
+    ],
   };
 }
 
@@ -539,9 +800,10 @@ async function handleReplay(args: unknown) {
       content: [
         {
           type: "text" as const,
-          text: index === 0
-            ? "[replay] No audio in history buffer. Speak something first."
-            : `[replay] No audio at index ${index}. Buffer may have fewer entries.`,
+          text:
+            index === 0
+              ? "[replay] No audio in history buffer. Speak something first."
+              : `[replay] No audio at index ${index}. Buffer may have fewer entries.`,
         },
       ],
       isError: true,
@@ -577,7 +839,12 @@ async function handleToggle(args: unknown) {
   const validated = validateToggleArgs(args);
   if (!validated) {
     return {
-      content: [{ type: "text" as const, text: "Missing required parameter: enabled (boolean)" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Missing required parameter: enabled (boolean)",
+        },
+      ],
       isError: true,
     };
   }
@@ -588,11 +855,16 @@ async function handleToggle(args: unknown) {
   if (scope === "all" || scope === "tts") {
     if (enabled) {
       if (existsSync(TTS_DISABLED_FILE)) {
-        try { unlinkSync(TTS_DISABLED_FILE); } catch {}
+        try {
+          unlinkSync(TTS_DISABLED_FILE);
+        } catch {}
       }
       actions.push("TTS enabled");
     } else {
-      writeFileSync(TTS_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
+      writeFileSync(
+        TTS_DISABLED_FILE,
+        `disabled at ${new Date().toISOString()}`,
+      );
       actions.push("TTS disabled");
     }
   }
@@ -600,11 +872,16 @@ async function handleToggle(args: unknown) {
   if (scope === "all" || scope === "mic") {
     if (enabled) {
       if (existsSync(MIC_DISABLED_FILE)) {
-        try { unlinkSync(MIC_DISABLED_FILE); } catch {}
+        try {
+          unlinkSync(MIC_DISABLED_FILE);
+        } catch {}
       }
       actions.push("mic enabled");
     } else {
-      writeFileSync(MIC_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
+      writeFileSync(
+        MIC_DISABLED_FILE,
+        `disabled at ${new Date().toISOString()}`,
+      );
       actions.push("mic disabled");
     }
   }
@@ -613,10 +890,15 @@ async function handleToggle(args: unknown) {
   if (scope === "all") {
     if (enabled) {
       if (existsSync(VOICE_DISABLED_FILE)) {
-        try { unlinkSync(VOICE_DISABLED_FILE); } catch {}
+        try {
+          unlinkSync(VOICE_DISABLED_FILE);
+        } catch {}
       }
     } else {
-      writeFileSync(VOICE_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
+      writeFileSync(
+        VOICE_DISABLED_FILE,
+        `disabled at ${new Date().toISOString()}`,
+      );
     }
   }
 
@@ -637,13 +919,19 @@ async function main() {
   try {
     await getBackend();
   } catch (err: unknown) {
-    console.error(`[voicelayer] Warning: no STT backend available — converse mode will fail`);
-    console.error(`[voicelayer]   ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `[voicelayer] Warning: no STT backend available — converse mode will fail`,
+    );
+    console.error(
+      `[voicelayer]   ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[voicelayer] MCP server v2.0 running — modes: announce, brief, consult, converse, replay, toggle");
+  console.error(
+    "[voicelayer] MCP server v2.0 running — modes: announce, brief, consult, converse, replay, toggle",
+  );
 }
 
 main().catch((err) => {
