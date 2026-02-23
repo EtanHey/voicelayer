@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  VoiceLayer TTS Daemon — Qwen3-TTS voice cloning server.
+
+  Install:
+    cp com.golems.tts-daemon.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.golems.tts-daemon.plist
+
+  Start manually:
+    launchctl start com.golems.tts-daemon
+
+  Stop:
+    launchctl stop com.golems.tts-daemon
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.golems.tts-daemon.plist
+    rm ~/Library/LaunchAgents/com.golems.tts-daemon.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.golems.tts-daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>--app-dir</string>
+        <string>/Users/etanheyman/Gits/voicelayer/src</string>
+        <string>tts_daemon:create_app</string>
+        <string>--factory</string>
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8880</string>
+        <string>--log-level</string>
+        <string>warning</string>
+    </array>
+
+    <!-- On-demand: only runs when manually started or when port 8880 is accessed -->
+    <key>KeepAlive</key>
+    <false/>
+
+    <!-- Run as current user -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Logging -->
+    <key>StandardOutPath</key>
+    <string>/tmp/voicelayer-tts-daemon.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/voicelayer-tts-daemon.stderr.log</string>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
