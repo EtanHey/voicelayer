@@ -138,6 +138,15 @@ curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 ```
 
+### For Voice Extraction (CLI only)
+
+```bash
+brew install yt-dlp ffmpeg                    # System dependencies
+pip3 install silero-vad torch soundfile       # Required Python packages
+# Optional: vocal separation + speaker diarization
+pip3 install demucs pyannote.audio
+```
+
 ### Setup
 
 Add to `.mcp.json` (via npm/bunx — recommended):
@@ -184,6 +193,28 @@ Grant microphone access to your terminal app (System Settings > Privacy > Microp
 
 Old `qa_voice_*` names still work as backward-compat aliases.
 
+## CLI Tools
+
+### Voice Extraction
+
+Extract voice samples from YouTube for zero-shot voice cloning:
+
+```bash
+voicelayer extract --source "https://youtube.com/@t3dotgg" --name theo --count 20
+```
+
+Pipeline: yt-dlp (WAV 48kHz) → [optional Demucs vocal separation] → Silero VAD segmentation (6-30s clips) → FFmpeg normalization (24kHz mono s16) → `~/.voicelayer/voices/{name}/`
+
+Key flags:
+- `--source` — YouTube URL (video, channel, or playlist)
+- `--name` — Speaker name (output directory + file prefix)
+- `--count` — Max videos to download (default: 20)
+- `--demucs` — Force vocal separation (for music-heavy audio)
+- `--no-single-speaker` — Enable speaker diarization (multi-speaker)
+- `--check-deps` — Verify dependencies and exit
+
+Output: `~/.voicelayer/voices/{name}/samples/*.wav` + `metadata.json` + `profile.yaml`
+
 ## Scripts
 
 | Script | Purpose |
@@ -223,6 +254,9 @@ voicelayer/
 │   │   ├── qa-categories.ts   # 6 QA categories (31 checks)
 │   │   ├── discovery.ts       # Discovery session schema + helpers
 │   │   └── discovery-categories.ts  # 7 discovery categories (23 questions)
+│   ├── cli/
+│   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
+│   │   └── voicelayer.sh      # CLI wrapper (routes subcommands)
 │   └── __tests__/             # 101 tests, 226 expect() calls
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
@@ -252,6 +286,10 @@ voicelayer/
 | Ring Buffer Audio | `/tmp/voicelayer-history-{0-19}.mp3` |
 | TTS Disabled Flag | `/tmp/.claude_tts_disabled` |
 | Mic Disabled Flag | `/tmp/.claude_mic_disabled` |
+| Voice Samples | `~/.voicelayer/voices/{name}/samples/*.wav` |
+| Voice Metadata | `~/.voicelayer/voices/{name}/metadata.json` |
+| Voice Profile | `~/.voicelayer/voices/{name}/profile.yaml` |
+| yt-dlp Archive | `~/.voicelayer/voices/{name}/.archive` |
 
 ## Dependencies
 
@@ -261,6 +299,13 @@ voicelayer/
 - `sox` (system) — Audio recording via `rec` command
 - `afplay` (macOS) / `mpv`/`ffplay`/`mpg123` (Linux) — Audio playback
 - `whisper-cpp` (system, optional) — Local STT engine
+- `yt-dlp` (system, for extract) — YouTube audio downloader
+- `ffmpeg` (system, for extract) — Audio normalization
+- `silero-vad` (Python, for extract) — Speech segmentation
+- `torch` (Python, for extract) — Silero VAD dependency
+- `soundfile` (Python, for extract) — Audio I/O
+- `demucs` (Python, optional) — Vocal separation for music-heavy audio
+- `pyannote.audio` (Python, optional) — Speaker diarization
 
 ## Naming Convention
 

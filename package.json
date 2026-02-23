@@ -4,7 +4,8 @@
   "description": "Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.",
   "type": "module",
   "bin": {
-    "voicelayer-mcp": "src/mcp-server.ts"
+    "voicelayer-mcp": "src/mcp-server.ts",
+    "voicelayer": "src/cli/voicelayer.sh"
   },
   "files": [
     "src/",
@@ -39,7 +40,9 @@
     "text-to-speech",
     "whisper",
     "edge-tts",
-    "model-context-protocol"
+    "model-context-protocol",
+    "voice-cloning",
+    "audio-extraction"
   ],
   "author": "Etan Heyman <etan@heyman.net>",
   "license": "MIT",
