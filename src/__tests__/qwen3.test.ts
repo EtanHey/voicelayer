@@ -170,11 +170,26 @@ describe("resolveVoice with cloned voices", () => {
     expect(result.voice).toBe("en-US-BrianNeural");
   });
 
-  it("returns edge-tts engine for preset profile names", async () => {
+  it("returns edge-tts engine for preset profile names (when voices.json exists)", async () => {
     const { resolveVoice } = await import("../tts");
+    const { existsSync } = await import("fs");
+    const { join } = await import("path");
+    const voicesFile = join(
+      process.env.HOME || "~",
+      ".voicelayer",
+      "voices.json",
+    );
+
     const result = resolveVoice("andrew");
     expect(result.engine).toBe("edge-tts");
-    expect(result.voice).toBe("en-US-AndrewNeural");
+
+    if (existsSync(voicesFile)) {
+      // Local dev — voices.json has andrew preset
+      expect(result.voice).toBe("en-US-AndrewNeural");
+    } else {
+      // CI — no voices.json, falls back to default with warning
+      expect(result.warning).toBeDefined();
+    }
   });
 
   it("returns edge-tts with warning for unknown voice", async () => {
