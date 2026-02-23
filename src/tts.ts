@@ -15,9 +15,60 @@ import { existsSync, readFileSync, writeFileSync, copyFileSync, unlinkSync } fro
 import { platform } from "os";
 import { STOP_FILE, ttsFilePath, TTS_HISTORY_FILE, ttsHistoryFilePath, TTS_DISABLED_FILE } from "./paths";
 
-const VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
+const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
 const RING_BUFFER_SIZE = 20;
+
+// --- Voice Profiles ---
+
+interface VoiceProfile {
+  engine: string;        // "edge-tts" | "kokoro" | future engines
+  voice: string;         // edge-tts voice name (e.g., "en-US-JennyNeural")
+}
+
+const VOICES_FILE = `${process.env.HOME}/.voicelayer/voices.json`;
+
+let voiceProfilesCache: Record<string, VoiceProfile> | null = null;
+
+function loadVoiceProfiles(): Record<string, VoiceProfile> {
+  if (voiceProfilesCache) return voiceProfilesCache;
+  try {
+    if (!existsSync(VOICES_FILE)) return {};
+    const raw: unknown = JSON.parse(readFileSync(VOICES_FILE, "utf-8"));
+    if (!raw || typeof raw !== "object") return {};
+    voiceProfilesCache = raw as Record<string, VoiceProfile>;
+    return voiceProfilesCache;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Resolve a voice name to an edge-tts voice string.
+ * Accepts either a profile name ("andrew") or a raw edge-tts name ("en-US-AndrewNeural").
+ * Returns { voice, warning? } — warning if profile not found (falls back to default).
+ */
+export function resolveVoice(name?: string): { voice: string; warning?: string } {
+  if (!name) return { voice: DEFAULT_VOICE };
+
+  // Check profiles first
+  const profiles = loadVoiceProfiles();
+  const profile = profiles[name.toLowerCase()];
+  if (profile) {
+    if (profile.engine !== "edge-tts") {
+      return { voice: DEFAULT_VOICE, warning: `Voice profile "${name}" uses engine "${profile.engine}" which is not yet supported. Using default.` };
+    }
+    return { voice: profile.voice };
+  }
+
+  // If it looks like a raw edge-tts voice name (contains hyphen pattern like en-US-*), use directly
+  if (/^[a-z]{2}-[A-Z]{2}-/i.test(name)) {
+    return { voice: name };
+  }
+
+  // Unknown name — fallback with warning
+  return { voice: DEFAULT_VOICE, warning: `Unknown voice "${name}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.` };
+}
 
 let ttsCounter = 0;
 
@@ -180,19 +231,23 @@ export function stopPlayback(): boolean {
  * @param text - Text to speak
  * @param options.rate - Rate override (e.g., "-10%", "+5%"). If omitted, uses DEFAULT_RATE.
  * @param options.mode - Voice mode name for auto-rate selection (announce/brief/consult/converse).
+ * @param options.voice - Voice name (profile name or raw edge-tts voice). If omitted, uses default.
  * @param options.waitForPlayback - If true, wait for audio playback to finish (used in converse mode before recording).
  */
 export async function speak(
   text: string,
-  options?: { rate?: string; mode?: string; waitForPlayback?: boolean },
-): Promise<void> {
-  if (!text?.trim()) return;
+  options?: { rate?: string; mode?: string; voice?: string; waitForPlayback?: boolean },
+): Promise<{ warning?: string }> {
+  if (!text?.trim()) return {};
 
   // Check if TTS is disabled
   if (isTTSDisabled()) {
     console.error("[voicelayer] TTS disabled via flag file — skipping speech");
-    return;
+    return {};
   }
+
+  // Resolve voice: profile name → edge-tts voice name
+  const { voice: resolvedVoice, warning: voiceWarning } = resolveVoice(options?.voice);
 
   // Determine rate: explicit > mode default > env default
   let rate = options?.rate
@@ -208,7 +263,7 @@ export async function speak(
   const synth = Bun.spawn([
     "python3", "-m", "edge_tts",
     "--text", text,
-    "--voice", VOICE,
+    "--voice", resolvedVoice,
     "--rate", rate,
     "--write-media", ttsFile,
   ]);
@@ -218,7 +273,7 @@ export async function speak(
   }
 
   // Save to ring buffer before playback
-  addToHistory(text, ttsFile, VOICE);
+  addToHistory(text, ttsFile, resolvedVoice);
 
   // Play audio — NON-BLOCKING (returns immediately)
   const proc = playAudioNonBlocking(ttsFile);
@@ -232,4 +287,6 @@ export async function speak(
   if (options?.waitForPlayback) {
     await proc.exited;
   }
+
+  return { warning: voiceWarning };
 }

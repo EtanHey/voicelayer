@@ -27,7 +27,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
-import { speak, getHistoryEntry, playAudioNonBlocking } from "./tts";
+import { speak, getHistoryEntry, playAudioNonBlocking, resolveVoice } from "./tts";
 import { waitForInput, clearInput } from "./input";
 import { getBackend } from "./stt";
 import {
@@ -35,7 +35,7 @@ import {
   isVoiceBooked,
   clearStopSignal,
 } from "./session-booking";
-import { TTS_DISABLED_FILE, MIC_DISABLED_FILE } from "./paths";
+import { TTS_DISABLED_FILE, MIC_DISABLED_FILE, VOICE_DISABLED_FILE } from "./paths";
 import type { SilenceMode } from "./vad";
 
 const THINK_FILE = process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
@@ -94,6 +94,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: "Output mode. Auto-detected from message content if omitted.",
             enum: ["announce", "brief", "consult", "think", "auto"],
             default: "auto",
+          },
+          voice: {
+            type: "string",
+            description: "Voice name — profile name (e.g. 'andrew') or raw edge-tts voice (e.g. 'en-US-AndrewNeural'). Default: jenny.",
           },
           rate: {
             type: "string",
@@ -229,7 +233,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // --- Arg validation helpers ---
 
-interface TtsArgs { message: string; rate?: string }
+interface TtsArgs { message: string; rate?: string; voice?: string }
 interface ConverseArgs { message: string; timeout_seconds?: number; silence_mode?: SilenceMode }
 interface ThinkArgs { thought: string; category: string }
 interface ReplayArgs { index: number }
@@ -244,7 +248,8 @@ function validateTtsArgs(args: unknown): TtsArgs | null {
   const message = typeof a.message === "string" ? a.message.trim() : "";
   if (!message) return null;
   const rate = typeof a.rate === "string" ? a.rate : undefined;
-  return { message, rate };
+  const voice = typeof a.voice === "string" ? a.voice : undefined;
+  return { message, rate, voice };
 }
 
 function validateConverseArgs(args: unknown): ConverseArgs | null {
@@ -332,19 +337,21 @@ async function handleVoiceSpeak(args: unknown) {
   const mode = requestedMode === "auto" ? detectMode(message) : requestedMode;
   const rate = typeof a.rate === "string" ? a.rate : undefined;
 
+  const voice = typeof a.voice === "string" ? a.voice : undefined;
+
   switch (mode) {
     case "think": {
       const category = typeof a.category === "string" ? a.category : "insight";
       return handleThink({ thought: message, category });
     }
     case "announce":
-      return handleAnnounce({ message, rate });
+      return handleAnnounce({ message, rate, voice });
     case "brief":
-      return handleBrief({ message, rate });
+      return handleBrief({ message, rate, voice });
     case "consult":
-      return handleConsult({ message, rate });
+      return handleConsult({ message, rate, voice });
     default:
-      return handleAnnounce({ message, rate });
+      return handleAnnounce({ message, rate, voice });
   }
 }
 
@@ -371,11 +378,10 @@ async function handleAnnounce(args: unknown) {
     };
   }
 
-  await speak(validated.message, { mode: "announce", rate: validated.rate });
+  const { warning } = await speak(validated.message, { mode: "announce", rate: validated.rate, voice: validated.voice });
+  const text = `[announce] Spoke: "${validated.message}"` + (warning ? `\nWarning: ${warning}` : "");
 
-  return {
-    content: [{ type: "text" as const, text: `[announce] Spoke: "${validated.message}"` }],
-  };
+  return { content: [{ type: "text" as const, text }] };
 }
 
 async function handleBrief(args: unknown) {
@@ -387,11 +393,10 @@ async function handleBrief(args: unknown) {
     };
   }
 
-  await speak(validated.message, { mode: "brief", rate: validated.rate });
+  const { warning } = await speak(validated.message, { mode: "brief", rate: validated.rate, voice: validated.voice });
+  const text = `[brief] Explained: "${validated.message}"` + (warning ? `\nWarning: ${warning}` : "");
 
-  return {
-    content: [{ type: "text" as const, text: `[brief] Explained: "${validated.message}"` }],
-  };
+  return { content: [{ type: "text" as const, text }] };
 }
 
 async function handleConsult(args: unknown) {
@@ -403,18 +408,12 @@ async function handleConsult(args: unknown) {
     };
   }
 
-  await speak(validated.message, { mode: "consult", rate: validated.rate });
+  const { warning } = await speak(validated.message, { mode: "consult", rate: validated.rate, voice: validated.voice });
+  const text = `[consult] Spoke: "${validated.message}"\n` +
+    "User may want to respond. Use voice_ask to collect voice input if needed." +
+    (warning ? `\nWarning: ${warning}` : "");
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text:
-          `[consult] Spoke: "${validated.message}"\n` +
-          "User may want to respond. Use qa_voice_converse to collect voice input if needed.",
-      },
-    ],
-  };
+  return { content: [{ type: "text" as const, text }] };
 }
 
 async function handleConverse(args: unknown) {
@@ -466,7 +465,9 @@ async function handleConverse(args: unknown) {
   clearStopSignal();
 
   // Speak the question aloud — BLOCKING for converse (need to finish before recording)
-  await speak(validated.message, { mode: "converse", waitForPlayback: true });
+  // Converse accepts voice from the wrapping voice_ask handler
+  const voiceName = (args as Record<string, unknown>)?.voice;
+  await speak(validated.message, { mode: "converse", waitForPlayback: true, voice: typeof voiceName === "string" ? voiceName : undefined });
 
   // Record mic audio, then transcribe with selected STT backend
   // Uses Silero VAD with configurable silence mode
@@ -586,13 +587,11 @@ async function handleToggle(args: unknown) {
 
   if (scope === "all" || scope === "tts") {
     if (enabled) {
-      // Remove disable flag → enable TTS
       if (existsSync(TTS_DISABLED_FILE)) {
         try { unlinkSync(TTS_DISABLED_FILE); } catch {}
       }
       actions.push("TTS enabled");
     } else {
-      // Create disable flag → disable TTS
       writeFileSync(TTS_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
       actions.push("TTS disabled");
     }
@@ -600,15 +599,24 @@ async function handleToggle(args: unknown) {
 
   if (scope === "all" || scope === "mic") {
     if (enabled) {
-      // Remove disable flag → enable mic
       if (existsSync(MIC_DISABLED_FILE)) {
         try { unlinkSync(MIC_DISABLED_FILE); } catch {}
       }
       actions.push("mic enabled");
     } else {
-      // Create disable flag → disable mic
       writeFileSync(MIC_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
       actions.push("mic disabled");
+    }
+  }
+
+  // Manage combined flag — used by CC PreToolUse hook to block all voice tools
+  if (scope === "all") {
+    if (enabled) {
+      if (existsSync(VOICE_DISABLED_FILE)) {
+        try { unlinkSync(VOICE_DISABLED_FILE); } catch {}
+      }
+    } else {
+      writeFileSync(VOICE_DISABLED_FILE, `disabled at ${new Date().toISOString()}`);
     }
   }
 

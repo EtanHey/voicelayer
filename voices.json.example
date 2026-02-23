@@ -1,0 +1,5 @@
+{
+  "jenny": { "engine": "edge-tts", "voice": "en-US-JennyNeural" },
+  "andrew": { "engine": "edge-tts", "voice": "en-US-AndrewNeural" },
+  "brian": { "engine": "edge-tts", "voice": "en-US-BrianNeural" }
+}
