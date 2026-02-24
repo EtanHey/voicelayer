@@ -35,13 +35,52 @@ struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
 
     var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            pillContent
+        }
+    }
+
+    // MARK: - Pill content (collapsed or expanded)
+
+    private var pillContent: some View {
+        Group {
+            if state.isCollapsed {
+                collapsedPill
+            } else {
+                expandedPill
+            }
+        }
+        .animation(.smooth(duration: 0.3), value: state.isCollapsed)
+        .onHover { hovering in
+            state.setHovering(hovering)
+        }
+    }
+
+    // MARK: - Collapsed pill (just dot)
+
+    private var collapsedPill: some View {
+        Circle()
+            .fill(state.isConnected ? Color.green : Color.red)
+            .frame(width: 10, height: 10)
+            .padding(8)
+            .background(Theme.pillBackground)
+            .clipShape(Capsule())
+            .onTapGesture {
+                state.setHovering(true) // expand on tap
+            }
+    }
+
+    // MARK: - Expanded pill (full content)
+
+    private var expandedPill: some View {
         HStack(spacing: 8) {
             leadingIndicator
             stateContent
             actionButtons
         }
         .padding(.horizontal, 14)
-        .frame(height: Theme.pillHeight)
+        .frame(height: pillHeight)
         .frame(minWidth: Theme.pillMinWidth)
         .background(Theme.pillBackground)
         .clipShape(Capsule())
@@ -59,13 +98,18 @@ struct BarView: View {
         .opacity(state.mode == .disconnected ? 0.7 : 1.0)
         .fixedSize()
         .frame(maxWidth: Theme.pillMaxWidth, alignment: .center)
-        .animation(Theme.stateTransition, value: state.mode)
+        .animation(.smooth(duration: 0.3), value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
         .onTapGesture {
+            // Click-to-record — onTapGesture has lower priority than Button,
+            // so replay/stop buttons still receive clicks.
             if state.mode == .idle {
+                NSHapticFeedbackManager.defaultPerformer.perform(
+                    .alignment, performanceTime: .now
+                )
                 state.record()
             }
         }
@@ -110,6 +154,16 @@ struct BarView: View {
         }
     }
 
+    // MARK: - Pill height (expands during speaking)
+
+    /// Pill grows vertically when speaking with teleprompter text.
+    private var pillHeight: CGFloat {
+        if state.mode == .speaking, !state.statusText.isEmpty {
+            return Theme.pillExpandedHeight
+        }
+        return Theme.pillHeight
+    }
+
     // MARK: - Leading indicator
 
     @ViewBuilder
@@ -129,14 +183,14 @@ struct BarView: View {
     private var stateContent: some View {
         switch state.mode {
         case .recording:
-            // Active waveform during recording
+            // Active waveform during recording — driven by real audio level when available
             WaveformView(
                 mode: state.speechDetected ? .speechDetected : .listening,
-                audioLevel: nil
+                audioLevel: state.audioLevel
             )
         case .speaking:
             // Shimmer waveform + teleprompter during speaking
-            WaveformView(mode: .idle, audioLevel: nil)
+            WaveformView(mode: .idle, audioLevel: state.audioLevel)
             if !state.statusText.isEmpty {
                 TeleprompterView(text: state.statusText)
             } else {
@@ -257,7 +311,10 @@ struct BarView: View {
     }
 
     private func pillButton(icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            action()
+        } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.8))

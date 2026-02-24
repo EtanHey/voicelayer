@@ -50,8 +50,9 @@ const BITS_PER_SAMPLE = 16;
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-// Re-export calculateRMS from audio-utils for backward compat (used by stt.ts Wispr Flow volume data only)
-export { calculateRMS } from "./audio-utils";
+import { calculateRMS } from "./audio-utils";
+// Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
+export { calculateRMS };
 
 /**
  * Create a WAV file buffer from raw PCM data.
@@ -292,6 +293,17 @@ export async function recordToBuffer(
             pcmChunks.push(chunk);
             totalPcmBytes += chunk.byteLength;
             totalChunksProcessed++;
+
+            // Broadcast audio level every ~100ms (3 chunks × 32ms)
+            if (totalChunksProcessed % 3 === 0) {
+              const rmsRaw = calculateRMS(chunk);
+              // Normalize: practical speech max ~8000 (16-bit audio)
+              const rmsNormalized = Math.min(1.0, rmsRaw / 8000);
+              broadcast({
+                type: "audio_level",
+                rms: Math.round(rmsNormalized * 100) / 100,
+              });
+            }
 
             if (pressToTalk) {
               // PTT mode: no VAD, only stop on user signal or timeout

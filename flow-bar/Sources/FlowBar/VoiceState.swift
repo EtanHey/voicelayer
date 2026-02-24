@@ -40,6 +40,18 @@ final class VoiceState {
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     var confirmationText: String?
 
+    /// Real-time audio level (0.0–1.0) from RMS events.
+    var audioLevel: Double?
+
+    /// Whether the pill is collapsed (idle for too long).
+    var isCollapsed: Bool = false
+
+    /// Whether the mouse is hovering over the pill.
+    var isHovering: Bool = false
+
+    /// Timer for idle collapse.
+    private var collapseTimer: Task<Void, Never>?
+
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
     private var barInitiatedRecording = false
@@ -100,22 +112,27 @@ final class VoiceState {
                 speechDetected = false
                 recordingMode = nil
                 silenceMode = nil
+                audioLevel = nil
                 // Reset bar-initiated flag if recording was cancelled/timed out
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     frontmostAppOnRecordStart = nil
                 }
+                startCollapseTimer()
             case "speaking":
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
+                expandFromCollapse()
             case "recording":
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
                 speechDetected = false
+                expandFromCollapse()
             case "transcribing":
                 mode = .transcribing
                 statusText = ""
+                expandFromCollapse()
             default:
                 break
             }
@@ -135,15 +152,49 @@ final class VoiceState {
                 }
             }
 
+        case "audio_level":
+            if let rms = event["rms"] as? Double {
+                audioLevel = rms
+            }
+
         case "error":
             mode = .error
             errorMessage = event["message"] as? String ?? "Unknown error"
+            expandFromCollapse() // Ensure error is visible even when collapsed
             // Reset bar-initiated flag on error (e.g., mic disabled)
             barInitiatedRecording = false
             frontmostAppOnRecordStart = nil
 
         default:
             break
+        }
+    }
+
+    // MARK: - Idle collapse
+
+    private func startCollapseTimer() {
+        collapseTimer?.cancel()
+        collapseTimer = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Theme.collapseDelay))
+            if !Task.isCancelled, mode == .idle, !isHovering {
+                isCollapsed = true
+            }
+        }
+    }
+
+    private func expandFromCollapse() {
+        collapseTimer?.cancel()
+        isCollapsed = false
+    }
+
+    /// Called when hover state changes.
+    func setHovering(_ hovering: Bool) {
+        isHovering = hovering
+        if hovering, isCollapsed {
+            isCollapsed = false
+        }
+        if !hovering, mode == .idle {
+            startCollapseTimer()
         }
     }
 

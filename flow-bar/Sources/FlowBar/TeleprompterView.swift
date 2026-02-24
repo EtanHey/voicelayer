@@ -1,13 +1,73 @@
 // TeleprompterView.swift — Word-by-word speaking text with karaoke highlighting.
 //
-// Smooth horizontal scroll through all words. Current word is bright white,
-// past words fade, upcoming words are dimmed. ScrollViewReader handles
-// smooth centering — no layout shift.
+// Multi-line wrapping layout with per-word styling. Current word is bright white,
+// past words fade, upcoming words are dimmed. Auto-scrolls vertically to keep
+// the current word visible. Uses FlowLayout for natural word wrapping.
 //
 // AIDEV-NOTE: Word timing is estimated, not synced to actual TTS audio.
 // True sync would require word-level timestamps from the TTS engine.
 
 import SwiftUI
+
+// MARK: - Flow Layout (wrapping words across lines)
+
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 5
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        return result.size
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize,
+        subviews: Subviews, cache: inout ()
+    ) {
+        let result = arrangeSubviews(proposal: proposal, subviews: subviews)
+        for (index, position) in result.positions.enumerated()
+            where index < subviews.count {
+            subviews[index].place(
+                at: CGPoint(
+                    x: bounds.minX + position.x,
+                    y: bounds.minY + position.y
+                ),
+                proposal: .unspecified
+            )
+        }
+    }
+
+    private func arrangeSubviews(
+        proposal: ProposedViewSize,
+        subviews: Subviews
+    ) -> (size: CGSize, positions: [CGPoint]) {
+        let maxWidth = proposal.width ?? .infinity
+        var positions: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                x = 0
+                y += lineHeight + spacing * 0.6
+                lineHeight = 0
+            }
+            positions.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+            maxX = max(maxX, x)
+        }
+
+        return (
+            CGSize(width: maxX, height: y + lineHeight),
+            positions
+        )
+    }
+}
+
+// MARK: - Teleprompter View
 
 struct TeleprompterView: View {
     let text: String
@@ -27,18 +87,23 @@ struct TeleprompterView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 5) {
+            ScrollView(.vertical, showsIndicators: false) {
+                FlowLayout(spacing: 5) {
                     ForEach(0 ..< words.count, id: \.self) { index in
                         Text(words[index])
-                            .font(.system(size: 11, weight: index == currentIndex ? .bold : .medium))
-                            .foregroundStyle(.white.opacity(opacityFor(index)))
+                            .font(.system(
+                                size: 11,
+                                weight: index == currentIndex ? .bold : .medium
+                            ))
+                            .foregroundStyle(
+                                .white.opacity(opacityFor(index))
+                            )
                             .id(index)
                     }
                 }
                 .padding(.horizontal, 4)
             }
-            .scrollDisabled(true) // User can't scroll — we control position
+            .scrollDisabled(true) // We control scroll position
             .onChange(of: currentIndex) { _, newIndex in
                 withAnimation(.smooth(duration: 0.3)) {
                     proxy.scrollTo(newIndex, anchor: .center)
@@ -46,20 +111,20 @@ struct TeleprompterView: View {
             }
         }
         .mask {
-            HStack(spacing: 0) {
+            VStack(spacing: 0) {
                 LinearGradient(
                     colors: [.clear, .white],
-                    startPoint: .leading,
-                    endPoint: .trailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                .frame(width: 12)
+                .frame(height: 8)
                 Color.white
                 LinearGradient(
                     colors: [.white, .clear],
-                    startPoint: .leading,
-                    endPoint: .trailing
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                .frame(width: 12)
+                .frame(height: 8)
             }
         }
         .frame(maxWidth: 220)

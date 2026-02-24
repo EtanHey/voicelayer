@@ -30,7 +30,14 @@ enum Theme {
     static let pillMinWidth: CGFloat = 100
     static let pillMaxWidth: CGFloat = 360
     static let pillHeight: CGFloat = 44
+    /// Expanded pill height for teleprompter multi-line display during speaking.
+    static let pillExpandedHeight: CGFloat = 80
     static let cornerRadius: CGFloat = 22 // Half of height for capsule
+
+    /// Width of the collapsed idle pill (just dot + icon).
+    static let collapsedWidth: CGFloat = 40
+    /// Seconds of idle before pill collapses.
+    static let collapseDelay: TimeInterval = 5.0
 
     // MARK: - Position
 

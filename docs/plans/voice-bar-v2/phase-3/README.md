@@ -48,9 +48,9 @@ Polish the pill UX with audio-responsive waveform, idle collapse, draggable posi
 
 ## Status
 
-- [ ] Expanding teleprompter (vertical, 2-3 lines for agent speech)
-- [ ] Audio-level waveform (protocol + Swift)
-- [ ] Idle collapse with hover expand
-- [ ] Draggable positioning + UserDefaults persistence
-- [ ] Smooth width animation
-- [ ] Haptic feedback on buttons
+- [x] Expanding teleprompter (vertical, 2-3 lines for agent speech)
+- [x] Audio-level waveform (protocol + Swift + TS emission during recording)
+- [x] Idle collapse with hover expand
+- [x] Draggable positioning + UserDefaults persistence (via isMovableByWindowBackground + didMove observer)
+- [x] Smooth width animation
+- [x] Haptic feedback on buttons

@@ -16,7 +16,7 @@ final class FloatingPillPanel: NSPanel {
             contentRect: NSRect(
                 x: 0, y: 0,
                 width: Theme.pillMaxWidth + Theme.panelPadding * 2,
-                height: Theme.pillHeight
+                height: Theme.pillExpandedHeight + Theme.panelPadding * 2
             ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -44,7 +44,7 @@ final class FloatingPillPanel: NSPanel {
         hasShadow = false // SwiftUI adds its own shadow
 
         // --- Interaction ---
-        isMovableByWindowBackground = false
+        isMovableByWindowBackground = true // pill is draggable via background
         ignoresMouseEvents = false // NOT click-through
 
         contentView = content
@@ -62,12 +62,15 @@ final class FloatingPillPanel: NSPanel {
 
     /// Position pill at bottom of the given screen (or the screen containing the mouse).
     /// macOS coordinates: origin at bottom-left, Y increases upward.
-    func positionOnScreen(_ screen: NSScreen? = nil) {
+    func positionOnScreen(
+        _ screen: NSScreen? = nil,
+        horizontalOffset: CGFloat = Theme.horizontalOffset
+    ) {
         let target = screen ?? screenContainingMouse() ?? NSScreen.main
         guard let target else { return }
         let visible = target.visibleFrame // excludes Dock & menu bar
         let size = frame.size
-        let x = visible.origin.x + (visible.width * Theme.horizontalOffset) - (size.width / 2)
+        let x = visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
         let y = visible.origin.y + Theme.bottomPadding
         setFrameOrigin(NSPoint(x: x, y: y))
     }
