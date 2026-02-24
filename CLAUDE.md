@@ -227,6 +227,19 @@ For Wispr Flow cloud STT (only if whisper.cpp not installed), add env:
 
 Grant microphone access to your terminal app (System Settings > Privacy > Microphone).
 
+### Flow Bar (floating pill widget)
+
+```bash
+# From the voicelayer repo:
+voicelayer bar          # Build + launch the floating pill
+voicelayer bar-stop     # Stop the Flow Bar
+
+# Or manually:
+cd flow-bar && swift build -c release && .build/release/FlowBar
+```
+
+The Flow Bar connects to `/tmp/voicelayer.sock` and shows real-time voice state. Requires macOS 14+.
+
 ## MCP Tools
 
 | Tool | What It Does | Returns |
