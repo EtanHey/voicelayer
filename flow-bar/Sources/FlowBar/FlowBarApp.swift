@@ -17,10 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var moveObserver: Any?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
-    /// Saved horizontal offset (0.0–1.0) for pill positioning.
+    /// Saved offsets (0.0–1.0) for pill positioning on screen.
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
+    private var verticalOffset: CGFloat? // nil = use default bottomPadding
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
+    private static let verticalOffsetKey = "voicebar.verticalOffset"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon (LSUIElement equivalent)
@@ -49,13 +51,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             height: Theme.pillExpandedHeight + Theme.panelPadding * 2
         )
 
-        // Load saved horizontal offset
+        // Load saved position
         if let saved = UserDefaults.standard.object(forKey: Self.horizontalOffsetKey) as? Double {
             horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
         }
+        if let saved = UserDefaults.standard.object(forKey: Self.verticalOffsetKey) as? Double {
+            verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
+        }
 
         let pill = FloatingPillPanel(content: hosting)
-        pill.positionOnScreen(horizontalOffset: horizontalOffset)
+        pill.positionOnScreen(
+            horizontalOffset: horizontalOffset,
+            verticalOffset: verticalOffset
+        )
         pill.orderFront(nil)
         panel = pill
 
@@ -104,21 +112,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             currentScreenIndex = targetScreen
             panel?.positionOnScreen(
                 screens[targetScreen],
-                horizontalOffset: horizontalOffset
+                horizontalOffset: horizontalOffset,
+                verticalOffset: verticalOffset
             )
         }
     }
 
     // MARK: - Drag persistence
 
-    /// Save the pill's horizontal offset as a percentage of screen width.
+    /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
-        let offset = (panel.frame.midX - visible.origin.x) / visible.width
-        let clamped = max(0.05, min(0.95, offset))
-        horizontalOffset = CGFloat(clamped)
-        UserDefaults.standard.set(Double(clamped), forKey: Self.horizontalOffsetKey)
+        let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
+        let vOffset = (panel.frame.origin.y - visible.origin.y) / visible.height
+        horizontalOffset = max(0.05, min(0.95, CGFloat(hOffset)))
+        verticalOffset = max(0.0, min(0.95, CGFloat(vOffset)))
+        UserDefaults.standard.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
+        UserDefaults.standard.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
     }
 }
 
