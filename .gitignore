@@ -5,3 +5,5 @@ dist/
 .env.local
 bun.lockb
 site/
+docs.local/
+claude.scratchpad.md
