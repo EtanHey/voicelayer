@@ -50,7 +50,7 @@ while True:
         while True:  # Loop continuously until client disconnects
             for evt in events:
                 delay = evt.get("_delay", 3)
-                line = json.dumps(evt) + "\n"
+                line = json.dumps({k: v for k, v in evt.items() if k != "_delay"}) + "\n"
                 conn.sendall(line.encode())
                 print(f"  -> {line.strip()}")
                 time.sleep(delay)
