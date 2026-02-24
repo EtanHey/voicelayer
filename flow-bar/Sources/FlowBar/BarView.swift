@@ -55,7 +55,7 @@ struct BarView: View {
             Capsule()
                 .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
         }
-        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+        // No drop shadow — clean edges like Wispr Flow
         .opacity(state.mode == .disconnected ? 0.7 : 1.0)
         .fixedSize()
         .frame(maxWidth: Theme.pillMaxWidth, alignment: .center)
@@ -167,19 +167,38 @@ struct BarView: View {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white.opacity(0.9))
             .lineLimit(1)
-            .truncationMode(.tail)
             .contentTransition(.interpolate)
+            .mask {
+                // Leading fade when text is trimmed — words ghost out to the left
+                if textIsTrimmed {
+                    HStack(spacing: 0) {
+                        LinearGradient(
+                            colors: [.clear, .white],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 20)
+                        Color.white
+                    }
+                } else {
+                    Color.white
+                }
+            }
     }
+
+    /// Max words shown in the pill for speaking/transcript text.
+    private static let maxDisplayWords = 4
 
     private var statusText: String {
         switch state.mode {
         case .idle:
             if !state.transcript.isEmpty {
-                return state.transcript  // Show last transcription briefly
+                return Self.lastWords(state.transcript)
             }
             return "Ready"
         case .speaking:
-            return state.statusText.isEmpty ? "Speaking..." : state.statusText
+            if state.statusText.isEmpty { return "Speaking..." }
+            return Self.lastWords(state.statusText)
         case .recording:
             return "Listening..."
         case .transcribing:
@@ -191,12 +210,37 @@ struct BarView: View {
         }
     }
 
+    /// Whether the displayed text was trimmed (needs leading fade).
+    private var textIsTrimmed: Bool {
+        switch state.mode {
+        case .speaking:
+            return !state.statusText.isEmpty
+                && state.statusText.split(separator: " ").count > Self.maxDisplayWords
+        case .idle:
+            return !state.transcript.isEmpty
+                && state.transcript.split(separator: " ").count > Self.maxDisplayWords
+        default:
+            return false
+        }
+    }
+
+    /// Return the last N words of a string (no ellipsis — leading fade handles it).
+    private static func lastWords(_ text: String) -> String {
+        let words = text.split(separator: " ")
+        if words.count <= maxDisplayWords { return text }
+        return words.suffix(maxDisplayWords).joined(separator: " ")
+    }
+
     // MARK: - Action buttons
 
     @ViewBuilder
     private var actionButtons: some View {
         HStack(spacing: 2) {
-            if state.mode == .recording || state.mode == .speaking {
+            if state.mode == .recording {
+                pillButton(icon: "xmark") { state.cancel() }
+                pillButton(icon: "stop.fill") { state.stop() }
+            }
+            if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { state.stop() }
             }
             if state.mode == .idle {

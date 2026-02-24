@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock VoiceLayer socket server for testing Voice Bar.
 
-Cycles through voice states every 2 seconds so you can verify
+Cycles through voice states continuously so you can verify
 the pill UI updates correctly.
 
 Usage:
@@ -40,22 +40,23 @@ while True:
             {"type": "error", "message": "TTS synthesis failed", "recoverable": True},
             {"type": "state", "state": "idle"},
         ]
-        for evt in events:
-            line = json.dumps(evt) + "\n"
-            conn.sendall(line.encode())
-            print(f"  -> {line.strip()}")
-            time.sleep(2)
+        while True:  # Loop continuously until client disconnects
+            for evt in events:
+                line = json.dumps(evt) + "\n"
+                conn.sendall(line.encode())
+                print(f"  -> {line.strip()}")
+                time.sleep(3)
 
-            # Check for incoming commands (non-blocking)
-            conn.setblocking(False)
-            try:
-                data = conn.recv(4096)
-                if data:
-                    for cmd_line in data.decode().strip().split("\n"):
-                        print(f"  <- {cmd_line}")
-            except BlockingIOError:
-                pass
-            conn.setblocking(True)
+                # Check for incoming commands (non-blocking)
+                conn.setblocking(False)
+                try:
+                    data = conn.recv(4096)
+                    if data:
+                        for cmd_line in data.decode().strip().split("\n"):
+                            print(f"  <- {cmd_line}")
+                except BlockingIOError:
+                    pass
+                conn.setblocking(True)
 
     except BrokenPipeError:
         print("Client disconnected")

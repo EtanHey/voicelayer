@@ -47,6 +47,10 @@ final class VoiceState {
         sendCommand?(["cmd": "stop"])
     }
 
+    func cancel() {
+        sendCommand?(["cmd": "cancel"])
+    }
+
     func toggle(scope: String = "all", enabled: Bool) {
         sendCommand?(["cmd": "toggle", "scope": scope, "enabled": enabled])
     }

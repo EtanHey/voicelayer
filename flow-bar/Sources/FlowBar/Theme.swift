@@ -28,7 +28,7 @@ enum Theme {
 
     /// Dynamic width: pill shrink-wraps content between min and max.
     static let pillMinWidth: CGFloat = 100
-    static let pillMaxWidth: CGFloat = 320
+    static let pillMaxWidth: CGFloat = 300
     static let pillHeight: CGFloat = 44
     static let cornerRadius: CGFloat = 22  // Half of height for capsule
 
