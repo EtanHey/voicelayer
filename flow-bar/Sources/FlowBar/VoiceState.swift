@@ -76,6 +76,7 @@ final class VoiceState {
         guard mode == .idle else { return }
         // Set mode optimistically to prevent rapid-tap duplicates
         mode = .recording
+        confirmationText = nil
         frontmostAppOnRecordStart = NSWorkspace.shared.frontmostApplication
         barInitiatedRecording = true
         sendCommand?([
