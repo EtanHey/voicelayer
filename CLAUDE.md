@@ -15,8 +15,17 @@ Claude Code session
   │   │     3. Fallback → text-only
   │   │   Also: replay_index, enabled (toggle)
   │   ├── voice_ask(message) → BLOCKING speak + record + transcribe
-  │   └── qa_voice_* → backward-compat aliases
+  │   ├── qa_voice_* → backward-compat aliases
+  │   └── Unix socket (/tmp/voicelayer.sock) → Flow Bar IPC
+  │       ├── Broadcasts: state, speech, transcription, error events (NDJSON)
+  │       └── Receives: stop, replay, toggle commands
   └── Supabase MCP (data persistence)
+
+Flow Bar (separate native macOS app — SwiftUI)
+  ├── Connects to /tmp/voicelayer.sock as client
+  ├── Shows voice state (idle/speaking/recording/transcribing)
+  ├── Animated waveform bars
+  └── Controls: stop, replay, toggle
 ```
 
 ## TTS Backends (Three-Tier)
@@ -299,6 +308,8 @@ voicelayer/
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
 │   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
+│   ├── socket-server.ts       # Unix domain socket server for Flow Bar IPC
+│   ├── socket-protocol.ts     # Socket protocol types + serialization (NDJSON)
 │   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based voice session mutex
 │   ├── session.ts             # Session lifecycle (save/load/generate)
@@ -313,7 +324,7 @@ voicelayer/
 │   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
 │   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
 │   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
-│   └── __tests__/             # 114 tests, 264 expect() calls
+│   └── __tests__/             # 154 tests, 334 expect() calls
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
 ├── com.golems.tts-daemon.plist  # macOS launchd plist for TTS daemon
@@ -348,6 +359,7 @@ voicelayer/
 | Voice Profile | `~/.voicelayer/voices/{name}/profile.yaml` |
 | yt-dlp Archive | `~/.voicelayer/voices/{name}/.archive` |
 | Qwen3-TTS Model | `~/.voicelayer/models/qwen3-tts-4bit/` |
+| Flow Bar Socket | `/tmp/voicelayer.sock` |
 | TTS Daemon Logs | `/tmp/voicelayer-tts-daemon.{stdout,stderr}.log` |
 
 ## Dependencies
