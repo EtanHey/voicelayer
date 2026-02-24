@@ -325,6 +325,17 @@ voicelayer/
 │   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
 │   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
 │   └── __tests__/             # 166 tests, 367 expect() calls
+├── flow-bar/                    # SwiftUI macOS floating pill app
+│   ├── Package.swift            # SPM executable, macOS 14+
+│   ├── Sources/FlowBar/
+│   │   ├── FlowBarApp.swift     # @main, AppDelegate, MenuBarExtra
+│   │   ├── FloatingPanel.swift  # NSPanel subclass (non-focus-stealing)
+│   │   ├── BarView.swift        # Main pill view with vibrancy
+│   │   ├── WaveformView.swift   # 7-bar 60fps waveform animation
+│   │   ├── VoiceState.swift     # @Observable state model
+│   │   ├── SocketClient.swift   # NWConnection Unix socket client
+│   │   └── Theme.swift          # Colors, sizes, animation constants
+│   └── mock_server.py           # Python test harness
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
 ├── com.golems.tts-daemon.plist  # macOS launchd plist for TTS daemon
