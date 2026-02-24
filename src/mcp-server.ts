@@ -1000,6 +1000,29 @@ async function main() {
         }
         break;
       }
+      case "record": {
+        // Voice Bar initiated recording — fire and forget, results come via socket events
+        if (existsSync(MIC_DISABLED_FILE)) {
+          broadcast({
+            type: "error",
+            message: "Mic is disabled",
+            recoverable: false,
+          });
+          break;
+        }
+        const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
+        const silenceMode = command.silence_mode ?? "standard";
+        const ptt = command.press_to_talk ?? false;
+        // waitForInput broadcasts recording/transcribing/transcription/idle states
+        waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
+          broadcast({
+            type: "error",
+            message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
+            recoverable: true,
+          });
+        });
+        break;
+      }
       case "toggle": {
         const { scope, enabled } = command;
         const flagFile =
