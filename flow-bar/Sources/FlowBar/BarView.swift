@@ -130,9 +130,13 @@ struct BarView: View {
                 audioLevel: nil
             )
         case .speaking:
-            // Shimmer waveform during speaking
+            // Shimmer waveform + teleprompter during speaking
             WaveformView(mode: .idle, audioLevel: nil)
-            statusLabel
+            if !state.statusText.isEmpty {
+                TeleprompterView(text: state.statusText)
+            } else {
+                statusLabel
+            }
         default:
             statusIcon
             statusLabel
@@ -197,8 +201,7 @@ struct BarView: View {
             }
             return "Ready"
         case .speaking:
-            if state.statusText.isEmpty { return "Speaking..." }
-            return Self.lastWords(state.statusText)
+            return "Speaking..."
         case .recording:
             return "Listening..."
         case .transcribing:
@@ -213,9 +216,6 @@ struct BarView: View {
     /// Whether the displayed text was trimmed (needs leading fade).
     private var textIsTrimmed: Bool {
         switch state.mode {
-        case .speaking:
-            !state.statusText.isEmpty
-                && state.statusText.split(separator: " ").count > Self.maxDisplayWords
         case .idle:
             !state.transcript.isEmpty
                 && state.transcript.split(separator: " ").count > Self.maxDisplayWords

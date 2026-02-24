@@ -28,24 +28,32 @@ while True:
     print("Client connected")
     try:
         events = [
-            {"type": "state", "state": "speaking", "text": "Hello, how can I help?"},
-            {"type": "state", "state": "idle"},
+            # Short speaking — teleprompter fits in one view
+            {"type": "state", "state": "speaking", "text": "Hello, how can I help you today?"},
+            {"type": "state", "state": "idle", "_delay": 6},
+            # Recording with speech detection
             {"type": "state", "state": "recording", "mode": "vad", "silence_mode": "standard"},
-            {"type": "speech", "detected": True},
+            {"type": "speech", "detected": True, "_delay": 2},
             {"type": "state", "state": "transcribing"},
-            {"type": "transcription", "text": "Can you explain this code?"},
+            {"type": "transcription", "text": "Can you walk me through how the socket server works?"},
             {"type": "state", "state": "idle"},
-            {"type": "state", "state": "speaking", "text": "Sure, let me walk you through it..."},
-            {"type": "state", "state": "idle"},
+            # Long speaking — teleprompter scrolls through words
+            {"type": "state", "state": "speaking", "text": "Sure thing. The socket server creates a Unix domain socket at tmp voicelayer sock and broadcasts state changes to all connected clients using newline delimited JSON"},
+            {"type": "state", "state": "idle", "_delay": 12},
+            # Another medium speaking
+            {"type": "state", "state": "speaking", "text": "Each event has a type field and the Voice Bar parses these to update its display in real time"},
+            {"type": "state", "state": "idle", "_delay": 8},
+            # Error
             {"type": "error", "message": "TTS synthesis failed", "recoverable": True},
             {"type": "state", "state": "idle"},
         ]
         while True:  # Loop continuously until client disconnects
             for evt in events:
+                delay = evt.pop("_delay", 3)
                 line = json.dumps(evt) + "\n"
                 conn.sendall(line.encode())
                 print(f"  -> {line.strip()}")
-                time.sleep(3)
+                time.sleep(delay)
 
                 # Check for incoming commands (non-blocking)
                 conn.setblocking(False)
