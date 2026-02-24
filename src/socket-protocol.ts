@@ -42,6 +42,12 @@ export interface TranscriptionEvent {
   partial?: boolean;
 }
 
+export interface AudioLevelEvent {
+  type: "audio_level";
+  /** RMS audio level 0.0–1.0. */
+  rms: number;
+}
+
 export interface ErrorEvent {
   type: "error";
   message: string;
@@ -53,6 +59,7 @@ export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
+  | AudioLevelEvent
   | ErrorEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
