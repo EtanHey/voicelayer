@@ -20,7 +20,7 @@ v2 makes it a full Wispr Flow replacement — the user can unsubscribe from Wisp
 |---|-------|--------|--------|----|-------|
 | 1 | Teleprompter Polish | [phase-1](phase-1/) | done | #28 | Scroll anchor, replay, punctuation timing, wider view |
 | 2 | Interactive Recording | [phase-2](phase-2/) | done | #29 | Click-to-record, paste via CGEvent Cmd+V |
-| 3 | Visual Polish & UX | [phase-3](phase-3/) | in-progress | — | Audio waveform, drag, idle collapse, expanding teleprompter |
+| 3 | Visual Polish & UX | [phase-3](phase-3/) | done | #30 | Expanding teleprompter, audio waveform, drag, idle collapse |
 | 4 | Live Dictation | [phase-4](phase-4/) | pending | — | Streaming STT — needs Etan present |
 | 5 | Production Readiness | [phase-5](phase-5/) | pending | — | Launch at login, center position, cleanup |
 
