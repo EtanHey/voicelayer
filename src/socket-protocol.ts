@@ -61,6 +61,10 @@ export interface StopCommand {
   cmd: "stop";
 }
 
+export interface CancelCommand {
+  cmd: "cancel";
+}
+
 export interface ReplayCommand {
   cmd: "replay";
 }
@@ -71,7 +75,11 @@ export interface ToggleCommand {
   enabled: boolean;
 }
 
-export type SocketCommand = StopCommand | ReplayCommand | ToggleCommand;
+export type SocketCommand =
+  | StopCommand
+  | CancelCommand
+  | ReplayCommand
+  | ToggleCommand;
 
 // --- Serialization ---
 
@@ -94,6 +102,8 @@ export function parseCommand(line: string): SocketCommand | null {
     switch (parsed.cmd) {
       case "stop":
         return { cmd: "stop" };
+      case "cancel":
+        return { cmd: "cancel" };
       case "replay":
         return { cmd: "replay" };
       case "toggle": {
