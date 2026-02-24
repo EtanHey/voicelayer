@@ -47,8 +47,10 @@ struct BarView: View {
         Group {
             if state.isCollapsed {
                 collapsedPill
+                    .transition(.scale.combined(with: .opacity))
             } else {
                 expandedPill
+                    .transition(.scale.combined(with: .opacity))
             }
         }
         .animation(.smooth(duration: 0.3), value: state.isCollapsed)
@@ -156,9 +158,13 @@ struct BarView: View {
 
     // MARK: - Pill height (expands during speaking)
 
-    /// Pill grows vertically when speaking with teleprompter text.
+    /// Pill grows vertically only when text needs multiple lines (8+ words).
+    /// Short sentences stay in the standard 44pt pill.
+    private static let multiLineWordThreshold = 8
+
     private var pillHeight: CGFloat {
-        if state.mode == .speaking, !state.statusText.isEmpty {
+        if state.mode == .speaking,
+           state.statusText.split(separator: " ").count >= Self.multiLineWordThreshold {
             return Theme.pillExpandedHeight
         }
         return Theme.pillHeight
@@ -230,6 +236,7 @@ struct BarView: View {
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white.opacity(0.9))
             .lineLimit(1)
+            .truncationMode(.tail)
             .contentTransition(.interpolate)
             .mask {
                 // Leading fade when text is trimmed — words ghost out to the left
@@ -250,7 +257,7 @@ struct BarView: View {
     }
 
     /// Max words shown in the pill for speaking/transcript text.
-    private static let maxDisplayWords = 4
+    private static let maxDisplayWords = 3
 
     private var statusText: String {
         switch state.mode {
