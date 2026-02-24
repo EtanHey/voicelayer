@@ -34,8 +34,8 @@ Fix teleprompter word tracking, replay integration, and add expanding view for f
 
 ## Status
 
-- [ ] Fix scroll anchor to center
-- [ ] Replay re-triggers teleprompter
-- [ ] Expanding teleprompter view
-- [ ] Improved word timing
-- [ ] Tests
+- [x] Fix scroll anchor to center (PR #28)
+- [x] Replay re-triggers teleprompter (PR #28 — idle→speaking broadcast)
+- [ ] Expanding teleprompter view (deferred to Phase 3)
+- [x] Improved word timing — punctuation pauses (PR #28)
+- [ ] Tests (deferred — timing estimation is heuristic)
