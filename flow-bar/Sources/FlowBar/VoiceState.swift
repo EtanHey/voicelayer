@@ -145,12 +145,9 @@ final class VoiceState {
     // MARK: - Paste transcription at cursor
 
     /// Refocuses the captured app and pastes text via Cmd+V.
+    /// Transcription stays on clipboard (useful for re-pasting, matches Wispr Flow behavior).
     private func pasteTranscription(_ text: String) {
         let pasteboard = NSPasteboard.general
-        // Save current clipboard to restore after paste
-        let previousClipboard = pasteboard.string(forType: .string)
-
-        // Put transcription on clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
@@ -168,14 +165,6 @@ final class VoiceState {
             self?.confirmationText = "Pasted!"
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 self?.confirmationText = nil
-            }
-
-            // Restore previous clipboard after paste completes
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                if let prev = previousClipboard {
-                    pasteboard.clearContents()
-                    pasteboard.setString(prev, forType: .string)
-                }
             }
         }
     }
