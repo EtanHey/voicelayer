@@ -9,6 +9,7 @@
 import AppKit
 import Foundation
 import Observation
+import SwiftUI
 
 // MARK: - Voice mode enumeration
 
@@ -177,21 +178,27 @@ final class VoiceState {
         collapseTimer = Task { @MainActor in
             try? await Task.sleep(for: .seconds(Theme.collapseDelay))
             if !Task.isCancelled, mode == .idle, !isHovering {
-                isCollapsed = true
+                withAnimation(.smooth(duration: 0.3)) {
+                    isCollapsed = true
+                }
             }
         }
     }
 
     private func expandFromCollapse() {
         collapseTimer?.cancel()
-        isCollapsed = false
+        withAnimation(.smooth(duration: 0.3)) {
+            isCollapsed = false
+        }
     }
 
     /// Called when hover state changes.
     func setHovering(_ hovering: Bool) {
         isHovering = hovering
         if hovering, isCollapsed {
-            isCollapsed = false
+            withAnimation(.smooth(duration: 0.3)) {
+                isCollapsed = false
+            }
         }
         if !hovering, mode == .idle {
             startCollapseTimer()

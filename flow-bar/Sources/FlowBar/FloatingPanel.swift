@@ -60,18 +60,27 @@ final class FloatingPillPanel: NSPanel {
         false
     }
 
-    /// Position pill at bottom of the given screen (or the screen containing the mouse).
+    /// Position pill on the given screen (or the screen containing the mouse).
     /// macOS coordinates: origin at bottom-left, Y increases upward.
+    /// - Parameters:
+    ///   - horizontalOffset: 0.0–1.0 fraction of screen width for pill center.
+    ///   - verticalOffset: 0.0–1.0 fraction of screen height for pill origin.
+    ///     nil = default bottom padding.
     func positionOnScreen(
         _ screen: NSScreen? = nil,
-        horizontalOffset: CGFloat = Theme.horizontalOffset
+        horizontalOffset: CGFloat = Theme.horizontalOffset,
+        verticalOffset: CGFloat? = nil
     ) {
         let target = screen ?? screenContainingMouse() ?? NSScreen.main
         guard let target else { return }
         let visible = target.visibleFrame // excludes Dock & menu bar
         let size = frame.size
         let x = visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
-        let y = visible.origin.y + Theme.bottomPadding
+        let y: CGFloat = if let vOffset = verticalOffset {
+            visible.origin.y + (visible.height * vOffset)
+        } else {
+            visible.origin.y + Theme.bottomPadding
+        }
         setFrameOrigin(NSPoint(x: x, y: y))
     }
 

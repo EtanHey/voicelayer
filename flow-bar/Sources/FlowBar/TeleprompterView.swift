@@ -85,52 +85,67 @@ struct TeleprompterView: View {
         text.split(separator: " ").map(String.init)
     }
 
+    /// Short text (≤ threshold words) renders inline without ScrollView —
+    /// naturally vertically centered by the parent HStack.
+    private static let shortTextThreshold = 8
+
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+        Group {
+            if words.count <= Self.shortTextThreshold {
+                // Short text: no ScrollView needed, centers naturally in parent
                 FlowLayout(spacing: 5) {
-                    ForEach(0 ..< words.count, id: \.self) { index in
-                        Text(words[index])
-                            .font(.system(
-                                size: 11,
-                                weight: index == currentIndex ? .bold : .medium
-                            ))
-                            .foregroundStyle(
-                                .white.opacity(opacityFor(index))
-                            )
-                            .id(index)
-                    }
+                    wordViews
                 }
                 .padding(.horizontal, 4)
-            }
-            .scrollDisabled(true) // We control scroll position
-            .onChange(of: currentIndex) { _, newIndex in
-                withAnimation(.smooth(duration: 0.3)) {
-                    proxy.scrollTo(newIndex, anchor: .center)
+            } else {
+                // Long text: vertical scroll with auto-advance
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        FlowLayout(spacing: 5) {
+                            wordViews
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.top, 4) // Breathing room before first line
+                    }
+                    .scrollDisabled(true) // We control scroll position
+                    .onChange(of: currentIndex) { _, newIndex in
+                        withAnimation(.smooth(duration: 0.3)) {
+                            proxy.scrollTo(newIndex, anchor: .center)
+                        }
+                    }
                 }
-            }
-        }
-        .mask {
-            VStack(spacing: 0) {
-                LinearGradient(
-                    colors: [.clear, .white],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 8)
-                Color.white
-                LinearGradient(
-                    colors: [.white, .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .frame(height: 8)
+                .mask {
+                    // Only bottom fade — top edge sharp so first words aren't clipped
+                    VStack(spacing: 0) {
+                        Color.white
+                        LinearGradient(
+                            colors: [.white, .clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 8)
+                    }
+                }
             }
         }
         .frame(maxWidth: 220)
         .onAppear { startAnimating() }
         .onDisappear { stopAnimating() }
         .onChange(of: text) { _, _ in restart() }
+    }
+
+    private var wordViews: some View {
+        ForEach(0 ..< words.count, id: \.self) { index in
+            Text(words[index])
+                .font(.system(
+                    size: 11,
+                    weight: index == currentIndex ? .bold : .medium
+                ))
+                .foregroundStyle(
+                    .white.opacity(opacityFor(index))
+                )
+                .id(index)
+        }
     }
 
     // MARK: - Word opacity
