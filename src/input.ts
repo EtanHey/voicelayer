@@ -30,6 +30,7 @@ import {
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
+import { broadcast } from "./socket-server";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -44,8 +45,8 @@ export { calculateRMS } from "./audio-utils";
  * Writes standard 44-byte RIFF/WAV header + PCM payload.
  */
 export function createWavBuffer(pcmData: Uint8Array): Uint8Array {
-  const byteRate = SAMPLE_RATE * CHANNELS * BITS_PER_SAMPLE / 8;
-  const blockAlign = CHANNELS * BITS_PER_SAMPLE / 8;
+  const byteRate = (SAMPLE_RATE * CHANNELS * BITS_PER_SAMPLE) / 8;
+  const blockAlign = (CHANNELS * BITS_PER_SAMPLE) / 8;
   const dataSize = pcmData.byteLength;
 
   const header = new ArrayBuffer(44);
@@ -58,12 +59,12 @@ export function createWavBuffer(pcmData: Uint8Array): Uint8Array {
 
   // fmt sub-chunk
   writeString(view, 12, "fmt ");
-  view.setUint32(16, 16, true);              // sub-chunk size (PCM = 16)
-  view.setUint16(20, 1, true);               // audio format (1 = PCM)
-  view.setUint16(22, CHANNELS, true);        // channels
-  view.setUint32(24, SAMPLE_RATE, true);     // sample rate
-  view.setUint32(28, byteRate, true);        // byte rate
-  view.setUint16(32, blockAlign, true);      // block align
+  view.setUint32(16, 16, true); // sub-chunk size (PCM = 16)
+  view.setUint16(20, 1, true); // audio format (1 = PCM)
+  view.setUint16(22, CHANNELS, true); // channels
+  view.setUint32(24, SAMPLE_RATE, true); // sample rate
+  view.setUint32(28, byteRate, true); // byte rate
+  view.setUint16(32, blockAlign, true); // block align
   view.setUint16(34, BITS_PER_SAMPLE, true); // bits per sample
 
   // data sub-chunk
@@ -98,7 +99,9 @@ export async function recordToBuffer(
 ): Promise<Uint8Array | null> {
   // Check mic disabled flag
   if (isMicDisabled()) {
-    console.error("[voicelayer] Mic disabled via flag file — skipping recording");
+    console.error(
+      "[voicelayer] Mic disabled via flag file — skipping recording",
+    );
     return null;
   }
 
@@ -109,9 +112,9 @@ export async function recordToBuffer(
   if (which.exitCode !== 0) {
     throw new Error(
       "sox not installed. Install:\n" +
-      "  macOS: brew install sox\n" +
-      "  Linux: apt install sox / dnf install sox\n" +
-      "Also grant microphone access to your terminal app (macOS: System Settings > Privacy > Microphone)."
+        "  macOS: brew install sox\n" +
+        "  Linux: apt install sox / dnf install sox\n" +
+        "Also grant microphone access to your terminal app (macOS: System Settings > Privacy > Microphone).",
     );
   }
 
@@ -138,7 +141,9 @@ export async function recordToBuffer(
 
       // Kill recorder
       if (recorder) {
-        try { recorder.kill(); } catch {}
+        try {
+          recorder.kill();
+        } catch {}
         recorder = null;
       }
 
@@ -166,13 +171,18 @@ export async function recordToBuffer(
       recorder = Bun.spawn(
         [
           "rec",
-          "-r", String(SAMPLE_RATE),
-          "-c", "1",
-          "-b", "16",
-          "-e", "signed",
-          "-t", "raw",
-          "-q",  // quiet (no progress)
-          "-",   // output to stdout
+          "-r",
+          String(SAMPLE_RATE),
+          "-c",
+          "1",
+          "-b",
+          "16",
+          "-e",
+          "signed",
+          "-t",
+          "raw",
+          "-q", // quiet (no progress)
+          "-", // output to stdout
         ],
         { stdout: "pipe", stderr: "ignore" },
       );
@@ -182,9 +192,19 @@ export async function recordToBuffer(
         return;
       }
 
+      // Broadcast recording state to Flow Bar
+      broadcast({
+        type: "state",
+        state: "recording",
+        mode: "vad",
+        silence_mode: silenceMode,
+      });
+
       console.error("[voicelayer] Listening... speak now (Silero VAD active)");
 
-      const reader = (recorder.stdout as ReadableStream<Uint8Array>).getReader();
+      const reader = (
+        recorder.stdout as ReadableStream<Uint8Array>
+      ).getReader();
 
       const processAudio = async () => {
         while (!resolved) {
@@ -215,6 +235,10 @@ export async function recordToBuffer(
             const speechDetected = isSpeech(speechProb);
 
             if (speechDetected) {
+              if (!hasSpeech) {
+                // First speech detection — notify Flow Bar
+                broadcast({ type: "speech", detected: true });
+              }
               hasSpeech = true;
               consecutiveSilentChunks = 0;
             } else {
@@ -228,14 +252,18 @@ export async function recordToBuffer(
             // Check for user-initiated stop signal
             if (hasSpeech && hasStopSignal()) {
               clearStopSignal();
-              console.error("[voicelayer] Stop signal received — ending recording");
+              console.error(
+                "[voicelayer] Stop signal received — ending recording",
+              );
               finish();
               return;
             }
 
             // VAD-based silence stop (only after speech was detected)
             if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
-              console.error(`[voicelayer] Silence detected (${silenceMode} mode) — ending recording`);
+              console.error(
+                `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
+              );
               finish();
               return;
             }
@@ -265,7 +293,13 @@ export async function waitForInput(
 ): Promise<string | null> {
   // Record audio to buffer
   const pcmData = await recordToBuffer(timeoutMs, silenceMode);
-  if (!pcmData) return null;
+  if (!pcmData) {
+    broadcast({ type: "state", state: "idle" });
+    return null;
+  }
+
+  // Broadcast transcribing state to Flow Bar
+  broadcast({ type: "state", state: "transcribing" });
 
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
@@ -277,9 +311,25 @@ export async function waitForInput(
     const backend = await getBackend();
     console.error(`[voicelayer] Transcribing with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
-    console.error(`[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`);
+    console.error(
+      `[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`,
+    );
+
+    // Broadcast transcription result + idle state to Flow Bar
+    if (result.text) {
+      broadcast({ type: "transcription", text: result.text });
+    }
+    broadcast({ type: "state", state: "idle" });
 
     return result.text || null;
+  } catch (err) {
+    broadcast({
+      type: "error",
+      message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle" });
+    throw err;
   } finally {
     // Clean up temp file
     try {

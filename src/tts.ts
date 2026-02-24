@@ -31,6 +31,7 @@ import {
   TTS_DISABLED_FILE,
 } from "./paths";
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
+import { broadcast } from "./socket-server";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -248,10 +249,13 @@ export function playAudioNonBlocking(
   });
   currentPlayback = { proc, pid: proc.pid };
 
-  // Clean up reference when playback finishes
+  // Clean up reference + broadcast idle when playback finishes
+  // AIDEV-NOTE: Idle broadcast is here (not in callers) to avoid race conditions —
+  // only the LATEST playback should broadcast idle when it finishes.
   proc.exited.then(() => {
     if (currentPlayback?.pid === proc.pid) {
       currentPlayback = null;
+      broadcast({ type: "state", state: "idle" });
     }
   });
 
@@ -264,6 +268,7 @@ export function stopPlayback(): boolean {
     try {
       currentPlayback.proc.kill("SIGTERM");
       currentPlayback = null;
+      broadcast({ type: "state", state: "idle" });
       return true;
     } catch {
       currentPlayback = null;
@@ -306,6 +311,14 @@ export async function speak(
 
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
+
+  // Broadcast speaking state to Flow Bar
+  broadcast({
+    type: "state",
+    state: "speaking",
+    text: text.slice(0, 200), // Truncate for IPC — Flow Bar only needs preview
+    voice: resolved.voice,
+  });
 
   // Tier 1: Cloned voice → try Qwen3-TTS daemon
   if (resolved.engine === "cloned") {
@@ -378,6 +391,12 @@ async function speakWithEdgeTTS(
   ]);
   const synthExit = await synth.exited;
   if (synthExit !== 0) {
+    broadcast({
+      type: "error",
+      message: "TTS synthesis failed (edge-tts)",
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle" });
     throw new Error(
       `edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`,
     );
@@ -389,7 +408,7 @@ async function speakWithEdgeTTS(
   // Play audio — NON-BLOCKING (returns immediately)
   const proc = playAudioNonBlocking(ttsFile);
 
-  // Clean up TTS temp file after playback finishes (not blocking)
+  // Clean up TTS temp file after playback finishes (idle broadcast is in playAudioNonBlocking)
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
