@@ -989,7 +989,8 @@ async function main() {
       case "replay": {
         const entry = getHistoryEntry(0);
         if (entry && existsSync(entry.file)) {
-          // Broadcast speaking state so Voice Bar shows teleprompter on replay
+          // Reset to idle first so TeleprompterView remounts on same-text replay
+          broadcast({ type: "state", state: "idle" });
           broadcast({
             type: "state",
             state: "speaking",
