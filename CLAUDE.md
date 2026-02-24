@@ -14,7 +14,7 @@ Claude Code session
   │   │     2. Preset voice → edge-tts (default)
   │   │     3. Fallback → text-only
   │   │   Also: replay_index, enabled (toggle)
-  │   ├── voice_ask(message) → BLOCKING speak + record + transcribe
+  │   ├── voice_ask(message, press_to_talk?) → BLOCKING speak + record + transcribe
   │   ├── qa_voice_* → backward-compat aliases
   │   └── Unix socket (/tmp/voicelayer.sock) → Flow Bar IPC
   │       ├── Broadcasts: state, speech, transcription, error events (NDJSON)
@@ -120,10 +120,15 @@ All TTS modes (announce, brief, consult) return **instantly** after synthesis. A
 
 Last 20 synthesized audio files are cached in `/tmp/voicelayer-history-{N}.mp3` with metadata in `/tmp/voicelayer-history.json`. Use `voice_speak(replay_index=N)` to replay (0 = most recent).
 
-### User-Controlled Stop (converse mode)
+### Recording Modes (converse / voice_ask)
 
-- **Primary:** Touch `/tmp/voicelayer-stop` to end recording
-- **Fallback:** Silero VAD silence detection (configurable: quick/standard/thoughtful)
+Two recording modes:
+- **VAD mode** (default): Silero VAD detects speech, auto-stops on silence (configurable: quick/standard/thoughtful)
+- **Push-to-talk** (`press_to_talk=true`): No VAD, records until stop signal — best for noisy environments
+
+Stop recording:
+- **Primary:** Touch `/tmp/voicelayer-stop` to end recording (works in both modes)
+- **Fallback (VAD only):** Silero VAD silence detection
 - **Timeout:** 300s default, configurable per call
 - **skhd hotkey:** `ctrl+alt-s` → kills afplay (stops TTS playback)
 
@@ -245,7 +250,7 @@ The Flow Bar connects to `/tmp/voicelayer.sock` and shows real-time voice state.
 | Tool | What It Does | Returns |
 |------|--------------|---------|
 | `voice_speak` | NON-BLOCKING TTS — auto-selects announce/brief/consult/think from message | Confirmation |
-| `voice_ask` | BLOCKING — speak question, record + transcribe response | Transcribed text |
+| `voice_ask` | BLOCKING — speak question, record + transcribe response. Supports `press_to_talk` for noisy envs | Transcribed text |
 
 Old `qa_voice_*` names still work as backward-compat aliases.
 

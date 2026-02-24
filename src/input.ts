@@ -5,11 +5,17 @@
  * saves to WAV, then transcribes with the selected STT backend
  * (whisper.cpp local or Wispr Flow cloud).
  *
- * Voice activity detection uses Silero VAD (neural network) — NOT energy/amplitude.
+ * Two recording modes:
+ *   - VAD mode (default): Silero VAD neural network detects speech/silence
+ *   - Push-to-talk (PTT): User explicitly controls start/stop via stop signal
+ *
+ * AIDEV-NOTE: Energy-based VAD (amplitude threshold) removed in Phase 2.
+ * False positives in noisy environments. Use Silero VAD or PTT instead.
+ * calculateRMS() in audio-utils.ts is retained only for Wispr Flow volume data.
  *
  * Stops recording on:
  *   1. User stop signal (touch /tmp/voicelayer-stop) — PRIMARY
- *   2. Silero VAD silence detection (configurable mode) — FALLBACK
+ *   2. Silero VAD silence detection (configurable mode) — only in VAD mode
  *   3. Timeout — SAFETY NET
  *
  * Prerequisites:
@@ -37,7 +43,14 @@ const BYTES_PER_SAMPLE = 2;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 
-// Re-export calculateRMS from audio-utils for backward compat (used by stt.ts Wispr backend)
+/**
+ * Pre-speech timeout: if no speech is detected within this many seconds,
+ * stop recording early and return null. Prevents long silent waits.
+ * Only applies to VAD mode (not PTT).
+ */
+const PRE_SPEECH_TIMEOUT_SECONDS = 15;
+
+// Re-export calculateRMS from audio-utils for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS } from "./audio-utils";
 
 /**
@@ -91,11 +104,19 @@ function isMicDisabled(): boolean {
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
- * Handles stop signal, Silero VAD silence detection, and timeout.
+ *
+ * Two modes:
+ * - VAD mode (default): Silero VAD detects speech/silence, auto-stops on silence
+ * - PTT mode (pressToTalk=true): Records until stop signal or timeout, no VAD
+ *
+ * @param timeoutMs - Maximum recording time in milliseconds
+ * @param silenceMode - VAD silence threshold (ignored in PTT mode)
+ * @param pressToTalk - If true, skip VAD — only stop on user signal or timeout
  */
 export async function recordToBuffer(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
+  pressToTalk: boolean = false,
 ): Promise<Uint8Array | null> {
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -105,7 +126,14 @@ export async function recordToBuffer(
     return null;
   }
 
-  const silenceChunksNeeded = silenceChunksForMode(silenceMode);
+  const silenceChunksNeeded = pressToTalk
+    ? Infinity
+    : silenceChunksForMode(silenceMode);
+
+  // Pre-speech timeout: max chunks before giving up if no speech detected
+  const preSpeechChunks = pressToTalk
+    ? Infinity
+    : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
 
   // Check that rec (sox) is available
   const which = Bun.spawnSync(["which", "rec"]);
@@ -118,14 +146,17 @@ export async function recordToBuffer(
     );
   }
 
-  // Reset VAD state for fresh recording
-  await resetVAD();
+  // Reset VAD state for fresh recording (skip in PTT mode — no VAD needed)
+  if (!pressToTalk) {
+    await resetVAD();
+  }
 
   // Clear any leftover stop signal from previous recording
   clearStopSignal();
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
     let consecutiveSilentChunks = 0;
+    let totalChunksProcessed = 0;
     let hasSpeech = false;
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
@@ -149,8 +180,8 @@ export async function recordToBuffer(
 
       if (error) {
         reject(error);
-      } else if (totalPcmBytes === 0 || !hasSpeech) {
-        resolve(null); // No speech detected
+      } else if (totalPcmBytes === 0 || (!pressToTalk && !hasSpeech)) {
+        resolve(null); // No speech detected (PTT mode always returns audio)
       } else {
         // Concatenate all PCM chunks
         const result = new Uint8Array(totalPcmBytes);
@@ -184,7 +215,7 @@ export async function recordToBuffer(
           "-q", // quiet (no progress)
           "-", // output to stdout
         ],
-        { stdout: "pipe", stderr: "ignore" },
+        { stdout: "pipe", stderr: "pipe" },
       );
 
       if (!recorder.stdout) {
@@ -192,15 +223,42 @@ export async function recordToBuffer(
         return;
       }
 
+      // Capture stderr for diagnostics — rec errors (permissions, no device) go here
+      if (recorder.stderr) {
+        const stderrReader = (
+          recorder.stderr as ReadableStream<Uint8Array>
+        ).getReader();
+        (async () => {
+          const chunks: Uint8Array[] = [];
+          try {
+            while (true) {
+              const { value, done } = await stderrReader.read();
+              if (done) break;
+              if (value) chunks.push(value);
+            }
+          } catch {}
+          if (chunks.length > 0) {
+            const text = Buffer.concat(chunks).toString("utf-8").trim();
+            if (text) {
+              console.error(`[voicelayer] rec stderr: ${text}`);
+            }
+          }
+        })();
+      }
+
       // Broadcast recording state to Flow Bar
       broadcast({
         type: "state",
         state: "recording",
-        mode: "vad",
+        mode: pressToTalk ? "ptt" : "vad",
         silence_mode: silenceMode,
       });
 
-      console.error("[voicelayer] Listening... speak now (Silero VAD active)");
+      console.error(
+        pressToTalk
+          ? "[voicelayer] Push-to-talk: recording... touch /tmp/voicelayer-stop to end"
+          : "[voicelayer] Listening... speak now (Silero VAD active)",
+      );
 
       const reader = (
         recorder.stdout as ReadableStream<Uint8Array>
@@ -230,42 +288,66 @@ export async function recordToBuffer(
             readBuffer = remainder.length > 0 ? [remainder] : [];
             readBufferLen = remainder.length;
 
-            // Run Silero VAD on this chunk
-            const speechProb = await processVADChunk(chunk);
-            const speechDetected = isSpeech(speechProb);
-
-            if (speechDetected) {
-              if (!hasSpeech) {
-                // First speech detection — notify Flow Bar
-                broadcast({ type: "speech", detected: true });
-              }
-              hasSpeech = true;
-              consecutiveSilentChunks = 0;
-            } else {
-              consecutiveSilentChunks++;
-            }
-
             // Always accumulate audio data
             pcmChunks.push(chunk);
             totalPcmBytes += chunk.byteLength;
+            totalChunksProcessed++;
 
-            // Check for user-initiated stop signal
-            if (hasSpeech && hasStopSignal()) {
-              clearStopSignal();
-              console.error(
-                "[voicelayer] Stop signal received — ending recording",
-              );
-              finish();
-              return;
-            }
+            if (pressToTalk) {
+              // PTT mode: no VAD, only stop on user signal or timeout
+              if (hasStopSignal()) {
+                clearStopSignal();
+                console.error(
+                  "[voicelayer] Stop signal received — ending PTT recording",
+                );
+                finish();
+                return;
+              }
+            } else {
+              // VAD mode: run Silero VAD on this chunk
+              const speechProb = await processVADChunk(chunk);
+              const speechDetected = isSpeech(speechProb);
 
-            // VAD-based silence stop (only after speech was detected)
-            if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
-              console.error(
-                `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
-              );
-              finish();
-              return;
+              if (speechDetected) {
+                if (!hasSpeech) {
+                  // First speech detection — notify Flow Bar
+                  broadcast({ type: "speech", detected: true });
+                }
+                hasSpeech = true;
+                consecutiveSilentChunks = 0;
+              } else {
+                consecutiveSilentChunks++;
+              }
+
+              // Check for user-initiated stop signal — ALWAYS, regardless of speech state
+              // AIDEV-NOTE: Previously gated on hasSpeech, which meant user couldn't
+              // stop recording before speaking. Fixed: stop signal is unconditional.
+              if (hasStopSignal()) {
+                clearStopSignal();
+                console.error(
+                  "[voicelayer] Stop signal received — ending recording",
+                );
+                finish();
+                return;
+              }
+
+              // VAD-based silence stop (only after speech was detected)
+              if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
+                console.error(
+                  `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
+                );
+                finish();
+                return;
+              }
+
+              // Pre-speech timeout: if no speech detected within N seconds, give up
+              if (!hasSpeech && totalChunksProcessed >= preSpeechChunks) {
+                console.error(
+                  `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
+                );
+                finish();
+                return;
+              }
             }
           }
         }
@@ -286,13 +368,15 @@ export async function recordToBuffer(
  *
  * @param timeoutMs - Max wait time in milliseconds
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
+ * @param pressToTalk - If true, use PTT mode (no VAD, stop on signal only)
  */
 export async function waitForInput(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
+  pressToTalk: boolean = false,
 ): Promise<string | null> {
   // Record audio to buffer
-  const pcmData = await recordToBuffer(timeoutMs, silenceMode);
+  const pcmData = await recordToBuffer(timeoutMs, silenceMode, pressToTalk);
   if (!pcmData) {
     broadcast({ type: "state", state: "idle" });
     return null;
