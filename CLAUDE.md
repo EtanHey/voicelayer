@@ -324,7 +324,7 @@ voicelayer/
 │   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
 │   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
 │   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
-│   └── __tests__/             # 154 tests, 334 expect() calls
+│   └── __tests__/             # 166 tests, 367 expect() calls
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
 ├── com.golems.tts-daemon.plist  # macOS launchd plist for TTS daemon
