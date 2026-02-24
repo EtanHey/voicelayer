@@ -44,8 +44,15 @@ import {
   TTS_DISABLED_FILE,
   MIC_DISABLED_FILE,
   VOICE_DISABLED_FILE,
+  STOP_FILE,
 } from "./paths";
 import type { SilenceMode } from "./vad";
+import {
+  startSocketServer,
+  stopSocketServer,
+  onCommand,
+} from "./socket-server";
+import type { SocketCommand } from "./socket-protocol";
 
 const THINK_FILE =
   process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
@@ -960,14 +967,79 @@ async function main() {
     );
   }
 
+  // Start the Flow Bar socket server alongside MCP
+  startSocketServer();
+
+  // Handle commands from Flow Bar clients
+  onCommand((command: SocketCommand) => {
+    switch (command.cmd) {
+      case "stop":
+        // Reuse existing stop mechanism — write the stop file + kill TTS playback
+        writeFileSync(
+          STOP_FILE,
+          `stop from flow-bar at ${new Date().toISOString()}`,
+        );
+        try {
+          Bun.spawnSync(["pkill", "-f", "afplay"]);
+        } catch {}
+        break;
+      case "replay": {
+        const entry = getHistoryEntry(0);
+        if (entry && existsSync(entry.file)) {
+          playAudioNonBlocking(entry.file);
+        }
+        break;
+      }
+      case "toggle": {
+        const { scope, enabled } = command;
+        const flagFile =
+          scope === "tts"
+            ? TTS_DISABLED_FILE
+            : scope === "mic"
+              ? MIC_DISABLED_FILE
+              : VOICE_DISABLED_FILE;
+        if (enabled) {
+          try {
+            unlinkSync(flagFile);
+          } catch {}
+          // If toggling "all" on, also clear individual flags
+          if (scope === "all") {
+            try {
+              unlinkSync(TTS_DISABLED_FILE);
+            } catch {}
+            try {
+              unlinkSync(MIC_DISABLED_FILE);
+            } catch {}
+          }
+        } else {
+          writeFileSync(
+            flagFile,
+            `disabled from flow-bar at ${new Date().toISOString()}`,
+          );
+        }
+        break;
+      }
+    }
+  });
+
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
     "[voicelayer] MCP server v2.0 running — modes: announce, brief, consult, converse, replay, toggle",
   );
+  console.error("[voicelayer] Flow Bar socket server active");
 }
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  stopSocketServer();
+});
+process.on("SIGINT", () => {
+  stopSocketServer();
+});
 
 main().catch((err) => {
   console.error("[voicelayer] Fatal:", err);
+  stopSocketServer();
   process.exit(1);
 });

@@ -15,8 +15,17 @@ Claude Code session
   │   │     3. Fallback → text-only
   │   │   Also: replay_index, enabled (toggle)
   │   ├── voice_ask(message, press_to_talk?) → BLOCKING speak + record + transcribe
-  │   └── qa_voice_* → backward-compat aliases
+  │   ├── qa_voice_* → backward-compat aliases
+  │   └── Unix socket (/tmp/voicelayer.sock) → Flow Bar IPC
+  │       ├── Broadcasts: state, speech, transcription, error events (NDJSON)
+  │       └── Receives: stop, replay, toggle commands
   └── Supabase MCP (data persistence)
+
+Flow Bar (separate native macOS app — SwiftUI)
+  ├── Connects to /tmp/voicelayer.sock as client
+  ├── Shows voice state (idle/speaking/recording/transcribing)
+  ├── Animated waveform bars
+  └── Controls: stop, replay, toggle
 ```
 
 ## TTS Backends (Three-Tier)
@@ -223,6 +232,19 @@ For Wispr Flow cloud STT (only if whisper.cpp not installed), add env:
 
 Grant microphone access to your terminal app (System Settings > Privacy > Microphone).
 
+### Flow Bar (floating pill widget)
+
+```bash
+# From the voicelayer repo:
+voicelayer bar          # Build + launch the floating pill
+voicelayer bar-stop     # Stop the Flow Bar
+
+# Or manually:
+cd flow-bar && swift build -c release && .build/release/FlowBar
+```
+
+The Flow Bar connects to `/tmp/voicelayer.sock` and shows real-time voice state. Requires macOS 14+.
+
 ## MCP Tools
 
 | Tool | What It Does | Returns |
@@ -304,6 +326,8 @@ voicelayer/
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
 │   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
+│   ├── socket-server.ts       # Unix domain socket server for Flow Bar IPC
+│   ├── socket-protocol.ts     # Socket protocol types + serialization (NDJSON)
 │   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based voice session mutex
 │   ├── session.ts             # Session lifecycle (save/load/generate)
@@ -318,7 +342,18 @@ voicelayer/
 │   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
 │   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
 │   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
-│   └── __tests__/             # 116 tests, 268 expect() calls
+│   └── __tests__/             # 166 tests, 367 expect() calls
+├── flow-bar/                    # SwiftUI macOS floating pill app
+│   ├── Package.swift            # SPM executable, macOS 14+
+│   ├── Sources/FlowBar/
+│   │   ├── FlowBarApp.swift     # @main, AppDelegate, MenuBarExtra
+│   │   ├── FloatingPanel.swift  # NSPanel subclass (non-focus-stealing)
+│   │   ├── BarView.swift        # Main pill view with vibrancy
+│   │   ├── WaveformView.swift   # 7-bar 60fps waveform animation
+│   │   ├── VoiceState.swift     # @Observable state model
+│   │   ├── SocketClient.swift   # NWConnection Unix socket client
+│   │   └── Theme.swift          # Colors, sizes, animation constants
+│   └── mock_server.py           # Python test harness
 ├── models/
 │   └── silero_vad.onnx        # Silero VAD v5 model (~2.3MB)
 ├── com.golems.tts-daemon.plist  # macOS launchd plist for TTS daemon
@@ -353,6 +388,7 @@ voicelayer/
 | Voice Profile | `~/.voicelayer/voices/{name}/profile.yaml` |
 | yt-dlp Archive | `~/.voicelayer/voices/{name}/.archive` |
 | Qwen3-TTS Model | `~/.voicelayer/models/qwen3-tts-4bit/` |
+| Flow Bar Socket | `/tmp/voicelayer.sock` |
 | TTS Daemon Logs | `/tmp/voicelayer-tts-daemon.{stdout,stderr}.log` |
 
 ## Dependencies

@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+FLOW_BAR_DIR="$(cd "$SCRIPT_DIR/../../flow-bar" && pwd)"
+
 case "${1:-}" in
     extract)
         shift
@@ -19,6 +21,21 @@ case "${1:-}" in
         shift
         exec python3 "$SCRIPT_DIR/../tts_daemon.py" "$@"
         ;;
+    bar)
+        shift
+        echo "[voicelayer] Building Flow Bar..."
+        cd "$FLOW_BAR_DIR"
+        swift build -c release 2>&1 | tail -1
+        echo "[voicelayer] Launching Flow Bar..."
+        exec ".build/release/FlowBar" "$@"
+        ;;
+    bar-stop)
+        if pkill -f "FlowBar" 2>/dev/null; then
+            echo "[voicelayer] Flow Bar stopped."
+        else
+            echo "[voicelayer] Flow Bar is not running."
+        fi
+        ;;
     --help|-h|"")
         echo "Usage: voicelayer <command> [options]"
         echo ""
@@ -26,11 +43,14 @@ case "${1:-}" in
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
+        echo "  bar        Build and launch Flow Bar (floating pill widget)"
+        echo "  bar-stop   Stop the Flow Bar if running"
         echo ""
         echo "Examples:"
         echo "  voicelayer extract --source 'https://youtube.com/@t3dotgg' --name theo --count 20"
         echo "  voicelayer clone --name theo"
         echo "  voicelayer daemon --port 8880"
+        echo "  voicelayer bar"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."
         ;;

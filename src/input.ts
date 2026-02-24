@@ -36,6 +36,7 @@ import {
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
+import { broadcast } from "./socket-server";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -245,6 +246,14 @@ export async function recordToBuffer(
         })();
       }
 
+      // Broadcast recording state to Flow Bar
+      broadcast({
+        type: "state",
+        state: "recording",
+        mode: pressToTalk ? "ptt" : "vad",
+        silence_mode: silenceMode,
+      });
+
       console.error(
         pressToTalk
           ? "[voicelayer] Push-to-talk: recording... touch /tmp/voicelayer-stop to end"
@@ -300,6 +309,10 @@ export async function recordToBuffer(
               const speechDetected = isSpeech(speechProb);
 
               if (speechDetected) {
+                if (!hasSpeech) {
+                  // First speech detection — notify Flow Bar
+                  broadcast({ type: "speech", detected: true });
+                }
                 hasSpeech = true;
                 consecutiveSilentChunks = 0;
               } else {
@@ -364,7 +377,13 @@ export async function waitForInput(
 ): Promise<string | null> {
   // Record audio to buffer
   const pcmData = await recordToBuffer(timeoutMs, silenceMode, pressToTalk);
-  if (!pcmData) return null;
+  if (!pcmData) {
+    broadcast({ type: "state", state: "idle" });
+    return null;
+  }
+
+  // Broadcast transcribing state to Flow Bar
+  broadcast({ type: "state", state: "transcribing" });
 
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
@@ -380,7 +399,21 @@ export async function waitForInput(
       `[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`,
     );
 
+    // Broadcast transcription result + idle state to Flow Bar
+    if (result.text) {
+      broadcast({ type: "transcription", text: result.text });
+    }
+    broadcast({ type: "state", state: "idle" });
+
     return result.text || null;
+  } catch (err) {
+    broadcast({
+      type: "error",
+      message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle" });
+    throw err;
   } finally {
     // Clean up temp file
     try {
