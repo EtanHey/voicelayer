@@ -31,7 +31,7 @@ struct TeleprompterView: View {
                 HStack(spacing: 5) {
                     ForEach(0 ..< words.count, id: \.self) { index in
                         Text(words[index])
-                            .font(.system(size: 12, weight: index == currentIndex ? .bold : .medium))
+                            .font(.system(size: 11, weight: index == currentIndex ? .bold : .medium))
                             .foregroundStyle(.white.opacity(opacityFor(index)))
                             .id(index)
                     }
@@ -41,7 +41,7 @@ struct TeleprompterView: View {
             .scrollDisabled(true) // User can't scroll — we control position
             .onChange(of: currentIndex) { _, newIndex in
                 withAnimation(.smooth(duration: 0.3)) {
-                    proxy.scrollTo(newIndex, anchor: .leading)
+                    proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
         }
@@ -62,7 +62,7 @@ struct TeleprompterView: View {
                 .frame(width: 12)
             }
         }
-        .frame(maxWidth: 180)
+        .frame(maxWidth: 220)
         .onAppear { startAnimating() }
         .onDisappear { stopAnimating() }
         .onChange(of: text) { _, _ in restart() }
@@ -87,12 +87,27 @@ struct TeleprompterView: View {
             for i in 0 ..< words.count {
                 currentIndex = i
                 let word = words[i]
-                let charTime = Self.baseDelay + Double(word.count) * Self.perCharDelay
-                let delay = min(Self.maxDelay, max(Self.minDelay, charTime))
+                let delay = Self.estimateDelay(for: word)
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
             }
         }
+    }
+
+    /// Estimate speaking duration for a word based on length and punctuation.
+    private static func estimateDelay(for word: String) -> Double {
+        let charTime = baseDelay + Double(word.count) * perCharDelay
+        var delay = min(maxDelay, max(minDelay, charTime))
+
+        // Punctuation pauses — commas/semicolons add a short pause, periods/questions longer
+        if let last = word.last {
+            if last == "." || last == "!" || last == "?" {
+                delay += 0.15
+            } else if last == "," || last == ";" || last == ":" {
+                delay += 0.08
+            }
+        }
+        return delay
     }
 
     private func stopAnimating() {
