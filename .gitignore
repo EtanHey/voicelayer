@@ -7,3 +7,6 @@ bun.lockb
 site/
 docs.local/
 claude.scratchpad.md
+
+# Swift build artifacts
+flow-bar/.build/

@@ -967,10 +967,10 @@ async function main() {
     );
   }
 
-  // Start the Flow Bar socket server alongside MCP
+  // Start the Voice Bar socket server alongside MCP
   startSocketServer();
 
-  // Handle commands from Flow Bar clients
+  // Handle commands from Voice Bar clients
   onCommand((command: SocketCommand) => {
     switch (command.cmd) {
       case "stop":
@@ -1027,7 +1027,7 @@ async function main() {
   console.error(
     "[voicelayer] MCP server v2.0 running — modes: announce, brief, consult, converse, replay, toggle",
   );
-  console.error("[voicelayer] Flow Bar socket server active");
+  console.error("[voicelayer] Voice Bar socket server active");
 }
 
 // Graceful shutdown

@@ -1,5 +1,5 @@
 /**
- * Unix domain socket server for VoiceLayer ↔ Flow Bar communication.
+ * Unix domain socket server for VoiceLayer ↔ Voice Bar communication.
  *
  * Creates a socket at /tmp/voicelayer.sock, broadcasts NDJSON state events
  * to all connected clients, and receives commands.
@@ -151,7 +151,7 @@ export function stopSocketServer(): void {
 }
 
 /**
- * Broadcast an event to ALL connected Flow Bar clients.
+ * Broadcast an event to ALL connected Voice Bar clients.
  * No-op if no clients are connected or server isn't running.
  */
 export function broadcast(event: SocketEvent): void {
@@ -163,7 +163,7 @@ export function broadcast(event: SocketEvent): void {
 }
 
 /**
- * Register a handler for commands received from Flow Bar clients.
+ * Register a handler for commands received from Voice Bar clients.
  * Only one handler is supported — last one wins.
  */
 export function onCommand(handler: (command: SocketCommand) => void): void {

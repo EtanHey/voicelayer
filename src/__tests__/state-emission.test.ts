@@ -2,7 +2,7 @@
  * Tests for Phase 2: State emission via socket broadcast.
  *
  * Verifies that tts.ts and input.ts broadcast correct state events
- * to connected Flow Bar clients through the socket server.
+ * to connected Voice Bar clients through the socket server.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, unlinkSync } from "fs";
