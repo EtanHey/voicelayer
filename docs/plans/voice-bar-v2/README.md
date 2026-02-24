@@ -18,7 +18,7 @@ v2 makes it a full Wispr Flow replacement — the user can unsubscribe from Wisp
 
 | # | Phase | Folder | Status | PR | Notes |
 |---|-------|--------|--------|----|-------|
-| 1 | Teleprompter Polish | [phase-1](phase-1/) | pending | — | Scroll anchor, replay, expanding view |
+| 1 | Teleprompter Polish | [phase-1](phase-1/) | done | #28 | Scroll anchor, replay, punctuation timing, wider view |
 | 2 | Interactive Recording | [phase-2](phase-2/) | pending | — | Click-to-record, paste-on-stop |
 | 3 | Visual Polish & UX | [phase-3](phase-3/) | pending | — | Audio waveform, drag, idle collapse |
 | 4 | Live Dictation | [phase-4](phase-4/) | pending | — | Streaming STT — needs Etan present |
