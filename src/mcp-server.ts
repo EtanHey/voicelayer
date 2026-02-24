@@ -51,6 +51,7 @@ import {
   startSocketServer,
   stopSocketServer,
   onCommand,
+  broadcast,
 } from "./socket-server";
 import type { SocketCommand } from "./socket-protocol";
 
