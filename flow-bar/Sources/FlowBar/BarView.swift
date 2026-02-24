@@ -1,39 +1,13 @@
-/// BarView.swift — Main pill UI for Flow Bar.
-///
-/// Shows state icon, status label, waveform (when recording/speaking),
-/// and action buttons. Uses NSVisualEffectView for reliable vibrancy
-/// in transparent NSPanel.
-///
-/// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
-/// state border glow, right-click context menu.
+// BarView.swift — Main pill UI for Voice Bar.
+//
+// Solid dark pill with dynamic width — shrink-wraps content per state.
+// No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
+//
+// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
+// state border glow, right-click context menu.
 
-import SwiftUI
 import AppKit
-
-// MARK: - NSVisualEffectView wrapper
-
-/// Wraps NSVisualEffectView for reliable behind-window vibrancy.
-/// Setting state = .active keeps blur even when panel is not key window.
-struct VisualEffectBlur: NSViewRepresentable {
-    var material: NSVisualEffectView.Material
-    var blendingMode: NSVisualEffectView.BlendingMode
-    var state: NSVisualEffectView.State = .active
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.material     = material
-        v.blendingMode = blendingMode
-        v.state        = state
-        v.isEmphasized = true
-        return v
-    }
-
-    func updateNSView(_ v: NSVisualEffectView, context: Context) {
-        v.material     = material
-        v.blendingMode = blendingMode
-        v.state        = state
-    }
-}
+import SwiftUI
 
 // MARK: - Pulsing recording dot
 
@@ -61,25 +35,30 @@ struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             leadingIndicator
             stateContent
-            Spacer(minLength: 4)
             actionButtons
         }
-        .padding(.horizontal, 12)
-        .frame(width: Theme.pillWidth, height: Theme.pillHeight)
-        .background {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-        }
+        .padding(.horizontal, 14)
+        .frame(height: Theme.pillHeight)
+        .frame(minWidth: Theme.pillMinWidth)
+        .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
             // State-dependent border glow
             Capsule()
                 .strokeBorder(borderColor, lineWidth: borderWidth)
         }
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-        .opacity(state.mode == .disconnected ? 0.6 : 1.0)
+        .overlay {
+            // Subtle inner edge for depth
+            Capsule()
+                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
+        }
+        // No drop shadow — clean edges like Wispr Flow
+        .opacity(state.mode == .disconnected ? 0.7 : 1.0)
+        .fixedSize()
+        .frame(maxWidth: Theme.pillMaxWidth, alignment: .center)
         .animation(Theme.stateTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .onChange(of: state.mode) { _, newMode in
@@ -99,7 +78,7 @@ struct BarView: View {
         if newMode == .error {
             errorDismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
-                if !Task.isCancelled && state.mode == .error {
+                if !Task.isCancelled, state.mode == .error {
                     state.mode = .idle
                     state.errorMessage = nil
                 }
@@ -111,18 +90,18 @@ struct BarView: View {
 
     private var borderColor: Color {
         switch state.mode {
-        case .recording:     return Theme.recordingColor.opacity(0.5)
-        case .speaking:      return Theme.speakingColor.opacity(0.3)
-        case .error:         return Theme.errorColor.opacity(0.5)
-        default:             return .clear
+        case .recording: Theme.recordingColor.opacity(0.5)
+        case .speaking: Theme.speakingColor.opacity(0.3)
+        case .error: Theme.errorColor.opacity(0.5)
+        default: .clear
         }
     }
 
     private var borderWidth: CGFloat {
         switch state.mode {
-        case .recording, .error:  return 1.5
-        case .speaking:           return 1.0
-        default:                  return 0
+        case .recording, .error: 1.5
+        case .speaking: 1.0
+        default: 0
         }
     }
 
@@ -134,7 +113,7 @@ struct BarView: View {
             PulsingDot()
         } else {
             Circle()
-                .fill(state.isConnected ? Color.green : Color.red.opacity(0.7))
+                .fill(state.isConnected ? Color.green : Color.red)
                 .frame(width: 6, height: 6)
         }
     }
@@ -151,9 +130,13 @@ struct BarView: View {
                 audioLevel: nil
             )
         case .speaking:
-            // Shimmer waveform during speaking
+            // Shimmer waveform + teleprompter during speaking
             WaveformView(mode: .idle, audioLevel: nil)
-            statusLabel
+            if !state.statusText.isEmpty {
+                TeleprompterView(text: state.statusText)
+            } else {
+                statusLabel
+            }
         default:
             statusIcon
             statusLabel
@@ -172,12 +155,12 @@ struct BarView: View {
 
     private var iconName: String {
         switch state.mode {
-        case .idle:          return "mic.fill"
-        case .speaking:      return "speaker.wave.2.fill"
-        case .recording:     return "waveform"
-        case .transcribing:  return "text.bubble"
-        case .error:         return "exclamationmark.triangle.fill"
-        case .disconnected:  return "wifi.slash"
+        case .idle: "mic.fill"
+        case .speaking: "speaker.wave.2.fill"
+        case .recording: "waveform"
+        case .transcribing: "text.bubble"
+        case .error: "exclamationmark.triangle.fill"
+        case .disconnected: "wifi.slash"
         }
     }
 
@@ -186,21 +169,39 @@ struct BarView: View {
     private var statusLabel: some View {
         Text(statusText)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.primary)
+            .foregroundStyle(.white.opacity(0.9))
             .lineLimit(1)
-            .truncationMode(.tail)
             .contentTransition(.interpolate)
+            .mask {
+                // Leading fade when text is trimmed — words ghost out to the left
+                if textIsTrimmed {
+                    HStack(spacing: 0) {
+                        LinearGradient(
+                            colors: [.clear, .white],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(width: 20)
+                        Color.white
+                    }
+                } else {
+                    Color.white
+                }
+            }
     }
+
+    /// Max words shown in the pill for speaking/transcript text.
+    private static let maxDisplayWords = 4
 
     private var statusText: String {
         switch state.mode {
         case .idle:
             if !state.transcript.isEmpty {
-                return state.transcript  // Show last transcription briefly
+                return Self.lastWords(state.transcript)
             }
             return "Ready"
         case .speaking:
-            return state.statusText.isEmpty ? "Speaking..." : state.statusText
+            return "Speaking..."
         case .recording:
             return "Listening..."
         case .transcribing:
@@ -212,12 +213,33 @@ struct BarView: View {
         }
     }
 
+    /// Whether the displayed text was trimmed (needs leading fade).
+    private var textIsTrimmed: Bool {
+        switch state.mode {
+        case .idle:
+            !state.transcript.isEmpty
+                && state.transcript.split(separator: " ").count > Self.maxDisplayWords
+        default:
+            false
+        }
+    }
+
+    /// Return the last N words of a string (no ellipsis — leading fade handles it).
+    private static func lastWords(_ text: String) -> String {
+        let words = text.split(separator: " ")
+        if words.count <= maxDisplayWords { return text }
+        return words.suffix(maxDisplayWords).joined(separator: " ")
+    }
+
     // MARK: - Action buttons
 
-    @ViewBuilder
     private var actionButtons: some View {
         HStack(spacing: 2) {
-            if state.mode == .recording || state.mode == .speaking {
+            if state.mode == .recording {
+                pillButton(icon: "xmark") { state.cancel() }
+                pillButton(icon: "stop.fill") { state.stop() }
+            }
+            if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { state.stop() }
             }
             if state.mode == .idle {
@@ -230,7 +252,7 @@ struct BarView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.8))
+                .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 26, height: 26)
                 .contentShape(Circle())
         }

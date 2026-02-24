@@ -1,14 +1,14 @@
 /**
- * Socket protocol types for VoiceLayer ↔ Flow Bar communication.
+ * Socket protocol types for VoiceLayer ↔ Voice Bar communication.
  *
  * Transport: Unix domain socket at /tmp/voicelayer.sock
  * Framing: Newline-delimited JSON (NDJSON) — one JSON object per line, \n terminated.
  *
  * AIDEV-NOTE: This is the contract between the Bun socket server and the
- * SwiftUI Flow Bar client. Both sides must agree on these types.
+ * SwiftUI Voice Bar client. Both sides must agree on these types.
  */
 
-// --- Events: VoiceLayer → Flow Bar ---
+// --- Events: VoiceLayer → Voice Bar ---
 
 export type VoiceLayerState =
   | "idle"
@@ -55,7 +55,7 @@ export type SocketEvent =
   | TranscriptionEvent
   | ErrorEvent;
 
-// --- Commands: Flow Bar → VoiceLayer ---
+// --- Commands: Voice Bar → VoiceLayer ---
 
 export interface StopCommand {
   cmd: "stop";

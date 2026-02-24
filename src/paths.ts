@@ -50,5 +50,5 @@ export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
 /** Combined voice disabled flag — checked by CC PreToolUse hook to block all voice tools. */
 export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
 
-/** Unix domain socket for Flow Bar IPC — VoiceLayer creates, Flow Bar connects. */
+/** Unix domain socket for Voice Bar IPC — VoiceLayer creates, Voice Bar connects. */
 export const SOCKET_PATH = tmpPath("voicelayer.sock");

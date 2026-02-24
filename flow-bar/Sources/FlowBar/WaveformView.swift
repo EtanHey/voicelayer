@@ -1,12 +1,12 @@
-/// WaveformView.swift — Animated 7-bar waveform visualization.
-///
-/// Three modes:
-///   idle           — gentle breathing, barely visible
-///   listening      — medium height, gentle swaying
-///   speechDetected — active, lively movement
-///
-/// Uses TimelineView at 60fps with golden-ratio phase offsets
-/// so bars never synchronize. Center bars are "louder" for a natural arc.
+// WaveformView.swift — Animated 7-bar waveform visualization.
+//
+// Three modes:
+//   idle           — gentle breathing, barely visible
+//   listening      — medium height, gentle swaying
+//   speechDetected — active, lively movement
+//
+// Uses TimelineView at 60fps with golden-ratio phase offsets
+// so bars never synchronize. Center bars are "louder" for a natural arc.
 
 import SwiftUI
 
@@ -39,7 +39,7 @@ struct WaveformView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
             HStack(spacing: barSpacing) {
-                ForEach(0..<barCount, id: \.self) { index in
+                ForEach(0 ..< barCount, id: \.self) { index in
                     WaveformBar(
                         index: index,
                         barCount: barCount,
@@ -74,13 +74,13 @@ private struct WaveformBar: View {
     let minHeight: CGFloat
     let barWidth: CGFloat
 
-    // Golden-ratio-based offsets so bars never sync up
+    /// Golden-ratio-based offsets so bars never sync up
     private var phaseOffset: Double {
         let phi = 1.618033988749895
         return Double(index) * phi
     }
 
-    // Center bars are "louder" -- natural arc shape
+    /// Center bars are "louder" -- natural arc shape
     private var centerWeight: Double {
         let center = Double(barCount - 1) / 2.0
         let distance = abs(Double(index) - center) / center
@@ -100,18 +100,16 @@ private struct WaveformBar: View {
     // MARK: - Height Calculation
 
     private var barHeight: CGFloat {
-        let normalized: Double
-
-        switch mode {
+        let normalized: Double = switch mode {
         case .idle:
-            normalized = idleLevel
+            idleLevel
         case .listening:
-            normalized = listeningLevel
+            listeningLevel
         case .speechDetected:
             if let level = audioLevel {
-                normalized = audioLevelDriven(level)
+                audioLevelDriven(level)
             } else {
-                normalized = speechSimulatedLevel
+                speechSimulatedLevel
             }
         }
 
@@ -134,20 +132,20 @@ private struct WaveformBar: View {
         return 0.25 + primary * 0.2 * centerWeight + secondary + drift
     }
 
-    // Speech detected: lively
+    /// Speech detected: lively
     private var speechSimulatedLevel: Double {
-        let fast    = sin(time * 8.5 + phaseOffset * 2.3) * 0.25
-        let medium  = sin(time * 4.2 + phaseOffset * 3.7) * 0.2
-        let slow    = sin(time * 1.8 + phaseOffset * 1.1) * 0.15
-        let pulse   = sin(time * 6.1 + phaseOffset * 4.9) * 0.1
-        let jitter  = sin(time * 13.7 + phaseOffset * 7.3) * sin(time * 9.1 + phaseOffset * 5.2) * 0.12
+        let fast = sin(time * 8.5 + phaseOffset * 2.3) * 0.25
+        let medium = sin(time * 4.2 + phaseOffset * 3.7) * 0.2
+        let slow = sin(time * 1.8 + phaseOffset * 1.1) * 0.15
+        let pulse = sin(time * 6.1 + phaseOffset * 4.9) * 0.1
+        let jitter = sin(time * 13.7 + phaseOffset * 7.3) * sin(time * 9.1 + phaseOffset * 5.2) * 0.12
         let base = 0.55 * centerWeight
         return base + fast + medium + slow + pulse + jitter
     }
 
-    // Audio-driven (v2)
+    /// Audio-driven (v2)
     private func audioLevelDriven(_ level: Double) -> Double {
-        let fast   = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
+        let fast = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
         let jitter = sin(time * 12.0 + phaseOffset * 6.0) * 0.05
         let envelope = level * centerWeight
         return 0.15 + envelope * 0.75 + fast + jitter
@@ -157,25 +155,25 @@ private struct WaveformBar: View {
 
     private var barColor: Color {
         switch mode {
-        case .idle:           return Theme.idleColor
-        case .listening:      return Theme.recordingColor
-        case .speechDetected: return Theme.recordingColor
+        case .idle: Theme.idleColor
+        case .listening: Theme.recordingColor
+        case .speechDetected: Theme.recordingColor
         }
     }
 
     private var glowOpacity: Double {
         switch mode {
-        case .idle:           return 0
-        case .listening:      return 0.25
-        case .speechDetected: return 0.45
+        case .idle: 0
+        case .listening: 0.25
+        case .speechDetected: 0.45
         }
     }
 
     private var glowRadius: CGFloat {
         switch mode {
-        case .idle:           return 0
-        case .listening:      return 3
-        case .speechDetected: return 5
+        case .idle: 0
+        case .listening: 3
+        case .speechDetected: 5
         }
     }
 }

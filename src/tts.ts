@@ -312,11 +312,11 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
 
-  // Broadcast speaking state to Flow Bar
+  // Broadcast speaking state to Voice Bar
   broadcast({
     type: "state",
     state: "speaking",
-    text: text.slice(0, 200), // Truncate for IPC — Flow Bar only needs preview
+    text: text.slice(0, 200), // Truncate for IPC — Voice Bar only needs preview
     voice: resolved.voice,
   });
 

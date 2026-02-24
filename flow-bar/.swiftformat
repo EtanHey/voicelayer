@@ -1,0 +1,12 @@
+--swiftversion 5.10
+--indent 4
+--indentcase false
+--trimwhitespace always
+--voidtype void
+--semicolons never
+--stripunusedargs closure-only
+--maxwidth 120
+
+# Disable rules that conflict with our style
+--disable acronyms
+--disable wrapMultilineStatementBraces

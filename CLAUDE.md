@@ -16,12 +16,12 @@ Claude Code session
   │   │   Also: replay_index, enabled (toggle)
   │   ├── voice_ask(message, press_to_talk?) → BLOCKING speak + record + transcribe
   │   ├── qa_voice_* → backward-compat aliases
-  │   └── Unix socket (/tmp/voicelayer.sock) → Flow Bar IPC
+  │   └── Unix socket (/tmp/voicelayer.sock) → Voice Bar IPC
   │       ├── Broadcasts: state, speech, transcription, error events (NDJSON)
   │       └── Receives: stop, replay, toggle commands
   └── Supabase MCP (data persistence)
 
-Flow Bar (separate native macOS app — SwiftUI)
+Voice Bar (separate native macOS app — SwiftUI)
   ├── Connects to /tmp/voicelayer.sock as client
   ├── Shows voice state (idle/speaking/recording/transcribing)
   ├── Animated waveform bars
@@ -232,18 +232,18 @@ For Wispr Flow cloud STT (only if whisper.cpp not installed), add env:
 
 Grant microphone access to your terminal app (System Settings > Privacy > Microphone).
 
-### Flow Bar (floating pill widget)
+### Voice Bar (floating pill widget)
 
 ```bash
 # From the voicelayer repo:
 voicelayer bar          # Build + launch the floating pill
-voicelayer bar-stop     # Stop the Flow Bar
+voicelayer bar-stop     # Stop the Voice Bar
 
 # Or manually:
 cd flow-bar && swift build -c release && .build/release/FlowBar
 ```
 
-The Flow Bar connects to `/tmp/voicelayer.sock` and shows real-time voice state. Requires macOS 14+.
+The Voice Bar connects to `/tmp/voicelayer.sock` and shows real-time voice state. Requires macOS 14+.
 
 ## MCP Tools
 
@@ -326,7 +326,7 @@ voicelayer/
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
 │   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
-│   ├── socket-server.ts       # Unix domain socket server for Flow Bar IPC
+│   ├── socket-server.ts       # Unix domain socket server for Voice Bar IPC
 │   ├── socket-protocol.ts     # Socket protocol types + serialization (NDJSON)
 │   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based voice session mutex
@@ -388,7 +388,7 @@ voicelayer/
 | Voice Profile | `~/.voicelayer/voices/{name}/profile.yaml` |
 | yt-dlp Archive | `~/.voicelayer/voices/{name}/.archive` |
 | Qwen3-TTS Model | `~/.voicelayer/models/qwen3-tts-4bit/` |
-| Flow Bar Socket | `/tmp/voicelayer.sock` |
+| Voice Bar Socket | `/tmp/voicelayer.sock` |
 | TTS Daemon Logs | `/tmp/voicelayer-tts-daemon.{stdout,stderr}.log` |
 
 ## Dependencies

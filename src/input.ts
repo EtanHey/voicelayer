@@ -246,7 +246,7 @@ export async function recordToBuffer(
         })();
       }
 
-      // Broadcast recording state to Flow Bar
+      // Broadcast recording state to Voice Bar
       broadcast({
         type: "state",
         state: "recording",
@@ -310,7 +310,7 @@ export async function recordToBuffer(
 
               if (speechDetected) {
                 if (!hasSpeech) {
-                  // First speech detection — notify Flow Bar
+                  // First speech detection — notify Voice Bar
                   broadcast({ type: "speech", detected: true });
                 }
                 hasSpeech = true;
@@ -382,7 +382,7 @@ export async function waitForInput(
     return null;
   }
 
-  // Broadcast transcribing state to Flow Bar
+  // Broadcast transcribing state to Voice Bar
   broadcast({ type: "state", state: "transcribing" });
 
   // Save as WAV to temp file
@@ -399,7 +399,7 @@ export async function waitForInput(
       `[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`,
     );
 
-    // Broadcast transcription result + idle state to Flow Bar
+    // Broadcast transcription result + idle state to Voice Bar
     if (result.text) {
       broadcast({ type: "transcription", text: result.text });
     }
