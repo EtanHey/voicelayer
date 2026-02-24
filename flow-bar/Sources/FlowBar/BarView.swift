@@ -1,7 +1,11 @@
 /// BarView.swift — Main pill UI for Flow Bar.
 ///
-/// Shows state icon, status label, waveform (when recording), and action buttons.
-/// Uses NSVisualEffectView for reliable vibrancy in transparent NSPanel.
+/// Shows state icon, status label, waveform (when recording/speaking),
+/// and action buttons. Uses NSVisualEffectView for reliable vibrancy
+/// in transparent NSPanel.
+///
+/// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
+/// state border glow, right-click context menu.
 
 import SwiftUI
 import AppKit
@@ -31,14 +35,34 @@ struct VisualEffectBlur: NSViewRepresentable {
     }
 }
 
+// MARK: - Pulsing recording dot
+
+struct PulsingDot: View {
+    @State private var isPulsing = false
+
+    var body: some View {
+        Circle()
+            .fill(Theme.recordingColor)
+            .frame(width: 8, height: 8)
+            .scaleEffect(isPulsing ? 1.3 : 1.0)
+            .opacity(isPulsing ? 0.7 : 1.0)
+            .animation(
+                .easeInOut(duration: 0.75).repeatForever(autoreverses: true),
+                value: isPulsing
+            )
+            .onAppear { isPulsing = true }
+    }
+}
+
 // MARK: - Bar View
 
 struct BarView: View {
     var state: VoiceState
+    @State private var errorDismissTask: Task<Void, Never>?
 
     var body: some View {
         HStack(spacing: 6) {
-            connectionDot
+            leadingIndicator
             stateContent
             Spacer(minLength: 4)
             actionButtons
@@ -49,30 +73,88 @@ struct BarView: View {
             VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
         }
         .clipShape(Capsule())
+        .overlay {
+            // State-dependent border glow
+            Capsule()
+                .strokeBorder(borderColor, lineWidth: borderWidth)
+        }
         .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+        .opacity(state.mode == .disconnected ? 0.6 : 1.0)
         .animation(Theme.stateTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
+        .onChange(of: state.mode) { _, newMode in
+            handleModeChange(newMode)
+        }
+        .contextMenu {
+            Button("Replay Last") { state.replay() }
+            Divider()
+            Button("Stop") { state.stop() }
+        }
     }
 
-    // MARK: - Connection indicator
+    // MARK: - Error auto-dismiss
 
-    private var connectionDot: some View {
-        Circle()
-            .fill(state.isConnected ? Color.green : Color.red.opacity(0.7))
-            .frame(width: 6, height: 6)
+    private func handleModeChange(_ newMode: VoiceMode) {
+        errorDismissTask?.cancel()
+        if newMode == .error {
+            errorDismissTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                if !Task.isCancelled && state.mode == .error {
+                    state.mode = .idle
+                    state.errorMessage = nil
+                }
+            }
+        }
+    }
+
+    // MARK: - Border glow
+
+    private var borderColor: Color {
+        switch state.mode {
+        case .recording:     return Theme.recordingColor.opacity(0.5)
+        case .speaking:      return Theme.speakingColor.opacity(0.3)
+        case .error:         return Theme.errorColor.opacity(0.5)
+        default:             return .clear
+        }
+    }
+
+    private var borderWidth: CGFloat {
+        switch state.mode {
+        case .recording, .error:  return 1.5
+        case .speaking:           return 1.0
+        default:                  return 0
+        }
+    }
+
+    // MARK: - Leading indicator
+
+    @ViewBuilder
+    private var leadingIndicator: some View {
+        if state.mode == .recording {
+            PulsingDot()
+        } else {
+            Circle()
+                .fill(state.isConnected ? Color.green : Color.red.opacity(0.7))
+                .frame(width: 6, height: 6)
+        }
     }
 
     // MARK: - State content (icon + label OR waveform)
 
     @ViewBuilder
     private var stateContent: some View {
-        if state.mode == .recording {
-            // Show waveform when recording
+        switch state.mode {
+        case .recording:
+            // Active waveform during recording
             WaveformView(
                 mode: state.speechDetected ? .speechDetected : .listening,
                 audioLevel: nil
             )
-        } else {
+        case .speaking:
+            // Shimmer waveform during speaking
+            WaveformView(mode: .idle, audioLevel: nil)
+            statusLabel
+        default:
             statusIcon
             statusLabel
         }
@@ -112,12 +194,21 @@ struct BarView: View {
 
     private var statusText: String {
         switch state.mode {
-        case .idle:          return "Ready"
-        case .speaking:      return state.statusText.isEmpty ? "Speaking..." : state.statusText
-        case .recording:     return "Listening..."
-        case .transcribing:  return "Thinking..."
-        case .error:         return state.errorMessage ?? "Error"
-        case .disconnected:  return "Disconnected"
+        case .idle:
+            if !state.transcript.isEmpty {
+                return state.transcript  // Show last transcription briefly
+            }
+            return "Ready"
+        case .speaking:
+            return state.statusText.isEmpty ? "Speaking..." : state.statusText
+        case .recording:
+            return "Listening..."
+        case .transcribing:
+            return "Thinking..."
+        case .error:
+            return state.errorMessage ?? "Error"
+        case .disconnected:
+            return "Disconnected"
         }
     }
 
