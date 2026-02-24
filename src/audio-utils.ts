@@ -9,10 +9,17 @@ const BYTES_PER_SAMPLE = 2;
 
 /**
  * Calculate RMS energy of a 16-bit signed PCM audio buffer.
- * Used for voice activity / silence detection.
+ *
+ * AIDEV-NOTE: This is NOT used for voice activity detection (energy-based VAD
+ * was removed in Phase 2 — Silero VAD replaced it). This function is only
+ * retained for Wispr Flow WebSocket volume data in stt.ts.
  */
 export function calculateRMS(buffer: Uint8Array): number {
-  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  const view = new DataView(
+    buffer.buffer,
+    buffer.byteOffset,
+    buffer.byteLength,
+  );
   const numSamples = Math.floor(buffer.byteLength / BYTES_PER_SAMPLE);
   if (numSamples === 0) return 0;
 
