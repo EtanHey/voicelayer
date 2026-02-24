@@ -103,19 +103,14 @@ struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
-        .overlay {
-            // Transparent button for click-to-record — uses Button (not onTapGesture)
-            // so it works with isMovableByWindowBackground on the panel.
+        .onTapGesture {
+            // Click-to-record — onTapGesture has lower priority than Button,
+            // so replay/stop buttons still receive clicks.
             if state.mode == .idle {
-                Button {
-                    NSHapticFeedbackManager.defaultPerformer.perform(
-                        .alignment, performanceTime: .now
-                    )
-                    state.record()
-                } label: {
-                    Color.clear
-                }
-                .buttonStyle(.plain)
+                NSHapticFeedbackManager.defaultPerformer.perform(
+                    .alignment, performanceTime: .now
+                )
+                state.record()
             }
         }
         .contextMenu {

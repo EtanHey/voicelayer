@@ -160,6 +160,7 @@ final class VoiceState {
         case "error":
             mode = .error
             errorMessage = event["message"] as? String ?? "Unknown error"
+            expandFromCollapse() // Ensure error is visible even when collapsed
             // Reset bar-initiated flag on error (e.g., mic disabled)
             barInitiatedRecording = false
             frontmostAppOnRecordStart = nil
