@@ -14,8 +14,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var socketClient: SocketClient?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
+    private var moveObserver: Any?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
+    /// Saved horizontal offset (0.0–1.0) for pill positioning.
+    private var horizontalOffset: CGFloat = Theme.horizontalOffset
+
+    private static let horizontalOffsetKey = "voicebar.horizontalOffset"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // No Dock icon (LSUIElement equivalent)
@@ -38,12 +43,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Floating pill
         let barView = BarView(state: voiceState)
         let hosting = NSHostingView(rootView: barView)
-        hosting.frame = NSRect(x: 0, y: 0, width: Theme.pillMaxWidth + Theme.panelPadding * 2, height: Theme.pillHeight)
+        hosting.frame = NSRect(
+            x: 0, y: 0,
+            width: Theme.pillMaxWidth + Theme.panelPadding * 2,
+            height: Theme.pillExpandedHeight + Theme.panelPadding * 2
+        )
+
+        // Load saved horizontal offset
+        if let saved = UserDefaults.standard.object(forKey: Self.horizontalOffsetKey) as? Double {
+            horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
+        }
 
         let pill = FloatingPillPanel(content: hosting)
-        pill.positionOnScreen()
+        pill.positionOnScreen(horizontalOffset: horizontalOffset)
         pill.orderFront(nil)
         panel = pill
+
+        // Save position when user drags the pill
+        moveObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didMoveNotification,
+            object: pill,
+            queue: .main
+        ) { [weak self] _ in
+            self?.savePanelPosition()
+        }
 
         // Track mouse across screens — move pill to whichever monitor the cursor is on
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
@@ -55,6 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         socketClient?.disconnect()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
+        }
+        if let observer = moveObserver {
+            NotificationCenter.default.removeObserver(observer)
         }
     }
 
@@ -76,8 +102,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only reposition when the screen actually changes
         if targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
-            panel?.positionOnScreen(screens[targetScreen])
+            panel?.positionOnScreen(
+                screens[targetScreen],
+                horizontalOffset: horizontalOffset
+            )
         }
+    }
+
+    // MARK: - Drag persistence
+
+    /// Save the pill's horizontal offset as a percentage of screen width.
+    private func savePanelPosition() {
+        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
+        let visible = screen.visibleFrame
+        let offset = (panel.frame.midX - visible.origin.x) / visible.width
+        let clamped = max(0.05, min(0.95, offset))
+        horizontalOffset = CGFloat(clamped)
+        UserDefaults.standard.set(Double(clamped), forKey: Self.horizontalOffsetKey)
     }
 }
 
