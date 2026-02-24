@@ -16,7 +16,7 @@
 | 2 | State Emission | [phase-2](phase-2/) | done | feature/phase-2-state-emission | PR #21 merged |
 | 3 | SwiftUI App Scaffold | [phase-3](phase-3/) | done | feature/phase-3-swiftui-scaffold | PR #22 merged |
 | 4 | Socket Client + State | [phase-4](phase-4/) | done | feature/phase-4-socket-client-state | PR #23 (merged with Phase 3) |
-| 5 | Waveform + Visual Polish | [phase-5](phase-5/) | pending | | |
+| 5 | Waveform + Visual Polish | [phase-5](phase-5/) | in progress | feature/phase-5-waveform-polish | |
 | 6 | Integration + CLI | [phase-6](phase-6/) | pending | | |
 | 7 | Live Dictation (v1.5) | [phase-7](phase-7/) | pending | | |
 
