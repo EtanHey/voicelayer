@@ -13,7 +13,7 @@
 | # | Phase | Folder | Status | Branch | PR |
 |---|-------|--------|--------|--------|----|
 | 1 | Socket Server (Bun) | [phase-1](phase-1/) | done | feature/phase-1-socket-server | PR #20 merged |
-| 2 | State Emission | [phase-2](phase-2/) | in progress | feature/phase-2-state-emission | |
+| 2 | State Emission | [phase-2](phase-2/) | done | feature/phase-2-state-emission | PR #21 merged |
 | 3 | SwiftUI App Scaffold | [phase-3](phase-3/) | pending | | |
 | 4 | Socket Client + State | [phase-4](phase-4/) | pending | | |
 | 5 | Waveform + Visual Polish | [phase-5](phase-5/) | pending | | |
