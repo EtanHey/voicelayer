@@ -6,6 +6,7 @@
 // AIDEV-NOTE: VoiceMode values must match socket-protocol.ts VoiceLayerState
 // type: "idle" | "speaking" | "recording" | "transcribing"
 
+import AppKit
 import Foundation
 import Observation
 
@@ -36,6 +37,16 @@ final class VoiceState {
     var recordingMode: String? // "vad" or "ptt"
     var silenceMode: String? // "quick" | "standard" | "thoughtful"
 
+    /// Brief confirmation text shown after paste (e.g., "Pasted!").
+    var confirmationText: String?
+
+    /// Whether the current recording was initiated from the Voice Bar (vs MCP).
+    /// When true, transcription result is auto-pasted at the cursor.
+    private var barInitiatedRecording = false
+
+    /// The app that was frontmost when bar-initiated recording started.
+    private var frontmostAppOnRecordStart: NSRunningApplication?
+
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     var sendCommand: (([String: Any]) -> Void)?
@@ -47,6 +58,8 @@ final class VoiceState {
     }
 
     func cancel() {
+        barInitiatedRecording = false
+        frontmostAppOnRecordStart = nil
         sendCommand?(["cmd": "cancel"])
     }
 
@@ -56,6 +69,20 @@ final class VoiceState {
 
     func replay() {
         sendCommand?(["cmd": "replay"])
+    }
+
+    /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
+    func record() {
+        guard mode == .idle else { return }
+        // Set mode optimistically to prevent rapid-tap duplicates
+        mode = .recording
+        confirmationText = nil
+        frontmostAppOnRecordStart = NSWorkspace.shared.frontmostApplication
+        barInitiatedRecording = true
+        sendCommand?([
+            "cmd": "record",
+            "silence_mode": "standard",
+        ])
     }
 
     // MARK: - State updates from socket events
@@ -73,6 +100,11 @@ final class VoiceState {
                 speechDetected = false
                 recordingMode = nil
                 silenceMode = nil
+                // Reset bar-initiated flag if recording was cancelled/timed out
+                if barInitiatedRecording {
+                    barInitiatedRecording = false
+                    frontmostAppOnRecordStart = nil
+                }
             case "speaking":
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
@@ -96,14 +128,61 @@ final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 transcript = text
+                // Auto-paste when recording was bar-initiated
+                if barInitiatedRecording {
+                    barInitiatedRecording = false
+                    pasteTranscription(text)
+                }
             }
 
         case "error":
             mode = .error
             errorMessage = event["message"] as? String ?? "Unknown error"
+            // Reset bar-initiated flag on error (e.g., mic disabled)
+            barInitiatedRecording = false
+            frontmostAppOnRecordStart = nil
 
         default:
             break
         }
+    }
+
+    // MARK: - Paste transcription at cursor
+
+    /// Refocuses the captured app and pastes text via Cmd+V.
+    /// Transcription stays on clipboard (useful for re-pasting, matches Wispr Flow behavior).
+    private func pasteTranscription(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+
+        // Refocus the app that was frontmost when recording started
+        if let app = frontmostAppOnRecordStart {
+            app.activate()
+        }
+        frontmostAppOnRecordStart = nil
+
+        // Small delay for app to regain focus, then simulate Cmd+V
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            Self.simulatePaste()
+
+            // Show brief confirmation
+            self?.confirmationText = "Pasted!"
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                self?.confirmationText = nil
+            }
+        }
+    }
+
+    /// Simulate Cmd+V keypress via CGEvent.
+    private static func simulatePaste() {
+        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        // Virtual key 0x09 = V
+        let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
+        let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        vDown?.flags = .maskCommand
+        vUp?.flags = .maskCommand
+        vDown?.post(tap: .cghidEventTap)
+        vUp?.post(tap: .cghidEventTap)
     }
 }

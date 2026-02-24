@@ -1000,6 +1000,29 @@ async function main() {
         }
         break;
       }
+      case "record": {
+        // Voice Bar initiated recording — fire and forget, results come via socket events
+        if (existsSync(MIC_DISABLED_FILE)) {
+          broadcast({
+            type: "error",
+            message: "Mic is disabled",
+            recoverable: false,
+          });
+          break;
+        }
+        const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
+        const silenceMode = command.silence_mode ?? "standard";
+        const ptt = command.press_to_talk ?? false;
+        // waitForInput broadcasts recording/transcribing/transcription/idle states.
+        // Safety-net: ensure bar returns to idle if an early error occurs.
+        waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
+          console.error(
+            `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          broadcast({ type: "state", state: "idle" });
+        });
+        break;
+      }
       case "toggle": {
         const { scope, enabled } = command;
         const flagFile =

@@ -28,7 +28,7 @@ enum Theme {
 
     /// Dynamic width: pill shrink-wraps content between min and max.
     static let pillMinWidth: CGFloat = 100
-    static let pillMaxWidth: CGFloat = 300
+    static let pillMaxWidth: CGFloat = 360
     static let pillHeight: CGFloat = 44
     static let cornerRadius: CGFloat = 22 // Half of height for capsule
 
@@ -36,6 +36,8 @@ enum Theme {
 
     /// Horizontal position: 80% from left edge of screen (avoids covering Wispr Flow)
     static let horizontalOffset: CGFloat = 0.8
+    /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
+    static let panelPadding: CGFloat = 20
     /// Vertical offset from bottom of visible area
     static let bottomPadding: CGFloat = 12
 
