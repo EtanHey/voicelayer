@@ -988,6 +988,12 @@ async function main() {
       case "replay": {
         const entry = getHistoryEntry(0);
         if (entry && existsSync(entry.file)) {
+          // Broadcast speaking state so Voice Bar shows teleprompter on replay
+          broadcast({
+            type: "state",
+            state: "speaking",
+            text: entry.text.slice(0, 200),
+          });
           playAudioNonBlocking(entry.file);
         }
         break;
