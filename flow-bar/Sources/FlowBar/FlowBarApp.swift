@@ -1,7 +1,8 @@
-/// FlowBarApp.swift — Entry point for Flow Bar.
+/// FlowBarApp.swift — Entry point for Voice Bar.
 ///
 /// Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
 /// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
+/// Tracks mouse across screens — pill follows the cursor.
 
 import SwiftUI
 import AppKit
@@ -13,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let voiceState = VoiceState()
     private var socketClient: SocketClient?
     private var panel: FloatingPillPanel?
+    private var mouseMonitor: Any?
+    /// Track which screen the pill is on to avoid unnecessary repositioning.
+    private var currentScreenIndex: Int = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
 
@@ -39,17 +43,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.frame = NSRect(x: 0, y: 0, width: Theme.pillWidth, height: Theme.pillHeight)
 
         let pill = FloatingPillPanel(content: hosting)
-        pill.positionAtBottom()
+        pill.positionOnScreen()
         pill.orderFront(nil)
         self.panel = pill
+
+        // Track mouse across screens — move pill to whichever monitor the cursor is on
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            self?.handleMouseMoved()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         socketClient?.disconnect()
+        if let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false        // keep running as a menu-bar agent
+    }
+
+    // MARK: - Mouse tracking
+
+    /// Reposition pill when mouse moves to a different screen.
+    private func handleMouseMoved() {
+        let mouseLocation = NSEvent.mouseLocation
+        guard let targetScreen = NSScreen.screens.firstIndex(where: {
+            NSMouseInRect(mouseLocation, $0.frame, false)
+        }) else { return }
+
+        // Only reposition when the screen actually changes
+        if targetScreen != currentScreenIndex {
+            currentScreenIndex = targetScreen
+            panel?.positionOnScreen(NSScreen.screens[targetScreen])
+        }
     }
 }
 
@@ -62,7 +90,7 @@ struct FlowBarApp: App {
     var body: some Scene {
 
         // Menu bar icon + dropdown
-        MenuBarExtra("FlowBar", systemImage: "waveform.circle.fill") {
+        MenuBarExtra("VoiceBar", systemImage: "waveform.circle.fill") {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Circle()
@@ -72,7 +100,7 @@ struct FlowBarApp: App {
                         .font(.system(.caption, weight: .medium))
                 }
                 Divider()
-                Button("Quit Flow Bar") {
+                Button("Quit Voice Bar") {
                     NSApplication.shared.terminate(nil)
                 }
                 .keyboardShortcut("q")

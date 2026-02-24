@@ -23,17 +23,17 @@ case "${1:-}" in
         ;;
     bar)
         shift
-        echo "[voicelayer] Building Flow Bar..."
+        echo "[voicelayer] Building Voice Bar..."
         cd "$FLOW_BAR_DIR"
         swift build -c release 2>&1 | tail -1
-        echo "[voicelayer] Launching Flow Bar..."
+        echo "[voicelayer] Launching Voice Bar..."
         exec ".build/release/FlowBar" "$@"
         ;;
     bar-stop)
         if pkill -f "FlowBar" 2>/dev/null; then
-            echo "[voicelayer] Flow Bar stopped."
+            echo "[voicelayer] Voice Bar stopped."
         else
-            echo "[voicelayer] Flow Bar is not running."
+            echo "[voicelayer] Voice Bar is not running."
         fi
         ;;
     --help|-h|"")
@@ -43,8 +43,8 @@ case "${1:-}" in
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
-        echo "  bar        Build and launch Flow Bar (floating pill widget)"
-        echo "  bar-stop   Stop the Flow Bar if running"
+        echo "  bar        Build and launch Voice Bar (floating pill widget)"
+        echo "  bar-stop   Stop the Voice Bar if running"
         echo ""
         echo "Examples:"
         echo "  voicelayer extract --source 'https://youtube.com/@t3dotgg' --name theo --count 20"

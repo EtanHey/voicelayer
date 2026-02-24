@@ -1,4 +1,4 @@
-/// VoiceState.swift — Observable state model for Flow Bar.
+/// VoiceState.swift — Observable state model for Voice Bar.
 ///
 /// Single source of truth for all UI state. Maps socket protocol events
 /// (from VoiceLayer MCP server) to SwiftUI-friendly properties.

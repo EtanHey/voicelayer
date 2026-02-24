@@ -1,4 +1,4 @@
-/// Theme.swift — Color constants, sizes, and animation parameters for Flow Bar.
+/// Theme.swift — Color constants, sizes, and animation parameters for Voice Bar.
 
 import SwiftUI
 
@@ -19,8 +19,8 @@ enum Theme {
 
     // MARK: - Position
 
-    /// Horizontal position: 60% from left edge of screen
-    static let horizontalOffset: CGFloat = 0.6
+    /// Horizontal position: 80% from left edge of screen (avoids covering Wispr Flow)
+    static let horizontalOffset: CGFloat = 0.8
     /// Vertical offset from bottom of visible area
     static let bottomPadding: CGFloat = 12
 

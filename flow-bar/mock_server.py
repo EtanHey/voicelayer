@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mock VoiceLayer socket server for testing Flow Bar.
+"""Mock VoiceLayer socket server for testing Voice Bar.
 
 Cycles through voice states every 2 seconds so you can verify
 the pill UI updates correctly.
@@ -21,7 +21,7 @@ if os.path.exists(SOCK):
 srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 srv.bind(SOCK)
 srv.listen(1)
-print(f"Listening on {SOCK}  --  run Flow Bar now")
+print(f"Listening on {SOCK}  --  run Voice Bar now")
 
 while True:
     conn, _ = srv.accept()

@@ -1,5 +1,7 @@
 /// FloatingPanel.swift — NSPanel subclass for non-focus-stealing floating pill.
 ///
+/// Follows the user's mouse across multiple monitors.
+///
 /// AIDEV-NOTE: .nonactivatingPanel MUST be in the styleMask at init time.
 /// Setting it later has a known bug (FB16484811) where the WindowServer
 /// tag doesn't update. This is why we use a custom NSPanel subclass
@@ -54,14 +56,21 @@ final class FloatingPillPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
-    /// Position pill at bottom of screen, horizontally offset 60% from the left.
+    /// Position pill at bottom of the given screen (or the screen containing the mouse).
     /// macOS coordinates: origin at bottom-left, Y increases upward.
-    func positionAtBottom() {
-        guard let screen = NSScreen.main else { return }
-        let visible = screen.visibleFrame          // excludes Dock & menu bar
+    func positionOnScreen(_ screen: NSScreen? = nil) {
+        let target = screen ?? screenContainingMouse() ?? NSScreen.main
+        guard let target else { return }
+        let visible = target.visibleFrame          // excludes Dock & menu bar
         let size    = frame.size
         let x = visible.origin.x + (visible.width * Theme.horizontalOffset) - (size.width / 2)
         let y = visible.origin.y + Theme.bottomPadding
         setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    /// Find which screen currently contains the mouse cursor.
+    private func screenContainingMouse() -> NSScreen? {
+        let mouseLocation = NSEvent.mouseLocation
+        return NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
     }
 }

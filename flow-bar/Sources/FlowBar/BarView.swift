@@ -1,4 +1,4 @@
-/// BarView.swift — Main pill UI for Flow Bar.
+/// BarView.swift — Main pill UI for Voice Bar.
 ///
 /// Shows state icon, status label, waveform (when recording/speaking),
 /// and action buttons. Uses NSVisualEffectView for reliable vibrancy
@@ -61,13 +61,13 @@ struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             leadingIndicator
             stateContent
-            Spacer(minLength: 4)
+                .frame(maxWidth: .infinity, alignment: .center)
             actionButtons
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .frame(width: Theme.pillWidth, height: Theme.pillHeight)
         .background {
             VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)

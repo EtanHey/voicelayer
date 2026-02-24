@@ -1,4 +1,4 @@
-/// SocketClient.swift — Unix domain socket client for Flow Bar.
+/// SocketClient.swift — Unix domain socket client for Voice Bar.
 ///
 /// Connects to VoiceLayer's socket at /tmp/voicelayer.sock using Network.framework.
 /// Receives NDJSON state events, sends commands. Auto-reconnects on disconnect.
