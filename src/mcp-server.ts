@@ -1013,12 +1013,13 @@ async function main() {
         const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
         const silenceMode = command.silence_mode ?? "standard";
         const ptt = command.press_to_talk ?? false;
-        // waitForInput broadcasts recording/transcribing/transcription/idle states
-        // It also handles its own error broadcasting, so we just log here
+        // waitForInput broadcasts recording/transcribing/transcription/idle states.
+        // Safety-net: ensure bar returns to idle if an early error occurs.
         waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
           console.error(
             `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
           );
+          broadcast({ type: "state", state: "idle" });
         });
         break;
       }
