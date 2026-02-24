@@ -1,13 +1,13 @@
-/// BarView.swift — Main pill UI for Voice Bar.
-///
-/// Solid dark pill with dynamic width — shrink-wraps content per state.
-/// No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
-///
-/// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
-/// state border glow, right-click context menu.
+// BarView.swift — Main pill UI for Voice Bar.
+//
+// Solid dark pill with dynamic width — shrink-wraps content per state.
+// No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
+//
+// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
+// state border glow, right-click context menu.
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - Pulsing recording dot
 
@@ -78,7 +78,7 @@ struct BarView: View {
         if newMode == .error {
             errorDismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
-                if !Task.isCancelled && state.mode == .error {
+                if !Task.isCancelled, state.mode == .error {
                     state.mode = .idle
                     state.errorMessage = nil
                 }
@@ -90,18 +90,18 @@ struct BarView: View {
 
     private var borderColor: Color {
         switch state.mode {
-        case .recording:     return Theme.recordingColor.opacity(0.5)
-        case .speaking:      return Theme.speakingColor.opacity(0.3)
-        case .error:         return Theme.errorColor.opacity(0.5)
-        default:             return .clear
+        case .recording: Theme.recordingColor.opacity(0.5)
+        case .speaking: Theme.speakingColor.opacity(0.3)
+        case .error: Theme.errorColor.opacity(0.5)
+        default: .clear
         }
     }
 
     private var borderWidth: CGFloat {
         switch state.mode {
-        case .recording, .error:  return 1.5
-        case .speaking:           return 1.0
-        default:                  return 0
+        case .recording, .error: 1.5
+        case .speaking: 1.0
+        default: 0
         }
     }
 
@@ -151,12 +151,12 @@ struct BarView: View {
 
     private var iconName: String {
         switch state.mode {
-        case .idle:          return "mic.fill"
-        case .speaking:      return "speaker.wave.2.fill"
-        case .recording:     return "waveform"
-        case .transcribing:  return "text.bubble"
-        case .error:         return "exclamationmark.triangle.fill"
-        case .disconnected:  return "wifi.slash"
+        case .idle: "mic.fill"
+        case .speaking: "speaker.wave.2.fill"
+        case .recording: "waveform"
+        case .transcribing: "text.bubble"
+        case .error: "exclamationmark.triangle.fill"
+        case .disconnected: "wifi.slash"
         }
     }
 
@@ -214,13 +214,13 @@ struct BarView: View {
     private var textIsTrimmed: Bool {
         switch state.mode {
         case .speaking:
-            return !state.statusText.isEmpty
+            !state.statusText.isEmpty
                 && state.statusText.split(separator: " ").count > Self.maxDisplayWords
         case .idle:
-            return !state.transcript.isEmpty
+            !state.transcript.isEmpty
                 && state.transcript.split(separator: " ").count > Self.maxDisplayWords
         default:
-            return false
+            false
         }
     }
 
@@ -233,7 +233,6 @@ struct BarView: View {
 
     // MARK: - Action buttons
 
-    @ViewBuilder
     private var actionButtons: some View {
         HStack(spacing: 2) {
             if state.mode == .recording {

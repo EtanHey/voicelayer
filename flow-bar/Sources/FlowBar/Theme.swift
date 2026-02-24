@@ -1,20 +1,20 @@
-/// Theme.swift — Design tokens for Voice Bar.
-///
-/// Industrial-minimal aesthetic: solid dark pill, clean white text,
-/// bright state indicators. Dynamic width that breathes with content.
-///
-/// AIDEV-NOTE: Design system documented in memory/voice-bar-design-system.md.
-/// Update both when changing tokens here.
+// Theme.swift — Design tokens for Voice Bar.
+//
+// Industrial-minimal aesthetic: solid dark pill, clean white text,
+// bright state indicators. Dynamic width that breathes with content.
+//
+// AIDEV-NOTE: Design system documented in memory/voice-bar-design-system.md.
+// Update both when changing tokens here.
 
 import SwiftUI
 
 enum Theme {
     // MARK: - Colors
 
-    static let speakingColor = Color(hex: 0x4A90D9)      // Blue
-    static let recordingColor = Color(hex: 0xE54D4D)      // Red
-    static let idleColor = Color(hex: 0xAEAEB2)           // Light gray (legible on dark bg)
-    static let transcribingColor = Color(hex: 0xE5A84D)   // Yellow/orange
+    static let speakingColor = Color(hex: 0x4A90D9) // Blue
+    static let recordingColor = Color(hex: 0xE54D4D) // Red
+    static let idleColor = Color(hex: 0xAEAEB2) // Light gray (legible on dark bg)
+    static let transcribingColor = Color(hex: 0xE5A84D) // Yellow/orange
     static let errorColor = Color.red
 
     // MARK: - Pill background
@@ -30,7 +30,7 @@ enum Theme {
     static let pillMinWidth: CGFloat = 100
     static let pillMaxWidth: CGFloat = 300
     static let pillHeight: CGFloat = 44
-    static let cornerRadius: CGFloat = 22  // Half of height for capsule
+    static let cornerRadius: CGFloat = 22 // Half of height for capsule
 
     // MARK: - Position
 
@@ -48,11 +48,11 @@ enum Theme {
 
     static func stateColor(for mode: VoiceMode) -> Color {
         switch mode {
-        case .idle, .disconnected:  return idleColor
-        case .speaking:             return speakingColor
-        case .recording:            return recordingColor
-        case .transcribing:         return transcribingColor
-        case .error:                return errorColor
+        case .idle, .disconnected: idleColor
+        case .speaking: speakingColor
+        case .recording: recordingColor
+        case .transcribing: transcribingColor
+        case .error: errorColor
         }
     }
 }
@@ -63,9 +63,9 @@ extension Color {
     init(hex: UInt32, opacity: Double = 1.0) {
         self.init(
             .sRGB,
-            red:   Double((hex >> 16) & 0xFF) / 255.0,
-            green: Double((hex >> 8)  & 0xFF) / 255.0,
-            blue:  Double( hex        & 0xFF) / 255.0,
+            red: Double((hex >> 16) & 0xFF) / 255.0,
+            green: Double((hex >> 8) & 0xFF) / 255.0,
+            blue: Double(hex & 0xFF) / 255.0,
             opacity: opacity
         )
     }

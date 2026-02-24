@@ -1,16 +1,15 @@
-/// SocketClient.swift — Unix domain socket client for Voice Bar.
-///
-/// Connects to VoiceLayer's socket at /tmp/voicelayer.sock using Network.framework.
-/// Receives NDJSON state events, sends commands. Auto-reconnects on disconnect.
-///
-/// AIDEV-NOTE: NWConnection cannot be reused after .failed or .cancelled.
-/// Each reconnection creates a brand-new NWConnection instance.
+// SocketClient.swift — Unix domain socket client for Voice Bar.
+//
+// Connects to VoiceLayer's socket at /tmp/voicelayer.sock using Network.framework.
+// Receives NDJSON state events, sends commands. Auto-reconnects on disconnect.
+//
+// AIDEV-NOTE: NWConnection cannot be reused after .failed or .cancelled.
+// Each reconnection creates a brand-new NWConnection instance.
 
 import Foundation
 import Network
 
 final class SocketClient {
-
     private let socketPath: String
     private let queue = DispatchQueue(label: "com.voicelayer.flowbar.socket", qos: .userInitiated)
     private var connection: NWConnection?
@@ -30,25 +29,25 @@ final class SocketClient {
 
         // NWEndpoint.unix(path:) -- confirmed API, macOS 13+.
         let conn = NWConnection(to: .unix(path: socketPath), using: .tcp)
-        self.connection = conn
+        connection = conn
 
         conn.stateUpdateHandler = { [weak self] newState in
             guard let self else { return }
             switch newState {
             case .ready:
-                self.setConnected(true)
-                self.receiveLoop()
+                setConnected(true)
+                receiveLoop()
 
-            case .failed(let error):
+            case let .failed(error):
                 print("[FlowBar] Connection failed: \(error)")
-                self.handleDisconnect()
+                handleDisconnect()
 
-            case .waiting(let error):
+            case let .waiting(error):
                 print("[FlowBar] Waiting: \(error)")
-                self.handleDisconnect()
+                handleDisconnect()
 
             case .cancelled:
-                self.setConnected(false)
+                setConnected(false)
 
             default:
                 break
@@ -82,26 +81,26 @@ final class SocketClient {
     // MARK: - Receive
 
     private func receiveLoop() {
-        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65_536) {
+        connection?.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
             [weak self] data, _, isDone, error in
             guard let self else { return }
 
             if let data, !data.isEmpty {
-                self.buffer.append(String(decoding: data, as: UTF8.self))
-                self.drainLines()
+                buffer.append(String(decoding: data, as: UTF8.self))
+                drainLines()
             }
             if error != nil || isDone {
-                self.handleDisconnect()
+                handleDisconnect()
                 return
             }
-            self.receiveLoop()
+            receiveLoop()
         }
     }
 
     /// TCP delivers arbitrary byte chunks. Buffer and split on newlines.
     private func drainLines() {
         while let idx = buffer.firstIndex(of: "\n") {
-            let line = String(buffer[buffer.startIndex..<idx])
+            let line = String(buffer[buffer.startIndex ..< idx])
             buffer = String(buffer[buffer.index(after: idx)...])
             if !line.isEmpty { parseLine(line) }
         }
@@ -133,17 +132,17 @@ final class SocketClient {
         // Wait 2 seconds, then create a brand-new NWConnection.
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.intentionallyClosed else { return }
-            print("[FlowBar] Reconnecting to \(self.socketPath)...")
-            self.connect()
+            print("[FlowBar] Reconnecting to \(socketPath)...")
+            connect()
         }
     }
 
     private func setConnected(_ value: Bool) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.state.isConnected = value
+            state.isConnected = value
             if !value {
-                self.state.mode = .disconnected
+                state.mode = .disconnected
             }
         }
     }

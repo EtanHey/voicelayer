@@ -1,10 +1,10 @@
-/// VoiceState.swift — Observable state model for Voice Bar.
-///
-/// Single source of truth for all UI state. Maps socket protocol events
-/// (from VoiceLayer MCP server) to SwiftUI-friendly properties.
-///
-/// AIDEV-NOTE: VoiceMode values must match socket-protocol.ts VoiceLayerState
-/// type: "idle" | "speaking" | "recording" | "transcribing"
+// VoiceState.swift — Observable state model for Voice Bar.
+//
+// Single source of truth for all UI state. Maps socket protocol events
+// (from VoiceLayer MCP server) to SwiftUI-friendly properties.
+//
+// AIDEV-NOTE: VoiceMode values must match socket-protocol.ts VoiceLayerState
+// type: "idle" | "speaking" | "recording" | "transcribing"
 
 import Foundation
 import Observation
@@ -24,7 +24,6 @@ enum VoiceMode: String, CaseIterable {
 
 @Observable
 final class VoiceState {
-
     // UI-bound properties -- all mutations must happen on the main thread.
     var mode: VoiceMode = .disconnected
     var statusText: String = ""
@@ -35,10 +34,10 @@ final class VoiceState {
 
     // Recording metadata
     var recordingMode: String? // "vad" or "ptt"
-    var silenceMode: String?   // "quick" | "standard" | "thoughtful"
+    var silenceMode: String? // "quick" | "standard" | "thoughtful"
 
-    // Transport-layer hook injected by AppDelegate.
-    // BarView calls stop()/toggle()/replay() which forward through this closure.
+    /// Transport-layer hook injected by AppDelegate.
+    /// BarView calls stop()/toggle()/replay() which forward through this closure.
     var sendCommand: (([String: Any]) -> Void)?
 
     // MARK: - Commands

@@ -1,16 +1,15 @@
-/// FlowBarApp.swift — Entry point for Voice Bar.
-///
-/// Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
-/// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
-/// Tracks mouse across screens — pill follows the cursor.
+// FlowBarApp.swift — Entry point for Voice Bar.
+//
+// Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
+// No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
+// Tracks mouse across screens — pill follows the cursor.
 
-import SwiftUI
 import AppKit
+import SwiftUI
 
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-
     let voiceState = VoiceState()
     private var socketClient: SocketClient?
     private var panel: FloatingPillPanel?
@@ -19,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var currentScreenIndex: Int = -1
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
@@ -28,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             socketPath: "/tmp/voicelayer.sock",
             state: voiceState
         )
-        self.socketClient = client
+        socketClient = client
 
         // Wire the send-command closure so BarView buttons -> socket
         voiceState.sendCommand = { [weak client] cmd in
@@ -39,16 +37,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Floating pill
         let barView = BarView(state: voiceState)
-        let hosting  = NSHostingView(rootView: barView)
+        let hosting = NSHostingView(rootView: barView)
         hosting.frame = NSRect(x: 0, y: 0, width: Theme.pillMaxWidth, height: Theme.pillHeight)
 
         let pill = FloatingPillPanel(content: hosting)
         pill.positionOnScreen()
         pill.orderFront(nil)
-        self.panel = pill
+        panel = pill
 
         // Track mouse across screens — move pill to whichever monitor the cursor is on
-        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.handleMouseMoved()
         }
     }
@@ -61,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        false        // keep running as a menu-bar agent
+        false // keep running as a menu-bar agent
     }
 
     // MARK: - Mouse tracking
@@ -88,7 +86,6 @@ struct FlowBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-
         // Menu bar icon + dropdown
         MenuBarExtra("VoiceBar", systemImage: "waveform.circle.fill") {
             VStack(alignment: .leading, spacing: 6) {
