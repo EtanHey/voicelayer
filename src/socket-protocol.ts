@@ -75,11 +75,22 @@ export interface ToggleCommand {
   enabled: boolean;
 }
 
+export interface RecordCommand {
+  cmd: "record";
+  /** Recording timeout in seconds (default: 30). */
+  timeout_seconds?: number;
+  /** Silence detection mode (default: "standard"). */
+  silence_mode?: "quick" | "standard" | "thoughtful";
+  /** Push-to-talk mode — no VAD, stop via signal (default: false). */
+  press_to_talk?: boolean;
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
-  | ToggleCommand;
+  | ToggleCommand
+  | RecordCommand;
 
 // --- Serialization ---
 
@@ -113,6 +124,23 @@ export function parseCommand(line: string): SocketCommand | null {
           return { cmd: "toggle", scope: "all", enabled: parsed.enabled };
         }
         return { cmd: "toggle", scope, enabled: parsed.enabled };
+      }
+      case "record": {
+        const sm = parsed.silence_mode;
+        const silenceMode =
+          sm === "quick" || sm === "standard" || sm === "thoughtful"
+            ? sm
+            : "standard";
+        const rawTimeout =
+          typeof parsed.timeout_seconds === "number"
+            ? parsed.timeout_seconds
+            : 30;
+        return {
+          cmd: "record",
+          timeout_seconds: Math.max(5, Math.min(300, rawTimeout)),
+          silence_mode: silenceMode,
+          press_to_talk: parsed.press_to_talk === true,
+        };
       }
       default:
         return null;

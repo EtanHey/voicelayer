@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Floating pill
         let barView = BarView(state: voiceState)
         let hosting = NSHostingView(rootView: barView)
-        hosting.frame = NSRect(x: 0, y: 0, width: Theme.pillMaxWidth, height: Theme.pillHeight)
+        hosting.frame = NSRect(x: 0, y: 0, width: Theme.pillMaxWidth + Theme.panelPadding * 2, height: Theme.pillHeight)
 
         let pill = FloatingPillPanel(content: hosting)
         pill.positionOnScreen()

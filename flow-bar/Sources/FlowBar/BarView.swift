@@ -64,6 +64,11 @@ struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onTapGesture {
+            if state.mode == .idle {
+                state.record()
+            }
+        }
         .contextMenu {
             Button("Replay Last") { state.replay() }
             Divider()
@@ -196,6 +201,9 @@ struct BarView: View {
     private var statusText: String {
         switch state.mode {
         case .idle:
+            if let confirmation = state.confirmationText {
+                return confirmation
+            }
             if !state.transcript.isEmpty {
                 return Self.lastWords(state.transcript)
             }
