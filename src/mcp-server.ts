@@ -974,10 +974,12 @@ async function main() {
   onCommand((command: SocketCommand) => {
     switch (command.cmd) {
       case "stop":
-        // Reuse existing stop mechanism — write the stop file + kill TTS playback
+      case "cancel":
+        // Both stop and cancel write the stop file to end recording.
+        // Cancel is semantically "discard" but uses the same mechanism.
         writeFileSync(
           STOP_FILE,
-          `stop from flow-bar at ${new Date().toISOString()}`,
+          `${command.cmd} from voice-bar at ${new Date().toISOString()}`,
         );
         try {
           Bun.spawnSync(["pkill", "-f", "afplay"]);

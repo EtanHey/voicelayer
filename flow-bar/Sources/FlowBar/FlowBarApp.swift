@@ -67,14 +67,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Reposition pill when mouse moves to a different screen.
     private func handleMouseMoved() {
         let mouseLocation = NSEvent.mouseLocation
-        guard let targetScreen = NSScreen.screens.firstIndex(where: {
+        // Capture screens array once to avoid TOCTOU race if a display disconnects.
+        let screens = NSScreen.screens
+        guard let targetScreen = screens.firstIndex(where: {
             NSMouseInRect(mouseLocation, $0.frame, false)
         }) else { return }
 
         // Only reposition when the screen actually changes
         if targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
-            panel?.positionOnScreen(NSScreen.screens[targetScreen])
+            panel?.positionOnScreen(screens[targetScreen])
         }
     }
 }
