@@ -1,19 +1,34 @@
-/// Theme.swift — Color constants, sizes, and animation parameters for Voice Bar.
+/// Theme.swift — Design tokens for Voice Bar.
+///
+/// Industrial-minimal aesthetic: solid dark pill, clean white text,
+/// bright state indicators. Dynamic width that breathes with content.
+///
+/// AIDEV-NOTE: Design system documented in memory/voice-bar-design-system.md.
+/// Update both when changing tokens here.
 
 import SwiftUI
 
 enum Theme {
     // MARK: - Colors
 
-    static let speakingColor = Color(hex: 0x4A90D9)   // Blue
-    static let recordingColor = Color(hex: 0xE54D4D)   // Red
-    static let idleColor = Color(hex: 0x8E8E93)        // System gray
-    static let transcribingColor = Color(hex: 0xE5A84D) // Yellow/orange
+    static let speakingColor = Color(hex: 0x4A90D9)      // Blue
+    static let recordingColor = Color(hex: 0xE54D4D)      // Red
+    static let idleColor = Color(hex: 0xAEAEB2)           // Light gray (legible on dark bg)
+    static let transcribingColor = Color(hex: 0xE5A84D)   // Yellow/orange
     static let errorColor = Color.red
+
+    // MARK: - Pill background
+
+    /// Solid dark background — works on any wallpaper, no vibrancy edge artifacts.
+    static let pillBackground = Color.black.opacity(0.82)
+    /// Subtle inner edge for depth — barely visible, adds polish.
+    static let pillInnerEdge = Color.white.opacity(0.08)
 
     // MARK: - Pill dimensions
 
-    static let pillWidth: CGFloat = 280
+    /// Dynamic width: pill shrink-wraps content between min and max.
+    static let pillMinWidth: CGFloat = 100
+    static let pillMaxWidth: CGFloat = 320
     static let pillHeight: CGFloat = 44
     static let cornerRadius: CGFloat = 22  // Half of height for capsule
 

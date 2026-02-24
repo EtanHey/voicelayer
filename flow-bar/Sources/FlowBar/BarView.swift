@@ -1,39 +1,13 @@
 /// BarView.swift — Main pill UI for Voice Bar.
 ///
-/// Shows state icon, status label, waveform (when recording/speaking),
-/// and action buttons. Uses NSVisualEffectView for reliable vibrancy
-/// in transparent NSPanel.
+/// Solid dark pill with dynamic width — shrink-wraps content per state.
+/// No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
 ///
 /// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
 /// state border glow, right-click context menu.
 
 import SwiftUI
 import AppKit
-
-// MARK: - NSVisualEffectView wrapper
-
-/// Wraps NSVisualEffectView for reliable behind-window vibrancy.
-/// Setting state = .active keeps blur even when panel is not key window.
-struct VisualEffectBlur: NSViewRepresentable {
-    var material: NSVisualEffectView.Material
-    var blendingMode: NSVisualEffectView.BlendingMode
-    var state: NSVisualEffectView.State = .active
-
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let v = NSVisualEffectView()
-        v.material     = material
-        v.blendingMode = blendingMode
-        v.state        = state
-        v.isEmphasized = true
-        return v
-    }
-
-    func updateNSView(_ v: NSVisualEffectView, context: Context) {
-        v.material     = material
-        v.blendingMode = blendingMode
-        v.state        = state
-    }
-}
 
 // MARK: - Pulsing recording dot
 
@@ -64,22 +38,27 @@ struct BarView: View {
         HStack(spacing: 8) {
             leadingIndicator
             stateContent
-                .frame(maxWidth: .infinity, alignment: .center)
             actionButtons
         }
         .padding(.horizontal, 14)
-        .frame(width: Theme.pillWidth, height: Theme.pillHeight)
-        .background {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
-        }
+        .frame(height: Theme.pillHeight)
+        .frame(minWidth: Theme.pillMinWidth)
+        .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
             // State-dependent border glow
             Capsule()
                 .strokeBorder(borderColor, lineWidth: borderWidth)
         }
-        .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
-        .opacity(state.mode == .disconnected ? 0.6 : 1.0)
+        .overlay {
+            // Subtle inner edge for depth
+            Capsule()
+                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+        .opacity(state.mode == .disconnected ? 0.7 : 1.0)
+        .fixedSize()
+        .frame(maxWidth: Theme.pillMaxWidth, alignment: .center)
         .animation(Theme.stateTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .onChange(of: state.mode) { _, newMode in
@@ -134,7 +113,7 @@ struct BarView: View {
             PulsingDot()
         } else {
             Circle()
-                .fill(state.isConnected ? Color.green : Color.red.opacity(0.7))
+                .fill(state.isConnected ? Color.green : Color.red)
                 .frame(width: 6, height: 6)
         }
     }
@@ -186,7 +165,7 @@ struct BarView: View {
     private var statusLabel: some View {
         Text(statusText)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.primary)
+            .foregroundStyle(.white.opacity(0.9))
             .lineLimit(1)
             .truncationMode(.tail)
             .contentTransition(.interpolate)
@@ -230,7 +209,7 @@ struct BarView: View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.primary.opacity(0.8))
+                .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 26, height: 26)
                 .contentShape(Circle())
         }

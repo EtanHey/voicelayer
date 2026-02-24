@@ -16,7 +16,7 @@ final class FloatingPillPanel: NSPanel {
         super.init(
             contentRect: NSRect(
                 x: 0, y: 0,
-                width: Theme.pillWidth,
+                width: Theme.pillMaxWidth,
                 height: Theme.pillHeight
             ),
             styleMask: [.borderless, .nonactivatingPanel],
