@@ -17,7 +17,8 @@
 | 3 | SwiftUI App Scaffold | [phase-3](phase-3/) | done | feature/phase-3-swiftui-scaffold | PR #22 merged |
 | 4 | Socket Client + State | [phase-4](phase-4/) | done | feature/phase-4-socket-client-state | PR #23 (merged with Phase 3) |
 | 5 | Waveform + Visual Polish | [phase-5](phase-5/) | done | feature/phase-5-waveform-polish | PR #24 merged |
-| 6 | Integration + CLI | [phase-6](phase-6/) | in progress | feature/phase-6-integration-cli | |
+| 6 | Integration + CLI | [phase-6](phase-6/) | done | feature/phase-6-integration-cli | PR #25 merged |
+| 6.5 | UI Polish (rename → Voice Bar, reposition, follow mouse) | — | done | fix/voice-bar-ui-polish | PR #26 |
 | 7 | Live Dictation (v1.5) | [phase-7](phase-7/) | pending | | |
 
 ---
