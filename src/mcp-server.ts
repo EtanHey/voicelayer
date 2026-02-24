@@ -51,6 +51,7 @@ import {
   startSocketServer,
   stopSocketServer,
   onCommand,
+  broadcast,
 } from "./socket-server";
 import type { SocketCommand } from "./socket-protocol";
 
@@ -988,6 +989,13 @@ async function main() {
       case "replay": {
         const entry = getHistoryEntry(0);
         if (entry && existsSync(entry.file)) {
+          // Reset to idle first so TeleprompterView remounts on same-text replay
+          broadcast({ type: "state", state: "idle" });
+          broadcast({
+            type: "state",
+            state: "speaking",
+            text: entry.text.slice(0, 200),
+          });
           playAudioNonBlocking(entry.file);
         }
         break;
