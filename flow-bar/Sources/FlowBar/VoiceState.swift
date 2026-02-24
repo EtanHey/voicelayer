@@ -58,6 +58,8 @@ final class VoiceState {
     }
 
     func cancel() {
+        barInitiatedRecording = false
+        frontmostAppOnRecordStart = nil
         sendCommand?(["cmd": "cancel"])
     }
 
@@ -72,6 +74,8 @@ final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     func record() {
         guard mode == .idle else { return }
+        // Set mode optimistically to prevent rapid-tap duplicates
+        mode = .recording
         frontmostAppOnRecordStart = NSWorkspace.shared.frontmostApplication
         barInitiatedRecording = true
         sendCommand?([

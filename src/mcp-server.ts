@@ -1014,12 +1014,11 @@ async function main() {
         const silenceMode = command.silence_mode ?? "standard";
         const ptt = command.press_to_talk ?? false;
         // waitForInput broadcasts recording/transcribing/transcription/idle states
+        // It also handles its own error broadcasting, so we just log here
         waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
-          broadcast({
-            type: "error",
-            message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
-            recoverable: true,
-          });
+          console.error(
+            `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
         });
         break;
       }
