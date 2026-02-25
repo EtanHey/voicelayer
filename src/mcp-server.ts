@@ -32,6 +32,7 @@ import {
   getHistoryEntry,
   playAudioNonBlocking,
   resolveVoice,
+  awaitCurrentPlayback,
 } from "./tts";
 import { waitForInput, clearInput } from "./input";
 import { getBackend } from "./stt";
@@ -71,9 +72,9 @@ const server = new Server(
     instructions:
       "Voice I/O layer for Claude Code. 2 tools:\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
-      "- voice_ask(message): BLOCKING. Speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch /tmp/voicelayer-stop OR 5s silence.\n" +
+      "- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch /tmp/voicelayer-stop OR 5s silence.\n" +
       'Auto-mode detection: ends with ? → consult. length > 280 → brief. starts with "insight:" → think. default → announce.\n' +
-      "voice_speak returns immediately (non-blocking). Audio plays in background via detached process.\n" +
+      "voice_speak returns immediately (non-blocking). Audio plays in background. voice_ask auto-waits for it to finish before speaking.\n" +
       "replay=true on voice_ask speaks back last transcription before recording.\n" +
       "noise_floor param (default 0) filters low-confidence STT artifacts.\n" +
       "Voice is disabled by default; user enables via /mcp or toggle tool.\n" +
@@ -160,7 +161,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "voice_ask",
       description:
-        "Speak a question aloud and wait for the user's voice response. BLOCKING.\n\n" +
+        "Speak a question aloud and wait for the user's voice response. BLOCKING.\n" +
+        "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
         "- Push-to-talk (press_to_talk=true): Records until stop signal — best for noisy environments\n\n" +
@@ -750,6 +752,10 @@ async function handleConverse(args: unknown) {
 
   clearInput();
   clearStopSignal();
+
+  // Wait for any currently playing audio to finish (e.g., from a prior non-blocking voice_speak)
+  // so the converse question doesn't overlap with leftover TTS playback.
+  await awaitCurrentPlayback();
 
   // Speak the question aloud — BLOCKING for converse (need to finish before recording)
   // Converse accepts voice from the wrapping voice_ask handler

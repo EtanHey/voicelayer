@@ -163,14 +163,16 @@ Single terminal — no companion script needed.
 
 1. Claude calls `voice_ask("question")` via MCP
 2. Session booking checked/acquired (lockfile)
-3. edge-tts speaks the question aloud via afplay (blocking for converse, non-blocking for others)
-4. Audio saved to ring buffer (last 20 entries) for replay
-5. Mic recording starts via `rec` (sox) — 16kHz 16-bit mono PCM to buffer
-6. Silero VAD processes 32ms chunks, detects real speech vs noise
-7. Stop when: user touches `/tmp/voicelayer-stop`, OR VAD-confirmed silence (configurable mode)
-8. Recorded audio saved as WAV, sent to STT backend (whisper.cpp or Wispr Flow)
-9. STT returns the transcription
-10. Claude receives the text and continues
+3. Wait for any playing `voice_speak` audio to finish (prevents overlap)
+4. edge-tts speaks the question aloud via afplay (blocking — waits for completion)
+5. Audio saved to ring buffer (last 20 entries) for replay
+6. Device native sample rate detected (e.g., 24kHz AirPods, 48kHz built-in mic)
+7. Mic recording starts via `rec` (sox) at native rate — raw PCM to stdout
+8. Each chunk resampled to 16kHz in code, fed to Silero VAD (32ms chunks)
+9. Stop when: user touches `/tmp/voicelayer-stop`, OR VAD-confirmed silence (configurable mode)
+10. 16kHz PCM saved as WAV, sent to STT backend (whisper.cpp or Wispr Flow)
+11. STT returns the transcription
+12. Claude receives the text and continues
 
 ## Quick Start
 
@@ -325,7 +327,7 @@ voicelayer/
 │   ├── input.ts               # Mic recording + Silero VAD + STT transcription
 │   ├── vad.ts                 # Silero VAD integration (onnxruntime-node)
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
-│   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
+│   ├── audio-utils.ts         # Audio utilities (RMS, native rate detection, PCM resampling)
 │   ├── socket-server.ts       # Unix domain socket server for Voice Bar IPC
 │   ├── socket-protocol.ts     # Socket protocol types + serialization (NDJSON)
 │   ├── paths.ts               # Centralized /tmp path constants
@@ -342,7 +344,7 @@ voicelayer/
 │   │   ├── extract.py         # Voice extraction pipeline (yt-dlp → VAD → FFmpeg)
 │   │   ├── clone.py           # Voice profile builder (reference clip selection + transcription)
 │   │   └── voicelayer.sh      # CLI wrapper (routes subcommands: extract, clone, daemon)
-│   └── __tests__/             # 166 tests, 367 expect() calls
+│   └── __tests__/             # 168 tests, 371 expect() calls
 ├── flow-bar/                    # SwiftUI macOS floating pill app
 │   ├── Package.swift            # SPM executable, macOS 14+
 │   ├── Sources/FlowBar/

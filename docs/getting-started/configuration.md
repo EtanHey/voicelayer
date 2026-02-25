@@ -42,10 +42,15 @@ VoiceLayer is configured entirely via environment variables. All settings have s
 
 ### Recording
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `QA_VOICE_SILENCE_SECONDS` | `2` | Seconds of silence before auto-stop (converse mode uses 5s override) |
-| `QA_VOICE_SILENCE_THRESHOLD` | `500` | RMS energy threshold for silence detection (0-32767) |
+Recording uses Silero VAD (neural network) for speech detection. The device's native sample rate is auto-detected — no configuration needed for any microphone (built-in, AirPods, USB, etc.).
+
+Silence detection is configured per-call via the `silence_mode` parameter on `voice_ask`:
+
+| Mode | Silence Duration | Use Case |
+|------|-----------------|----------|
+| `quick` | 0.5s | Fast responses, short answers |
+| `standard` | 1.5s | Normal conversation |
+| `thoughtful` | 2.5s (default) | User pauses to think |
 
 ### Output
 
@@ -100,8 +105,7 @@ You can override per-call by passing the `rate` parameter to any TTS tool.
       "args": ["voicelayer-mcp"],
       "env": {
         "QA_VOICE_TTS_VOICE": "en-GB-SoniaNeural",
-        "QA_VOICE_STT_BACKEND": "whisper",
-        "QA_VOICE_SILENCE_THRESHOLD": "300"
+        "QA_VOICE_STT_BACKEND": "whisper"
       }
     }
   }

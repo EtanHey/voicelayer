@@ -262,6 +262,13 @@ export function playAudioNonBlocking(
   return proc;
 }
 
+/** Wait for current playback to finish (if any). Resolves immediately if nothing is playing. */
+export async function awaitCurrentPlayback(): Promise<void> {
+  if (currentPlayback) {
+    await currentPlayback.proc.exited;
+  }
+}
+
 /** Stop current playback if any. */
 export function stopPlayback(): boolean {
   if (currentPlayback) {
