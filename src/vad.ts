@@ -16,6 +16,7 @@
  */
 
 import { existsSync } from "fs";
+import { homedir } from "os";
 import { join, dirname } from "path";
 
 // AIDEV-NOTE: onnxruntime-node uses native C++ addon (N-API). Works with Bun 1.3+.
@@ -67,7 +68,7 @@ function findModelPath(): string {
 
   // 3. User cache directory
   const cacheModel = join(
-    process.env.HOME || "~",
+    process.env.HOME || homedir(),
     ".cache",
     "voicelayer",
     "silero_vad.onnx",
