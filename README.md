@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-75%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
@@ -69,32 +69,36 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 ```
 Claude Code  ─── MCP ───>  VoiceLayer
+                            ├── Waits for any playing voice_speak audio
                             ├── edge-tts speaks question (speakers)
-                            ├── sox records mic (16kHz mono PCM)
+                            ├── sox records mic (native rate → resample to 16kHz)
+                            ├── Silero VAD detects speech/silence
                             ├── whisper.cpp transcribes locally (~300ms)
                             └── Returns transcription to Claude
 ```
 
 1. Claude calls `voice_ask("How does the nav look on mobile?")`
-2. VoiceLayer speaks the question aloud via edge-tts
-3. Mic recording starts — user speaks their response
-4. Recording ends when user touches `/tmp/voicelayer-stop` or after 5s silence
-5. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
-6. Claude receives the transcribed text and continues
+2. VoiceLayer waits for any prior `voice_speak` audio to finish (no overlap)
+3. Speaks the question aloud via edge-tts
+4. Mic recording starts at device's native sample rate (auto-detected)
+5. Audio resampled to 16kHz in real-time, fed to Silero VAD for speech detection
+6. Recording ends on user stop signal, VAD silence detection, or timeout
+7. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
+8. Claude receives the transcribed text and continues
 
 ## Voice Tools
 
 | Tool | What It Does | Blocking |
 |------|-------------|----------|
 | **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think from message content | No |
-| **voice_ask** | Blocking voice Q&A — speak question, record + transcribe response | Yes |
+| **voice_ask** | Blocking voice Q&A — auto-waits for playing audio, speaks question, records + transcribes response | Yes |
 
 Old `qa_voice_*` names still work as backward-compat aliases.
 
 ### User-Controlled Stop
 
 - **Primary:** `touch /tmp/voicelayer-stop` to end recording or playback
-- **Fallback:** 5s silence detection (converse mode)
+- **Fallback:** Silero VAD silence detection (configurable: quick 0.5s, standard 1.5s, thoughtful 2.5s)
 - **Timeout:** 300s default, configurable per call (10-3600)
 
 ### Session Booking
@@ -134,8 +138,6 @@ Client call assistant: track unknowns, suggest follow-up questions, detect red f
 | `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate (per-mode defaults applied on top) |
-| `QA_VOICE_SILENCE_SECONDS` | `2` | Silence seconds before end (converse uses 5) |
-| `QA_VOICE_SILENCE_THRESHOLD` | `500` | RMS energy threshold (0-32767) |
 | `QA_VOICE_THINK_FILE` | `/tmp/voicelayer-thinking.md` | Live thinking log path |
 
 ## Platform Support
@@ -148,7 +150,7 @@ Client call assistant: track unknowns, suggest follow-up questions, detect red f
 ## Testing
 
 ```bash
-bun test    # 75 tests, 178 assertions
+bun test    # 168 tests, 371 assertions
 ```
 
 ## Project Structure
@@ -160,14 +162,14 @@ voicelayer/
 │   ├── tts.ts                 # edge-tts + cross-platform audio player
 │   ├── input.ts               # Mic recording + STT pipeline
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
-│   ├── audio-utils.ts         # Shared audio utilities (RMS calculation)
+│   ├── audio-utils.ts         # Audio utilities (RMS, native rate detection, resampling)
 │   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based session mutex
 │   ├── session.ts             # Session lifecycle (save/load/generate)
 │   ├── report.ts              # QA report renderer (JSON → markdown)
 │   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
 │   ├── schemas/               # QA + discovery schemas
-│   └── __tests__/             # 75 tests
+│   └── __tests__/             # 168 tests
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test

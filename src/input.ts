@@ -50,7 +50,11 @@ const BITS_PER_SAMPLE = 16;
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-import { calculateRMS } from "./audio-utils";
+import {
+  calculateRMS,
+  detectNativeSampleRate,
+  resamplePCM16,
+} from "./audio-utils";
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
 
@@ -147,6 +151,23 @@ export async function recordToBuffer(
     );
   }
 
+  // Detect native device sample rate to avoid sox resampling during pipe
+  // AIDEV-NOTE: Sox buffer-overruns when resampling during streaming (e.g., AirPods at 24kHz → 16kHz).
+  // Recording at native rate and resampling in our code avoids this entirely.
+  const nativeRate = detectNativeSampleRate();
+  const needsResample = nativeRate !== SAMPLE_RATE;
+  // Native chunk size: how many bytes at native rate correspond to one VAD chunk (512 samples at 16kHz)
+  const nativeChunkSamples = Math.ceil(
+    VAD_CHUNK_SAMPLES * (nativeRate / SAMPLE_RATE),
+  );
+  const nativeChunkBytes = nativeChunkSamples * BYTES_PER_SAMPLE;
+
+  if (needsResample) {
+    console.error(
+      `[voicelayer] Device native rate: ${nativeRate}Hz — will resample to ${SAMPLE_RATE}Hz`,
+    );
+  }
+
   // Reset VAD state for fresh recording (skip in PTT mode — no VAD needed)
   if (!pressToTalk) {
     await resetVAD();
@@ -199,12 +220,14 @@ export async function recordToBuffer(
     const timer = setTimeout(() => finish(), timeoutMs);
 
     try {
-      // Start mic recording via sox — raw 16kHz 16-bit mono PCM to stdout
+      // Start mic recording via sox — raw PCM to stdout at device's native rate
+      // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
+      // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
       recorder = Bun.spawn(
         [
           "rec",
           "-r",
-          String(SAMPLE_RATE),
+          String(nativeRate),
           "-c",
           "1",
           "-b",
@@ -275,8 +298,8 @@ export async function recordToBuffer(
           readBuffer.push(value);
           readBufferLen += value.length;
 
-          // Process VAD-sized chunks (512 samples = 1024 bytes = 32ms)
-          while (readBufferLen >= VAD_CHUNK_BYTES && !resolved) {
+          // Process chunks: read at native rate, resample to 16kHz for VAD
+          while (readBufferLen >= nativeChunkBytes && !resolved) {
             // Flatten only when needed
             const flat = new Uint8Array(readBufferLen);
             let off = 0;
@@ -284,12 +307,17 @@ export async function recordToBuffer(
               flat.set(buf, off);
               off += buf.length;
             }
-            const chunk = flat.slice(0, VAD_CHUNK_BYTES);
-            const remainder = flat.slice(VAD_CHUNK_BYTES);
+            const nativeChunk = flat.slice(0, nativeChunkBytes);
+            const remainder = flat.slice(nativeChunkBytes);
             readBuffer = remainder.length > 0 ? [remainder] : [];
             readBufferLen = remainder.length;
 
-            // Always accumulate audio data
+            // Resample to 16kHz if needed (for VAD + STT compatibility)
+            const chunk = needsResample
+              ? resamplePCM16(nativeChunk, nativeRate, SAMPLE_RATE)
+              : nativeChunk;
+
+            // Always accumulate 16kHz audio data
             pcmChunks.push(chunk);
             totalPcmBytes += chunk.byteLength;
             totalChunksProcessed++;

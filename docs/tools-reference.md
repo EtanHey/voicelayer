@@ -34,13 +34,14 @@ Non-blocking text-to-speech. Speaks a message aloud or logs it silently. Auto-de
 
 ## voice_ask
 
-Blocking voice Q&A. Speaks a question aloud, records mic, transcribes via Silero VAD + whisper.cpp/Wispr Flow, returns text.
+Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, then speaks a question aloud, records mic at device's native rate (auto-detected), resamples to 16kHz, transcribes via Silero VAD + whisper.cpp/Wispr Flow, returns text.
 
 | Property | Value |
 |----------|-------|
 | **Blocking** | **Yes** |
 | **Requires mic** | **Yes** |
 | **Session booking** | **Yes** (auto-books on first call) |
+| **Auto-waits** | **Yes** (waits for prior `voice_speak` playback) |
 
 **Parameters:**
 

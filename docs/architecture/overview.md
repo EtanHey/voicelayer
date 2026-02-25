@@ -47,11 +47,11 @@ Claude Code Session
 |--------|------|---------------|
 | **MCP Server** | `mcp-server.ts` | Tool definitions, request routing, argument validation |
 | **TTS** | `tts.ts` | Text-to-speech via edge-tts, audio playback, rate adjustment |
-| **Input** | `input.ts` | Mic recording via sox, silence detection, PCM/WAV handling |
+| **Input** | `input.ts` | Mic recording via sox (native rate), Silero VAD speech detection, PCM resampling/WAV handling |
 | **STT** | `stt.ts` | Backend abstraction — whisper.cpp (local) or Wispr Flow (cloud) |
 | **Session Booking** | `session-booking.ts` | Lockfile mutex for mic access, stale lock cleanup |
 | **Paths** | `paths.ts` | Centralized `/tmp` path constants |
-| **Audio Utils** | `audio-utils.ts` | Shared audio utilities (RMS calculation) |
+| **Audio Utils** | `audio-utils.ts` | Shared audio utilities (RMS calculation, native rate detection, PCM resampling) |
 | **Session** | `session.ts` | Session lifecycle management (save/load/generate) |
 | **Report** | `report.ts` | QA report rendering (JSON -> markdown) |
 | **Brief** | `brief.ts` | Discovery brief rendering (JSON -> markdown) |
@@ -66,24 +66,29 @@ The most complex mode — full round-trip voice Q&A:
                 │
 2. Session booking check (lockfile)
                 │
-3. edge-tts synthesizes → /tmp/voicelayer-tts-PID-N.mp3
+3. Wait for prior voice_speak playback to finish (if any)
                 │
-4. afplay speaks the question (stop-signal polling at 300ms)
+4. edge-tts synthesizes → /tmp/voicelayer-tts-PID-N.mp3
                 │
-5. sox starts recording → raw 16kHz 16-bit mono PCM to stdout
+5. afplay speaks the question (blocking — waits for completion)
                 │
-6. PCM streamed in 1-second chunks, RMS calculated per chunk
+6. Detect device native sample rate (e.g., 24kHz AirPods, 48kHz built-in)
                 │
-7. Stop condition met:
+7. sox records at native rate → raw PCM to stdout (no sox resampling)
+                │
+8. Each 32ms chunk resampled to 16kHz, fed to Silero VAD + accumulated
+                │
+9. Stop condition met:
    - User: touch /tmp/voicelayer-stop
-   - Silence: 5 consecutive chunks below threshold
+   - Silero VAD: configurable silence after speech (0.5-2.5s)
+   - Pre-speech timeout: 15s of no speech detected
    - Timeout: configurable (default 300s)
                 │
-8. PCM wrapped in WAV header → /tmp/voicelayer-recording-PID-TS.wav
+10. 16kHz PCM wrapped in WAV header → /tmp/voicelayer-recording-PID-TS.wav
                 │
-9. whisper.cpp transcribes WAV → text
+11. whisper.cpp transcribes WAV → text
                 │
-10. Text returned to agent, temp files cleaned up
+12. Text returned to agent, temp files cleaned up
 ```
 
 ## External Dependencies
@@ -93,7 +98,7 @@ VoiceLayer delegates audio I/O to battle-tested system tools rather than bundlin
 | Tool | Purpose | Install |
 |------|---------|---------|
 | **python3 + edge-tts** | Neural TTS (Microsoft, free) | `pip3 install edge-tts` |
-| **sox/rec** | Mic recording (16kHz mono) | `brew install sox` |
+| **sox/rec** | Mic recording (native rate mono) | `brew install sox` |
 | **afplay** (macOS) | Audio playback | Built-in |
 | **mpv/ffplay/mpg123** (Linux) | Audio playback | Package manager |
 | **whisper.cpp** | Local STT | `brew install whisper-cpp` |
