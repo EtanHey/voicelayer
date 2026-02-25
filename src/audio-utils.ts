@@ -44,14 +44,17 @@ export function calculateRMS(buffer: Uint8Array): number {
  */
 export function detectNativeSampleRate(): number {
   try {
-    const probe = Bun.spawnSync(["rec", "-n", "stat"], {
+    // AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
+    // the full audio stream and blocks forever. trim 0 0 opens the device, prints
+    // the preamble (with Sample Rate), then exits immediately.
+    const probe = Bun.spawnSync(["rec", "-n", "trim", "0", "0"], {
       stdout: "pipe",
       stderr: "pipe",
     });
-    // Device info may be on stdout or stderr depending on sox version
-    const stdout = probe.stdout.toString("utf-8");
+    // Device preamble (Input File, Channels, Sample Rate) goes to stderr
     const stderr = probe.stderr.toString("utf-8");
-    const combined = stdout + "\n" + stderr;
+    const stdout = probe.stdout.toString("utf-8");
+    const combined = stderr + "\n" + stdout;
     const match = combined.match(/Sample Rate\s*:\s*(\d+)/);
     if (match) {
       const rate = parseInt(match[1], 10);
@@ -97,9 +100,7 @@ export function resamplePCM16(
     const frac = srcIdx - low;
     const sampleLow = inputView.getInt16(low * BYTES_PER_SAMPLE, true);
     const sampleHigh = inputView.getInt16(high * BYTES_PER_SAMPLE, true);
-    const interpolated = Math.round(
-      sampleLow * (1 - frac) + sampleHigh * frac,
-    );
+    const interpolated = Math.round(sampleLow * (1 - frac) + sampleHigh * frac);
     outputView.setInt16(i * BYTES_PER_SAMPLE, interpolated, true);
   }
 
