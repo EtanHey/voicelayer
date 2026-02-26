@@ -4,12 +4,29 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
 
 **Local-first, free, open-source.** All processing happens on your machine — no cloud APIs required. TTS via edge-tts (free), STT via whisper.cpp (local). Optional cloud fallback via Wispr Flow for machines without whisper.cpp.
+
+## Features
+
+VoiceLayer has two profiles: (1) Basic: 2 MCP tools for any Claude Code session, (2) Advanced: voice cloning, extraction pipeline, UI widget.
+
+### Advanced Features
+
+**Voice Cloning (Qwen3-TTS)**
+Three-tier TTS routing: Qwen3-TTS (cloned voices) → edge-tts (neural) → text-only fallback. Clone voices from YouTube samples using the extraction pipeline.
+
+**Voice Bar (macOS)**
+Floating SwiftUI widget for quick voice I/O. Communicates via Unix socket IPC. Requires macOS 14+.
+
+**CLI Tools**
+- `voicelayer extract` — Extract voice samples from YouTube (yt-dlp → Silero VAD → FFmpeg)
+- `voicelayer clone` — Build voice profiles from samples
+- `voicelayer daemon` — Run TTS server for cloned voices
 
 ## Quick Start
 
@@ -150,7 +167,7 @@ Client call assistant: track unknowns, suggest follow-up questions, detect red f
 ## Testing
 
 ```bash
-bun test    # 168 tests, 371 assertions
+bun test    # 187 tests, 401 expect() calls
 ```
 
 ## Project Structure
@@ -169,7 +186,7 @@ voicelayer/
 │   ├── report.ts              # QA report renderer (JSON → markdown)
 │   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
 │   ├── schemas/               # QA + discovery schemas
-│   └── __tests__/             # 168 tests
+│   └── __tests__/             # 187 tests
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
