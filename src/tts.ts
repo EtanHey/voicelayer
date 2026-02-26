@@ -31,6 +31,7 @@ import {
   TTS_DISABLED_FILE,
 } from "./paths";
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
+import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { broadcast } from "./socket-server";
 import { applyPronunciation } from "./pronunciation";
 
@@ -323,23 +324,80 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
 
-  // Broadcast speaking state to Voice Bar
-  broadcast({
-    type: "state",
-    state: "speaking",
-    text: text.slice(0, 200), // Truncate for IPC — Voice Bar only needs preview
-    voice: resolved.voice,
-  });
+  // AIDEV-NOTE: Speaking state is broadcast AFTER synthesis, right before playback starts.
+  // This keeps the teleprompter in sync with actual audio.
+  const speakingText = text.slice(0, 200); // Truncate for IPC — Voice Bar only needs preview
 
-  // Tier 1: Cloned voice → try Qwen3-TTS daemon
+  // Tier 1: Cloned voice → try engine-specific synthesis
   if (resolved.engine === "cloned") {
+    const profile = loadProfile(resolved.voice);
+
+    // Tier 1a: F5-TTS MLX (local zero-shot, no daemon needed)
+    if (
+      profile?.engine === "f5-tts-mlx" &&
+      isF5TTSAvailable() &&
+      profile.reference_clip &&
+      profile.reference_text
+    ) {
+      const wavPath = await synthesizeF5TTS(
+        text,
+        profile.reference_clip,
+        profile.reference_text,
+      );
+      if (wavPath) {
+        // Convert WAV to MP3 for consistent playback
+        const ttsFile = ttsFilePath(process.pid, ttsCounter++);
+        const conv = Bun.spawnSync([
+          "ffmpeg",
+          "-y",
+          "-i",
+          wavPath,
+          "-codec:a",
+          "libmp3lame",
+          "-q:a",
+          "2",
+          ttsFile,
+        ]);
+        try {
+          unlinkSync(wavPath);
+        } catch {}
+
+        if (conv.exitCode === 0) {
+          addToHistory(text, ttsFile, `f5tts:${resolved.voice}`);
+          broadcast({
+            type: "state",
+            state: "speaking",
+            text: speakingText,
+            voice: resolved.voice,
+          });
+          const proc = playAudioNonBlocking(ttsFile);
+          proc.exited.then(() => {
+            try {
+              unlinkSync(ttsFile);
+            } catch {}
+          });
+          if (options?.waitForPlayback) await proc.exited;
+          return { warning: resolved.warning };
+        }
+      }
+      console.error(
+        `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" — trying Qwen3 daemon`,
+      );
+    }
+
+    // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
     const audioBuffer = await synthesizeCloned(text, resolved.voice);
     if (audioBuffer) {
-      // Write MP3 buffer to temp file for playback
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
 
       addToHistory(text, ttsFile, `cloned:${resolved.voice}`);
+      broadcast({
+        type: "state",
+        state: "speaking",
+        text: speakingText,
+        voice: resolved.voice,
+      });
       const proc = playAudioNonBlocking(ttsFile);
       proc.exited.then(() => {
         try {
@@ -350,9 +408,9 @@ export async function speak(
       return { warning: resolved.warning };
     }
 
-    // Daemon unavailable — fall back to edge-tts with profile's fallback voice
+    // All cloned engines failed — fall back to edge-tts
     console.error(
-      `[voicelayer] Cloned voice "${resolved.voice}" daemon unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
+      `[voicelayer] Cloned voice "${resolved.voice}" unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
     );
     return speakWithEdgeTTS(
       text,
