@@ -32,6 +32,7 @@ import {
 } from "./paths";
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { broadcast } from "./socket-server";
+import { applyPronunciation } from "./pronunciation";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -309,6 +310,9 @@ export async function speak(
   },
 ): Promise<{ warning?: string }> {
   if (!text?.trim()) return {};
+
+  // Apply pronunciation corrections before any TTS engine
+  text = applyPronunciation(text);
 
   // Check if TTS is disabled
   if (isTTSDisabled()) {
