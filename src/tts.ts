@@ -1,14 +1,18 @@
 /**
- * TTS module — three-tier voice synthesis with ring buffer replay.
+ * TTS module — multi-engine voice synthesis with context-aware routing.
  *
- * Tier 1: Cloned voices → Qwen3-TTS daemon (localhost:8880)
- * Tier 2: Preset/default → edge-tts (Python CLI)
- * Tier 3: Text-only fallback (when no audio output possible)
+ * Engine priority for cloned voices:
+ *   Tier 0: XTTS-v2 fine-tuned (captures cadence + timbre — best quality)
+ *   Tier 1a: F5-TTS MLX zero-shot (timbre only, no daemon needed)
+ *   Tier 1b: Qwen3-TTS daemon zero-shot (timbre only, HTTP-based)
+ *   Tier 2: edge-tts (preset voices — fast, free)
+ *
+ * Context-aware optimizations:
+ *   - Short text (< 50 chars) in announce mode → edge-tts (speed over quality)
+ *   - Fine-tuned model available → XTTS-v2 (quality over speed)
+ *   - No cloned engine available → edge-tts fallback with configured voice
  *
  * Plays via afplay (macOS) or mpv/ffplay/mpg123 (Linux).
- * Supports per-call rate override, auto-slowdown for long text,
- * and non-blocking playback (returns immediately after synthesis).
- *
  * Ring buffer: last 20 synthesized audio files are cached for replay.
  */
 
@@ -32,6 +36,7 @@ import {
 } from "./paths";
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
+import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-server";
 import { applyPronunciation } from "./pronunciation";
 
@@ -328,9 +333,70 @@ export async function speak(
   // This keeps the teleprompter in sync with actual audio.
   const speakingText = text.slice(0, 200); // Truncate for IPC — Voice Bar only needs preview
 
-  // Tier 1: Cloned voice → try engine-specific synthesis
+  // Context-aware shortcut: short announcements use edge-tts for speed
+  if (
+    resolved.engine === "cloned" &&
+    options?.mode === "announce" &&
+    text.length < 50
+  ) {
+    return speakWithEdgeTTS(
+      text,
+      resolved.fallbackVoice || DEFAULT_VOICE,
+      options,
+      resolved.warning,
+    );
+  }
+
+  // Cloned voice → multi-engine synthesis cascade
   if (resolved.engine === "cloned") {
     const profile = loadProfile(resolved.voice);
+
+    // Tier 0: XTTS-v2 fine-tuned (best quality — captures cadence + timbre)
+    if (isXTTSAvailable(resolved.voice) && profile?.reference_clip) {
+      const wavPath = await synthesizeXTTS(
+        text,
+        resolved.voice,
+        profile.reference_clip,
+      );
+      if (wavPath) {
+        const ttsFile = ttsFilePath(process.pid, ttsCounter++);
+        const conv = Bun.spawnSync([
+          "ffmpeg",
+          "-y",
+          "-i",
+          wavPath,
+          "-codec:a",
+          "libmp3lame",
+          "-q:a",
+          "2",
+          ttsFile,
+        ]);
+        try {
+          unlinkSync(wavPath);
+        } catch {}
+
+        if (conv.exitCode === 0) {
+          addToHistory(text, ttsFile, `xtts:${resolved.voice}`);
+          broadcast({
+            type: "state",
+            state: "speaking",
+            text: speakingText,
+            voice: resolved.voice,
+          });
+          const proc = playAudioNonBlocking(ttsFile);
+          proc.exited.then(() => {
+            try {
+              unlinkSync(ttsFile);
+            } catch {}
+          });
+          if (options?.waitForPlayback) await proc.exited;
+          return { warning: resolved.warning };
+        }
+      }
+      console.error(
+        `[voicelayer] XTTS inference failed for "${resolved.voice}" — trying F5-TTS`,
+      );
+    }
 
     // Tier 1a: F5-TTS MLX (local zero-shot, no daemon needed)
     if (
@@ -345,7 +411,6 @@ export async function speak(
         profile.reference_text,
       );
       if (wavPath) {
-        // Convert WAV to MP3 for consistent playback
         const ttsFile = ttsFilePath(process.pid, ttsCounter++);
         const conv = Bun.spawnSync([
           "ffmpeg",
