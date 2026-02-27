@@ -187,7 +187,7 @@ voicelayer/
 │   ├── report.ts              # QA report renderer (JSON → markdown)
 │   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
 │   ├── schemas/               # QA + discovery schemas
-│   └── __tests__/             # 187 tests
+│   └── __tests__/             # 230 tests
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test

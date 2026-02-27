@@ -67,7 +67,7 @@ After 5 seconds of idle state, the pill collapses to a minimal dot. It expands a
 
 ## Architecture
 
-```
+```text
 VoiceLayer MCP Server
     │
     │  /tmp/voicelayer.sock (NDJSON)

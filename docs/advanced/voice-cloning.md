@@ -4,7 +4,7 @@ VoiceLayer supports **zero-shot voice cloning** using Qwen3-TTS. Clone any voice
 
 ## How It Works
 
-```
+```text
 YouTube URL → yt-dlp (WAV 48kHz) → Silero VAD segmentation → FFmpeg normalization
 → voicelayer clone (select best 3 clips) → profile.yaml → Qwen3-TTS daemon
 ```
