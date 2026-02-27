@@ -53,7 +53,7 @@ mcp-server.ts          # Request handler + arg validation
 
 1. Create a branch from `main`
 2. Make changes, add tests for new functionality
-3. Run `bun test` — all 75+ tests must pass
+3. Run `bun test` — all 230+ tests must pass
 4. Push and open a PR against `main`
 5. Address review comments from Cursor Bugbot / CodeRabbit
 

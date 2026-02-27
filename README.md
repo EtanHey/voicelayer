@@ -2,9 +2,10 @@
 
 > Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.
 
+[![npm](https://img.shields.io/npm/v/voicelayer-mcp)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-187%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-230%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
@@ -167,7 +168,7 @@ Client call assistant: track unknowns, suggest follow-up questions, detect red f
 ## Testing
 
 ```bash
-bun test    # 187 tests, 401 expect() calls
+bun test    # 230 tests, 463 expect() calls
 ```
 
 ## Project Structure
@@ -190,6 +191,9 @@ voicelayer/
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
+├── flow-bar/                     # SwiftUI macOS Voice Bar app
+│   ├── VoiceLayer/               # Main app source
+│   └── VoiceLayer.xcodeproj/     # Xcode project
 ├── package.json
 ├── tsconfig.json
 ├── LICENSE
