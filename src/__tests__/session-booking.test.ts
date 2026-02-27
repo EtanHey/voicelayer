@@ -1,14 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, writeFileSync, unlinkSync } from "fs";
-
-const LOCK_FILE = "/tmp/voicelayer-session.lock";
-const STOP_FILE = "/tmp/voicelayer-stop";
+import { LOCK_FILE, STOP_FILE } from "../paths";
 
 // Clean up before importing (module has side effects via process handlers)
 function cleanFiles() {
   for (const f of [LOCK_FILE, STOP_FILE]) {
     if (existsSync(f)) {
-      try { unlinkSync(f); } catch {}
+      try {
+        unlinkSync(f);
+      } catch {}
     }
   }
 }
@@ -46,7 +46,11 @@ describe("session booking", () => {
     // Write a lock with a different PID (use PID 1 — init, always alive)
     writeFileSync(
       LOCK_FILE,
-      JSON.stringify({ pid: 1, sessionId: "other", startedAt: new Date().toISOString() }),
+      JSON.stringify({
+        pid: 1,
+        sessionId: "other",
+        startedAt: new Date().toISOString(),
+      }),
     );
     const result = bookVoiceSession("mine");
     expect(result.success).toBe(false);
@@ -57,7 +61,11 @@ describe("session booking", () => {
     // Use a PID that almost certainly doesn't exist
     writeFileSync(
       LOCK_FILE,
-      JSON.stringify({ pid: 999999, sessionId: "dead", startedAt: new Date().toISOString() }),
+      JSON.stringify({
+        pid: 999999,
+        sessionId: "dead",
+        startedAt: new Date().toISOString(),
+      }),
     );
     const cleaned = cleanStaleLock();
     expect(cleaned).toBe(true);
@@ -67,7 +75,11 @@ describe("session booking", () => {
   it("books successfully after stale lock cleanup", () => {
     writeFileSync(
       LOCK_FILE,
-      JSON.stringify({ pid: 999999, sessionId: "dead", startedAt: new Date().toISOString() }),
+      JSON.stringify({
+        pid: 999999,
+        sessionId: "dead",
+        startedAt: new Date().toISOString(),
+      }),
     );
     const result = bookVoiceSession("fresh");
     expect(result.success).toBe(true);
@@ -84,7 +96,11 @@ describe("session booking", () => {
   it("does not release lock owned by another PID", () => {
     writeFileSync(
       LOCK_FILE,
-      JSON.stringify({ pid: 1, sessionId: "other", startedAt: new Date().toISOString() }),
+      JSON.stringify({
+        pid: 1,
+        sessionId: "other",
+        startedAt: new Date().toISOString(),
+      }),
     );
     releaseVoiceSession();
     // Lock should still exist — not ours to release
