@@ -52,10 +52,15 @@ final class SocketClient {
     /// Read the discovery file and return the socket path, or nil if unavailable.
     private func discoverSocketPath() -> String? {
         let url = URL(fileURLWithPath: Self.discoveryPath)
-        guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let path = json["socketPath"] as? String
-        else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("[FlowBar] Discovery file exists but JSON parsing failed")
+            return nil
+        }
+        guard let path = json["socketPath"] as? String else {
+            print("[FlowBar] Discovery file missing 'socketPath' key")
+            return nil
+        }
         return path
     }
 
