@@ -42,6 +42,7 @@ voicelayer/
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
+├── flow-bar/                  # SwiftUI macOS Voice Bar app
 ├── docs/                      # MkDocs documentation (this site)
 ├── package.json
 ├── tsconfig.json
@@ -62,7 +63,7 @@ bun test src/__tests__/tts.test.ts
 bun test --grep "session booking"
 ```
 
-The test suite covers 75 tests with 178 assertions across:
+The test suite covers 230 tests with 463 assertions across:
 
 - TTS synthesis and playback
 - STT backend detection and transcription

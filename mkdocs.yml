@@ -45,6 +45,9 @@ nav:
     - Overview: architecture/overview.md
     - STT Backends: architecture/stt-backends.md
     - Session Booking: architecture/session-booking.md
+  - Advanced:
+    - Voice Cloning: advanced/voice-cloning.md
+    - Voice Bar: advanced/voice-bar.md
   - Use Cases:
     - QA Testing: use-cases/qa-testing.md
     - Discovery Calls: use-cases/discovery-calls.md
