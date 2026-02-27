@@ -15,7 +15,13 @@
  * All modules import paths from here to prevent drift.
  */
 
-import { writeFileSync, unlinkSync, existsSync } from "fs";
+import {
+  writeFileSync,
+  unlinkSync,
+  existsSync,
+  renameSync,
+  lstatSync,
+} from "fs";
 import { randomBytes } from "crypto";
 
 const TMP = "/tmp";
@@ -73,10 +79,26 @@ export const SOCKET_PATH = tmpPath(`voicelayer-${SESSION_TOKEN}.sock`);
  */
 export const DISCOVERY_FILE = tmpPath("voicelayer-session.json");
 
-/** Write the discovery file so Voice Bar can find this session. */
+/** Write the discovery file so Voice Bar can find this session.
+ * Uses atomic write-and-rename to prevent symlink clobbering. */
 export function writeDiscoveryFile(): void {
+  // Refuse to overwrite a symlink — prevents symlink attacks on /tmp
+  if (existsSync(DISCOVERY_FILE)) {
+    try {
+      const stat = lstatSync(DISCOVERY_FILE);
+      if (stat.isSymbolicLink()) {
+        console.error(
+          `[voicelayer] Refusing to write discovery file: ${DISCOVERY_FILE} is a symlink`,
+        );
+        return;
+      }
+    } catch {}
+  }
+
+  // Atomic write: write to temp file then rename
+  const tmpFile = `${DISCOVERY_FILE}.${process.pid}.tmp`;
   writeFileSync(
-    DISCOVERY_FILE,
+    tmpFile,
     JSON.stringify(
       {
         socketPath: SOCKET_PATH,
@@ -88,7 +110,9 @@ export function writeDiscoveryFile(): void {
       null,
       2,
     ),
+    { mode: 0o600 },
   );
+  renameSync(tmpFile, DISCOVERY_FILE);
 }
 
 /** Remove the discovery file on shutdown. */

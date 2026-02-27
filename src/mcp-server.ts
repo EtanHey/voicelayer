@@ -151,7 +151,7 @@ function handleSocketCommand(command: SocketCommand): void {
       break;
     }
     case "record": {
-      if (existsSync(MIC_DISABLED_FILE)) {
+      if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
         broadcast({
           type: "error",
           message: "Mic is disabled",
@@ -215,9 +215,9 @@ async function main() {
     );
   }
 
+  onCommand(handleSocketCommand);
   startSocketServer();
   writeDiscoveryFile();
-  onCommand(handleSocketCommand);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
