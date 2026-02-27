@@ -24,6 +24,7 @@ import {
   VOICE_DISABLED_FILE,
 } from "./paths";
 import type { SilenceMode } from "./vad";
+import { ensureVoiceBarRunning } from "./voice-bar-launcher";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
@@ -118,6 +119,9 @@ export async function handleVoiceSpeak(args: unknown): Promise<McpResult> {
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
+
+  // Auto-launch Voice Bar on first voice_speak call (no-op after first attempt)
+  ensureVoiceBarRunning();
 
   // Toggle mode — enabled param present
   if (typeof a.enabled === "boolean") {
