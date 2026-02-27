@@ -234,7 +234,7 @@ export async function transcribeViaServer(
   const formData = new FormData();
   formData.append(
     "file",
-    new Blob([wavData], { type: "audio/wav" }),
+    new Blob([wavData as BlobPart], { type: "audio/wav" }),
     "audio.wav",
   );
   formData.append("response_format", "json");

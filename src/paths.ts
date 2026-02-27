@@ -3,12 +3,26 @@
  *
  * Uses /tmp (standard on macOS + Linux) — NOT os.tmpdir() which returns
  * /var/folders/... on macOS. We need /tmp because:
- *   1. MCP tool descriptions tell users: "touch /tmp/voicelayer-stop"
- *   2. All docs reference /tmp paths
- *   3. /tmp exists on both macOS and Linux
+ *   1. /tmp exists on both macOS and Linux
+ *   2. All legacy docs reference /tmp paths
+ *   3. Discovery file at well-known /tmp/voicelayer-session.json lets
+ *      Voice Bar find the per-session socket/stop paths.
+ *
+ * AIDEV-NOTE: Per-session random token prevents cross-process spoofing of
+ * stop signals and socket connections. Voice Bar reads the discovery file
+ * to find the correct session paths.
  *
  * All modules import paths from here to prevent drift.
  */
+
+import {
+  writeFileSync,
+  unlinkSync,
+  existsSync,
+  renameSync,
+  lstatSync,
+} from "fs";
+import { randomBytes } from "crypto";
 
 const TMP = "/tmp";
 
@@ -17,11 +31,17 @@ function tmpPath(name: string): string {
   return `${TMP}/${name}`;
 }
 
+/**
+ * Per-session random token (16 hex chars = 8 random bytes).
+ * Generated once at module load time. All session-specific paths use this.
+ */
+export const SESSION_TOKEN: string = randomBytes(8).toString("hex");
+
 /** Session lock file — prevents mic conflicts between Claude sessions. */
-export const LOCK_FILE = tmpPath("voicelayer-session.lock");
+export const LOCK_FILE = tmpPath(`voicelayer-session-${SESSION_TOKEN}.lock`);
 
 /** Stop signal file — touch to end current recording or playback. */
-export const STOP_FILE = tmpPath("voicelayer-stop");
+export const STOP_FILE = tmpPath(`voicelayer-stop-${SESSION_TOKEN}`);
 
 /** TTS audio file prefix — each speak() call generates a unique file. */
 export function ttsFilePath(pid: number, counter: number): string {
@@ -50,5 +70,56 @@ export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
 /** Combined voice disabled flag — checked by CC PreToolUse hook to block all voice tools. */
 export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
 
-/** Unix domain socket for Voice Bar IPC — VoiceLayer creates, Voice Bar connects. */
-export const SOCKET_PATH = tmpPath("voicelayer.sock");
+/** Unix domain socket for Voice Bar IPC — per-session to prevent spoofing. */
+export const SOCKET_PATH = tmpPath(`voicelayer-${SESSION_TOKEN}.sock`);
+
+/**
+ * Well-known discovery file — Voice Bar reads this to find the current
+ * session's socket path, stop file path, and token.
+ */
+export const DISCOVERY_FILE = tmpPath("voicelayer-session.json");
+
+/** Write the discovery file so Voice Bar can find this session.
+ * Uses atomic write-and-rename to prevent symlink clobbering. */
+export function writeDiscoveryFile(): void {
+  // Refuse to overwrite a symlink — prevents symlink attacks on /tmp
+  if (existsSync(DISCOVERY_FILE)) {
+    try {
+      const stat = lstatSync(DISCOVERY_FILE);
+      if (stat.isSymbolicLink()) {
+        console.error(
+          `[voicelayer] Refusing to write discovery file: ${DISCOVERY_FILE} is a symlink`,
+        );
+        return;
+      }
+    } catch {}
+  }
+
+  // Atomic write: write to temp file then rename
+  const tmpFile = `${DISCOVERY_FILE}.${process.pid}.tmp`;
+  writeFileSync(
+    tmpFile,
+    JSON.stringify(
+      {
+        socketPath: SOCKET_PATH,
+        stopFile: STOP_FILE,
+        sessionToken: SESSION_TOKEN,
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
+  );
+  renameSync(tmpFile, DISCOVERY_FILE);
+}
+
+/** Remove the discovery file on shutdown. */
+export function removeDiscoveryFile(): void {
+  if (existsSync(DISCOVERY_FILE)) {
+    try {
+      unlinkSync(DISCOVERY_FILE);
+    } catch {}
+  }
+}
