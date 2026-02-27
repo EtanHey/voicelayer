@@ -1,7 +1,7 @@
 /**
  * Unix domain socket server for VoiceLayer ↔ Voice Bar communication.
  *
- * Creates a socket at /tmp/voicelayer.sock, broadcasts NDJSON state events
+ * Creates a per-session socket at /tmp/voicelayer-{token}.sock, broadcasts NDJSON state events
  * to all connected clients, and receives commands.
  *
  * AIDEV-NOTE: This runs alongside MCP StdioServerTransport on the same Bun
