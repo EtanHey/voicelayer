@@ -1,7 +1,9 @@
 // SocketClient.swift — Unix domain socket client for Voice Bar.
 //
-// Connects to VoiceLayer's socket at /tmp/voicelayer.sock using Network.framework.
-// Receives NDJSON state events, sends commands. Auto-reconnects on disconnect.
+// Discovers the VoiceLayer socket by reading /tmp/voicelayer-session.json,
+// which contains the per-session socket path, token, and PID.
+// Watches the discovery file for changes so it reconnects immediately
+// when a new VoiceLayer session starts.
 //
 // AIDEV-NOTE: NWConnection cannot be reused after .failed or .cancelled.
 // Each reconnection creates a brand-new NWConnection instance.
@@ -10,24 +12,79 @@ import Foundation
 import Network
 
 final class SocketClient {
-    private let socketPath: String
+    /// Well-known path where VoiceLayer writes session info.
+    static let discoveryPath = "/tmp/voicelayer-session.json"
+
     private let queue = DispatchQueue(label: "com.voicelayer.flowbar.socket", qos: .userInitiated)
     private var connection: NWConnection?
     private var buffer = ""
     private var intentionallyClosed = false
     private let state: VoiceState
 
+    /// The socket path we're currently connected to (from discovery file).
+    private var currentSocketPath: String?
+
+    /// File system watcher for the discovery file.
+    private var discoverySource: DispatchSourceFileSystemObject?
+
     // MARK: - Lifecycle
 
-    init(socketPath: String, state: VoiceState) {
-        self.socketPath = socketPath
+    init(state: VoiceState) {
         self.state = state
     }
 
+    /// Start the connection loop. Reads the discovery file for the socket path.
     func connect() {
         intentionallyClosed = false
+        startWatchingDiscoveryFile()
+        attemptConnection()
+    }
 
-        // NWEndpoint.unix(path:) -- confirmed API, macOS 13+.
+    func disconnect() {
+        intentionallyClosed = true
+        stopWatchingDiscoveryFile()
+        connection?.cancel()
+        connection = nil
+    }
+
+    // MARK: - Discovery
+
+    /// Read the discovery file and return the socket path, or nil if unavailable.
+    private func discoverSocketPath() -> String? {
+        let url = URL(fileURLWithPath: Self.discoveryPath)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("[FlowBar] Discovery file exists but JSON parsing failed")
+            return nil
+        }
+        guard let path = json["socketPath"] as? String else {
+            print("[FlowBar] Discovery file missing 'socketPath' key")
+            return nil
+        }
+        return path
+    }
+
+    /// Attempt to connect using the discovered socket path.
+    private func attemptConnection() {
+        guard !intentionallyClosed else { return }
+
+        guard let socketPath = discoverSocketPath() else {
+            print("[FlowBar] No discovery file at \(Self.discoveryPath) — waiting...")
+            setConnected(false)
+            scheduleReconnect()
+            return
+        }
+
+        // Log when we discover a new or changed socket path
+        if socketPath != currentSocketPath {
+            if currentSocketPath != nil {
+                print("[FlowBar] Session changed — new socket: \(socketPath)")
+            } else {
+                print("[FlowBar] Discovered socket: \(socketPath)")
+            }
+            currentSocketPath = socketPath
+        }
+
         let conn = NWConnection(to: .unix(path: socketPath), using: .tcp)
         connection = conn
 
@@ -57,10 +114,69 @@ final class SocketClient {
         conn.start(queue: queue)
     }
 
-    func disconnect() {
-        intentionallyClosed = true
-        connection?.cancel()
-        connection = nil
+    // MARK: - File watching
+
+    /// Watch the discovery file for changes. When VoiceLayer writes a new
+    /// session file (atomic rename), the old inode gets a delete/rename event
+    /// which triggers re-discovery and reconnection.
+    private func startWatchingDiscoveryFile() {
+        stopWatchingDiscoveryFile()
+
+        let fd = open(Self.discoveryPath, O_EVTONLY)
+        guard fd >= 0 else {
+            // File doesn't exist yet — reconnect timer will poll
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .delete, .rename, .attrib],
+            queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            self?.handleDiscoveryFileChanged()
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        source.resume()
+        discoverySource = source
+    }
+
+    private func stopWatchingDiscoveryFile() {
+        discoverySource?.cancel()
+        discoverySource = nil
+    }
+
+    /// Called when the discovery file changes on disk.
+    private func handleDiscoveryFileChanged() {
+        guard !intentionallyClosed else { return }
+
+        guard let newPath = discoverSocketPath() else {
+            // Discovery file was deleted — VoiceLayer shut down
+            print("[FlowBar] Discovery file removed — disconnecting")
+            connection?.cancel()
+            connection = nil
+            buffer = ""
+            currentSocketPath = nil
+            setConnected(false)
+            // Re-establish watcher (old fd is now invalid)
+            startWatchingDiscoveryFile()
+            scheduleReconnect()
+            return
+        }
+
+        if newPath != currentSocketPath {
+            // New session — drop old connection and reconnect
+            print("[FlowBar] Discovery file updated — reconnecting to \(newPath)")
+            connection?.cancel()
+            connection = nil
+            buffer = ""
+            currentSocketPath = nil
+            // Re-establish watcher on the new file inode
+            startWatchingDiscoveryFile()
+            attemptConnection()
+        }
     }
 
     // MARK: - Send
@@ -129,11 +245,18 @@ final class SocketClient {
 
         guard !intentionallyClosed else { return }
 
-        // Wait 2 seconds, then create a brand-new NWConnection.
+        // Clear current path so next attempt re-reads discovery file
+        currentSocketPath = nil
+        // Re-establish watcher (old fd may be invalid after disconnect)
+        startWatchingDiscoveryFile()
+        scheduleReconnect()
+    }
+
+    private func scheduleReconnect() {
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.intentionallyClosed else { return }
-            print("[FlowBar] Reconnecting to \(socketPath)...")
-            connect()
+            print("[FlowBar] Reconnecting...")
+            attemptConnection()
         }
     }
 

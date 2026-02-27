@@ -1,7 +1,7 @@
 /**
  * Socket protocol types for VoiceLayer ↔ Voice Bar communication.
  *
- * Transport: Unix domain socket at /tmp/voicelayer.sock
+ * Transport: Unix domain socket at /tmp/voicelayer-{token}.sock (per-session)
  * Framing: Newline-delimited JSON (NDJSON) — one JSON object per line, \n terminated.
  *
  * AIDEV-NOTE: This is the contract between the Bun socket server and the

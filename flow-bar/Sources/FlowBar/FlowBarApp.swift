@@ -1,6 +1,7 @@
 // FlowBarApp.swift — Entry point for Voice Bar.
 //
 // Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
+// SocketClient auto-discovers the per-session socket via /tmp/voicelayer-session.json.
 // No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
 // Tracks mouse across screens — pill follows the cursor.
 
@@ -28,11 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
-        // Socket client
-        let client = SocketClient(
-            socketPath: "/tmp/voicelayer.sock",
-            state: voiceState
-        )
+        // Socket client — discovers socket path from /tmp/voicelayer-session.json
+        let client = SocketClient(state: voiceState)
         socketClient = client
 
         // Wire the send-command closure so BarView buttons -> socket
