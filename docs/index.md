@@ -19,18 +19,22 @@ VoiceLayer bridges the gap between your terminal and your microphone.
 
 ```
 Claude Code  ─── MCP ───>  VoiceLayer
+                            ├── Waits for any playing voice_speak audio
                             ├── edge-tts speaks question (speakers)
-                            ├── sox records mic (16kHz mono PCM)
+                            ├── sox records mic (native rate → resample to 16kHz)
+                            ├── Silero VAD detects speech/silence
                             ├── whisper.cpp transcribes locally (~300ms)
                             └── Returns transcription to Claude
 ```
 
 1. Claude calls `voice_ask("How does the nav look on mobile?")`
-2. VoiceLayer speaks the question aloud via edge-tts
-3. Mic recording starts — user speaks their response
-4. Recording ends when user touches `/tmp/voicelayer-stop` or after 5s silence
-5. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
-6. Claude receives the transcribed text and continues
+2. VoiceLayer waits for any prior `voice_speak` audio to finish (no overlap)
+3. Speaks the question aloud via edge-tts
+4. Mic recording starts at device's native sample rate (auto-detected)
+5. Audio resampled to 16kHz in real-time, fed to Silero VAD for speech detection
+6. Recording ends on user stop signal, VAD silence detection, or timeout
+7. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
+8. Claude receives the transcribed text and continues
 
 ## Voice Tools
 
@@ -45,7 +49,7 @@ Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), 
 
 - **100% local STT** — whisper.cpp on Apple Silicon, no cloud dependency
 - **Session booking** — lockfile mutex prevents mic conflicts between sessions
-- **User-controlled stop** — `touch /tmp/voicelayer-stop` ends recording or playback
+- **User-controlled stop** — `touch /tmp/voicelayer-stop`, or Silero VAD silence detection (quick 0.5s, standard 1.5s, thoughtful 2.5s)
 - **Per-mode speech rates** — announce is snappy (+10%), brief is slow (-10%)
 - **Auto-slowdown** — long text automatically gets slower speech rate
 - **Cross-platform** — macOS and Linux support
