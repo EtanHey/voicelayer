@@ -46,7 +46,7 @@ Use **converse** for back-and-forth voice dialogue:
 
 This is the only mode that records your microphone. Claude speaks the question, waits for your voice response, transcribes it locally, and continues.
 
-**Stopping a recording:** Touch `/tmp/voicelayer-stop` or wait for 5 seconds of silence.
+**Stopping a recording:** Touch `/tmp/voicelayer-stop-{TOKEN}` or wait for 2.5s of silence (thoughtful default).
 
 ### "Claude should take notes silently"
 
