@@ -59,6 +59,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
+        // Request Accessibility permission (needed for CGEvent paste-on-record-end).
+        // Shows the macOS permission dialog on first launch.
+        let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(axOptions)
+        NSLog("[FlowBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
+
         // Read discovery file for socket path
         let socketPath = readDiscoverySocketPath() ?? "/tmp/voicelayer.sock"
         lastSocketPath = socketPath
