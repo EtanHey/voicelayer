@@ -38,6 +38,7 @@ import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-server";
+import type { WordBoundary } from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
@@ -544,11 +545,7 @@ async function speakWithEdgeTTS(
   }
 
   // Parse word boundary metadata and broadcast to Voice Bar
-  let wordBoundaries: {
-    offset_ms: number;
-    duration_ms: number;
-    text: string;
-  }[] = [];
+  let wordBoundaries: WordBoundary[] = [];
   try {
     const metaRaw = readFileSync(metadataFile, "utf-8");
     wordBoundaries = metaRaw

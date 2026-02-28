@@ -164,8 +164,9 @@ final class VoiceState {
             // Word boundary timestamps from TTS engine for karaoke sync
             if let words = event["words"] as? [[String: Any]] {
                 wordBoundaries = words.compactMap { w in
-                    guard let offset = w["offset_ms"] as? Int,
-                          let duration = w["duration_ms"] as? Int,
+                    // JSONSerialization may decode numbers as Int or Double
+                    guard let offset = (w["offset_ms"] as? Int) ?? (w["offset_ms"] as? Double).map({ Int($0) }),
+                          let duration = (w["duration_ms"] as? Int) ?? (w["duration_ms"] as? Double).map({ Int($0) }),
                           let text = w["text"] as? String
                     else { return nil }
                     return (offsetMs: offset, durationMs: duration, text: text)
