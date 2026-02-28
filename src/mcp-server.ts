@@ -12,26 +12,15 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { existsSync, writeFileSync, unlinkSync } from "fs";
 import { getBackend } from "./stt";
-import {
-  TTS_DISABLED_FILE,
-  MIC_DISABLED_FILE,
-  VOICE_DISABLED_FILE,
-  STOP_FILE,
-  writeDiscoveryFile,
-  removeDiscoveryFile,
-} from "./paths";
-import { getHistoryEntry, playAudioNonBlocking } from "./tts";
-import { waitForInput } from "./input";
+import { writeDiscoveryFile, removeDiscoveryFile } from "./paths";
 import {
   startSocketServer,
   stopSocketServer,
   onCommand,
-  broadcast,
 } from "./socket-server";
-import type { SocketCommand } from "./socket-protocol";
 import { getToolDefinitions } from "./mcp-tools";
+import { handleSocketCommand } from "./socket-handlers";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -120,84 +109,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 });
-
-// --- Socket command handler ---
-
-function handleSocketCommand(command: SocketCommand): void {
-  switch (command.cmd) {
-    case "stop":
-    case "cancel":
-      writeFileSync(
-        STOP_FILE,
-        `${command.cmd} from voice-bar at ${new Date().toISOString()}`,
-      );
-      try {
-        Bun.spawnSync(["pkill", "-f", "afplay"]);
-      } catch {}
-      break;
-    case "replay": {
-      const entry = getHistoryEntry(0);
-      if (entry && existsSync(entry.file)) {
-        broadcast({ type: "state", state: "idle" });
-        broadcast({
-          type: "state",
-          state: "speaking",
-          text: entry.text.slice(0, 200),
-        });
-        playAudioNonBlocking(entry.file);
-      }
-      break;
-    }
-    case "record": {
-      if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
-        broadcast({
-          type: "error",
-          message: "Mic is disabled",
-          recoverable: false,
-        });
-        break;
-      }
-      const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
-      const silenceMode = command.silence_mode ?? "standard";
-      const ptt = command.press_to_talk ?? false;
-      waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
-        console.error(
-          `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        broadcast({ type: "state", state: "idle" });
-      });
-      break;
-    }
-    case "toggle": {
-      const { scope, enabled } = command;
-      const flagFile =
-        scope === "tts"
-          ? TTS_DISABLED_FILE
-          : scope === "mic"
-            ? MIC_DISABLED_FILE
-            : VOICE_DISABLED_FILE;
-      if (enabled) {
-        try {
-          unlinkSync(flagFile);
-        } catch {}
-        if (scope === "all") {
-          try {
-            unlinkSync(TTS_DISABLED_FILE);
-          } catch {}
-          try {
-            unlinkSync(MIC_DISABLED_FILE);
-          } catch {}
-        }
-      } else {
-        writeFileSync(
-          flagFile,
-          `disabled from flow-bar at ${new Date().toISOString()}`,
-        );
-      }
-      break;
-    }
-  }
-}
 
 // --- Startup ---
 
