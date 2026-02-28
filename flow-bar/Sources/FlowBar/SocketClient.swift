@@ -3,9 +3,6 @@
 // Connects to VoiceLayer's per-session socket discovered via
 // /tmp/voicelayer-session.json. Receives NDJSON state events,
 // sends commands. Auto-reconnects on disconnect.
-//
-// AIDEV-NOTE: NWConnection cannot be reused after .failed or .cancelled.
-// Each reconnection creates a brand-new NWConnection instance.
 
 import Foundation
 import Network
@@ -27,38 +24,7 @@ final class SocketClient {
 
     func connect() {
         intentionallyClosed = false
-
-        // NWEndpoint.unix(path:) -- confirmed API, macOS 13+.
-        let conn = NWConnection(to: .unix(path: socketPath), using: .tcp)
-        connection = conn
-
-        conn.stateUpdateHandler = { [weak self] newState in
-            guard let self else { return }
-            switch newState {
-            case .ready:
-                NSLog("[FlowBar] Connected to socket")
-                setConnected(true)
-                receiveLoop()
-
-            case let .failed(error):
-                NSLog("[FlowBar] Connection failed: \(error)")
-                handleDisconnect()
-
-            case let .waiting(error):
-                NSLog("[FlowBar] Waiting: \(error)")
-                handleDisconnect()
-
-            case .cancelled:
-                NSLog("[FlowBar] Connection cancelled")
-                setConnected(false)
-
-            default:
-                NSLog("[FlowBar] Connection state: \(newState)")
-            }
-        }
-
-        NSLog("[FlowBar] Connecting to %@", socketPath)
-        conn.start(queue: queue)
+        startConnection(to: socketPath)
     }
 
     func disconnect() {
@@ -77,31 +43,41 @@ final class SocketClient {
             buffer = ""
             socketPath = newPath
             intentionallyClosed = false
-
-            let conn = NWConnection(to: .unix(path: newPath), using: .tcp)
-            connection = conn
-
-            conn.stateUpdateHandler = { [weak self] newState in
-                guard let self else { return }
-                switch newState {
-                case .ready:
-                    setConnected(true)
-                    receiveLoop()
-                case let .failed(error):
-                    NSLog("[FlowBar] Connection failed: \(error)")
-                    handleDisconnect()
-                case let .waiting(error):
-                    NSLog("[FlowBar] Waiting: \(error)")
-                    handleDisconnect()
-                case .cancelled:
-                    setConnected(false)
-                default:
-                    break
-                }
-            }
-
-            conn.start(queue: queue)
+            startConnection(to: newPath)
         }
+    }
+
+    // MARK: - Connection setup
+
+    /// Create a new NWConnection, attach the state handler, and start it.
+    /// NWConnection cannot be reused after .failed or .cancelled —
+    /// each reconnection must create a new instance.
+    private func startConnection(to path: String) {
+        let conn = NWConnection(to: .unix(path: path), using: .tcp)
+        connection = conn
+
+        conn.stateUpdateHandler = { [weak self] newState in
+            guard let self else { return }
+            switch newState {
+            case .ready:
+                NSLog("[FlowBar] Connected to socket")
+                setConnected(true)
+                receiveLoop()
+            case let .failed(error):
+                NSLog("[FlowBar] Connection failed: \(error)")
+                handleDisconnect()
+            case let .waiting(error):
+                NSLog("[FlowBar] Waiting: \(error)")
+                handleDisconnect()
+            case .cancelled:
+                setConnected(false)
+            default:
+                break
+            }
+        }
+
+        NSLog("[FlowBar] Connecting to %@", path)
+        conn.start(queue: queue)
     }
 
     // MARK: - Send

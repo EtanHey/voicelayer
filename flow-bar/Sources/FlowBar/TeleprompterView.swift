@@ -1,10 +1,8 @@
 // TeleprompterView.swift — Word-by-word speaking text with karaoke highlighting.
 //
 // Multi-line wrapping layout with per-word styling. Current word is bright white,
-// past words fade, upcoming words are dimmed. Uses FlowLayout for natural word wrapping.
-//
-// AIDEV-NOTE: Uses server-provided WordBoundary timestamps from edge-tts when
-// available. Falls back to client-side estimation for non-edge-tts engines.
+// past words fade, upcoming words are dimmed. Uses server-provided WordBoundary
+// timestamps when available, falls back to client-side estimation.
 
 import SwiftUI
 
@@ -74,10 +72,9 @@ struct FlowLayout: Layout {
 struct TeleprompterView: View {
     let text: String
     /// Server-provided word boundary timestamps (ms offsets from audio start).
-    /// When non-empty, drives exact karaoke sync instead of client estimation.
     var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
 
-    /// Fallback timing for non-edge-tts engines (estimation).
+    /// Fallback timing constants for non-edge-tts engines (client estimation).
     private static let baseDelay: Double = 0.28
     private static let perCharDelay: Double = 0.015
     private static let minDelay: Double = 0.22
@@ -99,10 +96,7 @@ struct TeleprompterView: View {
         .onDisappear { stopAnimating() }
         .onChange(of: text) { _, _ in restart() }
         .onChange(of: wordBoundaries.count) { _, newCount in
-            // SubtitleEvent arrives after StateEvent — restart with real timestamps
-            if newCount > 0 {
-                restart()
-            }
+            if newCount > 0 { restart() }
         }
     }
 

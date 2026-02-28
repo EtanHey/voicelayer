@@ -2,9 +2,6 @@
 //
 // Industrial-minimal aesthetic: solid dark pill, clean white text,
 // bright state indicators. Dynamic width that breathes with content.
-//
-// AIDEV-NOTE: Design system documented in memory/voice-bar-design-system.md.
-// Update both when changing tokens here.
 
 import SwiftUI
 
@@ -29,15 +26,8 @@ enum Theme {
     /// Dynamic width: pill shrink-wraps content with minimum size.
     static let pillMinWidth: CGFloat = 100
     /// Panel needs to be large enough to never clip the pill.
-    /// The pill itself has no max — content determines width.
     static let panelWidth: CGFloat = 500
-    static let pillHeight: CGFloat = 44
-    /// Expanded pill height for teleprompter multi-line display during speaking.
-    static let pillExpandedHeight: CGFloat = 80
-    static let cornerRadius: CGFloat = 22 // Half of height for capsule
 
-    /// Width of the collapsed idle pill (just dot + icon).
-    static let collapsedWidth: CGFloat = 40
     /// Seconds of idle before pill collapses.
     static let collapseDelay: TimeInterval = 5.0
 
@@ -52,7 +42,6 @@ enum Theme {
 
     // MARK: - Animation
 
-    static let stateTransition: Animation = .spring(duration: 0.4, bounce: 0.2)
     static let connectionTransition: Animation = .spring(duration: 0.3, bounce: 0.15)
 
     // MARK: - State-dependent color

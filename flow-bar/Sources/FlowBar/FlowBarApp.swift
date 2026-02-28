@@ -3,10 +3,7 @@
 // Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
 // No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
 // Tracks mouse across screens — pill follows the cursor.
-//
-// AIDEV-NOTE: Socket path is discovered from /tmp/voicelayer-session.json,
-// which the MCP server writes at startup. A DispatchSource file watcher
-// detects when a new session starts and reconnects automatically.
+// Socket path discovered from /tmp/voicelayer-session.json with file watcher.
 
 import AppKit
 import SwiftUI
