@@ -18,22 +18,34 @@ describe("tts module", () => {
     // @ts-ignore — mock Bun.spawnSync so getAudioPlayer() is deterministic on all platforms
     Bun.spawnSync = (cmd: string[]) => {
       if (Array.isArray(cmd) && cmd[0] === "which") {
-        return { exitCode: 1, stdout: new Uint8Array(0), stderr: new Uint8Array(0) };
+        return {
+          exitCode: 1,
+          stdout: new Uint8Array(0),
+          stderr: new Uint8Array(0),
+        };
       }
       return originalSpawnSync(cmd);
     };
 
     // Clean up history file before each test
-    try { unlinkSync("/tmp/voicelayer-history.json"); } catch {}
+    try {
+      unlinkSync("/tmp/voicelayer-history.json");
+    } catch {}
     // Clean up TTS disabled flag
-    try { unlinkSync("/tmp/.claude_tts_disabled"); } catch {}
+    try {
+      unlinkSync("/tmp/.claude_tts_disabled");
+    } catch {}
   });
 
   afterEach(() => {
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
-    try { unlinkSync("/tmp/voicelayer-history.json"); } catch {}
-    try { unlinkSync("/tmp/.claude_tts_disabled"); } catch {}
+    try {
+      unlinkSync("/tmp/voicelayer-history.json");
+    } catch {}
+    try {
+      unlinkSync("/tmp/.claude_tts_disabled");
+    } catch {}
   });
 
   it("speak() calls edge-tts then audio player (non-blocking)", async () => {
@@ -45,7 +57,10 @@ describe("tts module", () => {
     const expectedPlayer = platform() === "darwin" ? "afplay" : "mpg123";
     expect(spawnCalls.length).toBe(2);
     expect(spawnCalls[0].cmd[0]).toBe("python3");
-    expect(spawnCalls[0].cmd).toContain("edge_tts");
+    // Uses edge-tts-words.py script for word boundary metadata
+    expect(
+      spawnCalls[0].cmd.some((c: string) => c.includes("edge-tts-words")),
+    ).toBe(true);
     expect(spawnCalls[0].cmd).toContain("Hello test");
     expect(spawnCalls[1].cmd[0]).toBe(expectedPlayer);
   });
@@ -84,14 +99,20 @@ describe("tts module", () => {
 
 describe("tts ring buffer", () => {
   beforeEach(() => {
-    try { unlinkSync("/tmp/voicelayer-history.json"); } catch {}
+    try {
+      unlinkSync("/tmp/voicelayer-history.json");
+    } catch {}
   });
 
   afterEach(() => {
-    try { unlinkSync("/tmp/voicelayer-history.json"); } catch {}
+    try {
+      unlinkSync("/tmp/voicelayer-history.json");
+    } catch {}
     // Clean up history audio files
     for (let i = 0; i < 20; i++) {
-      try { unlinkSync(`/tmp/voicelayer-history-${i}.mp3`); } catch {}
+      try {
+        unlinkSync(`/tmp/voicelayer-history-${i}.mp3`);
+      } catch {}
     }
   });
 

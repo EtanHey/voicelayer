@@ -55,12 +55,31 @@ export interface ErrorEvent {
   recoverable: boolean;
 }
 
+/** Word boundary from edge-tts WordBoundary event. */
+export interface WordBoundary {
+  /** Offset from start of audio in milliseconds. */
+  offset_ms: number;
+  /** Duration of the word in milliseconds. */
+  duration_ms: number;
+  /** The word text. */
+  text: string;
+}
+
+/** Sent after TTS synthesis completes, before playback starts.
+ *  Voice Bar uses these timestamps to drive karaoke word highlighting. */
+export interface SubtitleEvent {
+  type: "subtitle";
+  /** Word boundaries with exact timing from the TTS engine. */
+  words: WordBoundary[];
+}
+
 export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
   | AudioLevelEvent
-  | ErrorEvent;
+  | ErrorEvent
+  | SubtitleEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 

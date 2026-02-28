@@ -1,7 +1,8 @@
 // SocketClient.swift — Unix domain socket client for Voice Bar.
 //
-// Connects to VoiceLayer's socket at /tmp/voicelayer.sock using Network.framework.
-// Receives NDJSON state events, sends commands. Auto-reconnects on disconnect.
+// Connects to VoiceLayer's per-session socket discovered via
+// /tmp/voicelayer-session.json. Receives NDJSON state events,
+// sends commands. Auto-reconnects on disconnect.
 //
 // AIDEV-NOTE: NWConnection cannot be reused after .failed or .cancelled.
 // Each reconnection creates a brand-new NWConnection instance.
@@ -10,7 +11,7 @@ import Foundation
 import Network
 
 final class SocketClient {
-    private let socketPath: String
+    private var socketPath: String
     private let queue = DispatchQueue(label: "com.voicelayer.flowbar.socket", qos: .userInitiated)
     private var connection: NWConnection?
     private var buffer = ""
@@ -35,25 +36,28 @@ final class SocketClient {
             guard let self else { return }
             switch newState {
             case .ready:
+                NSLog("[FlowBar] Connected to socket")
                 setConnected(true)
                 receiveLoop()
 
             case let .failed(error):
-                print("[FlowBar] Connection failed: \(error)")
+                NSLog("[FlowBar] Connection failed: \(error)")
                 handleDisconnect()
 
             case let .waiting(error):
-                print("[FlowBar] Waiting: \(error)")
+                NSLog("[FlowBar] Waiting: \(error)")
                 handleDisconnect()
 
             case .cancelled:
+                NSLog("[FlowBar] Connection cancelled")
                 setConnected(false)
 
             default:
-                break
+                NSLog("[FlowBar] Connection state: \(newState)")
             }
         }
 
+        NSLog("[FlowBar] Connecting to %@", socketPath)
         conn.start(queue: queue)
     }
 
@@ -61,6 +65,43 @@ final class SocketClient {
         intentionallyClosed = true
         connection?.cancel()
         connection = nil
+    }
+
+    /// Reconnect to a new socket path (e.g., when discovery file changes).
+    func reconnect(to newPath: String) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            NSLog("[FlowBar] Reconnecting to new socket: \(newPath)")
+            connection?.cancel()
+            connection = nil
+            buffer = ""
+            socketPath = newPath
+            intentionallyClosed = false
+
+            let conn = NWConnection(to: .unix(path: newPath), using: .tcp)
+            connection = conn
+
+            conn.stateUpdateHandler = { [weak self] newState in
+                guard let self else { return }
+                switch newState {
+                case .ready:
+                    setConnected(true)
+                    receiveLoop()
+                case let .failed(error):
+                    NSLog("[FlowBar] Connection failed: \(error)")
+                    handleDisconnect()
+                case let .waiting(error):
+                    NSLog("[FlowBar] Waiting: \(error)")
+                    handleDisconnect()
+                case .cancelled:
+                    setConnected(false)
+                default:
+                    break
+                }
+            }
+
+            conn.start(queue: queue)
+        }
     }
 
     // MARK: - Send
@@ -73,7 +114,7 @@ final class SocketClient {
         connection.send(
             content: Data(jsonString.utf8),
             completion: .contentProcessed { error in
-                if let error { print("[FlowBar] Send error: \(error)") }
+                if let error { NSLog("[FlowBar] Send error: \(error)") }
             }
         )
     }
@@ -110,7 +151,7 @@ final class SocketClient {
         guard let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            print("[FlowBar] Bad JSON: \(json)")
+            NSLog("[FlowBar] Bad JSON: \(json)")
             return
         }
 
@@ -132,7 +173,7 @@ final class SocketClient {
         // Wait 2 seconds, then create a brand-new NWConnection.
         queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.intentionallyClosed else { return }
-            print("[FlowBar] Reconnecting to \(socketPath)...")
+            NSLog("[FlowBar] Reconnecting to \(socketPath)...")
             connect()
         }
     }
@@ -141,7 +182,14 @@ final class SocketClient {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             state.isConnected = value
-            if !value {
+            if value {
+                // Transition from disconnected to idle when socket connects.
+                // The server doesn't send initial state on connect, so we
+                // assume idle until the next state event arrives.
+                if state.mode == .disconnected {
+                    state.mode = .idle
+                }
+            } else {
                 state.mode = .disconnected
             }
         }
