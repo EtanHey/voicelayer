@@ -35,10 +35,7 @@ struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
-            pillContent
-        }
+        pillContent
     }
 
     // MARK: - Pill content (collapsed or expanded)
@@ -82,7 +79,7 @@ struct BarView: View {
             actionButtons
         }
         .padding(.horizontal, 14)
-        .frame(height: pillHeight)
+        .padding(.vertical, 8)
         .frame(minWidth: Theme.pillMinWidth)
         .background(Theme.pillBackground)
         .clipShape(Capsule())
@@ -99,7 +96,14 @@ struct BarView: View {
         // No drop shadow — clean edges like Wispr Flow
         .opacity(state.mode == .disconnected ? 0.7 : 1.0)
         .fixedSize()
-        .frame(maxWidth: Theme.pillMaxWidth, alignment: .center)
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { state.onPillSizeChange?(geo.size) }
+                    .onChange(of: geo.size.width) { _, _ in state.onPillSizeChange?(geo.size) }
+                    .onChange(of: geo.size.height) { _, _ in state.onPillSizeChange?(geo.size) }
+            }
+        )
         .animation(.smooth(duration: 0.3), value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .onChange(of: state.mode) { _, newMode in
@@ -156,19 +160,7 @@ struct BarView: View {
         }
     }
 
-    // MARK: - Pill height (expands during speaking)
-
-    /// Pill grows vertically only when text needs multiple lines (8+ words).
-    /// Short sentences stay in the standard 44pt pill.
-    private static let multiLineWordThreshold = 8
-
-    private var pillHeight: CGFloat {
-        if state.mode == .speaking,
-           state.statusText.split(separator: " ").count >= Self.multiLineWordThreshold {
-            return Theme.pillExpandedHeight
-        }
-        return Theme.pillHeight
-    }
+    // (Pill height is now automatic — .fixedSize() + padding wraps content)
 
     // MARK: - Leading indicator
 
@@ -198,7 +190,10 @@ struct BarView: View {
             // Shimmer waveform + teleprompter during speaking
             WaveformView(mode: .idle, audioLevel: state.audioLevel)
             if !state.statusText.isEmpty {
-                TeleprompterView(text: state.statusText)
+                TeleprompterView(
+                    text: state.statusText,
+                    wordBoundaries: state.wordBoundaries
+                )
             } else {
                 statusLabel
             }

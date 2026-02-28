@@ -38,6 +38,7 @@ import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-server";
+import type { WordBoundary } from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
@@ -509,11 +510,16 @@ async function speakWithEdgeTTS(
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
 
-  // Generate speech via Python edge-tts CLI (must complete — we need the file)
+  // Generate speech via edge-tts with word boundary metadata.
+  // Uses scripts/edge-tts-words.py which captures WordBoundary events
+  // for exact karaoke word sync in Voice Bar.
+  const metadataFile = ttsFile.replace(".mp3", ".meta.ndjson");
+  const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
+    .pathname;
+
   const synth = Bun.spawn([
     "python3",
-    "-m",
-    "edge_tts",
+    scriptPath,
     "--text",
     text,
     "--voice",
@@ -522,6 +528,8 @@ async function speakWithEdgeTTS(
     rate,
     "--write-media",
     ttsFile,
+    "--write-metadata",
+    metadataFile,
   ]);
   const synthExit = await synth.exited;
   if (synthExit !== 0) {
@@ -536,8 +544,51 @@ async function speakWithEdgeTTS(
     );
   }
 
+  // Parse word boundary metadata and broadcast to Voice Bar
+  let wordBoundaries: WordBoundary[] = [];
+  try {
+    const metaRaw = readFileSync(metadataFile, "utf-8");
+    wordBoundaries = metaRaw
+      .trim()
+      .split("\n")
+      .filter((l) => l.length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line);
+        // edge-tts offsets are in 100-nanosecond units — convert to ms
+        return {
+          offset_ms: Math.round(parsed.offset / 10000),
+          duration_ms: Math.round(parsed.duration / 10000),
+          text: parsed.text as string,
+        };
+      });
+  } catch {
+    // Non-fatal — fall back to client-side estimation if metadata missing
+  }
+
+  // Clean up metadata file
+  try {
+    unlinkSync(metadataFile);
+  } catch {}
+
   // Save to ring buffer before playback
   addToHistory(text, ttsFile, voice);
+
+  // Broadcast word boundaries BEFORE speaking state so Voice Bar has
+  // timestamps ready when TeleprompterView starts animating
+  if (wordBoundaries.length > 0) {
+    broadcast({
+      type: "subtitle",
+      words: wordBoundaries,
+    });
+  }
+
+  // Broadcast speaking state with text for Voice Bar teleprompter
+  broadcast({
+    type: "state",
+    state: "speaking",
+    text: text.slice(0, 200),
+    voice,
+  });
 
   // Play audio — NON-BLOCKING (returns immediately)
   const proc = playAudioNonBlocking(ttsFile);

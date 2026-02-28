@@ -1,11 +1,10 @@
 // TeleprompterView.swift — Word-by-word speaking text with karaoke highlighting.
 //
 // Multi-line wrapping layout with per-word styling. Current word is bright white,
-// past words fade, upcoming words are dimmed. Auto-scrolls vertically to keep
-// the current word visible. Uses FlowLayout for natural word wrapping.
+// past words fade, upcoming words are dimmed. Uses FlowLayout for natural word wrapping.
 //
-// AIDEV-NOTE: Word timing is estimated, not synced to actual TTS audio.
-// True sync would require word-level timestamps from the TTS engine.
+// AIDEV-NOTE: Uses server-provided WordBoundary timestamps from edge-tts when
+// available. Falls back to client-side estimation for non-edge-tts engines.
 
 import SwiftUI
 
@@ -13,6 +12,9 @@ import SwiftUI
 
 struct FlowLayout: Layout {
     var spacing: CGFloat = 5
+    /// Hard max width for word wrapping — needed because .fixedSize() on the
+    /// parent passes nil proposal, which would collapse everything to one line.
+    var maxWidth: CGFloat = .infinity
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let result = arrangeSubviews(proposal: proposal, subviews: subviews)
@@ -40,7 +42,7 @@ struct FlowLayout: Layout {
         proposal: ProposedViewSize,
         subviews: Subviews
     ) -> (size: CGSize, positions: [CGPoint]) {
-        let maxWidth = proposal.width ?? .infinity
+        let maxWidth = min(maxWidth, proposal.width ?? .infinity)
         var positions: [CGPoint] = []
         var x: CGFloat = 0
         var y: CGFloat = 0
@@ -71,12 +73,15 @@ struct FlowLayout: Layout {
 
 struct TeleprompterView: View {
     let text: String
+    /// Server-provided word boundary timestamps (ms offsets from audio start).
+    /// When non-empty, drives exact karaoke sync instead of client estimation.
+    var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
 
-    /// Base delay per word in seconds — adjusted by character count.
-    private static let baseDelay: Double = 0.25
-    private static let perCharDelay: Double = 0.05
-    private static let minDelay: Double = 0.2
-    private static let maxDelay: Double = 0.55
+    /// Fallback timing for non-edge-tts engines (estimation).
+    private static let baseDelay: Double = 0.28
+    private static let perCharDelay: Double = 0.015
+    private static let minDelay: Double = 0.22
+    private static let maxDelay: Double = 0.38
 
     @State private var currentIndex: Int = 0
     @State private var animationTask: Task<Void, Never>?
@@ -85,60 +90,27 @@ struct TeleprompterView: View {
         text.split(separator: " ").map(String.init)
     }
 
-    /// Short text (≤ threshold words) renders inline without ScrollView —
-    /// naturally vertically centered by the parent HStack.
-    private static let shortTextThreshold = 8
-
     var body: some View {
-        Group {
-            if words.count <= Self.shortTextThreshold {
-                // Short text: no ScrollView needed, centers naturally in parent
-                FlowLayout(spacing: 5) {
-                    wordViews
-                }
-                .padding(.horizontal, 4)
-            } else {
-                // Long text: vertical scroll with auto-advance
-                ScrollViewReader { proxy in
-                    ScrollView(.vertical, showsIndicators: false) {
-                        FlowLayout(spacing: 5) {
-                            wordViews
-                        }
-                        .padding(.horizontal, 4)
-                        .padding(.top, 4) // Breathing room before first line
-                    }
-                    .scrollDisabled(true) // We control scroll position
-                    .onChange(of: currentIndex) { _, newIndex in
-                        withAnimation(.smooth(duration: 0.3)) {
-                            proxy.scrollTo(newIndex, anchor: .center)
-                        }
-                    }
-                }
-                .mask {
-                    // Only bottom fade — top edge sharp so first words aren't clipped
-                    VStack(spacing: 0) {
-                        Color.white
-                        LinearGradient(
-                            colors: [.white, .clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(height: 8)
-                    }
-                }
-            }
+        FlowLayout(spacing: 5, maxWidth: 280) {
+            wordViews
         }
-        .frame(maxWidth: 220)
+        .padding(.horizontal, 4)
         .onAppear { startAnimating() }
         .onDisappear { stopAnimating() }
         .onChange(of: text) { _, _ in restart() }
+        .onChange(of: wordBoundaries.count) { _, newCount in
+            // SubtitleEvent arrives after StateEvent — restart with real timestamps
+            if newCount > 0 {
+                restart()
+            }
+        }
     }
 
     private var wordViews: some View {
         ForEach(0 ..< words.count, id: \.self) { index in
             Text(words[index])
                 .font(.system(
-                    size: 11,
+                    size: 16,
                     weight: index == currentIndex ? .bold : .medium
                 ))
                 .foregroundStyle(
@@ -161,9 +133,64 @@ struct TeleprompterView: View {
 
     // MARK: - Animation
 
+    private var hasServerTimestamps: Bool {
+        !wordBoundaries.isEmpty
+    }
+
     private func startAnimating() {
         guard words.count > 1 else { return }
+
+        if hasServerTimestamps {
+            startTimestampAnimation()
+        } else {
+            startEstimatedAnimation()
+        }
+    }
+
+    /// Server-driven animation: use exact word boundary timestamps from edge-tts.
+    /// Each word is highlighted at its exact offset_ms from audio start.
+    private func startTimestampAnimation() {
+        let boundaries = wordBoundaries
+        let wordCount = words.count
+
         animationTask = Task { @MainActor in
+            // Wait for audio player to start (~300ms startup latency)
+            try? await Task.sleep(for: .seconds(0.3))
+            if Task.isCancelled { return }
+
+            let startTime = ContinuousClock.now
+
+            for i in 0 ..< min(wordCount, boundaries.count) {
+                // Calculate when this word should be highlighted
+                let targetOffset = Duration.milliseconds(boundaries[i].offsetMs)
+                let elapsed = ContinuousClock.now - startTime
+
+                // Wait until the word's offset time
+                if targetOffset > elapsed {
+                    try? await Task.sleep(for: targetOffset - elapsed)
+                }
+
+                if Task.isCancelled { break }
+                currentIndex = i
+            }
+
+            // If there are more display words than boundaries (text was split
+            // differently than TTS), advance through remaining words quickly
+            if wordCount > boundaries.count {
+                for i in boundaries.count ..< wordCount {
+                    currentIndex = i
+                    try? await Task.sleep(for: .milliseconds(200))
+                    if Task.isCancelled { break }
+                }
+            }
+        }
+    }
+
+    /// Client-side estimated animation (fallback for non-edge-tts engines).
+    private func startEstimatedAnimation() {
+        animationTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.3))
+            if Task.isCancelled { return }
             for i in 0 ..< words.count {
                 currentIndex = i
                 let word = words[i]
@@ -179,12 +206,11 @@ struct TeleprompterView: View {
         let charTime = baseDelay + Double(word.count) * perCharDelay
         var delay = min(maxDelay, max(minDelay, charTime))
 
-        // Punctuation pauses — commas/semicolons add a short pause, periods/questions longer
         if let last = word.last {
             if last == "." || last == "!" || last == "?" {
-                delay += 0.15
+                delay += 0.10
             } else if last == "," || last == ";" || last == ":" {
-                delay += 0.08
+                delay += 0.05
             }
         }
         return delay
