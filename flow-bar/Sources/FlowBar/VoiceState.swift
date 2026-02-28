@@ -96,7 +96,12 @@ final class VoiceState {
         // Set mode optimistically to prevent rapid-tap duplicates
         mode = .recording
         confirmationText = nil
-        frontmostAppOnRecordStart = NSWorkspace.shared.frontmostApplication
+        // Capture the frontmost app for paste-on-stop.
+        // Skip if it's FlowBar itself (NSPanel is non-activating, but guard anyway).
+        let front = NSWorkspace.shared.frontmostApplication
+        if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
+            frontmostAppOnRecordStart = front
+        }
         barInitiatedRecording = true
         sendCommand?([
             "cmd": "record",
@@ -240,8 +245,9 @@ final class VoiceState {
         }
         frontmostAppOnRecordStart = nil
 
-        // Small delay for app to regain focus, then simulate Cmd+V
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+        // Delay for app to regain focus before simulating Cmd+V.
+        // 250ms accounts for Electron apps (VS Code, Claude) which are slower to activate.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             Self.simulatePaste()
 
             // Show brief confirmation
@@ -255,6 +261,10 @@ final class VoiceState {
     /// Simulate Cmd+V keypress via CGEvent.
     /// Requires Accessibility permission (System Settings → Privacy → Accessibility).
     private static func simulatePaste() {
+        guard AXIsProcessTrusted() else {
+            NSLog("[FlowBar] simulatePaste: Accessibility not granted — cannot post CGEvent")
+            return
+        }
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             NSLog("[FlowBar] simulatePaste: failed to create CGEventSource")
             return
