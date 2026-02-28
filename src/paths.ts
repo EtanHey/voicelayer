@@ -115,6 +115,25 @@ export function writeDiscoveryFile(): void {
   renameSync(tmpFile, DISCOVERY_FILE);
 }
 
+/**
+ * Safe write that refuses to follow symlinks.
+ * Prevents symlink attacks on predictable /tmp paths (S1 security fix).
+ */
+export function safeWriteFileSync(filePath: string, content: string): void {
+  if (existsSync(filePath)) {
+    try {
+      const stat = lstatSync(filePath);
+      if (stat.isSymbolicLink()) {
+        console.error(
+          `[voicelayer] Refusing to write: ${filePath} is a symlink`,
+        );
+        return;
+      }
+    } catch {}
+  }
+  writeFileSync(filePath, content, { mode: 0o600 });
+}
+
 /** Remove the discovery file on shutdown. */
 export function removeDiscoveryFile(): void {
   if (existsSync(DISCOVERY_FILE)) {
