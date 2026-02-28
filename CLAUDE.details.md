@@ -3,7 +3,7 @@
 ## Architecture
 - MCP server exposes `voice_speak` (non-blocking TTS) and `voice_ask` (blocking record + transcribe).
 - TTS routing: Qwen3-TTS daemon (cloned voices) -> edge-tts (preset) -> text-only fallback.
-- Voice Bar connects to `/tmp/voicelayer.sock` and shows state (idle/speaking/recording/transcribing).
+- Voice Bar connects to `/tmp/voicelayer-{TOKEN}.sock` and shows state (idle/speaking/recording/transcribing).
 - Socket protocol uses NDJSON events: state, speech, transcription, error; commands: stop, replay, toggle.
 
 ## TTS Backends
@@ -28,8 +28,8 @@
 - Uses Silero VAD (ONNX) with silence modes: quick (0.5s), standard (1.5s), thoughtful (2.5s).
 - Model location: `models/silero_vad.onnx`.
 - Recording modes: VAD (default) or `press_to_talk=true` for manual stop.
-- Stop signals: touch `/tmp/voicelayer-stop`, VAD silence (VAD mode), timeout (default 300s).
-- Session booking uses `/tmp/voicelayer-session.lock`; stale locks are cleaned.
+- Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 300s).
+- Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 
 ## Ring Buffer and Playback
 - Cached outputs: `/tmp/voicelayer-history-{0-19}.mp3`.
@@ -48,7 +48,7 @@
 - `voicelayer clone ...` to build a voice profile.
 
 ## Key Paths
-- Socket: `/tmp/voicelayer.sock`
+- Socket: `/tmp/voicelayer-{TOKEN}.sock` (TOKEN is a random hex string generated per session for security)
 - Thinking log: `/tmp/voicelayer-thinking.md`
 - TTS/mic disable flags: `/tmp/.claude_tts_disabled`, `/tmp/.claude_mic_disabled`
 - Recording temp files: `/tmp/voicelayer-recording-{pid}-{ts}.wav`

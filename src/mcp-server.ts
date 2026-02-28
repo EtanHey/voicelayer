@@ -56,11 +56,9 @@ const server = new Server(
     instructions:
       "Voice I/O layer for Claude Code. 2 tools:\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
-      `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 5s silence.\n` +
+      `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 2.5s silence (thoughtful default).\n` +
       'Auto-mode detection: ends with ? → consult. length > 280 → brief. starts with "insight:" → think. default → announce.\n' +
       "voice_speak returns immediately (non-blocking). Audio plays in background. voice_ask auto-waits for it to finish before speaking.\n" +
-      "replay=true on voice_ask speaks back last transcription before recording.\n" +
-      "noise_floor param (default 0) filters low-confidence STT artifacts.\n" +
       "Voice is disabled by default; user enables via /mcp or toggle tool.\n" +
       "All qa_voice_* tool names still work (backward compat aliases).",
   },

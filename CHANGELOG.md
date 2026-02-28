@@ -5,6 +5,22 @@ All notable changes to VoiceLayer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-02-28
+
+### Changed
+- **Tool consolidation** — Replaced 7 individual `qa_voice_*` tools (`qa_voice_announce`, `qa_voice_brief`, `qa_voice_consult`, `qa_voice_converse`, `qa_voice_think`, `qa_voice_say`, `qa_voice_ask`) with 2 unified tools: `voice_speak` (non-blocking TTS) and `voice_ask` (blocking record + transcribe). Old `qa_voice_*` names remain as backward-compat aliases.
+- **Auto-mode detection** — `voice_speak` selects announce/brief/consult/think automatically from message content (ends with `?` → consult, length > 280 → brief, starts with `"insight:"` → think, default → announce). Override with `mode` param.
+- **voice_ask auto-waits** — `voice_ask` automatically awaits any in-progress `voice_speak` playback before speaking its question, eliminating audio overlap without manual coordination.
+- **MCP server name** changed from `qa-voice` to `voicelayer`.
+- **npm package** renamed to `voicelayer-mcp`.
+
+### Added
+- `replay_index` param on `voice_speak` — plays a cached audio entry from the ring buffer (20-entry history at `/tmp/voicelayer-history-{0-19}.mp3`).
+- `enabled` toggle on `voice_speak` — enable/disable TTS and/or mic at runtime.
+- Voice Bar (macOS): floating SwiftUI widget communicating via Unix socket IPC.
+- Qwen3-TTS daemon for cloned voices (three-tier routing: Qwen3-TTS → edge-tts → text-only).
+- CLI commands: `voicelayer extract`, `voicelayer clone`, `voicelayer daemon`, `voicelayer bar`.
+
 ## [1.0.3] - 2026-02-25
 
 ### Fixed

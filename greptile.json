@@ -1,0 +1,31 @@
+{
+  "customContext": {
+    "rules": [
+      {
+        "content": "Bun + TypeScript project. VoiceLayer MCP server with 2 tools: voice_speak (TTS) and voice_ask (STT)."
+      },
+      {
+        "content": "Socket paths use per-session random tokens for security. Discovery file at /tmp/voicelayer-session.json.",
+        "scope": ["src/**"]
+      },
+      {
+        "content": "Voice Bar (flow-bar/) is a SwiftUI macOS app. Uses NWConnection for Unix socket IPC.",
+        "scope": ["flow-bar/**"]
+      },
+      {
+        "content": "Auto-mode detection for voice_speak: ends with ? → consult, >280 chars → brief, starts with 'insight:' → think, default → announce."
+      },
+      {
+        "content": "Flag surprises — if something in the codebase is unexpected, mention it in the review."
+      }
+    ]
+  },
+  "ignorePatterns": [
+    "node_modules",
+    ".git",
+    "dist",
+    ".build",
+    "*.lock",
+    "claude.scratchpad.md"
+  ]
+}
