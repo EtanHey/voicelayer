@@ -22,7 +22,7 @@ export function getToolDefinitions() {
         "- consult: checkpoint — speaks, hints user may respond\n" +
         "- think: silent markdown log, no audio (auto for 'insight:', 'note:', 'TODO:')\n\n" +
         "Also supports: replay (index param) and toggle (enabled param).\n\n" +
-        "Stop playback: pkill afplay or skhd hotkey (ctrl+alt-s).\n" +
+        "Stop playback: Voice Bar stop button or socket 'stop' command.\n" +
         "Prerequisites: python3 + edge-tts, audio player (afplay on macOS).",
       inputSchema: {
         type: "object" as const,
@@ -30,7 +30,7 @@ export function getToolDefinitions() {
           message: {
             type: "string",
             description:
-              "The message to speak or log (must be non-empty after trimming)",
+              "The message to speak or log. Required for speak/think modes, ignored for toggle/replay.",
           },
           mode: {
             type: "string",
@@ -77,7 +77,7 @@ export function getToolDefinitions() {
             default: "all",
           },
         },
-        required: ["message"],
+        required: [],
       },
     },
 
