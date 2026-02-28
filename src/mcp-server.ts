@@ -13,7 +13,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getBackend } from "./stt";
-import { writeDiscoveryFile, removeDiscoveryFile } from "./paths";
+import { STOP_FILE, writeDiscoveryFile, removeDiscoveryFile } from "./paths";
 import {
   startSocketServer,
   stopSocketServer,
