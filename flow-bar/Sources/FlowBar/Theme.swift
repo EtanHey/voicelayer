@@ -26,9 +26,11 @@ enum Theme {
 
     // MARK: - Pill dimensions
 
-    /// Dynamic width: pill shrink-wraps content between min and max.
+    /// Dynamic width: pill shrink-wraps content with minimum size.
     static let pillMinWidth: CGFloat = 100
-    static let pillMaxWidth: CGFloat = 360
+    /// Panel needs to be large enough to never clip the pill.
+    /// The pill itself has no max — content determines width.
+    static let panelWidth: CGFloat = 500
     static let pillHeight: CGFloat = 44
     /// Expanded pill height for teleprompter multi-line display during speaking.
     static let pillExpandedHeight: CGFloat = 80
@@ -44,7 +46,7 @@ enum Theme {
     /// Horizontal position: 80% from left edge of screen (avoids covering Wispr Flow)
     static let horizontalOffset: CGFloat = 0.8
     /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
-    static let panelPadding: CGFloat = 20
+    static let panelPadding: CGFloat = 4
     /// Vertical offset from bottom of visible area
     static let bottomPadding: CGFloat = 12
 

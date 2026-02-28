@@ -44,6 +44,9 @@ final class VoiceState {
     /// Real-time audio level (0.0–1.0) from RMS events.
     var audioLevel: Double?
 
+    /// Word boundary timestamps from TTS engine (ms offsets from audio start).
+    var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+
     /// Whether the pill is collapsed (idle for too long).
     var isCollapsed: Bool = false
 
@@ -63,6 +66,9 @@ final class VoiceState {
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     var sendCommand: (([String: Any]) -> Void)?
+
+    /// Callback when the pill's rendered size changes — used to resize the NSPanel.
+    var onPillSizeChange: ((CGSize) -> Void)?
 
     // MARK: - Commands
 
@@ -114,6 +120,7 @@ final class VoiceState {
                 recordingMode = nil
                 silenceMode = nil
                 audioLevel = nil
+                wordBoundaries = []
                 // Reset bar-initiated flag if recording was cancelled/timed out
                 if barInitiatedRecording {
                     barInitiatedRecording = false
@@ -150,6 +157,19 @@ final class VoiceState {
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     pasteTranscription(text)
+                }
+            }
+
+        case "subtitle":
+            // Word boundary timestamps from TTS engine for karaoke sync
+            if let words = event["words"] as? [[String: Any]] {
+                wordBoundaries = words.compactMap { w in
+                    // JSONSerialization may decode numbers as Int or Double
+                    guard let offset = (w["offset_ms"] as? Int) ?? (w["offset_ms"] as? Double).map({ Int($0) }),
+                          let duration = (w["duration_ms"] as? Int) ?? (w["duration_ms"] as? Double).map({ Int($0) }),
+                          let text = w["text"] as? String
+                    else { return nil }
+                    return (offsetMs: offset, durationMs: duration, text: text)
                 }
             }
 
@@ -233,14 +253,23 @@ final class VoiceState {
     }
 
     /// Simulate Cmd+V keypress via CGEvent.
+    /// Requires Accessibility permission (System Settings → Privacy → Accessibility).
     private static func simulatePaste() {
-        guard let source = CGEventSource(stateID: .hidSystemState) else { return }
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            NSLog("[FlowBar] simulatePaste: failed to create CGEventSource")
+            return
+        }
         // Virtual key 0x09 = V
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
         let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
+        if vDown == nil || vUp == nil {
+            NSLog("[FlowBar] simulatePaste: failed to create CGEvent")
+            return
+        }
         vDown?.flags = .maskCommand
         vUp?.flags = .maskCommand
         vDown?.post(tap: .cghidEventTap)
         vUp?.post(tap: .cghidEventTap)
+        NSLog("[FlowBar] simulatePaste: posted Cmd+V")
     }
 }

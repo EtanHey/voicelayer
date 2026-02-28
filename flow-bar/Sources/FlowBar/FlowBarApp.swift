@@ -3,9 +3,28 @@
 // Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
 // No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
 // Tracks mouse across screens — pill follows the cursor.
+//
+// AIDEV-NOTE: Socket path is discovered from /tmp/voicelayer-session.json,
+// which the MCP server writes at startup. A DispatchSource file watcher
+// detects when a new session starts and reconnects automatically.
 
 import AppKit
 import SwiftUI
+
+// MARK: - Discovery file
+
+private let discoveryPath = "/tmp/voicelayer-session.json"
+
+/// Read the discovery file and return the socket path, or nil if unavailable.
+private func readDiscoverySocketPath() -> String? {
+    guard let data = try? Data(contentsOf: URL(fileURLWithPath: discoveryPath)),
+          let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let socketPath = dict["socketPath"] as? String
+    else {
+        return nil
+    }
+    return socketPath
+}
 
 // MARK: - App Delegate
 
@@ -21,6 +40,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = use default bottomPadding
 
+    /// File descriptor for discovery file watcher.
+    private var discoveryFD: Int32 = -1
+    /// DispatchSource watching the discovery file for writes.
+    private var discoverySource: DispatchSourceFileSystemObject?
+    /// Polling timer as fallback when file watcher misses events.
+    private var pollTimer: DispatchSourceTimer?
+    /// Last known socket path to detect changes.
+    private var lastSocketPath: String?
+
+    /// Last reported pill size — used to avoid layout loops.
+    private var lastPillSize: CGSize = .zero
+
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
 
@@ -28,9 +59,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
+        // Read discovery file for socket path
+        let socketPath = readDiscoverySocketPath() ?? "/tmp/voicelayer.sock"
+        lastSocketPath = socketPath
+        NSLog("[FlowBar] Discovered socket: %@", socketPath)
+
         // Socket client
         let client = SocketClient(
-            socketPath: "/tmp/voicelayer.sock",
+            socketPath: socketPath,
             state: voiceState
         )
         socketClient = client
@@ -42,13 +78,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         client.connect()
 
+        // Watch discovery file for session changes
+        startDiscoveryWatcher()
+
+        // Resize panel dynamically when pill content changes
+        voiceState.onPillSizeChange = { [weak self] size in
+            DispatchQueue.main.async {
+                self?.resizePanelToFit(size)
+            }
+        }
+
         // Floating pill
         let barView = BarView(state: voiceState)
         let hosting = NSHostingView(rootView: barView)
         hosting.frame = NSRect(
             x: 0, y: 0,
-            width: Theme.pillMaxWidth + Theme.panelPadding * 2,
-            height: Theme.pillExpandedHeight + Theme.panelPadding * 2
+            width: Theme.panelWidth,
+            height: 300
         )
 
         // Load saved position
@@ -83,6 +129,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stopDiscoveryWatcher()
         socketClient?.disconnect()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
@@ -94,6 +141,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false // keep running as a menu-bar agent
+    }
+
+    // MARK: - Discovery file watcher
+
+    private func startDiscoveryWatcher() {
+        // Watch the discovery file for writes using DispatchSource
+        let fd = open(discoveryPath, O_EVTONLY)
+        if fd >= 0 {
+            discoveryFD = fd
+            let source = DispatchSource.makeFileSystemObjectSource(
+                fileDescriptor: fd,
+                eventMask: [.write, .rename, .delete],
+                queue: .main
+            )
+            source.setEventHandler { [weak self] in
+                self?.checkDiscoveryFile()
+            }
+            source.setCancelHandler {
+                close(fd)
+            }
+            source.resume()
+            discoverySource = source
+        }
+
+        // Polling fallback every 2s (file watcher can miss events on /tmp)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 2.0, repeating: 2.0)
+        timer.setEventHandler { [weak self] in
+            self?.checkDiscoveryFile()
+        }
+        timer.resume()
+        pollTimer = timer
+    }
+
+    private func stopDiscoveryWatcher() {
+        discoverySource?.cancel()
+        discoverySource = nil
+        pollTimer?.cancel()
+        pollTimer = nil
+        if discoveryFD >= 0 {
+            // fd is closed by the cancel handler
+            discoveryFD = -1
+        }
+    }
+
+    /// Check if discovery file has a new socket path and reconnect if so.
+    private func checkDiscoveryFile() {
+        guard let newPath = readDiscoverySocketPath() else { return }
+        if newPath != lastSocketPath {
+            NSLog("[FlowBar] Discovery file changed: %@", newPath)
+            lastSocketPath = newPath
+            socketClient?.reconnect(to: newPath)
+        }
+    }
+
+    // MARK: - Dynamic panel sizing
+
+    /// Resize the panel to tightly fit the pill content, anchored at bottom-center.
+    /// Called via onPillSizeChange callback from the SwiftUI GeometryReader.
+    private func resizePanelToFit(_ pillSize: CGSize) {
+        guard let panel else { return }
+        // Avoid layout loops — only resize on meaningful change
+        let epsilon: CGFloat = 2
+        if abs(pillSize.width - lastPillSize.width) < epsilon,
+           abs(pillSize.height - lastPillSize.height) < epsilon {
+            return
+        }
+        lastPillSize = pillSize
+
+        let padding = Theme.panelPadding
+        let newWidth = max(pillSize.width + padding * 2, 50)
+        let newHeight = max(pillSize.height + padding * 2, 30)
+
+        // Anchor at visual center — pill stays in place across state changes
+        let oldFrame = panel.frame
+        let centerX = oldFrame.midX
+        let centerY = oldFrame.midY
+        let newFrame = NSRect(
+            x: centerX - newWidth / 2,
+            y: centerY - newHeight / 2,
+            width: newWidth,
+            height: newHeight
+        )
+        panel.setFrame(newFrame, display: true, animate: false)
     }
 
     // MARK: - Mouse tracking
