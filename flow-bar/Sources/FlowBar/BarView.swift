@@ -110,8 +110,6 @@ struct BarView: View {
             handleModeChange(newMode)
         }
         .onTapGesture {
-            // Click-to-record — onTapGesture has lower priority than Button,
-            // so replay/stop buttons still receive clicks.
             if state.mode == .idle {
                 NSHapticFeedbackManager.defaultPerformer.perform(
                     .alignment, performanceTime: .now
@@ -159,8 +157,6 @@ struct BarView: View {
         default: 0
         }
     }
-
-    // (Pill height is now automatic — .fixedSize() + padding wraps content)
 
     // MARK: - Leading indicator
 

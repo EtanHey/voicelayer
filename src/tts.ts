@@ -16,9 +16,6 @@
  * Ring buffer: last 20 synthesized audio files are cached for replay.
  */
 
-// AIDEV-NOTE: Barge-in (interrupting TTS to start recording) explicitly not implemented.
-// skhd hotkey (ctrl+alt-s → pkill afplay) is the stop UX. See Phase 2 spec.
-
 import {
   existsSync,
   readFileSync,
@@ -28,7 +25,6 @@ import {
 } from "fs";
 import { platform } from "os";
 import {
-  STOP_FILE,
   ttsFilePath,
   TTS_HISTORY_FILE,
   ttsHistoryFilePath,
@@ -246,6 +242,54 @@ export function isTTSDisabled(): boolean {
   return existsSync(TTS_DISABLED_FILE);
 }
 
+/** Convert a WAV file to MP3 via ffmpeg. Returns the MP3 path, or null on failure. */
+function convertWavToMp3(wavPath: string): string | null {
+  const mp3Path = ttsFilePath(process.pid, ttsCounter++);
+  const result = Bun.spawnSync([
+    "ffmpeg",
+    "-y",
+    "-i",
+    wavPath,
+    "-codec:a",
+    "libmp3lame",
+    "-q:a",
+    "2",
+    mp3Path,
+  ]);
+  try {
+    unlinkSync(wavPath);
+  } catch {}
+  return result.exitCode === 0 ? mp3Path : null;
+}
+
+/**
+ * Broadcast speaking state, play audio, add to history, and clean up.
+ * Shared by all cloned voice engine tiers.
+ */
+async function playClonedAudio(
+  ttsFile: string,
+  text: string,
+  voiceLabel: string,
+  speakingText: string,
+  resolvedVoice: string,
+  options?: { waitForPlayback?: boolean },
+): Promise<void> {
+  addToHistory(text, ttsFile, voiceLabel);
+  broadcast({
+    type: "state",
+    state: "speaking",
+    text: speakingText,
+    voice: resolvedVoice,
+  });
+  const proc = playAudioNonBlocking(ttsFile);
+  proc.exited.then(() => {
+    try {
+      unlinkSync(ttsFile);
+    } catch {}
+  });
+  if (options?.waitForPlayback) await proc.exited;
+}
+
 /** Play an audio file non-blocking. Returns the spawned process. */
 export function playAudioNonBlocking(
   audioFile: string,
@@ -257,9 +301,7 @@ export function playAudioNonBlocking(
   });
   currentPlayback = { proc, pid: proc.pid };
 
-  // Clean up reference + broadcast idle when playback finishes
-  // AIDEV-NOTE: Idle broadcast is here (not in callers) to avoid race conditions —
-  // only the LATEST playback should broadcast idle when it finishes.
+  // Only the LATEST playback broadcasts idle when it finishes (avoids races)
   proc.exited.then(() => {
     if (currentPlayback?.pid === proc.pid) {
       currentPlayback = null;
@@ -330,9 +372,8 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
 
-  // AIDEV-NOTE: Speaking state is broadcast AFTER synthesis, right before playback starts.
-  // This keeps the teleprompter in sync with actual audio.
-  const speakingText = text.slice(0, 200); // Truncate for IPC — Voice Bar only needs preview
+  // Truncate for IPC -- Voice Bar only needs a preview for the teleprompter
+  const speakingText = text.slice(0, 200);
 
   // Context-aware shortcut: short announcements use edge-tts for speed
   if (
@@ -352,50 +393,27 @@ export async function speak(
   if (resolved.engine === "cloned") {
     const profile = loadProfile(resolved.voice);
 
-    // Tier 0: XTTS-v2 fine-tuned (best quality — captures cadence + timbre)
+    // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
     if (isXTTSAvailable(resolved.voice) && profile?.reference_clip) {
       const wavPath = await synthesizeXTTS(
         text,
         resolved.voice,
         profile.reference_clip,
       );
-      if (wavPath) {
-        const ttsFile = ttsFilePath(process.pid, ttsCounter++);
-        const conv = Bun.spawnSync([
-          "ffmpeg",
-          "-y",
-          "-i",
-          wavPath,
-          "-codec:a",
-          "libmp3lame",
-          "-q:a",
-          "2",
-          ttsFile,
-        ]);
-        try {
-          unlinkSync(wavPath);
-        } catch {}
-
-        if (conv.exitCode === 0) {
-          addToHistory(text, ttsFile, `xtts:${resolved.voice}`);
-          broadcast({
-            type: "state",
-            state: "speaking",
-            text: speakingText,
-            voice: resolved.voice,
-          });
-          const proc = playAudioNonBlocking(ttsFile);
-          proc.exited.then(() => {
-            try {
-              unlinkSync(ttsFile);
-            } catch {}
-          });
-          if (options?.waitForPlayback) await proc.exited;
-          return { warning: resolved.warning };
-        }
+      const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
+      if (mp3Path) {
+        await playClonedAudio(
+          mp3Path,
+          text,
+          `xtts:${resolved.voice}`,
+          speakingText,
+          resolved.voice,
+          options,
+        );
+        return { warning: resolved.warning };
       }
       console.error(
-        `[voicelayer] XTTS inference failed for "${resolved.voice}" — trying F5-TTS`,
+        `[voicelayer] XTTS inference failed for "${resolved.voice}" -- trying F5-TTS`,
       );
     }
 
@@ -411,43 +429,20 @@ export async function speak(
         profile.reference_clip,
         profile.reference_text,
       );
-      if (wavPath) {
-        const ttsFile = ttsFilePath(process.pid, ttsCounter++);
-        const conv = Bun.spawnSync([
-          "ffmpeg",
-          "-y",
-          "-i",
-          wavPath,
-          "-codec:a",
-          "libmp3lame",
-          "-q:a",
-          "2",
-          ttsFile,
-        ]);
-        try {
-          unlinkSync(wavPath);
-        } catch {}
-
-        if (conv.exitCode === 0) {
-          addToHistory(text, ttsFile, `f5tts:${resolved.voice}`);
-          broadcast({
-            type: "state",
-            state: "speaking",
-            text: speakingText,
-            voice: resolved.voice,
-          });
-          const proc = playAudioNonBlocking(ttsFile);
-          proc.exited.then(() => {
-            try {
-              unlinkSync(ttsFile);
-            } catch {}
-          });
-          if (options?.waitForPlayback) await proc.exited;
-          return { warning: resolved.warning };
-        }
+      const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
+      if (mp3Path) {
+        await playClonedAudio(
+          mp3Path,
+          text,
+          `f5tts:${resolved.voice}`,
+          speakingText,
+          resolved.voice,
+          options,
+        );
+        return { warning: resolved.warning };
       }
       console.error(
-        `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" — trying Qwen3 daemon`,
+        `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" -- trying Qwen3 daemon`,
       );
     }
 
@@ -456,21 +451,14 @@ export async function speak(
     if (audioBuffer) {
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
-
-      addToHistory(text, ttsFile, `cloned:${resolved.voice}`);
-      broadcast({
-        type: "state",
-        state: "speaking",
-        text: speakingText,
-        voice: resolved.voice,
-      });
-      const proc = playAudioNonBlocking(ttsFile);
-      proc.exited.then(() => {
-        try {
-          unlinkSync(ttsFile);
-        } catch {}
-      });
-      if (options?.waitForPlayback) await proc.exited;
+      await playClonedAudio(
+        ttsFile,
+        text,
+        `cloned:${resolved.voice}`,
+        speakingText,
+        resolved.voice,
+        options,
+      );
       return { warning: resolved.warning };
     }
 
@@ -510,9 +498,6 @@ async function speakWithEdgeTTS(
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
 
-  // Generate speech via edge-tts with word boundary metadata.
-  // Uses scripts/edge-tts-words.py which captures WordBoundary events
-  // for exact karaoke word sync in Voice Bar.
   const metadataFile = ttsFile.replace(".mp3", ".meta.ndjson");
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
     .pathname;
@@ -544,7 +529,6 @@ async function speakWithEdgeTTS(
     );
   }
 
-  // Parse word boundary metadata and broadcast to Voice Bar
   let wordBoundaries: WordBoundary[] = [];
   try {
     const metaRaw = readFileSync(metadataFile, "utf-8");
@@ -565,16 +549,14 @@ async function speakWithEdgeTTS(
     // Non-fatal — fall back to client-side estimation if metadata missing
   }
 
-  // Clean up metadata file
   try {
     unlinkSync(metadataFile);
   } catch {}
 
-  // Save to ring buffer before playback
   addToHistory(text, ttsFile, voice);
 
-  // Broadcast word boundaries BEFORE speaking state so Voice Bar has
-  // timestamps ready when TeleprompterView starts animating
+  // Broadcast boundaries before speaking state so Voice Bar has timestamps
+  // ready when TeleprompterView starts animating
   if (wordBoundaries.length > 0) {
     broadcast({
       type: "subtitle",
@@ -582,7 +564,6 @@ async function speakWithEdgeTTS(
     });
   }
 
-  // Broadcast speaking state with text for Voice Bar teleprompter
   broadcast({
     type: "state",
     state: "speaking",
@@ -590,17 +571,13 @@ async function speakWithEdgeTTS(
     voice,
   });
 
-  // Play audio — NON-BLOCKING (returns immediately)
   const proc = playAudioNonBlocking(ttsFile);
-
-  // Clean up TTS temp file after playback finishes (idle broadcast is in playAudioNonBlocking)
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
     } catch {}
   });
 
-  // For converse mode: wait for playback to finish before recording starts
   if (options?.waitForPlayback) {
     await proc.exited;
   }
