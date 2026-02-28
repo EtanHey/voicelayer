@@ -1,17 +1,12 @@
 // FloatingPanel.swift — NSPanel subclass for non-focus-stealing floating pill.
 //
 // Follows the user's mouse across multiple monitors.
-//
-// AIDEV-NOTE: .nonactivatingPanel MUST be in the styleMask at init time.
-// Setting it later has a known bug (FB16484811) where the WindowServer
-// tag doesn't update. This is why we use a custom NSPanel subclass
-// instead of configuring an NSWindow after creation.
+// .nonactivatingPanel MUST be in the styleMask at init time (FB16484811).
 
 import AppKit
 
 final class FloatingPillPanel: NSPanel {
     init(content: NSView) {
-        // .nonactivatingPanel MUST be in the styleMask at init time.
         super.init(
             contentRect: NSRect(
                 x: 0, y: 0,

@@ -2,9 +2,7 @@
 //
 // Single source of truth for all UI state. Maps socket protocol events
 // (from VoiceLayer MCP server) to SwiftUI-friendly properties.
-//
-// AIDEV-NOTE: VoiceMode values must match socket-protocol.ts VoiceLayerState
-// type: "idle" | "speaking" | "recording" | "transcribing"
+// VoiceMode values must match socket-protocol.ts VoiceLayerState.
 
 import AppKit
 import Foundation
@@ -93,11 +91,8 @@ final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     func record() {
         guard mode == .idle else { return }
-        // Set mode optimistically to prevent rapid-tap duplicates
-        mode = .recording
+        mode = .recording // Optimistic — prevents rapid-tap duplicates
         confirmationText = nil
-        // Capture the frontmost app for paste-on-stop.
-        // Skip if it's FlowBar itself (NSPanel is non-activating, but guard anyway).
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
@@ -158,7 +153,6 @@ final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 transcript = text
-                // Auto-paste when recording was bar-initiated
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     pasteTranscription(text)
@@ -166,7 +160,6 @@ final class VoiceState {
             }
 
         case "subtitle":
-            // Word boundary timestamps from TTS engine for karaoke sync
             if let words = event["words"] as? [[String: Any]] {
                 wordBoundaries = words.compactMap { w in
                     // JSONSerialization may decode numbers as Int or Double
@@ -233,24 +226,19 @@ final class VoiceState {
     // MARK: - Paste transcription at cursor
 
     /// Refocuses the captured app and pastes text via Cmd+V.
-    /// Transcription stays on clipboard (useful for re-pasting, matches Wispr Flow behavior).
     private func pasteTranscription(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        // Refocus the app that was frontmost when recording started
         if let app = frontmostAppOnRecordStart {
             app.activate()
         }
         frontmostAppOnRecordStart = nil
 
-        // Delay for app to regain focus before simulating Cmd+V.
-        // 250ms accounts for Electron apps (VS Code, Claude) which are slower to activate.
+        // 250ms delay for Electron apps (VS Code, Claude) to regain focus
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
             Self.simulatePaste()
-
-            // Show brief confirmation
             self?.confirmationText = "Pasted!"
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 self?.confirmationText = nil
@@ -258,28 +246,26 @@ final class VoiceState {
         }
     }
 
-    /// Simulate Cmd+V keypress via CGEvent.
-    /// Requires Accessibility permission (System Settings → Privacy → Accessibility).
+    /// Simulate Cmd+V via CGEvent. Requires Accessibility permission.
     private static func simulatePaste() {
         guard AXIsProcessTrusted() else {
-            NSLog("[FlowBar] simulatePaste: Accessibility not granted — cannot post CGEvent")
+            NSLog("[FlowBar] simulatePaste: Accessibility not granted")
             return
         }
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             NSLog("[FlowBar] simulatePaste: failed to create CGEventSource")
             return
         }
-        // Virtual key 0x09 = V
-        let vDown = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true)
-        let vUp = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        if vDown == nil || vUp == nil {
+        let vKey: CGKeyCode = 0x09 // V
+        let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
+        let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+        guard let vDown, let vUp else {
             NSLog("[FlowBar] simulatePaste: failed to create CGEvent")
             return
         }
-        vDown?.flags = .maskCommand
-        vUp?.flags = .maskCommand
-        vDown?.post(tap: .cghidEventTap)
-        vUp?.post(tap: .cghidEventTap)
-        NSLog("[FlowBar] simulatePaste: posted Cmd+V")
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        vDown.post(tap: .cghidEventTap)
+        vUp.post(tap: .cghidEventTap)
     }
 }
