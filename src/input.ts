@@ -416,7 +416,19 @@ export async function waitForInput(
   pressToTalk: boolean = false,
 ): Promise<string | null> {
   // Record audio to buffer
-  const pcmData = await recordToBuffer(timeoutMs, silenceMode, pressToTalk);
+  let pcmData: Uint8Array | null;
+  try {
+    pcmData = await recordToBuffer(timeoutMs, silenceMode, pressToTalk);
+  } catch (err) {
+    // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
+    broadcast({
+      type: "error",
+      message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle" });
+    throw err;
+  }
   if (!pcmData) {
     broadcast({ type: "state", state: "idle" });
     return null;
