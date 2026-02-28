@@ -16,8 +16,8 @@
 
 | # | Phase | Folder | Status | PR | Checkpoint |
 |---|-------|--------|--------|----|------------|
-| 1 | MCP Sweep | [phase-1](phase-1/) | pending | — | MCP tools work flawlessly end-to-end |
-| 2 | Voice Bar Hardening | [phase-2](phase-2/) | pending | — | Zero bugs in daily use for 1 week |
+| 1 | MCP Sweep | [phase-1](phase-1/) | **DONE** | [#47](https://github.com/EtanHey/voicelayer/pull/47) | MCP tools work flawlessly end-to-end |
+| 2 | Voice Bar Hardening | [phase-2](phase-2/) | **in progress** | — | Zero bugs in daily use for 1 week |
 | 3 | Standalone Daemon | [phase-3](phase-3/) | pending | — | `voicelayer serve` runs without Claude Code |
 | 4 | Global Hotkeys | [phase-4](phase-4/) | pending | — | Option+Space hold/double-tap, configurable |
 | 5 | Batch STT Engine | [phase-5](phase-5/) | pending | — | whisper small.en default, large-v3-turbo upgrade |

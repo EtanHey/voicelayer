@@ -48,6 +48,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Last reported pill size — used to avoid layout loops.
     private var lastPillSize: CGSize = .zero
+    /// Whether polling timer is currently suspended (A6 fix: stop polling when connected).
+    private var pollingSuspended = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -62,16 +64,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[FlowBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
-        // Read discovery file for socket path
-        let socketPath = readDiscoverySocketPath() ?? "/tmp/voicelayer.sock"
+        // Read discovery file for socket path — NO hardcoded fallback (S2 security fix).
+        // If discovery file is missing, stay disconnected until polling finds it.
+        let socketPath = readDiscoverySocketPath()
         lastSocketPath = socketPath
-        NSLog("[FlowBar] Discovered socket: %@", socketPath)
 
-        // Socket client
-        let client = SocketClient(
-            socketPath: socketPath,
-            state: voiceState
-        )
+        // Socket client — created even without a path so reconnect(to:) works later
+        let client = SocketClient(state: voiceState)
         socketClient = client
 
         // Wire the send-command closure so BarView buttons -> socket
@@ -79,10 +78,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             client?.send(command: cmd)
         }
 
-        client.connect()
+        if let socketPath {
+            NSLog("[FlowBar] Discovered socket: %@", socketPath)
+            client.connect(to: socketPath)
+        } else {
+            NSLog("[FlowBar] No discovery file yet — waiting for MCP server")
+        }
 
         // Watch discovery file for session changes
         startDiscoveryWatcher()
+
+        // A6 fix: suspend polling when connected, resume when disconnected
+        voiceState.onConnectionChange = { [weak self] connected in
+            guard let self else { return }
+            if connected, !pollingSuspended {
+                pollTimer?.suspend()
+                pollingSuspended = true
+                NSLog("[FlowBar] Connected — polling suspended")
+            } else if !connected, pollingSuspended {
+                pollTimer?.resume()
+                pollingSuspended = false
+                NSLog("[FlowBar] Disconnected — polling resumed")
+            }
+        }
 
         // Resize panel dynamically when pill content changes
         voiceState.onPillSizeChange = { [weak self] size in

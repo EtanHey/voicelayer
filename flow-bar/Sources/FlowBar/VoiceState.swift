@@ -68,6 +68,9 @@ final class VoiceState {
     /// Callback when the pill's rendered size changes — used to resize the NSPanel.
     var onPillSizeChange: ((CGSize) -> Void)?
 
+    /// Callback when socket connection state changes — used to suspend/resume polling.
+    var onConnectionChange: ((Bool) -> Void)?
+
     // MARK: - Commands
 
     func stop() {
@@ -231,41 +234,50 @@ final class VoiceState {
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
 
-        if let app = frontmostAppOnRecordStart {
-            app.activate()
+        // S4 fix: revalidate frontmost app at paste time — user may have switched apps
+        let currentFront = NSWorkspace.shared.frontmostApplication
+        let isSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
+        let targetApp = (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
+
+        if let targetApp {
+            targetApp.activate()
         }
         frontmostAppOnRecordStart = nil
 
         // 250ms delay for Electron apps (VS Code, Claude) to regain focus
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            Self.simulatePaste()
-            self?.confirmationText = "Pasted!"
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            // S3 fix: only show "Pasted!" if paste actually succeeds
+            let pasted = Self.simulatePaste()
+            self?.confirmationText = pasted ? "Pasted!" : "Paste failed — check Accessibility"
+            DispatchQueue.main.asyncAfter(deadline: .now() + (pasted ? 1.5 : 3.0)) {
                 self?.confirmationText = nil
             }
         }
     }
 
     /// Simulate Cmd+V via CGEvent. Requires Accessibility permission.
-    private static func simulatePaste() {
+    /// Returns true if paste was posted, false if blocked (S3 fix: caller checks this).
+    @discardableResult
+    private static func simulatePaste() -> Bool {
         guard AXIsProcessTrusted() else {
             NSLog("[FlowBar] simulatePaste: Accessibility not granted")
-            return
+            return false
         }
         guard let source = CGEventSource(stateID: .hidSystemState) else {
             NSLog("[FlowBar] simulatePaste: failed to create CGEventSource")
-            return
+            return false
         }
         let vKey: CGKeyCode = 0x09 // V
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
         guard let vDown, let vUp else {
             NSLog("[FlowBar] simulatePaste: failed to create CGEvent")
-            return
+            return false
         }
         vDown.flags = .maskCommand
         vUp.flags = .maskCommand
         vDown.post(tap: .cghidEventTap)
         vUp.post(tap: .cghidEventTap)
+        return true
     }
 }

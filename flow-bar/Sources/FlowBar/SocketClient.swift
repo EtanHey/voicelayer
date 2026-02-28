@@ -8,23 +8,27 @@ import Foundation
 import Network
 
 final class SocketClient {
-    private var socketPath: String
+    private var socketPath: String?
     private let queue = DispatchQueue(label: "com.voicelayer.flowbar.socket", qos: .userInitiated)
     private var connection: NWConnection?
     private var buffer = ""
     private var intentionallyClosed = false
     private let state: VoiceState
 
+    /// Current backoff delay for reconnection (exponential: 2s → 4s → 8s → 16s → 30s max).
+    private var reconnectDelay: TimeInterval = 2.0
+    private static let maxReconnectDelay: TimeInterval = 30.0
+
     // MARK: - Lifecycle
 
-    init(socketPath: String, state: VoiceState) {
-        self.socketPath = socketPath
+    init(state: VoiceState) {
         self.state = state
     }
 
-    func connect() {
+    func connect(to path: String) {
         intentionallyClosed = false
-        startConnection(to: socketPath)
+        socketPath = path
+        startConnection(to: path)
     }
 
     func disconnect() {
@@ -42,6 +46,7 @@ final class SocketClient {
             connection = nil
             buffer = ""
             socketPath = newPath
+            reconnectDelay = 2.0 // Reset backoff on explicit reconnect
             intentionallyClosed = false
             startConnection(to: newPath)
         }
@@ -145,19 +150,27 @@ final class SocketClient {
         setConnected(false)
 
         guard !intentionallyClosed else { return }
+        guard let socketPath else { return } // No path = can't reconnect
 
-        // Wait 2 seconds, then create a brand-new NWConnection.
-        queue.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+        // Exponential backoff: 2s → 4s → 8s → 16s → 30s max (A4 fix)
+        let delay = reconnectDelay
+        reconnectDelay = min(reconnectDelay * 2, Self.maxReconnectDelay)
+
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.intentionallyClosed else { return }
-            NSLog("[FlowBar] Reconnecting to \(socketPath)...")
-            connect()
+            NSLog("[FlowBar] Reconnecting to %@ (backoff: %.0fs)...", socketPath, delay)
+            startConnection(to: socketPath)
         }
     }
 
     private func setConnected(_ value: Bool) {
+        if value {
+            reconnectDelay = 2.0 // Reset backoff on successful connection
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             state.isConnected = value
+            state.onConnectionChange?(value)
             if value {
                 // Transition from disconnected to idle when socket connects.
                 // The server doesn't send initial state on connect, so we

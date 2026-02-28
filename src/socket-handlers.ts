@@ -5,12 +5,13 @@
  * broadcast() to communicate state back to Voice Bar clients.
  */
 
-import { existsSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, unlinkSync } from "fs";
 import {
   TTS_DISABLED_FILE,
   MIC_DISABLED_FILE,
   VOICE_DISABLED_FILE,
   STOP_FILE,
+  safeWriteFileSync,
 } from "./paths";
 import { getHistoryEntry, playAudioNonBlocking } from "./tts";
 import { waitForInput } from "./input";
@@ -22,7 +23,7 @@ export function handleSocketCommand(command: SocketCommand): void {
   switch (command.cmd) {
     case "stop":
     case "cancel":
-      writeFileSync(
+      safeWriteFileSync(
         STOP_FILE,
         `${command.cmd} from voice-bar at ${new Date().toISOString()}`,
       );
@@ -95,11 +96,11 @@ export function handleSocketCommand(command: SocketCommand): void {
         }
       } else {
         const ts = `disabled from voice-bar at ${new Date().toISOString()}`;
-        writeFileSync(flagFile, ts);
+        safeWriteFileSync(flagFile, ts);
         // M1 fix: when disabling "all", also write individual flag files
         if (scope === "all") {
-          writeFileSync(TTS_DISABLED_FILE, ts);
-          writeFileSync(MIC_DISABLED_FILE, ts);
+          safeWriteFileSync(TTS_DISABLED_FILE, ts);
+          safeWriteFileSync(MIC_DISABLED_FILE, ts);
         }
       }
       break;
