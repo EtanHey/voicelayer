@@ -10,7 +10,7 @@
 
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
-import * as socketServer from "../socket-client";
+import * as socketClient from "../socket-client";
 import { LOCK_FILE } from "../paths";
 import { handleSocketCommand } from "../socket-handlers";
 
@@ -42,7 +42,7 @@ describe("H4: waitForInput broadcasts idle on recordToBuffer error", () => {
 
   beforeEach(() => {
     blockSox = true;
-    broadcastSpy = spyOn(socketServer, "broadcast").mockImplementation(
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });
@@ -94,7 +94,7 @@ describe("M1: Socket toggle all writes individual flag files", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    broadcastSpy = spyOn(socketServer, "broadcast").mockImplementation(
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
     // Clean up any flag files
@@ -161,7 +161,7 @@ describe("H5: Socket record command checks session booking", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    broadcastSpy = spyOn(socketServer, "broadcast").mockImplementation(
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });

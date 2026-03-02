@@ -15,11 +15,18 @@ APP_DIR="$HOME/Applications/VoiceLayer/FlowBar.app"
 echo "[build-app] Building FlowBar (release)..."
 swift build -c release --package-path "$PACKAGE_DIR"
 
-# Find the built binary
-BINARY="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)/FlowBar"
+# Find the built binary (reuses cached build, no rebuild)
+BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
+BINARY="$BIN_DIR/FlowBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"
     exit 1
+fi
+
+# Clean stale bundle before recreating
+if [ -d "$APP_DIR" ]; then
+    echo "[build-app] Removing old bundle..."
+    rm -rf "$APP_DIR"
 fi
 
 echo "[build-app] Creating .app bundle at $APP_DIR..."
