@@ -12,7 +12,7 @@
 
 import { createWavBuffer } from "./input";
 import { transcribeViaServer, ensureServer } from "./whisper-server";
-import { broadcast } from "./socket-server";
+import { broadcast } from "./socket-client";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;

@@ -16,7 +16,7 @@ import {
 import { getHistoryEntry, playAudioNonBlocking } from "./tts";
 import { waitForInput } from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
-import { broadcast } from "./socket-server";
+import { broadcast } from "./socket-client";
 import type { SocketCommand } from "./socket-protocol";
 
 export function handleSocketCommand(command: SocketCommand): void {

@@ -7,7 +7,7 @@
 
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
 import { existsSync, unlinkSync, readFileSync } from "fs";
-import * as socketServer from "../socket-server";
+import * as socketClient from "../socket-client";
 import {
   TTS_DISABLED_FILE,
   MIC_DISABLED_FILE,
@@ -29,7 +29,7 @@ describe("handleToggle", () => {
 
   beforeEach(() => {
     cleanFlags();
-    broadcastSpy = spyOn(socketServer, "broadcast").mockImplementation(
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });
@@ -101,7 +101,7 @@ describe("handleReplay", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    broadcastSpy = spyOn(socketServer, "broadcast").mockImplementation(
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });
