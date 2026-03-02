@@ -15,10 +15,10 @@ import {
 import { getBackend } from "./stt";
 import { STOP_FILE } from "./paths";
 import {
-  startSocketServer,
-  stopSocketServer,
+  connectToFlowBar,
+  disconnectFromFlowBar,
   onCommand,
-} from "./socket-server";
+} from "./socket-client";
 import { getToolDefinitions } from "./mcp-tools";
 import { handleSocketCommand } from "./socket-handlers";
 import {
@@ -125,7 +125,7 @@ async function main() {
   }
 
   onCommand(handleSocketCommand);
-  startSocketServer();
+  connectToFlowBar();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -138,14 +138,14 @@ async function main() {
 // --- Graceful shutdown ---
 
 process.on("SIGTERM", () => {
-  stopSocketServer();
+  disconnectFromFlowBar();
 });
 process.on("SIGINT", () => {
-  stopSocketServer();
+  disconnectFromFlowBar();
 });
 
 main().catch((err) => {
   console.error("[voicelayer] Fatal:", err);
-  stopSocketServer();
+  disconnectFromFlowBar();
   process.exit(1);
 });

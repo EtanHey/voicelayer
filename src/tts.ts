@@ -33,7 +33,7 @@ import {
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
-import { broadcast } from "./socket-server";
+import { broadcast } from "./socket-client";
 import type { WordBoundary } from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
 

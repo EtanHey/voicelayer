@@ -7,7 +7,7 @@
 
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
 import { existsSync, unlinkSync, readFileSync } from "fs";
-import * as socketServer from "../socket-server";
+import * as socketServer from "../socket-client";
 import {
   TTS_DISABLED_FILE,
   MIC_DISABLED_FILE,

@@ -10,7 +10,7 @@
 
 import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
-import * as socketServer from "../socket-server";
+import * as socketServer from "../socket-client";
 import { LOCK_FILE } from "../paths";
 import { handleSocketCommand } from "../socket-handlers";
 
