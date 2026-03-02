@@ -129,6 +129,10 @@ final class SocketServer {
         let flags = fcntl(clientFD, F_GETFL)
         _ = fcntl(clientFD, F_SETFL, flags | O_NONBLOCK)
 
+        // Prevent SIGPIPE crash when writing to a disconnecting client
+        var nosigpipe: Int32 = 1
+        setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+
         NSLog("[FlowBar] Client connected (fd: %d, total: %d)", clientFD, clients.count + 1)
 
         // Read source for this client
@@ -201,15 +205,23 @@ final class SocketServer {
             jsonString.append("\n")
             let bytes = Array(jsonString.utf8)
 
+            var deadFDs: [Int32] = []
             for (fd, _) in clients {
                 var totalWritten = 0
                 while totalWritten < bytes.count {
                     let n = bytes.withUnsafeBufferPointer { ptr in
                         write(fd, ptr.baseAddress!.advanced(by: totalWritten), bytes.count - totalWritten)
                     }
-                    if n <= 0 { break }
+                    if n <= 0 {
+                        deadFDs.append(fd)
+                        break
+                    }
                     totalWritten += n
                 }
+            }
+            // Clean up clients that failed on write
+            for fd in deadFDs {
+                clients[fd]?.source.cancel()
             }
         }
     }
