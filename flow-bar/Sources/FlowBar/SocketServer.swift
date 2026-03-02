@@ -251,6 +251,19 @@ final class SocketServer {
     // MARK: - Cleanup
 
     private func cleanup() {
+        cleanupOnQueue()
+        NSLog("[FlowBar] Server stopped")
+        updateConnectionState()
+    }
+
+    deinit {
+        // Dispatch to queue for thread safety — cleanup accesses shared state
+        queue.sync {
+            self.cleanupOnQueue()
+        }
+    }
+
+    private func cleanupOnQueue() {
         listenSource?.cancel()
         listenSource = nil
 
@@ -260,17 +273,9 @@ final class SocketServer {
         clients.removeAll()
 
         if listenFD >= 0 {
-            // fd is closed by the cancel handler
             listenFD = -1
         }
 
         unlink(socketPath)
-        NSLog("[FlowBar] Server stopped")
-
-        updateConnectionState()
-    }
-
-    deinit {
-        cleanup()
     }
 }

@@ -13,17 +13,24 @@
  *   onCommand          → onCommand (unchanged API)
  */
 
+import {
+  connectToFlowBar,
+  disconnectFromFlowBar,
+  broadcast,
+  onCommand,
+  isConnected,
+} from "./socket-client";
+
 export {
   connectToFlowBar as startSocketServer,
   disconnectFromFlowBar as stopSocketServer,
   broadcast,
   onCommand,
   isConnected as isServerRunning,
-} from "./socket-client";
+};
 
 // AIDEV-NOTE: getClientCount() is no longer meaningful — MCP is a single client now.
 // Exported for backward compat; always returns 0 or 1.
 export function getClientCount(): number {
-  const { isConnected } = require("./socket-client");
   return isConnected() ? 1 : 0;
 }
