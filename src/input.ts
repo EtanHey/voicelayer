@@ -41,7 +41,7 @@ import {
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
-import { broadcast } from "./socket-server";
+import { broadcast } from "./socket-client";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;

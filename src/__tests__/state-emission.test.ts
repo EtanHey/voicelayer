@@ -87,7 +87,7 @@ describe("state emission", () => {
   /** Helper: connect client to mock server and wait */
   async function connectAndWait() {
     const { connectToFlowBar } = await import("../socket-client");
-    const { broadcast } = await import("../socket-server");
+    const { broadcast } = await import("../socket-client");
     connectToFlowBar(TEST_SOCKET);
     await Bun.sleep(200);
     return { broadcast };
