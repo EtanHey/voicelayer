@@ -62,7 +62,9 @@ function findModel(): string | null {
   const envModel = process.env.QA_VOICE_WHISPER_MODEL;
   if (envModel) {
     if (existsSync(envModel)) return envModel;
-    console.error(`[voicelayer] Warning: QA_VOICE_WHISPER_MODEL path does not exist: ${envModel}`);
+    console.error(
+      `[voicelayer] Warning: QA_VOICE_WHISPER_MODEL path does not exist: ${envModel}`,
+    );
   }
 
   // 2. Search standard paths
@@ -76,7 +78,9 @@ function findModel(): string | null {
   if (existsSync(cacheDir)) {
     try {
       const files = readdirSync(cacheDir);
-      const model = files.find((f: string) => f.startsWith("ggml-") && f.endsWith(".bin"));
+      const model = files.find(
+        (f: string) => f.startsWith("ggml-") && f.endsWith(".bin"),
+      );
       if (model) return join(cacheDir, model);
     } catch {
       // Ignore scan errors
@@ -91,7 +95,8 @@ let cachedBrewPrefix: string | null | undefined = undefined;
 function getBrewPrefix(): string | null {
   if (cachedBrewPrefix !== undefined) return cachedBrewPrefix;
   const result = Bun.spawnSync(["brew", "--prefix", "whisper-cpp"]);
-  cachedBrewPrefix = result.exitCode === 0 ? result.stdout.toString().trim() : null;
+  cachedBrewPrefix =
+    result.exitCode === 0 ? result.stdout.toString().trim() : null;
   return cachedBrewPrefix;
 }
 
@@ -113,16 +118,16 @@ export class WhisperCppBackend implements STTBackend {
     if (!this.binaryPath) {
       throw new Error(
         "whisper-cpp binary not found (looked for: whisper-cli, whisper-cpp). Install:\n" +
-        "  macOS: brew install whisper-cpp\n" +
-        "  Linux: build from source — https://github.com/ggerganov/whisper.cpp"
+          "  macOS: brew install whisper-cpp\n" +
+          "  Linux: build from source — https://github.com/ggerganov/whisper.cpp",
       );
     }
     if (!this.modelPath) {
       throw new Error(
         "No whisper model found. Download one:\n" +
-        "  mkdir -p ~/.cache/whisper\n" +
-        "  curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
-        "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"
+          "  mkdir -p ~/.cache/whisper\n" +
+          "  curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
+          "    https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
       );
     }
 
@@ -140,11 +145,14 @@ export class WhisperCppBackend implements STTBackend {
 
     const args = [
       this.binaryPath,
-      "-m", this.modelPath,
-      "-f", audioPath,
+      "-m",
+      this.modelPath,
+      "-f",
+      audioPath,
       "--no-timestamps",
-      "-l", process.env.QA_VOICE_WHISPER_LANG || "auto",
-      "--no-prints",  // suppress progress output
+      "-l",
+      process.env.QA_VOICE_WHISPER_LANG || "en",
+      "--no-prints", // suppress progress output
     ];
 
     const proc = Bun.spawn(args, {
@@ -161,7 +169,7 @@ export class WhisperCppBackend implements STTBackend {
 
     if (exitCode !== 0) {
       throw new Error(
-        `whisper-cpp failed (exit ${exitCode}): ${stderr.slice(0, 500)}`
+        `whisper-cpp failed (exit ${exitCode}): ${stderr.slice(0, 500)}`,
       );
     }
 
@@ -202,7 +210,7 @@ export class WisprFlowBackend implements STTBackend {
     const apiKey = process.env.QA_VOICE_WISPR_KEY;
     if (!apiKey) {
       throw new Error(
-        "QA_VOICE_WISPR_KEY not set. Get your API key from Wispr Flow settings."
+        "QA_VOICE_WISPR_KEY not set. Get your API key from Wispr Flow settings.",
       );
     }
 
@@ -226,11 +234,13 @@ export class WisprFlowBackend implements STTBackend {
       }, 30_000);
 
       ws.addEventListener("open", () => {
-        ws.send(JSON.stringify({
-          type: "auth",
-          language: ["en"],
-          context: { app: { name: "VoiceLayer", type: "ai" } },
-        }));
+        ws.send(
+          JSON.stringify({
+            type: "auth",
+            language: ["en"],
+            context: { app: { name: "VoiceLayer", type: "ai" } },
+          }),
+        );
       });
 
       ws.addEventListener("message", (event) => {
@@ -244,26 +254,34 @@ export class WisprFlowBackend implements STTBackend {
             const CHUNK_SIZE = 32000; // 1 second of 16kHz 16-bit mono
             const pcmData = audioBytes.slice(44);
             let packetIndex = 0;
-            for (let offset = 0; offset < pcmData.length; offset += CHUNK_SIZE) {
+            for (
+              let offset = 0;
+              offset < pcmData.length;
+              offset += CHUNK_SIZE
+            ) {
               const chunk = pcmData.slice(offset, offset + CHUNK_SIZE);
               const rms = calculateRMS(chunk);
-              ws.send(JSON.stringify({
-                type: "append",
-                position: packetIndex++,
-                audio_packets: {
-                  packets: [Buffer.from(chunk).toString("base64")],
-                  volumes: [rms],
-                  packet_duration: 1,
-                  audio_encoding: "wav",
-                  byte_encoding: "base64",
-                },
-              }));
+              ws.send(
+                JSON.stringify({
+                  type: "append",
+                  position: packetIndex++,
+                  audio_packets: {
+                    packets: [Buffer.from(chunk).toString("base64")],
+                    volumes: [rms],
+                    packet_duration: 1,
+                    audio_encoding: "wav",
+                    byte_encoding: "base64",
+                  },
+                }),
+              );
             }
             // Commit — signal end of audio
-            ws.send(JSON.stringify({
-              type: "commit",
-              total_packets: packetIndex,
-            }));
+            ws.send(
+              JSON.stringify({
+                type: "commit",
+                total_packets: packetIndex,
+              }),
+            );
           }
 
           if (msg.status === "text" && msg.body?.text) {
@@ -282,7 +300,9 @@ export class WisprFlowBackend implements STTBackend {
             resolved = true;
             clearTimeout(timer);
             ws.close();
-            reject(new Error(`Wispr API error: ${msg.error || JSON.stringify(msg)}`));
+            reject(
+              new Error(`Wispr API error: ${msg.error || JSON.stringify(msg)}`),
+            );
           }
         } catch {
           // Ignore non-JSON messages
@@ -293,7 +313,11 @@ export class WisprFlowBackend implements STTBackend {
         if (!resolved) {
           resolved = true;
           clearTimeout(timer);
-          reject(new Error("Wispr WebSocket connection failed. Check QA_VOICE_WISPR_KEY."));
+          reject(
+            new Error(
+              "Wispr WebSocket connection failed. Check QA_VOICE_WISPR_KEY.",
+            ),
+          );
         }
       });
 
@@ -301,7 +325,9 @@ export class WisprFlowBackend implements STTBackend {
         if (!resolved) {
           resolved = true;
           clearTimeout(timer);
-          reject(new Error("Wispr WebSocket closed before transcription completed"));
+          reject(
+            new Error("Wispr WebSocket closed before transcription completed"),
+          );
         }
       });
     });
@@ -329,7 +355,7 @@ export async function getBackend(): Promise<STTBackend> {
     }
     throw new Error(
       "whisper backend requested but not available. " +
-      "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/"
+        "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/",
     );
   }
 
@@ -339,16 +365,16 @@ export async function getBackend(): Promise<STTBackend> {
       cachedBackend = backend;
       return backend;
     }
-    throw new Error(
-      "wispr backend requested but QA_VOICE_WISPR_KEY not set."
-    );
+    throw new Error("wispr backend requested but QA_VOICE_WISPR_KEY not set.");
   }
 
   // Auto-detect: prefer whisper.cpp, fall back to Wispr Flow
   const whisper = new WhisperCppBackend();
   if (await whisper.isAvailable()) {
     cachedBackend = whisper;
-    console.error(`[voicelayer] STT backend: whisper.cpp (${whisper.getModelInfo().model})`);
+    console.error(
+      `[voicelayer] STT backend: whisper.cpp (${whisper.getModelInfo().model})`,
+    );
     return whisper;
   }
 
@@ -361,12 +387,12 @@ export async function getBackend(): Promise<STTBackend> {
 
   throw new Error(
     "No STT backend available. Options:\n" +
-    "  1. Install whisper.cpp:\n" +
-    "     macOS: brew install whisper-cpp\n" +
-    "     Linux: build from source — https://github.com/ggerganov/whisper.cpp\n" +
-    "     Download model: curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
-    "       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin\n" +
-    "  2. Set QA_VOICE_WISPR_KEY for cloud STT (Wispr Flow)"
+      "  1. Install whisper.cpp:\n" +
+      "     macOS: brew install whisper-cpp\n" +
+      "     Linux: build from source — https://github.com/ggerganov/whisper.cpp\n" +
+      "     Download model: curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \\\n" +
+      "       https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin\n" +
+      "  2. Set QA_VOICE_WISPR_KEY for cloud STT (Wispr Flow)",
   );
 }
 

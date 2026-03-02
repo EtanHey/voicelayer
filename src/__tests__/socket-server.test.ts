@@ -1,251 +1,264 @@
+/**
+ * Tests for socket-server.ts facade — verifies the re-export aliases work
+ * correctly after architecture inversion.
+ *
+ * The facade maps old names to new socket-client.ts implementation:
+ *   startSocketServer  → connectToFlowBar
+ *   stopSocketServer   → disconnectFromFlowBar
+ *   isServerRunning    → isConnected
+ *   broadcast          → broadcast
+ *   onCommand          → onCommand
+ *   getClientCount     → 0 or 1 based on isConnected
+ *
+ * Each test spins up a mock FlowBar server (Bun.listen) and tests through
+ * the facade aliases.
+ */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, unlinkSync } from "fs";
-import { SOCKET_PATH } from "../paths";
-import {
-  startSocketServer,
-  stopSocketServer,
-  broadcast,
-  onCommand,
-  getClientCount,
-  isServerRunning,
-} from "../socket-server";
+import { unlinkSync } from "fs";
 import type { SocketEvent, SocketCommand } from "../socket-protocol";
 
-// --- Helpers ---
+// Use a unique test socket path
+const TEST_SOCKET = "/tmp/voicelayer-test-facade.sock";
 
-/** Connect a test client to the socket and return read/write helpers. */
-async function connectClient(): Promise<{
-  socket: ReturnType<typeof Bun.connect> extends Promise<infer T> ? T : never;
+// --- Mock FlowBar server helper ---
+
+type MockServer = {
+  server: ReturnType<typeof Bun.listen>;
   received: string[];
-  close: () => void;
-}> {
-  const received: string[] = [];
-  let buffer = "";
+  clients: Set<any>;
+  sendToAll: (data: string) => void;
+  stop: () => void;
+};
 
-  const socket = await Bun.connect<{ buffer: string }>({
-    unix: SOCKET_PATH,
+function createMockFlowBarServer(socketPath: string): MockServer {
+  const received: string[] = [];
+  const clients = new Set<any>();
+
+  const server = Bun.listen<{ buffer: string }>({
+    unix: socketPath,
     socket: {
-      open(s) {
-        s.data = { buffer: "" };
+      open(socket) {
+        socket.data = { buffer: "" };
+        clients.add(socket);
       },
-      data(s, raw) {
-        buffer += raw.toString("utf-8");
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+      data(socket, raw) {
+        socket.data.buffer += raw.toString("utf-8");
+        const lines = socket.data.buffer.split("\n");
+        socket.data.buffer = lines.pop() ?? "";
         for (const line of lines) {
           if (line.trim()) received.push(line);
         }
       },
-      close() {},
-      error() {},
+      close(socket) {
+        clients.delete(socket);
+      },
+      error(socket) {
+        clients.delete(socket);
+      },
       drain() {},
     },
   });
 
-  // Small delay for the server to register the connection
-  await Bun.sleep(50);
-
   return {
-    socket: socket as any,
+    server,
     received,
-    close: () => socket.end(),
+    clients,
+    sendToAll(data: string) {
+      for (const client of clients) {
+        client.write(data);
+      }
+    },
+    stop() {
+      server.stop(true);
+      try {
+        unlinkSync(socketPath);
+      } catch {}
+    },
   };
-}
-
-/** Send a JSON command from a test client. */
-function sendCommand(socket: any, command: SocketCommand): void {
-  socket.write(JSON.stringify(command) + "\n");
 }
 
 // --- Tests ---
 
-describe("socket-server", () => {
+describe("socket-server (facade)", () => {
+  let mockServer: MockServer | null = null;
+
   beforeEach(() => {
-    // Ensure clean state
     try {
-      unlinkSync(SOCKET_PATH);
+      unlinkSync(TEST_SOCKET);
     } catch {}
   });
 
-  afterEach(() => {
-    stopSocketServer();
+  afterEach(async () => {
     try {
-      unlinkSync(SOCKET_PATH);
+      const { stopSocketServer } = await import("../socket-server");
+      stopSocketServer();
+    } catch {}
+    mockServer?.stop();
+    mockServer = null;
+    try {
+      unlinkSync(TEST_SOCKET);
     } catch {}
   });
 
   describe("lifecycle", () => {
-    it("starts and creates socket file", () => {
-      startSocketServer();
+    it("startSocketServer connects via facade", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { isServerRunning } = await import("../socket-server");
+
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
       expect(isServerRunning()).toBe(true);
-      expect(existsSync(SOCKET_PATH)).toBe(true);
     });
 
-    it("stops and removes socket file", () => {
-      startSocketServer();
+    it("stopSocketServer disconnects via facade", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { stopSocketServer, isServerRunning } =
+        await import("../socket-server");
+
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+      expect(isServerRunning()).toBe(true);
+
       stopSocketServer();
-      expect(isServerRunning()).toBe(false);
-      expect(existsSync(SOCKET_PATH)).toBe(false);
-    });
-
-    it("start is idempotent — second call is no-op", () => {
-      startSocketServer();
-      startSocketServer(); // should not throw
-      expect(isServerRunning()).toBe(true);
-    });
-
-    it("stop is idempotent — second call is no-op", () => {
-      startSocketServer();
-      stopSocketServer();
-      stopSocketServer(); // should not throw
+      await Bun.sleep(100);
       expect(isServerRunning()).toBe(false);
     });
 
-    it("cleans up stale socket file from previous crash", () => {
-      // Simulate stale file
-      Bun.write(SOCKET_PATH, "stale");
-      expect(existsSync(SOCKET_PATH)).toBe(true);
-      startSocketServer();
-      // Server should have replaced the stale file with a real socket
-      expect(isServerRunning()).toBe(true);
+    it("isServerRunning returns false when not connected", async () => {
+      const { isServerRunning } = await import("../socket-server");
+      expect(isServerRunning()).toBe(false);
     });
 
-    it("reports 0 clients when no one is connected", () => {
-      startSocketServer();
+    it("getClientCount returns 1 when connected, 0 when not", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar, disconnectFromFlowBar } =
+        await import("../socket-client");
+      const { getClientCount } = await import("../socket-server");
+
+      expect(getClientCount()).toBe(0);
+
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+      expect(getClientCount()).toBe(1);
+
+      disconnectFromFlowBar();
+      await Bun.sleep(100);
       expect(getClientCount()).toBe(0);
     });
   });
 
-  describe("client connections", () => {
-    it("accepts a client connection", async () => {
-      startSocketServer();
-      const client = await connectClient();
-      expect(getClientCount()).toBe(1);
-      client.close();
-      await Bun.sleep(50);
-      expect(getClientCount()).toBe(0);
-    });
+  describe("broadcast via facade", () => {
+    it("sends event to FlowBar server", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { broadcast } = await import("../socket-server");
 
-    it("accepts multiple clients", async () => {
-      startSocketServer();
-      const c1 = await connectClient();
-      const c2 = await connectClient();
-      expect(getClientCount()).toBe(2);
-      c1.close();
-      await Bun.sleep(50);
-      expect(getClientCount()).toBe(1);
-      c2.close();
-      await Bun.sleep(50);
-      expect(getClientCount()).toBe(0);
-    });
-  });
-
-  describe("broadcast", () => {
-    it("sends event to connected client", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
 
       const event: SocketEvent = { type: "state", state: "idle" };
       broadcast(event);
 
-      // Wait for the data to arrive
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      const parsed = JSON.parse(client.received[0]);
+      expect(mockServer.received.length).toBe(1);
+      const parsed = JSON.parse(mockServer.received[0]);
       expect(parsed.type).toBe("state");
       expect(parsed.state).toBe("idle");
-
-      client.close();
     });
 
-    it("sends event to ALL connected clients", async () => {
-      startSocketServer();
-      const c1 = await connectClient();
-      const c2 = await connectClient();
+    it("sends event to ALL connected — no-op concept: only one server", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { broadcast } = await import("../socket-server");
+
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
 
       broadcast({ type: "state", state: "speaking", text: "hello" });
       await Bun.sleep(100);
 
-      expect(c1.received.length).toBe(1);
-      expect(c2.received.length).toBe(1);
-      expect(JSON.parse(c1.received[0]).text).toBe("hello");
-      expect(JSON.parse(c2.received[0]).text).toBe("hello");
-
-      c1.close();
-      c2.close();
+      expect(mockServer.received.length).toBe(1);
+      expect(JSON.parse(mockServer.received[0]).text).toBe("hello");
     });
 
     it("sends multiple events in sequence", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { broadcast } = await import("../socket-server");
+
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
 
       broadcast({ type: "state", state: "speaking", text: "question" });
       broadcast({ type: "state", state: "recording", mode: "vad" });
       broadcast({ type: "speech", detected: true });
       await Bun.sleep(100);
 
-      expect(client.received.length).toBe(3);
-      expect(JSON.parse(client.received[0]).state).toBe("speaking");
-      expect(JSON.parse(client.received[1]).state).toBe("recording");
-      expect(JSON.parse(client.received[2]).detected).toBe(true);
-
-      client.close();
+      expect(mockServer.received.length).toBe(3);
+      expect(JSON.parse(mockServer.received[0]).state).toBe("speaking");
+      expect(JSON.parse(mockServer.received[1]).state).toBe("recording");
+      expect(JSON.parse(mockServer.received[2]).detected).toBe(true);
     });
 
-    it("is no-op when no clients connected", () => {
-      startSocketServer();
-      // Should not throw
-      broadcast({ type: "state", state: "idle" });
-    });
-
-    it("is no-op when server not running", () => {
-      // Should not throw
-      broadcast({ type: "state", state: "idle" });
+    it("is no-op when not connected", async () => {
+      const { broadcast } = await import("../socket-server");
+      expect(() => {
+        broadcast({ type: "state", state: "idle" });
+      }).not.toThrow();
     });
   });
 
-  describe("command handling", () => {
-    it("receives stop command from client", async () => {
-      startSocketServer();
+  describe("command handling via facade", () => {
+    it("receives stop command from FlowBar", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
-      sendCommand(client.socket, { cmd: "stop" });
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+
+      mockServer.sendToAll('{"cmd":"stop"}\n');
       await Bun.sleep(100);
 
       expect(commands.length).toBe(1);
       expect(commands[0].cmd).toBe("stop");
-
-      client.close();
     });
 
-    it("receives replay command from client", async () => {
-      startSocketServer();
+    it("receives replay command from FlowBar", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
-      sendCommand(client.socket, { cmd: "replay" });
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+
+      mockServer.sendToAll('{"cmd":"replay"}\n');
       await Bun.sleep(100);
 
       expect(commands.length).toBe(1);
       expect(commands[0].cmd).toBe("replay");
-
-      client.close();
     });
 
-    it("receives toggle command from client", async () => {
-      startSocketServer();
+    it("receives toggle command from FlowBar", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
-      sendCommand(client.socket, {
-        cmd: "toggle",
-        scope: "tts",
-        enabled: false,
-      });
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+
+      mockServer.sendToAll('{"cmd":"toggle","scope":"tts","enabled":false}\n');
       await Bun.sleep(100);
 
       expect(commands.length).toBe(1);
@@ -254,61 +267,66 @@ describe("socket-server", () => {
         scope: "tts",
         enabled: false,
       });
-
-      client.close();
     });
 
-    it("ignores invalid JSON from client", async () => {
-      startSocketServer();
+    it("ignores invalid JSON from FlowBar", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
-      client.socket.write("not json\n");
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+
+      mockServer.sendToAll("not json\n");
       await Bun.sleep(100);
 
       expect(commands.length).toBe(0);
-
-      client.close();
     });
 
     it("handles multiple commands in one TCP chunk", async () => {
-      startSocketServer();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
-      // Send two commands in a single write (single TCP chunk)
-      client.socket.write('{"cmd":"stop"}\n{"cmd":"replay"}\n');
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
+
+      mockServer.sendToAll('{"cmd":"stop"}\n{"cmd":"replay"}\n');
       await Bun.sleep(100);
 
       expect(commands.length).toBe(2);
       expect(commands[0].cmd).toBe("stop");
       expect(commands[1].cmd).toBe("replay");
-
-      client.close();
     });
   });
 
-  describe("bidirectional", () => {
-    it("client sends command AND receives broadcast", async () => {
-      startSocketServer();
+  describe("bidirectional via facade", () => {
+    it("client sends broadcast AND receives command", async () => {
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { connectToFlowBar } = await import("../socket-client");
+      const { broadcast, onCommand } = await import("../socket-server");
+
       const commands: SocketCommand[] = [];
       onCommand((cmd) => commands.push(cmd));
 
-      const client = await connectClient();
+      connectToFlowBar(TEST_SOCKET);
+      await Bun.sleep(200);
 
-      // Server broadcasts to client
+      // Client broadcasts to server
       broadcast({ type: "state", state: "speaking", text: "hi" });
       await Bun.sleep(50);
-      expect(client.received.length).toBe(1);
+      expect(mockServer.received.length).toBe(1);
 
-      // Client sends to server
-      sendCommand(client.socket, { cmd: "stop" });
+      // Server sends command to client
+      mockServer.sendToAll('{"cmd":"stop"}\n');
       await Bun.sleep(50);
       expect(commands.length).toBe(1);
-
-      client.close();
     });
   });
 });

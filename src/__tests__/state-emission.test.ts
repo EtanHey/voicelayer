@@ -1,40 +1,38 @@
 /**
- * Tests for Phase 2: State emission via socket broadcast.
+ * Tests for state emission via socket broadcast (inverted architecture).
  *
- * Verifies that tts.ts and input.ts broadcast correct state events
- * to connected Voice Bar clients through the socket server.
+ * Verifies that broadcast() sends correct state events to FlowBar.
+ * Uses a mock FlowBar server (Bun.listen) to receive events.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, unlinkSync } from "fs";
-import { SOCKET_PATH } from "../paths";
-import {
-  startSocketServer,
-  stopSocketServer,
-  broadcast,
-} from "../socket-server";
+import { unlinkSync } from "fs";
 import type { SocketEvent } from "../socket-protocol";
 
-// --- Test client helper (same pattern as socket-server.test.ts) ---
+const TEST_SOCKET = "/tmp/voicelayer-test-emission.sock";
 
-async function connectClient(): Promise<{
+// --- Mock FlowBar server ---
+
+type MockServer = {
+  server: ReturnType<typeof Bun.listen>;
   received: SocketEvent[];
   rawLines: string[];
-  close: () => void;
-}> {
+  stop: () => void;
+};
+
+function createMockFlowBarServer(socketPath: string): MockServer {
   const rawLines: string[] = [];
   const received: SocketEvent[] = [];
-  let buffer = "";
 
-  const socket = await Bun.connect<{ buffer: string }>({
-    unix: SOCKET_PATH,
+  const server = Bun.listen<{ buffer: string }>({
+    unix: socketPath,
     socket: {
-      open(s) {
-        s.data = { buffer: "" };
+      open(socket) {
+        socket.data = { buffer: "" };
       },
-      data(_s, raw) {
-        buffer += raw.toString("utf-8");
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
+      data(socket, raw) {
+        socket.data.buffer += raw.toString("utf-8");
+        const lines = socket.data.buffer.split("\n");
+        socket.data.buffer = lines.pop() ?? "";
         for (const line of lines) {
           if (line.trim()) {
             rawLines.push(line);
@@ -50,35 +48,55 @@ async function connectClient(): Promise<{
     },
   });
 
-  await Bun.sleep(50);
-
   return {
+    server,
     received,
     rawLines,
-    close: () => socket.end(),
+    stop() {
+      server.stop(true);
+      try {
+        unlinkSync(socketPath);
+      } catch {}
+    },
   };
 }
 
 // --- Tests ---
 
 describe("state emission", () => {
+  let mockServer: MockServer | null = null;
+
   beforeEach(() => {
     try {
-      unlinkSync(SOCKET_PATH);
+      unlinkSync(TEST_SOCKET);
     } catch {}
   });
 
-  afterEach(() => {
-    stopSocketServer();
+  afterEach(async () => {
     try {
-      unlinkSync(SOCKET_PATH);
+      const { disconnectFromFlowBar } = await import("../socket-client");
+      disconnectFromFlowBar();
+    } catch {}
+    mockServer?.stop();
+    mockServer = null;
+    try {
+      unlinkSync(TEST_SOCKET);
     } catch {}
   });
+
+  /** Helper: connect client to mock server and wait */
+  async function connectAndWait() {
+    const { connectToFlowBar } = await import("../socket-client");
+    const { broadcast } = await import("../socket-server");
+    connectToFlowBar(TEST_SOCKET);
+    await Bun.sleep(200);
+    return { broadcast };
+  }
 
   describe("broadcast events", () => {
     it("sends speaking state event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({
         type: "state",
@@ -88,33 +106,29 @@ describe("state emission", () => {
       });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
         type: "state",
         state: "speaking",
         text: "Hello world",
         voice: "en-US-JennyNeural",
       });
-
-      client.close();
     });
 
     it("sends idle state event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "idle" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({ type: "state", state: "idle" });
-
-      client.close();
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({ type: "state", state: "idle" });
     });
 
     it("sends recording state event with mode", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({
         type: "state",
@@ -124,65 +138,60 @@ describe("state emission", () => {
       });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
         type: "state",
         state: "recording",
         mode: "vad",
         silence_mode: "standard",
       });
-
-      client.close();
     });
 
     it("sends transcribing state event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "transcribing" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
         type: "state",
         state: "transcribing",
       });
-
-      client.close();
     });
 
     it("sends speech detection event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({ type: "speech", detected: true });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({ type: "speech", detected: true });
-
-      client.close();
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
+        type: "speech",
+        detected: true,
+      });
     });
 
     it("sends transcription result event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({ type: "transcription", text: "Hello, how are you?" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
         type: "transcription",
         text: "Hello, how are you?",
       });
-
-      client.close();
     });
 
     it("sends error event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({
         type: "error",
@@ -191,21 +200,19 @@ describe("state emission", () => {
       });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect(client.received[0]).toEqual({
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
         type: "error",
         message: "TTS synthesis failed",
         recoverable: true,
       });
-
-      client.close();
     });
   });
 
   describe("state transitions", () => {
     it("speaking → idle sequence", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({
         type: "state",
@@ -215,18 +222,16 @@ describe("state emission", () => {
       broadcast({ type: "state", state: "idle" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(2);
-      expect(client.received[0].type).toBe("state");
-      expect((client.received[0] as any).state).toBe("speaking");
-      expect(client.received[1].type).toBe("state");
-      expect((client.received[1] as any).state).toBe("idle");
-
-      client.close();
+      expect(mockServer.received.length).toBe(2);
+      expect(mockServer.received[0].type).toBe("state");
+      expect((mockServer.received[0] as any).state).toBe("speaking");
+      expect(mockServer.received[1].type).toBe("state");
+      expect((mockServer.received[1] as any).state).toBe("idle");
     });
 
     it("recording → speech → transcribing → transcription → idle sequence", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({
         type: "state",
@@ -240,19 +245,17 @@ describe("state emission", () => {
       broadcast({ type: "state", state: "idle" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(5);
-      expect((client.received[0] as any).state).toBe("recording");
-      expect((client.received[1] as any).detected).toBe(true);
-      expect((client.received[2] as any).state).toBe("transcribing");
-      expect((client.received[3] as any).text).toBe("Test result");
-      expect((client.received[4] as any).state).toBe("idle");
-
-      client.close();
+      expect(mockServer.received.length).toBe(5);
+      expect((mockServer.received[0] as any).state).toBe("recording");
+      expect((mockServer.received[1] as any).detected).toBe(true);
+      expect((mockServer.received[2] as any).state).toBe("transcribing");
+      expect((mockServer.received[3] as any).text).toBe("Test result");
+      expect((mockServer.received[4] as any).state).toBe("idle");
     });
 
     it("speaking → error → idle sequence", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "speaking", text: "Will fail" });
       broadcast({
@@ -263,17 +266,15 @@ describe("state emission", () => {
       broadcast({ type: "state", state: "idle" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(3);
-      expect((client.received[0] as any).state).toBe("speaking");
-      expect(client.received[1].type).toBe("error");
-      expect((client.received[2] as any).state).toBe("idle");
-
-      client.close();
+      expect(mockServer.received.length).toBe(3);
+      expect((mockServer.received[0] as any).state).toBe("speaking");
+      expect(mockServer.received[1].type).toBe("error");
+      expect((mockServer.received[2] as any).state).toBe("idle");
     });
 
     it("full converse cycle: speaking → idle → recording → speech → transcribing → transcription → idle", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       // TTS question
       broadcast({
@@ -296,10 +297,9 @@ describe("state emission", () => {
       broadcast({ type: "state", state: "idle" });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(7);
+      expect(mockServer.received.length).toBe(7);
 
-      // Verify state flow
-      const states = client.received.map((e) => {
+      const states = mockServer.received.map((e) => {
         if (e.type === "state") return (e as any).state;
         if (e.type === "speech") return "speech-detected";
         if (e.type === "transcription") return "transcription";
@@ -314,28 +314,24 @@ describe("state emission", () => {
         "transcription",
         "idle",
       ]);
-
-      client.close();
     });
   });
 
   describe("text truncation in speak broadcast", () => {
     it("truncates long text in speaking event", async () => {
-      startSocketServer();
-      const client = await connectClient();
+      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
 
       const longText = "A".repeat(500);
       broadcast({
         type: "state",
         state: "speaking",
-        text: longText.slice(0, 200), // Mimics what tts.ts does
+        text: longText.slice(0, 200),
       });
 
       await Bun.sleep(100);
-      expect(client.received.length).toBe(1);
-      expect((client.received[0] as any).text.length).toBe(200);
-
-      client.close();
+      expect(mockServer.received.length).toBe(1);
+      expect((mockServer.received[0] as any).text.length).toBe(200);
     });
   });
 });

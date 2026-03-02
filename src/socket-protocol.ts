@@ -1,10 +1,10 @@
 /**
  * Socket protocol types for VoiceLayer <-> Voice Bar communication.
  *
- * Transport: Unix domain socket (per-session path from /tmp/voicelayer-session.json).
+ * Transport: Unix domain socket at /tmp/voicelayer.sock (Voice Bar is server, MCP is client).
  * Framing: Newline-delimited JSON (NDJSON) -- one JSON object per line, \n terminated.
  *
- * Both the Bun socket server and SwiftUI Voice Bar client must agree on these types.
+ * Both the Bun socket client and SwiftUI Voice Bar server must agree on these types.
  */
 
 // --- Events: VoiceLayer → Voice Bar ---

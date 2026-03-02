@@ -1,33 +1,21 @@
 // FlowBarApp.swift — Entry point for Voice Bar.
 //
-// Wires together: VoiceState, SocketClient, FloatingPillPanel, BarView.
+// Wires together: VoiceState, SocketServer, FloatingPillPanel, BarView.
 // No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
 // Tracks mouse across screens — pill follows the cursor.
-// Socket path discovered from /tmp/voicelayer-session.json with file watcher.
+//
+// AIDEV-NOTE: Architecture inversion (Phase 0) — FlowBar is the persistent
+// server on /tmp/voicelayer.sock. MCP servers connect as clients.
+// All discovery file logic removed (no more polling, no file watchers).
 
 import AppKit
 import SwiftUI
-
-// MARK: - Discovery file
-
-private let discoveryPath = "/tmp/voicelayer-session.json"
-
-/// Read the discovery file and return the socket path, or nil if unavailable.
-private func readDiscoverySocketPath() -> String? {
-    guard let data = try? Data(contentsOf: URL(fileURLWithPath: discoveryPath)),
-          let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let socketPath = dict["socketPath"] as? String
-    else {
-        return nil
-    }
-    return socketPath
-}
 
 // MARK: - App Delegate
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let voiceState = VoiceState()
-    private var socketClient: SocketClient?
+    private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var moveObserver: Any?
@@ -37,19 +25,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = use default bottomPadding
 
-    /// File descriptor for discovery file watcher.
-    private var discoveryFD: Int32 = -1
-    /// DispatchSource watching the discovery file for writes.
-    private var discoverySource: DispatchSourceFileSystemObject?
-    /// Polling timer as fallback when file watcher misses events.
-    private var pollTimer: DispatchSourceTimer?
-    /// Last known socket path to detect changes.
-    private var lastSocketPath: String?
-
     /// Last reported pill size — used to avoid layout loops.
     private var lastPillSize: CGSize = .zero
-    /// Whether polling timer is currently suspended (A6 fix: stop polling when connected).
-    private var pollingSuspended = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -64,43 +41,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[FlowBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
-        // Read discovery file for socket path — NO hardcoded fallback (S2 security fix).
-        // If discovery file is missing, stay disconnected until polling finds it.
-        let socketPath = readDiscoverySocketPath()
-        lastSocketPath = socketPath
+        // Socket server — listens on /tmp/voicelayer.sock
+        let server = SocketServer(state: voiceState)
+        socketServer = server
 
-        // Socket client — created even without a path so reconnect(to:) works later
-        let client = SocketClient(state: voiceState)
-        socketClient = client
-
-        // Wire the send-command closure so BarView buttons -> socket
-        voiceState.sendCommand = { [weak client] cmd in
-            client?.send(command: cmd)
+        // Wire the send-command closure so BarView buttons -> socket -> MCP clients
+        voiceState.sendCommand = { [weak server] cmd in
+            server?.sendToAll(command: cmd)
         }
 
-        if let socketPath {
-            NSLog("[FlowBar] Discovered socket: %@", socketPath)
-            client.connect(to: socketPath)
-        } else {
-            NSLog("[FlowBar] No discovery file yet — waiting for MCP server")
-        }
-
-        // Watch discovery file for session changes
-        startDiscoveryWatcher()
-
-        // A6 fix: suspend polling when connected, resume when disconnected
-        voiceState.onConnectionChange = { [weak self] connected in
-            guard let self else { return }
-            if connected, !pollingSuspended {
-                pollTimer?.suspend()
-                pollingSuspended = true
-                NSLog("[FlowBar] Connected — polling suspended")
-            } else if !connected, pollingSuspended {
-                pollTimer?.resume()
-                pollingSuspended = false
-                NSLog("[FlowBar] Disconnected — polling resumed")
-            }
-        }
+        server.start()
 
         // Resize panel dynamically when pill content changes
         voiceState.onPillSizeChange = { [weak self] size in
@@ -150,8 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        stopDiscoveryWatcher()
-        socketClient?.disconnect()
+        socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -162,59 +111,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false // keep running as a menu-bar agent
-    }
-
-    // MARK: - Discovery file watcher
-
-    private func startDiscoveryWatcher() {
-        // Watch the discovery file for writes using DispatchSource
-        let fd = open(discoveryPath, O_EVTONLY)
-        if fd >= 0 {
-            discoveryFD = fd
-            let source = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: fd,
-                eventMask: [.write, .rename, .delete],
-                queue: .main
-            )
-            source.setEventHandler { [weak self] in
-                self?.checkDiscoveryFile()
-            }
-            source.setCancelHandler {
-                close(fd)
-            }
-            source.resume()
-            discoverySource = source
-        }
-
-        // Polling fallback every 2s (file watcher can miss events on /tmp)
-        let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 2.0, repeating: 2.0)
-        timer.setEventHandler { [weak self] in
-            self?.checkDiscoveryFile()
-        }
-        timer.resume()
-        pollTimer = timer
-    }
-
-    private func stopDiscoveryWatcher() {
-        discoverySource?.cancel()
-        discoverySource = nil
-        pollTimer?.cancel()
-        pollTimer = nil
-        if discoveryFD >= 0 {
-            // fd is closed by the cancel handler
-            discoveryFD = -1
-        }
-    }
-
-    /// Check if discovery file has a new socket path and reconnect if so.
-    private func checkDiscoveryFile() {
-        guard let newPath = readDiscoverySocketPath() else { return }
-        if newPath != lastSocketPath {
-            NSLog("[FlowBar] Discovery file changed: %@", newPath)
-            lastSocketPath = newPath
-            socketClient?.reconnect(to: newPath)
-        }
     }
 
     // MARK: - Dynamic panel sizing
