@@ -3,8 +3,9 @@
 ## Architecture
 - MCP server exposes `voice_speak` (non-blocking TTS) and `voice_ask` (blocking record + transcribe).
 - TTS routing: Qwen3-TTS daemon (cloned voices) -> edge-tts (preset) -> text-only fallback.
-- Voice Bar connects to `/tmp/voicelayer-{TOKEN}.sock` and shows state (idle/speaking/recording/transcribing).
+- Voice Bar is a persistent server on `/tmp/voicelayer.sock` (POSIX sockets + GCD). MCP servers connect as clients.
 - Socket protocol uses NDJSON events: state, speech, transcription, error; commands: stop, replay, toggle.
+- No discovery file — fixed socket path. Voice Bar survives MCP reconnects.
 
 ## TTS Backends
 - Qwen3-TTS daemon runs on port 8880 and reads `~/.voicelayer/voices/{name}/profile.yaml`.
@@ -48,7 +49,7 @@
 - `voicelayer clone ...` to build a voice profile.
 
 ## Key Paths
-- Socket: `/tmp/voicelayer-{TOKEN}.sock` (TOKEN is a random hex string generated per session for security)
+- Socket: `/tmp/voicelayer.sock` (fixed path — Voice Bar listens, MCP connects)
 - Thinking log: `/tmp/voicelayer-thinking.md`
 - TTS/mic disable flags: `/tmp/.claude_tts_disabled`, `/tmp/.claude_mic_disabled`
 - Recording temp files: `/tmp/voicelayer-recording-{pid}-{ts}.wav`

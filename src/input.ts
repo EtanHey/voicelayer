@@ -24,7 +24,12 @@
  */
 
 import { existsSync, unlinkSync, writeFileSync } from "fs";
-import { hasStopSignal, clearStopSignal } from "./session-booking";
+import {
+  hasStopSignal,
+  clearStopSignal,
+  hasCancelSignal,
+  clearCancelSignal,
+} from "./session-booking";
 import { getBackend } from "./stt";
 import { recordingFilePath, MIC_DISABLED_FILE } from "./paths";
 import {
@@ -173,8 +178,9 @@ export async function recordToBuffer(
     await resetVAD();
   }
 
-  // Clear any leftover stop signal from previous recording
+  // Clear any leftover stop/cancel signals from previous recording
   clearStopSignal();
+  clearCancelSignal();
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
     let consecutiveSilentChunks = 0;
@@ -430,6 +436,15 @@ export async function waitForInput(
     throw err;
   }
   if (!pcmData) {
+    clearCancelSignal();
+    broadcast({ type: "state", state: "idle" });
+    return null;
+  }
+
+  // Check if recording was cancelled (X button) — discard audio, don't transcribe
+  if (hasCancelSignal()) {
+    clearCancelSignal();
+    console.error("[voicelayer] Recording cancelled — discarding audio");
     broadcast({ type: "state", state: "idle" });
     return null;
   }
