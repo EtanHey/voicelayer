@@ -13,7 +13,7 @@ import {
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getBackend } from "./stt";
-import { STOP_FILE, writeDiscoveryFile, removeDiscoveryFile } from "./paths";
+import { STOP_FILE } from "./paths";
 import {
   startSocketServer,
   stopSocketServer,
@@ -126,30 +126,26 @@ async function main() {
 
   onCommand(handleSocketCommand);
   startSocketServer();
-  writeDiscoveryFile();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
     "[voicelayer] MCP server v2.0 running — modes: announce, brief, consult, converse, replay, toggle",
   );
-  console.error("[voicelayer] Voice Bar socket server active");
+  console.error("[voicelayer] Connected to Voice Bar as client");
 }
 
 // --- Graceful shutdown ---
 
 process.on("SIGTERM", () => {
-  removeDiscoveryFile();
   stopSocketServer();
 });
 process.on("SIGINT", () => {
-  removeDiscoveryFile();
   stopSocketServer();
 });
 
 main().catch((err) => {
   console.error("[voicelayer] Fatal:", err);
-  removeDiscoveryFile();
   stopSocketServer();
   process.exit(1);
 });

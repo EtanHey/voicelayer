@@ -51,6 +51,16 @@ final class FloatingPillPanel: NSPanel {
         true
     }
 
+    /// Override sendEvent to ensure first clicks pass through to SwiftUI buttons.
+    /// Without this, the first tap on the collapsed dot may be consumed by the panel.
+    override func sendEvent(_ event: NSEvent) {
+        // Force key status before processing mouse events so buttons respond immediately
+        if event.type == .leftMouseDown, !isKeyWindow {
+            makeKey()
+        }
+        super.sendEvent(event)
+    }
+
     override var canBecomeMain: Bool {
         false
     }

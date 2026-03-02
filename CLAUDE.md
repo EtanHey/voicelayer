@@ -16,7 +16,7 @@
 
 ## Workflow (HOW)
 - Start at `src/mcp-server.ts`; core runtime in `src/tts.ts`, `src/input.ts`, `src/vad.ts`, `src/stt.ts`.
-- IPC uses `/tmp/voicelayer.sock`; protocol types in `src/socket-protocol.ts`.
+- IPC uses `/tmp/voicelayer.sock` (Voice Bar is the server, MCP connects as client); protocol types in `src/socket-protocol.ts`.
 - `voice_speak` is non-blocking; `voice_ask` blocks and uses Silero VAD by default.
 - Keep session booking and ring buffer behavior stable (see `src/session-booking.ts`, `src/paths.ts`).
 - Tests live in `src/__tests__/`; run `bun test`.
