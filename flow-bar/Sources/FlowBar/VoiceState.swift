@@ -25,7 +25,7 @@ enum VoiceMode: String, CaseIterable {
 @Observable
 final class VoiceState {
     // UI-bound properties -- all mutations must happen on the main thread.
-    var mode: VoiceMode = .disconnected
+    var mode: VoiceMode = .idle
     var statusText: String = ""
     var transcript: String = ""
     var speechDetected: Bool = false
@@ -44,6 +44,10 @@ final class VoiceState {
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+
+    /// Whether the last completed action was TTS playback (replay is valid).
+    /// Set true when speaking state arrives, false when recording starts.
+    var canReplay: Bool = false
 
     /// Whether the pill is collapsed (idle for too long).
     var isCollapsed: Bool = false
@@ -71,6 +75,9 @@ final class VoiceState {
     /// Callback when socket connection state changes — used to suspend/resume polling.
     var onConnectionChange: ((Bool) -> Void)?
 
+    /// Callback when voice mode changes — used to lock/unlock pill dragging.
+    var onModeChange: ((VoiceMode) -> Void)?
+
     // MARK: - Commands
 
     func stop() {
@@ -80,6 +87,14 @@ final class VoiceState {
     func cancel() {
         barInitiatedRecording = false
         frontmostAppOnRecordStart = nil
+        // Optimistic — immediately go idle so user sees instant response.
+        // MCP will also send idle after processing the cancel.
+        mode = .idle
+        speechDetected = false
+        audioLevel = nil
+        statusText = ""
+        onModeChange?(.idle)
+        startCollapseTimer()
         sendCommand?(["cmd": "cancel"])
     }
 
@@ -95,6 +110,7 @@ final class VoiceState {
     func record() {
         guard mode == .idle else { return }
         mode = .recording // Optimistic — prevents rapid-tap duplicates
+        onModeChange?(.recording)
         confirmationText = nil
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
@@ -103,7 +119,8 @@ final class VoiceState {
         barInitiatedRecording = true
         sendCommand?([
             "cmd": "record",
-            "silence_mode": "standard",
+            "silence_mode": "thoughtful",
+            "timeout_seconds": 120,
         ])
     }
 
@@ -129,20 +146,26 @@ final class VoiceState {
                     barInitiatedRecording = false
                     frontmostAppOnRecordStart = nil
                 }
+                onModeChange?(.idle)
                 startCollapseTimer()
             case "speaking":
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
+                canReplay = true
+                onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
                 speechDetected = false
+                canReplay = false // User recording — replay not applicable
+                onModeChange?(.recording)
                 expandFromCollapse()
             case "transcribing":
                 mode = .transcribing
                 statusText = ""
+                onModeChange?(.transcribing)
                 expandFromCollapse()
             default:
                 break

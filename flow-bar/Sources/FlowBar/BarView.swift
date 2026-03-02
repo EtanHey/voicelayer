@@ -59,15 +59,17 @@ struct BarView: View {
     // MARK: - Collapsed pill (just dot)
 
     private var collapsedPill: some View {
-        Circle()
-            .fill(state.isConnected ? Color.green : Color.red)
-            .frame(width: 10, height: 10)
-            .padding(8)
-            .background(Theme.pillBackground)
-            .clipShape(Capsule())
-            .onTapGesture {
-                state.setHovering(true) // expand on tap
-            }
+        Button {
+            state.setHovering(true) // expand on tap
+        } label: {
+            Circle()
+                .fill(Color.green) // FlowBar is always alive — dot is always green
+                .frame(width: 10, height: 10)
+                .padding(8)
+                .background(Theme.pillBackground)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Expanded pill (full content)
@@ -94,7 +96,7 @@ struct BarView: View {
                 .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
         }
         // No drop shadow — clean edges like Wispr Flow
-        .opacity(state.mode == .disconnected ? 0.7 : 1.0)
+        .opacity(1.0)
         .fixedSize()
         .background(
             GeometryReader { geo in
@@ -166,7 +168,7 @@ struct BarView: View {
             PulsingDot()
         } else {
             Circle()
-                .fill(state.isConnected ? Color.green : Color.red)
+                .fill(Color.green) // FlowBar is always alive
                 .frame(width: 6, height: 6)
         }
     }
@@ -211,12 +213,11 @@ struct BarView: View {
 
     private var iconName: String {
         switch state.mode {
-        case .idle: "mic.fill"
+        case .idle, .disconnected: "mic.fill"
         case .speaking: "speaker.wave.2.fill"
         case .recording: "waveform"
         case .transcribing: "text.bubble"
         case .error: "exclamationmark.triangle.fill"
-        case .disconnected: "wifi.slash"
         }
     }
 
@@ -252,7 +253,7 @@ struct BarView: View {
 
     private var statusText: String {
         switch state.mode {
-        case .idle:
+        case .idle, .disconnected:
             if let confirmation = state.confirmationText {
                 return confirmation
             }
@@ -268,8 +269,6 @@ struct BarView: View {
             return "Thinking..."
         case .error:
             return state.errorMessage ?? "Error"
-        case .disconnected:
-            return "Disconnected"
         }
     }
 
@@ -302,7 +301,7 @@ struct BarView: View {
             if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { state.stop() }
             }
-            if state.mode == .idle {
+            if state.mode == .idle, state.canReplay {
                 pillButton(icon: "arrow.counterclockwise") { state.replay() }
             }
         }

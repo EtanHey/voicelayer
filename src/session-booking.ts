@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { LOCK_FILE, STOP_FILE } from "./paths";
+import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 
 export interface SessionLock {
   pid: number;
@@ -27,7 +27,10 @@ function isProcessAlive(pid: number): boolean {
     return true;
   } catch (err: unknown) {
     // ESRCH means process doesn't exist — it's dead
-    const code = err instanceof Object && "code" in err ? (err as { code: string }).code : undefined;
+    const code =
+      err instanceof Object && "code" in err
+        ? (err as { code: string }).code
+        : undefined;
     if (code === "ESRCH") return false;
     // EPERM means process exists but we can't signal it — it's alive
     return true;
@@ -42,13 +45,21 @@ function readLock(): SessionLock | null {
   try {
     const raw: unknown = JSON.parse(readFileSync(LOCK_FILE, "utf-8"));
     if (
-      typeof raw === "object" && raw !== null &&
-      "pid" in raw && typeof (raw as Record<string, unknown>).pid === "number" &&
-      "sessionId" in raw && typeof (raw as Record<string, unknown>).sessionId === "string" &&
-      "startedAt" in raw && typeof (raw as Record<string, unknown>).startedAt === "string"
+      typeof raw === "object" &&
+      raw !== null &&
+      "pid" in raw &&
+      typeof (raw as Record<string, unknown>).pid === "number" &&
+      "sessionId" in raw &&
+      typeof (raw as Record<string, unknown>).sessionId === "string" &&
+      "startedAt" in raw &&
+      typeof (raw as Record<string, unknown>).startedAt === "string"
     ) {
       const r = raw as Record<string, unknown>;
-      return { pid: r.pid as number, sessionId: r.sessionId as string, startedAt: r.startedAt as string };
+      return {
+        pid: r.pid as number,
+        sessionId: r.sessionId as string,
+        startedAt: r.startedAt as string,
+      };
     }
     return null;
   } catch {
@@ -107,7 +118,10 @@ export function bookVoiceSession(sessionId?: string): {
     return { success: true, lock };
   } catch (err: unknown) {
     // Another process grabbed the lock between our check and write
-    const code = err instanceof Object && "code" in err ? (err as { code: string }).code : undefined;
+    const code =
+      err instanceof Object && "code" in err
+        ? (err as { code: string }).code
+        : undefined;
     if (code === "EEXIST") {
       const winner = readLock();
       return {
@@ -170,12 +184,43 @@ export function clearStopSignal(): void {
 }
 
 /**
+ * Check if a cancel signal has been sent (recording should be discarded).
+ */
+export function hasCancelSignal(): boolean {
+  return existsSync(CANCEL_FILE);
+}
+
+/**
+ * Set the cancel signal (used by cancel command handler).
+ */
+export function setCancelSignal(): void {
+  safeWriteFileSync(CANCEL_FILE, `cancel at ${new Date().toISOString()}`);
+}
+
+/**
+ * Clear the cancel signal file.
+ */
+export function clearCancelSignal(): void {
+  if (existsSync(CANCEL_FILE)) {
+    try {
+      unlinkSync(CANCEL_FILE);
+    } catch {}
+  }
+}
+
+/**
  * Release lock + clean up on process exit.
  */
 function cleanup() {
   releaseVoiceSession();
 }
 
-process.on("SIGTERM", () => { cleanup(); process.exit(0); });
-process.on("SIGINT", () => { cleanup(); process.exit(0); });
+process.on("SIGTERM", () => {
+  cleanup();
+  process.exit(0);
+});
+process.on("SIGINT", () => {
+  cleanup();
+  process.exit(0);
+});
 process.on("exit", cleanup);

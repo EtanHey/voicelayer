@@ -15,17 +15,28 @@ import {
 } from "./paths";
 import { getHistoryEntry, playAudioNonBlocking } from "./tts";
 import { waitForInput } from "./input";
-import { isVoiceBooked } from "./session-booking";
+import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-server";
 import type { SocketCommand } from "./socket-protocol";
 
 export function handleSocketCommand(command: SocketCommand): void {
   switch (command.cmd) {
     case "stop":
-    case "cancel":
       safeWriteFileSync(
         STOP_FILE,
-        `${command.cmd} from voice-bar at ${new Date().toISOString()}`,
+        `stop from voice-bar at ${new Date().toISOString()}`,
+      );
+      try {
+        Bun.spawnSync(["pkill", "-f", "afplay"]);
+      } catch {}
+      break;
+    case "cancel":
+      // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
+      // so waitForInput() discards the recording instead of transcribing.
+      setCancelSignal();
+      safeWriteFileSync(
+        STOP_FILE,
+        `cancel from voice-bar at ${new Date().toISOString()}`,
       );
       try {
         Bun.spawnSync(["pkill", "-f", "afplay"]);

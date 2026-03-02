@@ -2,7 +2,7 @@
 //
 // Three modes:
 //   idle           — gentle breathing, barely visible
-//   listening      — medium height, gentle swaying
+//   listening      — minimal bars until real audio arrives, then audio-driven
 //   speechDetected — active, lively movement
 //
 // Uses TimelineView at 60fps with golden-ratio phase offsets
@@ -104,7 +104,13 @@ private struct WaveformBar: View {
         case .idle:
             idleLevel
         case .listening:
-            listeningLevel
+            // AIDEV-NOTE: Use real audio level when available (from MCP audio_level events).
+            // Shows minimal static bars until real audio data arrives — no fake animation.
+            if let level = audioLevel, level > 0.01 {
+                audioLevelDriven(level * 0.7) // Attenuated — pre-speech is quieter
+            } else {
+                waitingLevel
+            }
         case .speechDetected:
             if let level = audioLevel {
                 audioLevelDriven(level)
@@ -124,12 +130,10 @@ private struct WaveformBar: View {
         return 0.05 + breath * 0.1 * centerWeight + shimmer
     }
 
-    // Listening: medium sway
-    private var listeningLevel: Double {
-        let primary = sin(time * 2.0 + phaseOffset * 1.8) * 0.5 + 0.5
-        let secondary = sin(time * 3.3 + phaseOffset * 3.1) * 0.15
-        let drift = sin(time * 0.7 + phaseOffset) * 0.08
-        return 0.25 + primary * 0.2 * centerWeight + secondary + drift
+    // Waiting: minimal static bars with subtle pulse (no fake waveform)
+    private var waitingLevel: Double {
+        let pulse = sin(time * 2.5) * 0.03
+        return 0.12 * centerWeight + pulse
     }
 
     /// Speech detected: lively
@@ -143,7 +147,7 @@ private struct WaveformBar: View {
         return base + fast + medium + slow + pulse + jitter
     }
 
-    /// Audio-driven (v2)
+    /// Audio-driven — maps real RMS level to bar height with organic micro-movement
     private func audioLevelDriven(_ level: Double) -> Double {
         let fast = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
         let jitter = sin(time * 12.0 + phaseOffset * 6.0) * 0.05
