@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { LOCK_FILE, STOP_FILE, CANCEL_FILE } from "./paths";
+import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 
 export interface SessionLock {
   pid: number;
@@ -194,11 +194,7 @@ export function hasCancelSignal(): boolean {
  * Set the cancel signal (used by cancel command handler).
  */
 export function setCancelSignal(): void {
-  try {
-    writeFileSync(CANCEL_FILE, `cancel at ${new Date().toISOString()}`, {
-      mode: 0o600,
-    });
-  } catch {}
+  safeWriteFileSync(CANCEL_FILE, `cancel at ${new Date().toISOString()}`);
 }
 
 /**
