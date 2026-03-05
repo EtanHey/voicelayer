@@ -63,7 +63,7 @@ struct BarView: View {
             state.setHovering(true) // expand on tap
         } label: {
             Circle()
-                .fill(Color.green) // FlowBar is always alive — dot is always green
+                .fill(Color.green) // VoiceBar is always alive — dot is always green
                 .frame(width: 10, height: 10)
                 .padding(8)
                 .background(Theme.pillBackground)
@@ -168,7 +168,7 @@ struct BarView: View {
             PulsingDot()
         } else {
             Circle()
-                .fill(Color.green) // FlowBar is always alive
+                .fill(Color.green) // VoiceBar is always alive
                 .frame(width: 6, height: 6)
         }
     }

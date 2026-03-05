@@ -1,10 +1,10 @@
-// FlowBarApp.swift — Entry point for Voice Bar.
+// VoiceBarApp.swift — Entry point for Voice Bar.
 //
 // Wires together: VoiceState, SocketServer, FloatingPillPanel, BarView.
 // No Dock icon (.accessory activation policy). Menu bar icon for status + quit.
 // Tracks mouse across screens — pill follows the cursor.
 //
-// AIDEV-NOTE: Architecture inversion (Phase 0) — FlowBar is the persistent
+// AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
 // server on /tmp/voicelayer.sock. MCP servers connect as clients.
 // All discovery file logic removed (no more polling, no file watchers).
 
@@ -39,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Shows the macOS permission dialog on first launch.
         let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
-        NSLog("[FlowBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
+        NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
         // Socket server — listens on /tmp/voicelayer.sock
         let server = SocketServer(state: voiceState)
@@ -184,7 +184,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - SwiftUI App entry point
 
 @main
-struct FlowBarApp: App {
+struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {

@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "FlowBar",
+    name: "VoiceBar",
     platforms: [
-        .macOS(.v14)   // Required for @Observable, spring(duration:bounce:), .symbolEffect
+        .macOS(.v14), // Required for @Observable, spring(duration:bounce:), .symbolEffect
     ],
     targets: [
         .executableTarget(
-            name: "FlowBar",
-            path: "Sources/FlowBar"
-        )
+            name: "VoiceBar",
+            path: "Sources/VoiceBar"
+        ),
     ]
 )

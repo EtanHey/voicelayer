@@ -31,7 +31,7 @@ describe("secure session paths", () => {
 
   it("SOCKET_PATH is fixed well-known path (no session token)", () => {
     expect(paths.SOCKET_PATH).toBe("/tmp/voicelayer.sock");
-    // Should NOT contain session token — fixed path for FlowBar server
+    // Should NOT contain session token — fixed path for VoiceBar server
     expect(paths.SOCKET_PATH).not.toContain(paths.SESSION_TOKEN);
   });
 

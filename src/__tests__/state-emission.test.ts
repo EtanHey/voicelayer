@@ -1,8 +1,8 @@
 /**
  * Tests for state emission via socket broadcast (inverted architecture).
  *
- * Verifies that broadcast() sends correct state events to FlowBar.
- * Uses a mock FlowBar server (Bun.listen) to receive events.
+ * Verifies that broadcast() sends correct state events to VoiceBar.
+ * Uses a mock VoiceBar server (Bun.listen) to receive events.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { unlinkSync } from "fs";
@@ -10,7 +10,7 @@ import type { SocketEvent } from "../socket-protocol";
 
 const TEST_SOCKET = "/tmp/voicelayer-test-emission.sock";
 
-// --- Mock FlowBar server ---
+// --- Mock VoiceBar server ---
 
 type MockServer = {
   server: ReturnType<typeof Bun.listen>;
@@ -19,7 +19,7 @@ type MockServer = {
   stop: () => void;
 };
 
-function createMockFlowBarServer(socketPath: string): MockServer {
+function createMockVoiceBarServer(socketPath: string): MockServer {
   const rawLines: string[] = [];
   const received: SocketEvent[] = [];
 
@@ -74,8 +74,8 @@ describe("state emission", () => {
 
   afterEach(async () => {
     try {
-      const { disconnectFromFlowBar } = await import("../socket-client");
-      disconnectFromFlowBar();
+      const { disconnectFromBar } = await import("../socket-client");
+      disconnectFromBar();
     } catch {}
     mockServer?.stop();
     mockServer = null;
@@ -86,15 +86,15 @@ describe("state emission", () => {
 
   /** Helper: connect client to mock server and wait */
   async function connectAndWait() {
-    const { connectToFlowBar, broadcast } = await import("../socket-client");
-    connectToFlowBar(TEST_SOCKET);
+    const { connectToBar, broadcast } = await import("../socket-client");
+    connectToBar(TEST_SOCKET);
     await Bun.sleep(200);
     return { broadcast };
   }
 
   describe("broadcast events", () => {
     it("sends speaking state event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({
@@ -115,7 +115,7 @@ describe("state emission", () => {
     });
 
     it("sends idle state event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "idle" });
@@ -126,7 +126,7 @@ describe("state emission", () => {
     });
 
     it("sends recording state event with mode", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({
@@ -147,7 +147,7 @@ describe("state emission", () => {
     });
 
     it("sends transcribing state event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "transcribing" });
@@ -161,7 +161,7 @@ describe("state emission", () => {
     });
 
     it("sends speech detection event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({ type: "speech", detected: true });
@@ -175,7 +175,7 @@ describe("state emission", () => {
     });
 
     it("sends transcription result event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({ type: "transcription", text: "Hello, how are you?" });
@@ -189,7 +189,7 @@ describe("state emission", () => {
     });
 
     it("sends error event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({
@@ -210,7 +210,7 @@ describe("state emission", () => {
 
   describe("state transitions", () => {
     it("speaking → idle sequence", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({
@@ -229,7 +229,7 @@ describe("state emission", () => {
     });
 
     it("recording → speech → transcribing → transcription → idle sequence", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({
@@ -253,7 +253,7 @@ describe("state emission", () => {
     });
 
     it("speaking → error → idle sequence", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       broadcast({ type: "state", state: "speaking", text: "Will fail" });
@@ -272,7 +272,7 @@ describe("state emission", () => {
     });
 
     it("full converse cycle: speaking → idle → recording → speech → transcribing → transcription → idle", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       // TTS question
@@ -318,7 +318,7 @@ describe("state emission", () => {
 
   describe("text truncation in speak broadcast", () => {
     it("truncates long text in speaking event", async () => {
-      mockServer = createMockFlowBarServer(TEST_SOCKET);
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
       const longText = "A".repeat(500);

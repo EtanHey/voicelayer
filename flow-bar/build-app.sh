@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# Build FlowBar as a proper macOS .app bundle.
+# Build VoiceBar as a proper macOS .app bundle.
 #
 # Usage: bash flow-bar/build-app.sh
 #
-# Output: ~/Applications/VoiceLayer/FlowBar.app
+# Output: ~/Applications/VoiceLayer/VoiceBar.app
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
-APP_DIR="$HOME/Applications/VoiceLayer/FlowBar.app"
+APP_DIR="/Applications/VoiceBar.app"
 
-echo "[build-app] Building FlowBar (release)..."
+echo "[build-app] Building VoiceBar (release)..."
 swift build -c release --package-path "$PACKAGE_DIR"
 
 # Find the built binary (reuses cached build, no rebuild)
 BIN_DIR="$(swift build -c release --package-path "$PACKAGE_DIR" --show-bin-path)"
-BINARY="$BIN_DIR/FlowBar"
+BINARY="$BIN_DIR/VoiceBar"
 if [ ! -f "$BINARY" ]; then
     echo "[build-app] ERROR: Binary not found at $BINARY"
     exit 1
@@ -34,11 +34,18 @@ mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
-cp "$BINARY" "$APP_DIR/Contents/MacOS/FlowBar"
+cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
+
+# App icon
+if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
+    cp "$BUNDLE_DIR/VoiceBar.icns" "$APP_DIR/Contents/Resources/"
+    echo "[build-app] Icon installed."
+fi
 
 # Ad-hoc codesign (required for macOS Gatekeeper)
 echo "[build-app] Signing..."
 codesign --force --sign - "$APP_DIR"
 
 echo "[build-app] Done: $APP_DIR"
-echo "[build-app] Add to Login Items: System Settings > General > Login Items > +"
+echo "[build-app] To add to Login Items: System Settings > General > Login Items > +"
+echo "[build-app] Or run: osascript -e 'tell application \"System Events\" to make login item at end with properties {path:\"/Applications/VoiceBar.app\", hidden:true}'"

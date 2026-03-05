@@ -5,14 +5,14 @@
 // commands back. NWListener does NOT support Unix domain sockets, so we
 // use POSIX sockets + GCD DispatchSource.
 //
-// AIDEV-NOTE: Architecture inversion (Phase 0) — FlowBar is the persistent
+// AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
 // server. MCP servers connect as clients. This replaces SocketClient.swift.
 
 import Foundation
 
 final class SocketServer {
     private let socketPath = "/tmp/voicelayer.sock"
-    private let queue = DispatchQueue(label: "com.voicelayer.flowbar.server", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
 
     /// Listening socket file descriptor.
@@ -52,7 +52,7 @@ final class SocketServer {
         // Create POSIX Unix domain socket
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            NSLog("[FlowBar] Failed to create socket: errno %d", errno)
+            NSLog("[VoiceBar] Failed to create socket: errno %d", errno)
             return
         }
 
@@ -61,7 +61,7 @@ final class SocketServer {
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = socketPath.utf8CString
         guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
-            NSLog("[FlowBar] Socket path too long: %@", socketPath)
+            NSLog("[VoiceBar] Socket path too long: %@", socketPath)
             close(fd)
             return
         }
@@ -79,7 +79,7 @@ final class SocketServer {
             }
         }
         guard bindResult == 0 else {
-            NSLog("[FlowBar] Failed to bind socket: errno %d", errno)
+            NSLog("[VoiceBar] Failed to bind socket: errno %d", errno)
             close(fd)
             return
         }
@@ -89,7 +89,7 @@ final class SocketServer {
 
         // Listen with a small backlog
         guard listen(fd, 5) == 0 else {
-            NSLog("[FlowBar] Failed to listen: errno %d", errno)
+            NSLog("[VoiceBar] Failed to listen: errno %d", errno)
             close(fd)
             unlink(socketPath)
             return
@@ -110,7 +110,7 @@ final class SocketServer {
         source.resume()
         listenSource = source
 
-        NSLog("[FlowBar] Server listening on %@", socketPath)
+        NSLog("[VoiceBar] Server listening on %@", socketPath)
         updateConnectionState()
     }
 
@@ -120,7 +120,7 @@ final class SocketServer {
         let clientFD = accept(listenFD, nil, nil)
         guard clientFD >= 0 else {
             if errno != EWOULDBLOCK, errno != EAGAIN {
-                NSLog("[FlowBar] accept() failed: errno %d", errno)
+                NSLog("[VoiceBar] accept() failed: errno %d", errno)
             }
             return
         }
@@ -133,7 +133,7 @@ final class SocketServer {
         var nosigpipe: Int32 = 1
         setsockopt(clientFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
 
-        NSLog("[FlowBar] Client connected (fd: %d, total: %d)", clientFD, clients.count + 1)
+        NSLog("[VoiceBar] Client connected (fd: %d, total: %d)", clientFD, clients.count + 1)
 
         // Read source for this client
         let readSource = DispatchSource.makeReadSource(fileDescriptor: clientFD, queue: queue)
@@ -158,7 +158,7 @@ final class SocketServer {
 
         if bytesRead <= 0 {
             // EOF or error — client disconnected
-            NSLog("[FlowBar] Client disconnected (fd: %d)", fd)
+            NSLog("[VoiceBar] Client disconnected (fd: %d)", fd)
             clients[fd]?.source.cancel()
             return
         }
@@ -184,7 +184,7 @@ final class SocketServer {
         guard let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
-            NSLog("[FlowBar] Bad JSON from client: %@", json)
+            NSLog("[VoiceBar] Bad JSON from client: %@", json)
             return
         }
 
@@ -230,7 +230,7 @@ final class SocketServer {
 
     private func removeClient(fd: Int32) {
         clients.removeValue(forKey: fd)
-        NSLog("[FlowBar] Client removed (fd: %d, remaining: %d)", fd, clients.count)
+        NSLog("[VoiceBar] Client removed (fd: %d, remaining: %d)", fd, clients.count)
         updateConnectionState()
     }
 
@@ -240,7 +240,7 @@ final class SocketServer {
             guard let self else { return }
             let wasConnected = state.isConnected
             state.isConnected = count > 0
-            // AIDEV-NOTE: FlowBar is a persistent server — never show "disconnected".
+            // AIDEV-NOTE: VoiceBar is a persistent server — never show "disconnected".
             // When MCP clients leave, stay in idle. MCP connection status is in the menu bar.
             if wasConnected != state.isConnected {
                 state.onConnectionChange?(state.isConnected)
@@ -252,7 +252,7 @@ final class SocketServer {
 
     private func cleanup() {
         cleanupOnQueue()
-        NSLog("[FlowBar] Server stopped")
+        NSLog("[VoiceBar] Server stopped")
         updateConnectionState()
     }
 

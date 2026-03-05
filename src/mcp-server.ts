@@ -14,11 +14,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { getBackend } from "./stt";
 import { STOP_FILE } from "./paths";
-import {
-  connectToFlowBar,
-  disconnectFromFlowBar,
-  onCommand,
-} from "./socket-client";
+import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { getToolDefinitions } from "./mcp-tools";
 import { handleSocketCommand } from "./socket-handlers";
 import {
@@ -125,7 +121,7 @@ async function main() {
   }
 
   onCommand(handleSocketCommand);
-  connectToFlowBar();
+  connectToBar();
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
@@ -138,14 +134,14 @@ async function main() {
 // --- Graceful shutdown ---
 
 process.on("SIGTERM", () => {
-  disconnectFromFlowBar();
+  disconnectFromBar();
 });
 process.on("SIGINT", () => {
-  disconnectFromFlowBar();
+  disconnectFromBar();
 });
 
 main().catch((err) => {
   console.error("[voicelayer] Fatal:", err);
-  disconnectFromFlowBar();
+  disconnectFromBar();
   process.exit(1);
 });

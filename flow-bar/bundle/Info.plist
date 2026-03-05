@@ -3,17 +3,19 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>com.voicelayer.flowbar</string>
+	<string>com.voicelayer.voicebar</string>
 	<key>CFBundleName</key>
-	<string>FlowBar</string>
+	<string>VoiceBar</string>
 	<key>CFBundleDisplayName</key>
-	<string>VoiceLayer FlowBar</string>
+	<string>VoiceLayer VoiceBar</string>
 	<key>CFBundleVersion</key>
 	<string>2.0.0</string>
 	<key>CFBundleShortVersionString</key>
 	<string>2.0.0</string>
 	<key>CFBundleExecutable</key>
-	<string>FlowBar</string>
+	<string>VoiceBar</string>
+	<key>CFBundleIconFile</key>
+	<string>VoiceBar</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSUIElement</key>
