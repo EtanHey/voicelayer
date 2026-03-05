@@ -1,13 +1,13 @@
 /**
- * Unix domain socket client for VoiceLayer → FlowBar communication.
+ * Unix domain socket client for VoiceLayer → VoiceBar communication.
  *
- * Connects to FlowBar's persistent server at /tmp/voicelayer.sock.
+ * Connects to VoiceBar's persistent server at /tmp/voicelayer.sock.
  * Broadcasts NDJSON state events, receives commands.
- * Auto-reconnects with exponential backoff if FlowBar restarts.
+ * Auto-reconnects with exponential backoff if VoiceBar restarts.
  *
  * AIDEV-NOTE: This replaces socket-server.ts. The API surface is identical
  * (broadcast, onCommand, isConnected) — only the direction is inverted.
- * MCP servers are now clients; FlowBar is the server.
+ * MCP servers are now clients; VoiceBar is the server.
  */
 
 import {
@@ -37,12 +37,12 @@ let commandHandler: ((command: SocketCommand) => void) | null = null;
 let targetPath: string = SOCKET_PATH;
 
 /**
- * Connect to FlowBar's Unix domain socket server.
+ * Connect to VoiceBar's Unix domain socket server.
  * Auto-reconnects with exponential backoff if the connection drops.
  *
  * @param path Optional socket path override (for testing). Defaults to SOCKET_PATH.
  */
-export function connectToFlowBar(path?: string): void {
+export function connectToBar(path?: string): void {
   if (connected || (connection && !intentionallyClosed)) return;
 
   intentionallyClosed = false;
@@ -52,9 +52,9 @@ export function connectToFlowBar(path?: string): void {
 }
 
 /**
- * Disconnect from FlowBar. Stops auto-reconnect.
+ * Disconnect from VoiceBar. Stops auto-reconnect.
  */
-export function disconnectFromFlowBar(): void {
+export function disconnectFromBar(): void {
   intentionallyClosed = true;
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
@@ -72,7 +72,7 @@ export function disconnectFromFlowBar(): void {
 }
 
 /**
- * Broadcast an event to FlowBar.
+ * Broadcast an event to VoiceBar.
  * No-op if not connected.
  */
 export function broadcast(event: SocketEvent): void {
@@ -86,7 +86,7 @@ export function broadcast(event: SocketEvent): void {
 }
 
 /**
- * Register a handler for commands received from FlowBar.
+ * Register a handler for commands received from VoiceBar.
  * Only one handler is supported — last one wins.
  */
 export function onCommand(handler: (command: SocketCommand) => void): void {
@@ -94,7 +94,7 @@ export function onCommand(handler: (command: SocketCommand) => void): void {
 }
 
 /**
- * Check if connected to FlowBar.
+ * Check if connected to VoiceBar.
  */
 export function isConnected(): boolean {
   return connected;
@@ -112,7 +112,7 @@ function startConnection(): void {
         connected = true;
         buffer = "";
         reconnectDelay = 1000; // Reset backoff on successful connect
-        console.error(`[socket-client] Connected to FlowBar at ${targetPath}`);
+        console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
 
       data(_socket, raw) {
@@ -125,7 +125,7 @@ function startConnection(): void {
           const command = parseCommand(line);
           if (command) {
             console.error(
-              `[socket-client] Command from FlowBar: ${JSON.stringify(command)}`,
+              `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
             );
             if (commandHandler) {
               commandHandler(command);
@@ -140,7 +140,7 @@ function startConnection(): void {
         connected = false;
         connection = null as any;
         buffer = "";
-        console.error("[socket-client] Disconnected from FlowBar");
+        console.error("[socket-client] Disconnected from VoiceBar");
         scheduleReconnect();
       },
 
@@ -191,7 +191,7 @@ function scheduleReconnect(): void {
 // --- Graceful shutdown ---
 
 function cleanup() {
-  disconnectFromFlowBar();
+  disconnectFromBar();
 }
 
 process.on("SIGINT", cleanup);

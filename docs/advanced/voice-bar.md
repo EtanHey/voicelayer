@@ -108,9 +108,8 @@ The Voice Bar communicates via NDJSON events over `/tmp/voicelayer.sock`:
 ## Building from Source
 
 ```bash
-cd flow-bar
-swift build -c release
-.build/release/FlowBar
+bash flow-bar/build-app.sh
+# Builds, bundles, codesigns, installs to /Applications/VoiceBar.app
 ```
 
 The Voice Bar uses `NSPanel` with `.nonactivatingPanel` style so it never steals focus from your editor.

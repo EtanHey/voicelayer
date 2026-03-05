@@ -3,7 +3,7 @@ import { describe, it, expect, beforeEach } from "bun:test";
 /**
  * Tests for Voice Bar status checker (post-architecture-inversion).
  *
- * FlowBar is now a persistent server. MCP doesn't auto-launch it.
+ * VoiceBar is now a persistent server. MCP doesn't auto-launch it.
  * ensureVoiceBarRunning() only checks + warns.
  */
 

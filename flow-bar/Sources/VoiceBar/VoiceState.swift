@@ -283,18 +283,18 @@ final class VoiceState {
     @discardableResult
     private static func simulatePaste() -> Bool {
         guard AXIsProcessTrusted() else {
-            NSLog("[FlowBar] simulatePaste: Accessibility not granted")
+            NSLog("[VoiceBar] simulatePaste: Accessibility not granted")
             return false
         }
         guard let source = CGEventSource(stateID: .hidSystemState) else {
-            NSLog("[FlowBar] simulatePaste: failed to create CGEventSource")
+            NSLog("[VoiceBar] simulatePaste: failed to create CGEventSource")
             return false
         }
         let vKey: CGKeyCode = 0x09 // V
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
         guard let vDown, let vUp else {
-            NSLog("[FlowBar] simulatePaste: failed to create CGEvent")
+            NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
             return false
         }
         vDown.flags = .maskCommand
