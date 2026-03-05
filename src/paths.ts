@@ -7,7 +7,7 @@
  *   2. All legacy docs reference /tmp paths
  *
  * AIDEV-NOTE: Architecture inversion (Phase 0): SOCKET_PATH is now a fixed
- * well-known path. FlowBar listens on it as a persistent server. MCP servers
+ * well-known path. VoiceBar listens on it as a persistent server. MCP servers
  * connect as clients. No more discovery file.
  *
  * Per-session random token is still used for STOP_FILE and LOCK_FILE to
@@ -69,8 +69,8 @@ export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
 export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
 
 /**
- * Fixed Unix domain socket path for FlowBar IPC.
- * FlowBar listens here as a persistent server. MCP servers connect as clients.
+ * Fixed Unix domain socket path for VoiceBar IPC.
+ * VoiceBar listens here as a persistent server. MCP servers connect as clients.
  */
 export const SOCKET_PATH = tmpPath("voicelayer.sock");
 

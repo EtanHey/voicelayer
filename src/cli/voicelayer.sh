@@ -27,10 +27,10 @@ case "${1:-}" in
         cd "$FLOW_BAR_DIR"
         swift build -c release 2>&1 | tail -1
         echo "[voicelayer] Launching Voice Bar..."
-        exec ".build/release/FlowBar" "$@"
+        exec ".build/release/VoiceBar" "$@"
         ;;
     bar-stop)
-        if pkill -f "FlowBar" 2>/dev/null; then
+        if pkill -f "VoiceBar" 2>/dev/null; then
             echo "[voicelayer] Voice Bar stopped."
         else
             echo "[voicelayer] Voice Bar is not running."
