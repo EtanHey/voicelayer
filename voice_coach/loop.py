@@ -1,5 +1,6 @@
 """Main voice coaching conversation loop."""
 
+import os
 from pathlib import Path
 
 import anthropic
@@ -9,21 +10,38 @@ from .coach import SYSTEM_PROMPT, build_messages
 from .stt import transcribe
 from .tts import speak
 
-_client = anthropic.Anthropic()
-_MODEL = "claude-sonnet-4-6"
+_client: anthropic.Anthropic | None = None
+_MODEL = os.getenv("VOICE_COACH_MODEL", "claude-sonnet-4-6")
+
+
+def _get_client() -> anthropic.Anthropic:
+    """Lazy-init the Anthropic client (avoids import-time crash if key missing)."""
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic()
+    return _client
 
 
 def _truncate_history(history: list[dict], max_turns: int = 10) -> list[dict]:
-    """Return a new list with at most max_turns most recent messages."""
+    """Return a new list with at most max_turns most recent messages.
+
+    Ensures the result starts with a user message (Anthropic API requirement)
+    by dropping a leading assistant message if the slice would start with one.
+    """
     if len(history) <= max_turns:
         return list(history)
-    return list(history[-max_turns:])
+    truncated = list(history[-max_turns:])
+    # Ensure first message is role=user (API requirement)
+    if truncated and truncated[0]["role"] == "assistant":
+        truncated = truncated[1:]
+    return truncated
 
 
 def _coach_respond(user_text: str, history: list[dict]) -> str:
     """Send user_text to Claude with coach context, return response text."""
     messages = build_messages(user_text, history=history)
-    response = _client.messages.create(
+    client = _get_client()
+    response = client.messages.create(
         model=_MODEL,
         max_tokens=300,
         system=SYSTEM_PROMPT,
@@ -53,6 +71,9 @@ def run() -> None:
 
         try:
             transcript = transcribe(wav_path)
+        except Exception as e:
+            print(f"[transcription error: {e}]")
+            continue
         finally:
             Path(wav_path).unlink(missing_ok=True)
 
@@ -74,4 +95,7 @@ def run() -> None:
         history = _truncate_history(history)
 
         print(f"Coach: {response}\n")
-        speak(response)
+        try:
+            speak(response)
+        except Exception as e:
+            print(f"[tts error: {e}] (response was printed above)")

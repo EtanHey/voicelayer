@@ -1,7 +1,9 @@
-"""Tests for voice_coach.stt — whisper-cli output parsing."""
+"""Tests for voice_coach.stt — whisper-cli output parsing and binary detection."""
+
+import shutil
 
 import pytest
-from voice_coach.stt import parse_whisper_output
+from voice_coach.stt import parse_whisper_output, find_whisper_cli
 
 
 def test_parse_returns_clean_text():
@@ -44,3 +46,17 @@ def test_parse_handles_empty_input():
     """Empty input returns empty string, no error."""
     assert parse_whisper_output("") == ""
     assert parse_whisper_output("   \n  ") == ""
+
+
+def test_find_whisper_cli_returns_string():
+    """find_whisper_cli must return a non-empty path string."""
+    path = find_whisper_cli()
+    assert isinstance(path, str)
+    assert len(path) > 0
+
+
+def test_find_whisper_cli_finds_installed_binary():
+    """On this machine, whisper-cli should be findable."""
+    # This test is environment-specific but validates the detection logic
+    path = find_whisper_cli()
+    assert "whisper" in path

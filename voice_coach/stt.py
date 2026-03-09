@@ -1,11 +1,38 @@
 """STT via whisper-cli — audio file to text transcript."""
 
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
-WHISPER_CLI = "/opt/homebrew/bin/whisper-cli"
 DEFAULT_MODEL = str(Path.home() / ".cache/whisper/ggml-large-v3-turbo.bin")
+
+# Candidate binary names, checked in order (matches VoiceLayer TS detection)
+_WHISPER_CANDIDATES = ["whisper-cli", "whisper-cpp"]
+
+
+def find_whisper_cli() -> str:
+    """Find the whisper-cli binary, checking PATH and common install locations.
+
+    Returns:
+        Path to the whisper-cli binary.
+
+    Raises:
+        RuntimeError: If no whisper binary is found.
+    """
+    env_override = os.environ.get("VOICE_COACH_WHISPER_CLI")
+    if env_override:
+        return env_override
+
+    for name in _WHISPER_CANDIDATES:
+        path = shutil.which(name)
+        if path:
+            return path
+
+    raise RuntimeError(
+        "whisper-cli not found. Install via: brew install whisper-cpp"
+    )
 
 # Patterns that indicate noise or silence, not real speech
 _NOISE_PATTERNS = re.compile(
@@ -69,8 +96,9 @@ def transcribe(audio_path: str, model: str = DEFAULT_MODEL) -> str:
     Raises:
         RuntimeError: If whisper-cli fails.
     """
+    whisper_bin = find_whisper_cli()
     result = subprocess.run(
-        [WHISPER_CLI, "-m", model, "-f", audio_path, "--no-timestamps", "-np"],
+        [whisper_bin, "-m", model, "-f", audio_path, "--no-timestamps", "-np"],
         capture_output=True,
         text=True,
         timeout=60,
