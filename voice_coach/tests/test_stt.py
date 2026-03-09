@@ -1,6 +1,6 @@
 """Tests for voice_coach.stt — whisper-cli output parsing and binary detection."""
 
-import shutil
+from unittest.mock import patch
 
 import pytest
 from voice_coach.stt import parse_whisper_output, find_whisper_cli
@@ -48,15 +48,35 @@ def test_parse_handles_empty_input():
     assert parse_whisper_output("   \n  ") == ""
 
 
-def test_find_whisper_cli_returns_string():
-    """find_whisper_cli must return a non-empty path string."""
-    path = find_whisper_cli()
-    assert isinstance(path, str)
-    assert len(path) > 0
+def test_find_whisper_cli_uses_shutil_which():
+    """find_whisper_cli checks PATH via shutil.which."""
+    with patch("voice_coach.stt.shutil.which", return_value="/usr/local/bin/whisper-cli"):
+        path = find_whisper_cli()
+    assert path == "/usr/local/bin/whisper-cli"
 
 
-def test_find_whisper_cli_finds_installed_binary():
-    """On this machine, whisper-cli should be findable."""
-    # This test is environment-specific but validates the detection logic
-    path = find_whisper_cli()
-    assert "whisper" in path
+def test_find_whisper_cli_tries_whisper_cpp_fallback():
+    """Falls back to whisper-cpp if whisper-cli not found."""
+    def mock_which(name):
+        if name == "whisper-cpp":
+            return "/opt/homebrew/bin/whisper-cpp"
+        return None
+
+    with patch("voice_coach.stt.shutil.which", side_effect=mock_which):
+        path = find_whisper_cli()
+    assert path == "/opt/homebrew/bin/whisper-cpp"
+
+
+def test_find_whisper_cli_respects_env_override():
+    """VOICE_COACH_WHISPER_CLI env var overrides detection."""
+    with patch.dict("os.environ", {"VOICE_COACH_WHISPER_CLI": "/custom/whisper"}):
+        path = find_whisper_cli()
+    assert path == "/custom/whisper"
+
+
+def test_find_whisper_cli_raises_when_not_found():
+    """Raises RuntimeError when no whisper binary exists."""
+    with patch("voice_coach.stt.shutil.which", return_value=None):
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(RuntimeError, match="whisper-cli not found"):
+                find_whisper_cli()

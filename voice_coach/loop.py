@@ -1,53 +1,101 @@
-"""Main voice coaching conversation loop."""
+"""Main voice coaching conversation loop.
 
-import os
+Uses claude CLI (Claude Code) as the LLM backend, giving the coach full
+access to MCP tools (BrainLayer, VoiceLayer), skills, and the filesystem.
+"""
+
+import subprocess
 from pathlib import Path
 
-import anthropic
-
 from .audio import record
-from .coach import SYSTEM_PROMPT, build_messages
 from .stt import transcribe
 from .tts import speak
 
-_client: anthropic.Anthropic | None = None
-_MODEL = os.getenv("VOICE_COACH_MODEL", "claude-sonnet-4-6")
+# Voice-specific formatting rules only — coaching personality comes from
+# the coachClaude skill and Claude Code's context (CLAUDE.md, MCP servers).
+VOICE_FORMAT = (
+    "You are responding in a voice conversation. Rules for spoken output:\n"
+    "- 2-4 sentences max — this will be read aloud via TTS\n"
+    "- No markdown, no bullet points, no code blocks, no lists\n"
+    "- Natural spoken language, contractions are fine\n"
+    "- If a topic needs detail, offer to go deeper\n"
+    "- Lead with the most important thing first"
+)
 
 
-def _get_client() -> anthropic.Anthropic:
-    """Lazy-init the Anthropic client (avoids import-time crash if key missing)."""
-    global _client
-    if _client is None:
-        _client = anthropic.Anthropic()
-    return _client
+def _build_prompt(transcript: str, history: list[dict]) -> str:
+    """Build a prompt string with conversation history for claude CLI.
+
+    Args:
+        transcript: The user's current spoken input.
+        history: Prior conversation turns.
+
+    Returns:
+        Formatted prompt string.
+
+    Raises:
+        ValueError: If transcript is empty.
+    """
+    if not transcript or not transcript.strip():
+        raise ValueError("transcript cannot be empty")
+
+    parts = []
+    for msg in history:
+        prefix = "User" if msg["role"] == "user" else "Coach"
+        parts.append(f"{prefix}: {msg['content']}")
+    parts.append(f"User: {transcript.strip()}")
+    return "\n".join(parts)
 
 
 def _truncate_history(history: list[dict], max_turns: int = 10) -> list[dict]:
     """Return a new list with at most max_turns most recent messages.
 
-    Ensures the result starts with a user message (Anthropic API requirement)
+    Ensures the result starts with a user message (API requirement)
     by dropping a leading assistant message if the slice would start with one.
     """
     if len(history) <= max_turns:
         return list(history)
     truncated = list(history[-max_turns:])
-    # Ensure first message is role=user (API requirement)
     if truncated and truncated[0]["role"] == "assistant":
         truncated = truncated[1:]
     return truncated
 
 
-def _coach_respond(user_text: str, history: list[dict]) -> str:
-    """Send user_text to Claude with coach context, return response text."""
-    messages = build_messages(user_text, history=history)
-    client = _get_client()
-    response = client.messages.create(
-        model=_MODEL,
-        max_tokens=300,
-        system=SYSTEM_PROMPT,
-        messages=messages,
+def _coach_respond(transcript: str, history: list[dict]) -> str:
+    """Send transcript to claude CLI and return the response.
+
+    Uses Claude Code's `-p` (print) mode with `--append-system-prompt`
+    for voice formatting. Claude Code provides full tool access (BrainLayer,
+    MCP servers, skills) that the raw Anthropic API would not have.
+
+    Args:
+        transcript: User's spoken input (already transcribed).
+        history: Prior conversation turns.
+
+    Returns:
+        Coach response text.
+
+    Raises:
+        RuntimeError: If claude CLI fails.
+    """
+    prompt = _build_prompt(transcript, history)
+    cmd = [
+        "claude", "-p", prompt,
+        "--output-format", "text",
+        "--append-system-prompt", VOICE_FORMAT,
+    ]
+
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=120,
     )
-    return response.content[0].text
+
+    if result.returncode != 0:
+        raise RuntimeError(f"claude CLI failed: {result.stderr.strip()}")
+
+    return result.stdout.strip()
 
 
 def run() -> None:
