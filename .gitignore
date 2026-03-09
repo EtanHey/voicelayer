@@ -9,5 +9,9 @@ docs.local/
 claude.scratchpad.md
 .claude/
 
+# Python
+__pycache__/
+*.pyc
+
 # Swift build artifacts
 flow-bar/.build/
