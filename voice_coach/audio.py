@@ -38,7 +38,12 @@ def record(max_silence_secs: float = 2.5, sample_rate: int = 16000) -> str:
         "1", f"{max_silence_secs}s", "3%",           # stop on silence
     ]
 
-    result = subprocess.run(cmd, capture_output=True, timeout=300)
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        Path(output_path).unlink(missing_ok=True)
+        raise RuntimeError("recording timed out (300s)")
+
     if result.returncode != 0:
         Path(output_path).unlink(missing_ok=True)
         raise RuntimeError(f"rec failed: {result.stderr.decode().strip()}")

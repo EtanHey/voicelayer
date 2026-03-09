@@ -104,10 +104,14 @@ def run() -> None:
 
     print("Voice Coach — speak when ready. Press Ctrl+C to exit.\n")
 
-    # Greeting
+    # Greeting — seed into history so first user reply has context
     greeting = "Hey! I'm your coach. How are you feeling today?"
     print(f"Coach: {greeting}")
-    speak(greeting)
+    try:
+        speak(greeting)
+    except Exception as e:
+        print(f"[tts error: {e}] (greeting was printed above)")
+    history.append({"role": "assistant", "content": greeting})
 
     while True:
         print("\nListening... (speak now, silence stops recording)")
