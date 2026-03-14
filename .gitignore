@@ -15,3 +15,6 @@ __pycache__/
 
 # Swift build artifacts
 flow-bar/.build/
+
+# MCP config (contains secrets)
+.mcp.json
