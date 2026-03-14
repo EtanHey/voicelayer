@@ -1,0 +1,11 @@
+{
+  "_comment": "Run: ~/Gits/orchestrator/scripts/mcp-setup.sh ~/Gits/voicelayer",
+  "mcpServers": {
+    "brainlayer": {
+      "command": "brainlayer-mcp"
+    },
+    "voicelayer": {
+      "command": "voicelayer-mcp"
+    }
+  }
+}
