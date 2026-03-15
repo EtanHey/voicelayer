@@ -157,7 +157,13 @@ final class SocketServer {
         let bytesRead = read(fd, &buf, buf.count)
 
         if bytesRead <= 0 {
-            // EOF or error — client disconnected
+            if bytesRead == -1, errno == EAGAIN || errno == EWOULDBLOCK {
+                // Spurious GCD/kqueue wake-up — no data available yet.
+                // Can happen on the first DispatchSource resume() on macOS.
+                // Not a disconnect; just ignore and wait for the next event.
+                return
+            }
+            // True EOF (bytesRead == 0) or real error — client disconnected
             NSLog("[VoiceBar] Client disconnected (fd: %d)", fd)
             clients[fd]?.source.cancel()
             return
