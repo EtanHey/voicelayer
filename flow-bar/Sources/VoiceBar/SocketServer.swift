@@ -157,9 +157,10 @@ final class SocketServer {
         let bytesRead = read(fd, &buf, buf.count)
 
         if bytesRead <= 0 {
-            if bytesRead == -1, errno == EAGAIN || errno == EWOULDBLOCK {
+            if bytesRead == -1, errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR {
                 // Spurious GCD/kqueue wake-up — no data available yet.
-                // Can happen on the first DispatchSource resume() on macOS.
+                // Can happen on the first DispatchSource resume() on macOS,
+                // or when read() is interrupted by a signal (EINTR).
                 // Not a disconnect; just ignore and wait for the next event.
                 return
             }
