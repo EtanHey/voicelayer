@@ -5,6 +5,19 @@ All notable changes to VoiceLayer will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- CLI voice coaching loop (Phase 1) — 16-chunk transcription, structured coaching workflow via `voicelayer` CLI (#53)
+
+### Changed
+- **VoiceBar renamed from FlowBar** — app name, Swift source files, TypeScript references, build scripts, and docs all updated to VoiceBar (#52)
+- **Architecture inversion** — VoiceBar is now the persistent server (Unix socket IPC). MCP server acts as a thin client. Removes the facade layer between Swift and TS. (#50, #51)
+
+### Fixed
+- VoiceBar: 6 Swift bug fixes + symlink safety for `/Applications/VoiceBar.app` install (#48)
+- MCP server: error recovery, session booking hardening, handler tests added (#47)
+
 ## [2.0.0] - 2026-02-28
 
 ### Changed
