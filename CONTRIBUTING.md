@@ -1,5 +1,7 @@
 # Contributing to VoiceLayer
 
+Thanks for your interest in contributing! VoiceLayer is open source under Apache 2.0.
+
 ## Development Setup
 
 ```bash
@@ -28,17 +30,17 @@ Tests mock external dependencies (sox, edge-tts, whisper.cpp) — no hardware re
 
 ```
 MCP Client (Claude Code)
-    │
-    ▼
+    |
+    v
 mcp-server.ts          # Request handler + arg validation
-    │
-    ├── tts.ts          # Text-to-speech (edge-tts CLI → audio player)
-    ├── input.ts        # Mic recording (sox) → STT transcription
-    │   └── stt.ts      # Backend abstraction (whisper.cpp / Wispr Flow)
-    ├── session-booking.ts  # Lockfile mutex for mic access
-    ├── session.ts      # Session persistence (JSON files)
-    ├── paths.ts        # Centralized /tmp path constants
-    └── audio-utils.ts  # Shared audio utilities (RMS calculation)
+    |
+    +-- tts.ts          # Text-to-speech (edge-tts CLI -> audio player)
+    +-- input.ts        # Mic recording (sox) -> STT transcription
+    |   +-- stt.ts      # Backend abstraction (whisper.cpp / Wispr Flow)
+    +-- session-booking.ts  # Lockfile mutex for mic access
+    +-- session.ts      # Session persistence (JSON files)
+    +-- paths.ts        # Centralized /tmp path constants
+    +-- audio-utils.ts  # Shared audio utilities (RMS calculation)
 ```
 
 ## Code Style
@@ -53,9 +55,27 @@ mcp-server.ts          # Request handler + arg validation
 
 1. Create a branch from `main`
 2. Make changes, add tests for new functionality
-3. Run `bun test` — all 230+ tests must pass
+3. Run `bun test` — all tests must pass
 4. Push and open a PR against `main`
-5. Address review comments from Cursor Bugbot / CodeRabbit
+5. Address review comments from CodeRabbit
+6. PRs are squash-merged
+
+## Vouching Model
+
+We use a **vouching system** for new contributors, inspired by the t3-oss community:
+
+- **First PR?** An existing contributor or maintainer reviews and vouches for you
+- **Vouched contributors** get faster review cycles on subsequent PRs
+- **No CLA required** — your contributions are licensed under Apache 2.0 by submitting them
+- Add `Vouched-by: @username` to your PR description if someone invited you
+
+## AI Contributions
+
+This project uses AI coding tools extensively. When AI agents contribute code:
+
+- Add `Co-Authored-By: <agent> <noreply@provider.com>` to commit messages
+- AI-generated code goes through the same review process as human code
+- No distinction in quality standards — all code must pass tests and review
 
 ## Adding a New Voice Mode
 
@@ -75,3 +95,11 @@ All `/tmp` paths are centralized in `src/paths.ts`. Don't hardcode paths — imp
 | `STOP_FILE` | `/tmp/voicelayer-stop` | User stop signal |
 | `ttsFilePath()` | `/tmp/voicelayer-tts-{pid}-{n}.mp3` | TTS audio (ephemeral) |
 | `recordingFilePath()` | `/tmp/voicelayer-recording-{pid}-{ts}.wav` | Recording (ephemeral) |
+
+## Reporting Issues
+
+Open an issue with: what you expected, what happened, steps to reproduce, and your environment (OS, Bun version).
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the Apache License, Version 2.0.
