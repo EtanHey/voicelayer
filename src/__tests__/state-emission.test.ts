@@ -321,16 +321,16 @@ describe("state emission", () => {
       mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
-      const longText = "A".repeat(500);
+      const longText = "A".repeat(3000);
       broadcast({
         type: "state",
         state: "speaking",
-        text: longText.slice(0, 200),
+        text: longText.slice(0, 2000),
       });
 
       await Bun.sleep(100);
       expect(mockServer.received.length).toBe(1);
-      expect((mockServer.received[0] as any).text.length).toBe(200);
+      expect((mockServer.received[0] as any).text.length).toBe(2000);
     });
   });
 });

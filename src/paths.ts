@@ -75,6 +75,13 @@ export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
 export const SOCKET_PATH = tmpPath("voicelayer.sock");
 
 /**
+ * MCP daemon socket path.
+ * The daemon listens here for MCP clients (via socat).
+ * Separate from SOCKET_PATH so Voice Bar can keep serving on voicelayer.sock.
+ */
+export const MCP_SOCKET_PATH = tmpPath("voicelayer-mcp.sock");
+
+/**
  * Safe write that refuses to follow symlinks.
  * Prevents symlink attacks on predictable /tmp paths (S1 security fix).
  */

@@ -49,7 +49,7 @@ export function handleSocketCommand(command: SocketCommand): void {
         broadcast({
           type: "state",
           state: "speaking",
-          text: entry.text.slice(0, 200),
+          text: entry.text.slice(0, 2000),
         });
         playAudioNonBlocking(entry.file);
       }
