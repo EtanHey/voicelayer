@@ -10,14 +10,23 @@
 const HEADER_DELIM = "\r\n\r\n";
 const HEADER_PREFIX = "Content-Length: ";
 
-/**
- * Parse zero or more complete MCP frames from a buffer.
- * Returns parsed messages and any remaining unparsed bytes.
- */
-export function parseMcpFrames(data: string): {
+/** Maximum allowed frame size (10 MB) — prevents unbounded buffering. */
+const MAX_FRAME_SIZE = 10 * 1024 * 1024;
+
+export interface ParseResult {
   messages: Record<string, unknown>[];
   remainder: string;
-} {
+  /** Non-null if a malformed frame was encountered (bad header, invalid JSON, oversized). */
+  error?: string;
+}
+
+/**
+ * Parse zero or more complete MCP frames from a buffer.
+ * Returns parsed messages, any remaining unparsed bytes, and an error if
+ * a malformed frame was encountered. On error, the offending frame is
+ * consumed (not left in remainder) to prevent infinite retry loops.
+ */
+export function parseMcpFrames(data: string): ParseResult {
   const messages: Record<string, unknown>[] = [];
   let buffer = data;
 
@@ -25,19 +34,44 @@ export function parseMcpFrames(data: string): {
     // Find the header delimiter
     const delimIdx = buffer.indexOf(HEADER_DELIM);
     if (delimIdx === -1) {
-      // Incomplete header — return as remainder
+      // Incomplete header — return as remainder (need more data)
       break;
     }
 
     // Extract Content-Length value from header
     const header = buffer.slice(0, delimIdx);
     if (!header.startsWith(HEADER_PREFIX)) {
-      break;
+      // Malformed header — consume it to prevent infinite loop
+      const consumeTo = delimIdx + HEADER_DELIM.length;
+      buffer = buffer.slice(consumeTo);
+      return {
+        messages,
+        remainder: buffer,
+        error: `Malformed header: ${header}`,
+      };
     }
 
     const contentLength = parseInt(header.slice(HEADER_PREFIX.length), 10);
     if (isNaN(contentLength) || contentLength < 0) {
-      break;
+      // Invalid Content-Length — consume the header
+      const consumeTo = delimIdx + HEADER_DELIM.length;
+      buffer = buffer.slice(consumeTo);
+      return {
+        messages,
+        remainder: buffer,
+        error: `Invalid Content-Length: ${header}`,
+      };
+    }
+
+    if (contentLength > MAX_FRAME_SIZE) {
+      // Oversized frame — consume header, reject
+      const consumeTo = delimIdx + HEADER_DELIM.length;
+      buffer = buffer.slice(consumeTo);
+      return {
+        messages,
+        remainder: buffer,
+        error: `Frame too large: ${contentLength} bytes (max ${MAX_FRAME_SIZE})`,
+      };
     }
 
     // Check if we have enough bytes for the body
@@ -45,12 +79,12 @@ export function parseMcpFrames(data: string): {
     const bodyBytes = Buffer.byteLength(buffer.slice(bodyStart), "utf-8");
 
     if (bodyBytes < contentLength) {
-      // Incomplete body — return everything as remainder
+      // Incomplete body — return everything as remainder (need more data)
       break;
     }
 
     // Extract exactly contentLength bytes of body
-    // We need to handle the byte-length vs char-length difference
+    // Handle byte-length vs char-length difference for unicode
     const bodyBuf = Buffer.from(buffer.slice(bodyStart), "utf-8");
     const jsonStr = bodyBuf.subarray(0, contentLength).toString("utf-8");
     const remainingBytes = bodyBuf.subarray(contentLength).toString("utf-8");
@@ -59,8 +93,13 @@ export function parseMcpFrames(data: string): {
       const parsed = JSON.parse(jsonStr);
       messages.push(parsed);
     } catch {
-      // Invalid JSON — skip this frame
-      break;
+      // Invalid JSON — consume the frame (header + body) to prevent infinite loop
+      buffer = remainingBytes;
+      return {
+        messages,
+        remainder: buffer,
+        error: `Invalid JSON in frame: ${jsonStr.slice(0, 100)}`,
+      };
     }
 
     buffer = remainingBytes;
@@ -81,6 +120,8 @@ export function serializeMcpFrame(body: Record<string, unknown>): string {
 /**
  * Detect protocol from first bytes of data.
  * Returns "mcp" for Content-Length framing, "ndjson" for JSON, "unknown" otherwise.
+ *
+ * Uses the exact HEADER_PREFIX ("Content-Length: ") to stay aligned with parseMcpFrames.
  */
 export function detectProtocol(data: string): "mcp" | "ndjson" | "unknown" {
   if (data.length === 0) return "unknown";
@@ -88,10 +129,8 @@ export function detectProtocol(data: string): "mcp" | "ndjson" | "unknown" {
   // Trim leading whitespace for NDJSON detection
   const trimmed = data.trimStart();
 
-  if (
-    data.startsWith("Content-Length:") ||
-    data.startsWith("Content-Length ")
-  ) {
+  // Must match exact prefix that parseMcpFrames expects
+  if (data.startsWith(HEADER_PREFIX)) {
     return "mcp";
   }
 
@@ -102,7 +141,7 @@ export function detectProtocol(data: string): "mcp" | "ndjson" | "unknown" {
   }
 
   // Need more data if we only have a few chars that could be start of Content-Length
-  if (data.length < 2 && "C".startsWith(data)) {
+  if (data.length < HEADER_PREFIX.length && HEADER_PREFIX.startsWith(data)) {
     return "unknown";
   }
 

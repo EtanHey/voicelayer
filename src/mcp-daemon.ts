@@ -3,12 +3,13 @@
  * and NDJSON clients on the same socket.
  *
  * Protocol detection: first bytes of each connection determine the protocol.
- * - "Content-Length:" → MCP client (JSON-RPC over Content-Length framing)
+ * - "Content-Length: " → MCP client (JSON-RPC over Content-Length framing)
  * - "{" or "[" → NDJSON client (existing VoiceBar protocol)
  *
  * This replaces N per-session bun MCP processes with one persistent daemon.
  */
 
+import { unlinkSync } from "fs";
 import {
   parseMcpFrames,
   serializeMcpFrame,
@@ -41,7 +42,6 @@ export function createMcpDaemon(options: McpDaemonOptions): {
 
   // Clean up stale socket
   try {
-    const { unlinkSync } = require("fs");
     unlinkSync(socketPath);
   } catch {}
 
@@ -80,12 +80,30 @@ export function createMcpDaemon(options: McpDaemonOptions): {
   function handleMcpData(socket: {
     data: ClientState;
     write: (data: string) => number;
+    end: () => void;
   }) {
-    const { messages, remainder } = parseMcpFrames(socket.data.buffer);
+    const { messages, remainder, error } = parseMcpFrames(socket.data.buffer);
     socket.data.buffer = remainder;
 
+    if (error) {
+      // Malformed frame — log and close the connection
+      console.error(`[mcp-daemon] Frame parse error: ${error}`);
+      try {
+        const errResponse = serializeMcpFrame({
+          jsonrpc: "2.0",
+          id: null,
+          error: { code: -32700, message: `Parse error: ${error}` },
+        });
+        socket.write(errResponse);
+        socket.end();
+      } catch {
+        // Client already gone
+      }
+      return;
+    }
+
     for (const msg of messages) {
-      // Process each MCP request async
+      // Process each MCP request async with proper error handling
       handleMcpRequest(
         msg as {
           jsonrpc: string;
@@ -94,18 +112,35 @@ export function createMcpDaemon(options: McpDaemonOptions): {
           params?: Record<string, unknown>;
         },
         toolExecutor,
-      ).then((response) => {
-        if (response) {
-          const frame = serializeMcpFrame(
-            response as unknown as Record<string, unknown>,
-          );
-          try {
-            socket.write(frame);
-          } catch {
-            // Client may have disconnected
+      )
+        .then((response) => {
+          if (response) {
+            const frame = serializeMcpFrame(
+              response as unknown as Record<string, unknown>,
+            );
+            try {
+              socket.write(frame);
+            } catch {
+              // Client may have disconnected
+            }
           }
-        }
-      });
+        })
+        .catch((err) => {
+          console.error(`[mcp-daemon] Unhandled error: ${err}`);
+          try {
+            const errResponse = serializeMcpFrame({
+              jsonrpc: "2.0",
+              id: (msg as Record<string, unknown>).id ?? null,
+              error: {
+                code: -32603,
+                message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
+              },
+            });
+            socket.write(errResponse);
+          } catch {
+            // Client already gone
+          }
+        });
     }
   }
 
@@ -128,7 +163,6 @@ export function createMcpDaemon(options: McpDaemonOptions): {
     stop() {
       server.stop(true);
       try {
-        const { unlinkSync } = require("fs");
         unlinkSync(socketPath);
       } catch {}
     },

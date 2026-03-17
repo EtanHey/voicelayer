@@ -4,7 +4,7 @@
  * MCP uses LSP-style framing: `Content-Length: N\r\n\r\n{json}`
  * This module parses incoming frames and serializes outgoing ones.
  *
- * TDD RED: these tests define behavior for src/mcp-framing.ts (doesn't exist yet).
+ * Tests for MCP Content-Length framing utilities in src/mcp-framing.ts.
  */
 import { describe, it, expect } from "bun:test";
 import {
@@ -132,6 +132,46 @@ describe("mcp-framing", () => {
       expect(messages[0].id).toBe(1);
       expect(remainder.length).toBeGreaterThan(0);
     });
+
+    it("returns error for malformed header (no colon-space)", () => {
+      const data = "Content-Length 42\r\n\r\n{}";
+      const { messages, error } = parseMcpFrames(data);
+      expect(messages).toHaveLength(0);
+      expect(error).toBeDefined();
+      expect(error).toContain("Malformed header");
+    });
+
+    it("returns error for invalid Content-Length value", () => {
+      const data = "Content-Length: abc\r\n\r\n{}";
+      const { messages, error } = parseMcpFrames(data);
+      expect(messages).toHaveLength(0);
+      expect(error).toBeDefined();
+      expect(error).toContain("Invalid Content-Length");
+    });
+
+    it("returns error for invalid JSON body", () => {
+      const badJson = "{not valid json}}}";
+      const data = `Content-Length: ${badJson.length}\r\n\r\n${badJson}`;
+      const { messages, error } = parseMcpFrames(data);
+      expect(messages).toHaveLength(0);
+      expect(error).toBeDefined();
+      expect(error).toContain("Invalid JSON");
+    });
+
+    it("consumes malformed frame so remainder does not retry it", () => {
+      const data = "Content-Length abc\r\n\r\ngarbage";
+      const result = parseMcpFrames(data);
+      // Malformed header is consumed — remainder should not contain it
+      expect(result.remainder).not.toContain("Content-Length abc");
+      expect(result.error).toBeDefined();
+    });
+
+    it("returns no error for valid frames", () => {
+      const json = '{"id":1}';
+      const frame = `Content-Length: ${json.length}\r\n\r\n${json}`;
+      const { error } = parseMcpFrames(frame);
+      expect(error).toBeUndefined();
+    });
   });
 
   describe("detectProtocol", () => {
@@ -160,6 +200,16 @@ describe("mcp-framing", () => {
 
     it("handles whitespace before JSON", () => {
       expect(detectProtocol(' {"cmd":"stop"}\n')).toBe("ndjson");
+    });
+
+    it("rejects Content-Length without colon-space (aligned with parser)", () => {
+      // "Content-Length 42" is NOT valid MCP framing — parser requires ": "
+      expect(detectProtocol("Content-Length 42\r\n\r\n")).not.toBe("mcp");
+    });
+
+    it("returns unknown for partial Content-Length prefix", () => {
+      expect(detectProtocol("Content-")).toBe("unknown");
+      expect(detectProtocol("Content-Lengt")).toBe("unknown");
     });
   });
 });

@@ -4,7 +4,7 @@
  * The handler processes MCP requests (initialize, tools/list, tools/call)
  * and returns MCP JSON-RPC responses. Pure functions — no I/O.
  *
- * TDD RED: these tests define behavior for src/mcp-handler.ts (doesn't exist yet).
+ * Tests for MCP JSON-RPC handler logic in src/mcp-handler.ts.
  */
 import { describe, it, expect } from "bun:test";
 import { handleMcpRequest } from "../mcp-handler";

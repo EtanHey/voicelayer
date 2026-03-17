@@ -4,7 +4,7 @@
  *
  * Tests connect to a real Unix socket, send MCP frames, and verify responses.
  *
- * TDD RED: these tests define behavior for src/mcp-daemon.ts (doesn't exist yet).
+ * Integration tests for the MCP daemon Unix socket server.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { unlinkSync } from "fs";
