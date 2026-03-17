@@ -1,6 +1,6 @@
 # VoiceLayer
 
-> Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.
+> Voice I/O MCP daemon for AI coding assistants — dual-protocol (NDJSON + MCP Content-Length), local TTS, STT, session booking.
 
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -8,7 +8,7 @@
 [![Tests](https://img.shields.io/badge/tests-236%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
-VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
+VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Runs as a **singleton MCP daemon** with dual-protocol support (NDJSON streaming + MCP Content-Length framing). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
 
 **Local-first, free, open-source.** All processing happens on your machine — no cloud APIs required. TTS via edge-tts (free), STT via whisper.cpp (local). Optional cloud fallback via Wispr Flow for machines without whisper.cpp.
 
