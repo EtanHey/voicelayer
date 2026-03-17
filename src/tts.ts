@@ -290,26 +290,46 @@ async function playClonedAudio(
   if (options?.waitForPlayback) await proc.exited;
 }
 
-/** Play an audio file non-blocking. Returns the spawned process. */
-export function playAudioNonBlocking(
-  audioFile: string,
-): ReturnType<typeof Bun.spawn> {
+/**
+ * Playback queue — serializes audio playback to prevent overlapping afplay
+ * processes when multiple voice_speak calls arrive concurrently (e.g., from
+ * multiple socat MCP clients).
+ */
+let playbackQueue: Promise<void> = Promise.resolve();
+
+/** Play an audio file, queued after any currently playing audio. */
+export function playAudioNonBlocking(audioFile: string): {
+  exited: Promise<void>;
+} {
   const player = getAudioPlayer();
-  const proc = Bun.spawn([player, audioFile], {
-    stdout: "ignore",
-    stderr: "ignore",
-  });
-  currentPlayback = { proc, pid: proc.pid };
 
-  // Only the LATEST playback broadcasts idle when it finishes (avoids races)
-  proc.exited.then(() => {
-    if (currentPlayback?.pid === proc.pid) {
-      currentPlayback = null;
-      broadcast({ type: "state", state: "idle" });
-    }
+  let resolveExited: () => void;
+  const exited = new Promise<void>((r) => {
+    resolveExited = r;
   });
 
-  return proc;
+  // Chain this playback after the previous one finishes
+  playbackQueue = playbackQueue
+    .then(async () => {
+      const proc = Bun.spawn([player, audioFile], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      currentPlayback = { proc, pid: proc.pid };
+
+      await proc.exited;
+
+      if (currentPlayback?.pid === proc.pid) {
+        currentPlayback = null;
+        broadcast({ type: "state", state: "idle" });
+      }
+      resolveExited!();
+    })
+    .catch(() => {
+      resolveExited!();
+    });
+
+  return { exited };
 }
 
 /** Wait for current playback to finish (if any). Resolves immediately if nothing is playing. */
@@ -372,8 +392,9 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
 
-  // Truncate for IPC -- Voice Bar only needs a preview for the teleprompter
-  const speakingText = text.slice(0, 200);
+  // Truncate for IPC — keep generous limit for teleprompter scrolling.
+  // Voice Bar's ScrollView + FlowLayout handles long text fine.
+  const speakingText = text.slice(0, 2000);
 
   // Context-aware shortcut: short announcements use edge-tts for speed
   if (
@@ -567,7 +588,7 @@ async function speakWithEdgeTTS(
   broadcast({
     type: "state",
     state: "speaking",
-    text: text.slice(0, 200),
+    text: text.slice(0, 2000),
     voice,
   });
 

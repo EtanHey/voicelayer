@@ -6,6 +6,11 @@
     },
     "voicelayer": {
       "command": "voicelayer-mcp"
+    },
+    "voicelayer-daemon": {
+      "_comment": "Singleton daemon mode — one process serves all sessions via socat. Start daemon first: bun src/mcp-server-daemon.ts",
+      "command": "socat",
+      "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]
     }
   }
 }
