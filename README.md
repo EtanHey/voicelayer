@@ -173,7 +173,7 @@ VoiceLayer can auto-start on login via a macOS LaunchAgent (merged in PR #60):
 ./launchd/install.sh    # Install and load the LaunchAgent
 ```
 
-The daemon listens on `/tmp/voicelayer-mcp.sock` and starts automatically on login, so it's always ready when Claude Code opens a session. To uninstall: `./launchd/uninstall.sh`.
+The daemon listens on `/tmp/voicelayer-mcp.sock` and starts automatically on login, so it's always ready when Claude Code opens a session. To uninstall: `./launchd/install.sh --uninstall`.
 
 ## Testing
 
