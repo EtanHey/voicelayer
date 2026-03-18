@@ -1,16 +1,16 @@
 {
-  "_comment": "Run: ~/Gits/orchestrator/scripts/mcp-setup.sh ~/Gits/voicelayer",
+  "_comment": "VoiceLayer MCP — daemon mode (recommended) or direct spawn",
   "mcpServers": {
-    "brainlayer": {
-      "command": "brainlayer-mcp"
-    },
     "voicelayer": {
-      "command": "voicelayer-mcp"
-    },
-    "voicelayer-daemon": {
-      "_comment": "Singleton daemon mode — one process serves all sessions via socat. Start daemon first: bun src/mcp-server-daemon.ts",
+      "_comment": "Daemon mode — install: ./launchd/install.sh",
       "command": "socat",
       "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]
+    },
+    "voicelayer-direct": {
+      "_comment": "Direct spawn (fallback if daemon not running)",
+      "command": "bun",
+      "args": ["run", "src/mcp-server.ts"],
+      "cwd": "~/Gits/voicelayer"
     }
   }
 }
