@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-236%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-308%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Runs as a **singleton MCP daemon** with dual-protocol support (NDJSON streaming + MCP Content-Length framing). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
@@ -165,10 +165,20 @@ Client call assistant: track unknowns, suggest follow-up questions, detect red f
 | **macOS** | edge-tts | afplay (built-in) | whisper.cpp | sox/rec |
 | **Linux** | edge-tts | mpv, ffplay, or mpg123 | whisper.cpp | sox/rec |
 
+## Auto-Start (LaunchAgent)
+
+VoiceLayer can auto-start on login via a macOS LaunchAgent (merged in PR #60):
+
+```bash
+./launchd/install.sh    # Install and load the LaunchAgent
+```
+
+The daemon listens on `/tmp/voicelayer-mcp.sock` and starts automatically on login, so it's always ready when Claude Code opens a session. To uninstall: `./launchd/uninstall.sh`.
+
 ## Testing
 
 ```bash
-bun test    # 236 tests, 468 expect() calls
+bun test    # 308 tests
 ```
 
 ## Project Structure
@@ -187,7 +197,7 @@ voicelayer/
 │   ├── report.ts              # QA report renderer (JSON → markdown)
 │   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
 │   ├── schemas/               # QA + discovery schemas
-│   └── __tests__/             # 236 tests
+│   └── __tests__/             # 308 tests
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
