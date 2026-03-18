@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voicelayer.mcp-daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__BUN_BIN__</string>
+        <string>run</string>
+        <string>__VOICELAYER_DIR__/src/mcp-server-daemon.ts</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__VOICELAYER_DIR__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/voicelayer-mcp-daemon.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/voicelayer-mcp-daemon.stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>__HOME__/.bun/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>__HOME__</string>
+    </dict>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
