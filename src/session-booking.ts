@@ -11,6 +11,9 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { LOCK_FILE, STOP_FILE, CANCEL_FILE, safeWriteFileSync } from "./paths";
 
+/** Maximum age for a lock before it's considered orphaned (5 minutes). */
+export const ORPHAN_TIMEOUT_MS = 5 * 60 * 1000;
+
 export interface SessionLock {
   pid: number;
   sessionId: string;
@@ -68,18 +71,35 @@ function readLock(): SessionLock | null {
 }
 
 /**
- * Check and clean stale locks (dead PID). Returns true if a stale lock was cleaned.
+ * Check and clean stale locks. A lock is stale if:
+ *   1. The owning PID is dead, OR
+ *   2. The lock is older than ORPHAN_TIMEOUT_MS (handles PID reuse / hung processes)
+ *
+ * Our own locks (same PID) are never cleaned by timeout.
  */
 export function cleanStaleLock(): boolean {
   const lock = readLock();
   if (!lock) return false;
 
+  // Dead PID — always clean immediately
   if (!isProcessAlive(lock.pid)) {
     try {
       unlinkSync(LOCK_FILE);
     } catch {}
     return true;
   }
+
+  // Alive PID but not ours — check age
+  if (lock.pid !== process.pid) {
+    const lockAge = Date.now() - new Date(lock.startedAt).getTime();
+    if (lockAge > ORPHAN_TIMEOUT_MS) {
+      try {
+        unlinkSync(LOCK_FILE);
+      } catch {}
+      return true;
+    }
+  }
+
   return false;
 }
 

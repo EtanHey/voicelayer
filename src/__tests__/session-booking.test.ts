@@ -20,6 +20,7 @@ import {
   cleanStaleLock,
   hasStopSignal,
   clearStopSignal,
+  ORPHAN_TIMEOUT_MS,
 } from "../session-booking";
 
 describe("session booking", () => {
@@ -123,6 +124,43 @@ describe("session booking", () => {
     const result = bookVoiceSession();
     expect(result.success).toBe(true);
     expect(result.lock?.sessionId).toBe(`mcp-${process.pid}`);
+  });
+
+  it("cleans lock from alive PID if older than orphan timeout", () => {
+    // Simulate a lock from PID 1 (always alive) but old timestamp
+    const oldTime = new Date(
+      Date.now() - ORPHAN_TIMEOUT_MS - 1000,
+    ).toISOString();
+    writeFileSync(
+      LOCK_FILE,
+      JSON.stringify({
+        pid: 1,
+        sessionId: "orphaned",
+        startedAt: oldTime,
+      }),
+    );
+    const cleaned = cleanStaleLock();
+    expect(cleaned).toBe(true);
+    expect(existsSync(LOCK_FILE)).toBe(false);
+  });
+
+  it("does NOT clean lock from alive PID if within orphan timeout", () => {
+    // Recent lock from PID 1 (alive) should NOT be cleaned
+    writeFileSync(
+      LOCK_FILE,
+      JSON.stringify({
+        pid: 1,
+        sessionId: "active",
+        startedAt: new Date().toISOString(),
+      }),
+    );
+    const cleaned = cleanStaleLock();
+    expect(cleaned).toBe(false);
+    expect(existsSync(LOCK_FILE)).toBe(true);
+  });
+
+  it("ORPHAN_TIMEOUT_MS is 5 minutes", () => {
+    expect(ORPHAN_TIMEOUT_MS).toBe(5 * 60 * 1000);
   });
 });
 
