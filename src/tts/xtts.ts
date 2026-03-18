@@ -14,6 +14,7 @@
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { truncateAtWordBoundary } from "./truncate";
 
 const VOICES_DIR = join(process.env.HOME || "~", ".voicelayer", "voices");
 
@@ -115,8 +116,8 @@ export async function synthesizeXTTS(
     `voicelayer-xtts-${process.pid}-${Date.now()}.wav`,
   );
 
-  // Truncate text to avoid issues (XTTS has a 250 char limit for best quality)
-  const truncatedText = text.length > 240 ? text.slice(0, 240) : text;
+  // Truncate at word boundary to avoid garbled speech
+  const truncatedText = truncateAtWordBoundary(text, 240);
 
   // Build inline Python script for XTTS inference
   const script = `

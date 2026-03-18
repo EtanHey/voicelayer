@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
+import { truncateAtWordBoundary } from "./truncate";
 
 const VENV_PYTHON = join(
   process.env.HOME || "~",
@@ -64,8 +65,8 @@ export async function synthesizeF5TTS(
     `voicelayer-f5tts-${process.pid}-${Date.now()}.wav`,
   );
 
-  // Truncate text to avoid OOM (F5-TTS struggles with very long text)
-  const truncatedText = text.length > 300 ? text.slice(0, 300) : text;
+  // Truncate at word boundary to avoid OOM and garbled speech
+  const truncatedText = truncateAtWordBoundary(text, 300);
 
   // Build inline Python script for F5-TTS generation
   const script = `
