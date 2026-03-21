@@ -164,6 +164,212 @@ function adjustRateForLength(baseRate: string, textLength: number): string {
   return `${final >= 0 ? "+" : ""}${final}%`;
 }
 
+function splitIntoSentences(text: string): string[] {
+  try {
+    const segmenter = new Intl.Segmenter(undefined, {
+      granularity: "sentence",
+    });
+    const segments = Array.from(
+      segmenter.segment(text),
+      ({ segment }) => segment,
+    );
+    if (segments.length > 0) return segments;
+  } catch {
+    // Fall through to regex segmentation on runtimes without Intl.Segmenter.
+  }
+
+  return text.match(/[^.!?…。！？]+[.!?…。！？]+(?:\s+|$)|[^.!?…。！？]+$/gu) ?? [
+    text,
+  ];
+}
+
+function splitLongSegment(segment: string, maxLen: number): string[] {
+  const trimmed = segment.trim();
+  if (!trimmed) return [];
+  if (trimmed.length <= maxLen) return [trimmed];
+
+  const parts: string[] = [];
+  let current = "";
+
+  for (const token of trimmed.match(/\S+/gu) ?? [trimmed]) {
+    if (token.length > maxLen) {
+      if (current) {
+        parts.push(current);
+        current = "";
+      }
+      for (let i = 0; i < token.length; i += maxLen) {
+        parts.push(token.slice(i, i + maxLen));
+      }
+      continue;
+    }
+
+    const candidate = current ? `${current} ${token}` : token;
+    if (candidate.length <= maxLen) {
+      current = candidate;
+      continue;
+    }
+
+    parts.push(current);
+    current = token;
+  }
+
+  if (current) parts.push(current);
+  return parts;
+}
+
+/**
+ * Split text into chunks that edge-tts can handle.
+ * edge-tts fails with exit code 2 on very long text (roughly >500 chars).
+ * Prefer sentence boundaries, then fall back to word boundaries, then hard cuts.
+ */
+export function chunkTextForTTS(text: string, maxLen = 400): string[] {
+  if (text.length <= maxLen) return [text];
+
+  const chunks: string[] = [];
+  let current = "";
+
+  for (const sentence of splitIntoSentences(text)) {
+    for (const piece of splitLongSegment(sentence, maxLen)) {
+      const candidate = current ? `${current} ${piece}` : piece;
+      if (candidate.length <= maxLen) {
+        current = candidate;
+        continue;
+      }
+
+      if (current) chunks.push(current);
+      current = piece;
+    }
+  }
+
+  if (current) chunks.push(current);
+  return chunks.length > 0 ? chunks : [text];
+}
+
+function parseWordBoundaries(metadataFile: string): WordBoundary[] {
+  try {
+    const metaRaw = readFileSync(metadataFile, "utf-8");
+    return metaRaw
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const parsed = JSON.parse(line);
+        return {
+          offset_ms: Math.round(parsed.offset / 10000),
+          duration_ms: Math.round(parsed.duration / 10000),
+          text: parsed.text as string,
+        };
+      });
+  } catch {
+    return [];
+  }
+}
+
+function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
+  return wordBoundaries.reduce(
+    (max, word) => Math.max(max, word.offset_ms + word.duration_ms),
+    0,
+  );
+}
+
+function probeAudioDurationMs(audioFile: string): number | null {
+  try {
+    const probe = Bun.spawnSync([
+      "ffprobe",
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      audioFile,
+    ]);
+    if (probe.exitCode !== 0) return null;
+
+    const durationSeconds = Number(
+      Buffer.from(probe.stdout).toString("utf8").trim(),
+    );
+    if (!Number.isFinite(durationSeconds)) return null;
+    return Math.round(durationSeconds * 1000);
+  } catch {
+    return null;
+  }
+}
+
+function concatenateMp3Files(inputFiles: string[], outputFile: string): void {
+  const buffers = inputFiles.map((file) => readFileSync(file));
+  writeFileSync(outputFile, Buffer.concat(buffers));
+}
+
+interface SynthesizedChunk {
+  audioFile: string;
+  wordBoundaries: WordBoundary[];
+  durationMs: number;
+}
+
+async function synthesizeEdgeChunk(
+  text: string,
+  voice: string,
+  rate: string,
+  audioFile: string,
+  scriptPath: string,
+): Promise<SynthesizedChunk> {
+  const metadataFile = audioFile.replace(".mp3", ".meta.ndjson");
+  const synth = Bun.spawn([
+    "python3",
+    scriptPath,
+    "--text",
+    text,
+    "--voice",
+    voice,
+    "--rate",
+    rate,
+    "--write-media",
+    audioFile,
+    "--write-metadata",
+    metadataFile,
+  ]);
+  const synthExit = await synth.exited;
+  if (synthExit !== 0) {
+    throw new Error(
+      `edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`,
+    );
+  }
+
+  const wordBoundaries = parseWordBoundaries(metadataFile);
+  const durationMs = Math.max(
+    probeAudioDurationMs(audioFile) ?? 0,
+    inferBoundaryEndMs(wordBoundaries),
+  );
+
+  try {
+    unlinkSync(metadataFile);
+  } catch {}
+
+  return {
+    audioFile,
+    wordBoundaries,
+    durationMs,
+  };
+}
+
+function mergeWordBoundaryChunks(chunks: SynthesizedChunk[]): WordBoundary[] {
+  const merged: WordBoundary[] = [];
+  let chunkOffsetMs = 0;
+
+  for (const chunk of chunks) {
+    for (const word of chunk.wordBoundaries) {
+      merged.push({
+        ...word,
+        offset_ms: word.offset_ms + chunkOffsetMs,
+      });
+    }
+    chunkOffsetMs += Math.max(chunk.durationMs, inferBoundaryEndMs(chunk.wordBoundaries));
+  }
+
+  return merged;
+}
+
 // --- Ring Buffer ---
 
 export interface TTSHistoryEntry {
@@ -518,61 +724,66 @@ async function speakWithEdgeTTS(
   rate = adjustRateForLength(rate, text.length);
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
-
-  const metadataFile = ttsFile.replace(".mp3", ".meta.ndjson");
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
     .pathname;
+  const tempChunkFiles: string[] = [];
+  let wordBoundaries: WordBoundary[] = [];
 
-  const synth = Bun.spawn([
-    "python3",
-    scriptPath,
-    "--text",
-    text,
-    "--voice",
-    voice,
-    "--rate",
-    rate,
-    "--write-media",
-    ttsFile,
-    "--write-metadata",
-    metadataFile,
-  ]);
-  const synthExit = await synth.exited;
-  if (synthExit !== 0) {
+  try {
+    const textChunks = chunkTextForTTS(text);
+
+    if (textChunks.length === 1) {
+      const synthesized = await synthesizeEdgeChunk(
+        textChunks[0],
+        voice,
+        rate,
+        ttsFile,
+        scriptPath,
+      );
+      wordBoundaries = synthesized.wordBoundaries;
+    } else {
+      const synthesizedChunks: SynthesizedChunk[] = [];
+
+      for (const [index, chunk] of textChunks.entries()) {
+        const chunkFile = ttsFile.replace(".mp3", `.chunk${index}.mp3`);
+        tempChunkFiles.push(chunkFile);
+        synthesizedChunks.push(
+          await synthesizeEdgeChunk(chunk, voice, rate, chunkFile, scriptPath),
+        );
+      }
+
+      concatenateMp3Files(
+        synthesizedChunks.map((chunk) => chunk.audioFile),
+        ttsFile,
+      );
+      wordBoundaries = mergeWordBoundaryChunks(synthesizedChunks);
+    }
+  } catch (error) {
     broadcast({
       type: "error",
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
     });
     broadcast({ type: "state", state: "idle" });
-    throw new Error(
-      `edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`,
-    );
+    for (const file of tempChunkFiles) {
+      try {
+        unlinkSync(file);
+      } catch {}
+      try {
+        unlinkSync(file.replace(".mp3", ".meta.ndjson"));
+      } catch {}
+    }
+    try {
+      unlinkSync(ttsFile);
+    } catch {}
+    throw error;
   }
 
-  let wordBoundaries: WordBoundary[] = [];
-  try {
-    const metaRaw = readFileSync(metadataFile, "utf-8");
-    wordBoundaries = metaRaw
-      .trim()
-      .split("\n")
-      .filter((l) => l.length > 0)
-      .map((line) => {
-        const parsed = JSON.parse(line);
-        // edge-tts offsets are in 100-nanosecond units — convert to ms
-        return {
-          offset_ms: Math.round(parsed.offset / 10000),
-          duration_ms: Math.round(parsed.duration / 10000),
-          text: parsed.text as string,
-        };
-      });
-  } catch {
-    // Non-fatal — fall back to client-side estimation if metadata missing
+  for (const file of tempChunkFiles) {
+    try {
+      unlinkSync(file);
+    } catch {}
   }
-
-  try {
-    unlinkSync(metadataFile);
-  } catch {}
 
   addToHistory(text, ttsFile, voice);
 
