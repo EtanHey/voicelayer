@@ -273,23 +273,27 @@ function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
 }
 
 function probeAudioDurationMs(audioFile: string): number | null {
-  const probe = Bun.spawnSync([
-    "ffprobe",
-    "-v",
-    "error",
-    "-show_entries",
-    "format=duration",
-    "-of",
-    "default=noprint_wrappers=1:nokey=1",
-    audioFile,
-  ]);
-  if (probe.exitCode !== 0) return null;
+  try {
+    const probe = Bun.spawnSync([
+      "ffprobe",
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      audioFile,
+    ]);
+    if (probe.exitCode !== 0) return null;
 
-  const durationSeconds = Number(
-    Buffer.from(probe.stdout).toString("utf8").trim(),
-  );
-  if (!Number.isFinite(durationSeconds)) return null;
-  return Math.round(durationSeconds * 1000);
+    const durationSeconds = Number(
+      Buffer.from(probe.stdout).toString("utf8").trim(),
+    );
+    if (!Number.isFinite(durationSeconds)) return null;
+    return Math.round(durationSeconds * 1000);
+  } catch {
+    return null;
+  }
 }
 
 function concatenateMp3Files(inputFiles: string[], outputFile: string): void {

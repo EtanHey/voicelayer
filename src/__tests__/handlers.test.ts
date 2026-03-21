@@ -5,19 +5,38 @@
  * directly, without going through the MCP server transport.
  */
 
-import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
+import {
+  describe,
+  it,
+  expect,
+  spyOn,
+  beforeEach,
+  afterEach,
+  mock,
+} from "bun:test";
 import { existsSync, unlinkSync, readFileSync } from "fs";
 import * as socketClient from "../socket-client";
-import {
-  TTS_DISABLED_FILE,
-  MIC_DISABLED_FILE,
-  VOICE_DISABLED_FILE,
-} from "../paths";
+import * as actualPaths from "../paths";
 import { handleToggle, handleReplay, handleThink } from "../handlers";
+
+const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-mic-disabled`;
+const TEST_VOICE_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-voice-disabled`;
+
+mock.module("../paths", () => ({
+  ...actualPaths,
+  TTS_DISABLED_FILE: TEST_TTS_DISABLED_FILE,
+  MIC_DISABLED_FILE: TEST_MIC_DISABLED_FILE,
+  VOICE_DISABLED_FILE: TEST_VOICE_DISABLED_FILE,
+}));
 
 // Helper to clean flag files
 function cleanFlags() {
-  for (const f of [TTS_DISABLED_FILE, MIC_DISABLED_FILE, VOICE_DISABLED_FILE]) {
+  for (const f of [
+    TEST_TTS_DISABLED_FILE,
+    TEST_MIC_DISABLED_FILE,
+    TEST_VOICE_DISABLED_FILE,
+  ]) {
     try {
       if (existsSync(f)) unlinkSync(f);
     } catch {}
@@ -52,31 +71,31 @@ describe("handleToggle", () => {
   it("disables TTS when scope is tts", async () => {
     const result = await handleToggle({ enabled: false, scope: "tts" });
     expect(result.isError).toBeUndefined();
-    expect(existsSync(TTS_DISABLED_FILE)).toBe(true);
-    expect(existsSync(MIC_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(false);
   });
 
   it("disables mic when scope is mic", async () => {
     const result = await handleToggle({ enabled: false, scope: "mic" });
     expect(result.isError).toBeUndefined();
-    expect(existsSync(MIC_DISABLED_FILE)).toBe(true);
-    expect(existsSync(TTS_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(false);
   });
 
   it("disables all (tts + mic + combined) when scope is all", async () => {
     const result = await handleToggle({ enabled: false, scope: "all" });
     expect(result.isError).toBeUndefined();
-    expect(existsSync(TTS_DISABLED_FILE)).toBe(true);
-    expect(existsSync(MIC_DISABLED_FILE)).toBe(true);
-    expect(existsSync(VOICE_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(true);
   });
 
   it("defaults scope to all when not provided", async () => {
     const result = await handleToggle({ enabled: false });
     expect(result.isError).toBeUndefined();
-    expect(existsSync(TTS_DISABLED_FILE)).toBe(true);
-    expect(existsSync(MIC_DISABLED_FILE)).toBe(true);
-    expect(existsSync(VOICE_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(true);
   });
 
   it("enables all removes all flag files", async () => {
@@ -85,9 +104,9 @@ describe("handleToggle", () => {
     // Then enable
     const result = await handleToggle({ enabled: true, scope: "all" });
     expect(result.isError).toBeUndefined();
-    expect(existsSync(TTS_DISABLED_FILE)).toBe(false);
-    expect(existsSync(MIC_DISABLED_FILE)).toBe(false);
-    expect(existsSync(VOICE_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(false);
   });
 
   it("returns descriptive action text", async () => {
