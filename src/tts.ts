@@ -322,8 +322,7 @@ async function synthesizeEdgeChunk(
     text,
     "--voice",
     voice,
-    "--rate",
-    rate,
+    `--rate=${rate}`,
     "--write-media",
     audioFile,
     "--write-metadata",
@@ -353,7 +352,9 @@ async function synthesizeEdgeChunk(
   };
 }
 
-function mergeWordBoundaryChunks(chunks: SynthesizedChunk[]): WordBoundary[] {
+export function mergeWordBoundaryChunks(
+  chunks: SynthesizedChunk[],
+): WordBoundary[] {
   const merged: WordBoundary[] = [];
   let chunkOffsetMs = 0;
 
