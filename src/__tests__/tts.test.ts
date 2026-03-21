@@ -1,11 +1,19 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import { platform } from "os";
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
+import * as actualPaths from "../paths";
 
 // Mock Bun.spawn and Bun.spawnSync to avoid actually playing audio
 const originalSpawn = Bun.spawn;
 const originalSpawnSync = Bun.spawnSync;
 let spawnCalls: { cmd: string[] }[] = [];
+
+const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-tts-${process.pid}-disabled`;
+
+mock.module("../paths", () => ({
+  ...actualPaths,
+  TTS_DISABLED_FILE: TEST_TTS_DISABLED_FILE,
+}));
 
 describe("tts module", () => {
   beforeEach(() => {
@@ -33,7 +41,7 @@ describe("tts module", () => {
     } catch {}
     // Clean up TTS disabled flag
     try {
-      unlinkSync("/tmp/.claude_tts_disabled");
+      unlinkSync(TEST_TTS_DISABLED_FILE);
     } catch {}
   });
 
@@ -44,7 +52,7 @@ describe("tts module", () => {
       unlinkSync("/tmp/voicelayer-history.json");
     } catch {}
     try {
-      unlinkSync("/tmp/.claude_tts_disabled");
+      unlinkSync(TEST_TTS_DISABLED_FILE);
     } catch {}
   });
 
@@ -86,8 +94,32 @@ describe("tts module", () => {
     expect(osascriptCall).toBeUndefined();
   });
 
+  it("speak() tolerates missing ffprobe", async () => {
+    // @ts-ignore — simulate ffprobe missing from PATH
+    Bun.spawnSync = (cmd: string[]) => {
+      if (Array.isArray(cmd) && cmd[0] === "ffprobe") {
+        throw new Error('Executable not found in $PATH: "ffprobe"');
+      }
+      if (Array.isArray(cmd) && cmd[0] === "which") {
+        return {
+          exitCode: 1,
+          stdout: new Uint8Array(0),
+          stderr: new Uint8Array(0),
+        };
+      }
+      return originalSpawnSync(cmd);
+    };
+
+    const { speak } = await import("../tts");
+
+    await speak("ffprobe is optional");
+
+    expect(spawnCalls.length).toBe(2);
+    expect(spawnCalls[0].cmd[0]).toBe("python3");
+  });
+
   it("speak() skips when TTS is disabled via flag file", async () => {
-    writeFileSync("/tmp/.claude_tts_disabled", "test");
+    writeFileSync(TEST_TTS_DISABLED_FILE, "test");
     const { speak } = await import("../tts");
 
     await speak("Should not speak");

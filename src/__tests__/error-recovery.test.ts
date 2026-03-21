@@ -8,11 +8,31 @@
  * Bun.spawnSync to simulate sox-not-found without depending on system PATH.
  */
 
-import { describe, it, expect, spyOn, beforeEach, afterEach } from "bun:test";
+import {
+  describe,
+  it,
+  expect,
+  spyOn,
+  beforeEach,
+  afterEach,
+  mock,
+} from "bun:test";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import * as socketClient from "../socket-client";
+import * as actualPaths from "../paths";
 import { LOCK_FILE } from "../paths";
 import { handleSocketCommand } from "../socket-handlers";
+
+const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-mic-disabled`;
+const TEST_VOICE_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-voice-disabled`;
+
+mock.module("../paths", () => ({
+  ...actualPaths,
+  TTS_DISABLED_FILE: TEST_TTS_DISABLED_FILE,
+  MIC_DISABLED_FILE: TEST_MIC_DISABLED_FILE,
+  VOICE_DISABLED_FILE: TEST_VOICE_DISABLED_FILE,
+}));
 
 // Override Bun.spawnSync to simulate sox not found
 const realSpawnSync = Bun.spawnSync;
@@ -99,9 +119,9 @@ describe("M1: Socket toggle all writes individual flag files", () => {
     );
     // Clean up any flag files
     for (const f of [
-      require("../paths").TTS_DISABLED_FILE,
-      require("../paths").MIC_DISABLED_FILE,
-      require("../paths").VOICE_DISABLED_FILE,
+      TEST_TTS_DISABLED_FILE,
+      TEST_MIC_DISABLED_FILE,
+      TEST_VOICE_DISABLED_FILE,
     ]) {
       try {
         if (existsSync(f)) unlinkSync(f);
@@ -113,9 +133,9 @@ describe("M1: Socket toggle all writes individual flag files", () => {
     broadcastSpy.mockRestore();
     // Clean up
     for (const f of [
-      require("../paths").TTS_DISABLED_FILE,
-      require("../paths").MIC_DISABLED_FILE,
-      require("../paths").VOICE_DISABLED_FILE,
+      TEST_TTS_DISABLED_FILE,
+      TEST_MIC_DISABLED_FILE,
+      TEST_VOICE_DISABLED_FILE,
     ]) {
       try {
         if (existsSync(f)) unlinkSync(f);
@@ -126,17 +146,11 @@ describe("M1: Socket toggle all writes individual flag files", () => {
   it("disabling all also writes TTS and mic individual flag files", () => {
     handleSocketCommand({ cmd: "toggle", scope: "all", enabled: false });
 
-    const {
-      TTS_DISABLED_FILE: tts,
-      MIC_DISABLED_FILE: mic,
-      VOICE_DISABLED_FILE: voice,
-    } = require("../paths");
-
     // Combined flag
-    expect(existsSync(voice)).toBe(true);
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(true);
     // M1 BUG: Individual flags should also be written
-    expect(existsSync(tts)).toBe(true);
-    expect(existsSync(mic)).toBe(true);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(true);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(true);
   });
 
   it("enabling all removes all three flag files", () => {
@@ -145,15 +159,9 @@ describe("M1: Socket toggle all writes individual flag files", () => {
     // Then enable all
     handleSocketCommand({ cmd: "toggle", scope: "all", enabled: true });
 
-    const {
-      TTS_DISABLED_FILE: tts,
-      MIC_DISABLED_FILE: mic,
-      VOICE_DISABLED_FILE: voice,
-    } = require("../paths");
-
-    expect(existsSync(voice)).toBe(false);
-    expect(existsSync(tts)).toBe(false);
-    expect(existsSync(mic)).toBe(false);
+    expect(existsSync(TEST_VOICE_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_TTS_DISABLED_FILE)).toBe(false);
+    expect(existsSync(TEST_MIC_DISABLED_FILE)).toBe(false);
   });
 });
 
