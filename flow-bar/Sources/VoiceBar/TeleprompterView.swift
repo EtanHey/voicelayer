@@ -69,6 +69,60 @@ struct FlowLayout: Layout {
 
 // MARK: - Teleprompter View
 
+struct TeleprompterBoundary: Equatable {
+    let offsetMs: Int
+    let durationMs: Int
+    let text: String
+}
+
+struct TeleprompterWord: Equatable, Identifiable {
+    let id: Int
+    let text: String
+    let offsetMs: Int?
+    let durationMs: Int?
+}
+
+enum TeleprompterContentModel {
+    static func words(
+        text: String,
+        wordBoundaries: [TeleprompterBoundary]
+    ) -> [TeleprompterWord] {
+        let boundaryWords = wordBoundaries
+            .map { boundary in
+                TeleprompterWord(
+                    id: 0,
+                    text: boundary.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    offsetMs: boundary.offsetMs,
+                    durationMs: boundary.durationMs
+                )
+            }
+            .filter { !$0.text.isEmpty }
+
+        if !boundaryWords.isEmpty {
+            return boundaryWords.enumerated().map { index, word in
+                TeleprompterWord(
+                    id: index,
+                    text: word.text,
+                    offsetMs: word.offsetMs,
+                    durationMs: word.durationMs
+                )
+            }
+        }
+
+        return text
+            .split(separator: " ")
+            .enumerated()
+            .map { index, word in
+                TeleprompterWord(
+                    id: index,
+                    text: String(word),
+                    offsetMs: nil,
+                    durationMs: nil
+                )
+            }
+    }
+}
+
 struct TeleprompterView: View {
     let text: String
     /// Server-provided word boundary timestamps (ms offsets from audio start).
@@ -79,38 +133,80 @@ struct TeleprompterView: View {
     private static let perCharDelay: Double = 0.015
     private static let minDelay: Double = 0.22
     private static let maxDelay: Double = 0.38
+    private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
     @State private var currentIndex: Int = 0
     @State private var animationTask: Task<Void, Never>?
 
-    private var words: [String] {
-        text.split(separator: " ").map(String.init)
+    private var teleprompterWords: [TeleprompterWord] {
+        TeleprompterContentModel.words(
+            text: text,
+            wordBoundaries: wordBoundaries.map {
+                TeleprompterBoundary(
+                    offsetMs: $0.offsetMs,
+                    durationMs: $0.durationMs,
+                    text: $0.text
+                )
+            }
+        )
+    }
+
+    private var timedWords: [TeleprompterWord] {
+        teleprompterWords.filter { $0.offsetMs != nil }
     }
 
     var body: some View {
-        FlowLayout(spacing: 5, maxWidth: 280) {
-            wordViews
-        }
-        .padding(.horizontal, 4)
-        .onAppear { startAnimating() }
-        .onDisappear { stopAnimating() }
-        .onChange(of: text) { _, _ in restart() }
-        .onChange(of: wordBoundaries.count) { _, newCount in
-            if newCount > 0 { restart() }
+        ScrollViewReader { proxy in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
+                    Spacer(minLength: 0)
+
+                    FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
+                        wordViews
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    Spacer(minLength: 0)
+                }
+                .frame(
+                    maxWidth: .infinity,
+                    minHeight: Theme.teleprompterViewportHeight,
+                    alignment: .center
+                )
+                .padding(.horizontal, 4)
+                .padding(.vertical, Theme.teleprompterContentInset)
+            }
+            .clipped()
+            .onAppear {
+                startAnimating()
+                scrollToCurrentWord(with: proxy, animated: false)
+            }
+            .onDisappear { stopAnimating() }
+            .onChange(of: text) { _, _ in
+                restart()
+                scrollToCurrentWord(with: proxy, animated: false)
+            }
+            .onChange(of: wordBoundaries.count) { _, _ in
+                restart()
+                scrollToCurrentWord(with: proxy, animated: false)
+            }
+            .onChange(of: currentIndex) { _, _ in
+                scrollToCurrentWord(with: proxy)
+            }
         }
     }
 
     private var wordViews: some View {
-        ForEach(0 ..< words.count, id: \.self) { index in
-            Text(words[index])
+        ForEach(teleprompterWords) { word in
+            Text(word.text)
                 .font(.system(
                     size: 16,
-                    weight: index == currentIndex ? .bold : .medium
+                    weight: word.id == currentIndex ? .bold : .medium
                 ))
                 .foregroundStyle(
-                    .white.opacity(opacityFor(index))
+                    .white.opacity(opacityFor(word.id))
                 )
-                .id(index)
+                .id(word.id)
         }
     }
 
@@ -128,11 +224,11 @@ struct TeleprompterView: View {
     // MARK: - Animation
 
     private var hasServerTimestamps: Bool {
-        !wordBoundaries.isEmpty
+        !timedWords.isEmpty
     }
 
     private func startAnimating() {
-        guard words.count > 1 else { return }
+        guard teleprompterWords.count > 1 else { return }
 
         if hasServerTimestamps {
             startTimestampAnimation()
@@ -144,8 +240,7 @@ struct TeleprompterView: View {
     /// Server-driven animation: use exact word boundary timestamps from edge-tts.
     /// Each word is highlighted at its exact offset_ms from audio start.
     private func startTimestampAnimation() {
-        let boundaries = wordBoundaries
-        let wordCount = words.count
+        let words = timedWords
 
         animationTask = Task { @MainActor in
             // Wait for audio player to start (~300ms startup latency)
@@ -154,9 +249,10 @@ struct TeleprompterView: View {
 
             let startTime = ContinuousClock.now
 
-            for i in 0 ..< min(wordCount, boundaries.count) {
+            for word in words {
+                guard let targetOffsetMs = word.offsetMs else { continue }
                 // Calculate when this word should be highlighted
-                let targetOffset = Duration.milliseconds(boundaries[i].offsetMs)
+                let targetOffset = Duration.milliseconds(targetOffsetMs)
                 let elapsed = ContinuousClock.now - startTime
 
                 // Wait until the word's offset time
@@ -165,17 +261,7 @@ struct TeleprompterView: View {
                 }
 
                 if Task.isCancelled { break }
-                currentIndex = i
-            }
-
-            // If there are more display words than boundaries (text was split
-            // differently than TTS), advance through remaining words quickly
-            if wordCount > boundaries.count {
-                for i in boundaries.count ..< wordCount {
-                    currentIndex = i
-                    try? await Task.sleep(for: .milliseconds(200))
-                    if Task.isCancelled { break }
-                }
+                currentIndex = word.id
             }
         }
     }
@@ -185,10 +271,9 @@ struct TeleprompterView: View {
         animationTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.3))
             if Task.isCancelled { return }
-            for i in 0 ..< words.count {
+            for i in 0 ..< teleprompterWords.count {
                 currentIndex = i
-                let word = words[i]
-                let delay = Self.estimateDelay(for: word)
+                let delay = Self.estimateDelay(for: teleprompterWords[i].text)
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
             }
@@ -213,6 +298,21 @@ struct TeleprompterView: View {
     private func stopAnimating() {
         animationTask?.cancel()
         animationTask = nil
+    }
+
+    private func scrollToCurrentWord(
+        with proxy: ScrollViewProxy,
+        animated: Bool = true
+    ) {
+        guard teleprompterWords.indices.contains(currentIndex) else { return }
+
+        if animated {
+            withAnimation(Self.scrollAnimation) {
+                proxy.scrollTo(currentIndex, anchor: .center)
+            }
+        } else {
+            proxy.scrollTo(currentIndex, anchor: .center)
+        }
     }
 
     private func restart() {
