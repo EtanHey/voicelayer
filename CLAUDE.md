@@ -1,7 +1,6 @@
 # VoiceLayer
 
 @CLAUDE.details.md
-@~/Gits/orchestrator/standards/autonomous-workflow.md
 
 > Voice I/O layer for AI coding assistants. MCP server plus macOS Voice Bar.
 
