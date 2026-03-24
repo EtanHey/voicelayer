@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-308%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-314%20passing-brightgreen.svg)](#testing)
 [![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
 
 VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Runs as a **singleton MCP daemon** with dual-protocol support (NDJSON streaming + MCP Content-Length framing). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
@@ -178,7 +178,7 @@ The daemon listens on `/tmp/voicelayer-mcp.sock` and starts automatically on log
 ## Testing
 
 ```bash
-bun test    # 308 tests
+bun test    # 314 tests
 ```
 
 ## Project Structure
@@ -186,24 +186,44 @@ bun test    # 308 tests
 ```
 voicelayer/
 ├── src/
-│   ├── mcp-server.ts          # MCP server (voice_speak + voice_ask + aliases)
+│   ├── mcp-server.ts          # MCP server entry point (stdio transport)
+│   ├── mcp-tools.ts           # Tool definitions (voice_speak, voice_ask + aliases)
+│   ├── mcp-handler.ts         # MCP request handler
+│   ├── mcp-daemon.ts          # Singleton daemon (Unix socket)
+│   ├── mcp-framing.ts         # Dual-protocol framing (NDJSON + Content-Length)
+│   ├── handlers.ts            # Tool handler implementations
 │   ├── tts.ts                 # edge-tts + cross-platform audio player
+│   ├── tts/                   # TTS backends (Qwen3, XTTS, F5-TTS)
 │   ├── input.ts               # Mic recording + STT pipeline
 │   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
+│   ├── vad.ts                 # Silero VAD speech/silence detection
 │   ├── audio-utils.ts         # Audio utilities (RMS, native rate detection, resampling)
 │   ├── paths.ts               # Centralized /tmp path constants
 │   ├── session-booking.ts     # Lockfile-based session mutex
 │   ├── session.ts             # Session lifecycle (save/load/generate)
+│   ├── socket-protocol.ts     # IPC protocol types (Voice Bar communication)
+│   ├── socket-client.ts       # Unix socket client for Voice Bar
+│   ├── socket-handlers.ts     # Socket message handlers
+│   ├── voice-bar-launcher.ts  # Voice Bar app lifecycle management
+│   ├── streaming-stt.ts       # Streaming STT pipeline
+│   ├── whisper-server.ts      # whisper.cpp server mode integration
+│   ├── pronunciation.ts       # Word pronunciation utilities
 │   ├── report.ts              # QA report renderer (JSON → markdown)
 │   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
 │   ├── schemas/               # QA + discovery schemas
-│   └── __tests__/             # 308 tests
+│   ├── cli/                   # CLI tools (extract, clone, daemon)
+│   └── __tests__/             # 314 tests
 ├── scripts/
 │   ├── speak.sh               # Standalone TTS command
+│   ├── edge-tts-words.py      # Word-level TTS generation
 │   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
-├── flow-bar/                     # SwiftUI macOS Voice Bar app
-│   ├── VoiceLayer/               # Main app source
-│   └── VoiceLayer.xcodeproj/     # Xcode project
+├── flow-bar/                  # SwiftUI macOS Voice Bar app
+│   ├── Sources/VoiceBar/      # Main app source
+│   ├── Package.swift          # Swift package manifest
+│   └── build-app.sh           # Build + codesign + install script
+├── launchd/                   # macOS auto-start configuration
+│   ├── install.sh             # Install/uninstall LaunchAgent
+│   └── com.voicelayer.mcp-daemon.plist
 ├── package.json
 ├── tsconfig.json
 ├── LICENSE
