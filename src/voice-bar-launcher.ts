@@ -1,13 +1,14 @@
 /**
- * Voice Bar status checker.
+ * Voice Bar launcher — auto-starts VoiceBar.app if not running.
  *
- * AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is now a persistent
- * server. MCP doesn't manage its lifecycle. This module only checks if VoiceBar
- * is running and logs a warning if not. Users add VoiceBar to Login Items.
+ * AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is a persistent
+ * server on /tmp/voicelayer.sock. MCP connects as client. This module
+ * auto-launches VoiceBar.app on first voice_speak if it's not running,
+ * so "enable voice programmatically" actually works.
  */
 
-/** Whether we've already checked this session. */
-let checkAttempted = false;
+/** Whether we've already attempted a launch this session. */
+let launchAttempted = false;
 
 /**
  * Check if Voice Bar (VoiceBar) process is currently running.
@@ -23,26 +24,39 @@ export function isVoiceBarRunning(): boolean {
 }
 
 /**
- * Check if Voice Bar is running and warn if not.
- * Called on first voice_speak per session. No auto-launch — VoiceBar is persistent.
+ * Ensure Voice Bar is running. Auto-launches VoiceBar.app if not.
+ * Called on first voice_speak per session. Idempotent — only tries once.
  */
 export function ensureVoiceBarRunning(): void {
-  if (checkAttempted) return;
-  checkAttempted = true;
+  if (launchAttempted) return;
+  launchAttempted = true;
 
   if (isVoiceBarRunning()) {
     console.error("[voicelayer] Voice Bar is running");
     return;
   }
 
-  console.error(
-    "[voicelayer] Voice Bar not running — start it manually or add to Login Items",
-  );
+  // Auto-launch VoiceBar.app — works if installed to /Applications or ~/Applications
+  console.error("[voicelayer] Voice Bar not running — launching...");
+  try {
+    const result = Bun.spawnSync(["open", "-a", "VoiceBar"]);
+    if (result.exitCode === 0) {
+      console.error("[voicelayer] Voice Bar launched successfully");
+    } else {
+      console.error(
+        "[voicelayer] Failed to launch Voice Bar — install to /Applications or add to Login Items",
+      );
+    }
+  } catch {
+    console.error(
+      "[voicelayer] Failed to launch Voice Bar — install to /Applications or add to Login Items",
+    );
+  }
 }
 
 /**
- * Reset check state — for testing only.
+ * Reset launch state — for testing only.
  */
 export function resetLaunchState(): void {
-  checkAttempted = false;
+  launchAttempted = false;
 }

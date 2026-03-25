@@ -32,6 +32,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let verticalOffsetKey = "voicebar.verticalOffset"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Singleton guard — if another VoiceBar is already running, quit immediately.
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
+        if !others.isEmpty {
+            NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
+            // Give a moment for the log to flush
+            DispatchQueue.main.async {
+                NSApplication.shared.terminate(nil)
+            }
+            return
+        }
+
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
