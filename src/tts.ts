@@ -178,9 +178,11 @@ function splitIntoSentences(text: string): string[] {
     // Fall through to regex segmentation on runtimes without Intl.Segmenter.
   }
 
-  return text.match(/[^.!?…。！？]+[.!?…。！？]+(?:\s+|$)|[^.!?…。！？]+$/gu) ?? [
-    text,
-  ];
+  return (
+    text.match(/[^.!?…。！？]+[.!?…。！？]+(?:\s+|$)|[^.!?…。！？]+$/gu) ?? [
+      text,
+    ]
+  );
 }
 
 function splitLongSegment(segment: string, maxLen: number): string[] {
@@ -364,7 +366,10 @@ function mergeWordBoundaryChunks(chunks: SynthesizedChunk[]): WordBoundary[] {
         offset_ms: word.offset_ms + chunkOffsetMs,
       });
     }
-    chunkOffsetMs += Math.max(chunk.durationMs, inferBoundaryEndMs(chunk.wordBoundaries));
+    chunkOffsetMs += Math.max(
+      chunk.durationMs,
+      inferBoundaryEndMs(chunk.wordBoundaries),
+    );
   }
 
   return merged;
@@ -527,7 +532,7 @@ export function playAudioNonBlocking(audioFile: string): {
 
       if (currentPlayback?.pid === proc.pid) {
         currentPlayback = null;
-        broadcast({ type: "state", state: "idle" });
+        broadcast({ type: "state", state: "idle", source: "playback" });
       }
       resolveExited!();
     })
@@ -551,7 +556,7 @@ export function stopPlayback(): boolean {
     try {
       currentPlayback.proc.kill("SIGTERM");
       currentPlayback = null;
-      broadcast({ type: "state", state: "idle" });
+      broadcast({ type: "state", state: "idle", source: "playback" });
       return true;
     } catch {
       currentPlayback = null;
@@ -764,7 +769,7 @@ async function speakWithEdgeTTS(
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "playback" });
     for (const file of tempChunkFiles) {
       try {
         unlinkSync(file);

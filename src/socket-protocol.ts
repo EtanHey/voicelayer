@@ -26,6 +26,12 @@ export interface StateEvent {
   mode?: "vad" | "ptt";
   /** Present when state is "recording" with VAD — the silence mode. */
   silence_mode?: "quick" | "standard" | "thoughtful";
+  /**
+   * Source of idle events — lets Voice Bar distinguish playback-end from recording-end.
+   * AIDEV-NOTE: Without this, a queued voice_speak audio finishing during a bar-initiated
+   * recording resets barInitiatedRecording before the transcription arrives, killing paste.
+   */
+  source?: "playback" | "recording";
 }
 
 export interface SpeechEvent {
