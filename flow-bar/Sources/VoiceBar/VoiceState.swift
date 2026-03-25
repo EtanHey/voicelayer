@@ -58,8 +58,13 @@ final class VoiceState {
     /// Timer for idle collapse.
     private var collapseTimer: Task<Void, Never>?
 
+    /// Safety timeout for barInitiatedRecording — prevents stuck state.
+    private var barInitiatedTimeout: Task<Void, Never>?
+
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
+    /// ONLY cleared by: transcription handler (after paste) or cancel().
+    /// Never cleared by idle/error — those are ambiguous with multiple MCP clients.
     private var barInitiatedRecording = false
 
     /// The app that was frontmost when bar-initiated recording started.
@@ -86,6 +91,7 @@ final class VoiceState {
 
     func cancel() {
         barInitiatedRecording = false
+        barInitiatedTimeout?.cancel()
         frontmostAppOnRecordStart = nil
         // Optimistic — immediately go idle so user sees instant response.
         // MCP will also send idle after processing the cancel.
@@ -117,6 +123,17 @@ final class VoiceState {
             frontmostAppOnRecordStart = front
         }
         barInitiatedRecording = true
+
+        // Safety timeout: if no transcription arrives within 2.5 minutes, clear the flag
+        barInitiatedTimeout?.cancel()
+        barInitiatedTimeout = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(150))
+            if !Task.isCancelled, barInitiatedRecording {
+                barInitiatedRecording = false
+                frontmostAppOnRecordStart = nil
+            }
+        }
+
         sendCommand?([
             "cmd": "record",
             "silence_mode": "thoughtful",
@@ -134,6 +151,11 @@ final class VoiceState {
             guard let stateStr = event["state"] as? String else { return }
             switch stateStr {
             case "idle":
+                // AIDEV-NOTE: NEVER reset barInitiatedRecording on idle.
+                // Multiple MCP clients receive the record command via sendToAll.
+                // Clients that fail (no sox, session busy) broadcast error+idle
+                // BEFORE the successful client finishes. These stale idle events
+                // would kill the paste flag. Only transcription and cancel() reset it.
                 mode = .idle
                 statusText = ""
                 speechDetected = false
@@ -141,11 +163,6 @@ final class VoiceState {
                 silenceMode = nil
                 audioLevel = nil
                 wordBoundaries = []
-                // Reset bar-initiated flag if recording was cancelled/timed out
-                if barInitiatedRecording {
-                    barInitiatedRecording = false
-                    frontmostAppOnRecordStart = nil
-                }
                 onModeChange?(.idle)
                 startCollapseTimer()
             case "speaking":
@@ -181,6 +198,7 @@ final class VoiceState {
                 transcript = text
                 if barInitiatedRecording {
                     barInitiatedRecording = false
+                    barInitiatedTimeout?.cancel()
                     pasteTranscription(text)
                 }
             }
@@ -203,12 +221,15 @@ final class VoiceState {
             }
 
         case "error":
-            mode = .error
-            errorMessage = event["message"] as? String ?? "Unknown error"
-            expandFromCollapse() // Ensure error is visible even when collapsed
-            // Reset bar-initiated flag on error (e.g., mic disabled)
-            barInitiatedRecording = false
-            frontmostAppOnRecordStart = nil
+            // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
+            // With multiple MCP clients, failing clients broadcast errors while
+            // the successful client is still recording. Show error UI only if
+            // we're not in an active bar-initiated recording.
+            if !barInitiatedRecording {
+                mode = .error
+                errorMessage = event["message"] as? String ?? "Unknown error"
+                expandFromCollapse()
+            }
 
         default:
             break
