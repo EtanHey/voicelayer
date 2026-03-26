@@ -27,6 +27,12 @@ enum Theme {
     static let pillMinWidth: CGFloat = 100
     /// Panel needs to be large enough to never clip the pill.
     static let panelWidth: CGFloat = 500
+    /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
+    /// inside the pill instead of stretching the capsule.
+    static let teleprompterViewportWidth: CGFloat = 280
+    static let teleprompterViewportHeight: CGFloat = 68
+    static let teleprompterWrapWidth: CGFloat = 272
+    static let teleprompterContentInset: CGFloat = 4
 
     /// Seconds of idle before pill collapses.
     static let collapseDelay: TimeInterval = 5.0

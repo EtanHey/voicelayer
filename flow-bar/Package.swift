@@ -11,5 +11,10 @@ let package = Package(
             name: "VoiceBar",
             path: "Sources/VoiceBar"
         ),
+        .testTarget(
+            name: "VoiceBarTests",
+            dependencies: ["VoiceBar"],
+            path: "Tests/VoiceBarTests"
+        ),
     ]
 )
