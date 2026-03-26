@@ -145,10 +145,10 @@ def generate_synthetic_audio(
     LIMITATION: Synthetic TTS audio overestimates real-world STT accuracy
     by approximately 2x. Use only as a baseline, not as production metric.
     """
+    aiff_path = Path(output_path).with_suffix(".aiff")
     try:
-        aiff_path = output_path.replace(".wav", ".aiff")
         subprocess.run(
-            ["say", "-v", voice, "-r", str(rate), "-o", aiff_path, text],
+            ["say", "-v", voice, "-r", str(rate), "-o", str(aiff_path), text],
             capture_output=True,
             timeout=30,
             check=True,
@@ -160,7 +160,7 @@ def generate_synthetic_audio(
                 "-f", "WAVE",
                 "-d", "LEI16@16000",
                 "-c", "1",
-                aiff_path,
+                str(aiff_path),
                 output_path,
             ],
             capture_output=True,
@@ -168,12 +168,12 @@ def generate_synthetic_audio(
             check=True,
         )
 
-        if os.path.exists(aiff_path):
-            os.remove(aiff_path)
-
         return os.path.exists(output_path)
     except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
         return False
+    finally:
+        if aiff_path.exists():
+            aiff_path.unlink()
 
 
 def get_audio_duration_ms(audio_path: str) -> float:

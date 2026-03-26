@@ -152,12 +152,14 @@ class VoiceLayerBackend:
         return os.path.exists(stt_path)
 
     def transcribe(self, audio_path: str, language: str = "he") -> tuple[str, float]:
+        import json as _json
+        safe_path = _json.dumps(audio_path)  # JSON-escaped string literal for JS
         script = f"""
 import {{ WhisperCppBackend }} from "./src/stt.ts";
 const backend = new WhisperCppBackend();
 const available = await backend.isAvailable();
 if (!available) {{ console.log("UNAVAILABLE"); process.exit(0); }}
-const result = await backend.transcribe("{audio_path}");
+const result = await backend.transcribe({safe_path});
 console.log(JSON.stringify({{ text: result.text, durationMs: result.durationMs }}));
 """
         start = time.perf_counter()
