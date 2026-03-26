@@ -1,251 +1,469 @@
-# Bug Review: Voice Bar Paste Regression Fix
+# Bug Review: PID Lockfile for Orphan MCP Server Cleanup
 
 ## Executive Summary
 
-**Status**: ✅ **APPROVED WITH RECOMMENDATIONS**
+**Status**: 🟡 **APPROVED WITH CRITICAL FIXES REQUIRED**
 
-The PR correctly identifies and fixes the root cause (multi-client race condition). The core fix is sound and will work as intended. However, there are several improvements that would make the code more robust and maintainable:
+The PR correctly identifies the orphan MCP server problem and implements a reasonable solution. However, there are **critical race conditions** and **reliability issues** that must be fixed before merge.
 
 **Key Findings**:
-1. ✅ **Core fix is correct** - `barInitiatedRecording` is only cleared by transcription or cancel
-2. 🟡 **Protocol bloat** - `source` field is defined but not used (recommend removal or documentation)
-3. 🟠 **Missing safeguards** - No logging for safety timeout, zombie process handling could be better
-4. 🟢 **Good defensive programming** - Safety timeout prevents stuck states
+1. 🔴 **CRITICAL**: Race condition in lock acquisition - no wait after SIGTERM
+2. 🔴 **CRITICAL**: Silent failure in `safeWriteFileSync` breaks lock acquisition
+3. 🟠 **HIGH**: No verification that killed process actually died
+4. 🟡 **MEDIUM**: `killedStale` flag is misleading for dead processes
+5. 🟢 **GOOD**: Comprehensive test coverage for basic scenarios
 
 ---
 
 ## Critical Issues
 
-### 🔴 Issue #1: Immutable `launchAttempted` Variable
+### 🔴 Issue #1: Race Condition - No Wait After SIGTERM
 
-**File**: `src/voice-bar-launcher.ts:11`
+**File**: `src/process-lock.ts:83-92`
 
-**Problem**: The variable `launchAttempted` is declared as `let` but is mutated in `ensureVoiceBarRunning()` at line 32.
+**Problem**: The code sends SIGTERM to the stale process but immediately claims the lock without waiting for the process to actually terminate.
 
-```typescript:11:11:src/voice-bar-launcher.ts
-let launchAttempted = false;
+```typescript:83:92:src/process-lock.ts
+if (isProcessAlive(stalePid)) {
+  try {
+    process.kill(stalePid, "SIGTERM");
+    console.error(
+      `[voicelayer] Killed orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
+    );
+  } catch {
+    console.error(
+      `[voicelayer] Could not kill orphan MCP server (PID ${stalePid}) — claiming lock anyway`,
+    );
+  }
+}
+
+writePidFile();
 ```
 
-```typescript:30:32:src/voice-bar-launcher.ts
-export function ensureVoiceBarRunning(): void {
-  if (launchAttempted) return;
-  launchAttempted = true;  // ❌ ERROR: Cannot assign to 'launchAttempted' because it is a constant
-```
-
-**Impact**: 
-- Runtime error when `ensureVoiceBarRunning()` is called
-- VoiceBar auto-launch will fail
-- This breaks the "enable voice programmatically" feature mentioned in the PR
+**Impact**:
+- The old process may still be running when the new process starts
+- Both processes will try to connect to the Voice Bar socket simultaneously
+- This defeats the entire purpose of the PID lockfile
+- Race condition window: typically 10-100ms for graceful SIGTERM shutdown
 
 **Fix Required**:
 ```typescript
-// Change line 11 from:
-let launchAttempted = false;
-
-// To:
-let launchAttempted: boolean = false;
-```
-
-Wait, that's not right. The issue is that in TypeScript/JavaScript, `let` creates a mutable binding. Let me re-examine...
-
-Actually, reviewing the code again, `let` in TypeScript/JavaScript IS mutable. This is not a bug. The code is correct.
-
-Let me reconsider the actual issues...
-
----
-
-## Critical Issues (Revised)
-
-### 🟡 Issue #1: Protocol Design - `source` Field Not Utilized
-
-**Files**: 
-- `src/socket-protocol.ts:34` (defines `source` field)
-- `src/tts.ts:535,559,772` (sends `source: "playback"`)
-- `flow-bar/Sources/VoiceBar/VoiceState.swift:153-167` (doesn't check `source`)
-
-**Analysis**:
-
-The PR adds a `source?: "playback" | "recording"` field to distinguish idle event origins:
-- **Playback idles** (from `tts.ts`) include `source: "playback"`
-- **Recording idles** (from `input.ts`) have NO `source` field (undefined)
-
-However, the Swift code **never checks this field**. Instead, it uses a simpler strategy:
-- `barInitiatedRecording` is ONLY cleared by transcription (line 200) or cancel (line 93)
-- ALL idle/error events are ignored for the purposes of clearing this flag
-
-**Why This Works**:
-1. User taps Voice Bar → `barInitiatedRecording = true`
-2. Voice Bar sends `record` to ALL MCP clients via `sendToAll`
-3. Failed clients (no sox, busy) → broadcast error + idle (ignored by Swift)
-4. Successful client → records → broadcasts transcription + idle
-5. Transcription handler clears `barInitiatedRecording` (line 200)
-6. Subsequent idle is ignored (but flag already cleared)
-
-The transcription always arrives before the final idle (lines 471-473 of input.ts), so the flag is cleared at the right time.
-
-**The Issue**:
-The `source` field is defined in the protocol and sent by TypeScript, but never consumed by Swift. This creates protocol bloat and confusion. The field serves no functional purpose in the current implementation.
-
-**Recommendation**:
-Either:
-1. **Remove the `source` field** from socket-protocol.ts and tts.ts (simplify)
-2. **Document that it's for future use** (e.g., debugging, telemetry)
-3. **Use it in Swift** to be more selective about which idles to ignore
-
-Option 1 is cleanest unless there's a specific future use case.
-
----
-
-### ✅ Issue #2: Backward Compatibility of `source` Field (VERIFIED SAFE)
-
-**File**: `src/socket-protocol.ts:34`
-
-**Analysis**:
-- The field is optional (`?`), which is correct for backward compatibility
-- Old Swift clients that don't know about `source` will simply ignore it (JSON deserialization in Swift is lenient - extra fields are dropped)
-- Old TypeScript clients that don't know about `source` will also ignore it (TypeScript interfaces don't enforce runtime validation)
-- The field is never required for correctness (see Issue #1)
-
-**Verdict**: ✅ Backward compatible. The PR checklist item is satisfied.
-
----
-
-### 🟡 Issue #3: Safety Timeout May Be Too Long
-
-**File**: `flow-bar/Sources/VoiceBar/VoiceState.swift:127-135`
-
-**Problem**: The safety timeout is set to 150 seconds (2.5 minutes), which seems excessive.
-
-```swift:127:135:flow-bar/Sources/VoiceBar/VoiceState.swift
-// Safety timeout: if no transcription arrives within 2.5 minutes, clear the flag
-barInitiatedTimeout?.cancel()
-barInitiatedTimeout = Task { @MainActor in
-    try? await Task.sleep(for: .seconds(150))
-    if !Task.isCancelled, barInitiatedRecording {
-        barInitiatedRecording = false
-        frontmostAppOnRecordStart = nil
+if (isProcessAlive(stalePid)) {
+  try {
+    process.kill(stalePid, "SIGTERM");
+    console.error(
+      `[voicelayer] Sent SIGTERM to orphan MCP server (PID ${stalePid})`,
+    );
+    
+    // Wait for process to die (with timeout)
+    const maxWaitMs = 2000;
+    const startTime = Date.now();
+    while (isProcessAlive(stalePid) && Date.now() - startTime < maxWaitMs) {
+      // Sleep 50ms between checks
+      Bun.sleepSync(50);
     }
-}
-```
-
-**Analysis**:
-- The recording timeout in the `record()` function is 120 seconds (line 140)
-- The safety timeout is 150 seconds, which is 30 seconds longer than the recording timeout
-- This is reasonable as a safety margin, but could lead to a stuck state for 30 seconds after a recording timeout
-- If the MCP client crashes or disconnects during recording, the flag will remain set for 2.5 minutes
-
-**Recommendation**:
-- Consider reducing to 90-120 seconds (just slightly longer than the recording timeout)
-- Or add explicit cleanup on MCP client disconnect
-- Document why 150 seconds was chosen
-
----
-
-## Medium Issues
-
-### 🟠 Issue #4: No Logging for Safety Timeout Trigger
-
-**File**: `flow-bar/Sources/VoiceBar/VoiceState.swift:131-134`
-
-**Problem**: When the safety timeout triggers, there's no logging to help debug why it happened.
-
-```swift:131:134:flow-bar/Sources/VoiceBar/VoiceState.swift
-if !Task.isCancelled, barInitiatedRecording {
-    barInitiatedRecording = false
-    frontmostAppOnRecordStart = nil
-}
-```
-
-**Recommendation**:
-```swift
-if !Task.isCancelled, barInitiatedRecording {
-    NSLog("[VoiceBar] Safety timeout triggered - clearing barInitiatedRecording after 150s")
-    barInitiatedRecording = false
-    frontmostAppOnRecordStart = nil
-}
-```
-
----
-
-### 🟠 Issue #5: Singleton Guard Doesn't Handle Zombie Processes
-
-**File**: `flow-bar/Sources/VoiceBar/VoiceBarApp.swift:35-46`
-
-**Problem**: The singleton guard checks for running instances but doesn't verify they're actually functional.
-
-```swift:35:46:flow-bar/Sources/VoiceBar/VoiceBarApp.swift
-// Singleton guard — if another VoiceBar is already running, quit immediately.
-let myPID = ProcessInfo.processInfo.processIdentifier
-let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
-if !others.isEmpty {
-    NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
-    // Give a moment for the log to flush
-    DispatchQueue.main.async {
-        NSApplication.shared.terminate(nil)
+    
+    if (isProcessAlive(stalePid)) {
+      console.error(
+        `[voicelayer] Process ${stalePid} did not die after SIGTERM, sending SIGKILL`,
+      );
+      try {
+        process.kill(stalePid, "SIGKILL");
+        Bun.sleepSync(100); // SIGKILL is immediate, but give kernel time
+      } catch {
+        console.error(
+          `[voicelayer] Could not SIGKILL ${stalePid} — claiming lock anyway`,
+        );
+      }
+    } else {
+      console.error(
+        `[voicelayer] Killed orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
+      );
     }
-    return
+  } catch {
+    console.error(
+      `[voicelayer] Could not signal orphan MCP server (PID ${stalePid}) — claiming lock anyway`,
+    );
+  }
 }
 ```
 
-**Analysis**:
-- If the previous VoiceBar instance crashed but the process is still in the process table, this guard will prevent a new instance from starting
-- The socket server in `SocketServer.swift:49` does `unlink(socketPath)` to clean up stale sockets, which is good
-- But if the zombie process still holds the socket, the new instance will fail to bind
-
-**Recommendation**:
-- Add a check to see if the socket is actually being listened on
-- Or add a timeout/retry mechanism
-- Or kill the zombie process if it's not responding
+**Why This Matters**:
+- SIGTERM is a graceful shutdown signal - processes can take time to clean up
+- The MCP server has signal handlers that call `releaseProcessLock()` and `disconnectFromBar()`
+- These cleanup operations take time (socket close, file I/O)
+- Without waiting, you get a race where both processes are active
 
 ---
 
-## Minor Issues
+### 🔴 Issue #2: Silent Failure in `safeWriteFileSync`
 
-### 🟢 Issue #6: Inconsistent Error Handling in `ensureVoiceBarRunning()`
+**File**: `src/process-lock.ts:110` and `src/paths.ts:88-101`
 
-**File**: `src/voice-bar-launcher.ts:30-55`
+**Problem**: `safeWriteFileSync` silently returns on symlink detection instead of throwing an error. This means `writePidFile()` can fail silently, and the process will think it owns the lock when it doesn't.
 
-**Problem**: The function logs to `console.error` for both success and failure cases, which is semantically incorrect.
-
-```typescript:34:36:src/voice-bar-launcher.ts
-if (isVoiceBarRunning()) {
-  console.error("[voicelayer] Voice Bar is running");
-  return;
+```typescript:88:101:src/paths.ts
+export function safeWriteFileSync(filePath: string, content: string): void {
+  if (existsSync(filePath)) {
+    try {
+      const stat = lstatSync(filePath);
+      if (stat.isSymbolicLink()) {
+        console.error(
+          `[voicelayer] Refusing to write: ${filePath} is a symlink`,
+        );
+        return; // ❌ SILENT FAILURE
+      }
+    } catch {}
+  }
+  writeFileSync(filePath, content, { mode: 0o600 });
 }
 ```
 
-```typescript:43:44:src/voice-bar-launcher.ts
-if (result.exitCode === 0) {
-  console.error("[voicelayer] Voice Bar launched successfully");
+**Impact**:
+- If an attacker creates `/tmp/voicelayer-mcp.pid` as a symlink, the MCP server will fail to acquire the lock
+- The server will continue running without a lock, defeating the orphan prevention
+- Multiple MCP servers can run simultaneously
+- This is a **security issue** (symlink attack) AND a **reliability issue** (silent failure)
+
+**Fix Required**:
+
+Option 1: Make `safeWriteFileSync` throw on symlink:
+```typescript
+export function safeWriteFileSync(filePath: string, content: string): void {
+  if (existsSync(filePath)) {
+    try {
+      const stat = lstatSync(filePath);
+      if (stat.isSymbolicLink()) {
+        throw new Error(`Refusing to write: ${filePath} is a symlink`);
+      }
+    } catch (err) {
+      if ((err as any).message?.includes("symlink")) throw err;
+      // Other errors (EACCES, etc.) are non-fatal
+    }
+  }
+  writeFileSync(filePath, content, { mode: 0o600 });
+}
 ```
 
-**Recommendation**: Use `console.log` for success cases, `console.error` for failures.
+Option 2: Check if write succeeded in `acquireProcessLock`:
+```typescript
+function writePidFile(): void {
+  const data: PidLockData = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  };
+  safeWriteFileSync(MCP_PID_FILE, JSON.stringify(data));
+  
+  // Verify write succeeded
+  const written = readPidFile();
+  if (!written || written.pid !== process.pid) {
+    throw new Error(
+      `Failed to write PID file ${MCP_PID_FILE} — may be a symlink or permission issue`,
+    );
+  }
+}
+```
+
+**Recommendation**: Use Option 2 (verify write) as it's more robust and handles all write failures, not just symlinks.
 
 ---
 
-### 🟢 Issue #7: Missing Test Coverage for Multi-Client Scenario
+### 🟠 Issue #3: No Verification That Process Actually Died
 
-**Files**: `src/__tests__/*.test.ts`
+**File**: `src/process-lock.ts:83-100`
 
-**Problem**: There are no tests that simulate the multi-client race condition that this PR fixes.
+**Problem**: After sending SIGTERM, the code doesn't verify that the process actually terminated. It just logs and moves on.
 
-**Recommendation**: Add a test that:
-1. Connects multiple MCP clients to the Voice Bar socket
-2. Initiates a recording from the Voice Bar
-3. Simulates some clients failing with error+idle events
-4. Verifies that `barInitiatedRecording` remains true until transcription arrives
+**Impact**:
+- If SIGTERM fails (EPERM, process ignoring signal, etc.), both processes run
+- The new process will overwrite the PID file, but the old process is still connected to Voice Bar
+- Voice Bar socket only accepts one connection, so the new process will fail to connect
+
+**Fix**: See Issue #1 fix above (includes verification loop).
+
+---
+
+## High Priority Issues
+
+### 🟠 Issue #4: Misleading `killedStale` Flag
+
+**File**: `src/process-lock.ts:75-101`
+
+**Problem**: The `killedStale` flag is set to `true` even when the process was already dead (line 76). This is misleading.
+
+```typescript:74:101:src/process-lock.ts
+// Stale process found — try to kill it
+const stalePid = existing.pid;
+let killedStale = true; // ❌ Set to true even if process is already dead
+
+if (stalePid === process.pid) {
+  // We already own the lock (shouldn't happen, but handle gracefully)
+  return { acquired: true, killedStale: false };
+}
+
+if (isProcessAlive(stalePid)) {
+  try {
+    process.kill(stalePid, "SIGTERM");
+    console.error(
+      `[voicelayer] Killed orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
+    );
+  } catch {
+    console.error(
+      `[voicelayer] Could not kill orphan MCP server (PID ${stalePid}) — claiming lock anyway`,
+    );
+  }
+} else {
+  console.error(
+    `[voicelayer] Cleaned up stale PID file (PID ${stalePid} is dead)`,
+  );
+}
+
+writePidFile();
+return { acquired: true, killedStale, stalePid };
+```
+
+**Impact**:
+- Misleading logs in `mcp-server.ts:115-118` (says "Replaced orphan" when process was already dead)
+- Incorrect telemetry/debugging information
+
+**Fix**:
+```typescript
+const stalePid = existing.pid;
+let killedStale = false; // Default to false
+
+if (stalePid === process.pid) {
+  return { acquired: true, killedStale: false };
+}
+
+if (isProcessAlive(stalePid)) {
+  killedStale = true; // Only set true if we actually kill a living process
+  try {
+    process.kill(stalePid, "SIGTERM");
+    // ... wait logic from Issue #1 fix ...
+  } catch {
+    console.error(
+      `[voicelayer] Could not kill orphan MCP server (PID ${stalePid}) — claiming lock anyway`,
+    );
+  }
+} else {
+  console.error(
+    `[voicelayer] Cleaned up stale PID file (PID ${stalePid} is dead)`,
+  );
+}
+```
+
+---
+
+## Medium Priority Issues
+
+### 🟡 Issue #5: No Handling of PID Reuse
+
+**File**: `src/process-lock.ts:32-40`
+
+**Problem**: PIDs can be reused by the OS. If the PID in the lockfile now belongs to a different process (not an MCP server), we'll kill an innocent process.
+
+```typescript:32:40:src/process-lock.ts
+export function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // EPERM = alive but we can't signal it; ESRCH = not found (dead)
+    return code === "EPERM";
+  }
+}
+```
+
+**Impact**:
+- Low probability but high severity
+- Could kill unrelated system processes
+- More likely on systems with fast PID wraparound (containers, busy servers)
+
+**Mitigation Options**:
+
+1. **Check process start time** (best option):
+```typescript
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === "EPERM";
+  }
+}
+
+function isSameProcess(pid: number, startedAt: string): boolean {
+  if (!isProcessAlive(pid)) return false;
+  
+  // Check process start time via /proc (Linux) or ps (macOS)
+  try {
+    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "lstart="]);
+    if (result.exitCode !== 0) return false;
+    
+    const psStartTime = Buffer.from(result.stdout).toString("utf8").trim();
+    const lockStartTime = new Date(startedAt).getTime();
+    const psStartTimeMs = new Date(psStartTime).getTime();
+    
+    // Allow 1 second tolerance for clock skew
+    return Math.abs(psStartTimeMs - lockStartTime) < 1000;
+  } catch {
+    // If we can't verify, assume it's the same process (fail open)
+    return true;
+  }
+}
+```
+
+2. **Check process name** (simpler but less reliable):
+```typescript
+function isVoiceLayerMCP(pid: number): boolean {
+  try {
+    const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "comm="]);
+    if (result.exitCode !== 0) return false;
+    const comm = Buffer.from(result.stdout).toString("utf8").trim();
+    return comm.includes("bun") || comm.includes("node") || comm.includes("voicelayer");
+  } catch {
+    return false;
+  }
+}
+```
+
+**Recommendation**: Use process start time check (Option 1). It's more reliable and prevents killing innocent processes.
+
+---
+
+### 🟡 Issue #6: Race Condition in Concurrent Startup
+
+**File**: `src/process-lock.ts:66-101`
+
+**Problem**: If two MCP servers start simultaneously, both can read the PID file, see no lock, and both write their PIDs. The second write wins, and the first process thinks it has the lock but doesn't.
+
+**Scenario**:
+1. Process A reads PID file → null (no lock)
+2. Process B reads PID file → null (no lock)
+3. Process A writes PID file (PID=1234)
+4. Process B writes PID file (PID=5678) ← overwrites A's lock
+5. Process A thinks it has the lock, but B actually owns it
+
+**Impact**:
+- Low probability (requires simultaneous startup within ~1ms window)
+- Both processes will run, defeating the lock
+- More likely in automated testing or CI environments
+
+**Fix**: Use atomic file operations with `O_EXCL` flag:
+```typescript
+import { openSync, writeSync, closeSync, constants } from "fs";
+
+function writePidFile(): void {
+  const data: PidLockData = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  };
+  const content = JSON.stringify(data);
+  
+  try {
+    // O_CREAT | O_EXCL = atomic create-if-not-exists
+    const fd = openSync(MCP_PID_FILE, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    writeSync(fd, content);
+    closeSync(fd);
+  } catch (err: any) {
+    if (err.code === "EEXIST") {
+      // File was created between our read and write — retry lock acquisition
+      throw new Error("PID file created by another process — retry");
+    }
+    throw err;
+  }
+}
+```
+
+However, this doesn't work for the overwrite case (when we're replacing a stale lock). Better approach:
+
+```typescript
+function writePidFile(): void {
+  const data: PidLockData = {
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+  };
+  
+  // Use rename for atomic overwrite
+  const tempFile = `${MCP_PID_FILE}.${process.pid}.tmp`;
+  writeFileSync(tempFile, JSON.stringify(data), { mode: 0o600 });
+  renameSync(tempFile, MCP_PID_FILE); // Atomic on POSIX
+}
+```
+
+**Recommendation**: Use atomic rename approach. It's simple and works for both create and overwrite cases.
+
+---
+
+## Low Priority Issues
+
+### 🟢 Issue #7: Test Coverage Gap - Concurrent Acquisition
+
+**File**: `src/__tests__/process-lock.test.ts`
+
+**Problem**: No test for concurrent lock acquisition (Issue #6 scenario).
+
+**Recommendation**: Add test:
+```typescript
+it("handles concurrent lock acquisition", async () => {
+  // Simulate race: two processes try to acquire simultaneously
+  const child1 = Bun.spawn(["bun", "test-acquire-lock.ts"]);
+  const child2 = Bun.spawn(["bun", "test-acquire-lock.ts"]);
+  
+  await Promise.all([child1.exited, child2.exited]);
+  
+  // Only one should have succeeded
+  const pidFile = readFileSync(MCP_PID_FILE, "utf-8");
+  const data = JSON.parse(pidFile);
+  expect([child1.pid, child2.pid]).toContain(data.pid);
+});
+```
+
+---
+
+### 🟢 Issue #8: Missing Test - SIGTERM Handler
+
+**File**: `src/__tests__/process-lock.test.ts`
+
+**Problem**: No test verifies that the SIGTERM handler actually releases the lock.
+
+**Recommendation**: Add test:
+```typescript
+it("releases lock on SIGTERM", async () => {
+  const child = Bun.spawn(["bun", "run", "src/mcp-server.ts"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  
+  // Wait for startup
+  await new Promise(resolve => setTimeout(resolve, 500));
+  
+  // Verify lock is held
+  const beforeKill = readFileSync(MCP_PID_FILE, "utf-8");
+  const data = JSON.parse(beforeKill);
+  expect(data.pid).toBe(child.pid);
+  
+  // Send SIGTERM
+  child.kill("SIGTERM");
+  await child.exited;
+  
+  // Verify lock is released
+  expect(existsSync(MCP_PID_FILE)).toBe(false);
+});
+```
 
 ---
 
 ## Positive Observations
 
-✅ **Good**: The root cause analysis is accurate and well-documented
-✅ **Good**: The safety timeout is a smart defensive measure
-✅ **Good**: The singleton guard prevents duplicate Voice Bar instances
-✅ **Good**: The `source` field in the protocol is forward-thinking
-✅ **Good**: Extensive inline documentation (AIDEV-NOTE comments)
-✅ **Good**: The fix is minimal and surgical - doesn't over-engineer
+✅ **Good**: Clear problem statement and documentation  
+✅ **Good**: Comprehensive test coverage for basic scenarios  
+✅ **Good**: Graceful handling of corrupt PID files  
+✅ **Good**: Uses `safeWriteFileSync` to prevent symlink attacks  
+✅ **Good**: Signal handlers properly call `releaseProcessLock()`  
+✅ **Good**: `isProcessAlive` correctly handles EPERM vs ESRCH  
 
 ---
 
@@ -253,55 +471,49 @@ if (result.exitCode === 0) {
 
 ### Must Fix Before Merge
 
-1. **Add `source` field handling in Swift** OR **remove the field from TypeScript** - the protocol and implementation are currently inconsistent
-2. **Add logging when safety timeout triggers** - critical for debugging
-3. **Add test coverage for multi-client race condition** - this is the core bug being fixed
+1. **Fix Issue #1**: Add wait loop after SIGTERM (with SIGKILL fallback)
+2. **Fix Issue #2**: Verify PID file write succeeded
+3. **Fix Issue #3**: Verify killed process actually died
 
 ### Should Fix Before Merge
 
-4. **Reduce safety timeout to 90-120 seconds** - 150s is too long
-5. **Improve singleton guard to handle zombie processes** - prevents stuck states
-6. **Fix console.error usage in ensureVoiceBarRunning** - use console.log for success
+4. **Fix Issue #4**: Correct `killedStale` flag logic
+5. **Fix Issue #5**: Add process start time verification (prevent PID reuse)
+6. **Fix Issue #6**: Use atomic file operations (prevent race condition)
 
 ### Nice to Have
 
-7. **Document protocol version change** - add to CHANGELOG
-8. **Add explicit cleanup on client disconnect** - improves reliability
+7. **Fix Issue #7**: Add concurrent acquisition test
+8. **Fix Issue #8**: Add SIGTERM handler test
 
 ---
 
 ## Testing Checklist
 
-Before merging, verify:
+Before merging, manually verify:
 
-- [ ] Multiple MCP clients can connect simultaneously
-- [ ] Recording from Voice Bar works with 6+ connected clients
-- [ ] Failed clients (no sox, session busy) don't kill paste
-- [ ] Transcription arrives and pastes correctly
-- [ ] Safety timeout triggers after 150s if transcription never arrives
-- [ ] Singleton guard prevents duplicate Voice Bar instances
-- [ ] `open -a VoiceBar` twice only produces one instance
-- [ ] Old MCP clients can connect to new Voice Bar (backward compatibility)
-- [ ] New MCP clients can connect to old Voice Bar (forward compatibility)
+- [ ] Start two MCP servers sequentially — second kills first
+- [ ] Start two MCP servers simultaneously — only one survives
+- [ ] Kill MCP server with SIGTERM — PID file is removed
+- [ ] Kill MCP server with SIGKILL — next startup cleans up stale PID
+- [ ] Create symlink at `/tmp/voicelayer-mcp.pid` — server refuses to start or removes symlink
+- [ ] Start MCP server, wait 5 seconds, start another — first is killed cleanly
+- [ ] Corrupt PID file — next startup cleans up and acquires lock
 
 ---
 
 ## Verdict
 
-**Status**: ✅ **APPROVED WITH RECOMMENDATIONS**
+**Status**: 🟡 **APPROVED WITH CRITICAL FIXES REQUIRED**
 
-The PR correctly identifies the root cause and implements a working fix. The core logic is sound:
-- `barInitiatedRecording` is only cleared by transcription or cancel
-- Failed clients' error+idle events are ignored
-- Safety timeout prevents stuck states
+The PR addresses a real reliability problem (orphan MCP servers), but the implementation has **critical race conditions** that must be fixed:
 
-**The fix will work as implemented.**
+1. **No wait after SIGTERM** — old process may still be running when new process starts
+2. **Silent write failures** — process may think it has lock when it doesn't
+3. **No kill verification** — can't confirm old process actually died
 
-**Recommended Improvements** (non-blocking):
-1. **Clarify `source` field usage** - either remove it or document its purpose
-2. **Add logging for safety timeout** - helps debugging stuck states
-3. **Add test coverage for multi-client race condition** - validates the core fix
-4. **Reduce safety timeout to 90-120s** - current 150s is longer than necessary
-5. **Improve zombie process handling** - prevents edge case failures
+**These issues defeat the purpose of the PID lockfile.**
 
-These improvements would increase robustness and maintainability, but the PR can be merged as-is if time is constrained. The paste regression will be fixed.
+The fixes are straightforward (add wait loop, verify writes, check process death), but they are **essential for correctness**.
+
+**Recommendation**: Fix Issues #1, #2, #3 before merge. Issues #4-#6 are important but non-blocking.
