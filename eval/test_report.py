@@ -78,6 +78,22 @@ class TestFormatPerSampleTable:
         result = format_per_sample_table([])
         assert "No per-sample" in result
 
+    def test_pipe_characters_escaped_in_table(self):
+        mr = MetricResult(
+            sample_id="pipe-test",
+            backend="test",
+            wer=0.5,
+            cer=0.3,
+            latency_ms=100.0,
+            audio_duration_ms=1000.0,
+            rtf=0.1,
+            reference="text | with pipes",
+            hypothesis="text | also pipes",
+        )
+        table = format_per_sample_table([mr])
+        assert "\\|" in table
+        assert "text | with" not in table  # raw pipe should be escaped
+
     def test_per_sample_shows_wer_and_cer(self):
         mr = _make_metric_result()
         table = format_per_sample_table([mr])
