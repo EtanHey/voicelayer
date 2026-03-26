@@ -31,13 +31,17 @@ let resolvedPython3: string = "python3";
  */
 export function resolvePython3Path(): string {
   // Try `which` first — works in interactive shells
-  const which = Bun.spawnSync(["which", "python3"]);
-  if (which.exitCode === 0) {
-    const path = which.stdout.toString().trim();
-    if (path) {
-      resolvedPython3 = path;
-      return resolvedPython3;
+  try {
+    const which = Bun.spawnSync(["which", "python3"]);
+    if (which.exitCode === 0) {
+      const path = which.stdout.toString().trim();
+      if (path) {
+        resolvedPython3 = path;
+        return resolvedPython3;
+      }
     }
+  } catch {
+    // `which` not found (minimal images) — fall through to candidates
   }
 
   // Fallback: check common macOS/Linux locations
