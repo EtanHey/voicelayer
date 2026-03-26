@@ -555,15 +555,10 @@ describe("mcp-daemon resilience", () => {
     // Start first daemon
     daemon = await createMcpDaemon({ socketPath: TEST_SOCKET });
 
-    // Try to start second daemon on same socket
-    try {
-      const daemon2 = await createMcpDaemon({ socketPath: TEST_SOCKET });
-      daemon2.stop();
-      // Should not reach here
-      expect(true).toBe(false);
-    } catch (err) {
-      expect((err as Error).message).toContain("already listening");
-    }
+    // Second daemon on same socket should reject
+    await expect(createMcpDaemon({ socketPath: TEST_SOCKET })).rejects.toThrow(
+      "already listening",
+    );
   });
 
   it("isSocketLive returns false for non-existent socket", async () => {

@@ -5,7 +5,7 @@
  * Keeps one rotated backup (.1 suffix). Runs on an interval.
  */
 
-import { existsSync, statSync, renameSync, truncateSync } from "fs";
+import { existsSync, statSync, renameSync } from "fs";
 
 const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
 const CHECK_INTERVAL_MS = 60_000; // Check every 60 seconds
@@ -23,10 +23,7 @@ export function rotateIfNeeded(
     const rotatedPath = `${filePath}.1`;
     // Rename current to .1 (overwrites previous rotation)
     renameSync(filePath, rotatedPath);
-    // Truncate creates a fresh empty file at the original path.
-    // LaunchAgent will write to the same path so we don't need to recreate.
-    // The rename already moved the file, so we just need the path free.
-    // LaunchAgent reopens on next write automatically.
+    // LaunchAgent will recreate the file on next write automatically.
     return true;
   } catch (err) {
     console.error(

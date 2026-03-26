@@ -73,8 +73,18 @@ async function main() {
     );
   }
 
-  // Startup validation: refuse if another instance is actively listening
-  if (await isSocketLive(MCP_SOCKET_PATH)) {
+  // Startup validation: refuse if another instance is actively listening.
+  // Retry with backoff — the old process may still be tearing down after SIGTERM.
+  let socketStillLive = false;
+  for (const delayMs of [0, 200, 500]) {
+    if (delayMs > 0) await Bun.sleep(delayMs);
+    if (!(await isSocketLive(MCP_SOCKET_PATH))) {
+      socketStillLive = false;
+      break;
+    }
+    socketStillLive = true;
+  }
+  if (socketStillLive) {
     console.error(
       `[voicelayer-daemon] FATAL: Another daemon is already listening on ${MCP_SOCKET_PATH}`,
     );

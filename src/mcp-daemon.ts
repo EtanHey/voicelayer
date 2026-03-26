@@ -41,6 +41,7 @@ export interface McpDaemonOptions {
 interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
+  disconnected: boolean;
 }
 
 /**
@@ -51,7 +52,7 @@ interface ClientState {
 export async function isSocketLive(socketPath: string): Promise<boolean> {
   if (!existsSync(socketPath)) return false;
   try {
-    const socket = await Bun.connect({
+    await Bun.connect({
       unix: socketPath,
       socket: {
         open(s) {
@@ -64,7 +65,6 @@ export async function isSocketLive(socketPath: string): Promise<boolean> {
       },
     });
     // Connection succeeded — another instance is listening
-    socket.end();
     return true;
   } catch {
     // Connection refused — orphan socket file
@@ -119,7 +119,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { protocol: "unknown", buffer: "" };
+        socket.data = { protocol: "unknown", buffer: "", disconnected: false };
         onConnect();
       },
 
@@ -142,11 +142,17 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         }
       },
 
-      close() {
-        onDisconnect();
+      close(socket) {
+        if (!socket.data.disconnected) {
+          socket.data.disconnected = true;
+          onDisconnect();
+        }
       },
-      error() {
-        onDisconnect();
+      error(socket) {
+        if (!socket.data.disconnected) {
+          socket.data.disconnected = true;
+          onDisconnect();
+        }
       },
       drain() {},
     },
