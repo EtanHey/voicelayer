@@ -1,239 +1,227 @@
 # VoiceLayer
 
-> Voice I/O MCP daemon for AI coding assistants — dual-protocol (NDJSON + MCP Content-Length), local TTS, STT, session booking.
+> Singleton MCP daemon that adds voice I/O to AI coding assistants. One process serves every session — no orphans, no contention, no hangs.
 
-[![npm](https://img.shields.io/npm/v/voicelayer-mcp)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-314%20passing-brightgreen.svg)](#testing)
-[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue.svg)](https://etanhey.github.io/voicelayer/)
+[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen.svg)](#testing)
+[![TypeScript](https://img.shields.io/badge/TypeScript-Bun-black.svg)](https://bun.sh)
+[![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange.svg)](https://developer.apple.com/swiftui/)
 
-VoiceLayer adds **voice input and output** to Claude Code sessions via the Model Context Protocol (MCP). Runs as a **singleton MCP daemon** with dual-protocol support (NDJSON streaming + MCP Content-Length framing). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
+VoiceLayer gives Claude Code (and any MCP client) two tools: **`voice_speak`** for text-to-speech and **`voice_ask`** for speech-to-text. It runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process.
 
-**Local-first, free, open-source.** All processing happens on your machine — no cloud APIs required. TTS via edge-tts (free), STT via whisper.cpp (local). Optional cloud fallback via Wispr Flow for machines without whisper.cpp.
+**Local-first. Free. Open-source.** TTS via edge-tts (Microsoft neural voices, free). STT via whisper.cpp (runs on-device). No cloud APIs required.
 
-## Features
+## Architecture
 
-VoiceLayer has two profiles: (1) Basic: 2 MCP tools for any Claude Code session, (2) Advanced: voice cloning, extraction pipeline, UI widget.
+```
+                  ┌─────────────────────────────────────┐
+                  │         VoiceLayer Daemon            │
+                  │     /tmp/voicelayer-mcp.sock         │
+                  │                                      │
+                  │  MCP JSONRPC ──> Tool Handlers       │
+                  │  (Content-Length     ├── voice_speak  │
+                  │   framing)          └── voice_ask    │
+                  │                                      │
+                  │  TTS: edge-tts (retry + 30s timeout) │
+                  │  STT: whisper.cpp / Wispr Flow       │
+                  │  VAD: Silero ONNX (speech detection)  │
+                  │  IPC: Voice Bar ← NDJSON events      │
+                  └──────────┬──────────────────────────┘
+                             │ Unix socket
+              ┌──────────────┼──────────────┐
+              │              │              │
+         Claude Code    Claude Code    Cursor/Codex
+         (socat shim)  (socat shim)   (socat shim)
+```
 
-### Advanced Features
+**Why a daemon?** The original design spawned a new Bun process per Claude session. With 17+ repos open, that meant 17 competing processes (700+ MB RAM), fighting over one Voice Bar socket, crashing edge-tts with PATH issues, and leaving orphans that never died. The daemon architecture — shipped in PRs #67-72 — replaced all of that with a single process and `socat` shims.
 
-**Voice Cloning (Qwen3-TTS)**
-Three-tier TTS routing: Qwen3-TTS (cloned voices) → edge-tts (neural) → text-only fallback. Clone voices from YouTube samples using the extraction pipeline.
-
-**Voice Bar (macOS)**
-Floating SwiftUI widget for quick voice I/O. Communicates via Unix socket IPC. Requires macOS 14+.
-
-**CLI Tools**
-- `voicelayer extract` — Extract voice samples from YouTube (yt-dlp → Silero VAD → FFmpeg)
-- `voicelayer clone` — Build voice profiles from samples
-- `voicelayer daemon` — Run TTS server for cloned voices
+| Metric | Before (spawn-per-session) | After (daemon) |
+|--------|---------------------------|----------------|
+| Processes | N per session (17+ typical) | 1 daemon + socat shims |
+| RAM | ~700 MB (17 x 41 MB) | ~50 MB |
+| Orphan cleanup | Manual `pkill` | PID lockfile auto-kills stale |
+| edge-tts failures | Random (PATH, contention) | Retry with 30s hard timeout |
+| voice_ask hang | Up to 300s (5 min!) | 30s default + outer guard |
 
 ## Quick Start
 
 ```bash
-# 1. Install prerequisites
-brew install sox                    # Mic recording
-pip3 install edge-tts               # Microsoft neural TTS (free)
-brew install whisper-cpp            # Local STT (recommended)
+# Prerequisites
+brew install sox socat
+pip3 install edge-tts
+brew install whisper-cpp  # optional — local STT
 
-# 2. Download a whisper model
+# Download a whisper model (recommended)
 mkdir -p ~/.cache/whisper
 curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
 
-# 3. Add to your Claude Code .mcp.json
-```
-
-```json
-{
-  "mcpServers": {
-    "voicelayer": {
-      "command": "bunx",
-      "args": ["voicelayer-mcp"]
-    }
-  }
-}
-```
-
-> **Requires [Bun](https://bun.sh).** Install with: `curl -fsSL https://bun.sh/install | bash`
-
-<details>
-<summary>Alternative: install from source</summary>
-
-```bash
+# Clone and install
 git clone https://github.com/EtanHey/voicelayer.git
 cd voicelayer && bun install
 ```
 
-Then use this MCP config instead:
+### Start the Daemon
+
+```bash
+# Option A: LaunchAgent (auto-start on login, auto-restart on crash)
+./launchd/install.sh
+
+# Option B: Manual
+bun run src/mcp-server-daemon.ts
+```
+
+### Configure MCP Clients
+
+Add to your `.mcp.json` (in any repo where you use Claude Code):
 
 ```json
 {
   "mcpServers": {
     "voicelayer": {
-      "command": "bun",
-      "args": ["run", "/absolute/path/to/voicelayer/src/mcp-server.ts"]
+      "command": "socat",
+      "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]
     }
   }
 }
 ```
 
-</details>
+Or migrate all repos at once:
+
+```bash
+bash scripts/migrate-to-daemon.sh         # migrates every .mcp.json under ~/Gits
+bash scripts/migrate-to-daemon.sh --dry-run  # preview without changes
+```
 
 Grant microphone access to your terminal (macOS: System Settings > Privacy > Microphone).
 
-## How It Works
-
-```
-Claude Code  ─── MCP ───>  VoiceLayer
-                            ├── Waits for any playing voice_speak audio
-                            ├── edge-tts speaks question (speakers)
-                            ├── sox records mic (native rate → resample to 16kHz)
-                            ├── Silero VAD detects speech/silence
-                            ├── whisper.cpp transcribes locally (~300ms)
-                            └── Returns transcription to Claude
-```
-
-1. Claude calls `voice_ask("How does the nav look on mobile?")`
-2. VoiceLayer waits for any prior `voice_speak` audio to finish (no overlap)
-3. Speaks the question aloud via edge-tts
-4. Mic recording starts at device's native sample rate (auto-detected)
-5. Audio resampled to 16kHz in real-time, fed to Silero VAD for speech detection
-6. Recording ends on user stop signal, VAD silence detection, or timeout
-7. Audio transcribed by whisper.cpp (local) or Wispr Flow (cloud fallback)
-8. Claude receives the transcribed text and continues
-
 ## Voice Tools
 
-| Tool | What It Does | Blocking |
-|------|-------------|----------|
-| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think from message content | No |
-| **voice_ask** | Blocking voice Q&A — auto-waits for playing audio, speaks question, records + transcribes response | Yes |
+| Tool | Behavior | Blocking |
+|------|----------|----------|
+| **`voice_speak(message)`** | TTS with auto-mode detection. Announce (short), brief (long), consult (question), think (silent log). | No |
+| **`voice_ask(message)`** | Speaks question, records mic, transcribes response. Auto-waits for prior audio. 30s default timeout. | Yes |
 
-Old `qa_voice_*` names still work as backward-compat aliases.
+### How voice_ask Works
 
-### User-Controlled Stop
+1. Waits for any playing `voice_speak` audio to finish
+2. Speaks the question via edge-tts (with retry on failure)
+3. Records mic at device native rate, resamples to 16kHz
+4. Silero VAD detects speech onset and silence end
+5. whisper.cpp transcribes locally (~200-400ms on Apple Silicon)
+6. Returns transcription to the AI agent
 
-- **Primary:** `touch /tmp/voicelayer-stop` to end recording or playback
-- **Fallback:** Silero VAD silence detection (configurable: quick 0.5s, standard 1.5s, thoughtful 2.5s)
-- **Timeout:** 300s default, configurable per call (10-3600)
+### Reliability Features
 
-### Session Booking
+- **PID lockfile** (`/tmp/voicelayer-mcp.pid`): On startup, detects and kills any orphan MCP server from a previous session
+- **edge-tts retry**: Health check (cached 60s) + automatic retry with 30s hard timeout per attempt
+- **Outer timeout guard**: `Promise.race` wrapper around the entire voice_ask flow — if anything hangs, returns an error instead of blocking forever
+- **Session booking**: Lockfile mutex prevents mic conflicts between concurrent sessions
 
-Converse mode uses a lockfile (`/tmp/voicelayer-session.lock`) to prevent mic conflicts:
-- Auto-books on first `converse` call
-- Other sessions see "line busy" (returns `isError: true`)
-- Stale locks (dead PID) are auto-cleaned
+### Recording Controls
+
+| Method | How |
+|--------|-----|
+| Stop signal | `touch /tmp/voicelayer-stop-{token}` |
+| VAD silence | Configurable: quick (0.5s), standard (1.5s), thoughtful (2.5s) |
+| Timeout | 30s default, configurable 5-3600s per call |
+| Push-to-talk | `press_to_talk: true` — no VAD, stop on signal only |
 
 ## STT Backends
 
-| Backend | Type | Speed | Setup |
-|---------|------|-------|-------|
-| **whisper.cpp** | Local (default) | ~200-400ms on Apple Silicon | `brew install whisper-cpp` + model |
-| **Wispr Flow** | Cloud (fallback) | ~500ms + network | `QA_VOICE_WISPR_KEY` env var |
+| Backend | Type | Latency | Setup |
+|---------|------|---------|-------|
+| **whisper.cpp** | Local (default) | ~200-400ms | `brew install whisper-cpp` + model download |
+| **Wispr Flow** | Cloud (fallback) | ~500ms + network | Set `QA_VOICE_WISPR_KEY` env var |
 
-Auto-detection: whisper.cpp if available, else Wispr Flow. Override with `QA_VOICE_STT_BACKEND=whisper|wispr|auto`.
+Auto-detected. Override with `QA_VOICE_STT_BACKEND=whisper|wispr|auto`.
 
-## Use Modes
+## Voice Bar (macOS)
 
-### QA Mode
-Systematic website testing with Playwright: browse pages, speak questions, record findings in structured checklists, generate markdown reports.
-- 6 categories, 31 checks
-- Reports saved to `~/.voicelayer/reports/`
+Floating SwiftUI widget providing visual feedback during voice interactions. Connects to the daemon via NDJSON over `/tmp/voicelayer.sock`.
 
-### Discovery Mode
-Client call assistant: track unknowns, suggest follow-up questions, detect red flags, generate project briefs.
-- 7 categories, 23 questions
-- Briefs saved to `~/.voicelayer/briefs/`
+- Teleprompter with word-level highlighting and auto-scroll
+- Waveform visualization during recording
+- Expandable pill UI — collapses to dot after 5s idle
+- Draggable, position persisted across launches
+
+```bash
+cd flow-bar && ./build-app.sh   # Build, codesign, install to /Applications
+```
+
+### Advanced: Voice Cloning
+
+Three-tier TTS engine cascade for cloned voices:
+
+1. **XTTS-v2** fine-tuned (cadence + timbre)
+2. **F5-TTS MLX** zero-shot (local, no daemon)
+3. **Qwen3-TTS** daemon (HTTP-based)
+4. **edge-tts** fallback (always available)
+
+```bash
+voicelayer extract <youtube-url>   # Extract voice samples
+voicelayer clone <name>            # Build voice profile
+voicelayer daemon --port 8880      # Run Qwen3-TTS server
+```
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `QA_VOICE_STT_BACKEND` | `auto` | STT backend: `whisper`, `wispr`, or `auto` |
-| `QA_VOICE_WHISPER_MODEL` | auto-detected | Path to whisper.cpp GGML model file |
-| `QA_VOICE_WISPR_KEY` | — | Wispr Flow API key (cloud fallback only) |
+| `QA_VOICE_WHISPER_MODEL` | auto-detected | Path to whisper.cpp GGML model |
+| `QA_VOICE_WISPR_KEY` | -- | Wispr Flow API key (cloud fallback) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
-| `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate (per-mode defaults applied on top) |
-| `QA_VOICE_THINK_FILE` | `/tmp/voicelayer-thinking.md` | Live thinking log path |
-
-## Platform Support
-
-| Platform | TTS | Audio Player | STT | Recording |
-|----------|-----|-------------|-----|-----------|
-| **macOS** | edge-tts | afplay (built-in) | whisper.cpp | sox/rec |
-| **Linux** | edge-tts | mpv, ffplay, or mpg123 | whisper.cpp | sox/rec |
-
-## Auto-Start (LaunchAgent)
-
-VoiceLayer can auto-start on login via a macOS LaunchAgent (merged in PR #60):
-
-```bash
-./launchd/install.sh    # Install and load the LaunchAgent
-```
-
-The daemon listens on `/tmp/voicelayer-mcp.sock` and starts automatically on login, so it's always ready when Claude Code opens a session. To uninstall: `./launchd/install.sh --uninstall`.
+| `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate |
 
 ## Testing
 
 ```bash
-bun test    # 314 tests
+bun test   # 332 tests, 1178 assertions, 33 test files
 ```
+
+Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, and schema validation.
 
 ## Project Structure
 
 ```
 voicelayer/
-├── src/
-│   ├── mcp-server.ts          # MCP server entry point (stdio transport)
-│   ├── mcp-tools.ts           # Tool definitions (voice_speak, voice_ask + aliases)
-│   ├── mcp-handler.ts         # MCP request handler
-│   ├── mcp-daemon.ts          # Singleton daemon (Unix socket)
-│   ├── mcp-framing.ts         # Dual-protocol framing (NDJSON + Content-Length)
-│   ├── handlers.ts            # Tool handler implementations
-│   ├── tts.ts                 # edge-tts + cross-platform audio player
-│   ├── tts/                   # TTS backends (Qwen3, XTTS, F5-TTS)
-│   ├── input.ts               # Mic recording + STT pipeline
-│   ├── stt.ts                 # STT backend abstraction (whisper.cpp + Wispr Flow)
-│   ├── vad.ts                 # Silero VAD speech/silence detection
-│   ├── audio-utils.ts         # Audio utilities (RMS, native rate detection, resampling)
-│   ├── paths.ts               # Centralized /tmp path constants
-│   ├── session-booking.ts     # Lockfile-based session mutex
-│   ├── session.ts             # Session lifecycle (save/load/generate)
-│   ├── socket-protocol.ts     # IPC protocol types (Voice Bar communication)
-│   ├── socket-client.ts       # Unix socket client for Voice Bar
-│   ├── socket-handlers.ts     # Socket message handlers
-│   ├── voice-bar-launcher.ts  # Voice Bar app lifecycle management
-│   ├── streaming-stt.ts       # Streaming STT pipeline
-│   ├── whisper-server.ts      # whisper.cpp server mode integration
-│   ├── pronunciation.ts       # Word pronunciation utilities
-│   ├── report.ts              # QA report renderer (JSON → markdown)
-│   ├── brief.ts               # Discovery brief renderer (JSON → markdown)
-│   ├── schemas/               # QA + discovery schemas
-│   ├── cli/                   # CLI tools (extract, clone, daemon)
-│   └── __tests__/             # 314 tests
+├── src/                          # TypeScript/Bun (18K lines, 69 files)
+│   ├── mcp-server-daemon.ts      # Singleton daemon entry point
+│   ├── mcp-server.ts             # Stdio MCP server (legacy)
+│   ├── mcp-daemon.ts             # Unix socket server (dual-protocol)
+│   ├── mcp-framing.ts            # Content-Length + NDJSON framing
+│   ├── mcp-handler.ts            # JSONRPC request router
+│   ├── process-lock.ts           # PID lockfile (orphan prevention)
+│   ├── handlers.ts               # Tool handler implementations
+│   ├── tts.ts                    # Multi-engine TTS with playback queue
+│   ├── tts-health.ts             # edge-tts health check + retry
+│   ├── input.ts                  # Mic recording + STT pipeline
+│   ├── vad.ts                    # Silero VAD (ONNX inference)
+│   ├── stt.ts                    # STT backend abstraction
+│   ├── socket-client.ts          # Voice Bar IPC (auto-reconnect)
+│   ├── session-booking.ts        # Lockfile mutex
+│   ├── paths.ts                  # Centralized path constants
+│   └── __tests__/                # 332 tests across 33 files
+├── flow-bar/                     # SwiftUI macOS app (1.9K lines, 9 files)
+│   ├── Sources/VoiceBar/         # App source
+│   └── Tests/                    # Swift tests
 ├── scripts/
-│   ├── speak.sh               # Standalone TTS command
-│   ├── edge-tts-words.py      # Word-level TTS generation
-│   └── test-wispr-ws.ts       # Wispr Flow WebSocket test
-├── flow-bar/                  # SwiftUI macOS Voice Bar app
-│   ├── Sources/VoiceBar/      # Main app source
-│   ├── Package.swift          # Swift package manifest
-│   └── build-app.sh           # Build + codesign + install script
-├── launchd/                   # macOS auto-start configuration
-│   ├── install.sh             # Install/uninstall LaunchAgent
-│   └── com.voicelayer.mcp-daemon.plist
-├── package.json
-├── tsconfig.json
-├── LICENSE
-├── CLAUDE.md
-└── README.md
+│   ├── migrate-to-daemon.sh      # Batch .mcp.json migration
+│   └── edge-tts-words.py         # Word-level TTS with timestamps
+├── launchd/                      # macOS LaunchAgent auto-start
+├── models/                       # Silero VAD ONNX model
+└── package.json                  # v2.0.0
 ```
 
-## Contributing
+## Platform Support
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing, and PR process.
+| Platform | TTS | STT | Recording | Voice Bar |
+|----------|-----|-----|-----------|-----------|
+| **macOS** | edge-tts + afplay | whisper.cpp (CoreML) | sox | SwiftUI app |
+| **Linux** | edge-tts + mpv/ffplay | whisper.cpp | sox | -- |
 
 ## License
 
