@@ -47,7 +47,7 @@ export const VoiceSpeakSchema = z.object({
 /** voice_ask tool input. */
 export const VoiceAskSchema = z.object({
   message: nonEmptyTrimmed,
-  timeout_seconds: z.number().min(10).max(3600).default(300),
+  timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
   press_to_talk: z.boolean().optional(),
 });
@@ -76,7 +76,7 @@ export const ConsultArgsSchema = z.object({
 /** qa_voice_converse / qa_voice_ask args. */
 export const ConverseArgsSchema = z.object({
   message: nonEmptyTrimmed,
-  timeout_seconds: z.number().min(10).max(3600).default(300),
+  timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
   press_to_talk: z.boolean().optional(),
   voice: z.string().optional(),
