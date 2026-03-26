@@ -20,6 +20,56 @@ const SYNTH_TIMEOUT_MS = 30_000; // 30s hard timeout per synthesis attempt
 let healthCacheResult: boolean | null = null;
 let healthCacheTime = 0;
 
+// AIDEV-NOTE: LaunchAgent PATH doesn't include Python framework dirs.
+// Resolve full python3 path once at startup so edge-tts works in daemon mode.
+let resolvedPython3: string = "python3";
+
+/**
+ * Resolve the full path to python3. Checks common locations when `which`
+ * fails (e.g., inside a LaunchAgent with a minimal PATH).
+ * Result is cached — called once at startup.
+ */
+export function resolvePython3Path(): string {
+  // Try `which` first — works in interactive shells
+  const which = Bun.spawnSync(["which", "python3"]);
+  if (which.exitCode === 0) {
+    const path = which.stdout.toString().trim();
+    if (path) {
+      resolvedPython3 = path;
+      return resolvedPython3;
+    }
+  }
+
+  // Fallback: check common macOS/Linux locations
+  const candidates = [
+    "/Library/Frameworks/Python.framework/Versions/3.13/bin/python3",
+    "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3",
+    "/Library/Frameworks/Python.framework/Versions/3.11/bin/python3",
+    "/opt/homebrew/bin/python3",
+    "/usr/local/bin/python3",
+    "/usr/bin/python3",
+  ];
+
+  for (const candidate of candidates) {
+    const check = Bun.spawnSync([candidate, "--version"]);
+    if (check.exitCode === 0) {
+      resolvedPython3 = candidate;
+      console.error(`[voicelayer] Resolved python3 at: ${resolvedPython3}`);
+      return resolvedPython3;
+    }
+  }
+
+  console.error(
+    "[voicelayer] Warning: python3 not found in PATH or common locations — edge-tts will fail",
+  );
+  return resolvedPython3;
+}
+
+/** Get the resolved python3 path. */
+export function getPython3Path(): string {
+  return resolvedPython3;
+}
+
 /**
  * Check if edge-tts Python module is installed and importable.
  * Caches result for 60 seconds to avoid repeated subprocess spawns.
@@ -35,7 +85,7 @@ export function checkEdgeTTSHealth(): boolean {
 
   try {
     const result = Bun.spawnSync([
-      "python3",
+      resolvedPython3,
       "-c",
       "import edge_tts; print('ok')",
     ]);
@@ -108,7 +158,7 @@ export async function synthesizeWithRetry(
 
     try {
       const synth = Bun.spawn([
-        "python3",
+        resolvedPython3,
         scriptPath,
         "--text",
         text,

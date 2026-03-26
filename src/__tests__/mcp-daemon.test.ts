@@ -365,6 +365,107 @@ describe("mcp-daemon", () => {
     expect(parsed.state).toBe("idle");
   });
 
+  it("reclassifies NDJSON connection as MCP for JSON-RPC messages", async () => {
+    const { createMcpDaemon } = await import("../mcp-daemon");
+    daemon = createMcpDaemon({
+      socketPath: TEST_SOCKET,
+      toolExecutor: {
+        executeTool: async (name: string) => ({
+          content: [{ type: "text", text: `Mock: ${name}` }],
+        }),
+      },
+    });
+
+    // Send MCP initialize WITHOUT Content-Length framing (raw JSON, like socat sometimes does)
+    const responses = await ndjsonExchange(
+      TEST_SOCKET,
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "socat-client", version: "1.0" },
+        },
+      }),
+    );
+
+    // Should get a response back (not silently dropped)
+    expect(responses.length).toBeGreaterThan(0);
+    const response = JSON.parse(responses[0]);
+    expect(response.jsonrpc).toBe("2.0");
+    expect(response.id).toBe(1);
+    expect(
+      (response.result as Record<string, unknown>).serverInfo,
+    ).toBeDefined();
+  });
+
+  it("survives malformed Content-Length frame without killing connection", async () => {
+    const { createMcpDaemon } = await import("../mcp-daemon");
+    daemon = createMcpDaemon({ socketPath: TEST_SOCKET });
+
+    // Send a malformed frame followed by a valid one
+    const responses = await new Promise<Record<string, unknown>[]>(
+      (resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
+        let buffer = "";
+        const results: Record<string, unknown>[] = [];
+
+        Bun.connect({
+          unix: TEST_SOCKET,
+          socket: {
+            open(socket) {
+              // Malformed: Content-Length header with no number
+              const bad = "Content-Length: \r\n\r\n";
+              // Valid frame after the bad one
+              const good = serializeMcpFrame({
+                jsonrpc: "2.0",
+                id: 99,
+                method: "initialize",
+                params: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: {},
+                  clientInfo: { name: "test", version: "1.0" },
+                },
+              });
+              socket.write(bad + good);
+            },
+            data(_socket, raw) {
+              buffer += raw.toString("utf-8");
+              const { messages, remainder } = parseMcpFrames(buffer);
+              buffer = remainder;
+              results.push(...(messages as Record<string, unknown>[]));
+              if (results.length >= 1) {
+                clearTimeout(timeout);
+                resolve(results);
+              }
+            },
+            close() {
+              clearTimeout(timeout);
+              resolve(results);
+            },
+            error(_s, err) {
+              clearTimeout(timeout);
+              reject(err);
+            },
+            connectError(_s, err) {
+              clearTimeout(timeout);
+              reject(err);
+            },
+            drain() {},
+          },
+        }).catch(reject);
+      },
+    );
+
+    // The valid frame should still be processed despite the bad one before it
+    expect(responses.length).toBeGreaterThanOrEqual(1);
+    const valid = responses.find((r) => r.id === 99);
+    expect(valid).toBeDefined();
+    expect(valid!.jsonrpc).toBe("2.0");
+  });
+
   it("cleans up socket file on stop", async () => {
     const { createMcpDaemon } = await import("../mcp-daemon");
     const { existsSync } = await import("fs");

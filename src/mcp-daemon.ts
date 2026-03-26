@@ -82,27 +82,31 @@ export function createMcpDaemon(options: McpDaemonOptions): {
     write: (data: string) => number;
     end: () => void;
   }) {
-    const { messages, remainder, error } = parseMcpFrames(socket.data.buffer);
-    socket.data.buffer = remainder;
+    // AIDEV-NOTE: Parse in a loop — on error, parseMcpFrames returns early
+    // with a remainder that may still contain valid frames. Re-parse until
+    // no more data can be extracted.
+    const allMessages: Record<string, unknown>[] = [];
+    let keepParsing = true;
+    while (keepParsing) {
+      const { messages, remainder, error } = parseMcpFrames(socket.data.buffer);
+      socket.data.buffer = remainder;
+      allMessages.push(...messages);
 
-    if (error) {
-      // Malformed frame — log and close the connection
-      console.error(`[mcp-daemon] Frame parse error: ${error}`);
-      try {
-        const errResponse = serializeMcpFrame({
-          jsonrpc: "2.0",
-          id: null,
-          error: { code: -32700, message: `Parse error: ${error}` },
-        });
-        socket.write(errResponse);
-        socket.end();
-      } catch {
-        // Client already gone
+      if (error) {
+        // Malformed frame — log but keep connection alive.
+        // Previously this closed the connection, which caused entire MCP
+        // sessions to die on a single bad frame (e.g., buffered double
+        // Content-Length from socat). Now we skip and continue.
+        console.error(`[mcp-daemon] Frame parse error (skipping): ${error}`);
+        // There might be valid frames after the error — keep parsing
+        // unless buffer is empty
+        keepParsing = socket.data.buffer.length > 0;
+      } else {
+        keepParsing = false;
       }
-      return;
     }
 
-    for (const msg of messages) {
+    for (const msg of allMessages) {
       // Process each MCP request async with proper error handling
       handleMcpRequest(
         msg as {
@@ -144,7 +148,11 @@ export function createMcpDaemon(options: McpDaemonOptions): {
     }
   }
 
-  function handleNdjsonData(socket: { data: ClientState }) {
+  function handleNdjsonData(socket: {
+    data: ClientState;
+    write: (data: string) => number;
+    end: () => void;
+  }) {
     const lines = socket.data.buffer.split("\n");
     socket.data.buffer = lines.pop() ?? "";
 
@@ -152,6 +160,39 @@ export function createMcpDaemon(options: McpDaemonOptions): {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
+
+        // AIDEV-NOTE: MCP clients via socat sometimes arrive without Content-Length
+        // framing, causing protocol detection to classify them as NDJSON.
+        // Detect MCP-shaped messages and handle them as MCP requests.
+        if (msg.jsonrpc === "2.0" && typeof msg.method === "string") {
+          console.error(
+            `[mcp-daemon] Reclassifying NDJSON connection as MCP (method: ${msg.method})`,
+          );
+          socket.data.protocol = "mcp";
+          handleMcpRequest(
+            msg as {
+              jsonrpc: string;
+              id?: number | string;
+              method: string;
+              params?: Record<string, unknown>;
+            },
+            toolExecutor,
+          )
+            .then((response) => {
+              if (response) {
+                // Respond in NDJSON format since this client doesn't use
+                // Content-Length framing
+                try {
+                  socket.write(JSON.stringify(response) + "\n");
+                } catch {}
+              }
+            })
+            .catch((err) => {
+              console.error(`[mcp-daemon] Reclassified MCP error: ${err}`);
+            });
+          continue;
+        }
+
         onNdjsonMessage?.(msg);
       } catch {
         // Invalid JSON line — skip
