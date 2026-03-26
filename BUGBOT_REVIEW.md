@@ -111,7 +111,65 @@ for (let attempt = 0; attempt <= maxRetries; attempt++) {
 
 ## Minor Issues
 
-### 🟢 Issue #3: Metadata File Cleanup on Success
+### 🟢 Issue #3: Potential Race Condition in Health Check Cache
+
+**File**: `src/tts-health.ts:19-49`
+
+**Observation**: The health check cache uses module-level variables without synchronization:
+```typescript
+let healthCacheResult: boolean | null = null;
+let healthCacheTime = 0;
+
+export function checkEdgeTTSHealth(): boolean {
+  const now = Date.now();
+  if (healthCacheResult !== null && now - healthCacheTime < HEALTH_CACHE_TTL_MS) {
+    return healthCacheResult;  // Cache hit
+  }
+  // ... spawn subprocess and update cache ...
+}
+```
+
+**Analysis**: 
+If multiple concurrent calls to `checkEdgeTTSHealth()` occur when the cache is expired, they might all spawn `python3` subprocesses simultaneously. However:
+
+1. **In practice, this is not an issue** because:
+   - `checkEdgeTTSHealth()` is currently unused in production
+   - Even if used, TTS calls are typically serialized (playback queue)
+   - `Bun.spawnSync()` is synchronous, so the function completes before returning
+   - The race window is tiny (~50ms for the subprocess)
+
+2. **Worst case**: Multiple `python3` processes spawn simultaneously
+   - No data corruption (each sets the same cache value)
+   - Minor performance impact (wasted subprocess spawns)
+   - Self-correcting (cache gets set by first completion)
+
+**Recommendation**: 
+If health check is integrated into production and high concurrency is expected, consider adding a simple lock:
+```typescript
+let healthCheckInProgress = false;
+
+export function checkEdgeTTSHealth(): boolean {
+  // ... cache check ...
+  
+  if (healthCheckInProgress) {
+    // Another check is in progress, return cached or default
+    return healthCacheResult ?? false;
+  }
+  
+  healthCheckInProgress = true;
+  try {
+    // ... spawn subprocess ...
+  } finally {
+    healthCheckInProgress = false;
+  }
+}
+```
+
+**Impact**: Very Low - Current code is fine for typical usage patterns
+
+---
+
+### 🟢 Issue #5: Metadata File Cleanup on Success
 
 **File**: `src/tts-health.ts:125-129`
 
@@ -140,7 +198,7 @@ try {
 
 ---
 
-### 🟢 Issue #4: Error Message Includes Last Exit Code
+### 🟢 Issue #6: Error Message Includes Last Exit Code
 
 **File**: `src/tts-health.ts:157`
 
@@ -155,7 +213,7 @@ error: `edge-tts failed after ${maxRetries + 1} attempts (last exit code: ${last
 
 ---
 
-### 🟢 Issue #5: Word Boundary Parsing Error Handling
+### 🟢 Issue #7: Word Boundary Parsing Error Handling
 
 **File**: `src/tts-health.ts:66-84`
 
