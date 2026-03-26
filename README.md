@@ -2,9 +2,9 @@
 
 > Singleton MCP daemon that adds voice I/O to AI coding assistants. One process serves every session — no orphans, no contention, no hangs.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-253%20passing-brightgreen.svg)](#testing)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Bun-black.svg)](https://bun.sh)
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange.svg)](https://developer.apple.com/swiftui/)
 
@@ -93,6 +93,7 @@ Or migrate all repos at once:
 ```bash
 bash scripts/migrate-to-daemon.sh         # migrates every .mcp.json under ~/Gits
 bash scripts/migrate-to-daemon.sh --dry-run  # preview without changes
+# Edit the script to change search path if your repos aren't in ~/Gits
 ```
 
 Grant microphone access to your terminal (macOS: System Settings > Privacy > Microphone).
@@ -116,8 +117,8 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 ### Reliability Features
 
 - **PID lockfile** (`/tmp/voicelayer-mcp.pid`): On startup, detects and kills any orphan MCP server from a previous session
-- **edge-tts retry**: Health check (cached 60s) + automatic retry with 30s hard timeout per attempt
-- **Outer timeout guard**: `Promise.race` wrapper around the entire voice_ask flow — if anything hangs, returns an error instead of blocking forever
+- **edge-tts retry**: Health check (cached 60s) + automatic retry with 30s hard timeout per TTS attempt
+- **Outer timeout guard**: `Promise.race` wrapper around the entire voice_ask flow (default 30s total) — if anything hangs, returns an error instead of blocking forever
 - **Session booking**: Lockfile mutex prevents mic conflicts between concurrent sessions
 
 ### Recording Controls
@@ -179,7 +180,7 @@ voicelayer daemon --port 8880      # Run Qwen3-TTS server
 ## Testing
 
 ```bash
-bun test   # 332 tests, 1178 assertions, 33 test files
+bun test   # 253 tests passing (277 total), 33 test files
 ```
 
 Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, and schema validation.
@@ -188,7 +189,7 @@ Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + ret
 
 ```
 voicelayer/
-├── src/                          # TypeScript/Bun (18K lines, 69 files)
+├── src/                          # TypeScript/Bun (12K lines, 69 files)
 │   ├── mcp-server-daemon.ts      # Singleton daemon entry point
 │   ├── mcp-server.ts             # Stdio MCP server (legacy)
 │   ├── mcp-daemon.ts             # Unix socket server (dual-protocol)
@@ -225,4 +226,4 @@ voicelayer/
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
