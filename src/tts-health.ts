@@ -15,6 +15,7 @@ import { readFileSync, unlinkSync } from "fs";
 import type { WordBoundary } from "./socket-protocol";
 
 const HEALTH_CACHE_TTL_MS = 60_000;
+const SYNTH_TIMEOUT_MS = 30_000; // 30s hard timeout per synthesis attempt
 
 let healthCacheResult: boolean | null = null;
 let healthCacheTime = 0;
@@ -96,7 +97,7 @@ export async function synthesizeWithRetry(
   maxRetries = 1,
 ): Promise<SynthesizeResult> {
   const metadataFile = audioFile.replace(".mp3", ".meta.ndjson");
-  let lastExitCode = 0;
+  let lastError = "";
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
@@ -120,9 +121,29 @@ export async function synthesizeWithRetry(
         "--write-metadata",
         metadataFile,
       ]);
-      lastExitCode = await synth.exited;
 
-      if (lastExitCode === 0) {
+      // Hard timeout per attempt — prevents hanging on network stalls
+      const exitCode = await Promise.race([
+        synth.exited,
+        new Promise<number>((resolve) =>
+          setTimeout(() => {
+            try {
+              synth.kill("SIGTERM");
+            } catch {}
+            resolve(-1);
+          }, SYNTH_TIMEOUT_MS),
+        ),
+      ]);
+
+      if (exitCode === -1) {
+        lastError = `edge-tts timed out after ${SYNTH_TIMEOUT_MS / 1000}s`;
+        console.error(
+          `[voicelayer] ${lastError} (attempt ${attempt + 1}/${maxRetries + 1})`,
+        );
+        continue;
+      }
+
+      if (exitCode === 0) {
         const wordBoundaries = parseWordBoundaries(metadataFile);
         try {
           unlinkSync(metadataFile);
@@ -136,13 +157,13 @@ export async function synthesizeWithRetry(
         };
       }
 
+      lastError = `exit code ${exitCode}`;
       console.error(
-        `[voicelayer] edge-tts failed with exit code ${lastExitCode} (attempt ${attempt + 1}/${maxRetries + 1})`,
+        `[voicelayer] edge-tts failed with ${lastError} (attempt ${attempt + 1}/${maxRetries + 1})`,
       );
     } catch (err) {
-      console.error(
-        `[voicelayer] edge-tts spawn error: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      lastError = err instanceof Error ? err.message : String(err);
+      console.error(`[voicelayer] edge-tts spawn error: ${lastError}`);
     }
   }
 
@@ -154,6 +175,6 @@ export async function synthesizeWithRetry(
   return {
     success: false,
     attempts: maxRetries + 1,
-    error: `edge-tts failed after ${maxRetries + 1} attempts (last exit code: ${lastExitCode}). Is edge-tts installed? Run: pip3 install edge-tts`,
+    error: `edge-tts failed after ${maxRetries + 1} attempts (${lastError}). Is edge-tts installed? Run: pip3 install edge-tts`,
   };
 }

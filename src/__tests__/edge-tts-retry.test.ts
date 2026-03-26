@@ -17,10 +17,23 @@ describe("edge-tts health and retry", () => {
   });
 
   it("checkEdgeTTSHealth returns true when edge-tts is installed", async () => {
-    const { checkEdgeTTSHealth } = await import("../tts-health");
-    // Real check — edge-tts should be installed in dev env
+    // @ts-ignore
+    Bun.spawnSync = (cmd: string[]) => {
+      if (Array.isArray(cmd) && cmd[0] === "python3") {
+        return {
+          exitCode: 0,
+          stdout: Buffer.from("ok"),
+          stderr: new Uint8Array(0),
+        };
+      }
+      return originalSpawnSync(cmd);
+    };
+
+    const { checkEdgeTTSHealth, resetHealthCache } =
+      await import("../tts-health");
+    resetHealthCache();
     const result = checkEdgeTTSHealth();
-    expect(typeof result).toBe("boolean");
+    expect(result).toBe(true);
   });
 
   it("checkEdgeTTSHealth returns false when edge-tts is not found", async () => {
@@ -113,7 +126,7 @@ describe("edge-tts health and retry", () => {
     } catch {}
   });
 
-  it("synthesizeWithRetry fails after max retries", async () => {
+  it("synthesizeWithRetry fails after max retries with error context", async () => {
     // @ts-ignore — always fail
     Bun.spawn = () => ({
       exited: Promise.resolve(2),
@@ -132,5 +145,26 @@ describe("edge-tts health and retry", () => {
 
     expect(result.success).toBe(false);
     expect(result.attempts).toBe(2); // 1 original + 1 retry
+    // Error should include the actual exit code, not a misleading message
+    expect(result.error).toContain("exit code 2");
+  });
+
+  it("synthesizeWithRetry preserves spawn errors in failure message", async () => {
+    // @ts-ignore — throw on spawn
+    Bun.spawn = () => {
+      throw new Error("python3 not found");
+    };
+
+    const { synthesizeWithRetry } = await import("../tts-health");
+    const result = await synthesizeWithRetry(
+      "test text",
+      "en-US-JennyNeural",
+      "+0%",
+      `/tmp/voicelayer-retry-test-${process.pid}.mp3`,
+      "src/scripts/edge-tts-words.py",
+    );
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("python3 not found");
   });
 });
