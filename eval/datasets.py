@@ -219,7 +219,6 @@ def load_dataset(
     if not carmit:
         print("[eval] WARNING: Carmit Hebrew voice not available. Skipping synthetic Hebrew samples.")
         print("[eval] Install: System Settings > Accessibility > Spoken Content > Manage Voices > Hebrew")
-        return samples
 
     all_samples = list(HEBREW_SAMPLES)
     if include_english:
@@ -229,6 +228,8 @@ def load_dataset(
         sample_id = entry["id"]
         text = entry["text"]
         lang = entry.get("language", "he")
+        if lang == "he" and not carmit:
+            continue
         voice = "Carmit" if lang == "he" else "Samantha"
         audio_path = os.path.join(output_dir, f"{sample_id}.wav")
 
