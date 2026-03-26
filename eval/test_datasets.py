@@ -44,8 +44,7 @@ class TestHebrewSamples:
 class TestCarmitVoice:
     def test_carmit_detection(self):
         result = get_carmit_voice()
-        if result is not None:
-            assert result == "Carmit"
+        assert result is None or result == "Carmit"
 
 
 class TestSyntheticAudioGeneration:

@@ -53,8 +53,8 @@ def format_per_sample_table(results: list[MetricResult]) -> str:
     ]
 
     for r in results:
-        ref_short = r.reference[:40] + ("..." if len(r.reference) > 40 else "")
-        hyp_short = r.hypothesis[:40] + ("..." if len(r.hypothesis) > 40 else "")
+        ref_short = (r.reference[:40] + ("..." if len(r.reference) > 40 else "")).replace("|", "\\|")
+        hyp_short = (r.hypothesis[:40] + ("..." if len(r.hypothesis) > 40 else "")).replace("|", "\\|")
         lines.append(
             f"| {r.sample_id} | {r.wer:.1%} | {r.cer:.1%} "
             f"| {r.latency_ms:.0f}ms | {ref_short} | {hyp_short} |"
@@ -132,7 +132,7 @@ def generate_baseline_report(
         f"- **Total samples:** {dataset_info.get('total', 0)}",
         f"- **Hebrew samples:** {dataset_info.get('hebrew', 0)}",
         f"- **English samples:** {dataset_info.get('english', 0)}",
-        f"- **Sources:** {', '.join(dataset_info.get('sources', []))}",
+        f"- **Sources:** {', '.join(dataset_info.get('sources') or [])}",
         "",
         "### Source Descriptions",
         "",
@@ -211,7 +211,7 @@ def generate_json_results(
                     "reference": r.reference,
                     "hypothesis": r.hypothesis,
                 }
-                for r in agg.per_sample
+                for r in (agg.per_sample or [])
             ],
         }
         results["backends"].append(backend_data)
