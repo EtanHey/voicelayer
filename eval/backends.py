@@ -73,8 +73,10 @@ class WhisperCppBackend:
         return None
 
     def is_available(self) -> bool:
-        self.binary_path = self._find_binary()
-        self.model_path = self._find_model()
+        if not self.binary_path:
+            self.binary_path = self._find_binary()
+        if not self.model_path:
+            self.model_path = self._find_model()
         return self.binary_path is not None and self.model_path is not None
 
     def transcribe(self, audio_path: str, language: str = "he") -> tuple[str, float]:
