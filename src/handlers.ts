@@ -298,8 +298,9 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     return textResult(response);
   };
 
+  let timer: ReturnType<typeof setTimeout>;
   const timeoutPromise = new Promise<McpResult>((resolve) => {
-    setTimeout(() => {
+    timer = setTimeout(() => {
       console.error(
         `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
       );
@@ -313,7 +314,9 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     }, outerTimeoutMs);
   });
 
-  return Promise.race([converseFlow(), timeoutPromise]);
+  const result = await Promise.race([converseFlow(), timeoutPromise]);
+  clearTimeout(timer!);
+  return result;
 }
 
 export async function handleThink(args: unknown): Promise<McpResult> {
