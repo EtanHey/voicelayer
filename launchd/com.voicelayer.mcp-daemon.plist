@@ -19,6 +19,11 @@
         <key>SuccessfulExit</key>
         <false/>
     </dict>
+    <!-- Restart if the MCP socket disappears (e.g., manual rm, crash cleanup) -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/tmp/voicelayer-mcp.sock</string>
+    </array>
     <key>StandardOutPath</key>
     <string>/tmp/voicelayer-mcp-daemon.stdout.log</string>
     <key>StandardErrorPath</key>
