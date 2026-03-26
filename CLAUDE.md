@@ -21,6 +21,12 @@
 - Keep session booking and ring buffer behavior stable (see `src/session-booking.ts`, `src/paths.ts`).
 - Tests live in `src/__tests__/`; run `bun test`.
 
+## Playwright MCP (browser automation)
+- `.mcp.json` config: `{ "command": "npx", "args": ["@playwright/mcp@latest"] }`
+- Provides `browser_navigate`, `browser_snapshot`, `browser_click`, etc.
+- Hebrew text renders as proper Unicode in the accessibility tree (verified against he.wikipedia.org).
+- Verification tests in `tests/playwright-mcp-verify.test.ts`.
+
 ## MCP Daemon (preferred)
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
 - LaunchAgent: `com.voicelayer.mcp-daemon` (auto-start on login, auto-restart on crash).
