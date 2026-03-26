@@ -186,8 +186,8 @@ export function getToolDefinitions() {
           message: { type: "string", description: "The question to speak" },
           timeout_seconds: {
             type: "number",
-            default: 300,
-            minimum: 10,
+            default: 30,
+            minimum: 5,
             maximum: 3600,
           },
           silence_mode: {
@@ -270,8 +270,8 @@ export function getToolDefinitions() {
           message: { type: "string", description: "The question to speak" },
           timeout_seconds: {
             type: "number",
-            default: 300,
-            minimum: 10,
+            default: 30,
+            minimum: 5,
             maximum: 3600,
           },
           silence_mode: {
