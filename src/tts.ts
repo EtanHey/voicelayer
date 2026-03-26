@@ -36,6 +36,7 @@ import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-client";
 import type { WordBoundary } from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
+import { synthesizeWithRetry } from "./tts-health";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -247,26 +248,6 @@ export function chunkTextForTTS(text: string, maxLen = 400): string[] {
   return chunks.length > 0 ? chunks : [text];
 }
 
-function parseWordBoundaries(metadataFile: string): WordBoundary[] {
-  try {
-    const metaRaw = readFileSync(metadataFile, "utf-8");
-    return metaRaw
-      .trim()
-      .split("\n")
-      .filter((line) => line.length > 0)
-      .map((line) => {
-        const parsed = JSON.parse(line);
-        return {
-          offset_ms: Math.round(parsed.offset / 10000),
-          duration_ms: Math.round(parsed.duration / 10000),
-          text: parsed.text as string,
-        };
-      });
-  } catch {
-    return [];
-  }
-}
-
 function inferBoundaryEndMs(wordBoundaries: WordBoundary[]): number {
   return wordBoundaries.reduce(
     (max, word) => Math.max(max, word.offset_ms + word.duration_ms),
@@ -316,41 +297,26 @@ async function synthesizeEdgeChunk(
   audioFile: string,
   scriptPath: string,
 ): Promise<SynthesizedChunk> {
-  const metadataFile = audioFile.replace(".mp3", ".meta.ndjson");
-  const synth = Bun.spawn([
-    "python3",
-    scriptPath,
-    "--text",
+  const result = await synthesizeWithRetry(
     text,
-    "--voice",
     voice,
-    "--rate",
     rate,
-    "--write-media",
     audioFile,
-    "--write-metadata",
-    metadataFile,
-  ]);
-  const synthExit = await synth.exited;
-  if (synthExit !== 0) {
-    throw new Error(
-      `edge-tts failed with exit code ${synthExit}. Is edge-tts installed? Run: pip3 install edge-tts`,
-    );
-  }
-
-  const wordBoundaries = parseWordBoundaries(metadataFile);
-  const durationMs = Math.max(
-    probeAudioDurationMs(audioFile) ?? 0,
-    inferBoundaryEndMs(wordBoundaries),
+    scriptPath,
   );
 
-  try {
-    unlinkSync(metadataFile);
-  } catch {}
+  if (!result.success) {
+    throw new Error(result.error || "edge-tts synthesis failed after retries");
+  }
+
+  const durationMs = Math.max(
+    probeAudioDurationMs(audioFile) ?? 0,
+    inferBoundaryEndMs(result.wordBoundaries || []),
+  );
 
   return {
     audioFile,
-    wordBoundaries,
+    wordBoundaries: result.wordBoundaries || [],
     durationMs,
   };
 }
