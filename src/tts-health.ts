@@ -51,11 +51,15 @@ export function resolvePython3Path(): string {
   ];
 
   for (const candidate of candidates) {
-    const check = Bun.spawnSync([candidate, "--version"]);
-    if (check.exitCode === 0) {
-      resolvedPython3 = candidate;
-      console.error(`[voicelayer] Resolved python3 at: ${resolvedPython3}`);
-      return resolvedPython3;
+    try {
+      const check = Bun.spawnSync([candidate, "--version"]);
+      if (check.exitCode === 0) {
+        resolvedPython3 = candidate;
+        console.error(`[voicelayer] Resolved python3 at: ${resolvedPython3}`);
+        return resolvedPython3;
+      }
+    } catch {
+      // ENOENT — candidate binary doesn't exist, try next
     }
   }
 

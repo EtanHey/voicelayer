@@ -164,11 +164,12 @@ export function createMcpDaemon(options: McpDaemonOptions): {
         // AIDEV-NOTE: MCP clients via socat sometimes arrive without Content-Length
         // framing, causing protocol detection to classify them as NDJSON.
         // Detect MCP-shaped messages and handle them as MCP requests.
+        // Protocol stays "ndjson" so subsequent messages continue through
+        // this handler (not handleMcpData which expects Content-Length).
         if (msg.jsonrpc === "2.0" && typeof msg.method === "string") {
           console.error(
-            `[mcp-daemon] Reclassifying NDJSON connection as MCP (method: ${msg.method})`,
+            `[mcp-daemon] MCP-over-NDJSON request (method: ${msg.method})`,
           );
-          socket.data.protocol = "mcp";
           handleMcpRequest(
             msg as {
               jsonrpc: string;
@@ -180,15 +181,25 @@ export function createMcpDaemon(options: McpDaemonOptions): {
           )
             .then((response) => {
               if (response) {
-                // Respond in NDJSON format since this client doesn't use
-                // Content-Length framing
                 try {
                   socket.write(JSON.stringify(response) + "\n");
                 } catch {}
               }
             })
             .catch((err) => {
-              console.error(`[mcp-daemon] Reclassified MCP error: ${err}`);
+              console.error(`[mcp-daemon] MCP-over-NDJSON error: ${err}`);
+              try {
+                socket.write(
+                  JSON.stringify({
+                    jsonrpc: "2.0",
+                    id: msg.id ?? null,
+                    error: {
+                      code: -32603,
+                      message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
+                    },
+                  }) + "\n",
+                );
+              } catch {}
             });
           continue;
         }

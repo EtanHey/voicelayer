@@ -365,7 +365,7 @@ describe("mcp-daemon", () => {
     expect(parsed.state).toBe("idle");
   });
 
-  it("reclassifies NDJSON connection as MCP for JSON-RPC messages", async () => {
+  it("handles MCP-over-NDJSON without reclassifying protocol", async () => {
     const { createMcpDaemon } = await import("../mcp-daemon");
     daemon = createMcpDaemon({
       socketPath: TEST_SOCKET,
