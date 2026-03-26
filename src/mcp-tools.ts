@@ -103,9 +103,9 @@ export function getToolDefinitions() {
           timeout_seconds: {
             type: "number",
             description:
-              "Max wait time in seconds. Clamped to 10-3600. Default: 300.",
-            default: 300,
-            minimum: 10,
+              "Max wait time in seconds. Clamped to 5-3600. Default: 30.",
+            default: 30,
+            minimum: 5,
             maximum: 3600,
           },
           silence_mode: {

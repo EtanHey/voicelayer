@@ -237,7 +237,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   }
 
   const timeoutSeconds = Math.min(
-    Math.max(validated.timeout_seconds ?? 300, 10),
+    Math.max(validated.timeout_seconds ?? 30, 5),
     3600,
   );
 
@@ -264,34 +264,59 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   clearInput();
   clearStopSignal();
 
-  // Wait for any currently playing audio to finish
-  await awaitCurrentPlayback();
+  // Outer timeout guard — prevents the entire converse flow from hanging
+  // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
+  const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
+  const converseFlow = async (): Promise<McpResult> => {
+    // Wait for any currently playing audio to finish
+    await awaitCurrentPlayback();
 
-  // Speak the question aloud — BLOCKING for converse
-  const voiceName = validated.voice;
-  await speak(validated.message, {
-    mode: "converse",
-    waitForPlayback: true,
-    voice: voiceName,
+    // Speak the question aloud — BLOCKING for converse
+    const voiceName = validated.voice;
+    await speak(validated.message, {
+      mode: "converse",
+      waitForPlayback: true,
+      voice: voiceName,
+    });
+
+    // Record mic audio, then transcribe with selected STT backend
+    const pressToTalk = validated.press_to_talk ?? false;
+    const response = await waitForInput(
+      timeoutSeconds * 1000,
+      silenceMode,
+      pressToTalk,
+    );
+
+    if (response === null) {
+      return textResult(
+        pressToTalk
+          ? `[converse/PTT] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`
+          : `[converse] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`,
+      );
+    }
+
+    return textResult(response);
+  };
+
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<McpResult>((resolve) => {
+    timer = setTimeout(() => {
+      console.error(
+        `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
+      );
+      resolve(
+        textResult(
+          `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +
+            "The voice pipeline may be stuck. Try again.",
+          true,
+        ),
+      );
+    }, outerTimeoutMs);
   });
 
-  // Record mic audio, then transcribe with selected STT backend
-  const pressToTalk = validated.press_to_talk ?? false;
-  const response = await waitForInput(
-    timeoutSeconds * 1000,
-    silenceMode,
-    pressToTalk,
-  );
-
-  if (response === null) {
-    return textResult(
-      pressToTalk
-        ? `[converse/PTT] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`
-        : `[converse] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`,
-    );
-  }
-
-  return textResult(response);
+  const result = await Promise.race([converseFlow(), timeoutPromise]);
+  clearTimeout(timer!);
+  return result;
 }
 
 export async function handleThink(args: unknown): Promise<McpResult> {
