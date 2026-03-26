@@ -15,7 +15,7 @@
 import { existsSync, readFileSync, unlinkSync } from "fs";
 import { safeWriteFileSync } from "./paths";
 
-const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
+export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
 
 interface PidLockData {
   pid: number;
@@ -73,19 +73,23 @@ export function acquireProcessLock(): AcquireResult {
 
   // Stale process found — try to kill it
   const stalePid = existing.pid;
-  let killedStale = true;
 
   if (stalePid === process.pid) {
     // We already own the lock (shouldn't happen, but handle gracefully)
     return { acquired: true, killedStale: false };
   }
 
+  let killedStale = false;
+
   if (isProcessAlive(stalePid)) {
     try {
       process.kill(stalePid, "SIGTERM");
+      killedStale = true;
       console.error(
-        `[voicelayer] Killed orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
+        `[voicelayer] Sent SIGTERM to orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
       );
+      // Brief wait for the process to die before claiming the lock
+      Bun.sleepSync(200);
     } catch {
       console.error(
         `[voicelayer] Could not kill orphan MCP server (PID ${stalePid}) — claiming lock anyway`,

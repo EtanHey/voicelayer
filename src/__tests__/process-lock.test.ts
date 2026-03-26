@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, writeFileSync, unlinkSync, readFileSync } from "fs";
 
-const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
+import {
+  acquireProcessLock,
+  releaseProcessLock,
+  isProcessAlive,
+  MCP_PID_FILE,
+} from "../process-lock";
 
 function cleanPidFile() {
   if (existsSync(MCP_PID_FILE)) {
@@ -10,12 +15,6 @@ function cleanPidFile() {
     } catch {}
   }
 }
-
-import {
-  acquireProcessLock,
-  releaseProcessLock,
-  isProcessAlive,
-} from "../process-lock";
 
 describe("process lock", () => {
   beforeEach(cleanPidFile);
@@ -33,7 +32,7 @@ describe("process lock", () => {
     expect(typeof data.startedAt).toBe("string");
   });
 
-  it("acquires lock after killing stale process (dead PID)", () => {
+  it("acquires lock after cleaning stale PID file (dead process)", () => {
     // Write a PID file with a definitely-dead PID
     writeFileSync(
       MCP_PID_FILE,
@@ -45,7 +44,8 @@ describe("process lock", () => {
 
     const result = acquireProcessLock();
     expect(result.acquired).toBe(true);
-    expect(result.killedStale).toBe(true);
+    // killedStale is false — the process was already dead, we didn't kill it
+    expect(result.killedStale).toBe(false);
     expect(result.stalePid).toBe(99999999);
 
     const content = readFileSync(MCP_PID_FILE, "utf-8");
@@ -91,10 +91,8 @@ describe("process lock", () => {
     expect(result.acquired).toBe(true);
   });
 
-  it("sends SIGTERM to alive stale process before claiming lock", () => {
-    // We can't easily test killing a real process in unit tests,
-    // but we can verify the lock is acquired when a stale PID is alive
-    // by using PID 1 (init/launchd — always alive, SIGTERM will fail with EPERM)
+  it("attempts SIGTERM on alive stale process before claiming lock", () => {
+    // PID 1 (init/launchd) is always alive but SIGTERM fails with EPERM
     writeFileSync(
       MCP_PID_FILE,
       JSON.stringify({
@@ -106,7 +104,8 @@ describe("process lock", () => {
     const result = acquireProcessLock();
     // Should still acquire — PID 1 can't be killed but we claim the lock anyway
     expect(result.acquired).toBe(true);
-    expect(result.killedStale).toBe(true);
+    // killedStale is false because SIGTERM threw EPERM
+    expect(result.killedStale).toBe(false);
     expect(result.stalePid).toBe(1);
   });
 });

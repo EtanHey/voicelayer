@@ -145,10 +145,12 @@ async function main() {
 process.on("SIGTERM", () => {
   releaseProcessLock();
   disconnectFromBar();
+  process.exit(0);
 });
 process.on("SIGINT", () => {
   releaseProcessLock();
   disconnectFromBar();
+  process.exit(0);
 });
 
 main().catch((err) => {
