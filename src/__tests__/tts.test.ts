@@ -21,7 +21,7 @@ describe("tts module", () => {
     // @ts-ignore — mock Bun.spawn
     Bun.spawn = (cmd: string[], opts?: unknown) => {
       spawnCalls.push({ cmd: [...cmd] });
-      if (Array.isArray(cmd) && cmd[0] === "python3") {
+      if (Array.isArray(cmd) && cmd[0].includes("python3")) {
         const mediaIdx = cmd.indexOf("--write-media");
         if (mediaIdx >= 0 && cmd[mediaIdx + 1]) {
           writeFileSync(cmd[mediaIdx + 1], "fake mp3");
@@ -80,7 +80,8 @@ describe("tts module", () => {
     // On macOS: afplay, on Linux with no players: mpg123 fallback
     const expectedPlayer = platform() === "darwin" ? "afplay" : "mpg123";
     expect(spawnCalls.length).toBe(2);
-    expect(spawnCalls[0].cmd[0]).toBe("python3");
+    // python3 may be resolved to full path (e.g., /Library/Frameworks/.../python3)
+    expect(spawnCalls[0].cmd[0]).toContain("python3");
     // Uses edge-tts-words.py script for word boundary metadata
     expect(
       spawnCalls[0].cmd.some((c: string) => c.includes("edge-tts-words")),
@@ -106,7 +107,9 @@ describe("tts module", () => {
 
     await speak("This is a long sentence. ".repeat(40), { mode: "brief" });
 
-    const synthCalls = spawnCalls.filter((c) => c.cmd[0] === "python3");
+    const synthCalls = spawnCalls.filter((c: { cmd: string[] }) =>
+      c.cmd[0].includes("python3"),
+    );
     expect(synthCalls.length).toBeGreaterThan(1);
     for (const call of synthCalls) {
       const rateIdx = call.cmd.indexOf("--rate");
@@ -145,7 +148,7 @@ describe("tts module", () => {
     await speak("ffprobe is optional");
 
     expect(spawnCalls.length).toBe(2);
-    expect(spawnCalls[0].cmd[0]).toBe("python3");
+    expect(spawnCalls[0].cmd[0]).toContain("python3");
   });
 
   it("speak() skips when TTS is disabled via flag file", async () => {

@@ -86,6 +86,39 @@ describe("edge-tts health and retry", () => {
     expect(callCount).toBe(1);
   });
 
+  it("resolvePython3Path finds python3 via which", async () => {
+    const { resolvePython3Path, getPython3Path } =
+      await import("../tts-health");
+    const path = resolvePython3Path();
+    // On this machine python3 exists
+    expect(path).toContain("python3");
+    expect(path.startsWith("/")).toBe(true);
+    // getPython3Path should return the cached value
+    expect(getPython3Path()).toBe(path);
+  });
+
+  it("resolvePython3Path falls back to known paths when which fails", async () => {
+    const originalSpawnSyncLocal = Bun.spawnSync;
+    // @ts-ignore
+    Bun.spawnSync = (cmd: string[]) => {
+      if (Array.isArray(cmd) && cmd[0] === "which") {
+        return {
+          exitCode: 1,
+          stdout: Buffer.from(""),
+          stderr: new Uint8Array(0),
+        };
+      }
+      return originalSpawnSyncLocal(cmd);
+    };
+
+    const { resolvePython3Path } = await import("../tts-health");
+    const path = resolvePython3Path();
+    // Should still find python3 via fallback candidates
+    expect(path).toContain("python3");
+
+    Bun.spawnSync = originalSpawnSyncLocal;
+  });
+
   it("synthesizeWithRetry retries once on failure then succeeds", async () => {
     let attempts = 0;
     // @ts-ignore — mock Bun.spawn for edge-tts calls

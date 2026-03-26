@@ -17,6 +17,7 @@ import { MCP_SOCKET_PATH } from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon } from "./mcp-daemon";
+import { resolvePython3Path } from "./tts-health";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -54,6 +55,10 @@ const toolDispatch: Record<
 // --- Startup ---
 
 async function main() {
+  // Resolve python3 path early — LaunchAgent PATH may not include it
+  const python3 = resolvePython3Path();
+  console.error(`[voicelayer-daemon] python3: ${python3}`);
+
   try {
     await getBackend();
   } catch (err: unknown) {
