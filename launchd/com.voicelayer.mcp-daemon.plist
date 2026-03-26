@@ -19,7 +19,8 @@
         <key>SuccessfulExit</key>
         <false/>
     </dict>
-    <!-- Restart if the MCP socket disappears (e.g., manual rm, crash cleanup) -->
+    <!-- Restart if the MCP socket disappears (e.g., manual rm, crash cleanup).
+         This path must match MCP_SOCKET_PATH in src/paths.ts. -->
     <key>WatchPaths</key>
     <array>
         <string>/tmp/voicelayer-mcp.sock</string>

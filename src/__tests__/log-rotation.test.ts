@@ -2,13 +2,7 @@
  * Tests for log rotation — rotates at 10MB, keeps one backup.
  */
 import { describe, it, expect, afterEach } from "bun:test";
-import {
-  writeFileSync,
-  existsSync,
-  statSync,
-  readFileSync,
-  unlinkSync,
-} from "fs";
+import { writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import {
   rotateIfNeeded,
   startLogRotation,
@@ -46,7 +40,8 @@ describe("log-rotation", () => {
     writeFileSync(TEST_LOG, content);
     const rotated = rotateIfNeeded(TEST_LOG, 1000);
     expect(rotated).toBe(true);
-    // Original should be moved to .1
+    // Original should be moved to .1 (rename removes original)
+    expect(existsSync(TEST_LOG)).toBe(false);
     expect(existsSync(TEST_LOG_ROTATED)).toBe(true);
     const rotatedContent = readFileSync(TEST_LOG_ROTATED, "utf-8");
     expect(rotatedContent).toBe(content);
