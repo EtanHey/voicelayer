@@ -192,6 +192,10 @@ struct BarView: View {
                     text: state.statusText,
                     wordBoundaries: state.wordBoundaries
                 )
+                .frame(
+                    width: Theme.teleprompterViewportWidth,
+                    height: Theme.teleprompterViewportHeight
+                )
             } else {
                 statusLabel
             }
