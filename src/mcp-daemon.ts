@@ -7,15 +7,27 @@
  * - "{" or "[" → NDJSON client (existing VoiceBar protocol)
  *
  * This replaces N per-session bun MCP processes with one persistent daemon.
+ *
+ * Socket hygiene:
+ * - Orphan socket detection: probes existing socket before removing
+ * - Socket permissions: chmod 600 after creation
+ * - Health ping/pong: {"type":"ping"} → {"type":"pong","uptime_seconds":N,"connections":N}
+ * - Connection tracking: onConnect/onDisconnect for health reporting
  */
 
-import { unlinkSync } from "fs";
+import { unlinkSync, chmodSync, existsSync } from "fs";
 import {
   parseMcpFrames,
   serializeMcpFrame,
   detectProtocol,
 } from "./mcp-framing";
 import { handleMcpRequest, type ToolExecutor } from "./mcp-handler";
+import {
+  onConnect,
+  onDisconnect,
+  isPingRequest,
+  buildPongResponse,
+} from "./daemon-health";
 
 export interface McpDaemonOptions {
   /** Unix socket path to listen on. */
@@ -29,27 +41,86 @@ export interface McpDaemonOptions {
 interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
+  disconnected: boolean;
+}
+
+/**
+ * Check if an existing socket is actively being listened on.
+ * Tries to connect — if connection succeeds, another daemon is alive.
+ * Returns true if socket is live (another instance is running).
+ */
+export async function isSocketLive(socketPath: string): Promise<boolean> {
+  if (!existsSync(socketPath)) return false;
+  try {
+    await Bun.connect({
+      unix: socketPath,
+      socket: {
+        open(s) {
+          s.end();
+        },
+        data() {},
+        close() {},
+        error() {},
+        drain() {},
+      },
+    });
+    // Connection succeeded — another instance is listening
+    return true;
+  } catch {
+    // Connection refused — orphan socket file
+    return false;
+  }
+}
+
+/**
+ * Clean up an orphan socket file after verifying it's stale.
+ * Returns true if a stale socket was removed.
+ */
+export async function cleanOrphanSocket(socketPath: string): Promise<boolean> {
+  if (!existsSync(socketPath)) return false;
+
+  const live = await isSocketLive(socketPath);
+  if (live) return false; // Another instance is running
+
+  try {
+    unlinkSync(socketPath);
+    console.error(`[mcp-daemon] Removed orphan socket: ${socketPath}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Create and start an MCP daemon on a Unix socket.
  * Returns a handle with a stop() method.
+ *
+ * Performs orphan socket cleanup before starting.
+ * Sets socket permissions to 600 (owner only).
+ * Tracks connections for health reporting.
+ * Handles ping/pong health checks on NDJSON connections.
  */
-export function createMcpDaemon(options: McpDaemonOptions): {
+export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
   stop: () => void;
-} {
+}> {
   const { socketPath, toolExecutor, onNdjsonMessage } = options;
 
-  // Clean up stale socket
-  try {
-    unlinkSync(socketPath);
-  } catch {}
+  // Clean up orphan socket (probe before removing)
+  await cleanOrphanSocket(socketPath);
+
+  // If socket still exists after cleanup, another instance is live
+  if (existsSync(socketPath)) {
+    throw new Error(
+      `Another MCP daemon instance is already listening on ${socketPath}`,
+    );
+  }
 
   const server = Bun.listen<ClientState>({
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { protocol: "unknown", buffer: "" };
+        socket.data = { protocol: "unknown", buffer: "", disconnected: false };
+        onConnect();
       },
 
       data(socket, raw) {
@@ -71,11 +142,30 @@ export function createMcpDaemon(options: McpDaemonOptions): {
         }
       },
 
-      close() {},
-      error() {},
+      close(socket) {
+        if (!socket.data.disconnected) {
+          socket.data.disconnected = true;
+          onDisconnect();
+        }
+      },
+      error(socket) {
+        if (!socket.data.disconnected) {
+          socket.data.disconnected = true;
+          onDisconnect();
+        }
+      },
       drain() {},
     },
   });
+
+  // Set socket permissions to owner-only (chmod 600)
+  try {
+    chmodSync(socketPath, 0o600);
+  } catch (err) {
+    console.error(
+      `[mcp-daemon] Warning: could not set socket permissions: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   function handleMcpData(socket: {
     data: ClientState;
@@ -160,6 +250,15 @@ export function createMcpDaemon(options: McpDaemonOptions): {
       if (!line.trim()) continue;
       try {
         const msg = JSON.parse(line);
+
+        // Health check: ping → pong
+        if (isPingRequest(msg)) {
+          const pong = buildPongResponse();
+          try {
+            socket.write(JSON.stringify(pong) + "\n");
+          } catch {}
+          continue;
+        }
 
         // AIDEV-NOTE: MCP clients via socat sometimes arrive without Content-Length
         // framing, causing protocol detection to classify them as NDJSON.
