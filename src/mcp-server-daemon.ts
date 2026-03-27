@@ -5,6 +5,14 @@
  * Listens on /tmp/voicelayer-mcp.sock for MCP clients (via socat).
  * Connects to Voice Bar on /tmp/voicelayer.sock for UI state.
  *
+ * Resilience features:
+ * - Orphan socket detection (probe before remove)
+ * - Startup validation (refuse if another instance holds socket)
+ * - Socket permissions (chmod 600)
+ * - Health ping/pong endpoint
+ * - Log rotation at 10MB
+ * - Graceful shutdown (SIGTERM → flush, close, remove socket, release PID lock)
+ *
  * Usage:
  *   bun src/mcp-server-daemon.ts
  *
@@ -16,8 +24,10 @@ import { getBackend } from "./stt";
 import { MCP_SOCKET_PATH } from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
-import { createMcpDaemon } from "./mcp-daemon";
+import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
 import { resolvePython3Path } from "./tts-health";
+import { acquireProcessLock, releaseProcessLock } from "./process-lock";
+import { startLogRotation, stopLogRotation } from "./log-rotation";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -55,6 +65,39 @@ const toolDispatch: Record<
 // --- Startup ---
 
 async function main() {
+  // Acquire process lock (kills orphans)
+  const lockResult = acquireProcessLock();
+  if (lockResult.killedStale) {
+    console.error(
+      `[voicelayer-daemon] Killed orphan MCP server (PID ${lockResult.stalePid})`,
+    );
+  }
+
+  // Startup validation: refuse if another instance is actively listening.
+  // Retry with backoff — the old process may still be tearing down after SIGTERM.
+  let socketStillLive = false;
+  for (const delayMs of [0, 200, 500]) {
+    if (delayMs > 0) await Bun.sleep(delayMs);
+    if (!(await isSocketLive(MCP_SOCKET_PATH))) {
+      socketStillLive = false;
+      break;
+    }
+    socketStillLive = true;
+  }
+  if (socketStillLive) {
+    console.error(
+      `[voicelayer-daemon] FATAL: Another daemon is already listening on ${MCP_SOCKET_PATH}`,
+    );
+    console.error(
+      `[voicelayer-daemon] If this is stale, remove the socket: rm ${MCP_SOCKET_PATH}`,
+    );
+    releaseProcessLock();
+    process.exit(1);
+  }
+
+  // Start log rotation (10MB threshold, 60s interval)
+  startLogRotation();
+
   // Resolve python3 path early — LaunchAgent PATH may not include it
   const python3 = resolvePython3Path();
   console.error(`[voicelayer-daemon] python3: ${python3}`);
@@ -74,8 +117,8 @@ async function main() {
   onCommand(handleSocketCommand);
   connectToBar();
 
-  // Start MCP daemon
-  const daemon = createMcpDaemon({
+  // Start MCP daemon (includes orphan socket cleanup and chmod 600)
+  const daemon = await createMcpDaemon({
     socketPath: MCP_SOCKET_PATH,
     toolExecutor: {
       executeTool: async (name, args) => {
@@ -103,11 +146,14 @@ async function main() {
     `[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:${MCP_SOCKET_PATH}`,
   );
 
-  // Graceful shutdown
+  // Graceful shutdown: flush, close, remove socket, release PID lock
   const shutdown = () => {
     console.error("[voicelayer-daemon] Shutting down...");
+    stopLogRotation();
     daemon.stop();
     disconnectFromBar();
+    releaseProcessLock();
+    console.error("[voicelayer-daemon] Shutdown complete.");
     process.exit(0);
   };
 
@@ -117,6 +163,8 @@ async function main() {
 
 main().catch((err) => {
   console.error("[voicelayer-daemon] Fatal:", err);
+  stopLogRotation();
   disconnectFromBar();
+  releaseProcessLock();
   process.exit(1);
 });
