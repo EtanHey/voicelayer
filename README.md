@@ -4,7 +4,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-332%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-359%20passing-brightgreen.svg)](#testing)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Bun-black.svg)](https://bun.sh)
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange.svg)](https://developer.apple.com/swiftui/)
 
@@ -179,10 +179,10 @@ voicelayer daemon --port 8880      # Run Qwen3-TTS server
 ## Testing
 
 ```bash
-bun test   # 332 tests, 1178 assertions, 33 test files
+bun test   # 359 tests, 1241 assertions, 36 test files
 ```
 
-Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, and schema validation.
+Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, schema validation, Hebrew STT eval baselines, and daemon resilience.
 
 ## Project Structure
 
@@ -204,7 +204,7 @@ voicelayer/
 │   ├── socket-client.ts          # Voice Bar IPC (auto-reconnect)
 │   ├── session-booking.ts        # Lockfile mutex
 │   ├── paths.ts                  # Centralized path constants
-│   └── __tests__/                # 332 tests across 33 files
+│   └── __tests__/                # 359 tests across 36 files
 ├── flow-bar/                     # SwiftUI macOS app (1.9K lines, 9 files)
 │   ├── Sources/VoiceBar/         # App source
 │   └── Tests/                    # Swift tests
