@@ -1,0 +1,25 @@
+# .claude.local.md — Machine-Specific Config
+# Copy to .claude.local.md and customize for your machine.
+# This file is gitignored — safe for local paths, ports, and overrides.
+
+## Local Paths
+# - Repo: /Users/YOURUSERNAME/Gits/voicelayer
+# - VoiceBar app: /Users/YOURUSERNAME/Applications/VoiceBar.app
+# - MCP binary: /Users/YOURUSERNAME/.bun/bin/voicelayer-mcp
+
+## Daemon Sockets
+# - VoiceLayer MCP: /tmp/voicelayer-mcp.sock
+# - VoiceBar: /tmp/voicelayer.sock
+
+## Swift Build
+# - Build dir: flow-bar/.build/
+# - Xcode: /Applications/Xcode.app (or Xcode-beta.app)
+
+## Audio Config
+# - TTS engine: edge-tts (default)
+# - STT model: whisper-cli (local)
+# - whisper-cli path: /Users/YOURUSERNAME/.local/bin/whisper-cli
+
+## Dev Flags
+# - debug_audio: false
+# - mock_tts: false
