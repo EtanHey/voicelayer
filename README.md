@@ -1,5 +1,7 @@
 # VoiceLayer
 
+[![SafeSkill 59/100](https://img.shields.io/badge/SafeSkill-59%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/etanhey-voicelayer)
+
 > Singleton MCP daemon that adds voice I/O to AI coding assistants. One process serves every session — no orphans, no contention, no hangs.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
