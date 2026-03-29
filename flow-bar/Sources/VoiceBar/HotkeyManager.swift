@@ -125,6 +125,7 @@ func hotkeyAction(
         guard type == .flagsChanged else {
             return .ignore
         }
+        // flagsChanged events don't have autorepeat — they fire once per modifier state change
         return flags.contains(.maskCommand) ? .keyDown : .keyUp
     }
 
@@ -309,8 +310,13 @@ final class HotkeyManager {
 
     /// Reconfigure for different keycodes or event modes.
     func configure(keycodes: Set<Int64>, useModifierMode: Bool) {
+        guard !keycodes.isEmpty else {
+            NSLog("[HotkeyManager] configure() called with empty keycodes — ignoring")
+            return
+        }
         let wasRunning = eventTap != nil
         if wasRunning { stop() }
+        gesture.reset()
         targetKeycodes = keycodes
         self.useModifierMode = useModifierMode
         if wasRunning { _ = start() }
