@@ -313,7 +313,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
         `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
       );
       // P0-2: broadcast idle so VoiceBar doesn't get stuck
-      broadcast({ type: "state", state: "idle" });
+      broadcast({ type: "state", state: "idle", source: "recording" });
       resolve(
         textResult(
           `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +

@@ -528,7 +528,7 @@ export function playAudioNonBlocking(
 
       await proc.exited;
 
-      queueSize--;
+      queueSize = Math.max(0, queueSize - 1);
       if (currentPlayback?.pid === proc.pid) {
         currentPlayback = null;
         // Only broadcast idle when queue is fully drained AND this wasn't
@@ -540,7 +540,10 @@ export function playAudioNonBlocking(
       resolveExited!();
     })
     .catch(() => {
-      queueSize--;
+      queueSize = Math.max(0, queueSize - 1);
+      if (currentPlayback) {
+        currentPlayback = null;
+      }
       // Error path: always try to broadcast idle if queue is empty
       if (queueSize === 0) {
         broadcast({ type: "state", state: "idle", source: "playback" });
@@ -558,7 +561,12 @@ export function playAudioNonBlocking(
  * process, which returned immediately if the queue hadn't started processing.
  */
 export async function awaitCurrentPlayback(): Promise<void> {
-  await playbackQueue;
+  try {
+    await playbackQueue;
+  } catch {
+    // Queue errors are already logged/broadcast by playAudioNonBlocking
+    // Swallow here so voice_ask can proceed to recording
+  }
 }
 
 /** Stop current playback if any. */
@@ -567,10 +575,15 @@ export function stopPlayback(): boolean {
     try {
       currentPlayback.proc.kill("SIGTERM");
       currentPlayback = null;
+      // Reset queue to prevent queued items from playing after stop
+      playbackQueue = Promise.resolve();
+      queueSize = 0;
       broadcast({ type: "state", state: "idle", source: "playback" });
       return true;
     } catch {
       currentPlayback = null;
+      playbackQueue = Promise.resolve();
+      queueSize = 0;
     }
   }
   return false;
