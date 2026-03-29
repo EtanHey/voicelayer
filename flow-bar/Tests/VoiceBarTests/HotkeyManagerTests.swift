@@ -58,7 +58,6 @@ final class HotkeyManagerTests: XCTestCase {
             .keyUp
         )
     }
-
     func testModifierModeIgnoresNonTargetKeycodes() {
         XCTAssertEqual(
             hotkeyAction(
