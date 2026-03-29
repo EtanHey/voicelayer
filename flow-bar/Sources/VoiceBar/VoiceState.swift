@@ -61,6 +61,10 @@ final class VoiceState {
     var queueDepth: Int = 0
     var queueItems: [QueueItemState] = []
 
+    /// Global hotkey availability and live gesture hint state.
+    var hotkeyEnabled: Bool = false
+    var hotkeyPhase: HotkeyPhase = .idle
+
     /// Whether the pill is collapsed (idle for too long).
     var isCollapsed: Bool = false
 
@@ -179,12 +183,14 @@ final class VoiceState {
                     queueDepth = 0
                     queueItems = []
                 }
+                hotkeyPhase = .idle
                 onModeChange?(.idle)
                 startCollapseTimer()
             case "speaking":
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
+                hotkeyPhase = .idle
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
@@ -198,6 +204,7 @@ final class VoiceState {
             case "transcribing":
                 mode = .transcribing
                 statusText = ""
+                hotkeyPhase = .idle
                 onModeChange?(.transcribing)
                 expandFromCollapse()
             default:
@@ -309,6 +316,20 @@ final class VoiceState {
         }
         if !hovering, mode == .idle {
             startCollapseTimer()
+        }
+    }
+
+    func setHotkeyEnabled(_ enabled: Bool) {
+        hotkeyEnabled = enabled
+        if !enabled {
+            hotkeyPhase = .idle
+        }
+    }
+
+    func setHotkeyPhase(_ phase: HotkeyPhase) {
+        hotkeyPhase = hotkeyEnabled ? phase : .idle
+        if hotkeyPhase != .idle {
+            expandFromCollapse()
         }
     }
 
