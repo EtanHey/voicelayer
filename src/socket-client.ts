@@ -140,8 +140,10 @@ function startConnection(): void {
                   if (!response || !connection || !connected) return;
                   try {
                     connection.write(JSON.stringify(response) + "\n");
-                  } catch {
-                    // Connection may have died between handler completion and write
+                  } catch (err) {
+                    console.error(
+                      `[socket-client] Failed to write response: ${err instanceof Error ? err.message : String(err)}`,
+                    );
                   }
                 })
                 .catch((error) => {

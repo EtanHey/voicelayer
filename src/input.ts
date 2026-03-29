@@ -416,6 +416,9 @@ export async function recordToBuffer(
  * Wait for user voice input via mic recording + STT transcription.
  * Returns the transcribed text, or null on timeout / no speech.
  *
+ * THREAD-SAFETY: Callers must ensure only one recording is active at a time.
+ * Use session booking (isVoiceBooked) before calling this function.
+ *
  * @param timeoutMs - Max wait time in milliseconds
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
  * @param pressToTalk - If true, use PTT mode (no VAD, stop on signal only)
@@ -425,6 +428,12 @@ export async function waitForInput(
   silenceMode: SilenceMode = "standard",
   pressToTalk: boolean = false,
 ): Promise<string | null> {
+  if (recordingState !== "idle") {
+    throw new Error(
+      `Recording already in progress (state: ${recordingState})`,
+    );
+  }
+
   // Record audio to buffer
   let pcmData: Uint8Array | null;
   try {

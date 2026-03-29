@@ -89,13 +89,18 @@ async function main() {
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+
+  return shutdown;
 }
 
 if (import.meta.main) {
-  main().catch((err) => {
-    console.error(`${LOG_PREFIX} Fatal:`, err);
-    disconnectFromBar();
-    releaseProcessLock(DAEMON_PID_FILE);
-    process.exit(1);
-  });
+  main()
+    .then((shutdown) => {
+      // Keep process alive until signal
+    })
+    .catch((err) => {
+      console.error(`${LOG_PREFIX} Fatal:`, err);
+      const shutdown = createShutdownHandler();
+      shutdown();
+    });
 }
