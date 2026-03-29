@@ -219,7 +219,8 @@ final class VoiceState {
             }
 
         case "queue":
-            if let depth = event["depth"] as? Int {
+            // JSONSerialization may decode numbers as Int or Double
+            if let depth = (event["depth"] as? Int) ?? (event["depth"] as? Double).map({ Int($0) }) {
                 queueDepth = max(0, depth)
             }
 
