@@ -41,10 +41,10 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /** Read and parse the PID file. Returns null if missing, corrupt, or invalid. */
-function readPidFile(): PidLockData | null {
+function readPidFile(pidPath: string = MCP_PID_FILE): PidLockData | null {
   try {
-    if (!existsSync(MCP_PID_FILE)) return null;
-    const content = readFileSync(MCP_PID_FILE, "utf-8").trim();
+    if (!existsSync(pidPath)) return null;
+    const content = readFileSync(pidPath, "utf-8").trim();
     if (!content) return null;
     const data = JSON.parse(content);
     if (!data || typeof data.pid !== "number") return null;
@@ -55,19 +55,24 @@ function readPidFile(): PidLockData | null {
 }
 
 /**
- * Acquire the MCP process lock.
+ * Acquire a process lock.
  *
  * 1. If no PID file exists → claim it
  * 2. If PID file exists with dead process → claim it
  * 3. If PID file exists with alive process → SIGTERM it, wait briefly, claim it
  *
  * Always succeeds — we're the new owner regardless.
+ *
+ * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
+ *   Use DAEMON_PID_FILE from paths.ts for the standalone daemon.
  */
-export function acquireProcessLock(): AcquireResult {
-  const existing = readPidFile();
+export function acquireProcessLock(
+  pidPath: string = MCP_PID_FILE,
+): AcquireResult {
+  const existing = readPidFile(pidPath);
 
   if (!existing) {
-    writePidFile();
+    writePidFile(pidPath);
     return { acquired: true, killedStale: false };
   }
 
@@ -86,13 +91,13 @@ export function acquireProcessLock(): AcquireResult {
       process.kill(stalePid, "SIGTERM");
       killedStale = true;
       console.error(
-        `[voicelayer] Sent SIGTERM to orphan MCP server (PID ${stalePid}) — was started at ${existing.startedAt}`,
+        `[voicelayer] Sent SIGTERM to orphan process (PID ${stalePid}) — was started at ${existing.startedAt}`,
       );
       // Brief wait for the process to die before claiming the lock
       Bun.sleepSync(200);
     } catch {
       console.error(
-        `[voicelayer] Could not kill orphan MCP server (PID ${stalePid}) — claiming lock anyway`,
+        `[voicelayer] Could not kill orphan process (PID ${stalePid}) — claiming lock anyway`,
       );
     }
   } else {
@@ -101,27 +106,31 @@ export function acquireProcessLock(): AcquireResult {
     );
   }
 
-  writePidFile();
+  writePidFile(pidPath);
   return { acquired: true, killedStale, stalePid };
 }
 
 /** Write our PID to the lockfile. */
-function writePidFile(): void {
+function writePidFile(pidPath: string = MCP_PID_FILE): void {
   const data: PidLockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
   };
-  safeWriteFileSync(MCP_PID_FILE, JSON.stringify(data));
+  safeWriteFileSync(pidPath, JSON.stringify(data));
 }
 
-/** Release the lock by removing the PID file. Only removes if we own it. */
-export function releaseProcessLock(): void {
+/**
+ * Release the lock by removing the PID file. Only removes if we own it.
+ *
+ * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
+ */
+export function releaseProcessLock(pidPath: string = MCP_PID_FILE): void {
   try {
-    const existing = readPidFile();
+    const existing = readPidFile(pidPath);
     // Only remove if we own it (or it's corrupt/missing)
     if (existing && existing.pid !== process.pid) return;
-    if (existsSync(MCP_PID_FILE)) {
-      unlinkSync(MCP_PID_FILE);
+    if (existsSync(pidPath)) {
+      unlinkSync(pidPath);
     }
   } catch {
     // Best-effort cleanup
