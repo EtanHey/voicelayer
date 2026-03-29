@@ -102,6 +102,8 @@ private final class TapContext {
     let gesture: GestureStateMachine
     let targetKeycodes: Set<Int64>
     let useModifierMode: Bool
+    /// CFMachPort reference for re-enabling the tap after system disables it.
+    var tap: CFMachPort?
 
     init(gesture: GestureStateMachine, keycodes: Set<Int64>, modifierMode: Bool) {
         self.gesture = gesture
@@ -120,15 +122,19 @@ private func hotkeyCallback(
     event: CGEvent,
     userInfo: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    // Re-enable tap if system disabled it
-    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-        return Unmanaged.passUnretained(event)
-    }
-
     guard let userInfo else {
         return Unmanaged.passUnretained(event)
     }
     let ctx = Unmanaged<TapContext>.fromOpaque(userInfo).takeUnretainedValue()
+
+    // Re-enable tap if system disabled it (e.g., after timeout or secure input)
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let tap = ctx.tap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+            NSLog("[HotkeyManager] Re-enabled event tap after system disable")
+        }
+        return Unmanaged.passUnretained(event)
+    }
 
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
@@ -241,6 +247,7 @@ final class HotkeyManager {
         }
 
         eventTap = tap
+        ctx.tap = tap // Store tap reference so callback can re-enable it
 
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)!
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
