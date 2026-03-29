@@ -25,6 +25,7 @@ import {
 } from "./paths";
 import type { SilenceMode } from "./vad";
 import { ensureVoiceBarRunning } from "./voice-bar-launcher";
+import { broadcast, isConnected } from "./socket-client";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
@@ -264,11 +265,18 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   clearInput();
   clearStopSignal();
 
+  // AIDEV-NOTE: P0-2 — warn if VoiceBar is disconnected (non-blocking)
+  if (!isConnected()) {
+    console.error(
+      "[voicelayer] Warning: VoiceBar not connected — user won't see visual feedback",
+    );
+  }
+
   // Outer timeout guard — prevents the entire converse flow from hanging
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
   const converseFlow = async (): Promise<McpResult> => {
-    // Wait for any currently playing audio to finish
+    // Wait for all queued playback to finish (P0-2: awaits full queue)
     await awaitCurrentPlayback();
 
     // Speak the question aloud — BLOCKING for converse
@@ -304,6 +312,8 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       console.error(
         `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
       );
+      // P0-2: broadcast idle so VoiceBar doesn't get stuck
+      broadcast({ type: "state", state: "idle" });
       resolve(
         textResult(
           `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +
@@ -314,9 +324,18 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     }, outerTimeoutMs);
   });
 
-  const result = await Promise.race([converseFlow(), timeoutPromise]);
-  clearTimeout(timer!);
-  return result;
+  // P0-2: catch errors from speak()/waitForInput() — return clean error, broadcast idle
+  try {
+    const result = await Promise.race([converseFlow(), timeoutPromise]);
+    clearTimeout(timer!);
+    return result;
+  } catch (err) {
+    clearTimeout(timer!);
+    broadcast({ type: "state", state: "idle" });
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[voicelayer] voice_ask error: ${message}`);
+    return textResult(`[converse] Error: ${message}`, true);
+  }
 }
 
 export async function handleThink(args: unknown): Promise<McpResult> {

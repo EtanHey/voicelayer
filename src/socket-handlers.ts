@@ -45,13 +45,12 @@ export function handleSocketCommand(command: SocketCommand): void {
     case "replay": {
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
+        // Idle forces VoiceBar remount for same-text replay
         broadcast({ type: "state", state: "idle" });
-        broadcast({
-          type: "state",
-          state: "speaking",
+        playAudioNonBlocking(entry.file, {
           text: entry.text.slice(0, 2000),
+          voice: entry.voice,
         });
-        playAudioNonBlocking(entry.file);
       }
       break;
     }
