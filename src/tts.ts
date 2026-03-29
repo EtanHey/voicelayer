@@ -34,7 +34,11 @@ import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-client";
-import type { WordBoundary } from "./socket-protocol";
+import type {
+  PlaybackPriority,
+  QueueItemSnapshot,
+  WordBoundary,
+} from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 
@@ -448,10 +452,12 @@ async function playClonedAudio(
   options?: { mode?: string; waitForPlayback?: boolean },
 ): Promise<void> {
   addToHistory(text, ttsFile, voiceLabel);
+  const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
   const proc = playAudioNonBlocking(ttsFile, {
     text: speakingText,
     voice: resolvedVoice,
     priority: playbackPriorityForMode(options?.mode),
+    durationMs,
   });
   proc.exited.then(() => {
     try {
@@ -471,19 +477,13 @@ async function playClonedAudio(
  * 3. Critical items barge in: kill current playback and discard stale pending speech.
  * 4. Low/background chatter collapses so bursts do not create an audio backlog.
  */
-type PlaybackPriority =
-  | "critical"
-  | "high"
-  | "normal"
-  | "low"
-  | "background";
-
 /** Metadata for deferred broadcasting — fires when playback actually starts. */
 export interface PlaybackMetadata {
   text: string;
   voice: string;
   wordBoundaries?: WordBoundary[];
   priority?: PlaybackPriority;
+  durationMs?: number;
 }
 
 interface PlaybackJob {
@@ -545,9 +545,15 @@ function completeJob(job: PlaybackJob) {
 
 class PlaybackQueueManager {
   private pending: PlaybackJob[] = [];
-  private current: { job: PlaybackJob; proc: ReturnType<typeof Bun.spawn> } | null =
-    null;
+  private current:
+    | {
+        job: PlaybackJob;
+        proc: ReturnType<typeof Bun.spawn>;
+        startedAt: number;
+      }
+    | null = null;
   private drainWaiters = new Set<() => void>();
+  private progressTimer: ReturnType<typeof setInterval> | null = null;
 
   enqueue(audioFile: string, metadata?: PlaybackMetadata): { exited: Promise<void> } {
     const priority = metadata?.priority ?? "normal";
@@ -575,7 +581,7 @@ class PlaybackQueueManager {
     this.evictExpired();
     this.collapseBurstyLowPriority(job);
     this.insert(job);
-    this.emitQueueDepth();
+    this.emitQueueSnapshot();
     this.processNext();
     return { exited };
   }
@@ -604,8 +610,9 @@ class PlaybackQueueManager {
     }
 
     if (hadActivity) {
+      this.stopProgressTimer();
       broadcast({ type: "state", state: "idle", source: "playback" });
-      this.emitQueueDepth();
+      this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
 
@@ -644,15 +651,16 @@ class PlaybackQueueManager {
         if (this.depth() === 0) {
           broadcast({ type: "state", state: "idle", source: "playback" });
         }
-        this.emitQueueDepth();
+        this.emitQueueSnapshot();
         completeJob(next);
         this.resolveIfIdle();
         this.processNext();
         return;
       }
 
-      this.current = { job: next, proc };
-      this.emitQueueDepth();
+      this.current = { job: next, proc, startedAt: Date.now() };
+      this.startProgressTimer();
+      this.emitQueueSnapshot();
 
       proc.exited
         .then(() => {
@@ -665,18 +673,19 @@ class PlaybackQueueManager {
     }
 
     if (this.depth() === 0) {
-      this.emitQueueDepth();
+      this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
   }
 
   private finish(job: PlaybackJob, pid: number) {
     if (this.current?.proc.pid === pid) {
+      this.stopProgressTimer();
       this.current = null;
       if (this.depth() === 0) {
         broadcast({ type: "state", state: "idle", source: "playback" });
       }
-      this.emitQueueDepth();
+      this.emitQueueSnapshot();
       this.resolveIfIdle();
       this.processNext();
     }
@@ -702,7 +711,8 @@ class PlaybackQueueManager {
     }
 
     this.pending = [job];
-    this.emitQueueDepth();
+    this.stopProgressTimer();
+    this.emitQueueSnapshot();
     this.processNext();
   }
 
@@ -731,8 +741,30 @@ class PlaybackQueueManager {
     }
   }
 
-  private emitQueueDepth() {
-    broadcast({ type: "queue", depth: this.depth() });
+  private emitQueueSnapshot() {
+    const items: QueueItemSnapshot[] = [];
+
+    if (this.current) {
+      items.push({
+        text: this.current.job.metadata?.text ?? "",
+        voice: this.current.job.metadata?.voice ?? "",
+        priority: this.current.job.priority,
+        is_current: true,
+        progress: this.currentProgress(),
+      });
+    }
+
+    for (const job of this.pending) {
+      items.push({
+        text: job.metadata?.text ?? "",
+        voice: job.metadata?.voice ?? "",
+        priority: job.priority,
+        is_current: false,
+        progress: 0,
+      });
+    }
+
+    broadcast({ type: "queue", depth: this.depth(), items });
   }
 
   private evictExpired() {
@@ -756,6 +788,30 @@ class PlaybackQueueManager {
 
   private depth() {
     return this.pending.length + (this.current ? 1 : 0);
+  }
+
+  private startProgressTimer() {
+    this.stopProgressTimer();
+    this.progressTimer = setInterval(() => {
+      if (!this.current) return;
+      if ((this.current.job.metadata?.durationMs ?? 0) <= 0) return;
+      this.emitQueueSnapshot();
+    }, 100);
+  }
+
+  private stopProgressTimer() {
+    if (!this.progressTimer) return;
+    clearInterval(this.progressTimer);
+    this.progressTimer = null;
+  }
+
+  private currentProgress(): number {
+    const current = this.current;
+    if (!current) return 0;
+    const durationMs = current.job.metadata?.durationMs ?? 0;
+    if (durationMs <= 0) return 0;
+    const elapsedMs = Date.now() - current.startedAt;
+    return Math.max(0, Math.min(1, elapsedMs / durationMs));
   }
 }
 
@@ -1022,6 +1078,8 @@ async function speakWithEdgeTTS(
     voice,
     wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
     priority: playbackPriorityForMode(options?.mode),
+    durationMs:
+      wordBoundaries.length > 0 ? inferBoundaryEndMs(wordBoundaries) : undefined,
   });
   proc.exited.then(() => {
     try {

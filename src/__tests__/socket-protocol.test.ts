@@ -112,6 +112,45 @@ describe("socket-protocol", () => {
         expect(serializeEvent(event)).toEndWith("\n");
       }
     });
+
+    it("serializes queue snapshot with ordered items and progress", () => {
+      const event: SocketEvent = {
+        type: "queue",
+        depth: 2,
+        items: [
+          {
+            text: "Current item",
+            voice: "jenny",
+            priority: "normal",
+            is_current: true,
+            progress: 0.42,
+          },
+          {
+            text: "Queued next",
+            voice: "jenny",
+            priority: "high",
+            is_current: false,
+            progress: 0,
+          },
+        ],
+      };
+
+      const result = serializeEvent(event);
+      const parsed = JSON.parse(result.trim());
+      expect(parsed.type).toBe("queue");
+      expect(parsed.depth).toBe(2);
+      expect(parsed.items).toHaveLength(2);
+      expect(parsed.items[0]).toMatchObject({
+        text: "Current item",
+        is_current: true,
+        progress: 0.42,
+      });
+      expect(parsed.items[1]).toMatchObject({
+        text: "Queued next",
+        is_current: false,
+        progress: 0,
+      });
+    });
   });
 
   describe("parseCommand", () => {
