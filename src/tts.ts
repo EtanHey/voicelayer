@@ -445,7 +445,7 @@ async function playClonedAudio(
   voiceLabel: string,
   speakingText: string,
   resolvedVoice: string,
-  options?: { waitForPlayback?: boolean },
+  options?: { mode?: string; waitForPlayback?: boolean },
 ): Promise<void> {
   addToHistory(text, ttsFile, voiceLabel);
   const proc = playAudioNonBlocking(ttsFile, {
