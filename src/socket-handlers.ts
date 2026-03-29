@@ -17,9 +17,14 @@ import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
 import { waitForInput } from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-client";
-import type { SocketCommand } from "./socket-protocol";
+import type { HealthResponse, SocketCommand } from "./socket-protocol";
+import { buildHealthResponse } from "./daemon-health";
+import { getPlaybackQueueDepth } from "./tts";
+import { getRecordingState } from "./input";
 
-export function handleSocketCommand(command: SocketCommand): void {
+export function handleSocketCommand(
+  command: SocketCommand,
+): HealthResponse | void {
   switch (command.cmd) {
     case "stop":
       safeWriteFileSync(
@@ -115,5 +120,10 @@ export function handleSocketCommand(command: SocketCommand): void {
       }
       break;
     }
+    case "health":
+      return buildHealthResponse({
+        queueDepth: getPlaybackQueueDepth(),
+        recordingState: getRecordingState(),
+      });
   }
 }

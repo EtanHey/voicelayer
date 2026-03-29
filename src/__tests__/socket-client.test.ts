@@ -169,6 +169,34 @@ describe("socket-client", () => {
     expect(isConnected()).toBe(true);
   });
 
+  it("restores command and broadcast flow after reconnect", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+
+    const { connectToBar, onCommand, broadcast, isConnected } =
+      await import("../socket-client");
+    const commands: SocketCommand[] = [];
+    onCommand((cmd) => commands.push(cmd));
+
+    connectToBar(TEST_SOCKET);
+    await Bun.sleep(200);
+    expect(isConnected()).toBe(true);
+
+    mockServer.stop();
+    await Bun.sleep(300);
+    expect(isConnected()).toBe(false);
+
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+    await Bun.sleep(1500);
+    expect(isConnected()).toBe(true);
+
+    broadcast({ type: "state", state: "idle" });
+    mockServer.sendToAll('{"cmd":"health"}\n');
+    await Bun.sleep(100);
+
+    expect(mockServer.received).toContain('{"type":"state","state":"idle"}');
+    expect(commands.at(-1)).toEqual({ cmd: "health" });
+  });
+
   it("broadcast is no-op when disconnected", async () => {
     const { broadcast } = await import("../socket-client");
     // No server running, not connected — should not throw
