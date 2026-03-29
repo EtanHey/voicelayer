@@ -13,7 +13,7 @@ import {
   STOP_FILE,
   safeWriteFileSync,
 } from "./paths";
-import { getHistoryEntry, playAudioNonBlocking } from "./tts";
+import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
 import { waitForInput } from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-client";
@@ -26,9 +26,9 @@ export function handleSocketCommand(command: SocketCommand): void {
         STOP_FILE,
         `stop from voice-bar at ${new Date().toISOString()}`,
       );
-      try {
-        Bun.spawnSync(["pkill", "-f", "afplay"]);
-      } catch {}
+      // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
+      // playbackQueue and queueSize. Otherwise queued items resume after kill.
+      stopPlayback();
       break;
     case "cancel":
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
@@ -38,9 +38,9 @@ export function handleSocketCommand(command: SocketCommand): void {
         STOP_FILE,
         `cancel from voice-bar at ${new Date().toISOString()}`,
       );
-      try {
-        Bun.spawnSync(["pkill", "-f", "afplay"]);
-      } catch {}
+      // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
+      // playbackQueue and queueSize. Otherwise queued items resume after kill.
+      stopPlayback();
       break;
     case "replay": {
       const entry = getHistoryEntry(0);
