@@ -391,8 +391,11 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
     );
   }
 
-  // Play audio non-blocking
-  playAudioNonBlocking(entry.file);
+  // Play audio non-blocking — pass metadata for queue-aware broadcasting
+  playAudioNonBlocking(entry.file, {
+    text: entry.text.slice(0, 2000),
+    voice: entry.voice,
+  });
 
   return textResult(`[replay] Playing (index ${index}): "${entry.text}"`);
 }

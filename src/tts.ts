@@ -556,9 +556,12 @@ export function playAudioNonBlocking(
 
 /**
  * Wait for all queued playback to finish. Resolves immediately if queue is empty.
- * AIDEV-NOTE: P0-2 fix — voice_ask uses this to ensure all pending audio
- * finishes before starting recording. Previously only awaited the current
- * process, which returned immediately if the queue hadn't started processing.
+ *
+ * AIDEV-NOTE: Name kept as `awaitCurrentPlayback` for backward compat (handlers.ts
+ * imports it). Semantically it now awaits the full queue, not just the current proc.
+ * P0-2 fix — voice_ask uses this to ensure all pending audio finishes before
+ * starting recording. Previously only awaited currentPlayback.proc.exited, which
+ * returned immediately if the queue hadn't started processing.
  */
 export async function awaitCurrentPlayback(): Promise<void> {
   try {
