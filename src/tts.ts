@@ -528,11 +528,12 @@ export function playAudioNonBlocking(
 
       await proc.exited;
 
-      queueSize = Math.max(0, queueSize - 1);
+      // Guard decrement with pid check — if stopPlayback() already cleared
+      // currentPlayback and reset queueSize, skip to avoid corrupting count
+      // for items queued after the stop
       if (currentPlayback?.pid === proc.pid) {
+        queueSize = Math.max(0, queueSize - 1);
         currentPlayback = null;
-        // Only broadcast idle when queue is fully drained AND this wasn't
-        // externally stopped (stopPlayback already broadcasts idle itself)
         if (queueSize === 0) {
           broadcast({ type: "state", state: "idle", source: "playback" });
         }
