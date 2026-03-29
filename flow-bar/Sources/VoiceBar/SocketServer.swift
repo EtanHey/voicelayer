@@ -1,6 +1,6 @@
 // SocketServer.swift — Unix domain socket server for Voice Bar.
 //
-// POSIX socket server on /tmp/voicelayer.sock. Accepts connections from
+// POSIX socket server on VoiceLayerPaths.socketPath. Accepts connections from
 // MCP server instances (clients). Receives NDJSON state events, forwards
 // commands back. NWListener does NOT support Unix domain sockets, so we
 // use POSIX sockets + GCD DispatchSource.
@@ -11,7 +11,7 @@
 import Foundation
 
 final class SocketServer {
-    private let socketPath = "/tmp/voicelayer.sock"
+    private let socketPath = VoiceLayerPaths.socketPath
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
 
