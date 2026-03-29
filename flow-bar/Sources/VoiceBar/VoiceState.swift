@@ -49,6 +49,9 @@ final class VoiceState {
     /// Set true when speaking state arrives, false when recording starts.
     var canReplay: Bool = false
 
+    /// Total queued + currently playing TTS items.
+    var queueDepth: Int = 0
+
     /// Whether the pill is collapsed (idle for too long).
     var isCollapsed: Bool = false
 
@@ -213,6 +216,11 @@ final class VoiceState {
                     else { return nil }
                     return (offsetMs: offset, durationMs: duration, text: text)
                 }
+            }
+
+        case "queue":
+            if let depth = event["depth"] as? Int {
+                queueDepth = max(0, depth)
             }
 
         case "audio_level":

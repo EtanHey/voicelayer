@@ -123,12 +123,6 @@ export function resolveVoice(name?: string): {
 
 let ttsCounter = 0;
 
-/** Currently playing audio process — stored for stop/cleanup. */
-let currentPlayback: {
-  proc: ReturnType<typeof Bun.spawn>;
-  pid: number;
-} | null = null;
-
 /** Get platform-appropriate audio player command for MP3 files. */
 function getAudioPlayer(): string {
   if (platform() === "darwin") return "afplay";
@@ -457,6 +451,7 @@ async function playClonedAudio(
   const proc = playAudioNonBlocking(ttsFile, {
     text: speakingText,
     voice: resolvedVoice,
+    priority: playbackPriorityForMode(options?.mode),
   });
   proc.exited.then(() => {
     try {
@@ -468,26 +463,300 @@ async function playClonedAudio(
 
 /**
  * Playback queue — serializes audio playback to prevent overlapping afplay
- * processes when multiple voice_speak calls arrive concurrently (e.g., from
- * multiple socat MCP clients).
+ * processes when multiple voice_speak calls arrive concurrently.
  *
- * AIDEV-NOTE: P0-1 fix — three key behaviors:
- * 1. Speaking/subtitle broadcasts happen INSIDE the queue (when audio starts),
- *    not when queued. This prevents VoiceBar from showing wrong text.
- * 2. Idle broadcasts only fire when the queue fully drains (queueSize === 0),
- *    not between items. This prevents idle flicker.
- * 3. awaitCurrentPlayback() awaits the full queue promise chain, not just
- *    the current process. This lets voice_ask wait for all pending audio.
+ * Phase 8 queue semantics:
+ * 1. Speaking/subtitle broadcasts happen INSIDE the queue when playback starts.
+ * 2. Queue depth is broadcast to VoiceBar for visible state.
+ * 3. Critical items barge in: kill current playback and discard stale pending speech.
+ * 4. Low/background chatter collapses so bursts do not create an audio backlog.
  */
-let playbackQueue: Promise<void> = Promise.resolve();
-let queueSize = 0;
+type PlaybackPriority =
+  | "critical"
+  | "high"
+  | "normal"
+  | "low"
+  | "background";
 
 /** Metadata for deferred broadcasting — fires when playback actually starts. */
 export interface PlaybackMetadata {
   text: string;
   voice: string;
   wordBoundaries?: WordBoundary[];
+  priority?: PlaybackPriority;
 }
+
+interface PlaybackJob {
+  audioFile: string;
+  metadata?: PlaybackMetadata;
+  priority: PlaybackPriority;
+  enqueuedAt: number;
+  expiresAt: number;
+  resolveExited: () => void;
+  completed: boolean;
+  exited: Promise<void>;
+}
+
+const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
+  critical: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+  background: 4,
+};
+
+const LOW_PRIORITY_TTL_MS = 10_000;
+const NORMAL_PRIORITY_TTL_MS = 30_000;
+
+function playbackPriorityForMode(mode?: string): PlaybackPriority {
+  switch (mode) {
+    case "converse":
+      return "critical";
+    case "consult":
+      return "high";
+    case "brief":
+      return "low";
+    case "think":
+      return "background";
+    default:
+      return "normal";
+  }
+}
+
+function ttlForPriority(priority: PlaybackPriority): number {
+  switch (priority) {
+    case "critical":
+    case "high":
+      return 120_000;
+    case "normal":
+      return NORMAL_PRIORITY_TTL_MS;
+    case "low":
+      return LOW_PRIORITY_TTL_MS;
+    case "background":
+      return 5_000;
+  }
+}
+
+function completeJob(job: PlaybackJob) {
+  if (job.completed) return;
+  job.completed = true;
+  job.resolveExited();
+}
+
+class PlaybackQueueManager {
+  private pending: PlaybackJob[] = [];
+  private current: { job: PlaybackJob; proc: ReturnType<typeof Bun.spawn> } | null =
+    null;
+  private drainWaiters = new Set<() => void>();
+
+  enqueue(audioFile: string, metadata?: PlaybackMetadata): { exited: Promise<void> } {
+    const priority = metadata?.priority ?? "normal";
+    let resolveExited!: () => void;
+    const exited = new Promise<void>((resolve) => {
+      resolveExited = resolve;
+    });
+
+    const job: PlaybackJob = {
+      audioFile,
+      metadata,
+      priority,
+      enqueuedAt: Date.now(),
+      expiresAt: Date.now() + ttlForPriority(priority),
+      resolveExited,
+      completed: false,
+      exited,
+    };
+
+    if (priority === "critical") {
+      this.bargeIn(job);
+      return { exited };
+    }
+
+    this.evictExpired();
+    this.collapseBurstyLowPriority(job);
+    this.insert(job);
+    this.emitQueueDepth();
+    this.processNext();
+    return { exited };
+  }
+
+  async awaitDrained(): Promise<void> {
+    if (this.depth() === 0) return;
+    await new Promise<void>((resolve) => {
+      this.drainWaiters.add(resolve);
+    });
+  }
+
+  stop(): boolean {
+    const hadActivity = this.depth() > 0;
+    const active = this.current;
+    this.current = null;
+
+    for (const job of this.pending.splice(0)) {
+      completeJob(job);
+    }
+
+    if (active) {
+      try {
+        active.proc.kill("SIGTERM");
+      } catch {}
+      completeJob(active.job);
+    }
+
+    if (hadActivity) {
+      broadcast({ type: "state", state: "idle", source: "playback" });
+      this.emitQueueDepth();
+      this.resolveIfIdle();
+    }
+
+    return hadActivity;
+  }
+
+  private processNext() {
+    if (this.current) return;
+
+    while (this.pending.length > 0) {
+      const next = this.pending.shift()!;
+      if (next.expiresAt <= Date.now()) {
+        completeJob(next);
+        continue;
+      }
+
+      if (next.metadata?.wordBoundaries?.length) {
+        broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
+      }
+      if (next.metadata) {
+        broadcast({
+          type: "state",
+          state: "speaking",
+          text: next.metadata.text,
+          voice: next.metadata.voice,
+        });
+      }
+
+      let proc: ReturnType<typeof Bun.spawn>;
+      try {
+        proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+      } catch {
+        if (this.depth() === 0) {
+          broadcast({ type: "state", state: "idle", source: "playback" });
+        }
+        this.emitQueueDepth();
+        completeJob(next);
+        this.resolveIfIdle();
+        this.processNext();
+        return;
+      }
+
+      this.current = { job: next, proc };
+      this.emitQueueDepth();
+
+      proc.exited
+        .then(() => {
+          this.finish(next, proc.pid);
+        })
+        .catch(() => {
+          this.finish(next, proc.pid);
+        });
+      return;
+    }
+
+    if (this.depth() === 0) {
+      this.emitQueueDepth();
+      this.resolveIfIdle();
+    }
+  }
+
+  private finish(job: PlaybackJob, pid: number) {
+    if (this.current?.proc.pid === pid) {
+      this.current = null;
+      if (this.depth() === 0) {
+        broadcast({ type: "state", state: "idle", source: "playback" });
+      }
+      this.emitQueueDepth();
+      this.resolveIfIdle();
+      this.processNext();
+    }
+    completeJob(job);
+  }
+
+  private bargeIn(job: PlaybackJob) {
+    const active = this.current;
+    this.current = null;
+
+    for (const queued of this.pending.splice(0)) {
+      completeJob(queued);
+    }
+
+    if (active) {
+      try {
+        active.proc.kill("SIGTERM");
+      } catch {}
+      completeJob(active.job);
+    }
+
+    this.pending = [job];
+    this.emitQueueDepth();
+    this.processNext();
+  }
+
+  private collapseBurstyLowPriority(job: PlaybackJob) {
+    if (job.priority !== "low" && job.priority !== "background") return;
+
+    this.pending = this.pending.filter((queued) => {
+      const isCollapsible =
+        queued.priority === job.priority || queued.priority === "background";
+      if (isCollapsible) {
+        completeJob(queued);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private insert(job: PlaybackJob) {
+    const index = this.pending.findIndex((queued) => {
+      return PRIORITY_ORDER[job.priority] < PRIORITY_ORDER[queued.priority];
+    });
+    if (index === -1) {
+      this.pending.push(job);
+    } else {
+      this.pending.splice(index, 0, job);
+    }
+  }
+
+  private emitQueueDepth() {
+    broadcast({ type: "queue", depth: this.depth() });
+  }
+
+  private evictExpired() {
+    const now = Date.now();
+    this.pending = this.pending.filter((job) => {
+      if (job.expiresAt <= now) {
+        completeJob(job);
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private resolveIfIdle() {
+    if (this.depth() !== 0) return;
+    for (const resolve of this.drainWaiters) {
+      resolve();
+    }
+    this.drainWaiters.clear();
+  }
+
+  private depth() {
+    return this.pending.length + (this.current ? 1 : 0);
+  }
+}
+
+const playbackQueueManager = new PlaybackQueueManager();
 
 /** Play an audio file, queued after any currently playing audio. */
 export function playAudioNonBlocking(
@@ -496,63 +765,7 @@ export function playAudioNonBlocking(
 ): {
   exited: Promise<void>;
 } {
-  const player = getAudioPlayer();
-  queueSize++;
-
-  let resolveExited: () => void;
-  const exited = new Promise<void>((r) => {
-    resolveExited = r;
-  });
-
-  // Chain this playback after the previous one finishes
-  playbackQueue = playbackQueue
-    .then(async () => {
-      // Broadcast state when this item actually starts playing
-      if (metadata?.wordBoundaries?.length) {
-        broadcast({ type: "subtitle", words: metadata.wordBoundaries });
-      }
-      if (metadata) {
-        broadcast({
-          type: "state",
-          state: "speaking",
-          text: metadata.text,
-          voice: metadata.voice,
-        });
-      }
-
-      const proc = Bun.spawn([player, audioFile], {
-        stdout: "ignore",
-        stderr: "ignore",
-      });
-      currentPlayback = { proc, pid: proc.pid };
-
-      await proc.exited;
-
-      // Guard decrement with pid check — if stopPlayback() already cleared
-      // currentPlayback and reset queueSize, skip to avoid corrupting count
-      // for items queued after the stop
-      if (currentPlayback?.pid === proc.pid) {
-        queueSize = Math.max(0, queueSize - 1);
-        currentPlayback = null;
-        if (queueSize === 0) {
-          broadcast({ type: "state", state: "idle", source: "playback" });
-        }
-      }
-      resolveExited!();
-    })
-    .catch(() => {
-      queueSize = Math.max(0, queueSize - 1);
-      if (currentPlayback) {
-        currentPlayback = null;
-      }
-      // Error path: always try to broadcast idle if queue is empty
-      if (queueSize === 0) {
-        broadcast({ type: "state", state: "idle", source: "playback" });
-      }
-      resolveExited!();
-    });
-
-  return { exited };
+  return playbackQueueManager.enqueue(audioFile, metadata);
 }
 
 /**
@@ -565,32 +778,12 @@ export function playAudioNonBlocking(
  * returned immediately if the queue hadn't started processing.
  */
 export async function awaitCurrentPlayback(): Promise<void> {
-  try {
-    await playbackQueue;
-  } catch {
-    // Queue errors are already logged/broadcast by playAudioNonBlocking
-    // Swallow here so voice_ask can proceed to recording
-  }
+  await playbackQueueManager.awaitDrained();
 }
 
 /** Stop current playback if any. */
 export function stopPlayback(): boolean {
-  if (currentPlayback) {
-    try {
-      currentPlayback.proc.kill("SIGTERM");
-      currentPlayback = null;
-      // Reset queue to prevent queued items from playing after stop
-      playbackQueue = Promise.resolve();
-      queueSize = 0;
-      broadcast({ type: "state", state: "idle", source: "playback" });
-      return true;
-    } catch {
-      currentPlayback = null;
-      playbackQueue = Promise.resolve();
-      queueSize = 0;
-    }
-  }
-  return false;
+  return playbackQueueManager.stop();
 }
 
 /**
@@ -825,6 +1018,7 @@ async function speakWithEdgeTTS(
     text: text.slice(0, 2000),
     voice,
     wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
+    priority: playbackPriorityForMode(options?.mode),
   });
   proc.exited.then(() => {
     try {
