@@ -65,6 +65,22 @@ private bargeIn(job: PlaybackJob) {
 
 **Result:** Clarifies design assumptions for future maintainers ✅
 
+### 3. Fixed Queue Depth Event Type Casting ✅
+**File:** `flow-bar/Sources/VoiceBar/VoiceState.swift` (line 221)
+
+**Issue:** Macroscope identified that the `queue` event handler only cast `depth` as `Int`, but `JSONSerialization` may decode numbers as `Double`. If the server sends `{"depth": 5.0}`, the cast would fail and `queueDepth` would remain stale.
+
+**Fix:** Applied the same defensive pattern used in the `subtitle` handler:
+```swift
+case "queue":
+    // JSONSerialization may decode numbers as Int or Double
+    if let depth = (event["depth"] as? Int) ?? (event["depth"] as? Double).map({ Int($0) }) {
+        queueDepth = max(0, depth)
+    }
+```
+
+**Result:** Consistent type handling across all numeric event fields ✅
+
 ---
 
 ## Review Documents Created
@@ -148,6 +164,8 @@ All critical and high-priority issues have been addressed. The remaining recomme
 1. `docs: add comprehensive BugBot code review` (bba002b)
 2. `docs: add BugBot review summary for quick reference` (4602f01)
 3. `fix: address BugBot review recommendations` (e82612e)
+4. `docs: mark review complete - ready to merge` (31bbff2)
+5. `fix: use defensive Int/Double cast for queue depth event` (4330e39)
 
 ---
 
