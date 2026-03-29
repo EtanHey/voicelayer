@@ -62,12 +62,19 @@ struct BarView: View {
         Button {
             state.setHovering(true) // expand on tap
         } label: {
-            Circle()
-                .fill(Color.green) // VoiceBar is always alive — dot is always green
-                .frame(width: 10, height: 10)
-                .padding(8)
-                .background(Theme.pillBackground)
-                .clipShape(Capsule())
+            ZStack(alignment: .topTrailing) {
+                Circle()
+                    .fill(Color.green) // VoiceBar is always alive — dot is always green
+                    .frame(width: 10, height: 10)
+                    .padding(8)
+                    .background(Theme.pillBackground)
+                    .clipShape(Capsule())
+
+                if state.queueDepth > 1 {
+                    queueBadge
+                        .offset(x: 4, y: -2)
+                }
+            }
         }
         .buttonStyle(.plain)
     }
@@ -78,6 +85,9 @@ struct BarView: View {
         HStack(spacing: 8) {
             leadingIndicator
             stateContent
+            if state.queueDepth > 1 {
+                queueBadge
+            }
             actionButtons
         }
         .padding(.horizontal, 14)
@@ -171,6 +181,16 @@ struct BarView: View {
                 .fill(Color.green) // VoiceBar is always alive
                 .frame(width: 6, height: 6)
         }
+    }
+
+    private var queueBadge: some View {
+        Text("\(state.queueDepth)")
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.white.opacity(0.16))
+            .clipShape(Capsule())
     }
 
     // MARK: - State content (icon + label OR waveform)
