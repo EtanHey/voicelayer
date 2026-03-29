@@ -78,13 +78,20 @@ export interface SubtitleEvent {
   words: WordBoundary[];
 }
 
+export interface QueueEvent {
+  type: "queue";
+  /** Total queued + currently playing items. */
+  depth: number;
+}
+
 export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
   | AudioLevelEvent
   | ErrorEvent
-  | SubtitleEvent;
+  | SubtitleEvent
+  | QueueEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
