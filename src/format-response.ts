@@ -12,7 +12,11 @@ const BOT = "└─";
 const SEP = "│ ";
 
 function boxed(title: string, lines: string[]): string {
-  const body = lines.map((l) => `${SEP}${l}`).join("\n");
+  // Split multi-line strings to preserve box structure
+  const body = lines
+    .flatMap((l) => l.split("\n"))
+    .map((l) => `${SEP}${l}`)
+    .join("\n");
   return `${TOP} ${title}\n${body}\n${BOT}`;
 }
 
@@ -49,7 +53,8 @@ export function formatAsk(
   transcript: string | null,
   opts?: { timeoutSeconds?: number; pressToTalk?: boolean },
 ): string {
-  if (transcript) {
+  // Explicit null check to handle empty string "" as valid transcript
+  if (transcript !== null && transcript !== undefined) {
     return boxed("voice_ask", [`🎤 "${transcript}"`]);
   }
 
@@ -82,6 +87,9 @@ export function formatReplay(index: number, text: string): string {
 // ── Toggle ──
 
 export function formatToggle(actions: string[]): string {
+  if (actions.length === 0) {
+    return boxed("toggle", ["(no changes)"]);
+  }
   const lines = actions.map((a) => `• ${a}`);
   return boxed("toggle", lines);
 }
