@@ -39,18 +39,22 @@ final class GestureStateMachine {
     var onHoldEnd: () -> Void = {}
     var onSingleTap: () -> Void = {}
     var onDoubleTap: () -> Void = {}
+    var onPreviewPhaseChange: (HotkeyPhase) -> Void = { _ in }
 
     func handleKeyDown() {
         switch state {
         case .waitingForDoubleTap:
             doubleTapTimer?.cancel()
             state = .idle
+            onPreviewPhaseChange(.idle)
             onDoubleTap()
         case .idle:
             state = .waitingForHoldThreshold
+            onPreviewPhaseChange(.pressing)
             let timer = DispatchWorkItem { [weak self] in
                 guard let self, state == .waitingForHoldThreshold else { return }
                 state = .holding
+                onPreviewPhaseChange(.holding)
                 onHoldStart()
             }
             holdTimer = timer
@@ -68,9 +72,11 @@ final class GestureStateMachine {
         case .waitingForHoldThreshold:
             holdTimer?.cancel()
             state = .waitingForDoubleTap
+            onPreviewPhaseChange(.awaitingSecondTap)
             let timer = DispatchWorkItem { [weak self] in
                 guard let self, state == .waitingForDoubleTap else { return }
                 state = .idle
+                onPreviewPhaseChange(.idle)
                 onSingleTap()
             }
             doubleTapTimer = timer
@@ -80,6 +86,7 @@ final class GestureStateMachine {
             )
         case .holding:
             state = .idle
+            onPreviewPhaseChange(.idle)
             onHoldEnd()
         default:
             break
@@ -91,6 +98,7 @@ final class GestureStateMachine {
         holdTimer?.cancel()
         doubleTapTimer?.cancel()
         state = .idle
+        onPreviewPhaseChange(.idle)
     }
 }
 

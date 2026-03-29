@@ -25,6 +25,9 @@ enum Theme {
 
     /// Dynamic width: pill shrink-wraps content with minimum size.
     static let pillMinWidth: CGFloat = 100
+    static let pillCompactWidth: CGFloat = 136
+    static let pillStatusMaxWidth: CGFloat = 180
+    static let pillQueueWidth: CGFloat = 300
     /// Panel needs to be large enough to never clip the pill.
     static let panelWidth: CGFloat = 500
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
@@ -49,6 +52,8 @@ enum Theme {
     // MARK: - Animation
 
     static let connectionTransition: Animation = .spring(duration: 0.3, bounce: 0.15)
+    static let pillTransition: Animation = .spring(duration: 0.38, bounce: 0.12)
+    static let queueProgressTransition: Animation = .easeOut(duration: 0.18)
 
     // MARK: - State-dependent color
 
