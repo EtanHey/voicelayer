@@ -20,6 +20,14 @@ enum VoiceMode: String, CaseIterable {
     case disconnected
 }
 
+struct QueueItemState: Equatable {
+    var text: String
+    var voice: String
+    var priority: String
+    var isCurrent: Bool
+    var progress: Double
+}
+
 // MARK: - Observable state
 
 @Observable
@@ -51,6 +59,7 @@ final class VoiceState {
 
     /// Total queued + currently playing TTS items.
     var queueDepth: Int = 0
+    var queueItems: [QueueItemState] = []
 
     /// Whether the pill is collapsed (idle for too long).
     var isCollapsed: Bool = false
@@ -166,6 +175,10 @@ final class VoiceState {
                 silenceMode = nil
                 audioLevel = nil
                 wordBoundaries = []
+                if (event["source"] as? String) == "playback" {
+                    queueDepth = 0
+                    queueItems = []
+                }
                 onModeChange?(.idle)
                 startCollapseTimer()
             case "speaking":
@@ -221,6 +234,27 @@ final class VoiceState {
         case "queue":
             if let depth = event["depth"] as? Int {
                 queueDepth = max(0, depth)
+            }
+            if let items = event["items"] as? [[String: Any]] {
+                queueItems = items.compactMap { item in
+                    guard let text = item["text"] as? String,
+                          let voice = item["voice"] as? String,
+                          let priority = item["priority"] as? String,
+                          let isCurrent = item["is_current"] as? Bool
+                    else { return nil }
+                    let rawProgress = (item["progress"] as? Double)
+                        ?? (item["progress"] as? Int).map(Double.init)
+                        ?? 0
+                    return QueueItemState(
+                        text: text,
+                        voice: voice,
+                        priority: priority,
+                        isCurrent: isCurrent,
+                        progress: min(1, max(0, rawProgress))
+                    )
+                }
+            } else if queueDepth == 0 {
+                queueItems = []
             }
 
         case "audio_level":
