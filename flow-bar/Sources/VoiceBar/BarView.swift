@@ -50,7 +50,7 @@ struct BarView: View {
                     .transition(.scale.combined(with: .opacity))
             }
         }
-        .animation(.smooth(duration: 0.3), value: state.isCollapsed)
+        .animation(Theme.pillTransition, value: state.isCollapsed)
         .onHover { hovering in
             state.setHovering(hovering)
         }
@@ -92,7 +92,10 @@ struct BarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .frame(minWidth: Theme.pillMinWidth)
+        .frame(
+            minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
+            alignment: .leading
+        )
         .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
@@ -116,8 +119,10 @@ struct BarView: View {
                     .onChange(of: geo.size.height) { _, _ in state.onPillSizeChange?(geo.size) }
             }
         )
-        .animation(.smooth(duration: 0.3), value: state.mode)
+        .animation(Theme.pillTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
+        .animation(Theme.pillTransition, value: state.queueDepth)
+        .animation(Theme.pillTransition, value: state.hotkeyPhase)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
@@ -189,8 +194,9 @@ struct BarView: View {
             .foregroundStyle(.white)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
-            .background(Color.white.opacity(0.16))
+            .background(Theme.speakingColor.opacity(0.22))
             .clipShape(Capsule())
+            .contentTransition(.numericText())
     }
 
     // MARK: - State content (icon + label OR waveform)
@@ -230,37 +236,52 @@ struct BarView: View {
     }
 
     private var queueVisualization: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(Array(state.queueItems.prefix(3).enumerated()), id: \.offset) { index, item in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Text(index == 0 ? "Now" : "Next")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(.white.opacity(index == 0 ? 0.9 : 0.55))
-                            .frame(width: 28, alignment: .leading)
-                        Text(item.text)
-                            .font(.system(size: index == 0 ? 12 : 11, weight: index == 0 ? .medium : .regular))
-                            .foregroundStyle(.white.opacity(index == 0 ? 0.95 : 0.72))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+        let preview = VoiceBarPresentation.queuePreview(from: state.queueItems)
 
-                    if item.isCurrent {
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.white.opacity(0.12))
-                                Capsule()
-                                    .fill(Theme.speakingColor.opacity(0.95))
-                                    .frame(width: max(8, geo.size.width * item.progress))
-                            }
-                        }
-                        .frame(height: 4)
-                    }
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("Queue")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+                if preview.overflowCount > 0 {
+                    Text("+\(preview.overflowCount) more")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+
+            Text(preview.currentText)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.96))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.12))
+                    Capsule()
+                        .fill(Theme.speakingColor.opacity(0.95))
+                        .frame(width: max(10, geo.size.width * preview.progress))
+                }
+                .animation(Theme.queueProgressTransition, value: preview.progress)
+            }
+            .frame(height: 4)
+
+            if let nextText = preview.nextText {
+                HStack(spacing: 6) {
+                    Text("Up next")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text(nextText)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
         }
-        .frame(width: Theme.teleprompterViewportWidth, alignment: .leading)
+        .frame(width: Theme.pillQueueWidth, alignment: .leading)
     }
 
     // MARK: - Status icon
@@ -292,6 +313,7 @@ struct BarView: View {
             .lineLimit(1)
             .truncationMode(.tail)
             .contentTransition(.interpolate)
+            .frame(maxWidth: Theme.pillStatusMaxWidth, alignment: .leading)
             .mask {
                 // Leading fade when text is trimmed — words ghost out to the left
                 if textIsTrimmed {
@@ -316,21 +338,20 @@ struct BarView: View {
     private var statusText: String {
         switch state.mode {
         case .idle, .disconnected:
-            if let confirmation = state.confirmationText {
-                return confirmation
-            }
-            if !state.transcript.isEmpty {
-                return Self.lastWords(state.transcript)
-            }
-            return "Ready"
+            VoiceBarPresentation.idleStatusText(
+                transcript: state.transcript,
+                confirmationText: state.confirmationText,
+                hotkeyPhase: state.hotkeyPhase,
+                hotkeyEnabled: state.hotkeyEnabled
+            )
         case .speaking:
-            return "Speaking..."
+            "Speaking..."
         case .recording:
-            return "Listening..."
+            state.hotkeyPhase == .holding ? "Release to send" : "Listening..."
         case .transcribing:
-            return "Thinking..."
+            "Thinking..."
         case .error:
-            return state.errorMessage ?? "Error"
+            state.errorMessage ?? "Error"
         }
     }
 
@@ -347,9 +368,7 @@ struct BarView: View {
 
     /// Return the last N words of a string (no ellipsis — leading fade handles it).
     private static func lastWords(_ text: String) -> String {
-        let words = text.split(separator: " ")
-        if words.count <= maxDisplayWords { return text }
-        return words.suffix(maxDisplayWords).joined(separator: " ")
+        VoiceBarPresentation.lastWords(text)
     }
 
     // MARK: - Action buttons
@@ -378,6 +397,8 @@ struct BarView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(width: 26, height: 26)
+                .background(Color.white.opacity(0.06))
+                .clipShape(Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
