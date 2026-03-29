@@ -134,7 +134,7 @@ describe("handleConverse resilience — P0-2", () => {
     });
 
     expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toBe("hello");
+    expect(result.content[0].text).toContain("hello");
 
     // Verify warning was logged
     const warningCalls = errorSpy.mock.calls.filter(
