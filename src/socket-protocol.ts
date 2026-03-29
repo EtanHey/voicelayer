@@ -78,10 +78,28 @@ export interface SubtitleEvent {
   words: WordBoundary[];
 }
 
+export type PlaybackPriority =
+  | "critical"
+  | "high"
+  | "normal"
+  | "low"
+  | "background";
+
+export interface QueueItemSnapshot {
+  text: string;
+  voice: string;
+  priority: PlaybackPriority;
+  is_current: boolean;
+  /** Progress of the current item from 0.0 to 1.0. Queued items stay at 0. */
+  progress: number;
+}
+
 export interface QueueEvent {
   type: "queue";
   /** Total queued + currently playing items. */
   depth: number;
+  /** Ordered queue snapshot: current item first, then pending items. */
+  items: QueueItemSnapshot[];
 }
 
 export type SocketEvent =
