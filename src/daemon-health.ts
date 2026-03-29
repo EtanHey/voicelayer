@@ -7,6 +7,10 @@
  *
  * Connection tracking is maintained by the daemon socket server
  * via onConnect/onDisconnect callbacks.
+ *
+ * THREAD-SAFETY: Assumes single-threaded event loop (Bun/Node.js).
+ * onConnect/onDisconnect are called from socket event handlers which
+ * are serialized by the event loop.
  */
 
 const startTime = Date.now();
