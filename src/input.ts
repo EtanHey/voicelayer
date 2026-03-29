@@ -55,6 +55,8 @@ const BITS_PER_SAMPLE = 16;
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
+let recordingState: "idle" | "recording" | "transcribing" = "idle";
+
 import {
   calculateRMS,
   detectNativeSampleRate,
@@ -196,6 +198,7 @@ export async function recordToBuffer(
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
+      recordingState = "idle";
       clearTimeout(timer);
 
       // Kill recorder
@@ -277,6 +280,7 @@ export async function recordToBuffer(
       }
 
       // Broadcast recording state to Voice Bar
+      recordingState = "recording";
       broadcast({
         type: "state",
         state: "recording",
@@ -450,6 +454,7 @@ export async function waitForInput(
   }
 
   // Broadcast transcribing state to Voice Bar
+  recordingState = "transcribing";
   broadcast({ type: "state", state: "transcribing" });
 
   // Save as WAV to temp file
@@ -470,10 +475,12 @@ export async function waitForInput(
     if (result.text) {
       broadcast({ type: "transcription", text: result.text });
     }
+    recordingState = "idle";
     broadcast({ type: "state", state: "idle" });
 
     return result.text || null;
   } catch (err) {
+    recordingState = "idle";
     broadcast({
       type: "error",
       message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -495,4 +502,8 @@ export async function waitForInput(
  */
 export function clearInput(): void {
   // No persistent state to clear — recordings are ephemeral
+}
+
+export function getRecordingState(): "idle" | "recording" | "transcribing" {
+  return recordingState;
 }

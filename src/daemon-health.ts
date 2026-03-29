@@ -46,6 +46,23 @@ export function buildPongResponse(): {
   };
 }
 
+export function buildHealthResponse(health: {
+  queueDepth: number;
+  recordingState: "idle" | "recording" | "transcribing";
+}): {
+  type: "health";
+  uptime_seconds: number;
+  queue_depth: number;
+  recording_state: "idle" | "recording" | "transcribing";
+} {
+  return {
+    type: "health",
+    uptime_seconds: getUptimeSeconds(),
+    queue_depth: health.queueDepth,
+    recording_state: health.recordingState,
+  };
+}
+
 /** Check if a message is a ping request. */
 export function isPingRequest(msg: Record<string, unknown>): boolean {
   return msg.type === "ping";
