@@ -141,6 +141,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Wire gesture callbacks to VoiceState and start the event tap.
     private func setupHotkey() {
         // Hold start → push-to-talk recording
+        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+            self?.voiceState.setHotkeyPhase(phase)
+        }
+
         gestureStateMachine.onHoldStart = { [weak self] in
             guard let self else { return }
             NSLog("[VoiceBar] Hotkey hold start — starting push-to-talk recording")
@@ -182,8 +186,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if manager.start() {
             hotkeyManager = manager
             hotkeyEnabled = true
+            voiceState.setHotkeyEnabled(true)
             NSLog("[VoiceBar] Hotkey system active — Right Command for push-to-talk")
         } else {
+            voiceState.setHotkeyEnabled(false)
             NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
         }
     }
