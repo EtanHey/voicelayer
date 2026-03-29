@@ -5,7 +5,7 @@
 // Tracks mouse across screens — pill follows the cursor.
 //
 // AIDEV-NOTE: Architecture inversion (Phase 0) — VoiceBar is the persistent
-// server on /tmp/voicelayer.sock. MCP servers connect as clients.
+// server on VoiceLayerPaths.socketPath. MCP servers connect as clients.
 // All discovery file logic removed (no more polling, no file watchers).
 
 import AppKit
@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
-        // Socket server — listens on /tmp/voicelayer.sock
+        // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
         socketServer = server
 
