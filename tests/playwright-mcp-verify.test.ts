@@ -15,16 +15,20 @@ const npxAvailable = Bun.spawnSync(["which", "npx"]).exitCode === 0;
 const mcpJsonExists = existsSync(".mcp.json");
 
 describe("Playwright MCP setup", () => {
-  test.skipIf(!npxAvailable)("npx @playwright/mcp@latest is available", () => {
-    const result = Bun.spawnSync([
-      "npx",
-      "@playwright/mcp@latest",
-      "--version",
-    ]);
-    if (result.exitCode !== 0) return; // Offline — graceful skip
-    const stdout = result.stdout.toString().trim();
-    expect(stdout).toMatch(/\d+\.\d+/);
-  });
+  test.skipIf(!npxAvailable)(
+    "npx @playwright/mcp@latest is available",
+    { timeout: 15000 },
+    () => {
+      const result = Bun.spawnSync([
+        "npx",
+        "@playwright/mcp@latest",
+        "--version",
+      ]);
+      if (result.exitCode !== 0) return; // Offline — graceful skip
+      const stdout = result.stdout.toString().trim();
+      expect(stdout).toMatch(/\d+\.\d+/);
+    },
+  );
 
   test.skipIf(!mcpJsonExists)(
     ".mcp.json contains playwright config",
