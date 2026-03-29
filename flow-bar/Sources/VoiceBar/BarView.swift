@@ -205,24 +205,62 @@ struct BarView: View {
                 audioLevel: state.audioLevel
             )
         case .speaking:
-            // Shimmer waveform + teleprompter during speaking
-            WaveformView(mode: .idle, audioLevel: state.audioLevel)
-            if !state.statusText.isEmpty {
-                TeleprompterView(
-                    text: state.statusText,
-                    wordBoundaries: state.wordBoundaries
-                )
-                .frame(
-                    width: Theme.teleprompterViewportWidth,
-                    height: Theme.teleprompterViewportHeight
-                )
+            if state.queueItems.count > 1 {
+                queueVisualization
             } else {
-                statusLabel
+                // Shimmer waveform + teleprompter during speaking
+                WaveformView(mode: .idle, audioLevel: state.audioLevel)
+                if !state.statusText.isEmpty {
+                    TeleprompterView(
+                        text: state.statusText,
+                        wordBoundaries: state.wordBoundaries
+                    )
+                    .frame(
+                        width: Theme.teleprompterViewportWidth,
+                        height: Theme.teleprompterViewportHeight
+                    )
+                } else {
+                    statusLabel
+                }
             }
         default:
             statusIcon
             statusLabel
         }
+    }
+
+    private var queueVisualization: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(state.queueItems.prefix(3).enumerated()), id: \.offset) { index, item in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(index == 0 ? "Now" : "Next")
+                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white.opacity(index == 0 ? 0.9 : 0.55))
+                            .frame(width: 28, alignment: .leading)
+                        Text(item.text)
+                            .font(.system(size: index == 0 ? 12 : 11, weight: index == 0 ? .medium : .regular))
+                            .foregroundStyle(.white.opacity(index == 0 ? 0.95 : 0.72))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+
+                    if item.isCurrent {
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.12))
+                                Capsule()
+                                    .fill(Theme.speakingColor.opacity(0.95))
+                                    .frame(width: max(8, geo.size.width * item.progress))
+                            }
+                        }
+                        .frame(height: 4)
+                    }
+                }
+            }
+        }
+        .frame(width: Theme.teleprompterViewportWidth, alignment: .leading)
     }
 
     // MARK: - Status icon
