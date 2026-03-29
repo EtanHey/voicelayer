@@ -454,13 +454,10 @@ async function playClonedAudio(
   options?: { waitForPlayback?: boolean },
 ): Promise<void> {
   addToHistory(text, ttsFile, voiceLabel);
-  broadcast({
-    type: "state",
-    state: "speaking",
+  const proc = playAudioNonBlocking(ttsFile, {
     text: speakingText,
     voice: resolvedVoice,
   });
-  const proc = playAudioNonBlocking(ttsFile);
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
@@ -473,14 +470,34 @@ async function playClonedAudio(
  * Playback queue — serializes audio playback to prevent overlapping afplay
  * processes when multiple voice_speak calls arrive concurrently (e.g., from
  * multiple socat MCP clients).
+ *
+ * AIDEV-NOTE: P0-1 fix — three key behaviors:
+ * 1. Speaking/subtitle broadcasts happen INSIDE the queue (when audio starts),
+ *    not when queued. This prevents VoiceBar from showing wrong text.
+ * 2. Idle broadcasts only fire when the queue fully drains (queueSize === 0),
+ *    not between items. This prevents idle flicker.
+ * 3. awaitCurrentPlayback() awaits the full queue promise chain, not just
+ *    the current process. This lets voice_ask wait for all pending audio.
  */
 let playbackQueue: Promise<void> = Promise.resolve();
+let queueSize = 0;
+
+/** Metadata for deferred broadcasting — fires when playback actually starts. */
+export interface PlaybackMetadata {
+  text: string;
+  voice: string;
+  wordBoundaries?: WordBoundary[];
+}
 
 /** Play an audio file, queued after any currently playing audio. */
-export function playAudioNonBlocking(audioFile: string): {
+export function playAudioNonBlocking(
+  audioFile: string,
+  metadata?: PlaybackMetadata,
+): {
   exited: Promise<void>;
 } {
   const player = getAudioPlayer();
+  queueSize++;
 
   let resolveExited: () => void;
   const exited = new Promise<void>((r) => {
@@ -490,6 +507,19 @@ export function playAudioNonBlocking(audioFile: string): {
   // Chain this playback after the previous one finishes
   playbackQueue = playbackQueue
     .then(async () => {
+      // Broadcast state when this item actually starts playing
+      if (metadata?.wordBoundaries?.length) {
+        broadcast({ type: "subtitle", words: metadata.wordBoundaries });
+      }
+      if (metadata) {
+        broadcast({
+          type: "state",
+          state: "speaking",
+          text: metadata.text,
+          voice: metadata.voice,
+        });
+      }
+
       const proc = Bun.spawn([player, audioFile], {
         stdout: "ignore",
         stderr: "ignore",
@@ -498,23 +528,48 @@ export function playAudioNonBlocking(audioFile: string): {
 
       await proc.exited;
 
+      // Guard decrement with pid check — if stopPlayback() already cleared
+      // currentPlayback and reset queueSize, skip to avoid corrupting count
+      // for items queued after the stop
       if (currentPlayback?.pid === proc.pid) {
+        queueSize = Math.max(0, queueSize - 1);
         currentPlayback = null;
-        broadcast({ type: "state", state: "idle", source: "playback" });
+        if (queueSize === 0) {
+          broadcast({ type: "state", state: "idle", source: "playback" });
+        }
       }
       resolveExited!();
     })
     .catch(() => {
+      queueSize = Math.max(0, queueSize - 1);
+      if (currentPlayback) {
+        currentPlayback = null;
+      }
+      // Error path: always try to broadcast idle if queue is empty
+      if (queueSize === 0) {
+        broadcast({ type: "state", state: "idle", source: "playback" });
+      }
       resolveExited!();
     });
 
   return { exited };
 }
 
-/** Wait for current playback to finish (if any). Resolves immediately if nothing is playing. */
+/**
+ * Wait for all queued playback to finish. Resolves immediately if queue is empty.
+ *
+ * AIDEV-NOTE: Name kept as `awaitCurrentPlayback` for backward compat (handlers.ts
+ * imports it). Semantically it now awaits the full queue, not just the current proc.
+ * P0-2 fix — voice_ask uses this to ensure all pending audio finishes before
+ * starting recording. Previously only awaited currentPlayback.proc.exited, which
+ * returned immediately if the queue hadn't started processing.
+ */
 export async function awaitCurrentPlayback(): Promise<void> {
-  if (currentPlayback) {
-    await currentPlayback.proc.exited;
+  try {
+    await playbackQueue;
+  } catch {
+    // Queue errors are already logged/broadcast by playAudioNonBlocking
+    // Swallow here so voice_ask can proceed to recording
   }
 }
 
@@ -524,10 +579,15 @@ export function stopPlayback(): boolean {
     try {
       currentPlayback.proc.kill("SIGTERM");
       currentPlayback = null;
+      // Reset queue to prevent queued items from playing after stop
+      playbackQueue = Promise.resolve();
+      queueSize = 0;
       broadcast({ type: "state", state: "idle", source: "playback" });
       return true;
     } catch {
       currentPlayback = null;
+      playbackQueue = Promise.resolve();
+      queueSize = 0;
     }
   }
   return false;
@@ -760,23 +820,12 @@ async function speakWithEdgeTTS(
 
   addToHistory(text, ttsFile, voice);
 
-  // Broadcast boundaries before speaking state so Voice Bar has timestamps
-  // ready when TeleprompterView starts animating
-  if (wordBoundaries.length > 0) {
-    broadcast({
-      type: "subtitle",
-      words: wordBoundaries,
-    });
-  }
-
-  broadcast({
-    type: "state",
-    state: "speaking",
+  // Pass metadata to queue — broadcasting happens when audio actually starts
+  const proc = playAudioNonBlocking(ttsFile, {
     text: text.slice(0, 2000),
     voice,
+    wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
   });
-
-  const proc = playAudioNonBlocking(ttsFile);
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
