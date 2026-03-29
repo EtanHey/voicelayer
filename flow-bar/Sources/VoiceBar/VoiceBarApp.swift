@@ -28,6 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Last reported pill size — used to avoid layout loops.
     private var lastPillSize: CGSize = .zero
 
+    /// Hotkey management — CGEventTap + gesture state machine.
+    private var hotkeyManager: HotkeyManager?
+    private let gestureStateMachine = GestureStateMachine()
+    /// Whether the hotkey system is enabled.
+    var hotkeyEnabled: Bool = false
+
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
 
@@ -64,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         server.start()
+
+        // Hotkey setup — Right Command (keycode 54) push-to-talk by default
+        setupHotkey()
 
         // Resize panel dynamically when pill content changes
         voiceState.onPillSizeChange = { [weak self] size in
@@ -113,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        hotkeyManager?.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
@@ -124,6 +134,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false // keep running as a menu-bar agent
+    }
+
+    // MARK: - Hotkey setup
+
+    /// Wire gesture callbacks to VoiceState and start the event tap.
+    private func setupHotkey() {
+        // Hold start → push-to-talk recording
+        gestureStateMachine.onHoldStart = { [weak self] in
+            guard let self else { return }
+            NSLog("[VoiceBar] Hotkey hold start — starting push-to-talk recording")
+            voiceState.record()
+        }
+
+        // Hold end → stop recording
+        gestureStateMachine.onHoldEnd = { [weak self] in
+            guard let self else { return }
+            NSLog("[VoiceBar] Hotkey hold end — stopping recording")
+            voiceState.stop()
+        }
+
+        // Single tap → toggle recording (start if idle, stop if recording)
+        gestureStateMachine.onSingleTap = { [weak self] in
+            guard let self else { return }
+            if voiceState.mode == .idle {
+                NSLog("[VoiceBar] Hotkey single tap — starting toggle recording")
+                voiceState.record()
+            } else if voiceState.mode == .recording {
+                NSLog("[VoiceBar] Hotkey single tap — stopping recording")
+                voiceState.stop()
+            }
+        }
+
+        // Double tap → reserved (currently same as single tap for discoverability)
+        gestureStateMachine.onDoubleTap = { [weak self] in
+            guard let self else { return }
+            if voiceState.mode == .idle {
+                NSLog("[VoiceBar] Hotkey double tap — starting recording")
+                voiceState.record()
+            } else if voiceState.mode == .recording {
+                NSLog("[VoiceBar] Hotkey double tap — stopping recording")
+                voiceState.stop()
+            }
+        }
+
+        let manager = HotkeyManager(gesture: gestureStateMachine)
+        if manager.start() {
+            hotkeyManager = manager
+            hotkeyEnabled = true
+            NSLog("[VoiceBar] Hotkey system active — Right Command for push-to-talk")
+        } else {
+            NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
+        }
     }
 
     // MARK: - Dynamic panel sizing
@@ -209,6 +271,13 @@ struct VoiceBarApp: App {
                         .fill(appDelegate.voiceState.isConnected ? .green : .red)
                         .frame(width: 8, height: 8)
                     Text(appDelegate.voiceState.isConnected ? "Connected" : "Disconnected")
+                        .font(.system(.caption, weight: .medium))
+                }
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(appDelegate.hotkeyEnabled ? .green : .orange)
+                        .frame(width: 8, height: 8)
+                    Text(appDelegate.hotkeyEnabled ? "Hotkey: Right \u{2318}" : "Hotkey: needs permission")
                         .font(.system(.caption, weight: .medium))
                 }
                 Divider()
