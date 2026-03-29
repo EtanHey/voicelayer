@@ -72,6 +72,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
 // --- Stage 1: Filler removal ---
 
 const FILLER_PATTERNS: RegExp[] = [
+  // English fillers
   /\b(?:um|uh|er|ah)\b/gi,
   /\b(?:basically|essentially|actually|literally)\b/gi,
   /\byou know\b/gi,
@@ -81,6 +82,11 @@ const FILLER_PATTERNS: RegExp[] = [
   /\blike\b(?=\s+(?:really|very|so|just|totally|super))/gi, // "like" before intensifiers
   /^like\b\s*/gi, // "like" at start
   /\s+like$/gi, // "like" at end
+  // Hebrew fillers (אמ, אה, כאילו, בעצם, בקיצור, נו)
+  /(?:^|\s)(?:אמ|אה|נו)(?:\s|$)/g,
+  /(?:^|\s)כאילו(?:\s|$)/g,
+  /(?:^|\s)בעצם(?:\s|$)/g,
+  /(?:^|\s)בקיצור(?:\s|$)/g,
 ];
 
 function removeFillers(text: string): string {
@@ -368,7 +374,12 @@ function autoCapitalize(text: string): string {
 function applyAliases(text: string, aliases: Record<string, string>): string {
   let result = text;
   for (const [from, to] of Object.entries(aliases)) {
-    const pattern = new RegExp(`\\b${escapeRegex(from)}\\b`, "gi");
+    // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
+    const escaped = escapeRegex(from);
+    const pattern = new RegExp(
+      `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+      "giu",
+    );
     result = result.replace(pattern, to);
   }
   return result;

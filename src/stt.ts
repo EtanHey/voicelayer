@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
+import { getLanguageConfig, getLanguageModeFromEnv } from "./language-config";
 
 // --- Types ---
 
@@ -143,6 +144,11 @@ export class WhisperCppBackend implements STTBackend {
       env.GGML_METAL_PATH_RESOURCES = join(brewPrefix, "share", "whisper-cpp");
     }
 
+    // AIDEV-NOTE: Language config drives whisper args — supports auto (mixed
+    // Hebrew-English), hebrew, or english modes. Auto omits -l for auto-detect.
+    // Initial prompt primes vocabulary for dev terms in the configured language.
+    const langConfig = getLanguageConfig(getLanguageModeFromEnv());
+
     const args = [
       this.binaryPath,
       "-m",
@@ -150,8 +156,7 @@ export class WhisperCppBackend implements STTBackend {
       "-f",
       audioPath,
       "--no-timestamps",
-      "-l",
-      process.env.QA_VOICE_WHISPER_LANG || "en",
+      ...langConfig.whisperArgs,
       "--no-prints", // suppress progress output
     ];
 
