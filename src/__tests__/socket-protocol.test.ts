@@ -85,6 +85,22 @@ describe("socket-protocol", () => {
       expect(parsed.recoverable).toBe(true);
     });
 
+    it("serializes queue depth event", () => {
+      const event: SocketEvent = { type: "queue", depth: 3 };
+      const result = serializeEvent(event);
+      const parsed = JSON.parse(result.trim());
+      expect(parsed.type).toBe("queue");
+      expect(parsed.depth).toBe(3);
+    });
+
+    it("serializes queue depth zero", () => {
+      const event: SocketEvent = { type: "queue", depth: 0 };
+      const result = serializeEvent(event);
+      const parsed = JSON.parse(result.trim());
+      expect(parsed.type).toBe("queue");
+      expect(parsed.depth).toBe(0);
+    });
+
     it("always ends with newline", () => {
       const events: SocketEvent[] = [
         { type: "state", state: "idle" },

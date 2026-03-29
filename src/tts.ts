@@ -684,6 +684,9 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
+    // THREAD-SAFETY: This method assumes single-threaded execution.
+    // All queue mutations happen synchronously on the main event loop.
+    // If future async operations are added, consider adding a lock pattern.
     const active = this.current;
     this.current = null;
 
