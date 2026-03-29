@@ -82,6 +82,12 @@ export const SOCKET_PATH = tmpPath("voicelayer.sock");
 export const MCP_SOCKET_PATH = tmpPath("voicelayer-mcp.sock");
 
 /**
+ * Standalone daemon PID file.
+ * Separate from MCP_PID_FILE so daemon and MCP can coexist.
+ */
+export const DAEMON_PID_FILE = tmpPath("voicelayer-daemon.pid");
+
+/**
  * Safe write that refuses to follow symlinks.
  * Prevents symlink attacks on predictable /tmp paths (S1 security fix).
  */

@@ -1,0 +1,84 @@
+#!/usr/bin/env bun
+/**
+ * VoiceLayer Standalone Daemon — runs voice pipeline without MCP/Claude Code.
+ *
+ * Connects to Voice Bar on /tmp/voicelayer.sock as a client.
+ * Handles commands: record, stop, cancel, replay, toggle.
+ * Foundation for standalone dictation mode (replacing Wispr Flow).
+ *
+ * Usage:
+ *   bun src/daemon.ts
+ *   voicelayer serve
+ *
+ * AIDEV-NOTE: This file must NEVER import from @modelcontextprotocol, mcp-daemon,
+ * mcp-server, mcp-handler, or mcp-tools. Those are MCP-specific. The daemon
+ * reuses the same socket protocol and command handlers but operates independently.
+ */
+
+import { getBackend } from "./stt";
+import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
+import { handleSocketCommand } from "./socket-handlers";
+import { resolvePython3Path } from "./tts-health";
+import { acquireProcessLock, releaseProcessLock } from "./process-lock";
+import { DAEMON_PID_FILE } from "./paths";
+
+const LOG_PREFIX = "[voicelayer-serve]";
+
+async function main() {
+  // 1. Acquire daemon-specific process lock (separate from MCP PID)
+  const lockResult = acquireProcessLock(DAEMON_PID_FILE);
+  if (lockResult.killedStale) {
+    console.error(
+      `${LOG_PREFIX} Killed orphan daemon (PID ${lockResult.stalePid})`,
+    );
+  }
+
+  // 2. Resolve python3 path early — needed for edge-tts
+  try {
+    const python3 = resolvePython3Path();
+    console.error(`${LOG_PREFIX} python3: ${python3}`);
+  } catch {
+    console.error(`${LOG_PREFIX} Warning: python3 not found — TTS may fail`);
+  }
+
+  // 3. Init STT backend (warn but continue if unavailable)
+  try {
+    await getBackend();
+    console.error(`${LOG_PREFIX} STT backend ready`);
+  } catch (err: unknown) {
+    console.error(
+      `${LOG_PREFIX} Warning: no STT backend — recording will fail`,
+    );
+    console.error(
+      `${LOG_PREFIX}   ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // 4. Connect to Voice Bar for UI state + command handling
+  onCommand(handleSocketCommand);
+  connectToBar();
+
+  console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);
+  console.error(
+    `${LOG_PREFIX} Waiting for commands from Voice Bar on /tmp/voicelayer.sock`,
+  );
+
+  // 5. Graceful shutdown
+  const shutdown = () => {
+    console.error(`${LOG_PREFIX} Shutting down...`);
+    disconnectFromBar();
+    releaseProcessLock(DAEMON_PID_FILE);
+    console.error(`${LOG_PREFIX} Shutdown complete.`);
+    process.exit(0);
+  };
+
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
+}
+
+main().catch((err) => {
+  console.error(`${LOG_PREFIX} Fatal:`, err);
+  disconnectFromBar();
+  releaseProcessLock(DAEMON_PID_FILE);
+  process.exit(1);
+});
