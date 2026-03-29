@@ -21,6 +21,10 @@ case "${1:-}" in
         shift
         exec python3 "$SCRIPT_DIR/../tts_daemon.py" "$@"
         ;;
+    serve)
+        shift
+        exec bun "$SCRIPT_DIR/../daemon.ts" "$@"
+        ;;
     bar)
         shift
         echo "[voicelayer] Building Voice Bar..."
@@ -40,6 +44,7 @@ case "${1:-}" in
         echo "Usage: voicelayer <command> [options]"
         echo ""
         echo "Commands:"
+        echo "  serve      Start standalone voice daemon (without MCP/Claude Code)"
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
