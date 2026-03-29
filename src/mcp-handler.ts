@@ -6,6 +6,7 @@
  */
 
 import { getToolDefinitions } from "./mcp-tools";
+import { formatError } from "./format-response";
 
 /** Known tool names from mcp-server.ts dispatch table. */
 const KNOWN_TOOLS = new Set([
@@ -98,7 +99,10 @@ export async function handleMcpRequest(
           id: request.id,
           result: {
             content: [
-              { type: "text", text: "Missing tool name in tools/call" },
+              {
+                type: "text",
+                text: formatError("tools/call", "Missing tool name"),
+              },
             ],
             isError: true,
           },
@@ -114,7 +118,7 @@ export async function handleMcpRequest(
             content: [
               {
                 type: "text",
-                text: `Unknown tool: ${params.name}`,
+                text: formatError(params.name, "Unknown tool"),
               },
             ],
             isError: true,
@@ -128,7 +132,12 @@ export async function handleMcpRequest(
           jsonrpc: "2.0",
           id: request.id,
           result: {
-            content: [{ type: "text", text: "No tool executor available" }],
+            content: [
+              {
+                type: "text",
+                text: formatError("mcp", "No tool executor available"),
+              },
+            ],
             isError: true,
           },
         };
@@ -152,7 +161,10 @@ export async function handleMcpRequest(
             content: [
               {
                 type: "text",
-                text: `Error in ${params.name}: ${err instanceof Error ? err.message : String(err)}`,
+                text: formatError(
+                  params.name,
+                  err instanceof Error ? err.message : String(err),
+                ),
               },
             ],
             isError: true,

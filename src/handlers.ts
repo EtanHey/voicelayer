@@ -27,6 +27,15 @@ import type { SilenceMode } from "./vad";
 import { ensureVoiceBarRunning } from "./voice-bar-launcher";
 import { broadcast, isConnected } from "./socket-client";
 import {
+  formatSpeak,
+  formatAsk,
+  formatThink,
+  formatReplay,
+  formatToggle,
+  formatError,
+  formatBusy,
+} from "./format-response";
+import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
   ThinkArgsSchema,
@@ -187,11 +196,8 @@ export async function handleAnnounce(args: unknown): Promise<McpResult> {
     rate: validated.rate,
     voice: validated.voice,
   });
-  const text =
-    `[announce] Spoke: "${validated.message}"` +
-    (warning ? `\nWarning: ${warning}` : "");
 
-  return textResult(text);
+  return textResult(formatSpeak("announce", validated.message, warning));
 }
 
 export async function handleBrief(args: unknown): Promise<McpResult> {
@@ -205,11 +211,8 @@ export async function handleBrief(args: unknown): Promise<McpResult> {
     rate: validated.rate,
     voice: validated.voice,
   });
-  const text =
-    `[brief] Explained: "${validated.message}"` +
-    (warning ? `\nWarning: ${warning}` : "");
 
-  return textResult(text);
+  return textResult(formatSpeak("brief", validated.message, warning));
 }
 
 export async function handleConsult(args: unknown): Promise<McpResult> {
@@ -223,12 +226,8 @@ export async function handleConsult(args: unknown): Promise<McpResult> {
     rate: validated.rate,
     voice: validated.voice,
   });
-  const text =
-    `[consult] Spoke: "${validated.message}"\n` +
-    "User may want to respond. Use voice_ask to collect voice input if needed." +
-    (warning ? `\nWarning: ${warning}` : "");
 
-  return textResult(text);
+  return textResult(formatSpeak("consult", validated.message, warning));
 }
 
 export async function handleConverse(args: unknown): Promise<McpResult> {
@@ -248,9 +247,11 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   const booking = isVoiceBooked();
   if (booking.booked && !booking.ownedByUs) {
     return textResult(
-      `[converse] Line is busy — voice session owned by ${booking.owner?.sessionId} ` +
-        `(PID ${booking.owner?.pid}) since ${booking.owner?.startedAt}. ` +
-        "Fall back to text input, or wait for the other session to finish.",
+      formatBusy(
+        booking.owner?.sessionId ?? "unknown",
+        booking.owner?.pid ?? 0,
+        booking.owner?.startedAt ?? "unknown",
+      ),
       true,
     );
   }
@@ -296,14 +297,10 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     );
 
     if (response === null) {
-      return textResult(
-        pressToTalk
-          ? `[converse/PTT] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`
-          : `[converse] No response received within ${timeoutSeconds} seconds. The user may have stepped away.`,
-      );
+      return textResult(formatAsk(null, { timeoutSeconds, pressToTalk }));
     }
 
-    return textResult(response);
+    return textResult(formatAsk(response));
   };
 
   let timer: ReturnType<typeof setTimeout>;
@@ -368,7 +365,7 @@ export async function handleThink(args: unknown): Promise<McpResult> {
   }
   appendFileSync(THINK_FILE, line);
 
-  return textResult(`Noted (${category}): ${thought}`);
+  return textResult(formatThink(category, thought));
 }
 
 export async function handleReplay(args: unknown): Promise<McpResult> {
@@ -377,16 +374,22 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
   const entry = getHistoryEntry(index);
   if (!entry) {
     return textResult(
-      index === 0
-        ? "[replay] No audio in history buffer. Speak something first."
-        : `[replay] No audio at index ${index}. Buffer may have fewer entries.`,
+      formatError(
+        "replay",
+        index === 0
+          ? "No audio in history buffer. Speak something first."
+          : `No audio at index ${index}. Buffer may have fewer entries.`,
+      ),
       true,
     );
   }
 
   if (!existsSync(entry.file)) {
     return textResult(
-      `[replay] Audio file missing: ${entry.file}. It may have been cleaned up.`,
+      formatError(
+        "replay",
+        `Audio file missing: ${entry.file}. It may have been cleaned up.`,
+      ),
       true,
     );
   }
@@ -397,7 +400,7 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
     voice: entry.voice,
   });
 
-  return textResult(`[replay] Playing (index ${index}): "${entry.text}"`);
+  return textResult(formatReplay(index, entry.text));
 }
 
 export async function handleToggle(args: unknown): Promise<McpResult> {
@@ -459,5 +462,5 @@ export async function handleToggle(args: unknown): Promise<McpResult> {
     }
   }
 
-  return textResult(`[toggle] ${actions.join(", ")}`);
+  return textResult(formatToggle(actions));
 }
