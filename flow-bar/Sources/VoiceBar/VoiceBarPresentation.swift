@@ -58,6 +58,33 @@ enum VoiceBarPresentation {
         return hotkeyEnabled ? readyHotkeyHint : "Enable hotkey"
     }
 
+    static func liveStatusText(
+        mode: VoiceMode,
+        transcript: String,
+        confirmationText: String?,
+        hotkeyPhase: HotkeyPhase,
+        hotkeyEnabled: Bool,
+        errorMessage: String?
+    ) -> String {
+        switch mode {
+        case .idle, .disconnected:
+            idleStatusText(
+                transcript: transcript,
+                confirmationText: confirmationText,
+                hotkeyPhase: hotkeyPhase,
+                hotkeyEnabled: hotkeyEnabled
+            )
+        case .speaking:
+            "Speaking..."
+        case .recording:
+            hotkeyPhase == .holding ? "Release to send" : "Listening..."
+        case .transcribing:
+            "Thinking..."
+        case .error:
+            errorMessage ?? "Error"
+        }
+    }
+
     static func lastWords(_ text: String) -> String {
         let words = text.split(separator: " ")
         if words.count <= maxIdleWords { return text }

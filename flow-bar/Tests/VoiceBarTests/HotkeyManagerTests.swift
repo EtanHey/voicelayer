@@ -64,6 +64,20 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testCmdShiftVTriggersPasteLastTranscript() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 9,
+                flags: [.maskCommand, .maskShift],
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: true
+            ),
+            .pasteLastTranscript
+        )
+    }
+
     func testModifierModeIgnoresNonTargetKeycodes() {
         XCTAssertEqual(
             hotkeyAction(

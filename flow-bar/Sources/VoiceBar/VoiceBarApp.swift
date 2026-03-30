@@ -178,6 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let manager = HotkeyManager(gesture: gestureStateMachine)
+        manager.onPasteLastTranscript = { [weak self] in
+            self?.voiceState.repasteLastTranscript()
+        }
         if manager.start() {
             hotkeyManager = manager
             hotkeyEnabled = true

@@ -32,6 +32,8 @@ struct QueueItemState: Equatable {
 
 @Observable
 final class VoiceState {
+    private static let maxRecentTranscriptions = 8
+
     // UI-bound properties -- all mutations must happen on the main thread.
     var mode: VoiceMode = .idle
     var statusText: String = ""
@@ -56,6 +58,9 @@ final class VoiceState {
     /// Whether the last completed action was TTS playback (replay is valid).
     /// Set true when speaking state arrives, false when recording starts.
     var canReplay: Bool = false
+
+    /// Recent transcription history with the newest item first.
+    var recentTranscriptions: [String] = []
 
     /// Total queued + currently playing TTS items.
     var queueDepth: Int = 0
@@ -85,6 +90,15 @@ final class VoiceState {
 
     /// The app that was frontmost when bar-initiated recording started.
     private var frontmostAppOnRecordStart: NSRunningApplication?
+
+    /// The most recent app we pasted into. Reused for Cmd+Shift+V re-paste.
+    private var lastPasteTargetApp: NSRunningApplication?
+
+    /// Test seam for paste side effects. When set, bypasses system paste.
+    var pasteHandler: ((String) -> Bool)?
+
+    /// Delay before sending Cmd+V after activating the target app.
+    var pasteConfirmationDelay: TimeInterval = 0.25
 
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
@@ -128,6 +142,12 @@ final class VoiceState {
         sendCommand?(["cmd": "replay"])
     }
 
+    /// Paste the most recent transcript into the current target app again.
+    func repasteLastTranscript() {
+        guard !transcript.isEmpty else { return }
+        pasteTranscript(transcript, for: resolvedPasteTarget(forRepaste: true))
+    }
+
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     func record() {
         guard mode == .idle else { return }
@@ -167,6 +187,11 @@ final class VoiceState {
             guard let stateStr = event["state"] as? String else { return }
             switch stateStr {
             case "idle":
+                if barInitiatedRecording, mode == .transcribing {
+                    // Ignore stale idle from losing clients so the bar keeps
+                    // the thinking state until the winning transcription lands.
+                    return
+                }
                 // AIDEV-NOTE: NEVER reset barInitiatedRecording on idle.
                 // Multiple MCP clients receive the record command via sendToAll.
                 // Clients that fail (no sox, session busy) broadcast error+idle
@@ -219,10 +244,11 @@ final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 transcript = text
+                rememberRecentTranscription(text)
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
-                    pasteTranscription(text)
+                    pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false))
                 }
             }
 
@@ -333,32 +359,72 @@ final class VoiceState {
         }
     }
 
+    private func rememberRecentTranscription(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        recentTranscriptions.removeAll { $0 == trimmed }
+        recentTranscriptions.insert(trimmed, at: 0)
+        if recentTranscriptions.count > Self.maxRecentTranscriptions {
+            recentTranscriptions = Array(recentTranscriptions.prefix(Self.maxRecentTranscriptions))
+        }
+    }
+
     // MARK: - Paste transcription at cursor
 
-    /// Refocuses the captured app and pastes text via Cmd+V.
-    private func pasteTranscription(_ text: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-
-        // S4 fix: revalidate frontmost app at paste time — user may have switched apps
+    private func resolvedPasteTarget(forRepaste repaste: Bool) -> NSRunningApplication? {
         let currentFront = NSWorkspace.shared.frontmostApplication
         let isSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
-        let targetApp = (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
+
+        if repaste {
+            return (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
+        }
+
+        return (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
+    }
+
+    /// Refocuses the target app and pastes text via Cmd+V.
+    private func pasteTranscript(_ text: String, for targetApp: NSRunningApplication?) {
+        let pasted: Bool
+
+        if let pasteHandler {
+            pasted = pasteHandler(text)
+        } else {
+            guard let targetApp else {
+                pasted = false
+                frontmostAppOnRecordStart = nil
+                finishPasteConfirmation(pasted: pasted)
+                return
+            }
+
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+
+            // S4 fix: revalidate frontmost app at paste time — user may have switched apps
+            targetApp.activate()
+            lastPasteTargetApp = targetApp
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + pasteConfirmationDelay) { [weak self] in
+                guard let self else { return }
+                let pasted = Self.simulatePaste()
+                finishPasteConfirmation(pasted: pasted)
+            }
+            frontmostAppOnRecordStart = nil
+            return
+        }
 
         if let targetApp {
-            targetApp.activate()
+            lastPasteTargetApp = targetApp
         }
         frontmostAppOnRecordStart = nil
+        finishPasteConfirmation(pasted: pasted)
+    }
 
-        // 250ms delay for Electron apps (VS Code, Claude) to regain focus
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            // S3 fix: only show "Pasted!" if paste actually succeeds
-            let pasted = Self.simulatePaste()
-            self?.confirmationText = pasted ? "Pasted!" : "Paste failed — check Accessibility"
-            DispatchQueue.main.asyncAfter(deadline: .now() + (pasted ? 1.5 : 3.0)) {
-                self?.confirmationText = nil
-            }
+    private func finishPasteConfirmation(pasted: Bool) {
+        confirmationText = pasted ? "Pasted!" : "Paste failed — check Accessibility"
+        DispatchQueue.main.asyncAfter(deadline: .now() + (pasted ? 1.5 : 3.0)) { [weak self] in
+            self?.confirmationText = nil
         }
     }
 
