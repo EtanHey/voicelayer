@@ -136,6 +136,7 @@ enum HotkeyAction: Equatable {
     case ignore
     case keyDown
     case keyUp
+    case pasteLastTranscript
 }
 
 func hotkeyAction(
@@ -146,7 +147,9 @@ func hotkeyAction(
     targetKeycodes: Set<Int64>,
     useModifierMode: Bool
 ) -> HotkeyAction {
-    guard targetKeycodes.contains(keycode) else {
+    let repasteKeycode: Int64 = 9
+    let isRepasteKey = keycode == repasteKeycode
+    guard targetKeycodes.contains(keycode) || isRepasteKey else {
         NSLog(
             "[HotkeyManager] Keycode %lld does not match hotkey set %@ for event %@",
             keycode,
@@ -157,6 +160,34 @@ func hotkeyAction(
     }
 
     if useModifierMode {
+        if isRepasteKey {
+            guard type == .keyDown else {
+                NSLog(
+                    "[HotkeyManager] Ignoring repaste key event %@ for keycode %lld",
+                    describeEventType(type),
+                    keycode
+                )
+                return .ignore
+            }
+            guard autorepeat == 0 else {
+                NSLog("[HotkeyManager] Ignoring autorepeat for repaste keycode %lld", keycode)
+                return .ignore
+            }
+            guard flags.contains(.maskCommand), flags.contains(.maskShift) else {
+                NSLog(
+                    "[HotkeyManager] Ignoring repaste keyDown for keycode %lld because Cmd+Shift not held (flags=%@)",
+                    keycode,
+                    describeFlags(flags)
+                )
+                return .ignore
+            }
+            NSLog(
+                "[HotkeyManager] Matched repaste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
+                keycode,
+                describeFlags(flags)
+            )
+            return .pasteLastTranscript
+        }
         guard type == .keyDown || type == .keyUp else {
             NSLog(
                 "[HotkeyManager] Matched keycode %lld but ignored event type %@ in modifier mode",
@@ -218,13 +249,20 @@ private final class TapContext {
     let gesture: GestureStateMachine
     let targetKeycodes: Set<Int64>
     let useModifierMode: Bool
+    let onPasteLastTranscript: () -> Void
     /// CFMachPort reference for re-enabling the tap after system disables it.
     var tap: CFMachPort?
 
-    init(gesture: GestureStateMachine, keycodes: Set<Int64>, modifierMode: Bool) {
+    init(
+        gesture: GestureStateMachine,
+        keycodes: Set<Int64>,
+        modifierMode: Bool,
+        onPasteLastTranscript: @escaping () -> Void
+    ) {
         self.gesture = gesture
         targetKeycodes = keycodes
         useModifierMode = modifierMode
+        self.onPasteLastTranscript = onPasteLastTranscript
     }
 }
 
@@ -281,6 +319,10 @@ private func hotkeyCallback(
         DispatchQueue.main.async {
             ctx.gesture.handleKeyUp()
         }
+    case .pasteLastTranscript:
+        DispatchQueue.main.async {
+            ctx.onPasteLastTranscript()
+        }
     }
 
     // .listenOnly — always pass through
@@ -310,6 +352,9 @@ final class HotkeyManager {
 
     /// Retained context for the C callback — must live as long as the tap.
     private var tapContext: TapContext?
+
+    /// Callback for Cmd+Shift+V re-paste hotkey.
+    var onPasteLastTranscript: () -> Void = {}
 
     init(gesture: GestureStateMachine) {
         self.gesture = gesture
@@ -349,7 +394,10 @@ final class HotkeyManager {
 
         // Create context for the C callback
         let ctx = TapContext(
-            gesture: gesture, keycodes: targetKeycodes, modifierMode: useModifierMode
+            gesture: gesture,
+            keycodes: targetKeycodes,
+            modifierMode: useModifierMode,
+            onPasteLastTranscript: onPasteLastTranscript
         )
         tapContext = ctx
         let ctxPtr = Unmanaged.passUnretained(ctx).toOpaque()

@@ -113,4 +113,18 @@ final class VoiceBarPresentationTests: XCTestCase {
             "Enable hotkey"
         )
     }
+
+    func testLiveStatusTextShowsThinkingDuringTranscribing() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .transcribing,
+                transcript: "ignored",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: nil
+            ),
+            "Thinking..."
+        )
+    }
 }
