@@ -140,11 +140,6 @@ struct BarView: View {
                 state.record()
             }
         }
-        .contextMenu {
-            Button("Replay Last") { state.replay() }
-            Divider()
-            Button("Stop") { state.stop() }
-        }
     }
 
     // MARK: - Error auto-dismiss
