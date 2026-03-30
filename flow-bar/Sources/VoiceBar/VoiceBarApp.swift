@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let pillContextMenuController = PillContextMenuController()
+    private let daemonLauncher = VoiceBarDaemonLauncher()
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -44,6 +45,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            guard url.scheme == "voicebar" else { continue }
+            let command = url.host ?? ""
+            NSLog("[VoiceBar] URL scheme received: voicebar://%@", command)
+            switch command {
+            case "toggle":
+                // Toggle hands-free recording (same as double-tap)
+                if voiceState.mode == .idle {
+                    voiceState.record()
+                } else if voiceState.mode == .recording {
+                    voiceState.stop()
+                }
+            case "start-recording":
+                if voiceState.mode == .idle { voiceState.record() }
+            case "stop-recording":
+                if voiceState.mode == .recording { voiceState.stop() }
+            default:
+                NSLog("[VoiceBar] Unknown URL command: %@", command)
+            }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Singleton guard — if another VoiceBar is already running, quit immediately.
@@ -84,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configurePillContextMenu()
 
         server.start()
+        daemonLauncher.startIfNeeded()
 
         // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
         setupHotkey()
@@ -141,6 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         snoozeTask?.cancel()
         hotkeyManager?.stop()
+        daemonLauncher.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)

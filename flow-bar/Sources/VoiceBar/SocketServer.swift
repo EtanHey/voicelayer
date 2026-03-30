@@ -245,13 +245,7 @@ final class SocketServer {
         let count = clients.count
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            let wasConnected = state.isConnected
-            state.isConnected = count > 0
-            // AIDEV-NOTE: VoiceBar is a persistent server — never show "disconnected".
-            // When MCP clients leave, stay in idle. MCP connection status is in the menu bar.
-            if wasConnected != state.isConnected {
-                state.onConnectionChange?(state.isConnected)
-            }
+            state.setConnectionStatus(count > 0)
         }
     }
 
