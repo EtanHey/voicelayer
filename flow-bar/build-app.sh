@@ -9,6 +9,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Apple Development: Etan Heyman (DXHB5E7P2D)}"
@@ -36,6 +37,10 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
+cp -R "$REPO_ROOT/src" "$APP_DIR/Contents/Resources/"
+if [ -f "$REPO_ROOT/package.json" ]; then
+    cp "$REPO_ROOT/package.json" "$APP_DIR/Contents/Resources/package.json"
+fi
 
 # App icon
 if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then

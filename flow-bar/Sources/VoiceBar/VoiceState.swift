@@ -83,6 +83,7 @@ final class VoiceState {
 
     /// Safety timeout for barInitiatedRecording — prevents stuck state.
     private var barInitiatedTimeout: Task<Void, Never>?
+    private var transcriptionTimeoutTask: Task<Void, Never>?
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
@@ -129,6 +130,7 @@ final class VoiceState {
 
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     var onModeChange: ((VoiceMode) -> Void)?
+    var transcriptionTimeout: Duration = .seconds(30)
 
     // MARK: - Commands
 
@@ -136,9 +138,29 @@ final class VoiceState {
         sendCommand?(["cmd": "stop"])
     }
 
+    func dismissError() {
+        errorMessage = nil
+        speechDetected = false
+        recordingMode = nil
+        silenceMode = nil
+        resetAudioLevels()
+
+        if isConnected {
+            mode = .idle
+            onModeChange?(.idle)
+            startCollapseTimer()
+        } else {
+            mode = .disconnected
+            onModeChange?(.disconnected)
+            collapseTimer?.cancel()
+            isCollapsed = false
+        }
+    }
+
     func cancel() {
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
+        transcriptionTimeoutTask?.cancel()
         frontmostAppOnRecordStart = nil
         // Optimistic — immediately go idle so user sees instant response.
         // MCP will also send idle after processing the cancel.
@@ -170,6 +192,7 @@ final class VoiceState {
         }
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
+        transcriptionTimeoutTask?.cancel()
         frontmostAppOnRecordStart = nil
         speechDetected = false
         resetAudioLevels()
@@ -201,10 +224,11 @@ final class VoiceState {
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     func record() {
-        guard mode == .idle else { return }
+        guard mode == .idle || mode == .error else { return }
         mode = .recording // Optimistic — prevents rapid-tap duplicates
         onModeChange?(.recording)
         confirmationText = nil
+        errorMessage = nil
         let front = NSWorkspace.shared.frontmostApplication
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
@@ -253,6 +277,8 @@ final class VoiceState {
                 speechDetected = false
                 recordingMode = nil
                 silenceMode = nil
+                errorMessage = nil
+                transcriptionTimeoutTask?.cancel()
                 resetAudioLevels()
                 wordBoundaries = []
                 if (event["source"] as? String) == "playback" {
@@ -284,6 +310,7 @@ final class VoiceState {
                 statusText = ""
                 localRecordingLevel = nil
                 refreshAudioLevel()
+                startTranscriptionTimeout()
                 hotkeyPhase = .idle
                 onModeChange?(.transcribing)
                 expandFromCollapse()
@@ -298,12 +325,19 @@ final class VoiceState {
 
         case "transcription":
             if let text = event["text"] as? String {
-                transcript = text
-                rememberRecentTranscription(text)
+                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    failTranscription()
+                    return
+                }
+
+                transcriptionTimeoutTask?.cancel()
+                transcript = trimmed
+                rememberRecentTranscription(trimmed)
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
-                    pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+                    pasteTranscript(trimmed, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
                 }
             }
 
@@ -352,6 +386,7 @@ final class VoiceState {
             }
 
         case "error":
+            transcriptionTimeoutTask?.cancel()
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
             // the successful client is still recording. Show error UI only if
@@ -365,6 +400,37 @@ final class VoiceState {
         default:
             break
         }
+    }
+
+    func setConnectionStatus(_ connected: Bool) {
+        let previous = isConnected
+        isConnected = connected
+        guard previous != connected else { return }
+
+        onConnectionChange?(connected)
+
+        if connected {
+            if mode == .disconnected {
+                mode = .idle
+                onModeChange?(.idle)
+                startCollapseTimer()
+            }
+            return
+        }
+
+        transcriptionTimeoutTask?.cancel()
+        barInitiatedTimeout?.cancel()
+        barInitiatedRecording = false
+        frontmostAppOnRecordStart = nil
+        speechDetected = false
+        recordingMode = nil
+        silenceMode = nil
+        errorMessage = nil
+        resetAudioLevels()
+        mode = .disconnected
+        onModeChange?(.disconnected)
+        collapseTimer?.cancel()
+        isCollapsed = false
     }
 
     // MARK: - Idle collapse
@@ -438,6 +504,31 @@ final class VoiceState {
         socketAudioLevel = nil
         localRecordingLevel = nil
         audioLevel = nil
+    }
+
+    private func startTranscriptionTimeout() {
+        transcriptionTimeoutTask?.cancel()
+        let timeout = transcriptionTimeout
+        transcriptionTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self, !Task.isCancelled, mode == .transcribing else { return }
+            failTranscription()
+        }
+    }
+
+    private func failTranscription() {
+        transcriptionTimeoutTask?.cancel()
+        barInitiatedTimeout?.cancel()
+        barInitiatedRecording = false
+        frontmostAppOnRecordStart = nil
+        speechDetected = false
+        recordingMode = nil
+        silenceMode = nil
+        resetAudioLevels()
+        mode = .error
+        errorMessage = "Transcription failed"
+        onModeChange?(.error)
+        expandFromCollapse()
     }
 
     // MARK: - Paste transcription at cursor
