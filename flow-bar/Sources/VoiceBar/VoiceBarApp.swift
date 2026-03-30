@@ -322,6 +322,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
         UserDefaults.standard.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
     }
+
+    func quickMenuActions() -> [VoiceBarMenuAction] {
+        VoiceBarMenu.quickActions(
+            openSettings: { [weak self] in self?.openSettingsWindow() },
+            hideForOneHour: { [weak self] in self?.snoozeForOneHour() },
+            pasteLastTranscript: { [weak self] in self?.voiceState.repasteLastTranscript() },
+            quit: { NSApplication.shared.terminate(nil) }
+        )
+    }
+
+    private func openSettingsWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+    }
 }
 
 // MARK: - SwiftUI App entry point
@@ -349,10 +363,11 @@ struct VoiceBarApp: App {
                         .font(.system(.caption, weight: .medium))
                 }
                 Divider()
-                Button("Quit Voice Bar") {
-                    NSApplication.shared.terminate(nil)
+                ForEach(appDelegate.quickMenuActions()) { action in
+                    Button(action.title) {
+                        action.perform()
+                    }
                 }
-                .keyboardShortcut("q")
             }
             .padding(8)
         }

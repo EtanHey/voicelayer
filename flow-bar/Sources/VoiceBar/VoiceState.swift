@@ -102,6 +102,21 @@ final class VoiceState {
     /// Delay before sending Cmd+V after activating the target app.
     var pasteConfirmationDelay: TimeInterval = 0.25
 
+    /// Test seam for delayed paste scheduling.
+    var pasteScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+    }
+
+    /// Test seam for re-activating the target app before paste.
+    var targetAppActivator: (NSRunningApplication) -> Void = { app in
+        app.activate()
+    }
+
+    /// Test seam for the final Cmd+V event posting.
+    var simulatedPasteHandler: () -> Bool = {
+        VoiceState.simulatePaste()
+    }
+
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
     var sendCommand: (([String: Any]) -> Void)?
@@ -181,7 +196,7 @@ final class VoiceState {
     /// Paste the most recent transcript into the current target app again.
     func repasteLastTranscript() {
         guard !transcript.isEmpty else { return }
-        pasteTranscript(transcript, for: resolvedPasteTarget(forRepaste: true))
+        pasteTranscript(transcript, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
     }
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
@@ -288,7 +303,7 @@ final class VoiceState {
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
-                    pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false))
+                    pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
                 }
             }
 
@@ -439,7 +454,11 @@ final class VoiceState {
     }
 
     /// Refocuses the target app and pastes text via Cmd+V.
-    private func pasteTranscript(_ text: String, for targetApp: NSRunningApplication?) {
+    private func pasteTranscript(
+        _ text: String,
+        for targetApp: NSRunningApplication?,
+        plan: VoicePastePlan
+    ) {
         let pasted: Bool
 
         if let pasteHandler {
@@ -456,14 +475,17 @@ final class VoiceState {
             pasteboard.clearContents()
             pasteboard.setString(text, forType: .string)
 
-            // S4 fix: revalidate frontmost app at paste time — user may have switched apps
-            targetApp.activate()
-            lastPasteTargetApp = targetApp
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + pasteConfirmationDelay) { [weak self] in
+            let pasteDelay = plan == .autoPaste ? pasteConfirmationDelay : plan.pasteDelay
+            pasteScheduler(plan.activationDelay) { [weak self] in
                 guard let self else { return }
-                let pasted = Self.simulatePaste()
-                finishPasteConfirmation(pasted: pasted)
+                targetAppActivator(targetApp)
+                lastPasteTargetApp = targetApp
+
+                pasteScheduler(pasteDelay) { [weak self] in
+                    guard let self else { return }
+                    let pasted = simulatedPasteHandler()
+                    finishPasteConfirmation(pasted: pasted)
+                }
             }
             frontmostAppOnRecordStart = nil
             return
