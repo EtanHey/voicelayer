@@ -1,5 +1,7 @@
 # BugBot Review Summary: Cmd+F5 Hotkey
 
+> **⚠️ DEPRECATED:** This review covers the Cmd+F5 implementation from PR #93. As of commit a7fb029 (2026-03-30), VoiceBar uses **Cmd+F6** to avoid VoiceOver conflicts. See [BUGBOT_REVIEW_CMD_F6.md](./BUGBOT_REVIEW_CMD_F6.md) for the current implementation.
+
 **PR #93:** feat: switch VoiceBar hotkey to Cmd+F5  
 **Status:** ✅ APPROVED with fixes applied  
 **Date:** 2026-03-29
