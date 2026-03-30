@@ -98,6 +98,16 @@ final class VoiceBarPresentationTests: XCTestCase {
                 transcript: "",
                 confirmationText: nil,
                 hotkeyPhase: .idle,
+                hotkeyEnabled: true
+            ),
+            "⌘F6 to talk"
+        )
+
+        XCTAssertEqual(
+            VoiceBarPresentation.idleStatusText(
+                transcript: "",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
                 hotkeyEnabled: false
             ),
             "Enable hotkey"
