@@ -15,6 +15,7 @@ import {
   parseCommand,
   type SocketEvent,
   type SocketCommand,
+  type HealthResponse,
 } from "./socket-protocol";
 import { SOCKET_PATH } from "./paths";
 
@@ -31,7 +32,9 @@ let reconnectDelay = 1000; // Start at 1s, backoff to 15s max
 const MAX_RECONNECT_DELAY = 15000;
 
 // --- Command handler callback ---
-let commandHandler: ((command: SocketCommand) => void) | null = null;
+let commandHandler:
+  | ((command: SocketCommand) => void | HealthResponse | Promise<void | HealthResponse>)
+  | null = null;
 
 // --- Target socket path (overridable for tests) ---
 let targetPath: string = SOCKET_PATH;
@@ -89,7 +92,11 @@ export function broadcast(event: SocketEvent): void {
  * Register a handler for commands received from VoiceBar.
  * Only one handler is supported — last one wins.
  */
-export function onCommand(handler: (command: SocketCommand) => void): void {
+export function onCommand(
+  handler: (
+    command: SocketCommand,
+  ) => void | HealthResponse | Promise<void | HealthResponse>,
+): void {
   commandHandler = handler;
 }
 
@@ -128,7 +135,24 @@ function startConnection(): void {
               `[socket-client] Command from VoiceBar: ${JSON.stringify(command)}`,
             );
             if (commandHandler) {
-              commandHandler(command);
+              Promise.resolve(commandHandler(command))
+                .then((response) => {
+                  if (!response || !connection || !connected) return;
+                  try {
+                    connection.write(JSON.stringify(response) + "\n");
+                  } catch (err) {
+                    console.error(
+                      `[socket-client] Failed to write response: ${err instanceof Error ? err.message : String(err)}`,
+                    );
+                  }
+                })
+                .catch((error) => {
+                  console.error(
+                    `[socket-client] Command handler failed: ${
+                      error instanceof Error ? error.message : String(error)
+                    }`,
+                  );
+                });
             }
           } else {
             console.error(`[socket-client] Invalid command: ${line}`);

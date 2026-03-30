@@ -14,6 +14,8 @@ import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import * as tts from "../tts";
 import * as socketClient from "../socket-client";
 import * as sessionBooking from "../session-booking";
+import * as daemonHealth from "../daemon-health";
+import * as input from "../input";
 import { handleSocketCommand } from "../socket-handlers";
 
 describe("socket stop/cancel → stopPlayback()", () => {
@@ -74,5 +76,37 @@ describe("socket stop/cancel → stopPlayback()", () => {
     handleSocketCommand({ cmd: "cancel" });
     expect(setCancelSignalSpy).toHaveBeenCalledTimes(1);
     expect(stopPlaybackSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("socket health command", () => {
+  let getQueueDepthSpy: ReturnType<typeof spyOn>;
+  let getRecordingStateSpy: ReturnType<typeof spyOn>;
+  let getUptimeSecondsSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    getQueueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(3);
+    getRecordingStateSpy = spyOn(input, "getRecordingState").mockReturnValue(
+      "recording",
+    );
+    getUptimeSecondsSpy = spyOn(daemonHealth, "getUptimeSeconds").mockReturnValue(
+      42,
+    );
+  });
+
+  afterEach(() => {
+    getQueueDepthSpy.mockRestore();
+    getRecordingStateSpy.mockRestore();
+    getUptimeSecondsSpy.mockRestore();
+  });
+
+  it("returns daemon health snapshot with uptime, queue depth, and recording state", () => {
+    const response = handleSocketCommand({ cmd: "health" });
+    expect(response).toEqual({
+      type: "health",
+      uptime_seconds: 42,
+      queue_depth: 3,
+      recording_state: "recording",
+    });
   });
 });

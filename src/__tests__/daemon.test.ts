@@ -15,6 +15,7 @@ import {
   MCP_PID_FILE,
 } from "../process-lock";
 import { DAEMON_PID_FILE } from "../paths";
+import { createShutdownHandler } from "../daemon";
 
 // --- Helpers ---
 
@@ -119,6 +120,22 @@ describe("daemon has no MCP imports", () => {
     expect(joined).not.toContain("./mcp-server");
     expect(joined).not.toContain("./mcp-handler");
     expect(joined).not.toContain("./mcp-tools");
+  });
+});
+
+describe("daemon shutdown", () => {
+  it("releases the PID lock and disconnects exactly once on repeated shutdown signals", () => {
+    const calls: string[] = [];
+    const shutdown = createShutdownHandler({
+      disconnect: () => calls.push("disconnect"),
+      releaseLock: () => calls.push("releaseLock"),
+      exit: (code) => calls.push(`exit:${code}`),
+    });
+
+    shutdown();
+    shutdown();
+
+    expect(calls).toEqual(["disconnect", "releaseLock", "exit:0"]);
   });
 });
 
