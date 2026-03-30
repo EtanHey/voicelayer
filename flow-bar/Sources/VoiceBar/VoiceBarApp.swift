@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let gestureStateMachine = GestureStateMachine()
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
+    var missingHotkeyPermissions: [HotkeyPermission] = []
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -239,11 +240,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if manager.start() {
             hotkeyManager = manager
             hotkeyEnabled = true
+            missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
             NSLog("[VoiceBar] Hotkey system active — Cmd+F6 hold for push-to-talk, double-tap for hands-free")
         } else {
+            hotkeyEnabled = false
+            missingHotkeyPermissions = manager.permissionStatus.missingPermissions
             voiceState.setHotkeyEnabled(false)
-            NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
+            NSLog(
+                "[VoiceBar] Hotkey system unavailable — missing permissions: %@",
+                missingHotkeyPermissions.map {
+                    switch $0 {
+                    case .inputMonitoring: "Input Monitoring"
+                    case .accessibility: "Accessibility"
+                    }
+                }.joined(separator: ", ")
+            )
         }
     }
 
@@ -359,8 +371,13 @@ struct VoiceBarApp: App {
                     Circle()
                         .fill(appDelegate.hotkeyEnabled ? .green : .orange)
                         .frame(width: 8, height: 8)
-                    Text(appDelegate.hotkeyEnabled ? "Hotkey: \u{2318}F6" : "Hotkey: needs permission")
-                        .font(.system(.caption, weight: .medium))
+                    Text(
+                        VoiceBarPresentation.hotkeyPermissionHint(
+                            hotkeyEnabled: appDelegate.hotkeyEnabled,
+                            missingPermissions: appDelegate.missingHotkeyPermissions
+                        )
+                    )
+                    .font(.system(.caption, weight: .medium))
                 }
                 Divider()
                 ForEach(appDelegate.quickMenuActions()) { action in

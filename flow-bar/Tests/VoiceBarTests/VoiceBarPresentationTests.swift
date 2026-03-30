@@ -127,4 +127,32 @@ final class VoiceBarPresentationTests: XCTestCase {
             "Thinking..."
         )
     }
+
+    func testHotkeyPermissionHintIsSpecificToMissingPermission() {
+        XCTAssertEqual(
+            VoiceBarPresentation.hotkeyPermissionHint(
+                hotkeyEnabled: false,
+                missingPermissions: [.inputMonitoring]
+            ),
+            "Hotkey: enable Input Monitoring"
+        )
+
+        XCTAssertEqual(
+            VoiceBarPresentation.hotkeyPermissionHint(
+                hotkeyEnabled: false,
+                missingPermissions: [.accessibility]
+            ),
+            "Hotkey: enable Accessibility"
+        )
+    }
+
+    func testHotkeyPermissionHintHandlesBothPermissions() {
+        XCTAssertEqual(
+            VoiceBarPresentation.hotkeyPermissionHint(
+                hotkeyEnabled: false,
+                missingPermissions: [.inputMonitoring, .accessibility]
+            ),
+            "Hotkey: enable Accessibility + Input Monitoring"
+        )
+    }
 }

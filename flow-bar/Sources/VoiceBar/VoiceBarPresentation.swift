@@ -18,6 +18,21 @@ enum VoiceBarPresentation {
     private static let maxIdleWords = 3
     static let readyHotkeyHint = "⌘F6 to talk"
 
+    static func hotkeyPermissionHint(
+        hotkeyEnabled: Bool,
+        missingPermissions: [HotkeyPermission]
+    ) -> String {
+        guard !hotkeyEnabled else { return "Hotkey: ⌘F6" }
+        let labels = missingPermissions.map {
+            switch $0 {
+            case .inputMonitoring: "Input Monitoring"
+            case .accessibility: "Accessibility"
+            }
+        }.sorted()
+        guard !labels.isEmpty else { return "Hotkey: needs permission" }
+        return "Hotkey: enable \(labels.joined(separator: " + "))"
+    }
+
     static func queuePreview(from items: [QueueItemState]) -> VoiceBarQueuePreview {
         let current = items.first(where: \.isCurrent) ?? items.first
         let next = items.dropFirst().first(where: { !$0.isCurrent }) ?? items.dropFirst().first
