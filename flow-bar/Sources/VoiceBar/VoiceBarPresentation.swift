@@ -16,6 +16,7 @@ struct VoiceBarQueuePreview: Equatable {
 
 enum VoiceBarPresentation {
     private static let maxIdleWords = 3
+    static let readyHotkeyHint = "⌘F6 to talk"
 
     static func queuePreview(from items: [QueueItemState]) -> VoiceBarQueuePreview {
         let current = items.first(where: \.isCurrent) ?? items.first
@@ -54,7 +55,7 @@ enum VoiceBarPresentation {
             return lastWords(transcript)
         }
 
-        return hotkeyEnabled ? "Right ⌘ to talk" : "Enable hotkey"
+        return hotkeyEnabled ? readyHotkeyHint : "Enable hotkey"
     }
 
     static func lastWords(_ text: String) -> String {
