@@ -6,8 +6,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-FLOW_BAR_DIR="$(cd "$SCRIPT_DIR/../../flow-bar" && pwd)"
-
 case "${1:-}" in
     extract)
         shift
@@ -27,6 +25,7 @@ case "${1:-}" in
         ;;
     bar)
         shift
+        FLOW_BAR_DIR="$(cd "$SCRIPT_DIR/../../flow-bar" && pwd)"
         echo "[voicelayer] Building Voice Bar..."
         cd "$FLOW_BAR_DIR"
         swift build -c release 2>&1 | tail -1
