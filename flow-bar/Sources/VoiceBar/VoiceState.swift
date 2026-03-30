@@ -51,6 +51,8 @@ final class VoiceState {
 
     /// Real-time audio level (0.0–1.0) from RMS events.
     var audioLevel: Double?
+    private var socketAudioLevel: Double?
+    private var localRecordingLevel: Double?
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
@@ -127,7 +129,7 @@ final class VoiceState {
         // MCP will also send idle after processing the cancel.
         mode = .idle
         speechDetected = false
-        audioLevel = nil
+        resetAudioLevels()
         statusText = ""
         onModeChange?(.idle)
         startCollapseTimer()
@@ -140,6 +142,12 @@ final class VoiceState {
 
     func replay() {
         sendCommand?(["cmd": "replay"])
+    }
+
+    func setLocalRecordingLevel(_ level: Double?) {
+        guard mode == .recording else { return }
+        localRecordingLevel = level.map { min(1, max(0, $0)) }
+        refreshAudioLevel()
     }
 
     /// Paste the most recent transcript into the current target app again.
@@ -202,7 +210,7 @@ final class VoiceState {
                 speechDetected = false
                 recordingMode = nil
                 silenceMode = nil
-                audioLevel = nil
+                resetAudioLevels()
                 wordBoundaries = []
                 if (event["source"] as? String) == "playback" {
                     queueDepth = 0
@@ -223,12 +231,16 @@ final class VoiceState {
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
                 speechDetected = false
+                localRecordingLevel = nil
+                refreshAudioLevel()
                 canReplay = false // User recording — replay not applicable
                 onModeChange?(.recording)
                 expandFromCollapse()
             case "transcribing":
                 mode = .transcribing
                 statusText = ""
+                localRecordingLevel = nil
+                refreshAudioLevel()
                 hotkeyPhase = .idle
                 onModeChange?(.transcribing)
                 expandFromCollapse()
@@ -292,7 +304,8 @@ final class VoiceState {
 
         case "audio_level":
             if let rms = event["rms"] as? Double {
-                audioLevel = rms
+                socketAudioLevel = rms
+                refreshAudioLevel()
             }
 
         case "error":
@@ -368,6 +381,20 @@ final class VoiceState {
         if recentTranscriptions.count > Self.maxRecentTranscriptions {
             recentTranscriptions = Array(recentTranscriptions.prefix(Self.maxRecentTranscriptions))
         }
+    }
+
+    private func refreshAudioLevel() {
+        if mode == .recording, let localRecordingLevel {
+            audioLevel = localRecordingLevel
+        } else {
+            audioLevel = socketAudioLevel
+        }
+    }
+
+    private func resetAudioLevels() {
+        socketAudioLevel = nil
+        localRecordingLevel = nil
+        audioLevel = nil
     }
 
     // MARK: - Paste transcription at cursor
