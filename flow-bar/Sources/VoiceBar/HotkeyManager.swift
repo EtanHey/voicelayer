@@ -1,14 +1,15 @@
 // HotkeyManager.swift — Global hotkey detection via CGEventTap.
 //
-// Uses .listenOnly tap (Input Monitoring permission) with Right Command
-// as the default hotkey. App Store compatible. No event consumption needed
-// because Right Command alone has no system side-effect.
+// Uses .listenOnly tap (Input Monitoring permission) with Cmd+F5
+// as the default hotkey. No event consumption needed because the tap
+// only observes matching events and lets the system handle them normally.
 //
 // Gesture state machine: hold (250ms) = push-to-talk, double-tap (400ms) = toggle.
 //
 // AIDEV-NOTE: Based on R02 research (macOS Sequoia CGEventTap guide).
-// Right Command (keycode 54) is the recommended default — zero system conflicts,
-// works with .listenOnly, App Store viable. F4 (keycodes 118+129) as alternative.
+// Cmd+F5 is detected via flagsChanged with Command held and F5 keycodes
+// 96 (standard function key mode) or 176 (media mode), mirroring the
+// dual-keycode handling used for F4.
 
 import CoreGraphics
 import Foundation
@@ -17,8 +18,8 @@ import Foundation
 
 /// Detects hold vs tap vs double-tap from raw key events.
 /// - Hold (250ms+): push-to-talk recording
-/// - Single tap: toggle recording on/off
-/// - Double-tap (within 400ms): reserved for future use
+/// - Single tap: no-op
+/// - Double-tap (within 400ms): toggle hands-free recording
 final class GestureStateMachine {
     enum State: Sendable {
         case idle
@@ -102,6 +103,41 @@ final class GestureStateMachine {
     }
 }
 
+enum HotkeyAction: Equatable {
+    case ignore
+    case keyDown
+    case keyUp
+}
+
+func hotkeyAction(
+    type: CGEventType,
+    keycode: Int64,
+    flags: CGEventFlags,
+    autorepeat: Int64,
+    targetKeycodes: Set<Int64>,
+    useModifierMode: Bool
+) -> HotkeyAction {
+    guard targetKeycodes.contains(keycode) else {
+        return .ignore
+    }
+
+    if useModifierMode {
+        guard type == .flagsChanged else {
+            return .ignore
+        }
+        // flagsChanged events don't have autorepeat — they fire once per modifier state change
+        return flags.contains(.maskCommand) ? .keyDown : .keyUp
+    }
+
+    guard type == .keyDown || type == .keyUp else {
+        return .ignore
+    }
+    guard autorepeat == 0 else {
+        return .ignore
+    }
+    return type == .keyDown ? .keyDown : .keyUp
+}
+
 // MARK: - Tap Context (passed through userInfo)
 
 /// Holds configuration and gesture reference for the C callback.
@@ -146,35 +182,24 @@ private func hotkeyCallback(
 
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
 
-    if ctx.useModifierMode {
-        // Modifier key mode (Right Command = keycode 54)
-        guard ctx.targetKeycodes.contains(keycode) else {
-            return Unmanaged.passUnretained(event)
-        }
-        let isDown = event.flags.contains(.maskCommand)
+    let action = hotkeyAction(
+        type: type,
+        keycode: keycode,
+        flags: event.flags,
+        autorepeat: event.getIntegerValueField(.keyboardEventAutorepeat),
+        targetKeycodes: ctx.targetKeycodes,
+        useModifierMode: ctx.useModifierMode
+    )
+    switch action {
+    case .ignore:
+        break
+    case .keyDown:
         DispatchQueue.main.async {
-            if isDown {
-                ctx.gesture.handleKeyDown()
-            } else {
-                ctx.gesture.handleKeyUp()
-            }
+            ctx.gesture.handleKeyDown()
         }
-    } else {
-        // Function key mode (F4 = keycodes 118, 129)
-        guard ctx.targetKeycodes.contains(keycode) else {
-            return Unmanaged.passUnretained(event)
-        }
-        let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
-        guard autorepeat == 0 else {
-            return Unmanaged.passUnretained(event)
-        }
-        let isDown = (type == .keyDown)
+    case .keyUp:
         DispatchQueue.main.async {
-            if isDown {
-                ctx.gesture.handleKeyDown()
-            } else {
-                ctx.gesture.handleKeyUp()
-            }
+            ctx.gesture.handleKeyUp()
         }
     }
 
@@ -191,11 +216,11 @@ final class HotkeyManager {
     private var runLoopSource: CFRunLoopSource?
 
     /// Keycodes to listen for.
-    /// Right Command = 54. F4 standard = 118, F4 media = 129.
-    private var targetKeycodes: Set<Int64> = [54]
+    /// F5 standard = 96, F5 media = 176.
+    private var targetKeycodes: Set<Int64> = [96, 176]
 
-    /// Whether we're listening for flagsChanged (modifier keys like Cmd)
-    /// vs keyDown/keyUp (function keys like F4).
+    /// Whether we're listening for flagsChanged (Cmd+Fn key combinations)
+    /// vs keyDown/keyUp (plain function keys like F4).
     private var useModifierMode: Bool = true
 
     private let gesture: GestureStateMachine
@@ -225,7 +250,8 @@ final class HotkeyManager {
             return false
         }
 
-        // Event mask depends on whether we listen for modifier or function keys
+        // Event mask depends on whether we listen for flagsChanged combos
+        // or plain function-key presses.
         let mask = if useModifierMode {
             CGEventMask(1 << CGEventType.flagsChanged.rawValue)
         } else {
@@ -282,10 +308,15 @@ final class HotkeyManager {
         NSLog("[HotkeyManager] Event tap stopped")
     }
 
-    /// Reconfigure for different keycodes (e.g., switch from Right Command to F4).
+    /// Reconfigure for different keycodes or event modes.
     func configure(keycodes: Set<Int64>, useModifierMode: Bool) {
+        guard !keycodes.isEmpty else {
+            NSLog("[HotkeyManager] configure() called with empty keycodes — ignoring")
+            return
+        }
         let wasRunning = eventTap != nil
         if wasRunning { stop() }
+        gesture.reset()
         targetKeycodes = keycodes
         self.useModifierMode = useModifierMode
         if wasRunning { _ = start() }

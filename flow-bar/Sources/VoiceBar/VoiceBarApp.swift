@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         server.start()
 
-        // Hotkey setup — Right Command (keycode 54) push-to-talk by default
+        // Hotkey setup — Cmd+F5 hold for push-to-talk, double-tap for hands-free toggle
         setupHotkey()
 
         // Resize panel dynamically when pill content changes
@@ -158,26 +158,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             voiceState.stop()
         }
 
-        // Single tap → toggle recording (start if idle, stop if recording)
-        gestureStateMachine.onSingleTap = { [weak self] in
-            guard let self else { return }
-            if voiceState.mode == .idle {
-                NSLog("[VoiceBar] Hotkey single tap — starting toggle recording")
-                voiceState.record()
-            } else if voiceState.mode == .recording {
-                NSLog("[VoiceBar] Hotkey single tap — stopping recording")
-                voiceState.stop()
-            }
+        // Single tap is intentionally ignored so double-tap can toggle hands-free mode.
+        gestureStateMachine.onSingleTap = {
+            NSLog("[VoiceBar] Hotkey single tap — ignored")
         }
 
-        // Double tap → reserved (currently same as single tap for discoverability)
+        // Double tap → toggle hands-free recording
         gestureStateMachine.onDoubleTap = { [weak self] in
             guard let self else { return }
             if voiceState.mode == .idle {
-                NSLog("[VoiceBar] Hotkey double tap — starting recording")
+                NSLog("[VoiceBar] Hotkey double tap — starting hands-free recording")
                 voiceState.record()
             } else if voiceState.mode == .recording {
-                NSLog("[VoiceBar] Hotkey double tap — stopping recording")
+                NSLog("[VoiceBar] Hotkey double tap — stopping hands-free recording")
                 voiceState.stop()
             }
         }
@@ -187,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyManager = manager
             hotkeyEnabled = true
             voiceState.setHotkeyEnabled(true)
-            NSLog("[VoiceBar] Hotkey system active — Right Command for push-to-talk")
+            NSLog("[VoiceBar] Hotkey system active — Cmd+F5 hold for push-to-talk, double-tap for hands-free")
         } else {
             voiceState.setHotkeyEnabled(false)
             NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
@@ -283,7 +276,7 @@ struct VoiceBarApp: App {
                     Circle()
                         .fill(appDelegate.hotkeyEnabled ? .green : .orange)
                         .frame(width: 8, height: 8)
-                    Text(appDelegate.hotkeyEnabled ? "Hotkey: Right \u{2318}" : "Hotkey: needs permission")
+                    Text(appDelegate.hotkeyEnabled ? "Hotkey: \u{2318}F5" : "Hotkey: needs permission")
                         .font(.system(.caption, weight: .medium))
                 }
                 Divider()

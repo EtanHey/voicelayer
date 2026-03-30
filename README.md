@@ -146,10 +146,16 @@ Floating SwiftUI widget providing visual feedback during voice interactions. Con
 - Waveform visualization during recording
 - Expandable pill UI — collapses to dot after 5s idle
 - Draggable, position persisted across launches
+- **Global hotkey:** Cmd+F5 (hold for push-to-talk, double-tap to toggle hands-free)
 
 ```bash
 cd flow-bar && ./build-app.sh   # Build, codesign, install to /Applications
 ```
+
+**Hotkey Notes:**
+- Requires Input Monitoring permission (System Settings > Privacy & Security)
+- Cmd+F5 may conflict with VoiceOver or IDE shortcuts — if conflicts occur, the hotkey can be reconfigured via `HotkeyManager.configure()`
+- Supports both F5 keyboard modes (function-key and media-key)
 
 ### Advanced: Voice Cloning
 
