@@ -55,6 +55,11 @@ final class AudioLevelMonitor {
         }
     }
 
+    func restart() {
+        stop()
+        start()
+    }
+
     static func normalizeAveragePower(_ averagePower: Float) -> Double {
         let clamped = max(-120, min(0, averagePower))
         return Double((clamped + 120) / 120)

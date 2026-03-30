@@ -19,10 +19,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self?.voiceState.setLocalRecordingLevel(level)
     }
 
+    private let pillContextMenuController = PillContextMenuController()
+
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var moveObserver: Any?
+    private var snoozeTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
     /// Saved offsets (0.0–1.0) for pill positioning on screen.
@@ -77,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceState.onModeChange = { [weak self] mode in
             self?.handleVoiceModeChange(mode)
         }
+        configurePillContextMenu()
 
         server.start()
 
@@ -108,6 +112,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let pill = FloatingPillPanel(content: hosting)
+        pill.contextMenuProvider = { [weak self] in
+            self?.pillContextMenuController.makeMenu() ?? NSMenu()
+        }
         pill.positionOnScreen(
             horizontalOffset: horizontalOffset,
             verticalOffset: verticalOffset
@@ -131,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        snoozeTask?.cancel()
         hotkeyManager?.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
@@ -138,6 +146,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
+        }
+    }
+
+    private func configurePillContextMenu() {
+        pillContextMenuController.transcriptProvider = { [weak self] in
+            self?.voiceState.transcript ?? ""
+        }
+        pillContextMenuController.availableDevicesProvider = {
+            MicrophoneDeviceManager.availableInputDevices()
+        }
+        pillContextMenuController.selectedDeviceIDProvider = {
+            MicrophoneDeviceManager.selectedInputDeviceID()
+        }
+        pillContextMenuController.onSnooze = { [weak self] in
+            self?.snoozeForOneHour()
+        }
+        pillContextMenuController.onSelectDevice = { [weak self] deviceID in
+            guard MicrophoneDeviceManager.selectInputDevice(id: deviceID) else { return }
+            if self?.voiceState.mode == .recording {
+                self?.audioLevelMonitor.restart()
+            }
+        }
+        pillContextMenuController.onPasteLastTranscript = { [weak self] in
+            self?.voiceState.repasteLastTranscript()
+        }
+        pillContextMenuController.onQuit = {
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func snoozeForOneHour() {
+        snoozeTask?.cancel()
+        voiceState.snooze()
+        panel?.orderOut(nil)
+
+        snoozeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3600))
+            guard let self, !Task.isCancelled else { return }
+            voiceState.unsnooze()
+            panel?.orderFront(nil)
         }
     }
 

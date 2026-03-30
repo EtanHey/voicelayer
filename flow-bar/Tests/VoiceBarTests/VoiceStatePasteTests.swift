@@ -2,6 +2,39 @@
 import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
+    func testSnoozeMovesVoiceStateToDisconnected() {
+        let state = VoiceState()
+
+        state.snooze()
+
+        XCTAssertEqual(state.mode, .disconnected)
+    }
+
+    func testUnsnoozeReturnsVoiceStateToIdle() {
+        let state = VoiceState()
+        state.snooze()
+
+        state.unsnooze()
+
+        XCTAssertEqual(state.mode, .idle)
+    }
+
+    func testSnoozeClearsActiveRecordingAudioLevel() throws {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+        state.setLocalRecordingLevel(0.5)
+        _ = try XCTUnwrap(state.audioLevel)
+
+        state.snooze()
+
+        XCTAssertEqual(state.mode, .disconnected)
+        XCTAssertNil(state.audioLevel)
+    }
+
     func testLocalRecordingLevelOverridesSocketLevelWhileRecording() {
         let state = VoiceState()
 

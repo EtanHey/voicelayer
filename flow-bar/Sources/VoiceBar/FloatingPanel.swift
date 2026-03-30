@@ -6,6 +6,8 @@
 import AppKit
 
 final class FloatingPillPanel: NSPanel {
+    var contextMenuProvider: (() -> NSMenu)?
+
     init(content: NSView) {
         super.init(
             contentRect: NSRect(
@@ -54,6 +56,12 @@ final class FloatingPillPanel: NSPanel {
     /// Override sendEvent to ensure first clicks pass through to SwiftUI buttons.
     /// Without this, the first tap on the collapsed dot may be consumed by the panel.
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .rightMouseDown,
+           let contentView,
+           let menu = contextMenuProvider?() {
+            NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+            return
+        }
         // Force key status before processing mouse events so buttons respond immediately
         if event.type == .leftMouseDown, !isKeyWindow {
             makeKey()
