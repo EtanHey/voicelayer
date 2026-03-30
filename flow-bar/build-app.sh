@@ -3,7 +3,7 @@
 #
 # Usage: bash flow-bar/build-app.sh
 #
-# Output: ~/Applications/VoiceLayer/VoiceBar.app
+# Output: /Applications/VoiceBar.app
 
 set -euo pipefail
 
@@ -11,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PACKAGE_DIR="$SCRIPT_DIR"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
+SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Apple Development: Etan Heyman (DXHB5E7P2D)}"
 
 echo "[build-app] Building VoiceBar (release)..."
 swift build -c release --package-path "$PACKAGE_DIR"
@@ -42,9 +43,16 @@ if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     echo "[build-app] Icon installed."
 fi
 
-# Ad-hoc codesign (required for macOS Gatekeeper)
+# Developer signing keeps TCC permissions stable across rebuilds.
 echo "[build-app] Signing..."
-codesign --force --sign - "$APP_DIR"
+codesign --force --deep --sign "$SIGN_IDENTITY" --timestamp=none "$APP_DIR"
+
+echo "[build-app] Verifying signature..."
+if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
+    echo "[build-app] ERROR: Installed app is not signed with $SIGN_IDENTITY"
+    codesign -dv --verbose=4 "$APP_DIR" 2>&1
+    exit 1
+fi
 
 echo "[build-app] Done: $APP_DIR"
 echo "[build-app] To add to Login Items: System Settings > General > Login Items > +"

@@ -120,6 +120,11 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pastedTexts, ["test capture from codex"])
     }
 
+    func testRepasteWaitsForMenuFocusToSettle() {
+        XCTAssertGreaterThan(VoicePastePlan.repaste.activationDelay, 0)
+        XCTAssertEqual(VoicePastePlan.autoPaste.activationDelay, 0)
+    }
+
     func testRecentTranscriptionsAreMostRecentFirst() {
         let state = VoiceState()
 
