@@ -15,6 +15,10 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let voiceState = VoiceState()
+    private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
+        self?.voiceState.setLocalRecordingLevel(level)
+    }
+
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
@@ -69,6 +73,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in
             server?.sendToAll(command: cmd)
+        }
+        voiceState.onModeChange = { [weak self] mode in
+            self?.handleVoiceModeChange(mode)
         }
 
         server.start()
@@ -189,6 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             voiceState.setHotkeyEnabled(false)
             NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
+        }
+    }
+
+    private func handleVoiceModeChange(_ mode: VoiceMode) {
+        switch mode {
+        case .recording:
+            audioLevelMonitor.start()
+        default:
+            audioLevelMonitor.stop()
         }
     }
 
