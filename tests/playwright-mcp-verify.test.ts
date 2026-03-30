@@ -13,6 +13,9 @@ import { existsSync } from "fs";
 // Pre-check for conditional skips
 const npxAvailable = Bun.spawnSync(["which", "npx"]).exitCode === 0;
 const mcpJsonExists = existsSync(".mcp.json");
+const mcpConfig =
+  mcpJsonExists ? await Bun.file(".mcp.json").json().catch(() => null) : null;
+const playwrightConfig = mcpConfig?.mcpServers?.playwright;
 
 describe("Playwright MCP setup", () => {
   test.skipIf(!npxAvailable)(
@@ -30,13 +33,12 @@ describe("Playwright MCP setup", () => {
     },
   );
 
-  test.skipIf(!mcpJsonExists)(
+  test.skipIf(!playwrightConfig)(
     ".mcp.json contains playwright config",
-    async () => {
-      const config = await Bun.file(".mcp.json").json();
-      expect(config.mcpServers.playwright).toBeDefined();
-      expect(config.mcpServers.playwright.command).toBe("npx");
-      expect(config.mcpServers.playwright.args).toContain(
+    () => {
+      expect(playwrightConfig).toBeDefined();
+      expect(playwrightConfig.command).toBe("npx");
+      expect(playwrightConfig.args).toContain(
         "@playwright/mcp@latest",
       );
     },
