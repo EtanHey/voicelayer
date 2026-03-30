@@ -10,6 +10,7 @@
 // set, not as flagsChanged events. We listen for the dual F6 keycodes:
 // 97 (standard function key mode) or 177 (media mode).
 
+import ApplicationServices
 import CoreGraphics
 import Foundation
 
@@ -139,13 +140,73 @@ enum HotkeyAction: Equatable {
     case pasteLastTranscript
 }
 
+enum HotkeyPermission: Equatable {
+    case inputMonitoring
+    case accessibility
+}
+
+struct HotkeyPermissionStatus: Equatable {
+    var listenEventGranted: Bool
+    var accessibilityGranted: Bool
+
+    var missingPermissions: [HotkeyPermission] {
+        var missing: [HotkeyPermission] = []
+        if !listenEventGranted { missing.append(.inputMonitoring) }
+        if !accessibilityGranted { missing.append(.accessibility) }
+        return missing
+    }
+
+    var isGranted: Bool {
+        missingPermissions.isEmpty
+    }
+}
+
+struct DebounceClock {
+    var now: () -> TimeInterval = { CFAbsoluteTimeGetCurrent() }
+}
+
+struct HotkeyDebounceState {
+    var lastProcessedKeyDownTime: TimeInterval?
+}
+
+func shouldDebounceHotkeyAction(
+    action: HotkeyAction,
+    debounceState: inout HotkeyDebounceState,
+    clock: DebounceClock = DebounceClock()
+) -> Bool {
+    guard action == .keyDown else { return false }
+    let timestamp = clock.now()
+    if let lastProcessedKeyDownTime = debounceState.lastProcessedKeyDownTime,
+       (timestamp - lastProcessedKeyDownTime) < 0.3 {
+        return true
+    }
+    debounceState.lastProcessedKeyDownTime = timestamp
+    return false
+}
+
+func shouldConsumeHotkeyEvent(
+    hotkeyAction: HotkeyAction,
+    targetKeycodes: Set<Int64>,
+    keycode: Int64
+) -> Bool {
+    switch hotkeyAction {
+    case .keyDown, .keyUp:
+        targetKeycodes.contains(keycode)
+    case .pasteLastTranscript:
+        keycode == 9
+    case .ignore:
+        false
+    }
+}
+
 func hotkeyAction(
     type: CGEventType,
     keycode: Int64,
     flags: CGEventFlags,
     autorepeat: Int64,
     targetKeycodes: Set<Int64>,
-    useModifierMode: Bool
+    useModifierMode: Bool,
+    currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState)
 ) -> HotkeyAction {
     let repasteKeycode: Int64 = 9
     let isRepasteKey = keycode == repasteKeycode
@@ -200,7 +261,8 @@ func hotkeyAction(
             NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld in modifier mode", keycode)
             return .ignore
         }
-        if type == .keyDown, !flags.contains(.maskCommand) {
+        let commandHeld = flags.contains(.maskCommand) || currentModifierFlags.contains(.maskCommand)
+        if type == .keyDown, !commandHeld {
             NSLog(
                 "[HotkeyManager] Ignoring keyDown for keycode %lld because Command is not held (flags=%@)",
                 keycode,
@@ -250,6 +312,7 @@ private final class TapContext {
     let targetKeycodes: Set<Int64>
     let useModifierMode: Bool
     let onPasteLastTranscript: () -> Void
+    var debounceState = HotkeyDebounceState()
     /// CFMachPort reference for re-enabling the tap after system disables it.
     var tap: CFMachPort?
 
@@ -308,6 +371,10 @@ private func hotkeyCallback(
         targetKeycodes: ctx.targetKeycodes,
         useModifierMode: ctx.useModifierMode
     )
+    if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {
+        NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
+        return nil
+    }
     switch action {
     case .ignore:
         break
@@ -325,7 +392,14 @@ private func hotkeyCallback(
         }
     }
 
-    // .listenOnly — always pass through
+    if shouldConsumeHotkeyEvent(
+        hotkeyAction: action,
+        targetKeycodes: ctx.targetKeycodes,
+        keycode: keycode
+    ) {
+        return nil
+    }
+
     return Unmanaged.passUnretained(event)
 }
 
@@ -355,26 +429,43 @@ final class HotkeyManager {
 
     /// Callback for Cmd+Shift+V re-paste hotkey.
     var onPasteLastTranscript: () -> Void = {}
+    private(set) var permissionStatus = HotkeyPermissionStatus(
+        listenEventGranted: false,
+        accessibilityGranted: false
+    )
 
     init(gesture: GestureStateMachine) {
         self.gesture = gesture
     }
 
-    /// Check if Input Monitoring permission is granted.
-    static func hasPermission() -> Bool {
-        CGPreflightListenEventAccess()
+    static func currentPermissionStatus() -> HotkeyPermissionStatus {
+        HotkeyPermissionStatus(
+            listenEventGranted: CGPreflightListenEventAccess(),
+            accessibilityGranted: AXIsProcessTrusted()
+        )
     }
 
-    /// Request Input Monitoring permission (shows system dialog).
-    static func requestPermission() {
-        CGRequestListenEventAccess()
+    static func requestPermissions(for status: HotkeyPermissionStatus) {
+        if status.missingPermissions.contains(.inputMonitoring) {
+            CGRequestListenEventAccess()
+        }
+        if status.missingPermissions.contains(.accessibility) {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            _ = AXIsProcessTrustedWithOptions(options)
+        }
     }
 
     /// Start the event tap. Returns false if permission is missing or tap creation fails.
     func start() -> Bool {
-        guard HotkeyManager.hasPermission() else {
-            NSLog("[HotkeyManager] Input Monitoring permission not granted")
-            HotkeyManager.requestPermission()
+        permissionStatus = HotkeyManager.currentPermissionStatus()
+        guard permissionStatus.isGranted else {
+            if permissionStatus.missingPermissions.contains(.inputMonitoring) {
+                NSLog("[HotkeyManager] Input Monitoring permission not granted")
+            }
+            if permissionStatus.missingPermissions.contains(.accessibility) {
+                NSLog("[HotkeyManager] Accessibility permission not granted")
+            }
+            HotkeyManager.requestPermissions(for: permissionStatus)
             return false
         }
 
@@ -407,13 +498,13 @@ final class HotkeyManager {
             useModifierMode ? "modifier" : "plain",
             String(describing: targetKeycodes),
             mask,
-            HotkeyManager.hasPermission() ? "granted" : "missing"
+            permissionStatus.isGranted ? "granted" : "missing"
         )
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
-            options: .listenOnly,
+            options: .defaultTap,
             eventsOfInterest: mask,
             callback: hotkeyCallback,
             userInfo: ctxPtr
