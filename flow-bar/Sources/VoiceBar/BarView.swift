@@ -33,6 +33,7 @@ struct PulsingDot: View {
 struct BarView: View {
     var state: VoiceState
     @State private var errorDismissTask: Task<Void, Never>?
+    @State private var isHistoryPresented = false
 
     var body: some View {
         pillContent
@@ -126,6 +127,11 @@ struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onChange(of: state.recentTranscriptions.count) { _, count in
+            if count == 0 {
+                isHistoryPresented = false
+            }
+        }
         .onTapGesture {
             if state.mode == .idle {
                 NSHapticFeedbackManager.defaultPerformer.perform(
@@ -145,6 +151,9 @@ struct BarView: View {
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
+        if newMode != .idle {
+            isHistoryPresented = false
+        }
         if newMode == .error {
             errorDismissTask = Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
@@ -336,23 +345,14 @@ struct BarView: View {
     private static let maxDisplayWords = 3
 
     private var statusText: String {
-        switch state.mode {
-        case .idle, .disconnected:
-            VoiceBarPresentation.idleStatusText(
-                transcript: state.transcript,
-                confirmationText: state.confirmationText,
-                hotkeyPhase: state.hotkeyPhase,
-                hotkeyEnabled: state.hotkeyEnabled
-            )
-        case .speaking:
-            "Speaking..."
-        case .recording:
-            state.hotkeyPhase == .holding ? "Release to send" : "Listening..."
-        case .transcribing:
-            "Thinking..."
-        case .error:
-            state.errorMessage ?? "Error"
-        }
+        VoiceBarPresentation.liveStatusText(
+            mode: state.mode,
+            transcript: state.transcript,
+            confirmationText: state.confirmationText,
+            hotkeyPhase: state.hotkeyPhase,
+            hotkeyEnabled: state.hotkeyEnabled,
+            errorMessage: state.errorMessage
+        )
     }
 
     /// Whether the displayed text was trimmed (needs leading fade).
@@ -382,10 +382,57 @@ struct BarView: View {
             if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { state.stop() }
             }
+            if state.mode == .idle, !state.recentTranscriptions.isEmpty {
+                historyButton
+            }
             if state.mode == .idle, state.canReplay {
                 pillButton(icon: "arrow.counterclockwise") { state.replay() }
             }
         }
+    }
+
+    private var historyButton: some View {
+        pillButton(icon: "clock.arrow.circlepath") {
+            isHistoryPresented.toggle()
+        }
+        .popover(isPresented: $isHistoryPresented, arrowEdge: .bottom) {
+            historyPopover
+        }
+    }
+
+    private var historyPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Recent Transcriptions")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(state.recentTranscriptions.enumerated()), id: \.offset) { index, item in
+                        VStack(alignment: .leading, spacing: 4) {
+                            if index == 0 {
+                                Text("Latest")
+                                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Text(item)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 8)
+
+                        if index < state.recentTranscriptions.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+            .frame(width: 320, height: 220)
+        }
+        .padding(14)
     }
 
     private func pillButton(icon: String, action: @escaping () -> Void) -> some View {
