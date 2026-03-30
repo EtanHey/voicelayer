@@ -24,6 +24,27 @@ import { DAEMON_PID_FILE } from "./paths";
 
 const LOG_PREFIX = "[voicelayer-serve]";
 
+export function createShutdownHandler(deps?: {
+  disconnect?: () => void;
+  releaseLock?: () => void;
+  exit?: (code: number) => never | void;
+}) {
+  const disconnect = deps?.disconnect ?? disconnectFromBar;
+  const releaseLock = deps?.releaseLock ?? (() => releaseProcessLock(DAEMON_PID_FILE));
+  const exit = deps?.exit ?? process.exit;
+  let shutDown = false;
+
+  return () => {
+    if (shutDown) return;
+    shutDown = true;
+    console.error(`${LOG_PREFIX} Shutting down...`);
+    disconnect();
+    releaseLock();
+    console.error(`${LOG_PREFIX} Shutdown complete.`);
+    exit(0);
+  };
+}
+
 async function main() {
   // 1. Acquire daemon-specific process lock (separate from MCP PID)
   const lockResult = acquireProcessLock(DAEMON_PID_FILE);
@@ -64,21 +85,22 @@ async function main() {
   );
 
   // 5. Graceful shutdown
-  const shutdown = () => {
-    console.error(`${LOG_PREFIX} Shutting down...`);
-    disconnectFromBar();
-    releaseProcessLock(DAEMON_PID_FILE);
-    console.error(`${LOG_PREFIX} Shutdown complete.`);
-    process.exit(0);
-  };
+  const shutdown = createShutdownHandler();
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
+
+  return shutdown;
 }
 
-main().catch((err) => {
-  console.error(`${LOG_PREFIX} Fatal:`, err);
-  disconnectFromBar();
-  releaseProcessLock(DAEMON_PID_FILE);
-  process.exit(1);
-});
+if (import.meta.main) {
+  main()
+    .then((shutdown) => {
+      // Keep process alive until signal
+    })
+    .catch((err) => {
+      console.error(`${LOG_PREFIX} Fatal:`, err);
+      const shutdown = createShutdownHandler();
+      shutdown();
+    });
+}

@@ -790,6 +790,10 @@ class PlaybackQueueManager {
     return this.pending.length + (this.current ? 1 : 0);
   }
 
+  getDepthForHealth() {
+    return this.depth();
+  }
+
   private startProgressTimer() {
     this.stopProgressTimer();
     this.progressTimer = setInterval(() => {
@@ -838,6 +842,10 @@ export function playAudioNonBlocking(
  */
 export async function awaitCurrentPlayback(): Promise<void> {
   await playbackQueueManager.awaitDrained();
+}
+
+export function getPlaybackQueueDepth(): number {
+  return playbackQueueManager.getDepthForHealth();
 }
 
 /** Stop current playback if any. */

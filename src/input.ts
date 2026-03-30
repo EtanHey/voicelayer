@@ -55,6 +55,8 @@ const BITS_PER_SAMPLE = 16;
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
+let recordingState: "idle" | "recording" | "transcribing" = "idle";
+
 import {
   calculateRMS,
   detectNativeSampleRate,
@@ -196,6 +198,7 @@ export async function recordToBuffer(
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
+      recordingState = "idle";
       clearTimeout(timer);
 
       // Kill recorder
@@ -277,6 +280,7 @@ export async function recordToBuffer(
       }
 
       // Broadcast recording state to Voice Bar
+      recordingState = "recording";
       broadcast({
         type: "state",
         state: "recording",
@@ -412,6 +416,9 @@ export async function recordToBuffer(
  * Wait for user voice input via mic recording + STT transcription.
  * Returns the transcribed text, or null on timeout / no speech.
  *
+ * THREAD-SAFETY: Callers must ensure only one recording is active at a time.
+ * Use session booking (isVoiceBooked) before calling this function.
+ *
  * @param timeoutMs - Max wait time in milliseconds
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
  * @param pressToTalk - If true, use PTT mode (no VAD, stop on signal only)
@@ -421,6 +428,12 @@ export async function waitForInput(
   silenceMode: SilenceMode = "standard",
   pressToTalk: boolean = false,
 ): Promise<string | null> {
+  if (recordingState !== "idle") {
+    throw new Error(
+      `Recording already in progress (state: ${recordingState})`,
+    );
+  }
+
   // Record audio to buffer
   let pcmData: Uint8Array | null;
   try {
@@ -450,6 +463,7 @@ export async function waitForInput(
   }
 
   // Broadcast transcribing state to Voice Bar
+  recordingState = "transcribing";
   broadcast({ type: "state", state: "transcribing" });
 
   // Save as WAV to temp file
@@ -470,10 +484,12 @@ export async function waitForInput(
     if (result.text) {
       broadcast({ type: "transcription", text: result.text });
     }
+    recordingState = "idle";
     broadcast({ type: "state", state: "idle" });
 
     return result.text || null;
   } catch (err) {
+    recordingState = "idle";
     broadcast({
       type: "error",
       message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -495,4 +511,8 @@ export async function waitForInput(
  */
 export function clearInput(): void {
   // No persistent state to clear — recordings are ephemeral
+}
+
+export function getRecordingState(): "idle" | "recording" | "transcribing" {
+  return recordingState;
 }

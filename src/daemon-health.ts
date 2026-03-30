@@ -7,6 +7,10 @@
  *
  * Connection tracking is maintained by the daemon socket server
  * via onConnect/onDisconnect callbacks.
+ *
+ * THREAD-SAFETY: Assumes single-threaded event loop (Bun/Node.js).
+ * onConnect/onDisconnect are called from socket event handlers which
+ * are serialized by the event loop.
  */
 
 const startTime = Date.now();
@@ -43,6 +47,23 @@ export function buildPongResponse(): {
     type: "pong",
     uptime_seconds: getUptimeSeconds(),
     connections: getConnectionCount(),
+  };
+}
+
+export function buildHealthResponse(health: {
+  queueDepth: number;
+  recordingState: "idle" | "recording" | "transcribing";
+}): {
+  type: "health";
+  uptime_seconds: number;
+  queue_depth: number;
+  recording_state: "idle" | "recording" | "transcribing";
+} {
+  return {
+    type: "health",
+    uptime_seconds: getUptimeSeconds(),
+    queue_depth: health.queueDepth,
+    recording_state: health.recordingState,
   };
 }
 

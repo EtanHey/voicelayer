@@ -164,6 +164,11 @@ describe("socket-protocol", () => {
       expect(result).toEqual({ cmd: "replay" });
     });
 
+    it("parses health command", () => {
+      const result = parseCommand('{"cmd":"health"}');
+      expect(result).toEqual({ cmd: "health" });
+    });
+
     it("parses toggle command with all fields", () => {
       const result = parseCommand(
         '{"cmd":"toggle","scope":"tts","enabled":false}',

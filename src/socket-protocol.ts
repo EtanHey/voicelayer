@@ -141,12 +141,24 @@ export interface RecordCommand {
   press_to_talk?: boolean;
 }
 
+export interface HealthCommand {
+  cmd: "health";
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
   | ToggleCommand
-  | RecordCommand;
+  | RecordCommand
+  | HealthCommand;
+
+export interface HealthResponse {
+  type: "health";
+  uptime_seconds: number;
+  queue_depth: number;
+  recording_state: "idle" | "recording" | "transcribing";
+}
 
 // --- Serialization ---
 
@@ -173,6 +185,8 @@ export function parseCommand(line: string): SocketCommand | null {
         return { cmd: "cancel" };
       case "replay":
         return { cmd: "replay" };
+      case "health":
+        return { cmd: "health" };
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;
