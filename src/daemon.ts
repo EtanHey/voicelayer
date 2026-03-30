@@ -24,6 +24,15 @@ import { DAEMON_PID_FILE } from "./paths";
 
 const LOG_PREFIX = "[voicelayer-serve]";
 
+/**
+ * Optional test/diagnostic override for the VoiceBar socket path.
+ * Normal production usage still connects to the default well-known socket.
+ */
+export function getServeSocketPath(): string | undefined {
+  const override = process.env.QA_VOICE_SOCKET_PATH?.trim();
+  return override ? override : undefined;
+}
+
 export function createShutdownHandler(deps?: {
   disconnect?: () => void;
   releaseLock?: () => void;
@@ -77,7 +86,7 @@ async function main() {
 
   // 4. Connect to Voice Bar for UI state + command handling
   onCommand(handleSocketCommand);
-  connectToBar();
+  connectToBar(getServeSocketPath());
 
   console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);
   console.error(

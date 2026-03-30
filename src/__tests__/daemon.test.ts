@@ -15,7 +15,7 @@ import {
   MCP_PID_FILE,
 } from "../process-lock";
 import { DAEMON_PID_FILE } from "../paths";
-import { createShutdownHandler } from "../daemon";
+import { createShutdownHandler, getServeSocketPath } from "../daemon";
 
 // --- Helpers ---
 
@@ -139,11 +139,44 @@ describe("daemon shutdown", () => {
   });
 });
 
+describe("daemon socket path", () => {
+  it("defaults to VoiceBar's well-known socket", () => {
+    const saved = process.env.QA_VOICE_SOCKET_PATH;
+    delete process.env.QA_VOICE_SOCKET_PATH;
+    try {
+      expect(getServeSocketPath()).toBeUndefined();
+    } finally {
+      if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
+    }
+  });
+
+  it("allows overriding the socket path for isolated verification", () => {
+    const saved = process.env.QA_VOICE_SOCKET_PATH;
+    process.env.QA_VOICE_SOCKET_PATH = "/tmp/voicelayer-test.sock";
+    try {
+      expect(getServeSocketPath()).toBe("/tmp/voicelayer-test.sock");
+    } finally {
+      if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
+      else delete process.env.QA_VOICE_SOCKET_PATH;
+    }
+  });
+});
+
 describe("CLI integration", () => {
   it("voicelayer.sh includes serve command", async () => {
     const cliSrc = await Bun.file("src/cli/voicelayer.sh").text();
     expect(cliSrc).toContain("serve)");
     expect(cliSrc).toContain("daemon.ts");
+  });
+
+  it("voicelayer.sh resolves flow-bar only inside the bar command", async () => {
+    const cliSrc = await Bun.file("src/cli/voicelayer.sh").text();
+    expect(cliSrc).not.toMatch(
+      /SCRIPT_DIR=.*\n\nFLOW_BAR_DIR=.*\n\ncase/s,
+    );
+    expect(cliSrc).toMatch(
+      /bar\)\n[\s\S]*FLOW_BAR_DIR=.*\n[\s\S]*swift build/s,
+    );
   });
 
   it("voicelayer.sh help includes serve command", async () => {

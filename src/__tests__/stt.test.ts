@@ -37,12 +37,23 @@ describe("STT backends", () => {
 
     it("transcribe throws when binary not found", async () => {
       const backend = new WhisperCppBackend();
-      // Force binary path to null
-      (backend as any).binaryPath = null;
-      (backend as any).modelPath = "/some/model.bin";
+
+      // Prevent transcribe() from re-detecting a real local install.
+      Object.defineProperty(backend, "binaryPath", {
+        configurable: true,
+        get: () => null,
+        set: () => {},
+      });
+      Object.defineProperty(backend, "modelPath", {
+        configurable: true,
+        get: () => "/some/model.bin",
+        set: () => {},
+      });
 
       // Verify it throws with helpful error message
-      await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow("whisper-cpp");
+      await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow(
+        "whisper-cpp",
+      );
     });
   });
 
