@@ -2,6 +2,51 @@
 import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
+    func testLocalRecordingLevelOverridesSocketLevelWhileRecording() {
+        let state = VoiceState()
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.15,
+        ])
+
+        state.setLocalRecordingLevel(0.72)
+
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.72, accuracy: 0.001)
+    }
+
+    func testLocalRecordingLevelIgnoredOutsideRecordingMode() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.24,
+        ])
+
+        state.setLocalRecordingLevel(0.72)
+
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.24, accuracy: 0.001)
+    }
+
+    func testStopClearsLocalRecordingLevel() {
+        let state = VoiceState()
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+        state.setLocalRecordingLevel(0.72)
+
+        state.cancel()
+
+        XCTAssertNil(state.audioLevel)
+    }
+
     func testBarInitiatedTranscribingIgnoresStaleIdleUntilTranscriptionArrives() {
         let state = VoiceState()
 
