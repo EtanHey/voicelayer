@@ -71,7 +71,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         server.start()
 
-        // Hotkey setup — Cmd+F5 hold for push-to-talk, double-tap for hands-free toggle
+        // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
         setupHotkey()
 
         // Resize panel dynamically when pill content changes
@@ -180,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyManager = manager
             hotkeyEnabled = true
             voiceState.setHotkeyEnabled(true)
-            NSLog("[VoiceBar] Hotkey system active — Cmd+F5 hold for push-to-talk, double-tap for hands-free")
+            NSLog("[VoiceBar] Hotkey system active — Cmd+F6 hold for push-to-talk, double-tap for hands-free")
         } else {
             voiceState.setHotkeyEnabled(false)
             NSLog("[VoiceBar] Hotkey system unavailable — Input Monitoring permission needed")
@@ -276,7 +276,7 @@ struct VoiceBarApp: App {
                     Circle()
                         .fill(appDelegate.hotkeyEnabled ? .green : .orange)
                         .frame(width: 8, height: 8)
-                    Text(appDelegate.hotkeyEnabled ? "Hotkey: \u{2318}F5" : "Hotkey: needs permission")
+                    Text(appDelegate.hotkeyEnabled ? "Hotkey: \u{2318}F6" : "Hotkey: needs permission")
                         .font(.system(.caption, weight: .medium))
                 }
                 Divider()

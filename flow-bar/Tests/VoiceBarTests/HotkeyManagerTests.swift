@@ -3,61 +3,67 @@ import CoreGraphics
 import XCTest
 
 final class HotkeyManagerTests: XCTestCase {
-    func testCmdF5StandardFunctionKeyInModifierModeTriggersKeyDown() {
+    func testDefaultHotkeyConfigurationUsesCmdF6Keycodes() {
+        XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [97, 177])
+        XCTAssertTrue(HotkeyManager.defaultUsesModifierMode)
+    }
+
+    func testCmdF6StandardFunctionKeyInModifierModeTriggersKeyDown() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 96,
+                keycode: 97,
                 flags: .maskCommand,
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .keyDown
         )
     }
 
-    func testCmdF5MediaKeyInModifierModeTriggersKeyDown() {
+    func testCmdF6MediaKeyInModifierModeTriggersKeyDown() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 176,
+                keycode: 177,
                 flags: .maskCommand,
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .keyDown
         )
     }
 
-    func testCmdF5ReleaseTriggersKeyUp() {
+    func testCmdF6ReleaseTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 96,
+                keycode: 97,
                 flags: [],
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .keyUp
         )
     }
 
-    func testCmdF5MediaKeyReleaseTriggersKeyUp() {
+    func testCmdF6MediaKeyReleaseTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 176,
+                keycode: 177,
                 flags: [],
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .keyUp
         )
     }
+
     func testModifierModeIgnoresNonTargetKeycodes() {
         XCTAssertEqual(
             hotkeyAction(
@@ -65,7 +71,7 @@ final class HotkeyManagerTests: XCTestCase {
                 keycode: 54,
                 flags: .maskCommand,
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .ignore
@@ -76,38 +82,38 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 96,
+                keycode: 97,
                 flags: .maskCommand,
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .ignore
         )
     }
 
-    func testPlainF5InNonModifierModeTriggersKeyDown() {
+    func testPlainF6InNonModifierModeTriggersKeyDown() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 96,
+                keycode: 97,
                 flags: [],
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: false
             ),
             .keyDown
         )
     }
 
-    func testPlainF5InNonModifierModeTriggersKeyUp() {
+    func testPlainF6InNonModifierModeTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 96,
+                keycode: 97,
                 flags: [],
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: false
             ),
             .keyUp
@@ -118,38 +124,38 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 96,
+                keycode: 97,
                 flags: [],
                 autorepeat: 1,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: false
             ),
             .ignore
         )
     }
 
-    func testCmdF6InModifierModeIsIgnored() {
+    func testCmdF5InModifierModeIsIgnored() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskCommand,
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .ignore
         )
     }
 
-    func testF5WithoutCmdInModifierModeTriggersKeyUp() {
+    func testF6WithoutCmdInModifierModeTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 96,
+                keycode: 97,
                 flags: [],
                 autorepeat: 0,
-                targetKeycodes: [96, 176],
+                targetKeycodes: [97, 177],
                 useModifierMode: true
             ),
             .keyUp

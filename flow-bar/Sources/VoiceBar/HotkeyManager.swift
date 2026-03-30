@@ -1,14 +1,14 @@
 // HotkeyManager.swift — Global hotkey detection via CGEventTap.
 //
-// Uses .listenOnly tap (Input Monitoring permission) with Cmd+F5
+// Uses .listenOnly tap (Input Monitoring permission) with Cmd+F6
 // as the default hotkey. No event consumption needed because the tap
 // only observes matching events and lets the system handle them normally.
 //
 // Gesture state machine: hold (250ms) = push-to-talk, double-tap (400ms) = toggle.
 //
 // AIDEV-NOTE: Based on R02 research (macOS Sequoia CGEventTap guide).
-// Cmd+F5 is detected via flagsChanged with Command held and F5 keycodes
-// 96 (standard function key mode) or 176 (media mode), mirroring the
+// Cmd+F6 is detected via flagsChanged with Command held and F6 keycodes
+// 97 (standard function key mode) or 177 (media mode), mirroring the
 // dual-keycode handling used for F4.
 
 import CoreGraphics
@@ -212,16 +212,19 @@ private func hotkeyCallback(
 /// Manages CGEventTap for global hotkey detection.
 /// Uses .listenOnly (Input Monitoring) — does not consume events.
 final class HotkeyManager {
+    static let defaultTargetKeycodes: Set<Int64> = [97, 177]
+    static let defaultUsesModifierMode = true
+
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     /// Keycodes to listen for.
-    /// F5 standard = 96, F5 media = 176.
-    private var targetKeycodes: Set<Int64> = [96, 176]
+    /// F6 standard = 97, F6 media = 177.
+    private var targetKeycodes = HotkeyManager.defaultTargetKeycodes
 
     /// Whether we're listening for flagsChanged (Cmd+Fn key combinations)
     /// vs keyDown/keyUp (plain function keys like F4).
-    private var useModifierMode: Bool = true
+    private var useModifierMode = HotkeyManager.defaultUsesModifierMode
 
     private let gesture: GestureStateMachine
 
