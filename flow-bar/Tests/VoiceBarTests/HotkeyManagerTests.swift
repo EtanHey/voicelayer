@@ -3,6 +3,26 @@ import CoreGraphics
 import XCTest
 
 final class HotkeyManagerTests: XCTestCase {
+    func testConsumesMatchedKeyDownEvents() {
+        XCTAssertTrue(
+            shouldConsumeHotkeyEvent(
+                hotkeyAction: .keyDown,
+                targetKeycodes: [97, 177],
+                keycode: 97
+            )
+        )
+    }
+
+    func testDoesNotConsumeNonMatchingEvents() {
+        XCTAssertFalse(
+            shouldConsumeHotkeyEvent(
+                hotkeyAction: .ignore,
+                targetKeycodes: [97, 177],
+                keycode: 54
+            )
+        )
+    }
+
     func testDefaultHotkeyConfigurationUsesCmdF6Keycodes() {
         XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [97, 177])
         XCTAssertTrue(HotkeyManager.defaultUsesModifierMode)
@@ -114,9 +134,25 @@ final class HotkeyManagerTests: XCTestCase {
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: [97, 177],
-                useModifierMode: true
+                useModifierMode: true,
+                currentModifierFlags: []
             ),
             .ignore
+        )
+    }
+
+    func testModifierModeFallsBackToCurrentCommandFlagsWhenEventFlagsMissCommand() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 97,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: true,
+                currentModifierFlags: .maskCommand
+            ),
+            .keyDown
         )
     }
 
@@ -187,6 +223,49 @@ final class HotkeyManagerTests: XCTestCase {
                 useModifierMode: true
             ),
             .keyUp
+        )
+    }
+
+    func testDebounceIgnoresRapidRepeatedKeyDown() {
+        let clock = DebounceClock(now: { 1.0 })
+        var state = HotkeyDebounceState()
+
+        XCTAssertFalse(
+            shouldDebounceHotkeyAction(
+                action: .keyDown,
+                debounceState: &state,
+                clock: clock
+            )
+        )
+        XCTAssertTrue(
+            shouldDebounceHotkeyAction(
+                action: .keyDown,
+                debounceState: &state,
+                clock: DebounceClock(now: { 1.2 })
+            )
+        )
+    }
+
+    func testDebounceAllowsKeyDownAfterCooldown() {
+        var state = HotkeyDebounceState(lastProcessedKeyDownTime: 1.0)
+
+        XCTAssertFalse(
+            shouldDebounceHotkeyAction(
+                action: .keyDown,
+                debounceState: &state,
+                clock: DebounceClock(now: { 1.31 })
+            )
+        )
+    }
+
+    func testHotkeyPermissionStatusRequiresBothListenEventAndAccessibility() {
+        XCTAssertEqual(
+            HotkeyPermissionStatus(listenEventGranted: false, accessibilityGranted: false).missingPermissions,
+            [.inputMonitoring, .accessibility]
+        )
+        XCTAssertEqual(
+            HotkeyPermissionStatus(listenEventGranted: true, accessibilityGranted: false).missingPermissions,
+            [.accessibility]
         )
     }
 }
