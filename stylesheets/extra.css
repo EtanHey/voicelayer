@@ -1,0 +1,37 @@
+/* VoiceLayer docs — dark navy theme matching etanheyman.com */
+
+:root {
+  --md-primary-fg-color: #38BDF8;
+  --md-primary-fg-color--light: #7DD3FC;
+  --md-primary-fg-color--dark: #0EA5E9;
+  --md-accent-fg-color: #7DD3FC;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-default-bg-color: #0A0F1C;
+  --md-default-bg-color--light: #111827;
+  --md-code-bg-color: #111827;
+  --md-code-hl-color: rgba(56, 189, 248, 0.15);
+  --md-typeset-a-color: #7DD3FC;
+}
+
+[data-md-color-scheme="slate"] .md-header {
+  background-color: #080C18;
+}
+
+[data-md-color-scheme="slate"] .md-sidebar {
+  background-color: #080C18;
+}
+
+[data-md-color-scheme="slate"] .md-typeset code {
+  background-color: #111827;
+}
+
+[data-md-color-scheme="slate"] .md-typeset .admonition,
+[data-md-color-scheme="slate"] .md-typeset details {
+  border-color: #38BDF8;
+}
+
+[data-md-color-scheme="slate"] .md-footer {
+  background-color: #080C18;
+}
