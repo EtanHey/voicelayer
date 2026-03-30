@@ -144,6 +144,34 @@ final class VoiceState {
         sendCommand?(["cmd": "replay"])
     }
 
+    func snooze() {
+        switch mode {
+        case .recording, .transcribing:
+            sendCommand?(["cmd": "cancel"])
+        case .speaking:
+            sendCommand?(["cmd": "stop"])
+        default:
+            break
+        }
+        barInitiatedRecording = false
+        barInitiatedTimeout?.cancel()
+        frontmostAppOnRecordStart = nil
+        speechDetected = false
+        resetAudioLevels()
+        hotkeyPhase = .idle
+        mode = .disconnected
+        onModeChange?(.disconnected)
+        collapseTimer?.cancel()
+        isCollapsed = false
+    }
+
+    func unsnooze() {
+        guard mode == .disconnected else { return }
+        mode = .idle
+        onModeChange?(.idle)
+        startCollapseTimer()
+    }
+
     func setLocalRecordingLevel(_ level: Double?) {
         guard mode == .recording else { return }
         localRecordingLevel = level.map { min(1, max(0, $0)) }
