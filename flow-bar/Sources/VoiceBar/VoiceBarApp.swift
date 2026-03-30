@@ -56,6 +56,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Request Accessibility permission (needed for CGEvent paste-on-record-end).
         // Shows the macOS permission dialog on first launch.
+        let axTrusted = AXIsProcessTrusted()
+        NSLog("[VoiceBar] AXIsProcessTrusted() on launch: %@", axTrusted ? "YES" : "NO")
         let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")

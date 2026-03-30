@@ -6,13 +6,42 @@
 //
 // Gesture state machine: hold (250ms) = push-to-talk, double-tap (400ms) = toggle.
 //
-// AIDEV-NOTE: Based on R02 research (macOS Sequoia CGEventTap guide).
-// Cmd+F6 is detected via flagsChanged with Command held and F6 keycodes
-// 97 (standard function key mode) or 177 (media mode), mirroring the
-// dual-keycode handling used for F4.
+// AIDEV-NOTE: Cmd+F6 arrives as F6 keyDown/keyUp events with the Command flag
+// set, not as flagsChanged events. We listen for the dual F6 keycodes:
+// 97 (standard function key mode) or 177 (media mode).
 
 import CoreGraphics
 import Foundation
+
+private func describeEventType(_ type: CGEventType) -> String {
+    switch type {
+    case .null: "null"
+    case .leftMouseDown: "leftMouseDown"
+    case .leftMouseUp: "leftMouseUp"
+    case .rightMouseDown: "rightMouseDown"
+    case .rightMouseUp: "rightMouseUp"
+    case .mouseMoved: "mouseMoved"
+    case .leftMouseDragged: "leftMouseDragged"
+    case .rightMouseDragged: "rightMouseDragged"
+    case .keyDown: "keyDown"
+    case .keyUp: "keyUp"
+    case .flagsChanged: "flagsChanged"
+    case .scrollWheel: "scrollWheel"
+    case .tapDisabledByTimeout: "tapDisabledByTimeout"
+    case .tapDisabledByUserInput: "tapDisabledByUserInput"
+    default: "raw(\(type.rawValue))"
+    }
+}
+
+private func describeFlags(_ flags: CGEventFlags) -> String {
+    var parts: [String] = []
+    if flags.contains(.maskCommand) { parts.append("cmd") }
+    if flags.contains(.maskShift) { parts.append("shift") }
+    if flags.contains(.maskAlternate) { parts.append("option") }
+    if flags.contains(.maskControl) { parts.append("control") }
+    if flags.contains(.maskSecondaryFn) { parts.append("fn") }
+    return parts.isEmpty ? "none" : parts.joined(separator: "+")
+}
 
 // MARK: - Gesture State Machine
 
@@ -118,24 +147,67 @@ func hotkeyAction(
     useModifierMode: Bool
 ) -> HotkeyAction {
     guard targetKeycodes.contains(keycode) else {
+        NSLog(
+            "[HotkeyManager] Keycode %lld does not match hotkey set %@ for event %@",
+            keycode,
+            String(describing: targetKeycodes),
+            describeEventType(type)
+        )
         return .ignore
     }
 
     if useModifierMode {
-        guard type == .flagsChanged else {
+        guard type == .keyDown || type == .keyUp else {
+            NSLog(
+                "[HotkeyManager] Matched keycode %lld but ignored event type %@ in modifier mode",
+                keycode,
+                describeEventType(type)
+            )
             return .ignore
         }
-        // flagsChanged events don't have autorepeat — they fire once per modifier state change
-        return flags.contains(.maskCommand) ? .keyDown : .keyUp
+        guard autorepeat == 0 else {
+            NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld in modifier mode", keycode)
+            return .ignore
+        }
+        if type == .keyDown, !flags.contains(.maskCommand) {
+            NSLog(
+                "[HotkeyManager] Ignoring keyDown for keycode %lld because Command is not held (flags=%@)",
+                keycode,
+                describeFlags(flags)
+            )
+            return .ignore
+        }
+        // keyUp is accepted even if Command was released first so the gesture
+        // state machine can always exit a hold cleanly.
+        let action: HotkeyAction = type == .keyDown ? .keyDown : .keyUp
+        NSLog(
+            "[HotkeyManager] Matched keycode %lld in modifier mode -> %@ (flags=%@)",
+            keycode,
+            action == .keyDown ? "keyDown" : "keyUp",
+            describeFlags(flags)
+        )
+        return action
     }
 
     guard type == .keyDown || type == .keyUp else {
+        NSLog(
+            "[HotkeyManager] Matched keycode %lld but ignored non-key event %@",
+            keycode,
+            describeEventType(type)
+        )
         return .ignore
     }
     guard autorepeat == 0 else {
+        NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld", keycode)
         return .ignore
     }
-    return type == .keyDown ? .keyDown : .keyUp
+    let action: HotkeyAction = type == .keyDown ? .keyDown : .keyUp
+    NSLog(
+        "[HotkeyManager] Matched keycode %lld in plain mode -> %@",
+        keycode,
+        action == .keyDown ? "keyDown" : "keyUp"
+    )
+    return action
 }
 
 // MARK: - Tap Context (passed through userInfo)
@@ -170,6 +242,16 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
     let ctx = Unmanaged<TapContext>.fromOpaque(userInfo).takeUnretainedValue()
+    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+    let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
+
+    NSLog(
+        "[HotkeyManager] Callback entry type=%@ keycode=%lld flags=%@ autorepeat=%lld",
+        describeEventType(type),
+        keycode,
+        describeFlags(event.flags),
+        autorepeat
+    )
 
     // Re-enable tap if system disabled it (e.g., after timeout or secure input)
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
@@ -180,13 +262,11 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-
     let action = hotkeyAction(
         type: type,
         keycode: keycode,
         flags: event.flags,
-        autorepeat: event.getIntegerValueField(.keyboardEventAutorepeat),
+        autorepeat: autorepeat,
         targetKeycodes: ctx.targetKeycodes,
         useModifierMode: ctx.useModifierMode
     )
@@ -222,8 +302,8 @@ final class HotkeyManager {
     /// F6 standard = 97, F6 media = 177.
     private var targetKeycodes = HotkeyManager.defaultTargetKeycodes
 
-    /// Whether we're listening for flagsChanged (Cmd+Fn key combinations)
-    /// vs keyDown/keyUp (plain function keys like F4).
+    /// Whether the hotkey requires Command while the function key still emits
+    /// ordinary keyDown/keyUp events.
     private var useModifierMode = HotkeyManager.defaultUsesModifierMode
 
     private let gesture: GestureStateMachine
@@ -253,10 +333,13 @@ final class HotkeyManager {
             return false
         }
 
-        // Event mask depends on whether we listen for flagsChanged combos
-        // or plain function-key presses.
+        // Event mask depends on whether we require a modifier chord or a plain
+        // function key. Cmd+F6 still arrives as keyDown/keyUp.
         let mask = if useModifierMode {
-            CGEventMask(1 << CGEventType.flagsChanged.rawValue)
+            CGEventMask(
+                (1 << CGEventType.keyDown.rawValue) |
+                    (1 << CGEventType.keyUp.rawValue)
+            )
         } else {
             CGEventMask(
                 (1 << CGEventType.keyDown.rawValue) |
@@ -270,6 +353,14 @@ final class HotkeyManager {
         )
         tapContext = ctx
         let ctxPtr = Unmanaged.passUnretained(ctx).toOpaque()
+
+        NSLog(
+            "[HotkeyManager] Creating CGEventTap mode=%@ keycodes=%@ mask=0x%llx permission=%@",
+            useModifierMode ? "modifier" : "plain",
+            String(describing: targetKeycodes),
+            mask,
+            HotkeyManager.hasPermission() ? "granted" : "missing"
+        )
 
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
