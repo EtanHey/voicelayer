@@ -144,23 +144,50 @@ final class VoiceBarPresentationTests: XCTestCase {
                 confirmationText: nil,
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true,
-                errorMessage: nil
+                errorMessage: nil,
+                commandModeState: nil,
+                activeClipMarker: nil
             ),
             "Thinking..."
         )
     }
 
-    func testDisconnectedStatusTextShowsDisconnectedState() {
+    func testLiveStatusTextPrefersCommandModeAndClipMarkerStatus() {
         XCTAssertEqual(
             VoiceBarPresentation.liveStatusText(
-                mode: .disconnected,
-                transcript: "ignored",
+                mode: .idle,
+                transcript: "",
                 confirmationText: nil,
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true,
-                errorMessage: nil
+                errorMessage: nil,
+                commandModeState: CommandModeState(
+                    phase: .applying,
+                    operation: "replace_selection",
+                    prompt: "Rewrite selection"
+                ),
+                activeClipMarker: nil
             ),
-            "Disconnected"
+            "Command: Rewrite selection"
+        )
+
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .idle,
+                transcript: "",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: nil,
+                commandModeState: nil,
+                activeClipMarker: ClipMarkerState(
+                    id: "clip-1",
+                    label: "Action item",
+                    source: "command",
+                    status: "marked"
+                )
+            ),
+            "Clip marked: Action item"
         )
     }
 

@@ -151,6 +151,45 @@ describe("socket-protocol", () => {
         progress: 0,
       });
     });
+
+    it("serializes command mode events with replacement text", () => {
+      const event: SocketEvent = {
+        // @ts-expect-error Phase 8 event
+        type: "command_mode",
+        phase: "applying",
+        operation: "replace_selection",
+        replacement_text: "const nextValue = 1;",
+        prompt: "Replace selection",
+      };
+
+      const parsed = JSON.parse(serializeEvent(event).trim());
+      expect(parsed).toMatchObject({
+        type: "command_mode",
+        phase: "applying",
+        operation: "replace_selection",
+        replacement_text: "const nextValue = 1;",
+      });
+    });
+
+    it("serializes clip marker events for downstream gem consumers", () => {
+      const event: SocketEvent = {
+        // @ts-expect-error Phase 8 event
+        type: "clip_marker",
+        marker_id: "clip-42",
+        label: "Action item",
+        source: "command",
+        status: "marked",
+      };
+
+      const parsed = JSON.parse(serializeEvent(event).trim());
+      expect(parsed).toMatchObject({
+        type: "clip_marker",
+        marker_id: "clip-42",
+        label: "Action item",
+        source: "command",
+        status: "marked",
+      });
+    });
   });
 
   describe("parseCommand", () => {
@@ -223,6 +262,31 @@ describe("socket-protocol", () => {
     it("ignores extra fields on stop command", () => {
       const result = parseCommand('{"cmd":"stop","extra":"data"}');
       expect(result).toEqual({ cmd: "stop" });
+    });
+
+    it("parses selection-based command mode commands", () => {
+      const result = parseCommand(
+        '{"cmd":"command","operation":"replace_selection","text":"refactor this","prompt":"Rewrite selection"}',
+      );
+      expect(result).toEqual({
+        // @ts-expect-error Phase 8 command
+        cmd: "command",
+        operation: "replace_selection",
+        text: "refactor this",
+        prompt: "Rewrite selection",
+      });
+    });
+
+    it("parses clip marking commands", () => {
+      const result = parseCommand(
+        '{"cmd":"mark_clip","label":"Action item","source":"command"}',
+      );
+      expect(result).toEqual({
+        // @ts-expect-error Phase 8 command
+        cmd: "mark_clip",
+        label: "Action item",
+        source: "command",
+      });
     });
   });
 });

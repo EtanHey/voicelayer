@@ -10,13 +10,15 @@ import { Database } from "bun:sqlite";
 const WISPR_DB = `${process.env.HOME}/Library/Application Support/Wispr Flow/flow.sqlite`;
 const hasWisprFlow = (() => {
   if (!existsSync(WISPR_DB)) return false;
+  let db: Database | null = null;
   try {
-    const db = new Database(WISPR_DB, { readonly: true });
+    db = new Database(WISPR_DB, { readonly: true });
     db.query("SELECT 1").get();
-    db.close();
     return true;
   } catch {
     return false;
+  } finally {
+    db?.close();
   }
 })();
 

@@ -373,7 +373,9 @@ struct BarView: View {
             confirmationText: state.confirmationText,
             hotkeyPhase: state.hotkeyPhase,
             hotkeyEnabled: state.hotkeyEnabled,
-            errorMessage: state.errorMessage
+            errorMessage: state.errorMessage,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker
         )
     }
 
