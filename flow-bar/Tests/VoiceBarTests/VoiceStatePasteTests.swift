@@ -2,6 +2,25 @@
 import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
+    func testRecordSetsRecordingModeBeforeSendingCommand() {
+        let state = VoiceState()
+        var modeObservedInsideSend: VoiceMode?
+        var callbackModes: [VoiceMode] = []
+
+        state.sendCommand = { _ in
+            modeObservedInsideSend = state.mode
+        }
+        state.onModeChange = { mode in
+            callbackModes.append(mode)
+        }
+
+        state.record()
+
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(modeObservedInsideSend, .recording)
+        XCTAssertEqual(callbackModes, [.recording])
+    }
+
     func testSnoozeMovesVoiceStateToDisconnected() {
         let state = VoiceState()
 
