@@ -18,6 +18,17 @@
 	<string>VoiceBar</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.voicelayer.voicebar</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>voicebar</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSUIElement</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
