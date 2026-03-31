@@ -63,7 +63,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Handle voicebar:// URLs via Apple Events (kAEGetURL).
+    /// This fires when `open voicebar://toggle` is invoked from Karabiner or the shell.
+    @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
+        guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
+              let url = URL(string: urlString) else { return }
+        NSLog("[VoiceBar] handleGetURLEvent: %@", urlString)
+        VoiceBarCommandRouter.handle(url: url, voiceState: voiceState)
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Register Apple Event handler for voicebar:// URL scheme.
+        // Must happen after SwiftUI scene setup completes, so we defer
+        // registration to the next run loop iteration.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            NSAppleEventManager.shared().setEventHandler(
+                self,
+                andSelector: #selector(handleGetURLEvent(_:withReply:)),
+                forEventClass: AEEventClass(kInternetEventClass),
+                andEventID: AEEventID(kAEGetURL)
+            )
+            NSLog("[VoiceBar] Apple Event handler registered for voicebar:// scheme")
+        }
+
         // Singleton guard — if another VoiceBar is already running, quit immediately.
         let myPID = ProcessInfo.processInfo.processIdentifier
         let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -79,6 +102,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
+
+        // Register with Launch Services so voicebar:// URL scheme works
+        // after rebuilds (Launch Services caches bundle→scheme mappings).
+        if let bundleURL = Bundle.main.bundleURL as CFURL? {
+            let status = LSRegisterURL(bundleURL, true)
+            if status != 0 {
+                NSLog("[VoiceBar] LSRegisterURL returned %d", status)
+            }
+        }
 
         // Request Accessibility permission (needed for CGEvent paste-on-record-end).
         // Shows the macOS permission dialog on first launch.

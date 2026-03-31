@@ -438,6 +438,11 @@ final class HotkeyManager {
         self.gesture = gesture
     }
 
+    deinit {
+        // Ensure tap is invalidated before TapContext pointer becomes dangling
+        stop()
+    }
+
     static func currentPermissionStatus() -> HotkeyPermissionStatus {
         HotkeyPermissionStatus(
             listenEventGranted: CGPreflightListenEventAccess(),

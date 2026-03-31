@@ -131,6 +131,14 @@ final class AudioLevelMonitor {
         }
     }
 
+    deinit {
+        // Ensure tap + engine are torn down even if caller forgets stop()
+        if isRunning {
+            inputNode?.removeTap()
+            engine.stop()
+        }
+    }
+
     func restart() {
         stop()
         start()

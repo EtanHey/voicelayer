@@ -258,10 +258,11 @@ final class SocketServer {
     }
 
     deinit {
-        // Dispatch to queue for thread safety — cleanup accesses shared state
-        queue.sync {
-            self.cleanupOnQueue()
-        }
+        // AIDEV-NOTE: Do NOT use queue.sync here — deinit can fire on the
+        // queue itself (e.g., from a cancel handler) causing a deadlock.
+        // Direct cleanup is safe in deinit because no other code holds a
+        // reference to self at this point.
+        cleanupOnQueue()
     }
 
     private func cleanupOnQueue() {
@@ -274,6 +275,8 @@ final class SocketServer {
         clients.removeAll()
 
         if listenFD >= 0 {
+            // listenSource's cancelHandler already calls close(fd), but guard
+            // against the case where listenSource was nil (never started).
             listenFD = -1
         }
 
