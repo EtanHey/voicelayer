@@ -1,5 +1,7 @@
 import { describe, it, expect, mock, beforeEach } from "bun:test";
 import { createWavBuffer } from "../input";
+import { ChunkedRecordingSession } from "../input";
+import { MAX_STT_CHUNK_SECONDS, STT_CHUNK_OVERLAP_SECONDS } from "../vad";
 
 /**
  * Tests for streaming STT module.
@@ -117,6 +119,24 @@ describe("streaming-stt", () => {
       // VAD chunks are 1024 bytes each, so we need ~94 chunks for one window
       const chunksPerWindow = Math.ceil(WINDOW_BYTES / 1024);
       expect(chunksPerWindow).toBe(94);
+    });
+  });
+
+  describe("Phase 7 ring buffer chunking", () => {
+    it("emits an overlapped segment when max duration is reached", () => {
+      const session = new ChunkedRecordingSession(16000, "thoughtful");
+      const oneSecondChunk = new Uint8Array(16000 * 2);
+
+      for (let i = 0; i < MAX_STT_CHUNK_SECONDS; i++) {
+        session.pushChunk(oneSecondChunk, true);
+      }
+
+      const segments = session.consumeSegments();
+      expect(segments).toHaveLength(1);
+      expect(segments[0].byteLength).toBe(MAX_STT_CHUNK_SECONDS * 16000 * 2);
+      expect(session.currentOverlapBytes()).toBe(
+        STT_CHUNK_OVERLAP_SECONDS * 16000 * 2,
+      );
     });
   });
 });
