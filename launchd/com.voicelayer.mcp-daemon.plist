@@ -15,10 +15,7 @@
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
+    <true/>
     <!-- Restart if the MCP socket disappears (e.g., manual rm, crash cleanup).
          This path must match MCP_SOCKET_PATH in src/paths.ts. -->
     <key>WatchPaths</key>
