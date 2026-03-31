@@ -27,6 +27,50 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertEqual(engine.inputNode.installTapCallCount, 1)
     }
 
+    func testStopRemovesTapAndStopsEngine() {
+        let engine = AudioLevelMonitorEngineSpy()
+        let monitor = AudioLevelMonitor(engine: engine) { _ in }
+
+        monitor.start()
+        let removeTapCountAfterStart = engine.inputNode.removeTapCallCount
+        XCTAssertEqual(engine.inputNode.installTapCallCount, 1)
+        XCTAssertEqual(engine.startCallCount, 1)
+
+        monitor.stop()
+        // stop() adds one more removeTap call
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, removeTapCountAfterStart + 1)
+        XCTAssertEqual(engine.stopCallCount, 1)
+    }
+
+    func testDeinitCleansUpRunningEngine() {
+        let engine = AudioLevelMonitorEngineSpy()
+        var monitor: AudioLevelMonitor? = AudioLevelMonitor(engine: engine) { _ in }
+        monitor?.start()
+
+        let removeTapCountAfterStart = engine.inputNode.removeTapCallCount
+        XCTAssertEqual(engine.inputNode.installTapCallCount, 1)
+        XCTAssertEqual(engine.startCallCount, 1)
+
+        // Deallocate without calling stop()
+        monitor = nil
+
+        // deinit should have cleaned up
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, removeTapCountAfterStart + 1)
+        XCTAssertEqual(engine.stopCallCount, 1)
+    }
+
+    func testDeinitSkipsCleanupWhenNotRunning() {
+        let engine = AudioLevelMonitorEngineSpy()
+        var monitor: AudioLevelMonitor? = AudioLevelMonitor(engine: engine) { _ in }
+        monitor?.prepare()
+
+        monitor = nil
+
+        // Should NOT attempt to remove tap or stop if never started
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, 0)
+        XCTAssertEqual(engine.stopCallCount, 0)
+    }
+
     func testNormalizePowerClampsAndMapsIntoWaveformRange() {
         XCTAssertEqual(AudioLevelMonitor.normalizeAveragePower(-120), 0, accuracy: 0.001)
         XCTAssertEqual(AudioLevelMonitor.normalizeAveragePower(-10), 0.917, accuracy: 0.01)
