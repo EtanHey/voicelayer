@@ -20,12 +20,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private let pillContextMenuController = PillContextMenuController()
-    private let daemonLauncher = VoiceBarDaemonLauncher()
+    private let daemonController = VoiceBarDaemonController()
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var moveObserver: Any?
+    private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
@@ -39,6 +40,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
     private let gestureStateMachine = GestureStateMachine()
+    private lazy var wakeRecoveryCoordinator = WakeRecoveryCoordinator(
+        modeProvider: { [weak self] in self?.voiceState.mode ?? .idle },
+        restartRecordingAudio: { [weak self] in
+            self?.audioLevelMonitor.restart()
+        },
+        resetHotkeyState: { [weak self] in
+            self?.gestureStateMachine.reset()
+            self?.voiceState.setHotkeyPhase(.idle)
+        }
+    )
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
@@ -48,24 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            guard url.scheme == "voicebar" else { continue }
-            let command = url.host ?? ""
-            NSLog("[VoiceBar] URL scheme received: voicebar://%@", command)
-            switch command {
-            case "toggle":
-                // Toggle hands-free recording (same as double-tap)
-                if voiceState.mode == .idle {
-                    voiceState.record()
-                } else if voiceState.mode == .recording {
-                    voiceState.stop()
-                }
-            case "start-recording":
-                if voiceState.mode == .idle { voiceState.record() }
-            case "stop-recording":
-                if voiceState.mode == .recording { voiceState.stop() }
-            default:
-                NSLog("[VoiceBar] Unknown URL command: %@", command)
-            }
+            VoiceBarCommandRouter.handle(url: url, voiceState: voiceState)
         }
     }
 
@@ -94,8 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
-        audioLevelMonitor.prepare()
-
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
         socketServer = server
@@ -110,10 +102,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configurePillContextMenu()
 
         server.start()
-        daemonLauncher.startIfNeeded()
+        _ = daemonController.activateIfNeeded()
 
         // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
         setupHotkey()
+        configureWakeRecovery()
 
         // Resize panel dynamically when pill content changes
         voiceState.onPillSizeChange = { [weak self] size in
@@ -168,7 +161,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         snoozeTask?.cancel()
         hotkeyManager?.stop()
-        daemonLauncher.stop()
+        daemonController.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
@@ -176,6 +169,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        for observer in workspaceNotificationObservers {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        workspaceNotificationObservers.removeAll()
     }
 
     private func configurePillContextMenu() {
@@ -294,6 +291,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             audioLevelMonitor.stop()
         }
+    }
+
+    private func configureWakeRecovery() {
+        let center = NSWorkspace.shared.notificationCenter
+        let willSleepObserver = center.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.wakeRecoveryCoordinator.handleWillSleep()
+        }
+        let didWakeObserver = center.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.wakeRecoveryCoordinator.handleDidWake()
+        }
+        workspaceNotificationObservers = [willSleepObserver, didWakeObserver]
     }
 
     // MARK: - Dynamic panel sizing
