@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.voicelayer.voicebar</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Applications/VoiceBar.app/Contents/MacOS/VoiceBar</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Only restart on crash (non-zero exit), NOT on clean Quit.
+         Previous KeepAlive:true caused Quit to respawn immediately. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/voicebar.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/voicebar-err.log</string>
+</dict>
+</plist>
