@@ -53,6 +53,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
+    /// Whether VoiceBar is snoozed (hidden for a timed period).
+    var isSnoozed: Bool = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -217,8 +219,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.selectedDeviceIDProvider = {
             MicrophoneDeviceManager.selectedInputDeviceID()
         }
+        pillContextMenuController.isSnoozedProvider = { [weak self] in
+            self?.isSnoozed ?? false
+        }
         pillContextMenuController.onSnooze = { [weak self] in
             self?.snoozeForOneHour()
+        }
+        pillContextMenuController.onUnsnooze = { [weak self] in
+            self?.unsnoozeNow()
         }
         pillContextMenuController.onSelectDevice = { [weak self] deviceID in
             guard MicrophoneDeviceManager.selectInputDevice(id: deviceID) else { return }
@@ -236,15 +244,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func snoozeForOneHour() {
         snoozeTask?.cancel()
+        isSnoozed = true
         voiceState.snooze()
         panel?.orderOut(nil)
 
         snoozeTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(3600))
             guard let self, !Task.isCancelled else { return }
-            voiceState.unsnooze()
-            panel?.orderFront(nil)
+            unsnoozeNow()
         }
+    }
+
+    func unsnoozeNow() {
+        snoozeTask?.cancel()
+        isSnoozed = false
+        voiceState.unsnooze()
+        panel?.orderFront(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
+        // does NOT respawn. Only crashes (non-zero) trigger restart.
+        snoozeTask?.cancel()
+        hotkeyManager?.stop()
+        daemonController.stop()
+        socketServer?.stop()
+        return .terminateNow
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -413,8 +438,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
         VoiceBarMenu.quickActions(
+            isSnoozed: isSnoozed,
             openSettings: { [weak self] in self?.openSettingsWindow() },
-            hideForOneHour: { [weak self] in self?.snoozeForOneHour() },
+            snoozeToggle: { [weak self] in
+                guard let self else { return }
+                if isSnoozed { unsnoozeNow() } else { snoozeForOneHour() }
+            },
             pasteLastTranscript: { [weak self] in self?.voiceState.repasteLastTranscript() },
             quit: { NSApplication.shared.terminate(nil) }
         )
@@ -465,9 +494,14 @@ struct VoiceBarApp: App {
             .padding(8)
         }
 
-        // Empty Settings scene satisfies the "at least one Scene" requirement
         Settings {
-            EmptyView()
+            SettingsView(
+                hotkeyEnabled: appDelegate.hotkeyEnabled,
+                missingPermissions: appDelegate.missingHotkeyPermissions,
+                availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
+                selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
+                onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) }
+            )
         }
     }
 }
