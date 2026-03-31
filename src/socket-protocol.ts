@@ -102,6 +102,30 @@ export interface QueueEvent {
   items: QueueItemSnapshot[];
 }
 
+export type CommandModePhase =
+  | "listening"
+  | "capturing"
+  | "applying"
+  | "fallback"
+  | "done"
+  | "error";
+
+export interface CommandModeEvent {
+  type: "command_mode";
+  phase: CommandModePhase;
+  operation: "replace_selection" | "insert_below";
+  prompt?: string;
+  replacement_text?: string;
+}
+
+export interface ClipMarkerEvent {
+  type: "clip_marker";
+  marker_id: string;
+  label: string;
+  source: "tts" | "command";
+  status: "marked" | "consumed";
+}
+
 export type SocketEvent =
   | StateEvent
   | SpeechEvent
@@ -109,7 +133,9 @@ export type SocketEvent =
   | AudioLevelEvent
   | ErrorEvent
   | SubtitleEvent
-  | QueueEvent;
+  | QueueEvent
+  | CommandModeEvent
+  | ClipMarkerEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
@@ -145,13 +171,28 @@ export interface HealthCommand {
   cmd: "health";
 }
 
+export interface CommandModeCommand {
+  cmd: "command";
+  operation: "replace_selection" | "insert_below";
+  text: string;
+  prompt?: string;
+}
+
+export interface MarkClipCommand {
+  cmd: "mark_clip";
+  label: string;
+  source?: "tts" | "command";
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
   | ToggleCommand
   | RecordCommand
-  | HealthCommand;
+  | HealthCommand
+  | CommandModeCommand
+  | MarkClipCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -187,6 +228,29 @@ export function parseCommand(line: string): SocketCommand | null {
         return { cmd: "replay" };
       case "health":
         return { cmd: "health" };
+      case "command": {
+        if (typeof parsed.text !== "string" || parsed.text.trim().length === 0) {
+          return null;
+        }
+        const operation =
+          parsed.operation === "insert_below" ? "insert_below" : "replace_selection";
+        return {
+          cmd: "command",
+          operation,
+          text: parsed.text,
+          prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
+        };
+      }
+      case "mark_clip": {
+        if (typeof parsed.label !== "string" || parsed.label.trim().length === 0) {
+          return null;
+        }
+        return {
+          cmd: "mark_clip",
+          label: parsed.label,
+          source: parsed.source === "tts" ? "tts" : "command",
+        };
+      }
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;

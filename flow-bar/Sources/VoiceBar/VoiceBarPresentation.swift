@@ -93,18 +93,42 @@ enum VoiceBarPresentation {
         confirmationText: String?,
         hotkeyPhase: HotkeyPhase,
         hotkeyEnabled: Bool,
-        errorMessage: String?
+        errorMessage: String?,
+        commandModeState: CommandModeState?,
+        activeClipMarker: ClipMarkerState?
     ) -> String {
-        switch mode {
-        case .idle:
+        if let commandModeState {
+            switch commandModeState.phase {
+            case .applying:
+                let promptText = commandModeState.prompt?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return "Command: \((promptText?.isEmpty == false ? promptText! : "Apply to selection"))"
+            case .fallback:
+                return "Command fallback"
+            case .done:
+                return "Command applied"
+            case .error:
+                return "Command failed"
+            case .listening:
+                return "Command: listening"
+            case .capturing:
+                return "Command: capture selection"
+            }
+        }
+
+        if let activeClipMarker {
+            let label = activeClipMarker.label.trimmingCharacters(in: .whitespacesAndNewlines)
+            return label.isEmpty ? "Clip marked" : "Clip marked: \(label)"
+        }
+
+        return switch mode {
+        case .idle, .disconnected:
             idleStatusText(
                 transcript: transcript,
                 confirmationText: confirmationText,
                 hotkeyPhase: hotkeyPhase,
                 hotkeyEnabled: hotkeyEnabled
             )
-        case .disconnected:
-            "Disconnected"
         case .speaking:
             "Speaking..."
         case .recording:
