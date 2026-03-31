@@ -7,6 +7,12 @@ enum HotkeyPhase: Equatable {
     case awaitingSecondTap
 }
 
+struct VoiceBarRecordingContent: Equatable {
+    var statusText: String
+    var showsWaveform: Bool
+    var usesPulsingLabelOpacity: Bool
+}
+
 struct VoiceBarQueuePreview: Equatable {
     var currentText: String
     var nextText: String?
@@ -42,6 +48,14 @@ enum VoiceBarPresentation {
             nextText: next?.text,
             overflowCount: max(0, items.count - (next == nil ? 1 : 2)),
             progress: current?.progress ?? 0
+        )
+    }
+
+    static func recordingContent(hotkeyPhase: HotkeyPhase) -> VoiceBarRecordingContent {
+        VoiceBarRecordingContent(
+            statusText: hotkeyPhase == .holding ? "Release to send" : "Listening...",
+            showsWaveform: true,
+            usesPulsingLabelOpacity: true
         )
     }
 
@@ -92,7 +106,7 @@ enum VoiceBarPresentation {
         case .speaking:
             "Speaking..."
         case .recording:
-            hotkeyPhase == .holding ? "Release to send" : "Listening..."
+            recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
             "Thinking..."
         case .error:

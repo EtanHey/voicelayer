@@ -70,6 +70,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let trusted = AXIsProcessTrustedWithOptions(axOptions)
         NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
 
+        audioLevelMonitor.prepare()
+
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
         socketServer = server

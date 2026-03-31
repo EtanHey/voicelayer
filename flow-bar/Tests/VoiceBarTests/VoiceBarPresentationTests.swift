@@ -2,6 +2,28 @@
 import XCTest
 
 final class VoiceBarPresentationTests: XCTestCase {
+    func testRecordingContentShowsListeningLabelPulseAndWaveformImmediately() {
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingContent(hotkeyPhase: .idle),
+            VoiceBarRecordingContent(
+                statusText: "Listening...",
+                showsWaveform: true,
+                usesPulsingLabelOpacity: true
+            )
+        )
+    }
+
+    func testRecordingContentUsesReleaseToSendCopyWhileHolding() {
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingContent(hotkeyPhase: .holding),
+            VoiceBarRecordingContent(
+                statusText: "Release to send",
+                showsWaveform: true,
+                usesPulsingLabelOpacity: true
+            )
+        )
+    }
+
     func testQueuePreviewSummarizesCurrentNextAndOverflow() {
         let preview = VoiceBarPresentation.queuePreview(from: [
             QueueItemState(
