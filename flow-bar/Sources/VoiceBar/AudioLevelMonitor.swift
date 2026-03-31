@@ -1,24 +1,101 @@
 import AVFoundation
 import Foundation
 
-final class AudioLevelMonitor {
+protocol AudioLevelMonitoringInputNode {
+    func inputFormat() -> AVAudioFormat?
+    func installTap(
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat?,
+        block: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    )
+    func removeTap()
+}
+
+protocol AudioLevelMonitoringEngine {
+    var monitoringInputNode: AudioLevelMonitoringInputNode { get }
+    func prepare()
+    func start() throws
+    func stop()
+}
+
+private final class AVAudioLevelMonitoringEngine: AudioLevelMonitoringEngine {
     private let engine = AVAudioEngine()
+    private lazy var inputNode = AVAudioLevelMonitoringInputNode(node: engine.inputNode)
+
+    var monitoringInputNode: AudioLevelMonitoringInputNode {
+        inputNode
+    }
+
+    func prepare() {
+        engine.prepare()
+    }
+
+    func start() throws {
+        try engine.start()
+    }
+
+    func stop() {
+        engine.stop()
+    }
+}
+
+private final class AVAudioLevelMonitoringInputNode: AudioLevelMonitoringInputNode {
+    private let node: AVAudioInputNode
     private let bus: AVAudioNodeBus = 0
+
+    init(node: AVAudioInputNode) {
+        self.node = node
+    }
+
+    func inputFormat() -> AVAudioFormat? {
+        node.inputFormat(forBus: bus)
+    }
+
+    func installTap(
+        bufferSize: AVAudioFrameCount,
+        format: AVAudioFormat?,
+        block: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void
+    ) {
+        node.installTap(onBus: bus, bufferSize: bufferSize, format: format, block: block)
+    }
+
+    func removeTap() {
+        node.removeTap(onBus: bus)
+    }
+}
+
+final class AudioLevelMonitor {
+    private let engine: AudioLevelMonitoringEngine
     private let onLevel: (Double?) -> Void
+    private var inputNode: AudioLevelMonitoringInputNode?
+    private var isPrepared = false
     private var isRunning = false
 
-    init(onLevel: @escaping (Double?) -> Void) {
+    init(
+        engine: AudioLevelMonitoringEngine = AVAudioLevelMonitoringEngine(),
+        onLevel: @escaping (Double?) -> Void
+    ) {
+        self.engine = engine
         self.onLevel = onLevel
+    }
+
+    func prepare() {
+        guard !isPrepared else { return }
+        inputNode = engine.monitoringInputNode
+        _ = inputNode?.inputFormat()
+        engine.prepare()
+        isPrepared = true
     }
 
     func start() {
         guard !isRunning else { return }
+        prepare()
 
-        let inputNode = engine.inputNode
-        let format = inputNode.inputFormat(forBus: bus)
+        guard let inputNode else { return }
+        let format = inputNode.inputFormat()
 
-        inputNode.removeTap(onBus: bus)
-        inputNode.installTap(onBus: bus, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+        inputNode.removeTap()
+        inputNode.installTap(bufferSize: 1024, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             let level = Self.level(from: buffer)
             DispatchQueue.main.async {
@@ -27,11 +104,10 @@ final class AudioLevelMonitor {
         }
 
         do {
-            engine.prepare()
             try engine.start()
             isRunning = true
         } catch {
-            inputNode.removeTap(onBus: bus)
+            inputNode.removeTap()
             DispatchQueue.main.async {
                 self.onLevel(nil)
             }
@@ -47,7 +123,7 @@ final class AudioLevelMonitor {
             return
         }
 
-        engine.inputNode.removeTap(onBus: bus)
+        inputNode?.removeTap()
         engine.stop()
         isRunning = false
         DispatchQueue.main.async {

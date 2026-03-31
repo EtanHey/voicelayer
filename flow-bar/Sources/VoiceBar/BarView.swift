@@ -28,6 +28,25 @@ struct PulsingDot: View {
     }
 }
 
+struct PulsingStatusLabel: View {
+    let text: String
+    @State private var isPulsing = false
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.white.opacity(0.9))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .opacity(isPulsing ? 0.55 : 1.0)
+            .animation(
+                .easeInOut(duration: 0.75).repeatForever(autoreverses: true),
+                value: isPulsing
+            )
+            .onAppear { isPulsing = true }
+    }
+}
+
 // MARK: - Bar View
 
 struct BarView: View {
@@ -201,11 +220,26 @@ struct BarView: View {
     private var stateContent: some View {
         switch state.mode {
         case .recording:
-            // Active waveform during recording — driven by real audio level when available
-            WaveformView(
-                mode: state.speechDetected ? .speechDetected : .listening,
-                audioLevel: state.audioLevel
+            let recordingContent = VoiceBarPresentation.recordingContent(
+                hotkeyPhase: state.hotkeyPhase
             )
+            HStack(spacing: 8) {
+                if recordingContent.showsWaveform {
+                    WaveformView(
+                        mode: state.speechDetected ? .speechDetected : .listening,
+                        audioLevel: state.audioLevel
+                    )
+                }
+                if recordingContent.usesPulsingLabelOpacity {
+                    PulsingStatusLabel(text: recordingContent.statusText)
+                } else {
+                    Text(recordingContent.statusText)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
         case .speaking:
             if state.queueItems.count > 1 {
                 queueVisualization
