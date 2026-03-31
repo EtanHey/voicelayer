@@ -2,9 +2,15 @@ import Foundation
 
 enum VoiceBarCommandRouter {
     static func handle(url: URL, voiceState: VoiceState) {
-        guard url.scheme == "voicebar" else { return }
+        guard url.scheme == "voicebar" else {
+            NSLog("[VoiceBar] URL scheme mismatch: %@", url.absoluteString)
+            return
+        }
 
-        switch url.host ?? "" {
+        let command = url.host ?? ""
+        NSLog("[VoiceBar] URL command received: %@ (mode: %@)", command, voiceState.mode.rawValue)
+
+        switch command {
         case "toggle":
             if voiceState.mode == .idle {
                 voiceState.record()
@@ -20,7 +26,7 @@ enum VoiceBarCommandRouter {
                 voiceState.stop()
             }
         default:
-            break
+            NSLog("[VoiceBar] Unknown URL command: %@", command)
         }
     }
 }
