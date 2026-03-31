@@ -53,20 +53,24 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             }
         }
 
+        // Walk up from the executable looking for the repo root.
+        // Cap at 10 levels to prevent runaway traversal when running
+        // from /Applications (URL.deletingLastPathComponent can produce
+        // /../.. paths that never converge on macOS).
         var candidate = executableURL.deletingLastPathComponent()
-        while true {
+        for _ in 0 ..< 10 {
+            let candidatePath = candidate.path
+            if candidatePath == "/" || candidatePath.isEmpty {
+                return nil
+            }
             let packagePath = candidate.appendingPathComponent("flow-bar/Package.swift").path
             let daemonPath = candidate.appendingPathComponent("src/daemon.ts").path
             if fileExists(packagePath), fileExists(daemonPath) {
-                return candidate.path
+                return candidatePath
             }
-
-            let parent = candidate.deletingLastPathComponent()
-            if parent.path == candidate.path {
-                return nil
-            }
-            candidate = parent
+            candidate = candidate.deletingLastPathComponent()
         }
+        return nil
     }
 }
 
