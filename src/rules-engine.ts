@@ -43,6 +43,10 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = applyTechVocab(result);
   }
 
+  if (!disabled?.has("codeTokens")) {
+    result = preserveCodeTokens(result);
+  }
+
   // Stage 3: Case formatting commands (before punctuation — "camel case foo bar" must be detected as phrase)
   if (!disabled?.has("caseFormatting")) {
     result = applyCaseFormatting(result);
@@ -67,6 +71,26 @@ export function applyRules(text: string, config?: RulesConfig): string {
   result = result.replace(/  +/g, " ").trim();
 
   return result;
+}
+
+const CODE_TOKEN_PATTERNS: [RegExp, string][] = [
+  [/\bdot\s+([A-Za-z_][\w$]*)\b/g, ".$1"],
+  [/\bon click\b/gi, "onClick"],
+  [/\bon change\b/gi, "onChange"],
+  [/\bon submit\b/gi, "onSubmit"],
+  [/\bopen paren\b/gi, "("],
+  [/\bclose paren\b/gi, ")"],
+];
+
+export function preserveCodeTokens(text: string): string {
+  let result = text;
+  for (const [pattern, replacement] of CODE_TOKEN_PATTERNS) {
+    result = result.replace(pattern, replacement);
+  }
+  result = result.replace(/\(\s+/g, "(");
+  result = result.replace(/\)\s+\./g, ").");
+  result = result.replace(/\s+\)/g, ")");
+  return result.trim();
 }
 
 // --- Stage 1: Filler removal ---

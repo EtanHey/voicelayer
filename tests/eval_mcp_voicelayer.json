@@ -1,0 +1,39 @@
+{
+  "suite": "phase7_chunked_stt_same_pipeline",
+  "description": "Evaluation scaffolding for the flag-gated chunked STT pipeline. English, Hebrew, and code-switching all run through the same chunking, overlap-dedup, prompt-carry, and rules post-processing path.",
+  "feature_flag": "QA_VOICE_CHUNKED_STT=1",
+  "target_model": {
+    "name": "distil-large-v3",
+    "acceleration": "coreml",
+    "status": "target-deferred"
+  },
+  "chunking": {
+    "vad": "silero",
+    "max_chunk_seconds": 28,
+    "overlap_seconds": 3,
+    "deduplication": "application-layer"
+  },
+  "cases": [
+    {
+      "id": "en_simple_dictation",
+      "language_mode": "english",
+      "pipeline": "shared",
+      "input_type": "utterance",
+      "expected_contains": ["TypeScript", "useEffect"]
+    },
+    {
+      "id": "he_simple_dictation",
+      "language_mode": "hebrew",
+      "pipeline": "shared",
+      "input_type": "utterance",
+      "expected_contains": ["פול ריקווסט", "TypeScript"]
+    },
+    {
+      "id": "mixed_code_switch",
+      "language_mode": "auto",
+      "pipeline": "shared",
+      "input_type": "utterance",
+      "expected_contains": ["useEffect", "onClick", "עברית"]
+    }
+  ]
+}

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "bun:test";
-import { calculateRMS, createWavBuffer, clearInput } from "../input";
+import {
+  calculateRMS,
+  createWavBuffer,
+  clearInput,
+  isChunkedSTTEnabled,
+  transcribeChunkSequence,
+} from "../input";
 
 describe("input module", () => {
   describe("calculateRMS", () => {
@@ -150,6 +156,49 @@ describe("input module", () => {
       const { waitForInput } = await import("../input");
       expect(typeof waitForInput).toBe("function");
       expect(waitForInput.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("Phase 7 feature flag", () => {
+    it("uses legacy one-shot pipeline by default", () => {
+      const saved = process.env.QA_VOICE_CHUNKED_STT;
+      delete process.env.QA_VOICE_CHUNKED_STT;
+      try {
+        expect(isChunkedSTTEnabled()).toBe(false);
+      } finally {
+        if (saved) process.env.QA_VOICE_CHUNKED_STT = saved;
+      }
+    });
+
+    it("enables chunked pipeline when QA_VOICE_CHUNKED_STT is set", () => {
+      const saved = process.env.QA_VOICE_CHUNKED_STT;
+      process.env.QA_VOICE_CHUNKED_STT = "1";
+      try {
+        expect(isChunkedSTTEnabled()).toBe(true);
+      } finally {
+        if (saved) process.env.QA_VOICE_CHUNKED_STT = saved;
+        else delete process.env.QA_VOICE_CHUNKED_STT;
+      }
+    });
+  });
+
+  describe("Phase 7 chunk transcription integration", () => {
+    it("carries prompt context across chunks and applies rules to the merged text", async () => {
+      const prompts: string[] = [];
+
+      const result = await transcribeChunkSequence(
+        [new Uint8Array([1]), new Uint8Array([2])],
+        async (_chunk, prompt) => {
+          prompts.push(prompt);
+          return prompts.length === 1
+            ? "תשתמש ב use effect"
+            : "use effect בשביל on click handler";
+        },
+      );
+
+      expect(prompts).toEqual(["", "תשתמש ב use effect"]);
+      expect(result).toContain("useEffect");
+      expect(result).toContain("onClick");
     });
   });
 });
