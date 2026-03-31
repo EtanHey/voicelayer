@@ -216,53 +216,59 @@ struct BarView: View {
 
     // MARK: - State content (icon + label OR waveform)
 
-    @ViewBuilder
     private var stateContent: some View {
-        switch state.mode {
-        case .recording:
-            let recordingContent = VoiceBarPresentation.recordingContent(
-                hotkeyPhase: state.hotkeyPhase
-            )
-            HStack(spacing: 8) {
-                if recordingContent.showsWaveform {
-                    WaveformView(
-                        mode: state.speechDetected ? .speechDetected : .listening,
-                        audioLevel: state.audioLevel
-                    )
+        Group {
+            switch state.mode {
+            case .recording:
+                let recordingContent = VoiceBarPresentation.recordingContent(
+                    hotkeyPhase: state.hotkeyPhase
+                )
+                HStack(spacing: 8) {
+                    if recordingContent.showsWaveform {
+                        WaveformView(
+                            mode: state.speechDetected ? .speechDetected : .listening,
+                            audioLevel: state.audioLevel
+                        )
+                    }
+                    if recordingContent.usesPulsingLabelOpacity {
+                        PulsingStatusLabel(text: recordingContent.statusText)
+                    } else {
+                        Text(recordingContent.statusText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                 }
-                if recordingContent.usesPulsingLabelOpacity {
-                    PulsingStatusLabel(text: recordingContent.statusText)
+            case .speaking:
+                if state.queueItems.count > 1 {
+                    queueVisualization
                 } else {
-                    Text(recordingContent.statusText)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    // Shimmer waveform + teleprompter during speaking
+                    WaveformView(mode: .idle, audioLevel: state.audioLevel)
+                    if !state.statusText.isEmpty {
+                        TeleprompterView(
+                            text: state.statusText,
+                            wordBoundaries: state.wordBoundaries
+                        )
+                        .frame(
+                            width: Theme.teleprompterViewportWidth,
+                            height: Theme.teleprompterViewportHeight
+                        )
+                    } else {
+                        statusLabel
+                    }
                 }
+            default:
+                statusIcon
+                statusLabel
             }
-        case .speaking:
-            if state.queueItems.count > 1 {
-                queueVisualization
-            } else {
-                // Shimmer waveform + teleprompter during speaking
-                WaveformView(mode: .idle, audioLevel: state.audioLevel)
-                if !state.statusText.isEmpty {
-                    TeleprompterView(
-                        text: state.statusText,
-                        wordBoundaries: state.wordBoundaries
-                    )
-                    .frame(
-                        width: Theme.teleprompterViewportWidth,
-                        height: Theme.teleprompterViewportHeight
-                    )
-                } else {
-                    statusLabel
-                }
-            }
-        default:
-            statusIcon
-            statusLabel
         }
+        // Force a clean view identity swap on mode change — prevents glitchy
+        // partial animations when SwiftUI tries to morph between different
+        // view hierarchies (e.g., PulsingDot → TeleprompterView).
+        .id(state.mode)
+        .transition(.opacity.animation(.easeInOut(duration: 0.2)))
     }
 
     private var queueVisualization: some View {

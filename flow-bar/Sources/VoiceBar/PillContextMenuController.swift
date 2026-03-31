@@ -19,6 +19,8 @@ final class PillContextMenuController: NSObject {
     var selectedDeviceIDProvider: () -> String? = { nil }
 
     var onSnooze: () -> Void = {}
+    var onUnsnooze: () -> Void = {}
+    var isSnoozedProvider: () -> Bool = { false }
     var onSelectDevice: (String) -> Void = { _ in }
     var onPasteLastTranscript: () -> Void = {}
     var onQuit: () -> Void = {}
@@ -26,13 +28,23 @@ final class PillContextMenuController: NSObject {
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let snoozeItem = NSMenuItem(
-            title: "Hide for 1 hour",
-            action: #selector(handleSnooze),
-            keyEquivalent: ""
-        )
-        snoozeItem.target = self
-        menu.addItem(snoozeItem)
+        if isSnoozedProvider() {
+            let unsnoozeItem = NSMenuItem(
+                title: "Show VoiceBar",
+                action: #selector(handleUnsnooze),
+                keyEquivalent: ""
+            )
+            unsnoozeItem.target = self
+            menu.addItem(unsnoozeItem)
+        } else {
+            let snoozeItem = NSMenuItem(
+                title: "Hide for 1 hour",
+                action: #selector(handleSnooze),
+                keyEquivalent: ""
+            )
+            snoozeItem.target = self
+            menu.addItem(snoozeItem)
+        }
 
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
@@ -109,6 +121,10 @@ final class PillContextMenuController: NSObject {
 
     @objc private func handleSnooze() {
         onSnooze()
+    }
+
+    @objc private func handleUnsnooze() {
+        onUnsnooze()
     }
 
     @objc private func handlePasteLastTranscript() {
