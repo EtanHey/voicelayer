@@ -28,6 +28,28 @@ struct QueueItemState: Equatable {
     var progress: Double
 }
 
+enum CommandModePhase: String, Equatable {
+    case listening
+    case capturing
+    case applying
+    case fallback
+    case done
+    case error
+}
+
+struct CommandModeState: Equatable {
+    var phase: CommandModePhase
+    var operation: String
+    var prompt: String?
+}
+
+struct ClipMarkerState: Equatable {
+    var id: String
+    var label: String
+    var source: String
+    var status: String
+}
+
 // MARK: - Observable state
 
 @Observable
@@ -67,6 +89,8 @@ final class VoiceState {
     /// Total queued + currently playing TTS items.
     var queueDepth: Int = 0
     var queueItems: [QueueItemState] = []
+    var commandModeState: CommandModeState?
+    var activeClipMarker: ClipMarkerState?
 
     /// Global hotkey availability and live gesture hint state.
     var hotkeyEnabled: Bool = false
@@ -99,6 +123,7 @@ final class VoiceState {
 
     /// Test seam for paste side effects. When set, bypasses system paste.
     var pasteHandler: ((String) -> Bool)?
+    var commandModeApplyHandler: ((String) -> CommandModeApplyResult)?
 
     /// Delay before sending Cmd+V after activating the target app.
     var pasteConfirmationDelay: TimeInterval = 0.25
@@ -117,6 +142,8 @@ final class VoiceState {
     var simulatedPasteHandler: () -> Bool = {
         VoiceState.simulatePaste()
     }
+
+    private let commandModeAXHelper = CommandModeAXHelper()
 
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
@@ -385,6 +412,18 @@ final class VoiceState {
                 refreshAudioLevel()
             }
 
+        case "command_mode":
+            handleCommandModeEvent(event)
+
+        case "clip_marker":
+            if let id = event["marker_id"] as? String,
+               let label = event["label"] as? String,
+               let source = event["source"] as? String,
+               let status = event["status"] as? String {
+                activeClipMarker = ClipMarkerState(id: id, label: label, source: source, status: status)
+                expandFromCollapse()
+            }
+
         case "error":
             transcriptionTimeoutTask?.cancel()
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
@@ -590,9 +629,55 @@ final class VoiceState {
     }
 
     private func finishPasteConfirmation(pasted: Bool) {
-        confirmationText = pasted ? "Pasted!" : "Paste failed — check Accessibility"
-        DispatchQueue.main.asyncAfter(deadline: .now() + (pasted ? 1.5 : 3.0)) { [weak self] in
-            self?.confirmationText = nil
+        showConfirmation(pasted ? "Pasted!" : "Paste failed — check Accessibility", duration: pasted ? 1.5 : 3.0)
+    }
+
+    private func showConfirmation(_ message: String, duration: TimeInterval = 1.5) {
+        confirmationText = message
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
+            if self?.confirmationText == message {
+                self?.confirmationText = nil
+            }
+        }
+    }
+
+    private func handleCommandModeEvent(_ event: [String: Any]) {
+        guard let phaseString = event["phase"] as? String,
+              let phase = CommandModePhase(rawValue: phaseString),
+              let operation = event["operation"] as? String else {
+            return
+        }
+
+        commandModeState = CommandModeState(
+            phase: phase,
+            operation: operation,
+            prompt: event["prompt"] as? String
+        )
+        expandFromCollapse()
+
+        guard phase == .applying, let replacementText = event["replacement_text"] as? String else {
+            return
+        }
+
+        let result = (commandModeApplyHandler ?? { [commandModeAXHelper] text in
+            commandModeAXHelper.applyReplacement(text)
+        })(replacementText)
+
+        switch result {
+        case let .axVerified(message):
+            commandModeState = CommandModeState(phase: .done, operation: operation, prompt: event["prompt"] as? String)
+            showConfirmation(message)
+        case let .clipboardFallback(message):
+            commandModeState = CommandModeState(
+                phase: .fallback,
+                operation: operation,
+                prompt: event["prompt"] as? String
+            )
+            showConfirmation(message)
+        case let .failed(message):
+            commandModeState = CommandModeState(phase: .error, operation: operation, prompt: event["prompt"] as? String)
+            mode = .error
+            errorMessage = message
         }
     }
 

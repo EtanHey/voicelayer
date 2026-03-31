@@ -125,5 +125,23 @@ export function handleSocketCommand(
         queueDepth: getPlaybackQueueDepth(),
         recordingState: getRecordingState(),
       });
+    case "command":
+      broadcast({
+        type: "command_mode",
+        phase: "applying",
+        operation: command.operation,
+        replacement_text: command.text,
+        prompt: command.prompt,
+      });
+      break;
+    case "mark_clip":
+      broadcast({
+        type: "clip_marker",
+        marker_id: `command-${command.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`,
+        label: command.label,
+        source: command.source ?? "command",
+        status: "marked",
+      });
+      break;
   }
 }
