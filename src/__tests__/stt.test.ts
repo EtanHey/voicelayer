@@ -4,6 +4,8 @@ import {
   WisprFlowBackend,
   getBackend,
   resetBackendCache,
+  buildChunkPrompt,
+  mergeChunkTranscripts,
 } from "../stt";
 
 describe("STT backends", () => {
@@ -159,6 +161,35 @@ describe("STT backends", () => {
         if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
         else delete process.env.QA_VOICE_STT_BACKEND;
       }
+    });
+  });
+
+  describe("Phase 7 chunk assembly", () => {
+    it("buildChunkPrompt carries recent tokens for continuity", () => {
+      expect(
+        buildChunkPrompt(
+          "console log the result in TypeScript and then switch to עברית בבקשה",
+          6,
+        ),
+      ).toBe("TypeScript and then switch to עברית בבקשה");
+    });
+
+    it("deduplicates overlap text at the application layer", () => {
+      expect(
+        mergeChunkTranscripts([
+          "hello world from voice layer",
+          "world from voice layer and beyond",
+        ]),
+      ).toBe("hello world from voice layer and beyond");
+    });
+
+    it("deduplicates mixed Hebrew-English overlap on the same pipeline", () => {
+      expect(
+        mergeChunkTranscripts([
+          "אני בודק TypeScript היום",
+          "TypeScript היום עם עוד טקסט",
+        ]),
+      ).toBe("אני בודק TypeScript היום עם עוד טקסט");
     });
   });
 });

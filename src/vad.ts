@@ -26,6 +26,8 @@ const ort = require("onnxruntime-node");
 /** VAD chunk size — 512 samples = 32ms at 16kHz. Silero VAD v5 requirement. */
 export const VAD_CHUNK_SAMPLES = 512;
 export const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2; // 16-bit = 2 bytes per sample
+export const MAX_STT_CHUNK_SECONDS = 28;
+export const STT_CHUNK_OVERLAP_SECONDS = 3;
 
 /**
  * Context size for Silero VAD ONNX model.
@@ -52,6 +54,52 @@ const CHUNKS_PER_SECOND = 16000 / VAD_CHUNK_SAMPLES; // ~31.25
 /** Convert silence seconds to number of consecutive silent chunks needed. */
 export function silenceChunksForMode(mode: SilenceMode): number {
   return Math.ceil(SILENCE_MODE_SECONDS[mode] * CHUNKS_PER_SECOND);
+}
+
+export interface ChunkBoundaryInput {
+  hasSpeech: boolean;
+  silenceChunks: number;
+  silenceMode: SilenceMode;
+  chunkDurationSeconds: number;
+  sampleRate: number;
+}
+
+export interface ChunkBoundaryDecision {
+  shouldCloseChunk: boolean;
+  reason: "continue" | "silence" | "max-duration";
+  overlapBytes: number;
+}
+
+export function evaluateChunkBoundary(
+  input: ChunkBoundaryInput,
+): ChunkBoundaryDecision {
+  const overlapBytes =
+    STT_CHUNK_OVERLAP_SECONDS * input.sampleRate * 2;
+
+  if (input.chunkDurationSeconds >= MAX_STT_CHUNK_SECONDS) {
+    return {
+      shouldCloseChunk: true,
+      reason: "max-duration",
+      overlapBytes,
+    };
+  }
+
+  if (
+    input.hasSpeech &&
+    input.silenceChunks >= silenceChunksForMode(input.silenceMode)
+  ) {
+    return {
+      shouldCloseChunk: true,
+      reason: "silence",
+      overlapBytes,
+    };
+  }
+
+  return {
+    shouldCloseChunk: false,
+    reason: "continue",
+    overlapBytes: 0,
+  };
 }
 
 // --- Model paths ---
