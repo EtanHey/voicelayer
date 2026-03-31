@@ -82,13 +82,15 @@ enum VoiceBarPresentation {
         errorMessage: String?
     ) -> String {
         switch mode {
-        case .idle, .disconnected:
+        case .idle:
             idleStatusText(
                 transcript: transcript,
                 confirmationText: confirmationText,
                 hotkeyPhase: hotkeyPhase,
                 hotkeyEnabled: hotkeyEnabled
             )
+        case .disconnected:
+            "Disconnected"
         case .speaking:
             "Speaking..."
         case .recording:
