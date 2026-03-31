@@ -128,6 +128,20 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
+    func testDisconnectedStatusTextShowsDisconnectedState() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .disconnected,
+                transcript: "ignored",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: nil
+            ),
+            "Disconnected"
+        )
+    }
+
     func testHotkeyPermissionHintIsSpecificToMissingPermission() {
         XCTAssertEqual(
             VoiceBarPresentation.hotkeyPermissionHint(

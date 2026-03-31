@@ -3,7 +3,7 @@
 // Solid dark pill with dynamic width — shrink-wraps content per state.
 // No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
 //
-// Phase 5 polish: recording pulse, speaking waveform, error auto-dismiss,
+// Phase 5 polish: recording pulse, speaking waveform,
 // state border glow, right-click context menu.
 
 import AppKit
@@ -133,7 +133,7 @@ struct BarView: View {
             }
         }
         .onTapGesture {
-            if state.mode == .idle {
+            if state.mode == .idle || state.mode == .error {
                 NSHapticFeedbackManager.defaultPerformer.perform(
                     .alignment, performanceTime: .now
                 )
@@ -142,21 +142,12 @@ struct BarView: View {
         }
     }
 
-    // MARK: - Error auto-dismiss
+    // MARK: - Error state
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
         if newMode != .idle {
             isHistoryPresented = false
-        }
-        if newMode == .error {
-            errorDismissTask = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(3))
-                if !Task.isCancelled, state.mode == .error {
-                    state.mode = .idle
-                    state.errorMessage = nil
-                }
-            }
         }
     }
 
@@ -167,13 +158,14 @@ struct BarView: View {
         case .recording: Theme.recordingColor.opacity(0.5)
         case .speaking: Theme.speakingColor.opacity(0.3)
         case .error: Theme.errorColor.opacity(0.5)
+        case .disconnected: Theme.errorColor.opacity(0.35)
         default: .clear
         }
     }
 
     private var borderWidth: CGFloat {
         switch state.mode {
-        case .recording, .error: 1.5
+        case .recording, .error, .disconnected: 1.5
         case .speaking: 1.0
         default: 0
         }
@@ -187,7 +179,7 @@ struct BarView: View {
             PulsingDot()
         } else {
             Circle()
-                .fill(Color.green) // VoiceBar is always alive
+                .fill(state.mode == .disconnected ? Theme.errorColor : Color.green)
                 .frame(width: 6, height: 6)
         }
     }
@@ -300,7 +292,8 @@ struct BarView: View {
 
     private var iconName: String {
         switch state.mode {
-        case .idle, .disconnected: "mic.fill"
+        case .idle: "mic.fill"
+        case .disconnected: "bolt.horizontal.circle.fill"
         case .speaking: "speaker.wave.2.fill"
         case .recording: "waveform"
         case .transcribing: "text.bubble"
@@ -376,6 +369,9 @@ struct BarView: View {
             }
             if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { state.stop() }
+            }
+            if state.mode == .error {
+                pillButton(icon: "xmark") { state.dismissError() }
             }
             if state.mode == .idle, !state.recentTranscriptions.isEmpty {
                 historyButton
