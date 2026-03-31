@@ -175,4 +175,74 @@ describe("tts priority queue", () => {
       .at(-1);
     expect(lastQueueEvent).toMatchObject({ type: "queue", depth: 0 });
   });
+
+  it("preserves unrelated low-priority chatter when collapse keys differ", async () => {
+    const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
+
+    playAudioNonBlocking("/tmp/current-collapse.mp3", {
+      text: "current",
+      voice: "voice",
+      priority: "normal",
+    });
+    await Bun.sleep(30);
+
+    playAudioNonBlocking("/tmp/clip-a.mp3", {
+      text: "clip a",
+      voice: "voice",
+      priority: "low",
+      // @ts-expect-error Phase 8 metadata
+      collapseKey: "clip-markers",
+    });
+    playAudioNonBlocking("/tmp/queue-a.mp3", {
+      text: "queue a",
+      voice: "voice",
+      priority: "low",
+      // @ts-expect-error Phase 8 metadata
+      collapseKey: "queue-chatter",
+    });
+
+    playerMocks[0].resolveExit();
+    await Bun.sleep(40);
+
+    expect(playerMocks.length).toBe(2);
+    expect(playerMocks[1].cmd).toContain("/tmp/clip-a.mp3");
+
+    playerMocks[1].resolveExit();
+    await Bun.sleep(40);
+
+    expect(playerMocks.length).toBe(3);
+    expect(playerMocks[2].cmd).toContain("/tmp/queue-a.mp3");
+
+    playerMocks[2].resolveExit();
+    await awaitCurrentPlayback();
+  });
+
+  it("emits a clip marker event when playback metadata marks a clip boundary", async () => {
+    const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
+
+    playAudioNonBlocking("/tmp/marker.mp3", {
+      text: "marker audio",
+      voice: "voice",
+      priority: "high",
+      // @ts-expect-error Phase 8 metadata
+      clipMarker: {
+        id: "clip-123",
+        label: "Idea",
+        source: "tts",
+      },
+    });
+
+    await Bun.sleep(30);
+    playerMocks[0].resolveExit();
+    await awaitCurrentPlayback();
+
+    const markerEvent = broadcasts.find((event: any) => event.type === "clip_marker");
+    expect(markerEvent).toMatchObject({
+      type: "clip_marker",
+      marker_id: "clip-123",
+      label: "Idea",
+      source: "tts",
+      status: "marked",
+    });
+  });
 });

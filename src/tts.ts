@@ -484,6 +484,12 @@ export interface PlaybackMetadata {
   wordBoundaries?: WordBoundary[];
   priority?: PlaybackPriority;
   durationMs?: number;
+  collapseKey?: string;
+  clipMarker?: {
+    id: string;
+    label: string;
+    source?: "tts" | "command";
+  };
 }
 
 interface PlaybackJob {
@@ -632,6 +638,15 @@ class PlaybackQueueManager {
       if (next.metadata?.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
       }
+      if (next.metadata?.clipMarker) {
+        broadcast({
+          type: "clip_marker",
+          marker_id: next.metadata.clipMarker.id,
+          label: next.metadata.clipMarker.label,
+          source: next.metadata.clipMarker.source ?? "tts",
+          status: "marked",
+        });
+      }
       if (next.metadata) {
         broadcast({
           type: "state",
@@ -720,8 +735,11 @@ class PlaybackQueueManager {
     if (job.priority !== "low" && job.priority !== "background") return;
 
     this.pending = this.pending.filter((queued) => {
+      const sameCollapseKey =
+        (queued.metadata?.collapseKey ?? null) === (job.metadata?.collapseKey ?? null);
       const isCollapsible =
-        queued.priority === job.priority || queued.priority === "background";
+        sameCollapseKey &&
+        (queued.priority === job.priority || queued.priority === "background");
       if (isCollapsible) {
         completeJob(queued);
         return false;

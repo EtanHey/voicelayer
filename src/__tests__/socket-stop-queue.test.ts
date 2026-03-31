@@ -110,3 +110,56 @@ describe("socket health command", () => {
     });
   });
 });
+
+describe("socket command-mode and clip handlers", () => {
+  let broadcastSpy: ReturnType<typeof spyOn>;
+  let broadcasts: any[];
+
+  beforeEach(() => {
+    broadcasts = [];
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
+      (event: unknown) => {
+        broadcasts.push(event);
+      },
+    );
+  });
+
+  afterEach(() => {
+    broadcastSpy.mockRestore();
+  });
+
+  it("broadcasts a command-mode apply event for selection transforms", () => {
+    handleSocketCommand({
+      // @ts-expect-error Phase 8 command
+      cmd: "command",
+      operation: "replace_selection",
+      text: "const value = selectedText.trim();",
+      prompt: "Replace selection",
+    });
+
+    expect(broadcasts).toContainEqual({
+      type: "command_mode",
+      phase: "applying",
+      operation: "replace_selection",
+      replacement_text: "const value = selectedText.trim();",
+      prompt: "Replace selection",
+    });
+  });
+
+  it("broadcasts clip marker events for downstream consumers", () => {
+    handleSocketCommand({
+      // @ts-expect-error Phase 8 command
+      cmd: "mark_clip",
+      label: "Action item",
+      source: "command",
+    });
+
+    expect(broadcasts).toContainEqual({
+      type: "clip_marker",
+      marker_id: "command-action-item",
+      label: "Action item",
+      source: "command",
+      status: "marked",
+    });
+  });
+});
