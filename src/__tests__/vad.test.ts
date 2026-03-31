@@ -7,6 +7,9 @@ import {
   processVADChunk,
   isSpeech,
   resetVAD,
+  evaluateChunkBoundary,
+  MAX_STT_CHUNK_SECONDS,
+  STT_CHUNK_OVERLAP_SECONDS,
 } from "../vad";
 
 describe("vad module", () => {
@@ -89,6 +92,56 @@ describe("vad module", () => {
   describe("resetVAD", () => {
     it("does not throw", async () => {
       await expect(resetVAD()).resolves.toBeUndefined();
+    });
+  });
+
+  describe("Phase 7 chunk boundary handling", () => {
+    it("forces a rollover when chunk duration reaches the max cap", () => {
+      expect(
+        evaluateChunkBoundary({
+          hasSpeech: true,
+          silenceChunks: 0,
+          silenceMode: "thoughtful",
+          chunkDurationSeconds: MAX_STT_CHUNK_SECONDS,
+          sampleRate: 16000,
+        }),
+      ).toEqual({
+        shouldCloseChunk: true,
+        reason: "max-duration",
+        overlapBytes: STT_CHUNK_OVERLAP_SECONDS * 16000 * 2,
+      });
+    });
+
+    it("closes the chunk on VAD silence after speech starts", () => {
+      expect(
+        evaluateChunkBoundary({
+          hasSpeech: true,
+          silenceChunks: silenceChunksForMode("standard"),
+          silenceMode: "standard",
+          chunkDurationSeconds: 12,
+          sampleRate: 16000,
+        }),
+      ).toEqual({
+        shouldCloseChunk: true,
+        reason: "silence",
+        overlapBytes: STT_CHUNK_OVERLAP_SECONDS * 16000 * 2,
+      });
+    });
+
+    it("keeps the chunk open while speech is active and under the cap", () => {
+      expect(
+        evaluateChunkBoundary({
+          hasSpeech: true,
+          silenceChunks: 0,
+          silenceMode: "quick",
+          chunkDurationSeconds: 8,
+          sampleRate: 16000,
+        }),
+      ).toEqual({
+        shouldCloseChunk: false,
+        reason: "continue",
+        overlapBytes: 0,
+      });
     });
   });
 });

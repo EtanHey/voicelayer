@@ -14,7 +14,11 @@
  * Tests reflect this — it's correct behavior for dictation output.
  */
 import { describe, it, expect } from "bun:test";
-import { applyRules, type RulesConfig } from "../rules-engine";
+import {
+  applyRules,
+  preserveCodeTokens,
+  type RulesConfig,
+} from "../rules-engine";
 
 describe("rules-engine", () => {
   // --- Stage 1: Filler removal ---
@@ -144,6 +148,20 @@ describe("rules-engine", () => {
     it("corrects framework names", () => {
       expect(applyRules("next js")).toBe("Next.js");
       expect(applyRules("node js")).toBe("Node.js");
+    });
+  });
+
+  describe("Phase 7 code-token preservation", () => {
+    it("preserves common code tokens before punctuation cleanup", () => {
+      expect(
+        preserveCodeTokens("open paren foo bar close paren dot map"),
+      ).toBe("(foo bar).map");
+    });
+
+    it("preserves hook and identifier tokens in mixed dictation", () => {
+      const result = applyRules("תשתמש ב use effect בשביל on click handler");
+      expect(result).toContain("useEffect");
+      expect(result).toContain("onClick");
     });
   });
 

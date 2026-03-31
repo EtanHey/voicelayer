@@ -37,11 +37,19 @@ import {
   isSpeech,
   resetVAD,
   silenceChunksForMode,
+  evaluateChunkBoundary,
   VAD_CHUNK_BYTES,
   VAD_CHUNK_SAMPLES,
   type SilenceMode,
 } from "./vad";
 import { broadcast } from "./socket-client";
+import {
+  calculateRMS,
+  detectNativeSampleRate,
+  resamplePCM16,
+} from "./audio-utils";
+import { applyRules } from "./rules-engine";
+import { buildChunkPrompt, mergeChunkTranscripts, type STTBackend } from "./stt";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -56,14 +64,112 @@ const BITS_PER_SAMPLE = 16;
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
 let recordingState: "idle" | "recording" | "transcribing" = "idle";
-
-import {
-  calculateRMS,
-  detectNativeSampleRate,
-  resamplePCM16,
-} from "./audio-utils";
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
+
+export function isChunkedSTTEnabled(): boolean {
+  const raw = process.env.QA_VOICE_CHUNKED_STT?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+function flattenChunks(chunks: Uint8Array[]): Uint8Array {
+  const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+  const flat = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    flat.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return flat;
+}
+
+export class ChunkedRecordingSession {
+  private readonly sampleRate: number;
+  private readonly silenceMode: SilenceMode;
+  private activeChunks: Uint8Array[] = [];
+  private activeBytes = 0;
+  private completedSegments: Uint8Array[] = [];
+  private overlapBuffer = new Uint8Array(0);
+  private hasSpeech = false;
+  private silenceChunks = 0;
+
+  constructor(sampleRate = SAMPLE_RATE, silenceMode: SilenceMode = "standard") {
+    this.sampleRate = sampleRate;
+    this.silenceMode = silenceMode;
+  }
+
+  pushChunk(chunk: Uint8Array, speechDetected: boolean): void {
+    this.activeChunks.push(chunk);
+    this.activeBytes += chunk.byteLength;
+
+    if (speechDetected) {
+      this.hasSpeech = true;
+      this.silenceChunks = 0;
+    } else {
+      this.silenceChunks += 1;
+    }
+
+    const decision = evaluateChunkBoundary({
+      hasSpeech: this.hasSpeech,
+      silenceChunks: this.silenceChunks,
+      silenceMode: this.silenceMode,
+      chunkDurationSeconds: this.activeBytes / (this.sampleRate * BYTES_PER_SAMPLE),
+      sampleRate: this.sampleRate,
+    });
+
+    if (decision.shouldCloseChunk && this.activeBytes > 0) {
+      const flat = flattenChunks(this.activeChunks);
+      this.completedSegments.push(flat);
+      this.overlapBuffer = flat.slice(-Math.min(decision.overlapBytes, flat.byteLength));
+      this.activeChunks = this.overlapBuffer.byteLength > 0 ? [this.overlapBuffer] : [];
+      this.activeBytes = this.overlapBuffer.byteLength;
+      this.hasSpeech = this.overlapBuffer.byteLength > 0;
+      this.silenceChunks = 0;
+    }
+  }
+
+  finalize(): void {
+    if (this.activeBytes === 0) return;
+    const flat = flattenChunks(this.activeChunks);
+    const lastCompleted = this.completedSegments[this.completedSegments.length - 1];
+    if (
+      lastCompleted &&
+      lastCompleted.byteLength >= flat.byteLength &&
+      flat.every((byte, index) => lastCompleted[lastCompleted.byteLength - flat.byteLength + index] === byte)
+    ) {
+      return;
+    }
+    this.completedSegments.push(flat);
+  }
+
+  consumeSegments(): Uint8Array[] {
+    const segments = this.completedSegments;
+    this.completedSegments = [];
+    return segments;
+  }
+
+  currentOverlapBytes(): number {
+    return this.overlapBuffer.byteLength;
+  }
+}
+
+export async function transcribeChunkSequence(
+  chunks: Uint8Array[],
+  transcribeChunk: (chunk: Uint8Array, prompt: string) => Promise<string>,
+): Promise<string> {
+  const transcripts: string[] = [];
+
+  for (const chunk of chunks) {
+    const prompt =
+      transcripts.length === 0 ? "" : buildChunkPrompt(mergeChunkTranscripts(transcripts), 24);
+    const text = (await transcribeChunk(chunk, prompt)).trim();
+    if (text) {
+      transcripts.push(text);
+    }
+  }
+
+  return applyRules(mergeChunkTranscripts(transcripts));
+}
 
 /**
  * Create a WAV file buffer from raw PCM data.
@@ -129,6 +235,7 @@ export async function recordToBuffer(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pressToTalk: boolean = false,
+  chunkedSession?: ChunkedRecordingSession,
 ): Promise<Uint8Array | null> {
   // Check mic disabled flag
   if (isMicDisabled()) {
@@ -344,6 +451,7 @@ export async function recordToBuffer(
             }
 
             if (pressToTalk) {
+              chunkedSession?.pushChunk(chunk, true);
               // PTT mode: no VAD, only stop on user signal or timeout
               if (hasStopSignal()) {
                 clearStopSignal();
@@ -357,6 +465,7 @@ export async function recordToBuffer(
               // VAD mode: run Silero VAD on this chunk
               const speechProb = await processVADChunk(chunk);
               const speechDetected = isSpeech(speechProb);
+              chunkedSession?.pushChunk(chunk, speechDetected);
 
               if (speechDetected) {
                 if (!hasSpeech) {
@@ -436,8 +545,16 @@ export async function waitForInput(
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;
+  const chunkedSession = isChunkedSTTEnabled()
+    ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
+    : undefined;
   try {
-    pcmData = await recordToBuffer(timeoutMs, silenceMode, pressToTalk);
+    pcmData = await recordToBuffer(
+      timeoutMs,
+      silenceMode,
+      pressToTalk,
+      chunkedSession,
+    );
   } catch (err) {
     // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
     broadcast({
@@ -469,25 +586,48 @@ export async function waitForInput(
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
   try {
-    const wavData = createWavBuffer(pcmData);
-    writeFileSync(wavPath, wavData);
-
     // Transcribe with selected backend
     const backend = await getBackend();
-    console.error(`[voicelayer] Transcribing with ${backend.name}...`);
-    const result = await backend.transcribe(wavPath);
     console.error(
-      `[voicelayer] Transcription (${result.durationMs}ms): ${result.text}`,
+      `[voicelayer] Transcribing with ${backend.name}${chunkedSession ? " (chunked)" : ""}...`,
+    );
+    let text = "";
+
+    if (chunkedSession) {
+      chunkedSession.finalize();
+      const segments = chunkedSession.consumeSegments();
+      text = await transcribeChunkSequence(segments, async (chunk, prompt) => {
+        const chunkPath = recordingFilePath(process.pid, Date.now() + Math.random());
+        try {
+          writeFileSync(chunkPath, createWavBuffer(chunk));
+          const result = await backend.transcribe(chunkPath, {
+            promptOverride: prompt,
+          });
+          return result.text;
+        } finally {
+          try {
+            if (existsSync(chunkPath)) unlinkSync(chunkPath);
+          } catch {}
+        }
+      });
+    } else {
+      const wavData = createWavBuffer(pcmData);
+      writeFileSync(wavPath, wavData);
+      const result = await backend.transcribe(wavPath);
+      text = result.text;
+    }
+    console.error(
+      `[voicelayer] Transcription: ${text}`,
     );
 
     // Broadcast transcription result + idle state to Voice Bar
-    if (result.text) {
-      broadcast({ type: "transcription", text: result.text });
+    if (text) {
+      broadcast({ type: "transcription", text });
     }
     recordingState = "idle";
     broadcast({ type: "state", state: "idle" });
 
-    return result.text || null;
+    return text || null;
   } catch (err) {
     recordingState = "idle";
     broadcast({

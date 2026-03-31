@@ -4,10 +4,21 @@
  */
 import { describe, it, expect, beforeAll } from "bun:test";
 import { existsSync } from "fs";
+import { Database } from "bun:sqlite";
 
 // Skip all tests if Wispr Flow is not installed
 const WISPR_DB = `${process.env.HOME}/Library/Application Support/Wispr Flow/flow.sqlite`;
-const hasWisprFlow = existsSync(WISPR_DB);
+const hasWisprFlow = (() => {
+  if (!existsSync(WISPR_DB)) return false;
+  try {
+    const db = new Database(WISPR_DB, { readonly: true });
+    db.query("SELECT 1").get();
+    db.close();
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 describe("wispr-reader", () => {
   // Skip suite entirely if no Wispr Flow DB

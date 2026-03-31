@@ -15,7 +15,11 @@ import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
-import { getLanguageConfig, getLanguageModeFromEnv } from "./language-config";
+import {
+  getInitialPrompt,
+  getLanguageConfig,
+  getLanguageModeFromEnv,
+} from "./language-config";
 
 // --- Types ---
 
@@ -25,10 +29,57 @@ export interface STTResult {
   durationMs: number;
 }
 
+export interface STTTranscribeOptions {
+  promptOverride?: string;
+}
+
 export interface STTBackend {
   name: string;
   isAvailable(): Promise<boolean>;
-  transcribe(audioPath: string): Promise<STTResult>;
+  transcribe(audioPath: string, options?: STTTranscribeOptions): Promise<STTResult>;
+}
+
+export function buildChunkPrompt(text: string, maxWords = 24): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return words.join(" ");
+  return words.slice(-(maxWords + 1)).join(" ");
+}
+
+function normalizeChunkWords(text: string): string[] {
+  return text
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+export function mergeChunkTranscripts(chunks: string[]): string {
+  const merged: string[] = [];
+
+  for (const chunk of chunks) {
+    const nextWords = normalizeChunkWords(chunk);
+    if (nextWords.length === 0) continue;
+
+    if (merged.length === 0) {
+      merged.push(...nextWords);
+      continue;
+    }
+
+    const maxOverlap = Math.min(merged.length, nextWords.length);
+    let overlap = 0;
+
+    for (let size = maxOverlap; size > 0; size--) {
+      const mergedTail = merged.slice(-size).join(" ").toLowerCase();
+      const nextHead = nextWords.slice(0, size).join(" ").toLowerCase();
+      if (mergedTail === nextHead) {
+        overlap = size;
+        break;
+      }
+    }
+
+    merged.push(...nextWords.slice(overlap));
+  }
+
+  return merged.join(" ").trim();
 }
 
 // --- WhisperCpp Backend ---
@@ -112,7 +163,10 @@ export class WhisperCppBackend implements STTBackend {
     return this.binaryPath !== null && this.modelPath !== null;
   }
 
-  async transcribe(audioPath: string): Promise<STTResult> {
+  async transcribe(
+    audioPath: string,
+    options?: STTTranscribeOptions,
+  ): Promise<STTResult> {
     if (!this.binaryPath) this.binaryPath = findWhisperBinary();
     if (!this.modelPath) this.modelPath = findModel();
 
@@ -147,7 +201,17 @@ export class WhisperCppBackend implements STTBackend {
     // AIDEV-NOTE: Language config drives whisper args — supports auto (mixed
     // Hebrew-English), hebrew, or english modes. Auto omits -l for auto-detect.
     // Initial prompt primes vocabulary for dev terms in the configured language.
-    const langConfig = getLanguageConfig(getLanguageModeFromEnv());
+    const langMode = getLanguageModeFromEnv();
+    const langConfig = getLanguageConfig(langMode);
+    const basePrompt = getInitialPrompt(langMode);
+    const prompt = options?.promptOverride
+      ? `${basePrompt} ${options.promptOverride}`.trim()
+      : basePrompt;
+    const whisperArgs = [...langConfig.whisperArgs];
+    const promptIndex = whisperArgs.indexOf("--initial-prompt");
+    if (promptIndex >= 0 && promptIndex + 1 < whisperArgs.length) {
+      whisperArgs[promptIndex + 1] = prompt;
+    }
 
     const args = [
       this.binaryPath,
@@ -156,7 +220,7 @@ export class WhisperCppBackend implements STTBackend {
       "-f",
       audioPath,
       "--no-timestamps",
-      ...langConfig.whisperArgs,
+      ...whisperArgs,
       "--no-prints", // suppress progress output
     ];
 
@@ -211,7 +275,10 @@ export class WisprFlowBackend implements STTBackend {
     return !!process.env.QA_VOICE_WISPR_KEY;
   }
 
-  async transcribe(audioPath: string): Promise<STTResult> {
+  async transcribe(
+    audioPath: string,
+    _options?: STTTranscribeOptions,
+  ): Promise<STTResult> {
     const apiKey = process.env.QA_VOICE_WISPR_KEY;
     if (!apiKey) {
       throw new Error(
