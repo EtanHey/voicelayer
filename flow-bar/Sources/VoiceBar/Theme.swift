@@ -53,6 +53,8 @@ enum Theme {
 
     static let connectionTransition: Animation = .spring(duration: 0.3, bounce: 0.15)
     static let pillTransition: Animation = .spring(duration: 0.38, bounce: 0.12)
+    /// Smooth crossfade for mode changes — avoids bouncy intermediate states.
+    static let modeTransition: Animation = .easeInOut(duration: 0.25)
     static let queueProgressTransition: Animation = .easeOut(duration: 0.18)
 
     // MARK: - State-dependent color

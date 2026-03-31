@@ -34,14 +34,18 @@ struct VoiceBarMenuAction: Identifiable {
 
 enum VoiceBarMenu {
     static func quickActions(
+        isSnoozed: Bool = false,
         openSettings: @escaping () -> Void,
-        hideForOneHour: @escaping () -> Void,
+        snoozeToggle: @escaping () -> Void,
         pasteLastTranscript: @escaping () -> Void,
         quit: @escaping () -> Void
     ) -> [VoiceBarMenuAction] {
         [
             VoiceBarMenuAction(title: "Settings", perform: openSettings),
-            VoiceBarMenuAction(title: "Hide for 1 hour", perform: hideForOneHour),
+            VoiceBarMenuAction(
+                title: isSnoozed ? "Show VoiceBar" : "Hide for 1 hour",
+                perform: snoozeToggle
+            ),
             VoiceBarMenuAction(title: "Paste last transcript", perform: pasteLastTranscript),
             VoiceBarMenuAction(title: "Quit VoiceBar", perform: quit),
         ]
