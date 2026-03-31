@@ -11,4 +11,5 @@ enum VoiceLayerPaths {
 
     static let socketPath = tmpPath("voicelayer.sock")
     static let mcpSocketPath = tmpPath("voicelayer-mcp.sock")
+    static let daemonPIDPath = tmpPath("voicelayer-daemon.pid")
 }
