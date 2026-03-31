@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VoiceLayer — Native Voice-to-Text for AI Coding Assistants</title>
+  <meta name="description" content="macOS menu bar app with F6 push-to-talk, local whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
+  <meta property="og:title" content="VoiceLayer — Native Voice-to-Text for AI Coding Assistants">
+  <meta property="og:description" content="Press F6. Speak. Ship. Local whisper.cpp STT, BrainLayer integration, no cloud required.">
+  <meta property="og:type" content="website">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,700&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #09090b;
+      --bg-elevated: #111114;
+      --bg-card: #151519;
+      --border: #222228;
+      --border-hover: #38383f;
+      --text: #fafaf9;
+      --text-secondary: #a8a29e;
+      --text-dim: #6b6660;
+      --accent: #5eead4;
+      --accent-bright: #a7f3d0;
+      --accent-subtle: rgba(94, 234, 212, 0.08);
+      --amber: #d4956a;
+      --red: #cf6060;
+      --display: 'Newsreader', Georgia, serif;
+      --sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: var(--sans);
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* Grain */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.02'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    .wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    .wrap-wide {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* ─── Nav ─── */
+    nav {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: 16px 0;
+      background: rgba(9, 9, 11, 0.8);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid transparent;
+      transition: border-color 0.3s;
+    }
+
+    nav.scrolled { border-bottom-color: var(--border); }
+
+    nav .wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: var(--text);
+      font-family: var(--sans);
+      font-weight: 600;
+      font-size: 16px;
+      letter-spacing: -0.01em;
+      opacity: 0.9;
+      transition: opacity 0.2s;
+    }
+
+    .logo:hover { opacity: 1; }
+
+    .logo svg { flex-shrink: 0; }
+
+    .nav-right {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .nav-right a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 400;
+      transition: color 0.2s;
+    }
+
+    .nav-right a:hover { color: var(--text); }
+
+    .nav-gh {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .nav-gh .arrow {
+      display: inline-block;
+      transition: transform 0.2s;
+    }
+
+    .nav-gh:hover .arrow { transform: translateX(2px); }
+
+    /* ─── Hero ─── */
+    .hero {
+      padding: 180px 0 60px;
+      text-align: center;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: 45%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 700px;
+      height: 500px;
+      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.04), transparent 70%);
+      pointer-events: none;
+    }
+
+    h1 {
+      font-family: var(--display);
+      font-size: clamp(40px, 6vw, 68px);
+      font-weight: 700;
+      letter-spacing: -0.035em;
+      line-height: 1.08;
+      margin-bottom: 24px;
+      max-width: 720px;
+      margin-left: auto;
+      margin-right: auto;
+      position: relative;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--accent);
+    }
+
+    .hero-sub {
+      font-size: 17px;
+      color: var(--text-secondary);
+      max-width: 520px;
+      margin: 0 auto 40px;
+      line-height: 1.65;
+      font-weight: 300;
+    }
+
+    .hero-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 56px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      font-family: var(--sans);
+      transition: transform 0.15s, box-shadow 0.2s, background 0.2s;
+    }
+
+    .btn:hover { transform: scale(1.03); }
+    .btn:active { transform: scale(0.98); }
+
+    .btn-primary {
+      background: var(--text);
+      color: var(--bg);
+    }
+
+    .btn-primary:hover {
+      box-shadow: 0 0 24px rgba(250, 250, 249, 0.15);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-ghost:hover {
+      color: var(--text);
+      border-color: var(--border-hover);
+    }
+
+    /* ─── VoiceBar Mockup ─── */
+    .voicebar-showcase {
+      max-width: 640px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .voicebar-frame {
+      background: #0c0c0e;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 48px 32px 56px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .voicebar-frame::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 40px;
+      background: linear-gradient(transparent, var(--bg));
+      pointer-events: none;
+    }
+
+    .voicebar-menubar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 16px;
+      padding: 6px 16px;
+      background: rgba(255,255,255,0.03);
+      border-radius: 8px;
+      margin-bottom: 32px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    .voicebar-pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: rgba(94, 234, 212, 0.08);
+      border: 1px solid rgba(94, 234, 212, 0.2);
+      border-radius: 999px;
+      padding: 8px 18px;
+      margin: 0 auto;
+      width: fit-content;
+      position: relative;
+    }
+
+    .voicebar-pill::before {
+      content: '';
+      position: absolute;
+      inset: -12px;
+      border-radius: 999px;
+      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.06), transparent 70%);
+      pointer-events: none;
+    }
+
+    .pill-mic {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: mic-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes mic-pulse {
+      0%, 100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(94, 234, 212, 0.3); }
+      50% { opacity: 1; box-shadow: 0 0 8px 3px rgba(94, 234, 212, 0.15); }
+    }
+
+    .pill-waveform {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      height: 20px;
+    }
+
+    .wave-bar {
+      width: 3px;
+      background: var(--accent);
+      border-radius: 2px;
+      transform-origin: center;
+      animation: wave 1.4s ease-in-out infinite;
+    }
+
+    .wave-bar:nth-child(1) { animation-delay: 0s; height: 6px; }
+    .wave-bar:nth-child(2) { animation-delay: 0.1s; height: 12px; }
+    .wave-bar:nth-child(3) { animation-delay: 0.2s; height: 18px; }
+    .wave-bar:nth-child(4) { animation-delay: 0.15s; height: 14px; }
+    .wave-bar:nth-child(5) { animation-delay: 0.25s; height: 20px; }
+    .wave-bar:nth-child(6) { animation-delay: 0.3s; height: 16px; }
+    .wave-bar:nth-child(7) { animation-delay: 0.05s; height: 10px; }
+    .wave-bar:nth-child(8) { animation-delay: 0.35s; height: 8px; }
+    .wave-bar:nth-child(9) { animation-delay: 0.12s; height: 14px; }
+
+    @keyframes wave {
+      0%, 100% { transform: scaleY(0.3); }
+      50% { transform: scaleY(1); }
+    }
+
+    .pill-label {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 500;
+    }
+
+    .voicebar-transcript {
+      margin-top: 28px;
+      text-align: center;
+    }
+
+    .voicebar-transcript-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 10px;
+    }
+
+    .voicebar-transcript-text {
+      font-family: var(--sans);
+      font-size: 15px;
+      color: var(--text-secondary);
+      line-height: 1.65;
+      font-weight: 300;
+      max-width: 440px;
+      margin: 0 auto;
+    }
+
+    .voicebar-transcript-text .cursor-blink {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: var(--accent);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* Sound rings */
+    .sound-rings {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .sound-ring {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.5);
+      border: 1px solid rgba(94, 234, 212, 0.08);
+      border-radius: 50%;
+      animation: ring-expand 4s ease-out infinite;
+    }
+
+    .sound-ring:nth-child(1) { width: 200px; height: 200px; animation-delay: 0s; }
+    .sound-ring:nth-child(2) { width: 200px; height: 200px; animation-delay: 1.3s; }
+    .sound-ring:nth-child(3) { width: 200px; height: 200px; animation-delay: 2.6s; }
+
+    @keyframes ring-expand {
+      0% { transform: translate(-50%, -50%) scale(0.5); opacity: 0.4; }
+      100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+    }
+
+    /* ─── Terminal ─── */
+    .terminal-section {
+      padding: 20px 0 100px;
+    }
+
+    .terminal {
+      background: #0c0c0e;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px;
+      overflow: hidden;
+      max-width: 820px;
+      margin: 0 auto;
+      position: relative;
+    }
+
+    .terminal::after {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 60px;
+      background: linear-gradient(transparent, var(--bg));
+      pointer-events: none;
+    }
+
+    .terminal-bar {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 14px 18px;
+      background: rgba(255,255,255,0.03);
+      border-bottom: 1px solid rgba(255,255,255,0.05);
+    }
+
+    .dot { width: 11px; height: 11px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+
+    .terminal-title {
+      font-size: 12px;
+      color: var(--text-dim);
+      margin-left: 10px;
+      font-family: var(--mono);
+    }
+
+    .terminal-body {
+      padding: 20px 22px 48px;
+      font-family: var(--mono);
+      font-size: 13px;
+      line-height: 1.85;
+    }
+
+    .t { display: block; }
+    .t-gap { margin-top: 12px; }
+
+    .t-prompt { color: #6ec1e4; }
+    .t-user { color: var(--text); }
+    .t-dim { color: #4a4a52; }
+    .t-sys { color: #78787f; font-style: italic; }
+    .t-tool { color: var(--accent); font-weight: 500; }
+    .t-arg { color: #a8d8a8; }
+    .t-str { color: #e8b090; }
+    .t-num { color: var(--accent); }
+    .t-border { color: #333338; }
+    .t-body { color: var(--text-secondary); }
+    .t-recording { color: var(--accent); }
+    .t-whisper { color: var(--amber); }
+
+    /* ─── Sections ─── */
+    .section {
+      padding: 100px 0;
+    }
+
+    .section-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--accent);
+      margin-bottom: 12px;
+      text-align: center;
+      font-weight: 500;
+    }
+
+    .section-heading {
+      font-family: var(--display);
+      font-size: clamp(26px, 3.5vw, 36px);
+      font-weight: 600;
+      letter-spacing: -0.025em;
+      text-align: center;
+      margin-bottom: 56px;
+      line-height: 1.15;
+    }
+
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+    }
+
+    /* ─── Problem / Solution ─── */
+    .ps-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    .ps-card {
+      padding: 32px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      display: flex;
+      flex-direction: column;
+      transition: border-color 0.3s;
+    }
+
+    .ps-card:hover {
+      border-color: var(--border-hover);
+    }
+
+    .ps-card.problem { border-top: 2px solid var(--red); }
+    .ps-card.solution { border-top: 2px solid var(--accent); }
+
+    .ps-tag {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      margin-bottom: 14px;
+      font-weight: 500;
+    }
+
+    .problem .ps-tag { color: var(--red); }
+    .solution .ps-tag { color: var(--accent); }
+
+    .ps-title {
+      font-family: var(--sans);
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+
+    .ps-body {
+      color: var(--text-secondary);
+      font-size: 15px;
+      line-height: 1.7;
+      font-weight: 300;
+      flex: 1;
+    }
+
+    .ps-body strong { color: var(--text); font-weight: 500; }
+
+    /* ─── Features ─── */
+    .features-section {
+      padding: 100px 0;
+    }
+
+    .features-group {
+      max-width: 640px;
+      margin: 0 auto 48px;
+    }
+
+    .features-group:last-child { margin-bottom: 0; }
+
+    .features-group-label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--text-dim);
+      margin-bottom: 16px;
+      padding-left: 2px;
+      font-weight: 500;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: baseline;
+      gap: 20px;
+      padding: 12px 16px;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+
+    .feature-item:hover {
+      background: var(--bg-elevated);
+    }
+
+    .feature-item .name {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+      min-width: 150px;
+      flex-shrink: 0;
+    }
+
+    .feature-item .desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      font-weight: 300;
+    }
+
+    .feature-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 8px 0;
+      max-width: 640px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    /* ─── How it Works ─── */
+    .flow-section {
+      padding: 100px 0;
+    }
+
+    .flow-steps {
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 0;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+
+    .flow-step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      flex: 1;
+      position: relative;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 28px;
+      right: -2px;
+      width: calc(100% - 56px);
+      height: 1px;
+      background: linear-gradient(90deg, var(--border-hover), var(--border));
+      transform: translateX(50%);
+    }
+
+    .flow-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      position: relative;
+      z-index: 1;
+      transition: border-color 0.25s, transform 0.2s;
+    }
+
+    .flow-step:hover .flow-icon {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+
+    .flow-icon svg { color: var(--accent); }
+
+    .keycap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      background: linear-gradient(to bottom, #2a2a30, #1a1a1e);
+      border: 1px solid #3a3a40;
+      border-radius: 6px;
+      box-shadow: 0 2px 0 #111, inset 0 1px 0 rgba(255,255,255,0.05);
+      font-family: var(--mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .flow-label {
+      font-family: var(--sans);
+      font-size: 14px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .flow-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-weight: 300;
+      max-width: 140px;
+    }
+
+    /* ─── Integrations ─── */
+    .integrations-section {
+      padding: 80px 0 100px;
+      text-align: center;
+    }
+
+    .logo-row {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      flex-wrap: wrap;
+      margin-bottom: 64px;
+    }
+
+    .logo-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      transition: transform 0.2s;
+    }
+
+    .logo-item:hover { transform: translateY(-3px); }
+
+    .logo-box {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 11px;
+      transition: border-color 0.25s;
+    }
+
+    .logo-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .logo-item:hover .logo-box {
+      border-color: var(--border-hover);
+    }
+
+    .logo-name {
+      font-size: 12px;
+      color: var(--text-dim);
+      transition: color 0.2s;
+    }
+
+    .logo-item:hover .logo-name { color: var(--text-secondary); }
+
+    .logo-box.brainlayer-logo img {
+      filter: hue-rotate(120deg) saturate(0.65) brightness(1.1);
+    }
+
+    /* ─── Setup ─── */
+    .setup-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      max-width: 780px;
+      margin: 0 auto;
+    }
+
+    .setup-card {
+      text-align: left;
+    }
+
+    .setup-num {
+      font-family: var(--mono);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+
+    .setup-text {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+      font-weight: 300;
+      margin-bottom: 10px;
+    }
+
+    .setup-code {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .setup-code:hover { border-color: var(--accent); }
+
+    .setup-code span { flex: 1; }
+
+    .setup-code .copy-icon {
+      color: var(--text-dim);
+      transition: color 0.2s;
+      flex-shrink: 0;
+    }
+
+    .setup-code:hover .copy-icon { color: var(--accent); }
+
+    /* ─── CTA ─── */
+    .cta-section {
+      padding: 100px 0 80px;
+      text-align: center;
+    }
+
+    .cta-heading {
+      font-family: var(--display);
+      font-size: clamp(26px, 4vw, 42px);
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      margin-bottom: 12px;
+    }
+
+    .cta-sub {
+      color: var(--text-secondary);
+      font-size: 15px;
+      margin-bottom: 36px;
+      font-weight: 300;
+    }
+
+    .install-block {
+      max-width: 420px;
+      margin: 0 auto;
+    }
+
+    .install-cmd {
+      display: flex;
+      align-items: center;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-family: var(--mono);
+      font-size: 14px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: border-color 0.25s;
+      position: relative;
+    }
+
+    .install-cmd:hover {
+      border-color: var(--accent);
+    }
+
+    .install-cmd code { color: var(--text); flex: 1; }
+    .install-cmd .dim { color: var(--text-dim); }
+
+    .copy-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 4px;
+      transition: color 0.2s;
+    }
+
+    .copy-btn:hover { color: var(--accent); }
+
+    /* ─── Footer ─── */
+    footer {
+      padding: 32px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    footer .wrap {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .footer-left {
+      font-size: 13px;
+      color: var(--text-dim);
+      font-weight: 300;
+    }
+
+    .footer-left a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-left a:hover { color: var(--accent); }
+
+    .footer-right {
+      display: flex;
+      gap: 20px;
+    }
+
+    .footer-right a {
+      font-size: 13px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-right a:hover { color: var(--text-secondary); }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 768px) {
+      .nav-right a:not(.nav-gh) { display: none; }
+      .hero { padding: 140px 0 60px; }
+      .ps-grid { grid-template-columns: 1fr; }
+      .setup-grid { grid-template-columns: 1fr; }
+      .logo-row { gap: 24px; }
+      .flow-steps { flex-direction: column; gap: 24px; align-items: center; }
+      .flow-step:not(:last-child)::after { display: none; }
+      .flow-desc { max-width: 200px; }
+      footer .wrap { flex-direction: column; gap: 12px; }
+    }
+
+    @media (max-width: 480px) {
+      .hero-actions { flex-direction: column; }
+      .btn { width: 100%; justify-content: center; }
+      .voicebar-frame { padding: 32px 16px 40px; }
+    }
+
+    /* ─── Animations ─── */
+    .reveal {
+      opacity: 0;
+      transform: translateY(16px);
+      transition: opacity 0.8s ease, transform 0.8s ease;
+    }
+
+    .reveal.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .reveal-d1 { transition-delay: 0.1s; }
+    .reveal-d2 { transition-delay: 0.2s; }
+    .reveal-d3 { transition-delay: 0.3s; }
+  </style>
+</head>
+<body>
+
+  <nav id="nav">
+    <div class="wrap">
+      <a href="#" class="logo">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+          <rect x="3" y="8" width="2.5" height="8" rx="1.25" fill="#5eead4"/>
+          <rect x="7" y="4" width="2.5" height="16" rx="1.25" fill="#5eead4"/>
+          <rect x="11" y="6" width="2.5" height="12" rx="1.25" fill="#5eead4"/>
+          <rect x="15" y="2" width="2.5" height="20" rx="1.25" fill="#5eead4"/>
+          <rect x="19" y="7" width="2.5" height="10" rx="1.25" fill="#5eead4"/>
+        </svg>
+        VoiceLayer
+      </a>
+      <div class="nav-right">
+        <a href="#features">Features</a>
+        <a href="#setup">Setup</a>
+        <a href="https://github.com/EtanHey/voicelayer" class="nav-gh">GitHub <span class="arrow">&nearr;</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="wrap">
+      <h1 class="reveal">Your keyboard is<br>a bottleneck. <em>Fix that.</em></h1>
+      <p class="hero-sub reveal reveal-d1">
+        VoiceBar lives in your macOS menu bar. Hold F6, speak naturally,
+        get instant local transcription. whisper.cpp runs on-device &mdash;
+        nothing leaves your machine.
+      </p>
+      <div class="hero-actions reveal reveal-d2">
+        <a href="#setup" class="btn btn-primary">Get started</a>
+        <a href="https://github.com/EtanHey/voicelayer" class="btn btn-ghost">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          View source
+        </a>
+      </div>
+
+      <!-- VoiceBar Mockup -->
+      <div class="voicebar-showcase reveal reveal-d3">
+        <div class="voicebar-frame">
+          <div class="sound-rings">
+            <div class="sound-ring"></div>
+            <div class="sound-ring"></div>
+            <div class="sound-ring"></div>
+          </div>
+          <div class="voicebar-menubar">
+            <span>Wi-Fi</span>
+            <span>3:42 PM</span>
+            <span style="color: var(--accent);">VoiceBar</span>
+          </div>
+          <div class="voicebar-pill">
+            <div class="pill-mic"></div>
+            <div class="pill-waveform">
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+              <div class="wave-bar"></div>
+            </div>
+            <span class="pill-label">Recording</span>
+          </div>
+          <div class="voicebar-transcript">
+            <div class="voicebar-transcript-label">Transcribed &middot; whisper.cpp &middot; 1.2s</div>
+            <p class="voicebar-transcript-text">
+              Split the JWT validation into its own middleware function.
+              Add refresh token rotation and keep the cookie fallback
+              for the admin dashboard.<span class="cursor-blink"></span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Terminal -->
+  <section class="terminal-section">
+    <div class="wrap-wide">
+      <div class="terminal reveal">
+        <div class="terminal-bar">
+          <div class="dot dot-r"></div>
+          <div class="dot dot-y"></div>
+          <div class="dot dot-g"></div>
+          <span class="terminal-title">claude ~ myproject</span>
+        </div>
+        <div class="terminal-body">
+          <span class="t"><span class="t-prompt">&#10095;</span> <span class="t-user">Help me refactor the auth module</span></span>
+          <span class="t t-gap"><span class="t-sys">[VoiceLayer] &#127908; Recording... (F6 held)</span></span>
+          <span class="t"><span class="t-sys">[VoiceLayer] Transcribed (1.2s, whisper.cpp):</span></span>
+          <span class="t t-gap"><span class="t-recording">&nbsp;&nbsp;"Split the JWT validation into its own middleware.</span></span>
+          <span class="t"><span class="t-recording">&nbsp;&nbsp;&nbsp;Add refresh token rotation. Keep the existing</span></span>
+          <span class="t"><span class="t-recording">&nbsp;&nbsp;&nbsp;cookie fallback for the admin dashboard."</span></span>
+          <span class="t t-gap"><span class="t-body">Got it &mdash; I'll refactor the auth module with those three changes.</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span>(<span class="t-arg">text</span>=<span class="t-str">"Starting refactor. Creating jwt-middleware.ts..."</span>)</span>
+          <span class="t"><span class="t-border">&#9474;</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">engine:</span> <span class="t-str">edge-tts</span>&nbsp;&nbsp;<span class="t-dim">duration:</span> <span class="t-num">2.3s</span>&nbsp;&nbsp;<span class="t-dim">voice:</span> <span class="t-str">en-US-GuyNeural</span></span>
+          <span class="t"><span class="t-border">&#9474;</span></span>
+          <span class="t"><span class="t-border">&#9492;&#9472;</span> <span class="t-dim">&#9654; playing &middot; non-blocking</span></span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- Problem / Solution -->
+  <section class="section">
+    <div class="wrap">
+      <div class="ps-grid">
+        <div class="ps-card problem reveal">
+          <div class="ps-tag">The problem</div>
+          <h2 class="ps-title">Voice typing is broken for devs</h2>
+          <p class="ps-body">
+            Cloud-based dictation is slow, inaccurate with technical terms,
+            and sends your code context to someone else's server.
+            macOS dictation can't spell <strong>useState</strong>. Siri thinks
+            <strong>JWT</strong> is a radio station.<br><br>
+            Your voice is 3x faster than typing, but the tools don't respect
+            the way developers actually work.
+          </p>
+        </div>
+        <div class="ps-card solution reveal reveal-d1">
+          <div class="ps-tag">The fix</div>
+          <h2 class="ps-title">Local. Fast. Developer-aware.</h2>
+          <p class="ps-body">
+            VoiceBar runs <strong>whisper.cpp on-device</strong> &mdash; no cloud,
+            no latency, no privacy concerns. It knows technical vocabulary
+            because the model runs locally with your full context.<br><br>
+            <strong>Hebrew and English</strong> in the same sentence. Push-to-talk
+            with F6. Text appears at your cursor instantly. Works with Claude Code,
+            Cursor, and any MCP client.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- Features -->
+  <section class="features-section" id="features">
+    <div class="wrap">
+      <div class="section-label">Capabilities</div>
+      <h2 class="section-heading">Built for how developers actually work</h2>
+
+      <div class="features-group">
+        <div class="features-group-label">VoiceBar &mdash; the menu bar app</div>
+        <div class="feature-item reveal">
+          <span class="name">F6 push-to-talk</span>
+          <span class="desc">Hold to record, release to transcribe and paste at cursor</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">whisper.cpp</span>
+          <span class="desc">Local large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Hebrew + English</span>
+          <span class="desc">Seamless bilingual transcription in the same sentence</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Live waveform</span>
+          <span class="desc">Floating pill with real-time audio visualization and teleprompter</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Command mode</span>
+          <span class="desc">Prefix with "command" to trigger actions instead of text input</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Clip markers</span>
+          <span class="desc">Mark important moments during recording for later reference</span>
+        </div>
+      </div>
+
+      <div class="feature-divider"></div>
+
+      <div class="features-group">
+        <div class="features-group-label">MCP server &mdash; give your AI a voice</div>
+        <div class="feature-item reveal">
+          <span class="name">voice_speak</span>
+          <span class="desc">Non-blocking TTS with 20-output replay buffer and toggle control</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">voice_ask</span>
+          <span class="desc">Blocking record + transcribe for conversational voice input</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Voice modes</span>
+          <span class="desc">announce, brief, consult, converse, think &mdash; match the interaction style</span>
+        </div>
+        <div class="feature-item reveal">
+          <span class="name">Daemon lifecycle</span>
+          <span class="desc">LaunchAgent singleton &mdash; auto-start, auto-restart, zero config</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- How it Works -->
+  <section class="flow-section">
+    <div class="wrap">
+      <div class="section-label">Workflow</div>
+      <h2 class="section-heading">Four steps. Under two seconds.</h2>
+
+      <div class="flow-steps reveal">
+        <div class="flow-step">
+          <div class="flow-icon">
+            <span class="keycap">F6</span>
+          </div>
+          <div class="flow-label">Press</div>
+          <div class="flow-desc">Hold F6 to start recording via Karabiner</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+          </div>
+          <div class="flow-label">Speak</div>
+          <div class="flow-desc">Talk naturally &mdash; VoiceBar shows live waveform</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 20h9"/>
+              <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+            </svg>
+          </div>
+          <div class="flow-label">Transcribe</div>
+          <div class="flow-desc">whisper.cpp processes locally in &lt;1.5s</div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2"/>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>
+          </div>
+          <div class="flow-label">Paste</div>
+          <div class="flow-desc">Text appears at your cursor via Cmd+V</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="wrap"><div class="divider"></div></div>
+
+  <!-- Integrations + Setup -->
+  <section class="integrations-section" id="setup">
+    <div class="wrap">
+      <div class="section-label">Works with</div>
+      <h2 class="section-heading">Any MCP client</h2>
+
+      <div class="logo-row reveal">
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/claude.svg" alt="Claude Code"></div>
+          <span class="logo-name">Claude Code</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/cursor.svg" alt="Cursor"></div>
+          <span class="logo-name">Cursor</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/zed.svg" alt="Zed"></div>
+          <span class="logo-name">Zed</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/vscode.svg" alt="VS Code"></div>
+          <span class="logo-name">VS Code</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/openai.svg" alt="Codex"></div>
+          <span class="logo-name">Codex</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/kiro.svg" alt="Kiro"></div>
+          <span class="logo-name">Kiro</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/gemini.svg" alt="Gemini CLI"></div>
+          <span class="logo-name">Gemini CLI</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box brainlayer-logo"><img src="logos/brainlayer.svg" alt="BrainLayer"></div>
+          <span class="logo-name">BrainLayer</span>
+        </div>
+      </div>
+
+      <div class="section-label" style="margin-top:16px">Getting started</div>
+      <h2 class="section-heading">Three steps</h2>
+
+      <div class="setup-grid reveal">
+        <div class="setup-card">
+          <div class="setup-num">01</div>
+          <p class="setup-text">Install from npm</p>
+          <div class="setup-code" onclick="copyText(this, 'bun add -g voicelayer')">
+            <span>bun add -g voicelayer</span>
+            <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
+          </div>
+        </div>
+        <div class="setup-card">
+          <div class="setup-num">02</div>
+          <p class="setup-text">Launch VoiceBar</p>
+          <div class="setup-code" onclick="copyText(this, 'voicelayer bar')">
+            <span>voicelayer bar</span>
+            <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
+          </div>
+        </div>
+        <div class="setup-card">
+          <div class="setup-num">03</div>
+          <p class="setup-text">Press F6 and start talking</p>
+          <div class="setup-code" onclick="copyText(this, 'open karabiner://karabiner/assets/complex_modifications/import?url=https://raw.githubusercontent.com/EtanHey/voicelayer/main/flow-bar/karabiner/voicebar-cmd-f6.json')">
+            <span>Import F6 hotkey</span>
+            <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <div class="wrap">
+      <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
+      <p class="cta-sub reveal reveal-d1">Three commands. Local STT. Your voice stays yours.</p>
+      <div class="install-block reveal reveal-d2">
+        <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer')">
+          <code><span class="dim">$</span> bun add -g voicelayer</code>
+          <button class="copy-btn" aria-label="Copy">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <div class="footer-left">Built by <a href="https://etanheyman.com">Etan Heyman</a></div>
+      <div class="footer-right">
+        <a href="https://github.com/EtanHey/voicelayer">GitHub</a>
+        <a href="https://github.com/EtanHey/brainlayer">BrainLayer</a>
+        <a href="https://npmjs.com/package/voicelayer">npm</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // Nav scroll
+    const nav = document.getElementById('nav');
+    window.addEventListener('scroll', () => {
+      nav.classList.toggle('scrolled', window.scrollY > 20);
+    });
+
+    // Reveal on scroll
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+    }, { threshold: 0.1, rootMargin: '0px 0px -30px 0px' });
+
+    document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
+
+    // Copy to clipboard
+    function copyText(el, text) {
+      navigator.clipboard.writeText(text).then(() => {
+        const icon = el.querySelector('.copy-btn, .copy-icon');
+        if (!icon) return;
+        const original = icon.innerHTML || '';
+        const isSvg = icon.tagName === 'svg';
+
+        if (isSvg) {
+          const parent = icon.parentElement;
+          const check = document.createElement('span');
+          check.textContent = 'copied';
+          check.style.cssText = 'font-size:11px;color:var(--accent);font-family:var(--mono);';
+          parent.replaceChild(check, icon);
+          setTimeout(() => parent.replaceChild(icon, check), 1500);
+        } else {
+          icon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="var(--accent)" stroke-width="2"><path d="M3 8.5l3 3 7-7"/></svg>';
+          setTimeout(() => { icon.innerHTML = original; }, 1500);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
