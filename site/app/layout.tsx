@@ -25,11 +25,24 @@ export const metadata: Metadata = {
   title: "VoiceLayer — Native Voice I/O for AI Coding Assistants",
   description:
     "macOS menu bar app with F6 push-to-talk, on-device whisper.cpp transcription, Hebrew & English support. Works with Claude Code, Cursor, and any MCP client.",
+  metadataBase: new URL("https://voicelayer.etanheyman.com"),
+  alternates: {
+    canonical: "/",
+  },
   openGraph: {
     title: "VoiceLayer — Native Voice I/O for AI Coding Assistants",
     description:
       "Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS, Qwen3-TTS cloned voices. Works with any MCP client.",
     type: "website",
+    url: "https://voicelayer.etanheyman.com",
+    siteName: "VoiceLayer",
+  },
+  twitter: {
+    card: "summary",
+    title: "VoiceLayer — Native Voice I/O for AI Coding Assistants",
+    description:
+      "Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS. Works with any MCP client.",
+    creator: "@EtanHey",
   },
   icons: {
     icon: {
