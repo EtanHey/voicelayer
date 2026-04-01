@@ -1481,6 +1481,9 @@
 
     document.querySelectorAll('.reveal').forEach(el => obs.observe(el));
 
+    // Immediately reveal hero elements (above the fold)
+    document.querySelectorAll('.hero .reveal').forEach(el => el.classList.add('visible'));
+
     // Copy to clipboard
     function copyText(el, text) {
       navigator.clipboard.writeText(text).then(() => {
