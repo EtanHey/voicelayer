@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VoiceLayer — Native Voice I/O for AI Coding Assistants</title>
-  <meta name="description" content="macOS menu bar app with F6 push-to-talk, local whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
+  <meta name="description" content="macOS menu bar app with F6 push-to-talk, on-device whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
   <meta property="og:title" content="VoiceLayer — Native Voice I/O for AI Coding Assistants">
-  <meta property="og:description" content="Press F6. Speak. Ship. Local whisper.cpp STT, edge-tts TTS, BrainLayer integration. No cloud required.">
+  <meta property="og:description" content="Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS, Qwen3-TTS cloned voices. Works with any MCP client.">
   <meta property="og:type" content="website">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,10 +23,10 @@
       --text: #fafaf9;
       --text-secondary: #a8a29e;
       --text-dim: #6b6660;
-      --accent: #5eead4;
-      --accent-bright: #a7f3d0;
-      --accent-subtle: rgba(94, 234, 212, 0.08);
-      --amber: #d4956a;
+      --accent: #d4956a;
+      --accent-bright: #e8b090;
+      --accent-subtle: rgba(212, 149, 106, 0.08);
+      --teal: #5eead4;
       --red: #cf6060;
       --display: 'Newsreader', Georgia, serif;
       --sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -105,16 +105,10 @@
 
     .logo:hover { opacity: 1; }
 
-    .logo-icon {
+    .logo svg {
       width: 24px;
       height: 24px;
-      border-radius: 6px;
-      background: var(--accent-subtle);
-      border: 1px solid rgba(94, 234, 212, 0.15);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 13px;
+      flex-shrink: 0;
     }
 
     .nav-right {
@@ -161,7 +155,7 @@
       transform: translate(-50%, -50%);
       width: 700px;
       height: 500px;
-      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.04), transparent 70%);
+      background: radial-gradient(ellipse, rgba(212, 149, 106, 0.04), transparent 70%);
       pointer-events: none;
     }
 
@@ -283,8 +277,8 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      background: rgba(94, 234, 212, 0.08);
-      border: 1px solid rgba(94, 234, 212, 0.2);
+      background: rgba(212, 149, 106, 0.08);
+      border: 1px solid rgba(212, 149, 106, 0.2);
       border-radius: 999px;
       padding: 8px 18px;
       margin: 0 auto;
@@ -297,7 +291,7 @@
       position: absolute;
       inset: -12px;
       border-radius: 999px;
-      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.06), transparent 70%);
+      background: radial-gradient(ellipse, rgba(212, 149, 106, 0.06), transparent 70%);
       pointer-events: none;
     }
 
@@ -310,8 +304,8 @@
     }
 
     @keyframes mic-pulse {
-      0%, 100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(94, 234, 212, 0.3); }
-      50% { opacity: 1; box-shadow: 0 0 8px 3px rgba(94, 234, 212, 0.15); }
+      0%, 100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(212, 149, 106, 0.3); }
+      50% { opacity: 1; box-shadow: 0 0 8px 3px rgba(212, 149, 106, 0.15); }
     }
 
     .pill-waveform {
@@ -404,7 +398,7 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%) scale(0.5);
-      border: 1px solid rgba(94, 234, 212, 0.08);
+      border: 1px solid rgba(212, 149, 106, 0.08);
       border-radius: 50%;
       animation: ring-expand 4s ease-out infinite;
     }
@@ -481,12 +475,11 @@
     .t-sys { color: #78787f; font-style: italic; }
     .t-tool { color: var(--accent); font-weight: 500; }
     .t-arg { color: #a8d8a8; }
-    .t-str { color: #e8b090; }
-    .t-num { color: var(--accent); }
+    .t-str { color: var(--accent-bright); }
+    .t-num { color: var(--teal); }
     .t-border { color: #333338; }
     .t-body { color: var(--text-secondary); }
     .t-recording { color: var(--accent); }
-    .t-whisper { color: var(--amber); }
 
     /* ─── Sections ─── */
     .section {
@@ -540,7 +533,7 @@
     }
 
     .ps-card.problem { border-top: 2px solid var(--red); }
-    .ps-card.solution { border-top: 2px solid var(--accent); }
+    .ps-card.solution { border-top: 2px solid var(--teal); }
 
     .ps-tag {
       font-size: 11px;
@@ -551,7 +544,7 @@
     }
 
     .problem .ps-tag { color: var(--red); }
-    .solution .ps-tag { color: var(--accent); }
+    .solution .ps-tag { color: var(--teal); }
 
     .ps-title {
       font-family: var(--sans);
@@ -637,7 +630,7 @@
 
     .flow-steps {
       display: flex;
-      align-items: flex-start;
+      align-items: stretch;
       justify-content: center;
       gap: 0;
       max-width: 800px;
@@ -725,41 +718,51 @@
     .logo-row {
       display: flex;
       justify-content: center;
-      gap: 16px;
+      gap: 40px;
       flex-wrap: wrap;
       margin-bottom: 64px;
     }
 
-    .logo-pill {
-      display: inline-flex;
+    .logo-item {
+      display: flex;
+      flex-direction: column;
       align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      border-radius: 999px;
+      gap: 10px;
+      transition: transform 0.2s;
+    }
+
+    .logo-item:hover { transform: translateY(-3px); }
+
+    .logo-box {
+      width: 52px;
+      height: 52px;
+      border-radius: 12px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      font-family: var(--mono);
-      font-size: 13px;
-      color: var(--text-secondary);
-      transition: border-color 0.25s, color 0.2s;
-      text-decoration: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 11px;
+      transition: border-color 0.25s;
     }
 
-    .logo-pill:hover {
+    .logo-box img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    .logo-item:hover .logo-box {
       border-color: var(--border-hover);
-      color: var(--text);
     }
 
-    .logo-pill .dot-indicator {
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: var(--accent);
-      opacity: 0.5;
-      transition: opacity 0.2s;
+    .logo-name {
+      font-size: 12px;
+      color: var(--text-dim);
+      transition: color 0.2s;
     }
 
-    .logo-pill:hover .dot-indicator { opacity: 1; }
+    .logo-item:hover .logo-name { color: var(--text-secondary); }
 
     /* ─── Setup ─── */
     .setup-grid {
@@ -772,6 +775,8 @@
 
     .setup-card {
       text-align: left;
+      display: flex;
+      flex-direction: column;
     }
 
     .setup-num {
@@ -803,6 +808,7 @@
       color: var(--text);
       cursor: pointer;
       transition: border-color 0.2s;
+      margin-top: auto;
     }
 
     .setup-code:hover { border-color: var(--accent); }
@@ -922,7 +928,7 @@
       .hero { padding: 140px 0 60px; }
       .ps-grid { grid-template-columns: 1fr; }
       .setup-grid { grid-template-columns: 1fr; }
-      .logo-row { gap: 10px; }
+      .logo-row { gap: 24px; }
       .flow-steps { flex-direction: column; gap: 24px; align-items: center; }
       .flow-step:not(:last-child)::after { display: none; }
       .flow-desc { max-width: 200px; }
@@ -957,12 +963,13 @@
   <nav id="nav">
     <div class="wrap">
       <a href="#" class="logo">
-        <span class="logo-icon">V</span>
+        <svg viewBox="0 0 64 64" fill="none"><defs><linearGradient id="vl" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#e8b090"/><stop offset="100%" stop-color="#c47d50"/></linearGradient></defs><g fill="url(#vl)"><rect x="2" y="24" width="6" height="16" rx="3" opacity=".6"/><rect x="11" y="18" width="6" height="28" rx="3" opacity=".75"/><rect x="20" y="12" width="6" height="40" rx="3" opacity=".85"/><rect x="29" y="8" width="6" height="48" rx="3"/><rect x="38" y="12" width="6" height="40" rx="3" opacity=".85"/><rect x="47" y="18" width="6" height="28" rx="3" opacity=".75"/><rect x="56" y="24" width="6" height="16" rx="3" opacity=".6"/></g></svg>
         VoiceLayer
       </a>
       <div class="nav-right">
         <a href="#features">Features</a>
         <a href="#setup">Setup</a>
+        <a href="https://github.com/EtanHey/voicelayer#readme">Docs</a>
         <a href="https://github.com/EtanHey/voicelayer" class="nav-gh">GitHub <span class="arrow">&nearr;</span></a>
       </div>
     </div>
@@ -974,8 +981,8 @@
       <h1 class="reveal">Your keyboard is<br>a bottleneck. <em>Fix that.</em></h1>
       <p class="hero-sub reveal reveal-d1">
         VoiceBar lives in your macOS menu bar. Hold F6, speak naturally,
-        get local transcription via whisper.cpp. Your AI talks back
-        with edge-tts. Nothing leaves your machine.
+        get on-device transcription via whisper.cpp. Your AI talks back
+        with edge-tts or cloned voices via Qwen3-TTS.
       </p>
       <div class="hero-actions reveal reveal-d2">
         <a href="#setup" class="btn btn-primary">Get started</a>
@@ -1037,16 +1044,21 @@
           <span class="terminal-title">claude ~ myproject</span>
         </div>
         <div class="terminal-body">
-          <span class="t"><span class="t-prompt">&#10095;</span> <span class="t-user">Help me refactor the auth module</span></span>
-          <span class="t t-gap"><span class="t-sys">[VoiceLayer] &#127908; Recording... (F6 held)</span></span>
-          <span class="t"><span class="t-sys">[VoiceLayer] Transcribed (1.2s, whisper.cpp):</span></span>
-          <span class="t t-gap"><span class="t-recording">&nbsp;&nbsp;"Split the JWT validation into its own middleware.</span></span>
-          <span class="t"><span class="t-recording">&nbsp;&nbsp;&nbsp;Add refresh token rotation. Keep the existing</span></span>
-          <span class="t"><span class="t-recording">&nbsp;&nbsp;&nbsp;cookie fallback for the admin dashboard."</span></span>
-          <span class="t t-gap"><span class="t-body">Got it &mdash; I'll refactor the auth module with those three changes.</span></span>
-          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span>(<span class="t-arg">text</span>=<span class="t-str">"Starting refactor. Creating jwt-middleware.ts..."</span>)</span>
+          <span class="t"><span class="t-prompt">&#10095;</span> <span class="t-user">Refactor the auth module into separate middleware</span></span>
+          <span class="t t-gap"><span class="t-body">I see three auth patterns in this module. Let me ask which</span></span>
+          <span class="t"><span class="t-body">approach you prefer.</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_ask</span>(<span class="t-arg">prompt</span>=<span class="t-str">"Should I keep the cookie fallback for admin?"</span>)</span>
           <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">engine:</span> <span class="t-str">edge-tts</span>&nbsp;&nbsp;<span class="t-dim">duration:</span> <span class="t-num">2.3s</span>&nbsp;&nbsp;<span class="t-dim">voice:</span> <span class="t-str">en-US-GuyNeural</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">mode:</span> <span class="t-str">converse</span>&nbsp;&nbsp;<span class="t-dim">vad:</span> <span class="t-str">silero</span>&nbsp;&nbsp;<span class="t-dim">silence:</span> <span class="t-num">1.5s</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">stt:</span> <span class="t-str">whisper.cpp</span>&nbsp;&nbsp;<span class="t-dim">model:</span> <span class="t-str">large-v3-turbo</span>&nbsp;&nbsp;<span class="t-dim">latency:</span> <span class="t-num">1.1s</span></span>
+          <span class="t"><span class="t-border">&#9474;</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-recording">"Yeah keep the cookie path for admin, but move JWT</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-recording">&nbsp;validation into its own middleware with refresh rotation."</span></span>
+          <span class="t"><span class="t-border">&#9474;</span></span>
+          <span class="t"><span class="t-border">&#9492;&#9472;</span> <span class="t-dim">transcribed &middot; 42 words &middot; en</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span>(<span class="t-arg">text</span>=<span class="t-str">"Got it. Creating jwt-middleware.ts now."</span>)</span>
+          <span class="t"><span class="t-border">&#9474;</span></span>
+          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">engine:</span> <span class="t-str">edge-tts</span>&nbsp;&nbsp;<span class="t-dim">duration:</span> <span class="t-num">1.8s</span>&nbsp;&nbsp;<span class="t-dim">voice:</span> <span class="t-str">en-US-GuyNeural</span></span>
           <span class="t"><span class="t-border">&#9474;</span></span>
           <span class="t"><span class="t-border">&#9492;&#9472;</span> <span class="t-dim">&#9654; playing &middot; non-blocking</span></span>
         </div>
@@ -1074,7 +1086,7 @@
         </div>
         <div class="ps-card solution reveal reveal-d1">
           <div class="ps-tag">The fix</div>
-          <h2 class="ps-title">Local. Fast. Developer-aware.</h2>
+          <h2 class="ps-title">On-device. Fast. Developer-aware.</h2>
           <p class="ps-body">
             VoiceBar runs <strong>whisper.cpp on-device</strong> &mdash; no cloud,
             no latency, no privacy concerns. It knows technical vocabulary
@@ -1104,7 +1116,7 @@
         </div>
         <div class="feature-item reveal">
           <span class="name">whisper.cpp</span>
-          <span class="desc">Local large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
+          <span class="desc">On-device large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Hebrew + English</span>
@@ -1208,14 +1220,34 @@
       <h2 class="section-heading">Any MCP client</h2>
 
       <div class="logo-row reveal">
-        <span class="logo-pill"><span class="dot-indicator"></span> Claude Code</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> Cursor</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> Zed</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> VS Code</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> Codex</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> Kiro</span>
-        <span class="logo-pill"><span class="dot-indicator"></span> Gemini CLI</span>
-        <a href="https://etanhey.github.io/brainlayer/" class="logo-pill" style="border-color: rgba(212, 149, 106, 0.3);"><span class="dot-indicator" style="background: var(--amber);"></span> BrainLayer</a>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/claude.svg" alt="Claude Code"></div>
+          <span class="logo-name">Claude Code</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/cursor.svg" alt="Cursor"></div>
+          <span class="logo-name">Cursor</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/zed.svg" alt="Zed"></div>
+          <span class="logo-name">Zed</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/vscode.svg" alt="VS Code"></div>
+          <span class="logo-name">VS Code</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/openai.svg" alt="Codex"></div>
+          <span class="logo-name">Codex</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/kiro.svg" alt="Kiro"></div>
+          <span class="logo-name">Kiro</span>
+        </div>
+        <div class="logo-item">
+          <div class="logo-box"><img src="logos/gemini.svg" alt="Gemini CLI"></div>
+          <span class="logo-name">Gemini CLI</span>
+        </div>
       </div>
 
       <div class="section-label" style="margin-top:16px">Getting started</div>
@@ -1254,7 +1286,7 @@
   <section class="cta-section">
     <div class="wrap">
       <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
-      <p class="cta-sub reveal reveal-d1">Three commands. Local STT + TTS. Your voice stays yours.</p>
+      <p class="cta-sub reveal reveal-d1">Three steps. On-device STT. Natural TTS. Your workflow, uninterrupted.</p>
       <div class="install-block reveal reveal-d2">
         <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer')">
           <code><span class="dim">$</span> bun add -g voicelayer</code>
