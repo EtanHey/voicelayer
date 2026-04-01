@@ -24,6 +24,12 @@ export function getToolDefinitions() {
         "Also supports: replay (index param) and toggle (enabled param).\n\n" +
         "Stop playback: Voice Bar stop button or socket 'stop' command.\n" +
         "Prerequisites: python3 + edge-tts, audio player (afplay on macOS).",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -93,6 +99,12 @@ export function getToolDefinitions() {
         "Requires voice session booking — other sessions see 'line busy'.\n\n" +
         "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -133,6 +145,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_announce",
       description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -149,6 +167,12 @@ export function getToolDefinitions() {
       name: "qa_voice_brief",
       description:
         "Alias for voice_speak(mode='brief'). NON-BLOCKING TTS, slower rate.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -165,6 +189,12 @@ export function getToolDefinitions() {
       name: "qa_voice_consult",
       description:
         "Alias for voice_speak(mode='consult'). NON-BLOCKING checkpoint.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -180,6 +210,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_converse",
       description: "Alias for voice_ask. BLOCKING voice Q&A.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -207,6 +243,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_think",
       description: "Alias for voice_speak(mode='think'). Silent markdown log.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -224,6 +266,12 @@ export function getToolDefinitions() {
       name: "qa_voice_replay",
       description:
         "Alias for voice_speak(replay_index=N). Replay cached audio.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -234,6 +282,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_toggle",
       description: "Alias for voice_speak(enabled=bool). Toggle voice on/off.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -250,6 +304,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_say",
       description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {
@@ -264,6 +324,12 @@ export function getToolDefinitions() {
     {
       name: "qa_voice_ask",
       description: "Alias for voice_ask. BLOCKING voice Q&A.",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
       inputSchema: {
         type: "object" as const,
         properties: {

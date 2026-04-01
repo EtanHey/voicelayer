@@ -41,6 +41,7 @@ import type {
 } from "./socket-protocol";
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
+import { sanitizeTtsText } from "./sanitize";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -551,17 +552,18 @@ function completeJob(job: PlaybackJob) {
 
 class PlaybackQueueManager {
   private pending: PlaybackJob[] = [];
-  private current:
-    | {
-        job: PlaybackJob;
-        proc: ReturnType<typeof Bun.spawn>;
-        startedAt: number;
-      }
-    | null = null;
+  private current: {
+    job: PlaybackJob;
+    proc: ReturnType<typeof Bun.spawn>;
+    startedAt: number;
+  } | null = null;
   private drainWaiters = new Set<() => void>();
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
-  enqueue(audioFile: string, metadata?: PlaybackMetadata): { exited: Promise<void> } {
+  enqueue(
+    audioFile: string,
+    metadata?: PlaybackMetadata,
+  ): { exited: Promise<void> } {
     const priority = metadata?.priority ?? "normal";
     let resolveExited!: () => void;
     const exited = new Promise<void>((resolve) => {
@@ -736,7 +738,8 @@ class PlaybackQueueManager {
 
     this.pending = this.pending.filter((queued) => {
       const sameCollapseKey =
-        (queued.metadata?.collapseKey ?? null) === (job.metadata?.collapseKey ?? null);
+        (queued.metadata?.collapseKey ?? null) ===
+        (job.metadata?.collapseKey ?? null);
       const isCollapsible =
         sameCollapseKey &&
         (queued.priority === job.priority || queued.priority === "background");
@@ -896,6 +899,9 @@ export async function speak(
   },
 ): Promise<{ warning?: string }> {
   if (!text?.trim()) return {};
+
+  // SSML injection defense — strip tags before any TTS engine
+  text = sanitizeTtsText(text);
 
   // Apply pronunciation corrections before any TTS engine
   text = applyPronunciation(text);
@@ -1105,7 +1111,9 @@ async function speakWithEdgeTTS(
     wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
     priority: playbackPriorityForMode(options?.mode),
     durationMs:
-      wordBoundaries.length > 0 ? inferBoundaryEndMs(wordBoundaries) : undefined,
+      wordBoundaries.length > 0
+        ? inferBoundaryEndMs(wordBoundaries)
+        : undefined,
   });
   proc.exited.then(() => {
     try {
