@@ -8,6 +8,7 @@
   <meta property="og:title" content="VoiceLayer — Native Voice I/O for AI Coding Assistants">
   <meta property="og:description" content="Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS, Qwen3-TTS cloned voices. Works with any MCP client.">
   <meta property="og:type" content="website">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='4' y='20' width='8' height='10' rx='3' fill='%237DD3FC'/%3E%3Crect x='4' y='34' width='8' height='10' rx='3' fill='%2338BDF8'/%3E%3Crect x='16' y='14' width='8' height='16' rx='3' fill='%237DD3FC'/%3E%3Crect x='16' y='34' width='8' height='16' rx='3' fill='%2338BDF8'/%3E%3Crect x='28' y='6' width='8' height='24' rx='3' fill='%237DD3FC'/%3E%3Crect x='28' y='34' width='8' height='24' rx='3' fill='%2338BDF8'/%3E%3Crect x='40' y='14' width='8' height='16' rx='3' fill='%237DD3FC'/%3E%3Crect x='40' y='34' width='8' height='16' rx='3' fill='%2338BDF8'/%3E%3Crect x='52' y='20' width='8' height='10' rx='3' fill='%237DD3FC'/%3E%3Crect x='52' y='34' width='8' height='10' rx='3' fill='%2338BDF8'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,700&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -978,11 +979,11 @@
   <!-- Hero -->
   <section class="hero">
     <div class="wrap">
-      <h1 class="reveal">Your keyboard is<br>a bottleneck. <em>Fix that.</em></h1>
+      <h1 class="reveal">Press F6. Speak.<br><em>Ship.</em></h1>
       <p class="hero-sub reveal reveal-d1">
-        VoiceBar lives in your macOS menu bar. Hold F6, speak naturally,
-        get on-device transcription via whisper.cpp. Your AI talks back
-        with edge-tts or cloned voices via Qwen3-TTS.
+        Hands-free coding for macOS. Hold F6, dictate to your AI
+        in natural speech, get on-device transcription in under two seconds.
+        Your AI speaks back. You never leave your editor.
       </p>
       <div class="hero-actions reveal reveal-d2">
         <a href="#setup" class="btn btn-primary">Get started</a>
@@ -1044,23 +1045,22 @@
           <span class="terminal-title">claude ~ myproject</span>
         </div>
         <div class="terminal-body">
-          <span class="t"><span class="t-prompt">&#10095;</span> <span class="t-user">Refactor the auth module into separate middleware</span></span>
-          <span class="t t-gap"><span class="t-body">I see three auth patterns in this module. Let me ask which</span></span>
-          <span class="t"><span class="t-body">approach you prefer.</span></span>
-          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_ask</span>(<span class="t-arg">prompt</span>=<span class="t-str">"Should I keep the cookie fallback for admin?"</span>)</span>
-          <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">mode:</span> <span class="t-str">converse</span>&nbsp;&nbsp;<span class="t-dim">vad:</span> <span class="t-str">silero</span>&nbsp;&nbsp;<span class="t-dim">silence:</span> <span class="t-num">1.5s</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">stt:</span> <span class="t-str">whisper.cpp</span>&nbsp;&nbsp;<span class="t-dim">model:</span> <span class="t-str">large-v3-turbo</span>&nbsp;&nbsp;<span class="t-dim">latency:</span> <span class="t-num">1.1s</span></span>
-          <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-recording">"Yeah keep the cookie path for admin, but move JWT</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-recording">&nbsp;validation into its own middleware with refresh rotation."</span></span>
-          <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9492;&#9472;</span> <span class="t-dim">transcribed &middot; 42 words &middot; en</span></span>
-          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span>(<span class="t-arg">text</span>=<span class="t-str">"Got it. Creating jwt-middleware.ts now."</span>)</span>
-          <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9474;</span>&nbsp;&nbsp;<span class="t-dim">engine:</span> <span class="t-str">edge-tts</span>&nbsp;&nbsp;<span class="t-dim">duration:</span> <span class="t-num">1.8s</span>&nbsp;&nbsp;<span class="t-dim">voice:</span> <span class="t-str">en-US-GuyNeural</span></span>
-          <span class="t"><span class="t-border">&#9474;</span></span>
-          <span class="t"><span class="t-border">&#9492;&#9472;</span> <span class="t-dim">&#9654; playing &middot; non-blocking</span></span>
+          <span class="t"><span class="t-prompt">&#10095;</span> <span class="t-user">Refactor the auth module</span></span>
+          <span class="t t-gap"><span class="t-body">I see three auth patterns here. Which direction do you want?</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span></span>
+          <span class="t"><span class="t-border">&#9474;</span> <span class="t-str">&#128266; announce &rarr; "Should I keep the cookie fallback for admin,</span></span>
+          <span class="t"><span class="t-border">&#9474;</span> <span class="t-str">&nbsp;&nbsp;or go fully stateless with JWT?"</span></span>
+          <span class="t"><span class="t-border">&#9492;&#9472;</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_ask</span></span>
+          <span class="t"><span class="t-border">&#9474;</span> <span class="t-recording">&#127908; "Yeah keep cookies for admin. Move JWT validation into</span></span>
+          <span class="t"><span class="t-border">&#9474;</span> <span class="t-recording">&nbsp;&nbsp;its own middleware. Add refresh token rotation."</span></span>
+          <span class="t"><span class="t-border">&#9492;&#9472;</span></span>
+          <span class="t t-gap"><span class="t-sys">[voicelayer] STT: whisper.cpp (ggml-large-v3-turbo.bin) &middot; 1.1s</span></span>
+          <span class="t t-gap"><span class="t-body">Got it. Extracting JWT validation to <span class="t-str">jwt-middleware.ts</span>,</span></span>
+          <span class="t"><span class="t-body">adding refresh rotation, keeping cookie auth for <span class="t-str">/admin</span>.</span></span>
+          <span class="t t-gap"><span class="t-border">&#9484;&#9472;</span> <span class="t-tool">voice_speak</span></span>
+          <span class="t"><span class="t-border">&#9474;</span> <span class="t-str">&#128266; announce &rarr; "Done. Three files changed, tests passing."</span></span>
+          <span class="t"><span class="t-border">&#9492;&#9472;</span></span>
         </div>
       </div>
     </div>
