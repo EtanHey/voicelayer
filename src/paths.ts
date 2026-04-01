@@ -1,10 +1,10 @@
 /**
  * Centralized path constants for VoiceLayer temp files.
  *
- * Uses /tmp (standard on macOS + Linux) — NOT os.tmpdir() which returns
- * /var/folders/... on macOS. We need /tmp because:
- *   1. /tmp exists on both macOS and Linux
- *   2. All legacy docs reference /tmp paths
+ * Uses /tmp for ephemeral runtime files (audio, sockets, history).
+ * Uses ~/.local/state/voicelayer/ for security-sensitive files (stop/cancel
+ * signals, session locks) — /tmp is world-writable and vulnerable to symlink
+ * attacks even with safeWriteFileSync guards.
  *
  * AIDEV-NOTE: Architecture inversion (Phase 0): SOCKET_PATH is now a fixed
  * well-known path. VoiceBar listens on it as a persistent server. MCP servers
@@ -16,10 +16,22 @@
  * All modules import paths from here to prevent drift.
  */
 
-import { writeFileSync, existsSync, lstatSync } from "fs";
+import { writeFileSync, existsSync, lstatSync, mkdirSync } from "fs";
 import { randomBytes } from "crypto";
+import { homedir } from "os";
+import { join } from "path";
 
 const TMP = "/tmp";
+
+/**
+ * User-owned state directory for security-sensitive files.
+ * ~/.local/state/voicelayer/ — only writable by the current user,
+ * unlike /tmp which is world-writable.
+ */
+export const STATE_DIR = join(homedir(), ".local", "state", "voicelayer");
+
+// Ensure state directory exists on module load
+mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 
 // Simple path join — avoids importing node:path just for concatenation
 function tmpPath(name: string): string {
@@ -35,11 +47,11 @@ export const SESSION_TOKEN: string = randomBytes(8).toString("hex");
 /** Session lock file — prevents mic conflicts between Claude sessions. */
 export const LOCK_FILE = tmpPath(`voicelayer-session-${SESSION_TOKEN}.lock`);
 
-/** Stop signal file — touch to end current recording or playback. */
-export const STOP_FILE = tmpPath(`voicelayer-stop-${SESSION_TOKEN}`);
+/** Stop signal file — touch to end current recording or playback. In STATE_DIR (not /tmp) to prevent symlink attacks. */
+export const STOP_FILE = join(STATE_DIR, `stop-${SESSION_TOKEN}`);
 
 /** Cancel signal file — set alongside STOP_FILE to discard recording (skip transcription). */
-export const CANCEL_FILE = tmpPath(`voicelayer-cancel-${SESSION_TOKEN}`);
+export const CANCEL_FILE = join(STATE_DIR, `cancel-${SESSION_TOKEN}`);
 
 /** TTS audio file prefix — each speak() call generates a unique file. */
 export function ttsFilePath(pid: number, counter: number): string {

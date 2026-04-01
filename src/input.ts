@@ -14,7 +14,7 @@
  * calculateRMS() in audio-utils.ts is retained only for Wispr Flow volume data.
  *
  * Stops recording on:
- *   1. User stop signal (touch /tmp/voicelayer-stop) — PRIMARY
+ *   1. User stop signal (touch ~/.local/state/voicelayer/stop-{TOKEN}) — PRIMARY
  *   2. Silero VAD silence detection (configurable mode) — only in VAD mode
  *   3. Timeout — SAFETY NET
  *
@@ -49,7 +49,11 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { applyRules } from "./rules-engine";
-import { buildChunkPrompt, mergeChunkTranscripts, type STTBackend } from "./stt";
+import {
+  buildChunkPrompt,
+  mergeChunkTranscripts,
+  type STTBackend,
+} from "./stt";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -113,15 +117,19 @@ export class ChunkedRecordingSession {
       hasSpeech: this.hasSpeech,
       silenceChunks: this.silenceChunks,
       silenceMode: this.silenceMode,
-      chunkDurationSeconds: this.activeBytes / (this.sampleRate * BYTES_PER_SAMPLE),
+      chunkDurationSeconds:
+        this.activeBytes / (this.sampleRate * BYTES_PER_SAMPLE),
       sampleRate: this.sampleRate,
     });
 
     if (decision.shouldCloseChunk && this.activeBytes > 0) {
       const flat = flattenChunks(this.activeChunks);
       this.completedSegments.push(flat);
-      this.overlapBuffer = flat.slice(-Math.min(decision.overlapBytes, flat.byteLength));
-      this.activeChunks = this.overlapBuffer.byteLength > 0 ? [this.overlapBuffer] : [];
+      this.overlapBuffer = flat.slice(
+        -Math.min(decision.overlapBytes, flat.byteLength),
+      );
+      this.activeChunks =
+        this.overlapBuffer.byteLength > 0 ? [this.overlapBuffer] : [];
       this.activeBytes = this.overlapBuffer.byteLength;
       this.hasSpeech = this.overlapBuffer.byteLength > 0;
       this.silenceChunks = 0;
@@ -131,11 +139,16 @@ export class ChunkedRecordingSession {
   finalize(): void {
     if (this.activeBytes === 0) return;
     const flat = flattenChunks(this.activeChunks);
-    const lastCompleted = this.completedSegments[this.completedSegments.length - 1];
+    const lastCompleted =
+      this.completedSegments[this.completedSegments.length - 1];
     if (
       lastCompleted &&
       lastCompleted.byteLength >= flat.byteLength &&
-      flat.every((byte, index) => lastCompleted[lastCompleted.byteLength - flat.byteLength + index] === byte)
+      flat.every(
+        (byte, index) =>
+          lastCompleted[lastCompleted.byteLength - flat.byteLength + index] ===
+          byte,
+      )
     ) {
       return;
     }
@@ -161,7 +174,9 @@ export async function transcribeChunkSequence(
 
   for (const chunk of chunks) {
     const prompt =
-      transcripts.length === 0 ? "" : buildChunkPrompt(mergeChunkTranscripts(transcripts), 24);
+      transcripts.length === 0
+        ? ""
+        : buildChunkPrompt(mergeChunkTranscripts(transcripts), 24);
     const text = (await transcribeChunk(chunk, prompt)).trim();
     if (text) {
       transcripts.push(text);
@@ -397,7 +412,7 @@ export async function recordToBuffer(
 
       console.error(
         pressToTalk
-          ? "[voicelayer] Push-to-talk: recording... touch /tmp/voicelayer-stop to end"
+          ? "[voicelayer] Push-to-talk: recording... touch ~/.local/state/voicelayer/stop-{TOKEN} to end"
           : "[voicelayer] Listening... speak now (Silero VAD active)",
       );
 
@@ -538,9 +553,7 @@ export async function waitForInput(
   pressToTalk: boolean = false,
 ): Promise<string | null> {
   if (recordingState !== "idle") {
-    throw new Error(
-      `Recording already in progress (state: ${recordingState})`,
-    );
+    throw new Error(`Recording already in progress (state: ${recordingState})`);
   }
 
   // Record audio to buffer
@@ -597,7 +610,10 @@ export async function waitForInput(
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
       text = await transcribeChunkSequence(segments, async (chunk, prompt) => {
-        const chunkPath = recordingFilePath(process.pid, Date.now() + Math.random());
+        const chunkPath = recordingFilePath(
+          process.pid,
+          Date.now() + Math.random(),
+        );
         try {
           writeFileSync(chunkPath, createWavBuffer(chunk));
           const result = await backend.transcribe(chunkPath, {
@@ -616,9 +632,7 @@ export async function waitForInput(
       const result = await backend.transcribe(wavPath);
       text = result.text;
     }
-    console.error(
-      `[voicelayer] Transcription: ${text}`,
-    );
+    console.error(`[voicelayer] Transcription: ${text}`);
 
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {

@@ -35,6 +35,7 @@ import {
   formatError,
   formatBusy,
 } from "./format-response";
+import { sanitizeTtsText } from "./sanitize";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
@@ -143,8 +144,10 @@ export async function handleVoiceSpeak(args: unknown): Promise<McpResult> {
     return handleReplay({ index: a.replay_index });
   }
 
-  // Speech/think mode
-  const message = typeof a.message === "string" ? a.message.trim() : "";
+  // Speech/think mode — sanitize to prevent SSML injection
+  const message = sanitizeTtsText(
+    typeof a.message === "string" ? a.message.trim() : "",
+  );
   if (!message) {
     return textResult("Missing or empty required parameter: message", true);
   }

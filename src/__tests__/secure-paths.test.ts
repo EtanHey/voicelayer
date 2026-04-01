@@ -26,7 +26,7 @@ describe("secure session paths", () => {
 
   it("STOP_FILE contains session token", () => {
     expect(paths.STOP_FILE).toContain(paths.SESSION_TOKEN);
-    expect(paths.STOP_FILE).toContain("voicelayer-stop-");
+    expect(paths.STOP_FILE).toContain("stop-");
   });
 
   it("SOCKET_PATH is fixed well-known path (no session token)", () => {
