@@ -970,6 +970,10 @@
       color: var(--text-secondary);
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      .vdemo-eq-bar, .demo-cursor, .eq-bar { animation: none !important; }
+    }
+
     @media (max-width: 768px) {
       .vdemo-body { flex-direction: column; }
       .vdemo-voice {
@@ -1339,7 +1343,7 @@
         <div class="vdemo-body">
           <div class="vdemo-voice">
             <div class="vdemo-voice-label" id="vd-vlabel">Idle</div>
-            <div class="vdemo-eq" id="vd-eq">
+            <div class="vdemo-eq" id="vd-eq" aria-hidden="true">
               <div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div>
               <div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div>
               <div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div><div class="vdemo-eq-bar"></div>
@@ -1576,6 +1580,7 @@
         // Reset
         term.innerHTML = '';
         transcript.innerHTML = '';
+        transcript.dir = s.lang === 'he' ? 'rtl' : 'ltr';
         meta.textContent = '';
         setStat('stt', 'idle', 'val');
         setStat('tts', 'idle', 'val');
@@ -1625,7 +1630,7 @@
         setEq(true);
         const icon = {announce:'🔊',brief:'📖',consult:'💬'}[s.speakMode] || '🔊';
         appendTerm('<span class="c-d">┌─</span> <span class="c-b">voice_speak</span>', true);
-        appendTerm('<span class="c-d">│</span> <span class="c-s">' + icon + ' ' + s.speakMode + ' → "' + esc(s.speakText) + '"</span>');
+        appendTerm('<span class="c-d">│</span> <span class="c-s">' + icon + ' ' + esc(s.speakMode) + ' → "' + esc(s.speakText) + '"</span>');
         appendTerm('<span class="c-d">└─</span>');
         await sleep(2500);
 
@@ -1638,22 +1643,33 @@
         await sleep(2000);
       }
 
-      // Start on viewport entry
-      const demoObs = new IntersectionObserver(async (entries) => {
-        if (!entries[0].isIntersecting) return;
-        demoObs.disconnect();
+      // Start on viewport entry, pause when off-screen
+      let demoVisible = false;
+      let demoStarted = false;
+      const waitVisible = () => new Promise(r => {
+        if (demoVisible) return r();
+        const check = setInterval(() => { if (demoVisible) { clearInterval(check); r(); } }, 200);
+      });
 
-        const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-        let i = 0;
-        while (true) {
-          await runCycle(scenarios[i % scenarios.length]);
-          if (prefersReduced) break;
-          i++;
-          await sleep(1000);
+      const visObs = new IntersectionObserver((entries) => {
+        demoVisible = entries[0].isIntersecting;
+        if (demoVisible && !demoStarted) {
+          demoStarted = true;
+          (async () => {
+            const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            let i = 0;
+            while (true) {
+              await waitVisible();
+              await runCycle(scenarios[i % scenarios.length]);
+              if (prefersReduced) break;
+              i = (i + 1) % scenarios.length;
+              await sleep(1000);
+            }
+          })();
         }
       }, { threshold: 0.15 });
 
-      demoObs.observe(document.getElementById('vdemo'));
+      visObs.observe(document.getElementById('vdemo'));
     })();
   </script>
 </body>
