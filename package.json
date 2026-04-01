@@ -8,7 +8,8 @@
     "voicelayer": "src/cli/voicelayer.sh"
   },
   "files": [
-    "src/",
+    "src/**/*.ts",
+    "!src/__tests__/**",
     "scripts/",
     "models/",
     "README.md",
@@ -51,7 +52,7 @@
     "type": "git",
     "url": "git+https://github.com/EtanHey/voicelayer.git"
   },
-  "homepage": "https://github.com/EtanHey/voicelayer#readme",
+  "homepage": "https://voicelayer.etanheyman.com",
   "bugs": {
     "url": "https://github.com/EtanHey/voicelayer/issues"
   },

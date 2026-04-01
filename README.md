@@ -2,9 +2,10 @@
 
 > Singleton MCP daemon that adds voice I/O to AI coding assistants. One process serves every session — no orphans, no contention, no hangs.
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tests](https://img.shields.io/badge/tests-359%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-536%20passing-brightgreen.svg)](#testing)
+[![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
 [![TypeScript](https://img.shields.io/badge/TypeScript-Bun-black.svg)](https://bun.sh)
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange.svg)](https://developer.apple.com/swiftui/)
 
@@ -48,6 +49,9 @@ VoiceLayer gives Claude Code (and any MCP client) two tools: **`voice_speak`** f
 ## Quick Start
 
 ```bash
+# Install from npm
+bun add -g voicelayer-mcp
+
 # Prerequisites
 brew install sox socat
 pip3 install edge-tts
@@ -57,8 +61,11 @@ brew install whisper-cpp  # optional — local STT
 mkdir -p ~/.cache/whisper
 curl -L -o ~/.cache/whisper/ggml-large-v3-turbo.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin
+```
 
-# Clone and install
+Or install from source:
+
+```bash
 git clone https://github.com/EtanHey/voicelayer.git
 cd voicelayer && bun install
 ```
@@ -99,10 +106,12 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 ## Voice Tools
 
-| Tool | Behavior | Blocking |
-|------|----------|----------|
-| **`voice_speak(message)`** | TTS with auto-mode detection. Announce (short), brief (long), consult (question), think (silent log). | No |
-| **`voice_ask(message)`** | Speaks question, records mic, transcribes response. Auto-waits for prior audio. 30s default timeout. | Yes |
+| Tool | Behavior | Blocking | Annotations |
+|------|----------|----------|-------------|
+| **`voice_speak(message)`** | TTS with auto-mode detection. Announce (short), brief (long), consult (question), think (silent log). | No | `readOnly: false`, `destructive: false`, `idempotent: true` |
+| **`voice_ask(message)`** | Speaks question, records mic, transcribes response. Auto-waits for prior audio. 30s default timeout. | Yes | `readOnly: false`, `destructive: false`, `idempotent: false` |
+
+All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations) — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`. No VoiceLayer tools are destructive.
 
 ### How voice_ask Works
 
@@ -124,7 +133,7 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 | Method | How |
 |--------|-----|
-| Stop signal | `touch /tmp/voicelayer-stop-{token}` |
+| Stop signal | `touch ~/.local/state/voicelayer/stop-{token}` |
 | VAD silence | Configurable: quick (0.5s), standard (1.5s), thoughtful (2.5s) |
 | Timeout | 30s default, configurable 5-3600s per call |
 | Push-to-talk | `press_to_talk: true` — no VAD, stop on signal only |
@@ -185,10 +194,10 @@ voicelayer daemon --port 8880      # Run Qwen3-TTS server
 ## Testing
 
 ```bash
-bun test   # 359 tests, 1241 assertions, 36 test files
+bun test   # 536 tests, 1638 assertions, 48 test files
 ```
 
-Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, schema validation, Hebrew STT eval baselines, and daemon resilience.
+Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, schema validation, Hebrew STT eval baselines, daemon resilience, ToolAnnotations, SSML sanitization, and secure path hardening.
 
 ## Project Structure
 
@@ -210,7 +219,7 @@ voicelayer/
 │   ├── socket-client.ts          # Voice Bar IPC (auto-reconnect)
 │   ├── session-booking.ts        # Lockfile mutex
 │   ├── paths.ts                  # Centralized path constants
-│   └── __tests__/                # 359 tests across 36 files
+│   └── __tests__/                # 536 tests across 48 files
 ├── flow-bar/                     # SwiftUI macOS app (1.9K lines, 9 files)
 │   ├── Sources/VoiceBar/         # App source
 │   └── Tests/                    # Swift tests
@@ -231,4 +240,4 @@ voicelayer/
 
 ## License
 
-[MIT](LICENSE)
+[Apache-2.0](LICENSE)
