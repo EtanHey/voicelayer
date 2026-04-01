@@ -143,7 +143,7 @@
 
     /* ─── Hero ─── */
     .hero {
-      padding: 180px 0 60px;
+      padding: 160px 0 48px;
       text-align: center;
       position: relative;
       overflow: hidden;
@@ -663,7 +663,7 @@
 
     /* ─── Feature Cards ─── */
     .features-section {
-      padding: 100px 0;
+      padding: 60px 0 80px;
     }
 
     .feature-cards {
@@ -723,7 +723,7 @@
 
     /* ─── How it Works ─── */
     .flow-section {
-      padding: 100px 0;
+      padding: 60px 0 80px;
     }
 
     .keycap {
@@ -800,7 +800,7 @@
     .setup-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 24px;
+      gap: 16px;
       max-width: 780px;
       margin: 0 auto;
     }
@@ -851,13 +851,15 @@
       color: var(--text-dim);
       transition: color 0.2s;
       flex-shrink: 0;
+      width: 14px;
+      height: 14px;
     }
 
     .setup-code:hover .copy-icon { color: var(--accent); }
 
     /* ─── CTA ─── */
     .cta-section {
-      padding: 100px 0 80px;
+      padding: 64px 0 64px;
       text-align: center;
     }
 
@@ -910,6 +912,12 @@
       cursor: pointer;
       padding: 4px;
       transition: color 0.2s;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
 
     .copy-btn:hover { color: var(--accent); }
@@ -1261,8 +1269,8 @@
         <div class="setup-card">
           <div class="setup-num">01</div>
           <p class="setup-text">Install from npm</p>
-          <div class="setup-code" onclick="copyText(this, 'bun add -g voicelayer')">
-            <span>bun add -g voicelayer</span>
+          <div class="setup-code" onclick="copyText(this, 'bun add -g voicelayer-mcp')">
+            <span>bun add -g voicelayer-mcp</span>
             <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
           </div>
         </div>
@@ -1292,8 +1300,8 @@
       <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
       <p class="cta-sub reveal reveal-d1">One install. On-device STT. Works with any MCP client.</p>
       <div class="install-block reveal reveal-d2">
-        <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer')">
-          <code><span class="dim">$</span> bun add -g voicelayer</code>
+        <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer-mcp')">
+          <code><span class="dim">$</span> bun add -g voicelayer-mcp</code>
           <button class="copy-btn" aria-label="Copy">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
           </button>
@@ -1304,12 +1312,13 @@
 
   <footer>
     <div class="wrap">
-      <div class="footer-left">Part of the <a href="https://etanheyman.com">Golems</a> ecosystem</div>
+      <div class="footer-left">Part of the <a href="https://etanheyman.com/golems">Golems</a> ecosystem</div>
       <div class="footer-right">
         <a href="https://github.com/EtanHey/voicelayer">GitHub</a>
-        <a href="https://npmjs.com/package/voicelayer">npm</a>
+        <a href="https://npmjs.com/package/voicelayer-mcp">npm</a>
         <a href="https://etanhey.github.io/brainlayer/">BrainLayer</a>
-        <a href="https://etanhey.github.io/cmuxlayer/">cmuxLayer</a>
+        <a href="https://github.com/EtanHey/cmuxlayer">cmuxLayer</a>
+        <a href="https://etanheyman.com/golems">Golems</a>
       </div>
     </div>
   </footer>
