@@ -3,10 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VoiceLayer — Native Voice-to-Text for AI Coding Assistants</title>
+  <title>VoiceLayer — Native Voice I/O for AI Coding Assistants</title>
   <meta name="description" content="macOS menu bar app with F6 push-to-talk, local whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
-  <meta property="og:title" content="VoiceLayer — Native Voice-to-Text for AI Coding Assistants">
-  <meta property="og:description" content="Press F6. Speak. Ship. Local whisper.cpp STT, BrainLayer integration, no cloud required.">
+  <meta property="og:title" content="VoiceLayer — Native Voice I/O for AI Coding Assistants">
+  <meta property="og:description" content="Press F6. Speak. Ship. Local whisper.cpp STT, edge-tts TTS, BrainLayer integration. No cloud required.">
   <meta property="og:type" content="website">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -105,7 +105,17 @@
 
     .logo:hover { opacity: 1; }
 
-    .logo svg { flex-shrink: 0; }
+    .logo-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      background: var(--accent-subtle);
+      border: 1px solid rgba(94, 234, 212, 0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
 
     .nav-right {
       display: flex;
@@ -715,55 +725,41 @@
     .logo-row {
       display: flex;
       justify-content: center;
-      gap: 40px;
+      gap: 16px;
       flex-wrap: wrap;
       margin-bottom: 64px;
     }
 
-    .logo-item {
-      display: flex;
-      flex-direction: column;
+    .logo-pill {
+      display: inline-flex;
       align-items: center;
-      gap: 10px;
-      transition: transform 0.2s;
-    }
-
-    .logo-item:hover { transform: translateY(-3px); }
-
-    .logo-box {
-      width: 52px;
-      height: 52px;
-      border-radius: 12px;
+      gap: 8px;
+      padding: 8px 16px;
+      border-radius: 999px;
       background: var(--bg-card);
       border: 1px solid var(--border);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 11px;
-      transition: border-color 0.25s;
+      font-family: var(--mono);
+      font-size: 13px;
+      color: var(--text-secondary);
+      transition: border-color 0.25s, color 0.2s;
+      text-decoration: none;
     }
 
-    .logo-box img {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-    }
-
-    .logo-item:hover .logo-box {
+    .logo-pill:hover {
       border-color: var(--border-hover);
+      color: var(--text);
     }
 
-    .logo-name {
-      font-size: 12px;
-      color: var(--text-dim);
-      transition: color 0.2s;
+    .logo-pill .dot-indicator {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.5;
+      transition: opacity 0.2s;
     }
 
-    .logo-item:hover .logo-name { color: var(--text-secondary); }
-
-    .logo-box.brainlayer-logo img {
-      filter: hue-rotate(120deg) saturate(0.65) brightness(1.1);
-    }
+    .logo-pill:hover .dot-indicator { opacity: 1; }
 
     /* ─── Setup ─── */
     .setup-grid {
@@ -926,7 +922,7 @@
       .hero { padding: 140px 0 60px; }
       .ps-grid { grid-template-columns: 1fr; }
       .setup-grid { grid-template-columns: 1fr; }
-      .logo-row { gap: 24px; }
+      .logo-row { gap: 10px; }
       .flow-steps { flex-direction: column; gap: 24px; align-items: center; }
       .flow-step:not(:last-child)::after { display: none; }
       .flow-desc { max-width: 200px; }
@@ -961,13 +957,7 @@
   <nav id="nav">
     <div class="wrap">
       <a href="#" class="logo">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="8" width="2.5" height="8" rx="1.25" fill="#5eead4"/>
-          <rect x="7" y="4" width="2.5" height="16" rx="1.25" fill="#5eead4"/>
-          <rect x="11" y="6" width="2.5" height="12" rx="1.25" fill="#5eead4"/>
-          <rect x="15" y="2" width="2.5" height="20" rx="1.25" fill="#5eead4"/>
-          <rect x="19" y="7" width="2.5" height="10" rx="1.25" fill="#5eead4"/>
-        </svg>
+        <span class="logo-icon">V</span>
         VoiceLayer
       </a>
       <div class="nav-right">
@@ -984,8 +974,8 @@
       <h1 class="reveal">Your keyboard is<br>a bottleneck. <em>Fix that.</em></h1>
       <p class="hero-sub reveal reveal-d1">
         VoiceBar lives in your macOS menu bar. Hold F6, speak naturally,
-        get instant local transcription. whisper.cpp runs on-device &mdash;
-        nothing leaves your machine.
+        get local transcription via whisper.cpp. Your AI talks back
+        with edge-tts. Nothing leaves your machine.
       </p>
       <div class="hero-actions reveal reveal-d2">
         <a href="#setup" class="btn btn-primary">Get started</a>
@@ -1090,7 +1080,7 @@
             no latency, no privacy concerns. It knows technical vocabulary
             because the model runs locally with your full context.<br><br>
             <strong>Hebrew and English</strong> in the same sentence. Push-to-talk
-            with F6. Text appears at your cursor instantly. Works with Claude Code,
+            with F6. Text appears at your cursor. Works with Claude Code,
             Cursor, and any MCP client.
           </p>
         </div>
@@ -1118,7 +1108,7 @@
         </div>
         <div class="feature-item reveal">
           <span class="name">Hebrew + English</span>
-          <span class="desc">Seamless bilingual transcription in the same sentence</span>
+          <span class="desc">Bilingual transcription in the same sentence</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Live waveform</span>
@@ -1148,7 +1138,7 @@
         </div>
         <div class="feature-item reveal">
           <span class="name">Voice modes</span>
-          <span class="desc">announce, brief, consult, converse, think &mdash; match the interaction style</span>
+          <span class="desc">announce, brief, consult, converse, think &mdash; match the interaction</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Daemon lifecycle</span>
@@ -1218,38 +1208,14 @@
       <h2 class="section-heading">Any MCP client</h2>
 
       <div class="logo-row reveal">
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/claude.svg" alt="Claude Code"></div>
-          <span class="logo-name">Claude Code</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/cursor.svg" alt="Cursor"></div>
-          <span class="logo-name">Cursor</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/zed.svg" alt="Zed"></div>
-          <span class="logo-name">Zed</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/vscode.svg" alt="VS Code"></div>
-          <span class="logo-name">VS Code</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/openai.svg" alt="Codex"></div>
-          <span class="logo-name">Codex</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/kiro.svg" alt="Kiro"></div>
-          <span class="logo-name">Kiro</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box"><img src="logos/gemini.svg" alt="Gemini CLI"></div>
-          <span class="logo-name">Gemini CLI</span>
-        </div>
-        <div class="logo-item">
-          <div class="logo-box brainlayer-logo"><img src="logos/brainlayer.svg" alt="BrainLayer"></div>
-          <span class="logo-name">BrainLayer</span>
-        </div>
+        <span class="logo-pill"><span class="dot-indicator"></span> Claude Code</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> Cursor</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> Zed</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> VS Code</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> Codex</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> Kiro</span>
+        <span class="logo-pill"><span class="dot-indicator"></span> Gemini CLI</span>
+        <a href="https://etanhey.github.io/brainlayer/" class="logo-pill" style="border-color: rgba(212, 149, 106, 0.3);"><span class="dot-indicator" style="background: var(--amber);"></span> BrainLayer</a>
       </div>
 
       <div class="section-label" style="margin-top:16px">Getting started</div>
@@ -1288,7 +1254,7 @@
   <section class="cta-section">
     <div class="wrap">
       <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
-      <p class="cta-sub reveal reveal-d1">Three commands. Local STT. Your voice stays yours.</p>
+      <p class="cta-sub reveal reveal-d1">Three commands. Local STT + TTS. Your voice stays yours.</p>
       <div class="install-block reveal reveal-d2">
         <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer')">
           <code><span class="dim">$</span> bun add -g voicelayer</code>
@@ -1302,11 +1268,12 @@
 
   <footer>
     <div class="wrap">
-      <div class="footer-left">Built by <a href="https://etanheyman.com">Etan Heyman</a></div>
+      <div class="footer-left">Part of the <a href="https://etanheyman.com">Golems</a> ecosystem</div>
       <div class="footer-right">
         <a href="https://github.com/EtanHey/voicelayer">GitHub</a>
-        <a href="https://github.com/EtanHey/brainlayer">BrainLayer</a>
         <a href="https://npmjs.com/package/voicelayer">npm</a>
+        <a href="https://etanhey.github.io/brainlayer/">BrainLayer</a>
+        <a href="https://etanhey.github.io/cmuxlayer/">cmuxLayer</a>
       </div>
     </div>
   </footer>
