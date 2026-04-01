@@ -4,8 +4,8 @@
  * When a Claude session books voice, it holds the mic for the entire work session.
  * Other sessions see "line busy" and fall back to text.
  *
- * Lockfile: /tmp/voicelayer-session.lock
- * Stop signal: /tmp/voicelayer-stop (touch to end current recording)
+ * Lockfile: /tmp/voicelayer-session-{TOKEN}.lock
+ * Stop signal: ~/.local/state/voicelayer/stop-{TOKEN} (touch to end current recording)
  */
 
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
