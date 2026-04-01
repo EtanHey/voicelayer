@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VoiceLayer — Native Voice I/O for AI Coding Assistants</title>
-  <meta name="description" content="macOS menu bar app with F6 push-to-talk, local whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
+  <meta name="description" content="macOS menu bar app with F6 push-to-talk, on-device whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
   <meta property="og:title" content="VoiceLayer — Native Voice I/O for AI Coding Assistants">
   <meta property="og:description" content="Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS, Qwen3-TTS cloned voices. Works with any MCP client.">
   <meta property="og:type" content="website">
@@ -481,7 +481,7 @@
     .t-sys { color: #78787f; font-style: italic; }
     .t-tool { color: var(--accent); font-weight: 500; }
     .t-arg { color: #a8d8a8; }
-    .t-str { color: #e8b090; }
+    .t-str { color: var(--accent-bright); }
     .t-num { color: var(--teal); }
     .t-border { color: #333338; }
     .t-body { color: var(--text-secondary); }
@@ -1076,7 +1076,7 @@
         </div>
         <div class="ps-card solution reveal reveal-d1">
           <div class="ps-tag">The fix</div>
-          <h2 class="ps-title">Local. Fast. Developer-aware.</h2>
+          <h2 class="ps-title">On-device. Fast. Developer-aware.</h2>
           <p class="ps-body">
             VoiceBar runs <strong>whisper.cpp on-device</strong> &mdash; no cloud,
             no latency, no privacy concerns. It knows technical vocabulary
@@ -1106,7 +1106,7 @@
         </div>
         <div class="feature-item reveal">
           <span class="name">whisper.cpp</span>
-          <span class="desc">Local large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
+          <span class="desc">On-device large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Hebrew + English</span>
