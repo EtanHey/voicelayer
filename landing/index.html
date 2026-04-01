@@ -146,6 +146,7 @@
       padding: 180px 0 60px;
       text-align: center;
       position: relative;
+      overflow: hidden;
     }
 
     .hero::before {
@@ -158,6 +159,63 @@
       height: 500px;
       background: radial-gradient(ellipse, rgba(56, 189, 248, 0.04), transparent 70%);
       pointer-events: none;
+    }
+
+    /* Hero equalizer */
+    .hero-eq {
+      position: absolute;
+      bottom: -20px;
+      left: 0;
+      right: 0;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      gap: 4px;
+      height: 260px;
+      opacity: 0.035;
+      pointer-events: none;
+      padding: 0 5%;
+    }
+
+    .eq-bar {
+      flex: 1;
+      max-width: 10px;
+      background: var(--accent);
+      border-radius: 5px 5px 0 0;
+      transform-origin: bottom;
+      animation: eq-pulse 2.5s ease-in-out infinite;
+    }
+
+    .eq-bar:nth-child(odd) { animation-duration: 2s; }
+    .eq-bar:nth-child(3n) { animation-delay: 0.4s; }
+    .eq-bar:nth-child(4n+1) { animation-delay: 0.8s; }
+    .eq-bar:nth-child(5n+2) { animation-delay: 1.2s; }
+    .eq-bar:nth-child(7n) { animation-duration: 3s; }
+    .eq-bar:nth-child(2n) { animation-delay: 0.2s; }
+
+    .eq-bar:nth-child(1)  { height: 25%; }
+    .eq-bar:nth-child(2)  { height: 45%; }
+    .eq-bar:nth-child(3)  { height: 70%; }
+    .eq-bar:nth-child(4)  { height: 55%; }
+    .eq-bar:nth-child(5)  { height: 90%; }
+    .eq-bar:nth-child(6)  { height: 60%; }
+    .eq-bar:nth-child(7)  { height: 40%; }
+    .eq-bar:nth-child(8)  { height: 75%; }
+    .eq-bar:nth-child(9)  { height: 50%; }
+    .eq-bar:nth-child(10) { height: 85%; }
+    .eq-bar:nth-child(11) { height: 35%; }
+    .eq-bar:nth-child(12) { height: 65%; }
+    .eq-bar:nth-child(13) { height: 95%; }
+    .eq-bar:nth-child(14) { height: 55%; }
+    .eq-bar:nth-child(15) { height: 80%; }
+    .eq-bar:nth-child(16) { height: 45%; }
+    .eq-bar:nth-child(17) { height: 70%; }
+    .eq-bar:nth-child(18) { height: 30%; }
+    .eq-bar:nth-child(n+19) { height: 50%; }
+
+    @keyframes eq-pulse {
+      0%, 100% { transform: scaleY(0.3); }
+      50% { transform: scaleY(1); }
     }
 
     h1 {
@@ -258,20 +316,6 @@
       height: 40px;
       background: linear-gradient(transparent, var(--bg));
       pointer-events: none;
-    }
-
-    .voicebar-menubar {
-      display: flex;
-      align-items: center;
-      justify-content: flex-end;
-      gap: 16px;
-      padding: 6px 16px;
-      background: rgba(255,255,255,0.03);
-      border-radius: 8px;
-      margin-bottom: 32px;
-      font-family: var(--mono);
-      font-size: 12px;
-      color: var(--text-dim);
     }
 
     .voicebar-pill {
@@ -510,73 +554,6 @@
     .divider {
       height: 1px;
       background: linear-gradient(90deg, transparent, var(--border), transparent);
-    }
-
-    /* ─── Speed Comparison ─── */
-    .speed-grid {
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      gap: 24px;
-      align-items: center;
-      max-width: 780px;
-      margin: 0 auto;
-    }
-
-    .speed-card {
-      padding: 32px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--bg-card);
-      text-align: center;
-      transition: border-color 0.3s;
-    }
-
-    .speed-card:hover { border-color: var(--border-hover); }
-    .speed-card.slow { border-top: 2px solid var(--red); }
-    .speed-card.fast { border-top: 2px solid var(--accent); }
-
-    .speed-tag {
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      margin-bottom: 16px;
-      font-weight: 500;
-    }
-
-    .slow .speed-tag { color: var(--red); }
-    .fast .speed-tag { color: var(--accent); }
-
-    .speed-num {
-      font-family: var(--display);
-      font-size: clamp(36px, 5vw, 52px);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      line-height: 1;
-      margin-bottom: 8px;
-    }
-
-    .slow .speed-num { color: var(--text-dim); }
-    .fast .speed-num { color: var(--accent); }
-
-    .speed-unit {
-      font-size: 14px;
-      color: var(--text-dim);
-      font-weight: 300;
-    }
-
-    .speed-desc {
-      font-size: 14px;
-      color: var(--text-secondary);
-      margin-top: 16px;
-      font-weight: 300;
-      line-height: 1.5;
-    }
-
-    .speed-vs {
-      font-family: var(--mono);
-      font-size: 13px;
-      color: var(--text-dim);
-      text-align: center;
     }
 
     /* ─── Pipeline ─── */
@@ -949,8 +926,6 @@
     @media (max-width: 768px) {
       .nav-right a:not(.nav-gh) { display: none; }
       .hero { padding: 140px 0 60px; }
-      .speed-grid { grid-template-columns: 1fr; }
-      .speed-vs { display: none; }
       .pipeline { flex-direction: column; gap: 16px; }
       .pipe-arrow { transform: rotate(90deg); margin-bottom: 0; }
       .setup-grid { grid-template-columns: 1fr; }
@@ -1001,6 +976,13 @@
 
   <!-- Hero -->
   <section class="hero">
+    <div class="hero-eq" aria-hidden="true">
+      <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+      <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+      <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+      <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+      <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+    </div>
     <div class="wrap">
       <h1 class="reveal">Press F6. Speak.<br><em>Ship.</em></h1>
       <p class="hero-sub reveal reveal-d1">
@@ -1023,11 +1005,6 @@
             <div class="sound-ring"></div>
             <div class="sound-ring"></div>
             <div class="sound-ring"></div>
-          </div>
-          <div class="voicebar-menubar">
-            <span>Wi-Fi</span>
-            <span>3:42 PM</span>
-            <span style="color: var(--accent);">VoiceBar</span>
           </div>
           <div class="voicebar-pill">
             <div class="pill-mic"></div>
@@ -1091,36 +1068,11 @@
 
   <div class="wrap"><div class="divider"></div></div>
 
-  <!-- Speed Comparison -->
-  <section class="section">
-    <div class="wrap">
-      <div class="section-label">Why voice?</div>
-      <h2 class="section-heading">Typing is the bottleneck</h2>
-      <div class="speed-grid reveal">
-        <div class="speed-card slow">
-          <div class="speed-tag">Typing</div>
-          <div class="speed-num">40</div>
-          <div class="speed-unit">words per minute</div>
-          <p class="speed-desc">Average developer typing speed. Context-switching between thinking and typing breaks your flow.</p>
-        </div>
-        <div class="speed-vs">&rarr;</div>
-        <div class="speed-card fast">
-          <div class="speed-tag">Speaking</div>
-          <div class="speed-num">150</div>
-          <div class="speed-unit">words per minute</div>
-          <p class="speed-desc">Natural speech. whisper.cpp transcribes on-device in &lt;1.5s. Hebrew + English in the same sentence.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <div class="wrap"><div class="divider"></div></div>
-
   <!-- Features -->
   <section class="features-section" id="features">
     <div class="wrap">
       <div class="section-label">Capabilities</div>
-      <h2 class="section-heading">Built for how developers actually work</h2>
+      <h2 class="section-heading">Built for devs who think faster than they type</h2>
 
       <div class="features-group">
         <div class="features-group-label">VoiceBar &mdash; the menu bar app</div>
@@ -1130,23 +1082,15 @@
         </div>
         <div class="feature-item reveal">
           <span class="name">whisper.cpp</span>
-          <span class="desc">On-device large-v3-turbo model &mdash; no cloud, no API key, no latency</span>
+          <span class="desc">On-device large-v3-turbo &mdash; no cloud, no API key, sub-1.5s latency</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Hebrew + English</span>
-          <span class="desc">Bilingual transcription in the same sentence</span>
+          <span class="desc">Bilingual transcription in the same sentence, no mode switching</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">Live waveform</span>
-          <span class="desc">Floating pill with real-time audio visualization and teleprompter</span>
-        </div>
-        <div class="feature-item reveal">
-          <span class="name">Command mode</span>
-          <span class="desc">Prefix with "command" to trigger actions instead of text input</span>
-        </div>
-        <div class="feature-item reveal">
-          <span class="name">Clip markers</span>
-          <span class="desc">Mark important moments during recording for later reference</span>
+          <span class="desc">Floating pill with real-time audio levels, teleprompter, and auto-collapse</span>
         </div>
       </div>
 
@@ -1156,19 +1100,15 @@
         <div class="features-group-label">MCP server &mdash; give your AI a voice</div>
         <div class="feature-item reveal">
           <span class="name">voice_speak</span>
-          <span class="desc">Non-blocking TTS with 20-output replay buffer and toggle control</span>
+          <span class="desc">Non-blocking TTS &mdash; edge-tts cloud voices or Qwen3-TTS cloned voices</span>
         </div>
         <div class="feature-item reveal">
           <span class="name">voice_ask</span>
-          <span class="desc">Blocking record + transcribe for conversational voice input</span>
+          <span class="desc">Blocking record + transcribe with Silero VAD silence detection</span>
         </div>
         <div class="feature-item reveal">
-          <span class="name">Voice modes</span>
-          <span class="desc">announce, brief, consult, converse, think &mdash; match the interaction</span>
-        </div>
-        <div class="feature-item reveal">
-          <span class="name">Daemon lifecycle</span>
-          <span class="desc">LaunchAgent singleton &mdash; auto-start, auto-restart, zero config</span>
+          <span class="name">Five modes</span>
+          <span class="desc">announce, brief, consult, converse, think &mdash; match the interaction style</span>
         </div>
       </div>
     </div>
@@ -1179,7 +1119,7 @@
   <!-- Pipeline -->
   <section class="flow-section">
     <div class="wrap">
-      <div class="section-label">The pipeline</div>
+      <div class="section-label">150 WPM &mdash; 3.75x faster than typing</div>
       <h2 class="section-heading">F6 &rarr; text at your cursor. Under two seconds.</h2>
 
       <div class="pipeline reveal">
