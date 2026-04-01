@@ -71,7 +71,7 @@ export function Nav({ product, links, githubUrl }: NavProps) {
           >
             GitHub{" "}
             <span className="inline-block transition-transform group-hover:translate-x-0.5">
-              &nearr;
+              {"\u2197"}
             </span>
           </a>
         </div>
