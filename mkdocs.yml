@@ -1,6 +1,6 @@
 site_name: VoiceLayer
 site_description: Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.
-site_url: https://etanhey.github.io/voicelayer/docs/
+site_url: https://voicelayer.etanheyman.com/docs/
 repo_url: https://github.com/EtanHey/voicelayer
 repo_name: EtanHey/voicelayer
 

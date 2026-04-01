@@ -6,6 +6,7 @@ dist/
 bun.lockb
 site/
 docs.local/
+landing/docs/
 claude.scratchpad.md
 .claude/
 
