@@ -56,15 +56,22 @@ export function Nav({ product, links, githubUrl }: NavProps) {
           {current.name}
         </a>
         <div className="flex items-center gap-6">
-          {links.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="text-text-secondary no-underline text-sm hover:text-text transition-colors hidden md:inline"
-            >
-              {link.label}
-            </a>
-          ))}
+          {links.map((link) => {
+            const isExternal = link.href.startsWith("http");
+            return (
+              <a
+                key={link.href}
+                href={link.href}
+                {...(isExternal && {
+                  target: "_blank",
+                  rel: "noopener",
+                })}
+                className="text-text-secondary no-underline text-sm hover:text-text transition-colors hidden md:inline"
+              >
+                {link.label}
+              </a>
+            );
+          })}
           <a
             href={githubUrl}
             className="inline-flex items-center gap-1.5 text-text-secondary no-underline text-sm hover:text-text transition-colors"
