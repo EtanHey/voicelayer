@@ -556,6 +556,37 @@
       background: linear-gradient(90deg, transparent, var(--border), transparent);
     }
 
+    /* ─── Stat Strip ─── */
+    .stat-strip {
+      display: flex;
+      justify-content: center;
+      gap: 48px;
+      padding: 32px 0;
+      flex-wrap: wrap;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .stat-value {
+      font-family: var(--mono);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      font-weight: 300;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
     /* ─── Pipeline ─── */
     .pipeline {
       display: flex;
@@ -929,6 +960,7 @@
       .pipeline { flex-direction: column; gap: 16px; }
       .pipe-arrow { transform: rotate(90deg); margin-bottom: 0; }
       .setup-grid { grid-template-columns: 1fr; }
+      .stat-strip { gap: 24px; }
       .logo-row { gap: 24px; }
       .pipe-desc { max-width: 200px; }
       footer .wrap { flex-direction: column; gap: 12px; }
@@ -1034,6 +1066,28 @@
     </div>
   </section>
 
+  <!-- Stats -->
+  <div class="wrap">
+    <div class="stat-strip reveal">
+      <div class="stat-item">
+        <span class="stat-value">&lt;1.5s</span>
+        <span class="stat-label">transcription</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">150 WPM</span>
+        <span class="stat-label">speech vs 40 typing</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">HE + EN</span>
+        <span class="stat-label">bilingual</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">On-device</span>
+        <span class="stat-label">whisper.cpp</span>
+      </div>
+    </div>
+  </div>
+
   <!-- Terminal -->
   <section class="terminal-section">
     <div class="wrap-wide">
@@ -1065,8 +1119,6 @@
       </div>
     </div>
   </section>
-
-  <div class="wrap"><div class="divider"></div></div>
 
   <!-- Features -->
   <section class="features-section" id="features">
@@ -1113,8 +1165,6 @@
       </div>
     </div>
   </section>
-
-  <div class="wrap"><div class="divider"></div></div>
 
   <!-- Pipeline -->
   <section class="flow-section">
