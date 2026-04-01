@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "pip3 install mkdocs-material",
-  "buildCommand": "python3 -m mkdocs build -d landing/docs",
+  "installCommand": "python3 -m venv .venv && .venv/bin/pip install mkdocs-material",
+  "buildCommand": ".venv/bin/python -m mkdocs build -d landing/docs",
   "outputDirectory": "landing",
   "headers": [
     {
@@ -28,6 +28,14 @@
         {
           "key": "Referrer-Policy",
           "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=()"
         }
       ]
     }
