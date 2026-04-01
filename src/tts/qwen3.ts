@@ -138,16 +138,21 @@ export function parseProfileYaml(content: string): VoiceProfile {
  * Returns null if profile doesn't exist or is invalid.
  */
 export function loadProfile(voiceName: string): VoiceProfile | null {
-  const cached = profileCache.get(voiceName.toLowerCase());
+  // Reject path traversal attempts (../, /, \)
+  const name = voiceName.toLowerCase();
+  if (!name || name.includes("/") || name.includes("\\") || name.includes(".."))
+    return null;
+
+  const cached = profileCache.get(name);
   if (cached) return cached;
 
-  const profilePath = join(VOICES_DIR, voiceName.toLowerCase(), "profile.yaml");
+  const profilePath = join(VOICES_DIR, name, "profile.yaml");
   if (!existsSync(profilePath)) return null;
 
   try {
     const content = readFileSync(profilePath, "utf-8");
     const profile = parseProfileYaml(content);
-    profileCache.set(voiceName.toLowerCase(), profile);
+    profileCache.set(name, profile);
     return profile;
   } catch (err) {
     console.error(
