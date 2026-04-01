@@ -251,7 +251,7 @@ export function VoiceDemo() {
   }, [isInView, runCycle]);
 
   return (
-    <section id="demo" className="py-20" ref={ref}>
+    <section id="demo" className="py-20 overflow-x-hidden" ref={ref}>
       <div className="mx-auto max-w-[960px] px-6">
         <div className="text-[11px] uppercase tracking-[0.12em] text-accent mb-3 text-center font-medium">
           Live demo
