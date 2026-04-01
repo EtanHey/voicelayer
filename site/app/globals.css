@@ -26,6 +26,7 @@ body {
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
+  overflow-x: hidden;
 }
 
 /* Grain overlay */

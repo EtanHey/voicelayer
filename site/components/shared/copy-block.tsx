@@ -29,7 +29,7 @@ export function CopyBlock({
         fullWidth ? "w-full" : "max-w-[420px] mx-auto"
       }`}
     >
-      <code className="text-text flex-1 text-left">
+      <code className="text-text flex-1 text-left min-w-0 overflow-hidden">
         {showDollar && <span className="text-text-dim">$ </span>}
         {text}
       </code>

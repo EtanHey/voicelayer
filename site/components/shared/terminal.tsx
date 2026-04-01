@@ -71,7 +71,9 @@ interface BodyProps {
 
 function Body({ children, className = "" }: BodyProps) {
   return (
-    <div className={`p-5 font-mono text-[13px] leading-[1.85] ${className}`}>
+    <div
+      className={`p-5 font-mono text-[13px] leading-[1.85] overflow-x-auto ${className}`}
+    >
       {children}
     </div>
   );
