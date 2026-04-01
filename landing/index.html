@@ -6,7 +6,7 @@
   <title>VoiceLayer — Native Voice I/O for AI Coding Assistants</title>
   <meta name="description" content="macOS menu bar app with F6 push-to-talk, local whisper.cpp transcription, Hebrew &amp; English support. Works with Claude Code, Cursor, and any MCP client.">
   <meta property="og:title" content="VoiceLayer — Native Voice I/O for AI Coding Assistants">
-  <meta property="og:description" content="Press F6. Speak. Ship. Local whisper.cpp STT, edge-tts TTS, BrainLayer integration. No cloud required.">
+  <meta property="og:description" content="Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS, Qwen3-TTS cloned voices. Works with any MCP client.">
   <meta property="og:type" content="website">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -23,10 +23,10 @@
       --text: #fafaf9;
       --text-secondary: #a8a29e;
       --text-dim: #6b6660;
-      --accent: #5eead4;
-      --accent-bright: #a7f3d0;
-      --accent-subtle: rgba(94, 234, 212, 0.08);
-      --amber: #d4956a;
+      --accent: #d4956a;
+      --accent-bright: #e8b090;
+      --accent-subtle: rgba(212, 149, 106, 0.08);
+      --teal: #5eead4;
       --red: #cf6060;
       --display: 'Newsreader', Georgia, serif;
       --sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -110,7 +110,7 @@
       height: 24px;
       border-radius: 6px;
       background: var(--accent-subtle);
-      border: 1px solid rgba(94, 234, 212, 0.15);
+      border: 1px solid rgba(212, 149, 106, 0.15);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -161,7 +161,7 @@
       transform: translate(-50%, -50%);
       width: 700px;
       height: 500px;
-      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.04), transparent 70%);
+      background: radial-gradient(ellipse, rgba(212, 149, 106, 0.04), transparent 70%);
       pointer-events: none;
     }
 
@@ -283,8 +283,8 @@
       display: flex;
       align-items: center;
       gap: 10px;
-      background: rgba(94, 234, 212, 0.08);
-      border: 1px solid rgba(94, 234, 212, 0.2);
+      background: rgba(212, 149, 106, 0.08);
+      border: 1px solid rgba(212, 149, 106, 0.2);
       border-radius: 999px;
       padding: 8px 18px;
       margin: 0 auto;
@@ -297,7 +297,7 @@
       position: absolute;
       inset: -12px;
       border-radius: 999px;
-      background: radial-gradient(ellipse, rgba(94, 234, 212, 0.06), transparent 70%);
+      background: radial-gradient(ellipse, rgba(212, 149, 106, 0.06), transparent 70%);
       pointer-events: none;
     }
 
@@ -310,8 +310,8 @@
     }
 
     @keyframes mic-pulse {
-      0%, 100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(94, 234, 212, 0.3); }
-      50% { opacity: 1; box-shadow: 0 0 8px 3px rgba(94, 234, 212, 0.15); }
+      0%, 100% { opacity: 0.6; box-shadow: 0 0 0 0 rgba(212, 149, 106, 0.3); }
+      50% { opacity: 1; box-shadow: 0 0 8px 3px rgba(212, 149, 106, 0.15); }
     }
 
     .pill-waveform {
@@ -404,7 +404,7 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%) scale(0.5);
-      border: 1px solid rgba(94, 234, 212, 0.08);
+      border: 1px solid rgba(212, 149, 106, 0.08);
       border-radius: 50%;
       animation: ring-expand 4s ease-out infinite;
     }
@@ -482,11 +482,10 @@
     .t-tool { color: var(--accent); font-weight: 500; }
     .t-arg { color: #a8d8a8; }
     .t-str { color: #e8b090; }
-    .t-num { color: var(--accent); }
+    .t-num { color: var(--teal); }
     .t-border { color: #333338; }
     .t-body { color: var(--text-secondary); }
     .t-recording { color: var(--accent); }
-    .t-whisper { color: var(--amber); }
 
     /* ─── Sections ─── */
     .section {
@@ -540,7 +539,7 @@
     }
 
     .ps-card.problem { border-top: 2px solid var(--red); }
-    .ps-card.solution { border-top: 2px solid var(--accent); }
+    .ps-card.solution { border-top: 2px solid var(--teal); }
 
     .ps-tag {
       font-size: 11px;
@@ -551,7 +550,7 @@
     }
 
     .problem .ps-tag { color: var(--red); }
-    .solution .ps-tag { color: var(--accent); }
+    .solution .ps-tag { color: var(--teal); }
 
     .ps-title {
       font-family: var(--sans);
@@ -637,7 +636,7 @@
 
     .flow-steps {
       display: flex;
-      align-items: flex-start;
+      align-items: stretch;
       justify-content: center;
       gap: 0;
       max-width: 800px;
@@ -772,6 +771,8 @@
 
     .setup-card {
       text-align: left;
+      display: flex;
+      flex-direction: column;
     }
 
     .setup-num {
@@ -803,6 +804,7 @@
       color: var(--text);
       cursor: pointer;
       transition: border-color 0.2s;
+      margin-top: auto;
     }
 
     .setup-code:hover { border-color: var(--accent); }
@@ -974,8 +976,8 @@
       <h1 class="reveal">Your keyboard is<br>a bottleneck. <em>Fix that.</em></h1>
       <p class="hero-sub reveal reveal-d1">
         VoiceBar lives in your macOS menu bar. Hold F6, speak naturally,
-        get local transcription via whisper.cpp. Your AI talks back
-        with edge-tts. Nothing leaves your machine.
+        get on-device transcription via whisper.cpp. Your AI talks back
+        with edge-tts or cloned voices via Qwen3-TTS.
       </p>
       <div class="hero-actions reveal reveal-d2">
         <a href="#setup" class="btn btn-primary">Get started</a>
@@ -1215,7 +1217,7 @@
         <span class="logo-pill"><span class="dot-indicator"></span> Codex</span>
         <span class="logo-pill"><span class="dot-indicator"></span> Kiro</span>
         <span class="logo-pill"><span class="dot-indicator"></span> Gemini CLI</span>
-        <a href="https://etanhey.github.io/brainlayer/" class="logo-pill" style="border-color: rgba(212, 149, 106, 0.3);"><span class="dot-indicator" style="background: var(--amber);"></span> BrainLayer</a>
+        <a href="https://etanhey.github.io/brainlayer/" class="logo-pill"><span class="dot-indicator"></span> BrainLayer</a>
       </div>
 
       <div class="section-label" style="margin-top:16px">Getting started</div>
@@ -1254,7 +1256,7 @@
   <section class="cta-section">
     <div class="wrap">
       <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
-      <p class="cta-sub reveal reveal-d1">Three commands. Local STT + TTS. Your voice stays yours.</p>
+      <p class="cta-sub reveal reveal-d1">Three steps. On-device STT. Natural TTS. Your workflow, uninterrupted.</p>
       <div class="install-block reveal reveal-d2">
         <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer')">
           <code><span class="dim">$</span> bun add -g voicelayer</code>
