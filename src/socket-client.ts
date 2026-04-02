@@ -30,10 +30,14 @@ let buffer = "";
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectDelay = 1000; // Start at 1s, backoff to 15s max
 const MAX_RECONNECT_DELAY = 15000;
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+const KEEPALIVE_INTERVAL_MS = 30_000;
 
 // --- Command handler callback ---
 let commandHandler:
-  | ((command: SocketCommand) => void | HealthResponse | Promise<void | HealthResponse>)
+  | ((
+      command: SocketCommand,
+    ) => void | HealthResponse | Promise<void | HealthResponse>)
   | null = null;
 
 // --- Target socket path (overridable for tests) ---
@@ -119,6 +123,7 @@ function startConnection(): void {
         connected = true;
         buffer = "";
         reconnectDelay = 1000; // Reset backoff on successful connect
+        startKeepalive();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
 
@@ -164,6 +169,7 @@ function startConnection(): void {
         connected = false;
         connection = null as any;
         buffer = "";
+        stopKeepalive();
         console.error("[socket-client] Disconnected from VoiceBar");
         scheduleReconnect();
       },
@@ -212,9 +218,40 @@ function scheduleReconnect(): void {
   }, delay);
 }
 
+// --- Keepalive: periodic ping to detect dead connections ---
+
+function startKeepalive(): void {
+  stopKeepalive();
+  keepaliveTimer = setInterval(() => {
+    if (!connected || !connection) {
+      stopKeepalive();
+      return;
+    }
+    try {
+      // Send lightweight ping event — VoiceBar ignores unknown event types
+      connection.write('{"type":"ping"}\n');
+    } catch {
+      // Write failed — connection is dead, trigger reconnect
+      console.error("[socket-client] Keepalive write failed — connection dead");
+      connected = false;
+      connection = null as any;
+      stopKeepalive();
+      scheduleReconnect();
+    }
+  }, KEEPALIVE_INTERVAL_MS);
+}
+
+function stopKeepalive(): void {
+  if (keepaliveTimer) {
+    clearInterval(keepaliveTimer);
+    keepaliveTimer = null;
+  }
+}
+
 // --- Graceful shutdown ---
 
 function cleanup() {
+  stopKeepalive();
   disconnectFromBar();
 }
 

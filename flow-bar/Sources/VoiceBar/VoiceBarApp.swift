@@ -50,6 +50,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.voiceState.setHotkeyPhase(.idle)
         }
     )
+    /// Track when F6 hold started — for minimum recording duration guard.
+    private var holdStartTime: Date?
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
@@ -287,15 +289,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         gestureStateMachine.onHoldStart = { [weak self] in
             guard let self else { return }
-            NSLog("[VoiceBar] Hotkey hold start — starting push-to-talk recording")
+            NSLog("[VoiceBar] Hotkey hold start — starting recording")
+            holdStartTime = Date()
             voiceState.record()
         }
 
-        // Hold end → stop recording
+        // Hold end → stop recording only if held long enough (≥1s for VAD mode).
+        // Short holds let VAD decide when to stop via silence detection.
         gestureStateMachine.onHoldEnd = { [weak self] in
             guard let self else { return }
-            NSLog("[VoiceBar] Hotkey hold end — stopping recording")
-            voiceState.stop()
+            let holdDuration = Date().timeIntervalSince(holdStartTime ?? Date())
+            if holdDuration >= 1.0 {
+                NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
+                voiceState.stop()
+            } else {
+                NSLog("[VoiceBar] Hotkey hold end (%.1fs) — short hold, letting VAD decide", holdDuration)
+                // Don't send stop — VAD silence detection will end recording naturally
+            }
         }
 
         // Single tap is intentionally ignored so double-tap can toggle hands-free mode.
