@@ -1,17 +1,25 @@
 # VoiceLayer
 
-> Singleton MCP daemon that adds voice I/O to AI coding assistants. One process serves every session — no orphans, no contention, no hangs.
+> Your AI agent can't hear you. VoiceLayer gives it ears and a voice.
 
+[![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
+[![Tools](https://img.shields.io/badge/MCP%20tools-11-38BDF8.svg)](#voice-tools)
 [![Tests](https://img.shields.io/badge/tests-536%20passing-brightgreen.svg)](#testing)
-[![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
-[![TypeScript](https://img.shields.io/badge/TypeScript-Bun-black.svg)](https://bun.sh)
-[![Swift](https://img.shields.io/badge/Swift-SwiftUI-orange.svg)](https://developer.apple.com/swiftui/)
 
-VoiceLayer gives Claude Code (and any MCP client) two tools: **`voice_speak`** for text-to-speech and **`voice_ask`** for speech-to-text. It runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process.
+**Voice I/O for AI coding assistants.** Press F6, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
-**Local-first. Free. Open-source.** TTS via edge-tts (Microsoft neural voices, free). STT via whisper.cpp (runs on-device). No cloud APIs required.
+```
+  You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
+         STT (local)           MCP tools         TTS (free)
+```
+
+**Local-first. Free. Open-source.** No cloud APIs, no API keys, no data leaves your machine. Part of the [Golems](https://etanheyman.com) ecosystem.
+
+**[Website](https://voicelayer.etanheyman.com)** | **[Docs](https://etanhey.github.io/voicelayer/docs/)** | **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
+
+VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. 11 MCP tools with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 
 ## Architecture
 
@@ -106,12 +114,28 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 ## Voice Tools
 
-| Tool | Behavior | Blocking | Annotations |
-|------|----------|----------|-------------|
-| **`voice_speak(message)`** | TTS with auto-mode detection. Announce (short), brief (long), consult (question), think (silent log). | No | `readOnly: false`, `destructive: false`, `idempotent: true` |
-| **`voice_ask(message)`** | Speaks question, records mic, transcribes response. Auto-waits for prior audio. 30s default timeout. | Yes | `readOnly: false`, `destructive: false`, `idempotent: false` |
+### Primary tools
 
-All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations) — `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`. No VoiceLayer tools are destructive.
+| Tool | Behavior | Blocking | readOnly | destructive | idempotent |
+|------|----------|:--------:|:--------:|:-----------:|:----------:|
+| **`voice_speak`** | TTS with auto-mode (announce/brief/consult/think), replay, toggle | No | false | false | true |
+| **`voice_ask`** | Speak question + record mic + transcribe response | Yes | false | false | false |
+
+### Backward-compatible aliases
+
+| Alias | Maps to | idempotent |
+|-------|---------|:----------:|
+| `qa_voice_announce` | `voice_speak(mode='announce')` | true |
+| `qa_voice_brief` | `voice_speak(mode='brief')` | true |
+| `qa_voice_consult` | `voice_speak(mode='consult')` | true |
+| `qa_voice_say` | `voice_speak(mode='announce')` | true |
+| `qa_voice_think` | `voice_speak(mode='think')` | false |
+| `qa_voice_replay` | `voice_speak(replay_index=N)` | true |
+| `qa_voice_toggle` | `voice_speak(enabled=bool)` | true |
+| `qa_voice_converse` | `voice_ask` | false |
+| `qa_voice_ask` | `voice_ask` | false |
+
+All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive. All have `openWorldHint: false`.
 
 ### How voice_ask Works
 
@@ -237,6 +261,18 @@ voicelayer/
 |----------|-----|-----|-----------|-----------|
 | **macOS** | edge-tts + afplay | whisper.cpp (CoreML) | sox | SwiftUI app |
 | **Linux** | edge-tts + mpv/ffplay | whisper.cpp | sox | -- |
+
+## Part of Golems
+
+VoiceLayer is one of three open-source MCP servers in the [Golems](https://etanheyman.com) ecosystem:
+
+| Server | What it does | Tools |
+|--------|-------------|:-----:|
+| **[BrainLayer](https://brainlayer.etanheyman.com)** | Persistent memory for AI agents — knowledge graph + hybrid search | 12 |
+| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, F6 push-to-talk | 11 |
+| **[cmuxLayer](https://cmuxlayer.etanheyman.com)** | Terminal orchestration — spawn panes, read screens, coordinate agents | 22 |
+
+Pair with BrainLayer to remember voice conversations across sessions.
 
 ## License
 
