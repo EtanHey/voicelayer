@@ -57,4 +57,6 @@ Total setup time: about 5 minutes. See the [Quick Start](getting-started/quickst
 
 ## Is It Free?
 
-Yes. VoiceLayer is open source (MIT license). All voice processing runs locally on your machine. The only optional cloud component is Wispr Flow for speech-to-text, which requires an API key — but the default whisper.cpp backend is fully local and free.
+Yes. VoiceLayer is open source (Apache-2.0 license). All voice processing runs locally on your machine. The only optional cloud component is Wispr Flow for speech-to-text, which requires an API key — but the default whisper.cpp backend is fully local and free.
+
+VoiceLayer is part of the [Golems](https://etanheyman.com) ecosystem — three open-source MCP servers for memory ([BrainLayer](https://brainlayer.etanheyman.com)), voice (VoiceLayer), and orchestration ([cmuxLayer](https://cmuxlayer.etanheyman.com)).
