@@ -1,6 +1,6 @@
 # MCP Tools Reference
 
-VoiceLayer exposes 2 primary tools. Backward-compat aliases are listed below.
+VoiceLayer exposes 2 primary tools and 9 backward-compat aliases (11 total). All tools include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 
 ## voice_speak
 
@@ -11,6 +11,10 @@ Non-blocking text-to-speech. Speaks a message aloud or logs it silently. Auto-de
 | **Blocking** | No |
 | **Requires mic** | No |
 | **Session booking** | No |
+| **readOnlyHint** | `false` |
+| **destructiveHint** | `false` |
+| **idempotentHint** | `true` |
+| **openWorldHint** | `false` |
 
 **Parameters:**
 
@@ -42,14 +46,19 @@ Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, th
 | **Requires mic** | **Yes** |
 | **Session booking** | **Yes** (auto-books on first call) |
 | **Auto-waits** | **Yes** (waits for prior `voice_speak` playback) |
+| **readOnlyHint** | `false` |
+| **destructiveHint** | `false` |
+| **idempotentHint** | `false` |
+| **openWorldHint** | `false` |
 
 **Parameters:**
 
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `message` | `string` | Yes | — | Question to speak aloud (must be non-empty) |
-| `timeout_seconds` | `number` | No | `300` | Max wait time (clamped to 10-3600) |
-| `silence_mode` | `string` | No | `thoughtful` | `quick`, `standard`, or `thoughtful` |
+| `timeout_seconds` | `number` | No | `30` | Max wait time (clamped to 5-3600) |
+| `silence_mode` | `string` | No | `thoughtful` | `quick` (0.5s), `standard` (1.5s), or `thoughtful` (2.5s) |
+| `press_to_talk` | `boolean` | No | `false` | Push-to-talk mode — no VAD, stop via signal file only |
 
 **Returns (success):** The user's transcribed text (plain string)
 **Returns (timeout):** `[converse] No response received within N seconds.`
@@ -68,17 +77,19 @@ Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, th
 
 ## Backward-Compat Aliases
 
-| Alias | Maps To |
-|-------|---------|
-| `qa_voice_announce` | `voice_speak(mode='announce')` |
-| `qa_voice_brief` | `voice_speak(mode='brief')` |
-| `qa_voice_consult` | `voice_speak(mode='consult')` |
-| `qa_voice_think` | `voice_speak(mode='think')` (uses `thought` param) |
-| `qa_voice_say` | `voice_speak(mode='announce')` |
-| `qa_voice_replay` | `voice_speak(replay_index=N)` |
-| `qa_voice_toggle` | `voice_speak(enabled=bool)` |
-| `qa_voice_converse` | `voice_ask` |
-| `qa_voice_ask` | `voice_ask` |
+All aliases share `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`.
+
+| Alias | Maps To | idempotent |
+|-------|---------|:----------:|
+| `qa_voice_announce` | `voice_speak(mode='announce')` | true |
+| `qa_voice_brief` | `voice_speak(mode='brief')` | true |
+| `qa_voice_consult` | `voice_speak(mode='consult')` | true |
+| `qa_voice_say` | `voice_speak(mode='announce')` | true |
+| `qa_voice_think` | `voice_speak(mode='think')` (uses `thought` param) | false |
+| `qa_voice_replay` | `voice_speak(replay_index=N)` | true |
+| `qa_voice_toggle` | `voice_speak(enabled=bool)` | true |
+| `qa_voice_converse` | `voice_ask` | false |
+| `qa_voice_ask` | `voice_ask` | false |
 
 ---
 
