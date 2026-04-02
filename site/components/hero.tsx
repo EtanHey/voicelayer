@@ -41,26 +41,32 @@ export function Hero() {
 
       <div className="mx-auto max-w-[960px] px-6 relative">
         <h1 className="font-display text-[clamp(40px,6vw,68px)] font-bold tracking-[-0.035em] leading-[1.08] mb-6 max-w-[720px] mx-auto hero-fade">
-          Press F6. Speak.
+          Talk to your
           <br />
-          <em className="italic text-accent">Ship.</em>
+          <em className="italic text-accent">agents.</em>
         </h1>
 
-        <p className="text-[17px] text-text-secondary max-w-[520px] mx-auto mb-10 leading-[1.65] font-light hero-fade hero-fade-d1">
-          Hands-free coding for macOS. Hold F6, dictate to your AI in natural
-          speech, get on-device transcription in under two seconds. Your AI
-          speaks back. You never leave your editor.
+        <p className="text-[17px] text-text-secondary max-w-[520px] mx-auto mb-4 leading-[1.65] font-light hero-fade hero-fade-d1">
+          You type 40 words per minute. You speak 150. VoiceLayer adds voice to
+          Claude Code, Cursor, and every MCP client. Press F6. Speak. Ship.
         </p>
 
-        <div className="flex items-center justify-center gap-3 mb-14 hero-fade hero-fade-d2">
+        <p className="text-[13px] text-text-dim tracking-[0.06em] uppercase mb-10 hero-fade hero-fade-d1">
+          free &middot; open source &middot; local-first &middot; no cloud
+        </p>
+
+        <div className="flex items-center justify-center gap-3 mb-14 hero-fade hero-fade-d2 flex-wrap">
           <a
             href="#setup"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-sm font-medium bg-text text-bg hover:shadow-[0_0_24px_rgba(250,250,249,0.15)] transition-all hover:scale-[1.03] active:scale-[0.98]"
           >
             Get started
           </a>
+          <CopyBlock text="bun add -g voicelayer-mcp" />
           <a
             href="https://github.com/EtanHey/voicelayer"
+            target="_blank"
+            rel="noopener"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-sm font-medium text-text-secondary border border-border hover:text-text hover:border-border-hover transition-all hover:scale-[1.03] active:scale-[0.98]"
           >
             <GithubIcon /> View source
