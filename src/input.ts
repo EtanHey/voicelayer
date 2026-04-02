@@ -424,21 +424,27 @@ export async function recordToBuffer(
         recorder.stdout as ReadableStream<Uint8Array>
       ).getReader();
 
-      const processAudio = async () => {
+      // R66 Fix 1: Decouple pipe reading from VAD processing.
+      // ONNX inference (5-50ms) in processVADChunk blocks reader.read(),
+      // causing Bun to recycle pipe buffers before JS consumes them → rms=0.
+      // Split into: pipeReader (tight loop, no ONNX awaits) + chunkProcessor (VAD).
+      const chunkQueue: Uint8Array[] = [];
+      let readerDone = false;
+
+      // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
+      const pipeReader = async () => {
         while (!resolved) {
           const { value, done } = await reader.read();
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
 
-          // Defensive copy: Bun may recycle the underlying ArrayBuffer between reads.
-          // Without copying, stored references read stale/zeroed data. (R65 root cause)
+          // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
           const safeCopy = new Uint8Array(value);
           readBuffer.push(safeCopy);
           readBufferLen += safeCopy.length;
 
-          // Process chunks: read at native rate, resample to 16kHz for VAD
-          while (readBufferLen >= nativeChunkBytes && !resolved) {
-            // Flatten only when needed
+          // Extract native-rate chunks and resample to 16kHz — NO async here
+          while (readBufferLen >= nativeChunkBytes) {
             const flat = new Uint8Array(readBufferLen);
             let off = 0;
             for (const buf of readBuffer) {
@@ -450,100 +456,110 @@ export async function recordToBuffer(
             readBuffer = remainder.length > 0 ? [remainder] : [];
             readBufferLen = remainder.length;
 
-            // Resample to 16kHz if needed (for VAD + STT compatibility)
             const chunk = needsResample
               ? resamplePCM16(nativeChunk, nativeRate, SAMPLE_RATE)
               : nativeChunk;
+            chunkQueue.push(chunk);
+          }
+        }
+        readerDone = true;
+      };
 
-            // Always accumulate 16kHz audio data
-            pcmChunks.push(chunk);
-            totalPcmBytes += chunk.byteLength;
-            totalChunksProcessed++;
+      // chunkProcessor: runs VAD on queued chunks (can take its time)
+      const chunkProcessor = async () => {
+        while (!resolved) {
+          if (chunkQueue.length === 0) {
+            if (readerDone) break;
+            await Bun.sleep(1);
+            continue;
+          }
+          const chunk = chunkQueue.shift()!;
 
-            // Broadcast audio level every ~100ms (3 chunks × 32ms)
-            if (totalChunksProcessed % 3 === 0) {
-              const rmsRaw = calculateRMS(chunk);
-              // Normalize: practical speech max ~8000 (16-bit audio)
-              const rmsNormalized = Math.min(1.0, rmsRaw / 8000);
-              broadcast({
-                type: "audio_level",
-                rms: Math.round(rmsNormalized * 100) / 100,
-              });
+          pcmChunks.push(chunk);
+          totalPcmBytes += chunk.byteLength;
+          totalChunksProcessed++;
+
+          // Broadcast audio level every ~100ms (3 chunks × 32ms)
+          if (totalChunksProcessed % 3 === 0) {
+            const rmsRaw = calculateRMS(chunk);
+            const rmsNormalized = Math.min(1.0, rmsRaw / 8000);
+            broadcast({
+              type: "audio_level",
+              rms: Math.round(rmsNormalized * 100) / 100,
+            });
+          }
+
+          if (pressToTalk) {
+            chunkedSession?.pushChunk(chunk, true);
+            if (hasStopSignal()) {
+              clearStopSignal();
+              console.error(
+                "[voicelayer] Stop signal received — ending PTT recording",
+              );
+              finish();
+              return;
+            }
+          } else {
+            // VAD: ONNX inference happens here, decoupled from pipe reader
+            const speechProb = await processVADChunk(chunk);
+            const speechDetected = isSpeech(speechProb);
+            chunkedSession?.pushChunk(chunk, speechDetected);
+
+            // Log first 3 chunks for diagnostics
+            if (totalChunksProcessed <= 3) {
+              const rms = calculateRMS(chunk);
+              console.error(
+                `[voicelayer] VAD chunk #${totalChunksProcessed}: prob=${speechProb.toFixed(4)} rms=${rms.toFixed(0)}`,
+              );
             }
 
-            if (pressToTalk) {
-              chunkedSession?.pushChunk(chunk, true);
-              // PTT mode: no VAD, only stop on user signal or timeout
-              if (hasStopSignal()) {
-                clearStopSignal();
-                console.error(
-                  "[voicelayer] Stop signal received — ending PTT recording",
-                );
-                finish();
-                return;
+            if (speechDetected) {
+              if (!hasSpeech) {
+                broadcast({ type: "speech", detected: true });
               }
+              hasSpeech = true;
+              consecutiveSilentChunks = 0;
             } else {
-              // VAD mode: run Silero VAD on this chunk
-              const speechProb = await processVADChunk(chunk);
-              const speechDetected = isSpeech(speechProb);
-              chunkedSession?.pushChunk(chunk, speechDetected);
+              consecutiveSilentChunks++;
+            }
 
-              // Log first 3 chunks for diagnostics (verifies audio data is non-zero)
-              if (totalChunksProcessed <= 3) {
-                const rms = calculateRMS(chunk);
-                console.error(
-                  `[voicelayer] VAD chunk #${totalChunksProcessed}: prob=${speechProb.toFixed(4)} rms=${rms.toFixed(0)}`,
-                );
-              }
+            if (hasStopSignal()) {
+              clearStopSignal();
+              console.error(
+                "[voicelayer] Stop signal received — ending recording",
+              );
+              finish();
+              return;
+            }
 
-              if (speechDetected) {
-                if (!hasSpeech) {
-                  // First speech detection — notify Voice Bar
-                  broadcast({ type: "speech", detected: true });
-                }
-                hasSpeech = true;
-                consecutiveSilentChunks = 0;
-              } else {
-                consecutiveSilentChunks++;
-              }
+            if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
+              console.error(
+                `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
+              );
+              finish();
+              return;
+            }
 
-              // Check for user-initiated stop signal — ALWAYS, regardless of speech state
-              // AIDEV-NOTE: Previously gated on hasSpeech, which meant user couldn't
-              // stop recording before speaking. Fixed: stop signal is unconditional.
-              if (hasStopSignal()) {
-                clearStopSignal();
-                console.error(
-                  "[voicelayer] Stop signal received — ending recording",
-                );
-                finish();
-                return;
-              }
-
-              // VAD-based silence stop (only after speech was detected)
-              if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
-                console.error(
-                  `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
-                );
-                finish();
-                return;
-              }
-
-              // Pre-speech timeout: if no speech detected within N seconds, give up
-              if (!hasSpeech && totalChunksProcessed >= preSpeechChunks) {
-                console.error(
-                  `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
-                );
-                finish();
-                return;
-              }
+            if (!hasSpeech && totalChunksProcessed >= preSpeechChunks) {
+              console.error(
+                `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
+              );
+              finish();
+              return;
             }
           }
         }
       };
 
-      processAudio().catch((err) => {
-        finish(err instanceof Error ? err : new Error(String(err)));
-      });
+      // Run reader and processor concurrently
+      Promise.all([
+        pipeReader().catch((err) =>
+          finish(err instanceof Error ? err : new Error(String(err))),
+        ),
+        chunkProcessor().catch((err) =>
+          finish(err instanceof Error ? err : new Error(String(err))),
+        ),
+      ]);
     } catch (err) {
       finish(err instanceof Error ? err : new Error(String(err)));
     }
