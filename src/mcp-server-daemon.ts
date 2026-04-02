@@ -28,6 +28,7 @@ import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
+import { initEnrichedPATH } from "./resolve-binary";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -65,6 +66,13 @@ const toolDispatch: Record<
 // --- Startup ---
 
 async function main() {
+  // Enrich PATH before any binary resolution — captures login shell PATH
+  // for LaunchAgent/VoiceBar context where /opt/homebrew/bin is missing
+  const enrichedPath = initEnrichedPATH();
+  console.error(
+    `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
+  );
+
   // Acquire process lock (kills orphans)
   const lockResult = acquireProcessLock();
   if (lockResult.killedStale) {

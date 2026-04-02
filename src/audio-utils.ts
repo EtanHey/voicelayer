@@ -5,6 +5,8 @@
  * while input.ts imported getBackend from stt.ts.
  */
 
+import { resolveBinary } from "./resolve-binary";
+
 const BYTES_PER_SAMPLE = 2;
 
 /**
@@ -47,7 +49,10 @@ export function detectNativeSampleRate(): number {
     // AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
     // the full audio stream and blocks forever. trim 0 0 opens the device, prints
     // the preamble (with Sample Rate), then exits immediately.
-    const probe = Bun.spawnSync(["rec", "-n", "trim", "0", "0"], {
+    const recBin =
+      resolveBinary("rec", ["/opt/homebrew/bin/rec", "/usr/local/bin/rec"]) ||
+      "rec";
+    const probe = Bun.spawnSync([recBin, "-n", "trim", "0", "0"], {
       stdout: "pipe",
       stderr: "pipe",
     });
