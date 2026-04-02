@@ -21,6 +21,7 @@ import { handleSocketCommand } from "./socket-handlers";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import { DAEMON_PID_FILE } from "./paths";
+import { initEnrichedPATH } from "./resolve-binary";
 
 const LOG_PREFIX = "[voicelayer-serve]";
 
@@ -39,7 +40,8 @@ export function createShutdownHandler(deps?: {
   exit?: (code: number) => never | void;
 }) {
   const disconnect = deps?.disconnect ?? disconnectFromBar;
-  const releaseLock = deps?.releaseLock ?? (() => releaseProcessLock(DAEMON_PID_FILE));
+  const releaseLock =
+    deps?.releaseLock ?? (() => releaseProcessLock(DAEMON_PID_FILE));
   const exit = deps?.exit ?? process.exit;
   let shutDown = false;
 
@@ -55,6 +57,13 @@ export function createShutdownHandler(deps?: {
 }
 
 async function main() {
+  // 0. Enrich PATH before any binary resolution — captures login shell PATH
+  // for VoiceBar-spawned context where /opt/homebrew/bin is missing
+  const enrichedPath = initEnrichedPATH();
+  console.error(
+    `${LOG_PREFIX} PATH enriched (${enrichedPath.split(":").length} dirs)`,
+  );
+
   // 1. Acquire daemon-specific process lock (separate from MCP PID)
   const lockResult = acquireProcessLock(DAEMON_PID_FILE);
   if (lockResult.killedStale) {
