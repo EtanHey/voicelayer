@@ -2,6 +2,7 @@ import { Nav } from "@/components/shared/nav";
 import { Footer } from "@/components/shared/footer";
 import { Hero } from "@/components/hero";
 import { Stats } from "@/components/stats";
+import { Comparison } from "@/components/comparison";
 import { Features } from "@/components/features";
 import { Pipeline } from "@/components/pipeline";
 import { Integrations } from "@/components/integrations";
@@ -33,6 +34,7 @@ export default function Home() {
       />
       <Hero />
       <Stats />
+      <Comparison />
       <Features />
       <Pipeline />
       <VoiceDemoLoader />
