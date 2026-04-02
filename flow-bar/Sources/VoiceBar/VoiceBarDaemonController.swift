@@ -18,7 +18,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
         if let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
             return VoiceBarDaemonLaunchConfiguration(
                 launchPath: "/usr/bin/env",
-                arguments: ["bun", "run", "\(repoRoot)/src/daemon.ts"],
+                arguments: ["bun", "run", "\(repoRoot)/src/mcp-server-daemon.ts"],
                 workingDirectory: repoRoot
             )
         }
@@ -29,7 +29,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .appendingPathComponent("Resources")
         let bundledDaemon = resourcesDirectory
             .appendingPathComponent("src")
-            .appendingPathComponent("daemon.ts")
+            .appendingPathComponent("mcp-server-daemon.ts")
             .path
 
         guard fileExists(bundledDaemon) else { return nil }
@@ -64,7 +64,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
                 return nil
             }
             let packagePath = candidate.appendingPathComponent("flow-bar/Package.swift").path
-            let daemonPath = candidate.appendingPathComponent("src/daemon.ts").path
+            let daemonPath = candidate.appendingPathComponent("src/mcp-server-daemon.ts").path
             if fileExists(packagePath), fileExists(daemonPath) {
                 return candidatePath
             }
@@ -76,7 +76,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 
 enum VoiceBarDaemonLivenessProbe {
     static let freshSessionCheckCommand =
-        "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-daemon.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
+        "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-mcp.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
 
     static func isDaemonRunning(
         pidFilePath: String = VoiceLayerPaths.daemonPIDPath,
