@@ -36,13 +36,22 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://voicelayer.etanheyman.com",
     siteName: "VoiceLayer",
+    images: [
+      {
+        url: "/og.png",
+        width: 1200,
+        height: 630,
+        alt: "VoiceLayer — Voice I/O for AI agents",
+      },
+    ],
   },
   twitter: {
-    card: "summary",
+    card: "summary_large_image",
     title: "VoiceLayer — Native Voice I/O for AI Coding Assistants",
     description:
       "Press F6. Speak. Ship. On-device whisper.cpp STT, edge-tts cloud TTS. Works with any MCP client.",
     creator: "@EtanHey",
+    images: ["/og.png"],
   },
   icons: {
     icon: {
