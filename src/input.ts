@@ -49,6 +49,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { applyRules } from "./rules-engine";
+import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
   mergeChunkTranscripts,
@@ -269,9 +270,12 @@ export async function recordToBuffer(
     ? Infinity
     : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
 
-  // Check that rec (sox) is available
-  const which = Bun.spawnSync(["which", "rec"]);
-  if (which.exitCode !== 0) {
+  // Resolve rec (sox) binary — probes Homebrew paths for daemon/LaunchAgent context
+  const recPath = resolveBinary("rec", [
+    "/opt/homebrew/bin/rec",
+    "/usr/local/bin/rec",
+  ]);
+  if (!recPath) {
     throw new Error(
       "sox not installed. Install:\n" +
         "  macOS: brew install sox\n" +
@@ -356,7 +360,7 @@ export async function recordToBuffer(
       // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
       recorder = Bun.spawn(
         [
-          "rec",
+          recPath,
           "-r",
           String(nativeRate),
           "-c",
