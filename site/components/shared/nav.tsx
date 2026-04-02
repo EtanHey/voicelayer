@@ -48,13 +48,23 @@ export function Nav({ product, links, githubUrl }: NavProps) {
       style={{ background: "rgba(9, 9, 11, 0.8)" }}
     >
       <div className="mx-auto max-w-[960px] px-6 flex items-center justify-between">
-        <a
-          href="#"
-          className="flex items-center gap-2.5 no-underline text-text font-sans font-semibold text-base tracking-tight opacity-90 hover:opacity-100 transition-opacity"
-        >
-          <VoiceLayerLogo />
-          {current.name}
-        </a>
+        <div className="flex items-center gap-3">
+          <a
+            href="#"
+            className="flex items-center gap-2.5 no-underline text-text font-sans font-semibold text-base tracking-tight opacity-90 hover:opacity-100 transition-opacity"
+          >
+            <VoiceLayerLogo />
+            {current.name}
+          </a>
+          <a
+            href="https://etanheyman.com"
+            target="_blank"
+            rel="noopener"
+            className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-border text-[11px] text-text-dim no-underline hover:text-text-secondary hover:border-border-hover transition-colors"
+          >
+            Golems {"\u2197"}
+          </a>
+        </div>
         <div className="flex items-center gap-6">
           {links.map((link) => {
             const isExternal = link.href.startsWith("http");
