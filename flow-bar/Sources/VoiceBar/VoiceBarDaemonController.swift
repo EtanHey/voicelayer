@@ -11,14 +11,34 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
     let arguments: [String]
     let workingDirectory: String
 
+    /// Resolve the full path to the `bun` binary.
+    /// CRITICAL: Must NOT use /usr/bin/env as launchPath — env creates an intermediate
+    /// process that exits, orphaning the daemon to launchd (PPID=1). Orphaned processes
+    /// lose TCC mic permission inheritance from VoiceBar.
+    private static func resolveBunPath(
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> String? {
+        let candidates = [
+            NSHomeDirectory() + "/.bun/bin/bun",
+            "/opt/homebrew/bin/bun",
+            "/usr/local/bin/bun",
+        ]
+        return candidates.first(where: fileExists)
+    }
+
     static func configuration(
         for executableURL: URL,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> VoiceBarDaemonLaunchConfiguration? {
+        guard let bunPath = resolveBunPath(fileExists: fileExists) else {
+            NSLog("[VoiceBar] Cannot find bun binary")
+            return nil
+        }
+
         if let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
             return VoiceBarDaemonLaunchConfiguration(
-                launchPath: "/usr/bin/env",
-                arguments: ["bun", "run", "\(repoRoot)/src/mcp-server-daemon.ts"],
+                launchPath: bunPath,
+                arguments: ["run", "\(repoRoot)/src/mcp-server-daemon.ts"],
                 workingDirectory: repoRoot
             )
         }
@@ -34,8 +54,8 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 
         guard fileExists(bundledDaemon) else { return nil }
         return VoiceBarDaemonLaunchConfiguration(
-            launchPath: "/usr/bin/env",
-            arguments: ["bun", "run", bundledDaemon],
+            launchPath: bunPath,
+            arguments: ["run", bundledDaemon],
             workingDirectory: resourcesDirectory.path
         )
     }
