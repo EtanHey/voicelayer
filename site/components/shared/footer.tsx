@@ -3,7 +3,7 @@ type Product = "voicelayer" | "brainlayer" | "cmuxlayer";
 const SIBLINGS: Record<Product, { label: string; href: string }[]> = {
   voicelayer: [
     { label: "GitHub", href: "https://github.com/EtanHey/voicelayer" },
-    { label: "Docs", href: "https://etanhey.github.io/voicelayer/" },
+    { label: "Docs", href: "https://etanhey.github.io/voicelayer/docs/" },
     { label: "npm", href: "https://npmjs.com/package/voicelayer-mcp" },
     { label: "cmuxLayer", href: "https://cmuxlayer.etanheyman.com" },
     { label: "BrainLayer", href: "https://brainlayer.etanheyman.com" },
