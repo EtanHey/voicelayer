@@ -1,8 +1,15 @@
 # VoiceLayer
 
-> Voice I/O layer for AI coding assistants — local TTS, STT, session booking.
+> Your AI agent can't hear you. VoiceLayer gives it ears and a voice.
 
-VoiceLayer adds **voice input and output** to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io). Speak questions aloud, record voice responses, and transcribe locally with whisper.cpp — all inside your terminal.
+**Voice I/O for AI coding assistants.** You type 40 words per minute. You speak 150. VoiceLayer adds voice input and output to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and any [MCP](https://modelcontextprotocol.io) client. Press F6, speak, ship.
+
+```
+  You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
+         STT (local)           MCP tools         TTS (free)
+```
+
+**Local-first. Free. Open-source.** No cloud APIs, no API keys, no data leaves your machine. Part of the [Golems](https://etanheyman.com) ecosystem.
 
 ## Why VoiceLayer?
 
@@ -38,18 +45,20 @@ Claude Code  ─── MCP ───>  VoiceLayer
 
 ## Voice Tools
 
-| Tool | What It Does | Blocking |
-|------|-------------|----------|
-| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think from message | No |
-| **voice_ask** | Blocking voice Q&A — speak question, record + transcribe response | Yes |
+| Tool | What It Does | Blocking | readOnly | destructive | idempotent |
+|------|-------------|:--------:|:--------:|:-----------:|:----------:|
+| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think | No | false | false | true |
+| **voice_ask** | Blocking voice Q&A — speak question, record + transcribe | Yes | false | false | false |
 
-Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), [Consult](modes/consult.md), [Converse](modes/converse.md), [Think](modes/think.md). Old `qa_voice_*` names still work as backward-compat aliases.
+All 11 tools (2 primary + 9 backward-compat aliases) include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive.
+
+Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), [Consult](modes/consult.md), [Converse](modes/converse.md), [Think](modes/think.md). Full reference: [MCP Tools Reference](tools-reference.md).
 
 ## Key Features
 
 - **100% local STT** — whisper.cpp on Apple Silicon, no cloud dependency
 - **Session booking** — lockfile mutex prevents mic conflicts between sessions
-- **User-controlled stop** — `touch /tmp/voicelayer-stop`, or Silero VAD silence detection (quick 0.5s, standard 1.5s, thoughtful 2.5s)
+- **User-controlled stop** — `touch ~/.local/state/voicelayer/stop-{token}`, or Silero VAD silence detection (quick 0.5s, standard 1.5s, thoughtful 2.5s)
 - **Per-mode speech rates** — announce is snappy (+10%), brief is slow (-10%)
 - **Auto-slowdown** — long text automatically gets slower speech rate
 - **Cross-platform** — macOS and Linux support
