@@ -7,6 +7,7 @@ import { Features } from "@/components/features";
 import { Pipeline } from "@/components/pipeline";
 import { Integrations } from "@/components/integrations";
 import { Cta } from "@/components/cta";
+import { VoiceBar } from "@/components/voicebar";
 import { VoiceDemoLoader } from "@/components/voice-demo-loader";
 
 const NAV_LINKS = [
@@ -41,6 +42,8 @@ export default function Home() {
       <Divider />
       <Integrations />
       <Cta />
+      <Divider />
+      <VoiceBar />
       <Footer product="voicelayer" />
     </>
   );
