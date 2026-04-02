@@ -1,9 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.etanhey/voicelayer",
-  "title": "VoiceLayer — Voice I/O for AI Coding Assistants",
-  "description": "Voice input/output layer for Claude Code via MCP. 5 modes: announce, brief, consult, converse, think. Local TTS (edge-tts), local STT (whisper.cpp), session booking.",
-  "version": "1.0.0",
+  "title": "VoiceLayer",
+  "description": "Voice I/O for AI agents — local TTS via edge-tts, on-device STT via whisper.cpp. 11 MCP tools with ToolAnnotations. Press F6, speak, ship. No cloud, no API keys.",
+  "version": "2.0.0",
+  "websiteUrl": "https://voicelayer.etanheyman.com",
   "repository": {
     "url": "https://github.com/EtanHey/voicelayer",
     "source": "github"
@@ -11,14 +12,13 @@
   "packages": [
     {
       "registryType": "npm",
-      "registryBaseUrl": "https://www.npmjs.com",
+      "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "voicelayer-mcp",
-      "version": "1.0.0",
+      "version": "2.0.0",
       "runtimeHint": "bunx",
       "transport": {
         "type": "stdio"
       },
-      "packageArguments": [],
       "environmentVariables": [
         {
           "name": "QA_VOICE_STT_BACKEND",
