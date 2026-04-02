@@ -163,6 +163,18 @@ final class VoiceState {
 
     func stop() {
         sendCommand?(["cmd": "stop"])
+        // Reset local state after a short delay if daemon doesn't respond.
+        // Prevents UI stuck in "listening" when no daemon handles the stop.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if mode == .recording {
+                mode = .idle
+                onModeChange?(.idle)
+                barInitiatedRecording = false
+                resetAudioLevels()
+                startCollapseTimer()
+            }
+        }
     }
 
     func dismissError() {
