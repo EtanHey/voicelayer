@@ -53,18 +53,16 @@ final class FloatingPillPanel: NSPanel {
         true
     }
 
-    /// Override sendEvent to ensure first clicks pass through to SwiftUI buttons.
-    /// Without this, the first tap on the collapsed dot may be consumed by the panel.
+    /// Override sendEvent to handle right-click context menu.
+    /// Note: removed makeKey() on left click — it was stealing focus from the
+    /// user's active app. .nonactivatingPanel + canBecomeKey=true is sufficient
+    /// for SwiftUI buttons to respond without activation.
     override func sendEvent(_ event: NSEvent) {
         if event.type == .rightMouseDown,
            let contentView,
            let menu = contextMenuProvider?() {
             NSMenu.popUpContextMenu(menu, with: event, for: contentView)
             return
-        }
-        // Force key status before processing mouse events so buttons respond immediately
-        if event.type == .leftMouseDown, !isKeyWindow {
-            makeKey()
         }
         super.sendEvent(event)
     }
