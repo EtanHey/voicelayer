@@ -11,14 +11,34 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
     let arguments: [String]
     let workingDirectory: String
 
+    /// Resolve the full path to the `bun` binary.
+    /// CRITICAL: Must NOT use /usr/bin/env as launchPath — env creates an intermediate
+    /// process that exits, orphaning the daemon to launchd (PPID=1). Orphaned processes
+    /// lose TCC mic permission inheritance from VoiceBar.
+    private static func resolveBunPath(
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+    ) -> String? {
+        let candidates = [
+            NSHomeDirectory() + "/.bun/bin/bun",
+            "/opt/homebrew/bin/bun",
+            "/usr/local/bin/bun",
+        ]
+        return candidates.first(where: fileExists)
+    }
+
     static func configuration(
         for executableURL: URL,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     ) -> VoiceBarDaemonLaunchConfiguration? {
+        guard let bunPath = resolveBunPath(fileExists: fileExists) else {
+            NSLog("[VoiceBar] Cannot find bun binary")
+            return nil
+        }
+
         if let repoRoot = repositoryRoot(for: executableURL, fileExists: fileExists) {
             return VoiceBarDaemonLaunchConfiguration(
-                launchPath: "/usr/bin/env",
-                arguments: ["bun", "run", "\(repoRoot)/src/mcp-server-daemon.ts"],
+                launchPath: bunPath,
+                arguments: ["run", "\(repoRoot)/src/mcp-server-daemon.ts"],
                 workingDirectory: repoRoot
             )
         }
@@ -34,8 +54,8 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 
         guard fileExists(bundledDaemon) else { return nil }
         return VoiceBarDaemonLaunchConfiguration(
-            launchPath: "/usr/bin/env",
-            arguments: ["bun", "run", bundledDaemon],
+            launchPath: bunPath,
+            arguments: ["run", bundledDaemon],
             workingDirectory: resourcesDirectory.path
         )
     }
@@ -53,10 +73,6 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             }
         }
 
-        // Walk up from the executable looking for the repo root.
-        // Cap at 10 levels to prevent runaway traversal when running
-        // from /Applications (URL.deletingLastPathComponent can produce
-        // /../.. paths that never converge on macOS).
         var candidate = executableURL.deletingLastPathComponent()
         for _ in 0 ..< 10 {
             let candidatePath = candidate.path
@@ -94,6 +110,16 @@ enum VoiceBarDaemonLivenessProbe {
     }
 }
 
+// MARK: - Daemon Controller (Ollama pattern: spawn → monitor → restart)
+
+/// Manages the MCP daemon as a CHILD process of VoiceBar.
+///
+/// CRITICAL: The daemon MUST remain a child of VoiceBar (not orphaned to launchd)
+/// so it inherits VoiceBar's TCC microphone permission. If PPID becomes 1 (launchd),
+/// macOS silently denies mic access and sox records silence (rms=0).
+///
+/// Pattern from Ollama: menu bar app spawns server, monitors via terminationHandler,
+/// restarts on crash with exponential backoff.
 final class VoiceBarDaemonController {
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
@@ -102,6 +128,19 @@ final class VoiceBarDaemonController {
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
+    private var restartCount = 0
+    private var stopping = false
+
+    /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
+    private static let daemonPATH: String = {
+        let base = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+        let extras = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+        var parts = base.split(separator: ":").map(String.init)
+        for extra in extras where !parts.contains(extra) {
+            parts.insert(extra, at: 0)
+        }
+        return parts.joined(separator: ":")
+    }()
 
     init(
         executableURLProvider: @escaping () -> URL? = {
@@ -122,11 +161,23 @@ final class VoiceBarDaemonController {
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
-        if livenessProbe() {
-            ownsLaunchedProcess = false
+        // If we already own a running child, skip
+        if let process, process.isRunning {
             return .alreadyRunning
         }
 
+        // If another daemon is running (e.g., from LaunchAgent or manual start),
+        // don't fight it — but warn that it may not have mic permission
+        if livenessProbe() {
+            ownsLaunchedProcess = false
+            NSLog("[VoiceBar] External daemon already running — mic may not work (TCC inheritance)")
+            return .alreadyRunning
+        }
+
+        return launch()
+    }
+
+    private func launch() -> VoiceBarDaemonActivationResult {
         guard let executableURL = executableURLProvider(),
               let configuration = configurationProvider(executableURL)
         else {
@@ -134,27 +185,64 @@ final class VoiceBarDaemonController {
             return .unavailable
         }
 
-        let process = processFactory()
-        process.executableURL = URL(fileURLWithPath: configuration.launchPath)
-        process.arguments = configuration.arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
+        let proc = processFactory()
+        proc.executableURL = URL(fileURLWithPath: configuration.launchPath)
+        proc.arguments = configuration.arguments
+        proc.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
+
+        // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = Self.daemonPATH
+        proc.environment = env
+
+        // Monitor: restart on crash (non-zero exit), don't restart on clean exit
+        proc.terminationHandler = { [weak self] terminated in
+            guard let self, !stopping else { return }
+            let code = terminated.terminationStatus
+            let reason = terminated.terminationReason
+
+            if code == 0 {
+                NSLog("[VoiceBar] Daemon exited cleanly (code 0)")
+                ownsLaunchedProcess = false
+                return
+            }
+
+            NSLog("[VoiceBar] Daemon crashed (code %d, reason %d) — scheduling restart #%d",
+                  code, reason.rawValue, restartCount + 1)
+
+            // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
+            restartCount += 1
+            let delay = min(15.0, pow(2.0, Double(restartCount - 1)))
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !stopping else { return }
+                NSLog("[VoiceBar] Restarting daemon (attempt %d, after %.0fs)", restartCount, delay)
+                _ = launch()
+            }
+        }
 
         do {
-            try process.run()
-            self.process = process
+            try proc.run()
+            process = proc
             ownsLaunchedProcess = true
+            NSLog("[VoiceBar] Daemon launched as child (PID %d, PPID %d)",
+                  proc.processIdentifier, ProcessInfo.processInfo.processIdentifier)
             return .launched
         } catch {
-            self.process = nil
+            NSLog("[VoiceBar] Failed to launch daemon: %@", error.localizedDescription)
+            process = nil
             ownsLaunchedProcess = false
             return .unavailable
         }
     }
 
     func stop() {
-        guard ownsLaunchedProcess else { return }
-        process?.terminate()
-        process = nil
+        stopping = true
+        guard ownsLaunchedProcess, let process else { return }
+        if process.isRunning {
+            process.terminate()
+        }
+        self.process = nil
         ownsLaunchedProcess = false
     }
 }
