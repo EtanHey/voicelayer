@@ -430,9 +430,11 @@ export async function recordToBuffer(
           if (done || resolved) break;
           if (!value || value.length === 0) continue;
 
-          // Append incoming bytes to read buffer
-          readBuffer.push(value);
-          readBufferLen += value.length;
+          // Defensive copy: Bun may recycle the underlying ArrayBuffer between reads.
+          // Without copying, stored references read stale/zeroed data. (R65 root cause)
+          const safeCopy = new Uint8Array(value);
+          readBuffer.push(safeCopy);
+          readBufferLen += safeCopy.length;
 
           // Process chunks: read at native rate, resample to 16kHz for VAD
           while (readBufferLen >= nativeChunkBytes && !resolved) {
@@ -485,6 +487,14 @@ export async function recordToBuffer(
               const speechProb = await processVADChunk(chunk);
               const speechDetected = isSpeech(speechProb);
               chunkedSession?.pushChunk(chunk, speechDetected);
+
+              // Log first 3 chunks for diagnostics (verifies audio data is non-zero)
+              if (totalChunksProcessed <= 3) {
+                const rms = calculateRMS(chunk);
+                console.error(
+                  `[voicelayer] VAD chunk #${totalChunksProcessed}: prob=${speechProb.toFixed(4)} rms=${rms.toFixed(0)}`,
+                );
+              }
 
               if (speechDetected) {
                 if (!hasSpeech) {
