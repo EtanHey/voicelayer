@@ -15,6 +15,7 @@ import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
+import { resolveBinary } from "./resolve-binary";
 import {
   getInitialPrompt,
   getLanguageConfig,
@@ -36,7 +37,10 @@ export interface STTTranscribeOptions {
 export interface STTBackend {
   name: string;
   isAvailable(): Promise<boolean>;
-  transcribe(audioPath: string, options?: STTTranscribeOptions): Promise<STTResult>;
+  transcribe(
+    audioPath: string,
+    options?: STTTranscribeOptions,
+  ): Promise<STTResult>;
 }
 
 export function buildChunkPrompt(text: string, maxWords = 24): string {
@@ -46,10 +50,7 @@ export function buildChunkPrompt(text: string, maxWords = 24): string {
 }
 
 function normalizeChunkWords(text: string): string[] {
-  return text
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
+  return text.trim().split(/\s+/).filter(Boolean);
 }
 
 export function mergeChunkTranscripts(chunks: string[]): string {
@@ -97,13 +98,14 @@ const MODEL_SEARCH_PATHS = [
 /** Known binary names in preference order (v1.8.3+ renamed to whisper-cli) */
 const WHISPER_BINARY_NAMES = ["whisper-cli", "whisper-cpp"];
 
-/** Find whisper-cpp binary path. Returns null if not found. */
+/** Find whisper-cpp binary path. Probes Homebrew paths for daemon context. */
 function findWhisperBinary(): string | null {
   for (const name of WHISPER_BINARY_NAMES) {
-    const result = Bun.spawnSync(["which", name]);
-    if (result.exitCode === 0) {
-      return result.stdout.toString().trim();
-    }
+    const resolved = resolveBinary(name, [
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+    ]);
+    if (resolved) return resolved;
   }
   return null;
 }

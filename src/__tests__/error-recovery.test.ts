@@ -35,24 +35,32 @@ mock.module("../paths", () => ({
 }));
 
 // Override Bun.spawnSync to simulate sox not found
+// Must block both `which rec` AND direct path probes (resolveBinary pattern)
 const realSpawnSync = Bun.spawnSync;
 let blockSox = false;
 
 // @ts-expect-error — overriding for test
 Bun.spawnSync = function (...args: any[]) {
   const cmd = args[0];
-  if (
-    blockSox &&
-    Array.isArray(cmd) &&
-    cmd[0] === "which" &&
-    cmd[1] === "rec"
-  ) {
-    return {
-      exitCode: 1,
-      stdout: new Uint8Array(),
-      stderr: new Uint8Array(),
-      success: false,
-    };
+  if (blockSox && Array.isArray(cmd)) {
+    // Block `which rec`
+    if (cmd[0] === "which" && cmd[1] === "rec") {
+      return {
+        exitCode: 1,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+        success: false,
+      };
+    }
+    // Block direct path probes for rec (resolveBinary candidates)
+    if (typeof cmd[0] === "string" && cmd[0].endsWith("/rec")) {
+      return {
+        exitCode: 1,
+        stdout: new Uint8Array(),
+        stderr: new Uint8Array(),
+        success: false,
+      };
+    }
   }
   return realSpawnSync.apply(Bun, args as any);
 };
