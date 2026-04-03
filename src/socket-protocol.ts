@@ -184,13 +184,6 @@ export interface MarkClipCommand {
   source?: "tts" | "command";
 }
 
-/** Audio data from VoiceBar's AVAudioEngine capture (bypasses sox TCC issue). */
-export interface AudioDataCommand {
-  cmd: "audio_data";
-  /** Base64-encoded 16kHz 16-bit mono PCM */
-  pcm: string;
-}
-
 export type SocketCommand =
   | StopCommand
   | CancelCommand
@@ -199,8 +192,7 @@ export type SocketCommand =
   | RecordCommand
   | HealthCommand
   | CommandModeCommand
-  | MarkClipCommand
-  | AudioDataCommand;
+  | MarkClipCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -237,16 +229,11 @@ export function parseCommand(line: string): SocketCommand | null {
       case "health":
         return { cmd: "health" };
       case "command": {
-        if (
-          typeof parsed.text !== "string" ||
-          parsed.text.trim().length === 0
-        ) {
+        if (typeof parsed.text !== "string" || parsed.text.trim().length === 0) {
           return null;
         }
         const operation =
-          parsed.operation === "insert_below"
-            ? "insert_below"
-            : "replace_selection";
+          parsed.operation === "insert_below" ? "insert_below" : "replace_selection";
         return {
           cmd: "command",
           operation,
@@ -255,10 +242,7 @@ export function parseCommand(line: string): SocketCommand | null {
         };
       }
       case "mark_clip": {
-        if (
-          typeof parsed.label !== "string" ||
-          parsed.label.trim().length === 0
-        ) {
+        if (typeof parsed.label !== "string" || parsed.label.trim().length === 0) {
           return null;
         }
         return {
@@ -291,10 +275,6 @@ export function parseCommand(line: string): SocketCommand | null {
           silence_mode: silenceMode,
           press_to_talk: parsed.press_to_talk === true,
         };
-      }
-      case "audio_data": {
-        if (typeof parsed.pcm !== "string") return null;
-        return { cmd: "audio_data", pcm: parsed.pcm };
       }
       default:
         return null;
