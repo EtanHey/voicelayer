@@ -14,7 +14,7 @@ import {
   safeWriteFileSync,
 } from "./paths";
 import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
-import { waitForInput } from "./input";
+import { waitForInput, pushVoiceBarAudio, setVoiceBarAudioMode } from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-client";
 import type { HealthResponse, SocketCommand } from "./socket-protocol";
@@ -81,12 +81,17 @@ export function handleSocketCommand(
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
       const ptt = command.press_to_talk ?? false;
-      waitForInput(timeoutMs, silenceMode, ptt).catch((err) => {
-        console.error(
-          `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        broadcast({ type: "state", state: "idle" });
-      });
+      // Enable VoiceBar audio mode — VoiceBar will stream AVAudioEngine PCM
+      // via audio_data commands, bypassing sox TCC silence bug (R67)
+      setVoiceBarAudioMode(true);
+      waitForInput(timeoutMs, silenceMode, ptt)
+        .finally(() => setVoiceBarAudioMode(false))
+        .catch((err) => {
+          console.error(
+            `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          broadcast({ type: "state", state: "idle" });
+        });
       break;
     }
     case "toggle": {
@@ -137,11 +142,20 @@ export function handleSocketCommand(
     case "mark_clip":
       broadcast({
         type: "clip_marker",
-        marker_id: `command-${command.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`,
+        marker_id: `command-${command.label
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")}`,
         label: command.label,
         source: command.source ?? "command",
         status: "marked",
       });
       break;
+    case "audio_data": {
+      // VoiceBar AVAudioEngine capture — push PCM to recording pipeline
+      const pcmBytes = Buffer.from(command.pcm, "base64");
+      pushVoiceBarAudio(new Uint8Array(pcmBytes));
+      break;
+    }
   }
 }
