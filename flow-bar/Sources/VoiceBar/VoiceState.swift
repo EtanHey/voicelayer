@@ -56,10 +56,6 @@ struct ClipMarkerState: Equatable {
 final class VoiceState {
     private static let maxRecentTranscriptions = 8
 
-    /// AVAudioEngine mic capture — records in VoiceBar process (TCC-safe).
-    /// Streams 16kHz PCM to daemon via socket, bypassing sox silence bug.
-    let audioCapture = AudioCapture()
-
     // UI-bound properties -- all mutations must happen on the main thread.
     var mode: VoiceMode = .idle
     var statusText: String = ""
@@ -166,8 +162,19 @@ final class VoiceState {
     // MARK: - Commands
 
     func stop() {
-        audioCapture.stop()
         sendCommand?(["cmd": "stop"])
+        // Reset local state after a short delay if daemon doesn't respond.
+        // Prevents UI stuck in "listening" when no daemon handles the stop.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            if mode == .recording {
+                mode = .idle
+                onModeChange?(.idle)
+                barInitiatedRecording = false
+                resetAudioLevels()
+                startCollapseTimer()
+            }
+        }
     }
 
     func dismissError() {
@@ -275,19 +282,6 @@ final class VoiceState {
                 barInitiatedRecording = false
                 frontmostAppOnRecordStart = nil
             }
-        }
-
-        // Start AVAudioEngine mic capture — streams PCM to daemon via socket
-        audioCapture.onAudioChunk = { [weak self] data in
-            guard let self else { return }
-            let base64 = data.base64EncodedString()
-            sendCommand?(["cmd": "audio_data", "pcm": base64])
-        }
-        do {
-            try audioCapture.start()
-            NSLog("[VoiceBar] AVAudioEngine capture started")
-        } catch {
-            NSLog("[VoiceBar] AVAudioEngine failed: %@ — falling back to sox", error.localizedDescription)
         }
 
         sendCommand?([

@@ -69,29 +69,6 @@ const BITS_PER_SAMPLE = 16;
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
 let recordingState: "idle" | "recording" | "transcribing" = "idle";
-
-/**
- * Incoming audio queue from VoiceBar's AVAudioEngine capture.
- * When VoiceBar is connected and sends audio_data commands, these chunks
- * bypass sox entirely (avoiding the TCC/orphan mic silence bug).
- */
-const voiceBarAudioQueue: Uint8Array[] = [];
-let useVoiceBarAudio = false;
-
-/** Push a chunk from VoiceBar's AVAudioEngine (called by socket handler). */
-export function pushVoiceBarAudio(pcm16: Uint8Array): void {
-  if (useVoiceBarAudio) {
-    voiceBarAudioQueue.push(pcm16);
-  }
-}
-
-/** Enable VoiceBar audio mode (disable sox, use socket audio). */
-export function setVoiceBarAudioMode(enabled: boolean): void {
-  useVoiceBarAudio = enabled;
-  if (!enabled) {
-    voiceBarAudioQueue.length = 0;
-  }
-}
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
 
@@ -378,6 +355,56 @@ export async function recordToBuffer(
     const timer = setTimeout(() => finish(), timeoutMs);
 
     try {
+      // Start mic recording via sox — raw PCM to stdout at device's native rate
+      // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
+      // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
+      recorder = Bun.spawn(
+        [
+          recPath,
+          "-r",
+          String(nativeRate),
+          "-c",
+          "1",
+          "-b",
+          "16",
+          "-e",
+          "signed",
+          "-t",
+          "raw",
+          "-q", // quiet (no progress)
+          "-", // output to stdout
+        ],
+        { stdout: "pipe", stderr: "pipe" },
+      );
+
+      if (!recorder.stdout) {
+        finish(new Error("rec: stdout not available"));
+        return;
+      }
+
+      // Capture stderr for diagnostics — rec errors (permissions, no device) go here
+      if (recorder.stderr) {
+        const stderrReader = (
+          recorder.stderr as ReadableStream<Uint8Array>
+        ).getReader();
+        (async () => {
+          const chunks: Uint8Array[] = [];
+          try {
+            while (true) {
+              const { value, done } = await stderrReader.read();
+              if (done) break;
+              if (value) chunks.push(value);
+            }
+          } catch {}
+          if (chunks.length > 0) {
+            const text = Buffer.concat(chunks).toString("utf-8").trim();
+            if (text) {
+              console.error(`[voicelayer] rec stderr: ${text}`);
+            }
+          }
+        })();
+      }
+
       // Broadcast recording state to Voice Bar
       recordingState = "recording";
       broadcast({
@@ -387,70 +414,15 @@ export async function recordToBuffer(
         silence_mode: silenceMode,
       });
 
-      // Choose audio source: VoiceBar AVAudioEngine (TCC-safe) or sox (fallback)
-      const usingVoiceBarAudio = useVoiceBarAudio;
-
-      if (!usingVoiceBarAudio) {
-        // Sox fallback — used when VoiceBar isn't connected (MCP-only mode)
-        recorder = Bun.spawn(
-          [
-            recPath,
-            "-r",
-            String(nativeRate),
-            "-c",
-            "1",
-            "-b",
-            "16",
-            "-e",
-            "signed",
-            "-t",
-            "raw",
-            "-q",
-            "-",
-          ],
-          { stdout: "pipe", stderr: "pipe" },
-        );
-
-        if (!recorder.stdout) {
-          finish(new Error("rec: stdout not available"));
-          return;
-        }
-
-        if (recorder.stderr) {
-          const stderrReader = (
-            recorder.stderr as ReadableStream<Uint8Array>
-          ).getReader();
-          (async () => {
-            const chunks: Uint8Array[] = [];
-            try {
-              while (true) {
-                const { value, done } = await stderrReader.read();
-                if (done) break;
-                if (value) chunks.push(value);
-              }
-            } catch {}
-            if (chunks.length > 0) {
-              const text = Buffer.concat(chunks).toString("utf-8").trim();
-              if (text) {
-                console.error(`[voicelayer] rec stderr: ${text}`);
-              }
-            }
-          })();
-        }
-      }
-
       console.error(
-        usingVoiceBarAudio
-          ? "[voicelayer] Listening via VoiceBar audio capture (AVAudioEngine)"
-          : pressToTalk
-            ? "[voicelayer] Push-to-talk: recording via sox"
-            : "[voicelayer] Listening... speak now (Silero VAD active, sox)",
+        pressToTalk
+          ? "[voicelayer] Push-to-talk: recording... touch ~/.local/state/voicelayer/stop-{TOKEN} to end"
+          : "[voicelayer] Listening... speak now (Silero VAD active)",
       );
 
-      // Audio source: either sox pipe or VoiceBar queue
-      const reader = !usingVoiceBarAudio
-        ? (recorder!.stdout as ReadableStream<Uint8Array>).getReader()
-        : null;
+      const reader = (
+        recorder.stdout as ReadableStream<Uint8Array>
+      ).getReader();
 
       // R66 Fix 1: Decouple pipe reading from VAD processing.
       // ONNX inference (5-50ms) in processVADChunk blocks reader.read(),
@@ -459,63 +431,35 @@ export async function recordToBuffer(
       const chunkQueue: Uint8Array[] = [];
       let readerDone = false;
 
-      // pipeReader: reads audio as fast as possible, extracts 16kHz chunks
+      // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
       const pipeReader = async () => {
-        if (usingVoiceBarAudio) {
-          // VoiceBar mode: audio arrives as 16kHz PCM chunks via socket
-          // Already at 16kHz — no resampling needed
-          const VAD_CHUNK_BYTES_16K = VAD_CHUNK_BYTES; // 1024 bytes
-          voiceBarAudioQueue.length = 0; // Clear stale data
-          while (!resolved) {
-            if (voiceBarAudioQueue.length === 0) {
-              await Bun.sleep(5); // Poll at ~200Hz
-              continue;
+        while (!resolved) {
+          const { value, done } = await reader.read();
+          if (done || resolved) break;
+          if (!value || value.length === 0) continue;
+
+          // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65)
+          const safeCopy = new Uint8Array(value);
+          readBuffer.push(safeCopy);
+          readBufferLen += safeCopy.length;
+
+          // Extract native-rate chunks and resample to 16kHz — NO async here
+          while (readBufferLen >= nativeChunkBytes) {
+            const flat = new Uint8Array(readBufferLen);
+            let off = 0;
+            for (const buf of readBuffer) {
+              flat.set(buf, off);
+              off += buf.length;
             }
-            const incoming = voiceBarAudioQueue.shift()!;
-            readBuffer.push(incoming);
-            readBufferLen += incoming.length;
+            const nativeChunk = flat.slice(0, nativeChunkBytes);
+            const remainder = flat.slice(nativeChunkBytes);
+            readBuffer = remainder.length > 0 ? [remainder] : [];
+            readBufferLen = remainder.length;
 
-            while (readBufferLen >= VAD_CHUNK_BYTES_16K) {
-              const flat = new Uint8Array(readBufferLen);
-              let off = 0;
-              for (const buf of readBuffer) {
-                flat.set(buf, off);
-                off += buf.length;
-              }
-              chunkQueue.push(flat.slice(0, VAD_CHUNK_BYTES_16K));
-              const remainder = flat.slice(VAD_CHUNK_BYTES_16K);
-              readBuffer = remainder.length > 0 ? [remainder] : [];
-              readBufferLen = remainder.length;
-            }
-          }
-        } else {
-          // Sox mode: reads sox stdout, resamples from native rate to 16kHz
-          while (!resolved) {
-            const { value, done } = await reader!.read();
-            if (done || resolved) break;
-            if (!value || value.length === 0) continue;
-
-            const safeCopy = new Uint8Array(value);
-            readBuffer.push(safeCopy);
-            readBufferLen += safeCopy.length;
-
-            while (readBufferLen >= nativeChunkBytes) {
-              const flat = new Uint8Array(readBufferLen);
-              let off = 0;
-              for (const buf of readBuffer) {
-                flat.set(buf, off);
-                off += buf.length;
-              }
-              const nativeChunk = flat.slice(0, nativeChunkBytes);
-              const remainder = flat.slice(nativeChunkBytes);
-              readBuffer = remainder.length > 0 ? [remainder] : [];
-              readBufferLen = remainder.length;
-
-              const chunk = needsResample
-                ? resamplePCM16(nativeChunk, nativeRate, SAMPLE_RATE)
-                : nativeChunk;
-              chunkQueue.push(chunk);
-            }
+            const chunk = needsResample
+              ? resamplePCM16(nativeChunk, nativeRate, SAMPLE_RATE)
+              : nativeChunk;
+            chunkQueue.push(chunk);
           }
         }
         readerDone = true;
