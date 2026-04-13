@@ -8,7 +8,7 @@ site/.next/
 site/node_modules/
 docs.local/
 landing/docs/
-claude.scratchpad.md
+claude.scratchpad*.md
 .claude/
 
 # Python
@@ -23,3 +23,21 @@ flow-bar/.build/
 
 # Machine-local Claude config
 .claude.local.md
+
+# Generated static export artifacts for the site app
+site/404.html
+site/index.html
+site/sitemap.xml
+site/sitemap.xml.gz
+site/advanced/
+site/architecture/
+site/assets/
+site/contributing/
+site/getting-started/
+site/modes/
+site/plans/
+site/search/
+site/stylesheets/
+site/tools-reference/
+site/use-cases/
+site/what-is-voicelayer/
