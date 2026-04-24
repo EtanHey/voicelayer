@@ -248,20 +248,20 @@ export function parseCommand(line: string): SocketCommand | null {
     const id = parseCommandId(parsed);
     switch (parsed.cmd) {
       case "stop":
-        return withCommandId({ cmd: "stop" }, id);
+        return withCommandId<StopCommand>({ cmd: "stop" }, id);
       case "cancel":
-        return withCommandId({ cmd: "cancel" }, id);
+        return withCommandId<CancelCommand>({ cmd: "cancel" }, id);
       case "replay":
-        return withCommandId({ cmd: "replay" }, id);
+        return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
       case "health":
-        return withCommandId({ cmd: "health" }, id);
+        return withCommandId<HealthCommand>({ cmd: "health" }, id);
       case "command": {
         if (typeof parsed.text !== "string" || parsed.text.trim().length === 0) {
           return null;
         }
         const operation =
           parsed.operation === "insert_below" ? "insert_below" : "replace_selection";
-        return withCommandId({
+        return withCommandId<CommandModeCommand>({
           cmd: "command",
           operation,
           text: parsed.text,
@@ -272,7 +272,7 @@ export function parseCommand(line: string): SocketCommand | null {
         if (typeof parsed.label !== "string" || parsed.label.trim().length === 0) {
           return null;
         }
-        return withCommandId({
+        return withCommandId<MarkClipCommand>({
           cmd: "mark_clip",
           label: parsed.label,
           source: parsed.source === "tts" ? "tts" : "command",
@@ -283,12 +283,12 @@ export function parseCommand(line: string): SocketCommand | null {
         const scope = parsed.scope;
         if (scope !== "all" && scope !== "tts" && scope !== "mic") {
           return withCommandId(
-            { cmd: "toggle", scope: "all", enabled: parsed.enabled },
+            { cmd: "toggle", scope: "all", enabled: parsed.enabled } satisfies ToggleCommand,
             id,
           );
         }
         return withCommandId(
-          { cmd: "toggle", scope, enabled: parsed.enabled },
+          { cmd: "toggle", scope, enabled: parsed.enabled } satisfies ToggleCommand,
           id,
         );
       }
