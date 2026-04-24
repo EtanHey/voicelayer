@@ -22,6 +22,8 @@ describe("socket stop/cancel → stopPlayback()", () => {
   let stopPlaybackSpy: ReturnType<typeof spyOn>;
   let broadcastSpy: ReturnType<typeof spyOn>;
   let setCancelSignalSpy: ReturnType<typeof spyOn>;
+  let getQueueDepthSpy: ReturnType<typeof spyOn>;
+  let getRecordingStateSpy: ReturnType<typeof spyOn>;
   const originalSpawnSync = Bun.spawnSync;
 
   beforeEach(() => {
@@ -33,6 +35,10 @@ describe("socket stop/cancel → stopPlayback()", () => {
       sessionBooking,
       "setCancelSignal",
     ).mockImplementation(() => {});
+    getQueueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(1);
+    getRecordingStateSpy = spyOn(input, "getRecordingState").mockReturnValue(
+      "recording",
+    );
 
     // Prevent actual pkill from running
     // @ts-ignore
@@ -52,6 +58,8 @@ describe("socket stop/cancel → stopPlayback()", () => {
     stopPlaybackSpy.mockRestore();
     broadcastSpy.mockRestore();
     setCancelSignalSpy.mockRestore();
+    getQueueDepthSpy.mockRestore();
+    getRecordingStateSpy.mockRestore();
     Bun.spawnSync = originalSpawnSync;
   });
 
