@@ -9,6 +9,7 @@ import {
 
 const TEST_DIR = `/tmp/voicelayer-disable-flag-${process.pid}`;
 const TEST_MCP_SOCKET_PATH = `${TEST_DIR}/voicelayer-mcp.sock`;
+const TEST_MCP_PID_PATH = `${TEST_DIR}/voicelayer-mcp.pid`;
 const TEST_DISABLE_FLAG_PATH = `${TEST_DIR}/voice-disabled.flag`;
 
 function cleanup(): void {
@@ -17,6 +18,9 @@ function cleanup(): void {
   } catch {}
   try {
     unlinkSync(TEST_DISABLE_FLAG_PATH);
+  } catch {}
+  try {
+    unlinkSync(TEST_MCP_PID_PATH);
   } catch {}
   try {
     rmSync(TEST_DIR, { recursive: true, force: true });
@@ -43,6 +47,7 @@ function spawnDaemon(extraEnv: Record<string, string | undefined> = {}) {
     env: {
       ...process.env,
       QA_VOICE_MCP_SOCKET_PATH: TEST_MCP_SOCKET_PATH,
+      QA_VOICE_MCP_PID_PATH: TEST_MCP_PID_PATH,
       QA_VOICE_DISABLE_FLAG_PATH: TEST_DISABLE_FLAG_PATH,
       ...extraEnv,
     },
@@ -117,6 +122,7 @@ describe("DISABLE_VOICELAYER env", () => {
       const daemon = spawnDaemon();
 
       expect(await waitForFile(TEST_MCP_SOCKET_PATH, 2000)).toBe(true);
+      expect(await waitForFile(TEST_MCP_PID_PATH, 2000)).toBe(true);
 
       writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
 

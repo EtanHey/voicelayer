@@ -71,19 +71,19 @@ const toolDispatch: Record<
 // --- Startup ---
 
 async function main() {
-  // Enrich PATH before any binary resolution — captures login shell PATH
-  // for LaunchAgent/VoiceBar context where /opt/homebrew/bin is missing
-  const enrichedPath = initEnrichedPATH();
-  console.error(
-    `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
-  );
-
   if (isVoicelayerDisabled()) {
     console.error(
       `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,
     );
     process.exit(0);
   }
+
+  // Enrich PATH before any binary resolution — captures login shell PATH
+  // for LaunchAgent/VoiceBar context where /opt/homebrew/bin is missing
+  const enrichedPath = initEnrichedPATH();
+  console.error(
+    `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
+  );
 
   // Acquire process lock (kills orphans)
   const lockResult = acquireProcessLock();
