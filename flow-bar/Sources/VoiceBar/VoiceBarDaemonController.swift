@@ -161,6 +161,12 @@ final class VoiceBarDaemonController {
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
+        if VoiceLayerPaths.isVoicelayerDisabled() {
+            ownsLaunchedProcess = false
+            NSLog("[VoiceBar] VoiceLayer disabled — skipping daemon activation")
+            return .unavailable
+        }
+
         // If we already own a running child, skip
         if let process, process.isRunning {
             return .alreadyRunning

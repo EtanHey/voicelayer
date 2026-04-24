@@ -22,6 +22,9 @@ import { homedir } from "os";
 import { join } from "path";
 
 const TMP = "/tmp";
+const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
+const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
 /**
  * User-owned state directory for security-sensitive files.
@@ -36,6 +39,15 @@ mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 // Simple path join — avoids importing node:path just for concatenation
 function tmpPath(name: string): string {
   return `${TMP}/${name}`;
+}
+
+function readOverride(
+  name: string,
+  fallback: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const value = env[name]?.trim();
+  return value ? value : fallback;
 }
 
 /**
@@ -80,6 +92,29 @@ export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
 /** Combined voice disabled flag — checked by CC PreToolUse hook to block all voice tools. */
 export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
 
+/** Dedicated daemon disable flag — polled by the MCP daemon to exit cleanly. */
+export function getVoiceDisabledFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return readOverride(
+    VOICE_DISABLED_OVERRIDE_ENV,
+    tmpPath(".voicelayer-daemon-disabled"),
+    env,
+  );
+}
+
+export function isVoicelayerDisabled(options?: {
+  env?: NodeJS.ProcessEnv;
+  flagFilePath?: string;
+}): boolean {
+  const env = options?.env ?? process.env;
+  if (env[DISABLE_VOICELAYER]?.trim() === "1") {
+    return true;
+  }
+  const flagFilePath = options?.flagFilePath ?? getVoiceDisabledFilePath(env);
+  return existsSync(flagFilePath);
+}
+
 /**
  * Fixed Unix domain socket path for VoiceBar IPC.
  * VoiceBar listens here as a persistent server. MCP servers connect as clients.
@@ -91,7 +126,11 @@ export const SOCKET_PATH = tmpPath("voicelayer.sock");
  * The daemon listens here for MCP clients (via socat).
  * Separate from SOCKET_PATH so Voice Bar can keep serving on voicelayer.sock.
  */
-export const MCP_SOCKET_PATH = tmpPath("voicelayer-mcp.sock");
+export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+}
+
+export const MCP_SOCKET_PATH = getMcpSocketPath();
 
 /**
  * Standalone daemon PID file.
