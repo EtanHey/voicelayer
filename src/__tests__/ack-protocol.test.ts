@@ -135,6 +135,9 @@ describe("ack protocol", () => {
   });
 
   it("returns accept ack for record under happy path", () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+
     const response = handleSocketCommand({
       cmd: "record",
       id: "record-1",
@@ -201,6 +204,9 @@ describe("ack protocol", () => {
   });
 
   it("returns accept ack for replay under happy path", () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+
     const response = handleSocketCommand({
       cmd: "replay",
       id: "replay-1",

@@ -17,6 +17,7 @@ import {
 import { existsSync, unlinkSync, readFileSync } from "fs";
 import * as socketClient from "../socket-client";
 import * as actualPaths from "../paths";
+import { TTS_HISTORY_FILE } from "../paths";
 import { handleToggle, handleReplay, handleThink } from "../handlers";
 
 const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-tts-disabled`;
@@ -39,6 +40,17 @@ function cleanFlags() {
   ]) {
     try {
       if (existsSync(f)) unlinkSync(f);
+    } catch {}
+  }
+}
+
+function cleanHistory() {
+  try {
+    if (existsSync(TTS_HISTORY_FILE)) unlinkSync(TTS_HISTORY_FILE);
+  } catch {}
+  for (let i = 0; i < 20; i++) {
+    try {
+      unlinkSync(`/tmp/voicelayer-history-${i}.mp3`);
     } catch {}
   }
 }
@@ -120,12 +132,14 @@ describe("handleReplay", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
+    cleanHistory();
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });
 
   afterEach(() => {
+    cleanHistory();
     broadcastSpy.mockRestore();
   });
 

@@ -15,6 +15,7 @@ import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let voiceState = VoiceState()
+    lazy var commandRouter = VoiceBarCommandRouter(voiceState: voiceState)
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
     }
@@ -63,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            VoiceBarCommandRouter.handle(url: url, voiceState: voiceState)
+            commandRouter.handle(url: url)
         }
     }
 
@@ -73,7 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
               let url = URL(string: urlString) else { return }
         NSLog("[VoiceBar] handleGetURLEvent: %@", urlString)
-        VoiceBarCommandRouter.handle(url: url, voiceState: voiceState)
+        commandRouter.handle(url: url)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -152,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Floating pill
-        let barView = BarView(state: voiceState)
+        let barView = BarView(state: voiceState, commandRouter: commandRouter)
         let hosting = NSHostingView(rootView: barView)
         hosting.frame = NSRect(
             x: 0, y: 0,
@@ -291,7 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             NSLog("[VoiceBar] Hotkey hold start — starting recording")
             holdStartTime = Date()
-            voiceState.record()
+            handleHotkeyHoldStart()
         }
 
         // Hold end → stop recording only if held long enough (≥1s for VAD mode).
@@ -301,7 +302,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let holdDuration = Date().timeIntervalSince(holdStartTime ?? Date())
             if holdDuration >= 1.0 {
                 NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
-                voiceState.stop()
+                handleHotkeyHoldEnd(holdDuration: holdDuration)
             } else {
                 NSLog("[VoiceBar] Hotkey hold end (%.1fs) — short hold, letting VAD decide", holdDuration)
                 // Don't send stop — VAD silence detection will end recording naturally
@@ -318,11 +319,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if voiceState.mode == .idle {
                 NSLog("[VoiceBar] Hotkey double tap — starting hands-free recording")
-                voiceState.record()
             } else if voiceState.mode == .recording {
                 NSLog("[VoiceBar] Hotkey double tap — stopping hands-free recording")
-                voiceState.stop()
             }
+            handleHotkeyDoubleTap()
         }
 
         let manager = HotkeyManager(gesture: gestureStateMachine)
@@ -358,6 +358,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default:
             audioLevelMonitor.stop()
         }
+    }
+
+    func handleHotkeyHoldStart() {
+        commandRouter.handleHotkeyHoldStart()
+    }
+
+    func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
+        commandRouter.handleHotkeyHoldEnd(holdDuration: holdDuration)
+    }
+
+    func handleHotkeyDoubleTap() {
+        commandRouter.handleHotkeyDoubleTap()
     }
 
     private func configureWakeRecovery() {

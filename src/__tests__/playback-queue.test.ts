@@ -29,7 +29,13 @@ describe("playback queue — P0-1 sequential playback", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    try {
+      const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+      stopPlayback();
+      await awaitCurrentPlayback();
+    } catch {}
+
     broadcasts = [];
     playerMocks = [];
 
@@ -84,6 +90,11 @@ describe("playback queue — P0-1 sequential playback", () => {
       } catch {}
     }
     await Bun.sleep(50);
+    try {
+      const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+      stopPlayback();
+      await awaitCurrentPlayback();
+    } catch {}
 
     broadcastSpy.mockRestore();
     Bun.spawn = originalSpawn;
@@ -203,7 +214,13 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    try {
+      const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+      stopPlayback();
+      await awaitCurrentPlayback();
+    } catch {}
+
     playerMocks = [];
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
@@ -248,6 +265,11 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
       } catch {}
     }
     await Bun.sleep(50);
+    try {
+      const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+      stopPlayback();
+      await awaitCurrentPlayback();
+    } catch {}
 
     broadcastSpy.mockRestore();
     Bun.spawn = originalSpawn;
