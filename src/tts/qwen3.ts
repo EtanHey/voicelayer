@@ -15,12 +15,17 @@
 // Voice cloning uses 3 reference clips (~18.5s total) from the profile.yaml.
 // The daemon must be running for cloned voices to work (fallback: edge-tts).
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, lstatSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 
 const DAEMON_URL = "http://127.0.0.1:8880";
 const DAEMON_TIMEOUT_MS = 30_000; // 30s timeout for synthesis
 const HEALTH_TIMEOUT_MS = 2_000; // 2s timeout for health check
+const DEFAULT_DAEMON_AUTH_TOKEN_FILE = join(
+  process.env.HOME || "~",
+  ".voicelayer",
+  "daemon.secret",
+);
 
 // --- Voice Profile ---
 
@@ -176,6 +181,78 @@ export function clearProfileCache(): void {
   profileCache.clear();
 }
 
+/**
+ * Resolve the bearer token file shared with the Python Qwen3 daemon.
+ * The daemon and TypeScript bridge both default to ~/.voicelayer/daemon.secret.
+ */
+export function getDaemonAuthTokenFilePath(): string {
+  return (
+    process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE ||
+    process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE ||
+    DEFAULT_DAEMON_AUTH_TOKEN_FILE
+  );
+}
+
+/**
+ * Read the daemon bearer token from a strict 0600 file.
+ * Returns null when the token file is missing or insecure.
+ */
+export function loadDaemonAuthToken(): string | null {
+  const tokenFile = getDaemonAuthTokenFilePath();
+
+  if (!existsSync(tokenFile)) {
+    console.error(`[voicelayer] TTS daemon auth token file not found: ${tokenFile}`);
+    return null;
+  }
+
+  try {
+    const stat = lstatSync(tokenFile);
+    if (stat.isSymbolicLink()) {
+      console.error(
+        `[voicelayer] Refusing to read TTS daemon auth token symlink: ${tokenFile}`,
+      );
+      return null;
+    }
+
+    const mode = statSync(tokenFile).mode & 0o777;
+    if (mode !== 0o600) {
+      console.error(
+        `[voicelayer] TTS daemon auth token file must be 0600: ${tokenFile}`,
+      );
+      return null;
+    }
+
+    const token = readFileSync(tokenFile, "utf-8").trim();
+    if (!token) {
+      console.error(
+        `[voicelayer] TTS daemon auth token file is empty: ${tokenFile}`,
+      );
+      return null;
+    }
+    return token;
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to read TTS daemon auth token file "${tokenFile}": ${err}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Build headers for authenticated daemon requests.
+ */
+export function buildDaemonRequestHeaders(
+  includeJsonContentType = false,
+): Record<string, string> | null {
+  const token = loadDaemonAuthToken();
+  if (!token) return null;
+
+  return {
+    ...(includeJsonContentType ? { "Content-Type": "application/json" } : {}),
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 // --- Daemon Communication ---
 
 /**
@@ -183,10 +260,14 @@ export function clearProfileCache(): void {
  */
 export async function isDaemonHealthy(): Promise<boolean> {
   try {
+    const headers = buildDaemonRequestHeaders();
+    if (!headers) return false;
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
 
     const res = await fetch(`${DAEMON_URL}/health`, {
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -237,12 +318,15 @@ export async function synthesizeCloned(
   const expandedPath = refClip.replace(/^~/, process.env.HOME || "~");
 
   try {
+    const headers = buildDaemonRequestHeaders(true);
+    if (!headers) return null;
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), DAEMON_TIMEOUT_MS);
 
     const res = await fetch(`${DAEMON_URL}/synthesize`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         text,
         reference_wav: expandedPath,

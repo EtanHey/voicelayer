@@ -109,17 +109,37 @@ The daemon:
 - Serves a `/synthesize` HTTP endpoint
 - Inference latency: 200-500ms per call on Apple Silicon
 - Model location: `~/.voicelayer/models/qwen3-tts-4bit/`
+- Creates or reuses `~/.voicelayer/daemon.secret` with mode `0600`
+
+The TypeScript bridge and the Python daemon both default to the same token
+file. If you need a custom launcher path, set
+`VOICELAYER_TTS_DAEMON_SECRET_FILE=/path/to/token`,
+`VOICELAYER_TTS_AUTH_TOKEN_FILE=/path/to/token`, or start the daemon with
+`voicelayer daemon --daemon-secret-file /path/to/token`.
+
+The daemon requires `Authorization: Bearer ...` on every endpoint, only accepts
+`Host: 127.0.0.1:8880` / `Host: localhost:8880`, rejects non-local `Origin`
+headers, and only accepts `reference_wav` paths that resolve inside
+`~/.voicelayer/voices/`.
 
 ### Testing
 
 ```bash
+AUTH_TOKEN="$(cat ~/.voicelayer/daemon.secret)"
+
 # Health check
-curl http://127.0.0.1:8880/health
+curl http://127.0.0.1:8880/health \
+  -H "Authorization: Bearer ${AUTH_TOKEN}"
 
 # Synthesize
 curl -X POST http://127.0.0.1:8880/synthesize \
+  -H "Authorization: Bearer ${AUTH_TOKEN}" \
   -H "Content-Type: application/json" \
-  -d '{"text": "Hello world", "voice": "speaker-name"}'
+  -d '{
+    "text": "Hello world",
+    "reference_wav": "'"$HOME"'/.voicelayer/voices/speaker-name/samples/clip_007.wav",
+    "reference_text": "Transcribed text of this clip..."
+  }'
 ```
 
 ## Using Cloned Voices
