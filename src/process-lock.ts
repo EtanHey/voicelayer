@@ -16,6 +16,14 @@ import { existsSync, readFileSync, unlinkSync } from "fs";
 import { safeWriteFileSync } from "./paths";
 
 export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
+const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
+
+export function getMcpPidFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const override = env[MCP_PID_OVERRIDE_ENV]?.trim();
+  return override || MCP_PID_FILE;
+}
 
 interface PidLockData {
   pid: number;
@@ -41,7 +49,7 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /** Read and parse the PID file. Returns null if missing, corrupt, or invalid. */
-function readPidFile(pidPath: string = MCP_PID_FILE): PidLockData | null {
+function readPidFile(pidPath: string = getMcpPidFilePath()): PidLockData | null {
   try {
     if (!existsSync(pidPath)) return null;
     const content = readFileSync(pidPath, "utf-8").trim();
@@ -67,7 +75,7 @@ function readPidFile(pidPath: string = MCP_PID_FILE): PidLockData | null {
  *   Use DAEMON_PID_FILE from paths.ts for the standalone daemon.
  */
 export function acquireProcessLock(
-  pidPath: string = MCP_PID_FILE,
+  pidPath: string = getMcpPidFilePath(),
 ): AcquireResult {
   const existing = readPidFile(pidPath);
 
@@ -111,7 +119,7 @@ export function acquireProcessLock(
 }
 
 /** Write our PID to the lockfile. */
-function writePidFile(pidPath: string = MCP_PID_FILE): void {
+function writePidFile(pidPath: string = getMcpPidFilePath()): void {
   const data: PidLockData = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -124,7 +132,7 @@ function writePidFile(pidPath: string = MCP_PID_FILE): void {
  *
  * @param pidPath Optional PID file path. Defaults to MCP_PID_FILE.
  */
-export function releaseProcessLock(pidPath: string = MCP_PID_FILE): void {
+export function releaseProcessLock(pidPath: string = getMcpPidFilePath()): void {
   try {
     const existing = readPidFile(pidPath);
     // Only remove if we own it (or it's corrupt/missing)

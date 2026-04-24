@@ -11,12 +11,14 @@ PLIST_SRC="$(cd "$(dirname "$0")" && pwd)/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 VOICELAYER_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 BUN_BIN="$(which bun 2>/dev/null || echo "$HOME/.bun/bin/bun")"
+DAEMON_DISABLE_FLAG="/tmp/.voicelayer-daemon-disabled"
 
 # --- Uninstall ---
 if [[ "${1:-}" == "--uninstall" ]]; then
     echo "Stopping $LABEL..."
     launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
     rm -f "$PLIST_DST"
+    rm -f "$DAEMON_DISABLE_FLAG"
     echo "Uninstalled."
     exit 0
 fi
@@ -42,6 +44,9 @@ echo "Installing $LABEL..."
 echo "  bun:        $BUN_BIN"
 echo "  voicelayer:  $VOICELAYER_DIR"
 echo "  plist:       $PLIST_DST"
+if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
+    echo "  DISABLE_VOICELAYER=1 (daemon exits cleanly and launchd stays idle)"
+fi
 
 # Stop existing if running
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
@@ -54,6 +59,14 @@ sed \
     -e "s|__HOME__|$HOME|g" \
     "$PLIST_SRC" > "$PLIST_DST"
 
+if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:DISABLE_VOICELAYER" "$PLIST_DST" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:DISABLE_VOICELAYER string 1" "$PLIST_DST"
+    printf "disabled\n" > "$DAEMON_DISABLE_FLAG"
+else
+    rm -f "$DAEMON_DISABLE_FLAG"
+fi
+
 # Load and start
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 
@@ -63,6 +76,7 @@ if launchctl print "gui/$(id -u)/$LABEL" > /dev/null 2>&1; then
     echo "Started. Verify: launchctl list | grep voicelayer"
     echo "Logs:   tail -f /tmp/voicelayer-mcp-daemon.stderr.log"
     echo "Socket: /tmp/voicelayer-mcp.sock"
+    echo "Disable on boot: DISABLE_VOICELAYER=1 ./launchd/install.sh"
     echo ""
     echo "MCP client config (.mcp.json):"
     echo '  "voicelayer": { "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }'
