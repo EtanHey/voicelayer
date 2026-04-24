@@ -2,6 +2,71 @@
 import XCTest
 
 final class VoiceBarDaemonControllerTests: XCTestCase {
+    func testDaemonControllerSkipsSpawnWhenDisableEnvSet() {
+        setenv("DISABLE_VOICELAYER", "1", 1)
+        defer { unsetenv("DISABLE_VOICELAYER") }
+
+        let process = ProcessSpy()
+        var livenessProbeCalls = 0
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in
+                VoiceBarDaemonLaunchConfiguration(
+                    launchPath: "/usr/bin/env",
+                    arguments: ["bun", "run", "/tmp/voicelayer/src/daemon.ts"],
+                    workingDirectory: "/tmp/voicelayer"
+                )
+            },
+            livenessProbe: {
+                livenessProbeCalls += 1
+                return false
+            },
+            processFactory: { process }
+        )
+
+        let result = controller.activateIfNeeded()
+
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertFalse(process.didRun)
+        XCTAssertEqual(livenessProbeCalls, 0)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
+    }
+
+    func testDaemonControllerSkipsConnectWhenFlagFileExists() {
+        let flagPath = "\(NSTemporaryDirectory())voicebar-disable-\(UUID().uuidString)"
+        setenv("QA_VOICE_DISABLE_FLAG_PATH", flagPath, 1)
+        FileManager.default.createFile(atPath: flagPath, contents: Data("disabled".utf8))
+        defer {
+            unsetenv("QA_VOICE_DISABLE_FLAG_PATH")
+            try? FileManager.default.removeItem(atPath: flagPath)
+        }
+
+        let process = ProcessSpy()
+        var livenessProbeCalls = 0
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in
+                VoiceBarDaemonLaunchConfiguration(
+                    launchPath: "/usr/bin/env",
+                    arguments: ["bun", "run", "/tmp/voicelayer/src/daemon.ts"],
+                    workingDirectory: "/tmp/voicelayer"
+                )
+            },
+            livenessProbe: {
+                livenessProbeCalls += 1
+                return true
+            },
+            processFactory: { process }
+        )
+
+        let result = controller.activateIfNeeded()
+
+        XCTAssertEqual(result, .unavailable)
+        XCTAssertFalse(process.didRun)
+        XCTAssertEqual(livenessProbeCalls, 0)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
+    }
+
     func testActivationReturnsAlreadyRunningWhenProbeSucceeds() {
         let process = ProcessSpy()
         let controller = VoiceBarDaemonController(
@@ -158,6 +223,8 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     var capturedExecutableURL: URL?
     var capturedArguments: [String]?
     var capturedCurrentDirectoryURL: URL?
+    var capturedEnvironment: [String: String]?
+    var capturedTerminationHandler: (@Sendable (Process) -> Void)?
 
     override var executableURL: URL? {
         get { capturedExecutableURL }
@@ -174,8 +241,22 @@ private final class ProcessSpy: Process, @unchecked Sendable {
         set { capturedCurrentDirectoryURL = newValue }
     }
 
+    override var environment: [String: String]? {
+        get { capturedEnvironment }
+        set { capturedEnvironment = newValue }
+    }
+
+    override var terminationHandler: (@Sendable (Process) -> Void)? {
+        get { capturedTerminationHandler }
+        set { capturedTerminationHandler = newValue }
+    }
+
     override var isRunning: Bool {
         didRun && !didTerminate
+    }
+
+    override var processIdentifier: Int32 {
+        4321
     }
 
     override func run() throws {
