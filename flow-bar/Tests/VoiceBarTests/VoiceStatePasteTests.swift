@@ -2,12 +2,14 @@
 import XCTest
 
 final class VoiceStatePasteTests: XCTestCase {
-    func testRecordSetsRecordingModeBeforeSendingCommand() {
+    func testRecordLeavesModeIdleUntilDaemonStateArrives() {
         let state = VoiceState()
+        var sentCommand: [String: Any]?
         var modeObservedInsideSend: VoiceMode?
         var callbackModes: [VoiceMode] = []
 
-        state.sendCommand = { _ in
+        state.sendCommand = { command in
+            sentCommand = command
             modeObservedInsideSend = state.mode
         }
         state.onModeChange = { mode in
@@ -16,9 +18,11 @@ final class VoiceStatePasteTests: XCTestCase {
 
         state.record()
 
-        XCTAssertEqual(state.mode, .recording)
-        XCTAssertEqual(modeObservedInsideSend, .recording)
-        XCTAssertEqual(callbackModes, [.recording])
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(sentCommand?["cmd"] as? String, "record")
+        XCTAssertNotNil(sentCommand?["id"] as? String)
+        XCTAssertEqual(modeObservedInsideSend, .idle)
+        XCTAssertTrue(callbackModes.isEmpty)
     }
 
     func testSnoozeMovesVoiceStateToDisconnected() {

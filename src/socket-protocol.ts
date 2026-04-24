@@ -126,6 +126,25 @@ export interface ClipMarkerEvent {
   status: "marked" | "consumed";
 }
 
+export type IntentOutcome = "accept" | "noop" | "reject";
+
+export type AckCommand =
+  | "stop"
+  | "cancel"
+  | "replay"
+  | "toggle"
+  | "record"
+  | "command"
+  | "mark_clip";
+
+export interface AckEvent {
+  type: "ack";
+  command: AckCommand;
+  outcome: IntentOutcome;
+  id?: string;
+  reason?: string;
+}
+
 export type SocketEvent =
   | StateEvent
   | SpeechEvent
@@ -135,29 +154,34 @@ export type SocketEvent =
   | SubtitleEvent
   | QueueEvent
   | CommandModeEvent
-  | ClipMarkerEvent;
+  | ClipMarkerEvent
+  | AckEvent;
 
 // --- Commands: Voice Bar → VoiceLayer ---
 
-export interface StopCommand {
+interface SocketCommandBase {
+  id?: string;
+}
+
+export interface StopCommand extends SocketCommandBase {
   cmd: "stop";
 }
 
-export interface CancelCommand {
+export interface CancelCommand extends SocketCommandBase {
   cmd: "cancel";
 }
 
-export interface ReplayCommand {
+export interface ReplayCommand extends SocketCommandBase {
   cmd: "replay";
 }
 
-export interface ToggleCommand {
+export interface ToggleCommand extends SocketCommandBase {
   cmd: "toggle";
   scope: "all" | "tts" | "mic";
   enabled: boolean;
 }
 
-export interface RecordCommand {
+export interface RecordCommand extends SocketCommandBase {
   cmd: "record";
   /** Recording timeout in seconds (default: 30). */
   timeout_seconds?: number;
@@ -167,18 +191,18 @@ export interface RecordCommand {
   press_to_talk?: boolean;
 }
 
-export interface HealthCommand {
+export interface HealthCommand extends SocketCommandBase {
   cmd: "health";
 }
 
-export interface CommandModeCommand {
+export interface CommandModeCommand extends SocketCommandBase {
   cmd: "command";
   operation: "replace_selection" | "insert_below";
   text: string;
   prompt?: string;
 }
 
-export interface MarkClipCommand {
+export interface MarkClipCommand extends SocketCommandBase {
   cmd: "mark_clip";
   label: string;
   source?: "tts" | "command";
@@ -201,6 +225,8 @@ export interface HealthResponse {
   recording_state: "idle" | "recording" | "transcribing";
 }
 
+export type SocketResponse = HealthResponse | AckEvent;
+
 // --- Serialization ---
 
 /** Serialize an event to NDJSON (JSON + newline). */
@@ -219,62 +245,74 @@ export function parseCommand(line: string): SocketCommand | null {
     ) {
       return null;
     }
+    const id = parseCommandId(parsed);
     switch (parsed.cmd) {
       case "stop":
-        return { cmd: "stop" };
+        return withCommandId<StopCommand>({ cmd: "stop" }, id);
       case "cancel":
-        return { cmd: "cancel" };
+        return withCommandId<CancelCommand>({ cmd: "cancel" }, id);
       case "replay":
-        return { cmd: "replay" };
+        return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
       case "health":
-        return { cmd: "health" };
+        return withCommandId<HealthCommand>({ cmd: "health" }, id);
       case "command": {
         if (typeof parsed.text !== "string" || parsed.text.trim().length === 0) {
           return null;
         }
         const operation =
           parsed.operation === "insert_below" ? "insert_below" : "replace_selection";
-        return {
+        return withCommandId<CommandModeCommand>({
           cmd: "command",
           operation,
           text: parsed.text,
           prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
-        };
+        }, id);
       }
       case "mark_clip": {
         if (typeof parsed.label !== "string" || parsed.label.trim().length === 0) {
           return null;
         }
-        return {
+        return withCommandId<MarkClipCommand>({
           cmd: "mark_clip",
           label: parsed.label,
           source: parsed.source === "tts" ? "tts" : "command",
-        };
+        }, id);
       }
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;
         if (scope !== "all" && scope !== "tts" && scope !== "mic") {
-          return { cmd: "toggle", scope: "all", enabled: parsed.enabled };
+          return withCommandId(
+            { cmd: "toggle", scope: "all", enabled: parsed.enabled } satisfies ToggleCommand,
+            id,
+          );
         }
-        return { cmd: "toggle", scope, enabled: parsed.enabled };
+        return withCommandId(
+          { cmd: "toggle", scope, enabled: parsed.enabled } satisfies ToggleCommand,
+          id,
+        );
       }
       case "record": {
-        const sm = parsed.silence_mode;
-        const silenceMode =
-          sm === "quick" || sm === "standard" || sm === "thoughtful"
-            ? sm
-            : "standard";
-        const rawTimeout =
-          typeof parsed.timeout_seconds === "number"
-            ? parsed.timeout_seconds
-            : 30;
-        return {
-          cmd: "record",
-          timeout_seconds: Math.max(5, Math.min(300, rawTimeout)),
-          silence_mode: silenceMode,
-          press_to_talk: parsed.press_to_talk === true,
-        };
+        const command: RecordCommand = withCommandId(
+          {
+            cmd: "record",
+          },
+          id,
+        );
+        if (typeof parsed.timeout_seconds === "number") {
+          command.timeout_seconds = Math.max(5, Math.min(300, parsed.timeout_seconds));
+        }
+        if (
+          parsed.silence_mode === "quick" ||
+          parsed.silence_mode === "standard" ||
+          parsed.silence_mode === "thoughtful"
+        ) {
+          command.silence_mode = parsed.silence_mode;
+        }
+        if (parsed.press_to_talk === true) {
+          command.press_to_talk = true;
+        }
+        return command;
       }
       default:
         return null;
@@ -282,4 +320,18 @@ export function parseCommand(line: string): SocketCommand | null {
   } catch {
     return null;
   }
+}
+
+function parseCommandId(parsed: Record<string, unknown>): string | undefined {
+  if (typeof parsed.id !== "string") return undefined;
+  const id = parsed.id.trim();
+  return id.length > 0 ? id : undefined;
+}
+
+function withCommandId<T extends object>(command: T, id?: string): T & { id?: string } {
+  if (!id) return command;
+  return {
+    ...command,
+    id,
+  };
 }
