@@ -100,7 +100,7 @@ DISABLE_VOICELAYER=1 ./launchd/install.sh
 # <string>1</string>
 ```
 
-If the daemon is already running, create `/tmp/.claude_voice_disabled` and it will shut down within 5 seconds. To re-enable it, remove the env var from `~/Library/LaunchAgents/com.voicelayer.mcp-daemon.plist`, delete `/tmp/.claude_voice_disabled` if present, and restart the agent:
+If the daemon is already running, create `/tmp/.voicelayer-daemon-disabled` and it will shut down within 5 seconds. To re-enable it, remove the env var from `~/Library/LaunchAgents/com.voicelayer.mcp-daemon.plist`, delete `/tmp/.voicelayer-daemon-disabled` if present, and restart the agent:
 
 ```bash
 launchctl kickstart -k "gui/$(id -u)/com.voicelayer.mcp-daemon"

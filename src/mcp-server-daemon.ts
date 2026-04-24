@@ -80,9 +80,8 @@ async function main() {
 
   if (isVoicelayerDisabled()) {
     console.error(
-      `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or voice disable flag present — exiting`,
+      `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,
     );
-    releaseProcessLock();
     process.exit(0);
   }
 
@@ -189,7 +188,7 @@ async function main() {
   disablePollTimer = setInterval(() => {
     if (!isVoicelayerDisabled()) return;
     console.error(
-      "[voicelayer-daemon] Voice disable flag detected — shutting down cleanly",
+      "[voicelayer-daemon] Daemon disable flag detected — shutting down cleanly",
     );
     shutdown();
   }, DISABLE_POLL_INTERVAL_MS);

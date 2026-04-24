@@ -43,7 +43,7 @@ echo "  bun:        $BUN_BIN"
 echo "  voicelayer:  $VOICELAYER_DIR"
 echo "  plist:       $PLIST_DST"
 if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
-    echo "  disabled:    1"
+    echo "  DISABLE_VOICELAYER=1 (daemon exits cleanly and launchd stays idle)"
 fi
 
 # Stop existing if running

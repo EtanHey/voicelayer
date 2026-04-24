@@ -18,7 +18,7 @@ enum VoiceLayerPaths {
     }
 
     static func voiceDisabledFlagPath() -> String {
-        environmentValue(disableFlagOverrideEnvironmentVariable) ?? tmpPath(".claude_voice_disabled")
+        environmentValue(disableFlagOverrideEnvironmentVariable) ?? tmpPath(".voicelayer-daemon-disabled")
     }
 
     static func isVoicelayerDisabled() -> Bool {

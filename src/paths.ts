@@ -90,17 +90,18 @@ export const TTS_DISABLED_FILE = tmpPath(".claude_tts_disabled");
 export const MIC_DISABLED_FILE = tmpPath(".claude_mic_disabled");
 
 /** Combined voice disabled flag — checked by CC PreToolUse hook to block all voice tools. */
+export const VOICE_DISABLED_FILE = tmpPath(".claude_voice_disabled");
+
+/** Dedicated daemon disable flag — polled by the MCP daemon to exit cleanly. */
 export function getVoiceDisabledFilePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return readOverride(
     VOICE_DISABLED_OVERRIDE_ENV,
-    tmpPath(".claude_voice_disabled"),
+    tmpPath(".voicelayer-daemon-disabled"),
     env,
   );
 }
-
-export const VOICE_DISABLED_FILE = getVoiceDisabledFilePath();
 
 export function isVoicelayerDisabled(options?: {
   env?: NodeJS.ProcessEnv;
