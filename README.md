@@ -89,7 +89,6 @@ bun run src/mcp-server-daemon.ts
 ```
 
 ### Disabling VoiceLayer
-
 `DISABLE_VOICELAYER=1` is a hard kill-switch for the MCP daemon.
 
 ```bash
