@@ -92,6 +92,7 @@ describe("DISABLE_VOICELAYER env", () => {
       }),
     ).toBe(true);
 
+    mkdirSync(TEST_DIR, { recursive: true });
     writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
 
     expect(
@@ -109,23 +110,27 @@ describe("DISABLE_VOICELAYER env", () => {
     ).toBe(false);
   });
 
-  it("running daemon self-terminates when flag file appears", async () => {
-    const daemon = spawnDaemon();
+  it(
+    "running daemon self-terminates when flag file appears",
+    { timeout: 8000 },
+    async () => {
+      const daemon = spawnDaemon();
 
-    expect(await waitForFile(TEST_MCP_SOCKET_PATH, 2000)).toBe(true);
+      expect(await waitForFile(TEST_MCP_SOCKET_PATH, 2000)).toBe(true);
 
-    writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
+      writeFileSync(TEST_DISABLE_FLAG_PATH, "disabled");
 
-    const exitCode = await Promise.race([
-      daemon.exited,
-      Bun.sleep(6000).then(() => null),
-    ]);
+      const exitCode = await Promise.race([
+        daemon.exited,
+        Bun.sleep(6000).then(() => null),
+      ]);
 
-    if (exitCode === null) {
-      daemon.kill();
-      await daemon.exited;
-    }
+      if (exitCode === null) {
+        daemon.kill();
+        await daemon.exited;
+      }
 
-    expect(exitCode).toBe(0);
-  });
+      expect(exitCode).toBe(0);
+    },
+  );
 });

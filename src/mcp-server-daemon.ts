@@ -21,7 +21,11 @@
  */
 
 import { getBackend } from "./stt";
-import { MCP_SOCKET_PATH } from "./paths";
+import {
+  DISABLE_VOICELAYER,
+  MCP_SOCKET_PATH,
+  isVoicelayerDisabled,
+} from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
@@ -42,6 +46,7 @@ import {
 } from "./handlers";
 
 // --- Tool dispatch table ---
+const DISABLE_POLL_INTERVAL_MS = 5000;
 
 const toolDispatch: Record<
   string,
@@ -72,6 +77,14 @@ async function main() {
   console.error(
     `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
   );
+
+  if (isVoicelayerDisabled()) {
+    console.error(
+      `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or voice disable flag present — exiting`,
+    );
+    releaseProcessLock();
+    process.exit(0);
+  }
 
   // Acquire process lock (kills orphans)
   const lockResult = acquireProcessLock();
@@ -155,8 +168,16 @@ async function main() {
   );
 
   // Graceful shutdown: flush, close, remove socket, release PID lock
+  let shuttingDown = false;
+  let disablePollTimer: ReturnType<typeof setInterval> | null = null;
   const shutdown = () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.error("[voicelayer-daemon] Shutting down...");
+    if (disablePollTimer) {
+      clearInterval(disablePollTimer);
+      disablePollTimer = null;
+    }
     stopLogRotation();
     daemon.stop();
     disconnectFromBar();
@@ -164,6 +185,14 @@ async function main() {
     console.error("[voicelayer-daemon] Shutdown complete.");
     process.exit(0);
   };
+
+  disablePollTimer = setInterval(() => {
+    if (!isVoicelayerDisabled()) return;
+    console.error(
+      "[voicelayer-daemon] Voice disable flag detected — shutting down cleanly",
+    );
+    shutdown();
+  }, DISABLE_POLL_INTERVAL_MS);
 
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);

@@ -32,6 +32,10 @@
         <string>__HOME__/.bun/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>__HOME__</string>
+        <!-- To prevent the daemon from starting on login, uncomment:
+        <key>DISABLE_VOICELAYER</key>
+        <string>1</string>
+        -->
     </dict>
     <key>ProcessType</key>
     <string>Interactive</string>

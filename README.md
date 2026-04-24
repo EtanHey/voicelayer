@@ -88,6 +88,25 @@ cd voicelayer && bun install
 bun run src/mcp-server-daemon.ts
 ```
 
+### Disabling VoiceLayer
+
+`DISABLE_VOICELAYER=1` is a hard kill-switch for the MCP daemon.
+
+```bash
+# Install the LaunchAgent in a disabled state
+DISABLE_VOICELAYER=1 ./launchd/install.sh
+
+# Or edit the template-generated plist and add:
+# <key>DISABLE_VOICELAYER</key>
+# <string>1</string>
+```
+
+If the daemon is already running, create `/tmp/.claude_voice_disabled` and it will shut down within 5 seconds. To re-enable it, remove the env var from `~/Library/LaunchAgents/com.voicelayer.mcp-daemon.plist`, delete `/tmp/.claude_voice_disabled` if present, and restart the agent:
+
+```bash
+launchctl kickstart -k "gui/$(id -u)/com.voicelayer.mcp-daemon"
+```
+
 ### Configure MCP Clients
 
 Add to your `.mcp.json` (in any repo where you use Claude Code):

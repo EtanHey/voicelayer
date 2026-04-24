@@ -42,6 +42,9 @@ echo "Installing $LABEL..."
 echo "  bun:        $BUN_BIN"
 echo "  voicelayer:  $VOICELAYER_DIR"
 echo "  plist:       $PLIST_DST"
+if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
+    echo "  disabled:    1"
+fi
 
 # Stop existing if running
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
@@ -54,6 +57,11 @@ sed \
     -e "s|__HOME__|$HOME|g" \
     "$PLIST_SRC" > "$PLIST_DST"
 
+if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
+    /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:DISABLE_VOICELAYER" "$PLIST_DST" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:DISABLE_VOICELAYER string 1" "$PLIST_DST"
+fi
+
 # Load and start
 launchctl bootstrap "gui/$(id -u)" "$PLIST_DST"
 
@@ -63,6 +71,7 @@ if launchctl print "gui/$(id -u)/$LABEL" > /dev/null 2>&1; then
     echo "Started. Verify: launchctl list | grep voicelayer"
     echo "Logs:   tail -f /tmp/voicelayer-mcp-daemon.stderr.log"
     echo "Socket: /tmp/voicelayer-mcp.sock"
+    echo "Disable on boot: DISABLE_VOICELAYER=1 ./launchd/install.sh"
     echo ""
     echo "MCP client config (.mcp.json):"
     echo '  "voicelayer": { "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }'
