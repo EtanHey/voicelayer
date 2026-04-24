@@ -51,6 +51,7 @@ struct PulsingStatusLabel: View {
 
 struct BarView: View {
     var state: VoiceState
+    var commandRouter: VoiceBarCommandRouter
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
 
@@ -156,7 +157,7 @@ struct BarView: View {
                 NSHapticFeedbackManager.defaultPerformer.perform(
                     .alignment, performanceTime: .now
                 )
-                state.record()
+                commandRouter.handlePrimaryTap()
             }
         }
     }
@@ -406,11 +407,11 @@ struct BarView: View {
     private var actionButtons: some View {
         HStack(spacing: 2) {
             if state.mode == .recording {
-                pillButton(icon: "xmark") { state.cancel() }
-                pillButton(icon: "stop.fill") { state.stop() }
+                pillButton(icon: "xmark") { commandRouter.handleCancel() }
+                pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }
             if state.mode == .speaking {
-                pillButton(icon: "stop.fill") { state.stop() }
+                pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }
             if state.mode == .error {
                 pillButton(icon: "xmark") { state.dismissError() }
@@ -419,7 +420,7 @@ struct BarView: View {
                 historyButton
             }
             if state.mode == .idle, state.canReplay {
-                pillButton(icon: "arrow.counterclockwise") { state.replay() }
+                pillButton(icon: "arrow.counterclockwise") { commandRouter.handleReplay() }
             }
         }
     }

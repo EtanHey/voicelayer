@@ -31,10 +31,17 @@ import { getRecordingState } from "./input";
 export function handleSocketCommand(
   command: SocketCommand,
 ): SocketResponse | void {
+  const recordingState = getRecordingState();
+  const playbackQueueDepth = getPlaybackQueueDepth();
+  const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
+
   switch (command.cmd) {
     case "stop":
-      if (getRecordingState() === "idle" && getPlaybackQueueDepth() === 0) {
+      if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
+      }
+      if (recordingState === "transcribing") {
+        return buildAck(command, "noop", "already transcribing");
       }
       safeWriteFileSync(
         STOP_FILE,
@@ -45,6 +52,9 @@ export function handleSocketCommand(
       stopPlayback();
       return buildAck(command, "accept");
     case "cancel":
+      if (recordingState === "idle" && playbackQueueDepth === 0) {
+        return buildAck(command, "noop", "already idle");
+      }
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
       // so waitForInput() discards the recording instead of transcribing.
       setCancelSignal();
@@ -57,8 +67,14 @@ export function handleSocketCommand(
       stopPlayback();
       return buildAck(command, "accept");
     case "replay": {
+      if (recordingState === "recording" || recordingState === "transcribing") {
+        return buildAck(command, "reject", "busy");
+      }
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
+        if (isSpeaking) {
+          stopPlayback();
+        }
         // Idle forces VoiceBar remount for same-text replay
         broadcast({ type: "state", state: "idle" });
         playAudioNonBlocking(entry.file, {
@@ -70,6 +86,12 @@ export function handleSocketCommand(
       return buildAck(command, "noop", "nothing to replay");
     }
     case "record": {
+      if (recordingState === "recording") {
+        return buildAck(command, "noop", "already recording");
+      }
+      if (recordingState === "transcribing") {
+        return buildAck(command, "reject", "busy");
+      }
       if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
         broadcast({
           type: "error",
@@ -87,6 +109,9 @@ export function handleSocketCommand(
           recoverable: true,
         });
         return buildAck(command, "reject", "busy");
+      }
+      if (isSpeaking) {
+        stopPlayback();
       }
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
@@ -132,8 +157,8 @@ export function handleSocketCommand(
     }
     case "health":
       return buildHealthResponse({
-        queueDepth: getPlaybackQueueDepth(),
-        recordingState: getRecordingState(),
+        queueDepth: playbackQueueDepth,
+        recordingState,
       });
     case "command":
       broadcast({
