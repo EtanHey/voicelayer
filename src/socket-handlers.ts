@@ -17,16 +17,25 @@ import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
 import { waitForInput } from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-client";
-import type { HealthResponse, SocketCommand } from "./socket-protocol";
+import type {
+  AckCommand,
+  AckEvent,
+  HealthResponse,
+  SocketCommand,
+  SocketResponse,
+} from "./socket-protocol";
 import { buildHealthResponse } from "./daemon-health";
 import { getPlaybackQueueDepth } from "./tts";
 import { getRecordingState } from "./input";
 
 export function handleSocketCommand(
   command: SocketCommand,
-): HealthResponse | void {
+): SocketResponse | void {
   switch (command.cmd) {
     case "stop":
+      if (getRecordingState() === "idle" && getPlaybackQueueDepth() === 0) {
+        return buildAck(command, "noop", "already idle");
+      }
       safeWriteFileSync(
         STOP_FILE,
         `stop from voice-bar at ${new Date().toISOString()}`,
@@ -34,7 +43,7 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback();
-      break;
+      return buildAck(command, "accept");
     case "cancel":
       // AIDEV-NOTE: Cancel differs from stop — it sets the cancel signal
       // so waitForInput() discards the recording instead of transcribing.
@@ -46,7 +55,7 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback();
-      break;
+      return buildAck(command, "accept");
     case "replay": {
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
@@ -56,8 +65,9 @@ export function handleSocketCommand(
           text: entry.text.slice(0, 2000),
           voice: entry.voice,
         });
+        return buildAck(command, "accept");
       }
-      break;
+      return buildAck(command, "noop", "nothing to replay");
     }
     case "record": {
       if (existsSync(VOICE_DISABLED_FILE) || existsSync(MIC_DISABLED_FILE)) {
@@ -66,7 +76,7 @@ export function handleSocketCommand(
           message: "Mic is disabled",
           recoverable: false,
         });
-        break;
+        return buildAck(command, "reject", "mic disabled");
       }
       // H5 fix: check session booking to prevent concurrent recordings
       const booking = isVoiceBooked();
@@ -76,7 +86,7 @@ export function handleSocketCommand(
           message: `Line is busy — voice session owned by ${booking.owner?.sessionId ?? "unknown"}`,
           recoverable: true,
         });
-        break;
+        return buildAck(command, "reject", "busy");
       }
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
@@ -87,7 +97,7 @@ export function handleSocketCommand(
         );
         broadcast({ type: "state", state: "idle" });
       });
-      break;
+      return buildAck(command, "accept");
     }
     case "toggle": {
       const { scope, enabled } = command;
@@ -118,7 +128,7 @@ export function handleSocketCommand(
           safeWriteFileSync(MIC_DISABLED_FILE, ts);
         }
       }
-      break;
+      return buildAck(command, "accept");
     }
     case "health":
       return buildHealthResponse({
@@ -133,7 +143,7 @@ export function handleSocketCommand(
         replacement_text: command.text,
         prompt: command.prompt,
       });
-      break;
+      return buildAck(command, "accept");
     case "mark_clip":
       broadcast({
         type: "clip_marker",
@@ -142,6 +152,20 @@ export function handleSocketCommand(
         source: command.source ?? "command",
         status: "marked",
       });
-      break;
+      return buildAck(command, "accept");
   }
+}
+
+function buildAck(
+  command: SocketCommand & { cmd: AckCommand; id?: string },
+  outcome: AckEvent["outcome"],
+  reason?: string,
+): AckEvent {
+  return {
+    type: "ack",
+    command: command.cmd,
+    outcome,
+    ...(command.id ? { id: command.id } : {}),
+    ...(reason ? { reason } : {}),
+  };
 }

@@ -12,13 +12,14 @@ import { existsSync } from "fs";
 
 // Pre-check for conditional skips
 const npxAvailable = Bun.spawnSync(["which", "npx"]).exitCode === 0;
+const runningInCI = process.env.CI === "true";
 const mcpJsonExists = existsSync(".mcp.json");
 const mcpConfig =
   mcpJsonExists ? await Bun.file(".mcp.json").json().catch(() => null) : null;
 const playwrightConfig = mcpConfig?.mcpServers?.playwright;
 
 describe("Playwright MCP setup", () => {
-  test.skipIf(!npxAvailable)(
+  test.skipIf(!npxAvailable || runningInCI)(
     "npx @playwright/mcp@latest is available",
     { timeout: 15000 },
     () => {

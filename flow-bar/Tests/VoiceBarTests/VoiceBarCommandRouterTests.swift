@@ -2,12 +2,17 @@
 import XCTest
 
 final class VoiceBarCommandRouterTests: XCTestCase {
-    func testToggleStartsRecordingWhenIdle() throws {
+    func testToggleStartsRecordingIntentWhenIdle() throws {
         let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
 
         try VoiceBarCommandRouter.handle(url: XCTUnwrap(URL(string: "voicebar://toggle")), voiceState: state)
 
-        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "record")
+        XCTAssertNotNil(commands.first?["id"] as? String)
     }
 
     func testToggleStopsRecordingWhenAlreadyRecording() throws {
@@ -25,19 +30,27 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
     func testStartRecordingOnlyTriggersFromIdle() throws {
         let idleState = VoiceState()
+        var idleCommands: [[String: Any]] = []
+        idleState.sendCommand = { idleCommands.append($0) }
         try VoiceBarCommandRouter.handle(
             url: XCTUnwrap(URL(string: "voicebar://start-recording")),
             voiceState: idleState
         )
-        XCTAssertEqual(idleState.mode, .recording)
+        XCTAssertEqual(idleState.mode, .idle)
+        XCTAssertEqual(idleCommands.count, 1)
+        XCTAssertEqual(idleCommands.first?["cmd"] as? String, "record")
+        XCTAssertNotNil(idleCommands.first?["id"] as? String)
 
         let transcribingState = VoiceState()
         transcribingState.mode = .transcribing
+        var transcribingCommands: [[String: Any]] = []
+        transcribingState.sendCommand = { transcribingCommands.append($0) }
         try VoiceBarCommandRouter.handle(
             url: XCTUnwrap(URL(string: "voicebar://start-recording")),
             voiceState: transcribingState
         )
         XCTAssertEqual(transcribingState.mode, .transcribing)
+        XCTAssertTrue(transcribingCommands.isEmpty)
     }
 
     func testStopRecordingOnlyTriggersFromRecordingMode() throws {

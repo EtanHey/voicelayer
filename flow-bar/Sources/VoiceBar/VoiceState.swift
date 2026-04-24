@@ -105,14 +105,17 @@ final class VoiceState {
     /// Timer for idle collapse.
     private var collapseTimer: Task<Void, Never>?
 
+    /// Tracks the last user intent sent to the daemon until the matching ack returns.
+    var pendingIntent: PendingIntent?
+
     /// Safety timeout for barInitiatedRecording — prevents stuck state.
     private var barInitiatedTimeout: Task<Void, Never>?
     private var transcriptionTimeoutTask: Task<Void, Never>?
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
-    /// ONLY cleared by: transcription handler (after paste) or cancel().
-    /// Never cleared by idle/error — those are ambiguous with multiple MCP clients.
+    /// Cleared after transcription, cancel, disconnect, or a rejected record ack.
+    /// Never cleared by idle/error alone — those are ambiguous with multiple MCP clients.
     private var barInitiatedRecording = false
 
     /// The app that was frontmost when bar-initiated recording started.
@@ -162,22 +165,11 @@ final class VoiceState {
     // MARK: - Commands
 
     func stop() {
-        sendCommand?(["cmd": "stop"])
-        // Reset local state after a short delay if daemon doesn't respond.
-        // Prevents UI stuck in "listening" when no daemon handles the stop.
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(2))
-            if mode == .recording {
-                mode = .idle
-                onModeChange?(.idle)
-                barInitiatedRecording = false
-                resetAudioLevels()
-                startCollapseTimer()
-            }
-        }
+        sendIntent(command: .stop, payload: ["cmd": "stop"])
     }
 
     func dismissError() {
+        pendingIntent = nil
         errorMessage = nil
         speechDetected = false
         recordingMode = nil
@@ -201,31 +193,29 @@ final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         frontmostAppOnRecordStart = nil
-        // Optimistic — immediately go idle so user sees instant response.
-        // MCP will also send idle after processing the cancel.
-        mode = .idle
         speechDetected = false
         resetAudioLevels()
         statusText = ""
-        onModeChange?(.idle)
-        startCollapseTimer()
-        sendCommand?(["cmd": "cancel"])
+        sendIntent(command: .cancel, payload: ["cmd": "cancel"])
     }
 
     func toggle(scope: String = "all", enabled: Bool) {
-        sendCommand?(["cmd": "toggle", "scope": scope, "enabled": enabled])
+        sendIntent(
+            command: .toggle,
+            payload: ["cmd": "toggle", "scope": scope, "enabled": enabled]
+        )
     }
 
     func replay() {
-        sendCommand?(["cmd": "replay"])
+        sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
     func snooze() {
         switch mode {
         case .recording, .transcribing:
-            sendCommand?(["cmd": "cancel"])
+            sendIntent(command: .cancel, payload: ["cmd": "cancel"], trackPending: false)
         case .speaking:
-            sendCommand?(["cmd": "stop"])
+            sendIntent(command: .stop, payload: ["cmd": "stop"], trackPending: false)
         default:
             break
         }
@@ -264,8 +254,7 @@ final class VoiceState {
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     func record() {
         guard mode == .idle || mode == .error else { return }
-        mode = .recording // Optimistic — prevents rapid-tap duplicates
-        onModeChange?(.recording)
+        guard pendingIntent?.command != .record else { return }
         confirmationText = nil
         errorMessage = nil
         let front = NSWorkspace.shared.frontmostApplication
@@ -284,7 +273,7 @@ final class VoiceState {
             }
         }
 
-        sendCommand?([
+        sendIntent(command: .record, payload: [
             "cmd": "record",
             "silence_mode": "thoughtful",
             "timeout_seconds": 120,
@@ -356,6 +345,9 @@ final class VoiceState {
             default:
                 break
             }
+
+        case "ack":
+            handleAckEvent(event)
 
         case "speech":
             if let detected = event["detected"] as? Bool {
@@ -472,6 +464,7 @@ final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         barInitiatedRecording = false
+        pendingIntent = nil
         frontmostAppOnRecordStart = nil
         speechDetected = false
         recordingMode = nil
@@ -571,6 +564,7 @@ final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         barInitiatedRecording = false
+        pendingIntent = nil
         frontmostAppOnRecordStart = nil
         speechDetected = false
         recordingMode = nil
@@ -651,6 +645,41 @@ final class VoiceState {
                 self?.confirmationText = nil
             }
         }
+    }
+
+    private func sendIntent(
+        command: IntentCommand,
+        payload: [String: Any],
+        trackPending: Bool = true
+    ) {
+        let id = UUID().uuidString
+        var payloadWithID = payload
+        payloadWithID["id"] = id
+        if trackPending {
+            pendingIntent = PendingIntent(id: id, command: command)
+        }
+        sendCommand?(payloadWithID)
+    }
+
+    private func handleAckEvent(_ event: [String: Any]) {
+        guard let ack = SocketAckEvent(event: event),
+              pendingIntent?.id == ack.id,
+              pendingIntent?.command == ack.command
+        else {
+            return
+        }
+
+        pendingIntent = nil
+
+        guard ack.command == .record, ack.outcome == .reject else { return }
+
+        barInitiatedRecording = false
+        barInitiatedTimeout?.cancel()
+        frontmostAppOnRecordStart = nil
+        mode = .error
+        errorMessage = ack.reason ?? "Unable to start recording"
+        onModeChange?(.error)
+        expandFromCollapse()
     }
 
     private func handleCommandModeEvent(_ event: [String: Any]) {

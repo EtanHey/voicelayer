@@ -15,7 +15,7 @@ import {
   parseCommand,
   type SocketEvent,
   type SocketCommand,
-  type HealthResponse,
+  type SocketResponse,
 } from "./socket-protocol";
 import { SOCKET_PATH } from "./paths";
 
@@ -37,7 +37,7 @@ const KEEPALIVE_INTERVAL_MS = 30_000;
 let commandHandler:
   | ((
       command: SocketCommand,
-    ) => void | HealthResponse | Promise<void | HealthResponse>)
+    ) => void | SocketResponse | Promise<void | SocketResponse>)
   | null = null;
 
 // --- Target socket path (overridable for tests) ---
@@ -99,7 +99,7 @@ export function broadcast(event: SocketEvent): void {
 export function onCommand(
   handler: (
     command: SocketCommand,
-  ) => void | HealthResponse | Promise<void | HealthResponse>,
+  ) => void | SocketResponse | Promise<void | SocketResponse>,
 ): void {
   commandHandler = handler;
 }
