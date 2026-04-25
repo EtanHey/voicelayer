@@ -3,6 +3,7 @@ import {
   calculateRMS,
   createWavBuffer,
   clearInput,
+  evaluateNoSpeechGate,
   isChunkedSTTEnabled,
   transcribeChunkSequence,
 } from "../input";
@@ -141,6 +142,39 @@ describe("input module", () => {
   describe("clearInput", () => {
     it("does not throw (no-op)", () => {
       expect(() => clearInput()).not.toThrow();
+    });
+  });
+
+  describe("evaluateNoSpeechGate", () => {
+    function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      for (let i = 0; i < samples; i++) {
+        view.setInt16(i * 2, sample, true);
+      }
+      return buffer;
+    }
+
+    it("rejects recordings shorter than 600ms before STT", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(5000, 500));
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("too-short");
+    });
+
+    it("rejects near-silent recordings before STT", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(100, 700));
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("too-quiet");
+    });
+
+    it("allows normal-duration audible recordings", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(4000, 700));
+
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBeUndefined();
     });
   });
 

@@ -117,13 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Request Accessibility permission (needed for CGEvent paste-on-record-end).
-        // Shows the macOS permission dialog on first launch.
-        let axTrusted = AXIsProcessTrusted()
-        NSLog("[VoiceBar] AXIsProcessTrusted() on launch: %@", axTrusted ? "YES" : "NO")
-        let axOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(axOptions)
-        NSLog("[VoiceBar] Accessibility trusted: %@", trusted ? "YES" : "NO — paste will not work")
+        promptForAccessibilityIfNeeded()
 
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
@@ -279,6 +273,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false // keep running as a menu-bar agent
     }
 
+    private func promptForAccessibilityIfNeeded() {
+        // Request Accessibility permission (needed for CGEvent paste-on-record-end).
+        // Shows the macOS permission dialog on first launch and after revocation.
+        let trusted = VoiceState.isAccessibilityTrusted(prompt: true)
+        NSLog("[VoiceBar] Accessibility trusted on launch: %@", trusted ? "YES" : "NO — paste will not work")
+        guard !trusted else { return }
+
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "VoiceBar needs Accessibility permission to paste"
+            alert.informativeText = "Grant VoiceBar in System Settings > Privacy & Security > Accessibility, then try paste again."
+            alert.addButton(withTitle: "Open Settings")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn,
+               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
+        }
+    }
+
     // MARK: - Hotkey setup
 
     /// Wire gesture callbacks to VoiceState and start the event tap.
@@ -295,18 +310,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             handleHotkeyHoldStart()
         }
 
-        // Hold end → stop recording only if held long enough (≥1s for VAD mode).
-        // Short holds let VAD decide when to stop via silence detection.
+        // Hold end → stop the active PTT recording and transcribe whatever was captured.
         gestureStateMachine.onHoldEnd = { [weak self] in
             guard let self else { return }
             let holdDuration = Date().timeIntervalSince(holdStartTime ?? Date())
-            if holdDuration >= 1.0 {
-                NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
-                handleHotkeyHoldEnd(holdDuration: holdDuration)
-            } else {
-                NSLog("[VoiceBar] Hotkey hold end (%.1fs) — short hold, letting VAD decide", holdDuration)
-                // Don't send stop — VAD silence detection will end recording naturally
-            }
+            NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
+            handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
 
         // Single tap is intentionally ignored so double-tap can toggle hands-free mode.

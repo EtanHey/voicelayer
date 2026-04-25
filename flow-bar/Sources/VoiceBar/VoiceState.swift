@@ -146,6 +146,11 @@ final class VoiceState {
         VoiceState.simulatePaste()
     }
 
+    /// Test seam for Accessibility permission checks.
+    var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { prompt in
+        VoiceState.isAccessibilityTrusted(prompt: prompt)
+    }
+
     private let commandModeAXHelper = CommandModeAXHelper()
 
     /// Transport-layer hook injected by AppDelegate.
@@ -252,7 +257,7 @@ final class VoiceState {
     }
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
-    func record() {
+    func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
         confirmationText = nil
@@ -277,6 +282,7 @@ final class VoiceState {
             "cmd": "record",
             "silence_mode": "thoughtful",
             "timeout_seconds": 120,
+            "press_to_talk": pressToTalk,
         ])
     }
 
@@ -600,6 +606,14 @@ final class VoiceState {
         if let pasteHandler {
             pasted = pasteHandler(text)
         } else {
+            guard accessibilityTrustChecker(true) else {
+                NSLog("[VoiceBar] pasteTranscript: Accessibility not granted")
+                pasted = false
+                frontmostAppOnRecordStart = nil
+                finishPasteConfirmation(pasted: pasted)
+                return
+            }
+
             guard let targetApp else {
                 pasted = false
                 frontmostAppOnRecordStart = nil
@@ -635,7 +649,10 @@ final class VoiceState {
     }
 
     private func finishPasteConfirmation(pasted: Bool) {
-        showConfirmation(pasted ? "Pasted!" : "Paste failed — check Accessibility", duration: pasted ? 1.5 : 3.0)
+        showConfirmation(
+            pasted ? "Pasted!" : "Paste blocked — grant Accessibility in System Settings",
+            duration: pasted ? 1.5 : 4.0
+        )
     }
 
     private func showConfirmation(_ message: String, duration: TimeInterval = 1.5) {
@@ -726,7 +743,7 @@ final class VoiceState {
     /// Returns true if paste was posted, false if blocked (S3 fix: caller checks this).
     @discardableResult
     private static func simulatePaste() -> Bool {
-        guard AXIsProcessTrusted() else {
+        guard isAccessibilityTrusted(prompt: true) else {
             NSLog("[VoiceBar] simulatePaste: Accessibility not granted")
             return false
         }
@@ -746,5 +763,13 @@ final class VoiceState {
         vDown.post(tap: .cghidEventTap)
         vUp.post(tap: .cghidEventTap)
         return true
+    }
+
+    static func isAccessibilityTrusted(prompt: Bool) -> Bool {
+        if prompt {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            return AXIsProcessTrustedWithOptions(options)
+        }
+        return AXIsProcessTrusted()
     }
 }

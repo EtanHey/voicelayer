@@ -45,7 +45,8 @@ import {
 import { broadcast } from "./socket-client";
 import {
   calculateRMS,
-  detectNativeSampleRate,
+  detectNativeInputFormat,
+  downmixPCM16ToMono,
   resamplePCM16,
 } from "./audio-utils";
 import { applyRules } from "./rules-engine";
@@ -60,6 +61,9 @@ const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
 const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
+// AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
+const MIN_TRANSCRIBE_DURATION_MS = 600;
+const MIN_TRANSCRIBE_DBFS = -40;
 
 /**
  * Pre-speech timeout: if no speech is detected within this many seconds,
@@ -75,6 +79,32 @@ export { calculateRMS };
 export function isChunkedSTTEnabled(): boolean {
   const raw = process.env.QA_VOICE_CHUNKED_STT?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+export interface NoSpeechGateResult {
+  allowed: boolean;
+  durationMs: number;
+  rms: number;
+  dbfs: number;
+  reason?: "too-short" | "too-quiet";
+}
+
+export function evaluateNoSpeechGate(
+  pcmData: Uint8Array,
+  sampleRate = SAMPLE_RATE,
+): NoSpeechGateResult {
+  const samples = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
+  const durationMs = Math.round((samples / sampleRate) * 1000);
+  const rms = calculateRMS(pcmData);
+  const dbfs = rms > 0 ? 20 * Math.log10(rms / 32768) : -Infinity;
+
+  if (durationMs < MIN_TRANSCRIBE_DURATION_MS) {
+    return { allowed: false, durationMs, rms, dbfs, reason: "too-short" };
+  }
+  if (dbfs < MIN_TRANSCRIBE_DBFS) {
+    return { allowed: false, durationMs, rms, dbfs, reason: "too-quiet" };
+  }
+  return { allowed: true, durationMs, rms, dbfs };
 }
 
 function flattenChunks(chunks: Uint8Array[]): Uint8Array {
@@ -287,17 +317,21 @@ export async function recordToBuffer(
   // Detect native device sample rate to avoid sox resampling during pipe
   // AIDEV-NOTE: Sox buffer-overruns when resampling during streaming (e.g., AirPods at 24kHz → 16kHz).
   // Recording at native rate and resampling in our code avoids this entirely.
-  const nativeRate = detectNativeSampleRate();
+  const nativeInputFormat = detectNativeInputFormat();
+  const nativeRate = nativeInputFormat.sampleRate;
+  const nativeChannels = nativeInputFormat.channels;
   const needsResample = nativeRate !== SAMPLE_RATE;
+  const needsDownmix = nativeChannels !== CHANNELS;
   // Native chunk size: how many bytes at native rate correspond to one VAD chunk (512 samples at 16kHz)
-  const nativeChunkSamples = Math.ceil(
+  const nativeChunkFrames = Math.ceil(
     VAD_CHUNK_SAMPLES * (nativeRate / SAMPLE_RATE),
   );
-  const nativeChunkBytes = nativeChunkSamples * BYTES_PER_SAMPLE;
+  const nativeChunkBytes =
+    nativeChunkFrames * nativeChannels * BYTES_PER_SAMPLE;
 
-  if (needsResample) {
+  if (needsResample || needsDownmix) {
     console.error(
-      `[voicelayer] Device native rate: ${nativeRate}Hz — will resample to ${SAMPLE_RATE}Hz`,
+      `[voicelayer] Device input format: ${nativeChannels}ch @ ${nativeRate}Hz — ${needsDownmix ? "downmixing to mono, " : ""}${needsResample ? `resampling to ${SAMPLE_RATE}Hz` : "keeping native rate"}`,
     );
   }
 
@@ -364,7 +398,7 @@ export async function recordToBuffer(
           "-r",
           String(nativeRate),
           "-c",
-          "1",
+          String(nativeChannels),
           "-b",
           "16",
           "-e",
@@ -456,9 +490,12 @@ export async function recordToBuffer(
             readBuffer = remainder.length > 0 ? [remainder] : [];
             readBufferLen = remainder.length;
 
-            const chunk = needsResample
-              ? resamplePCM16(nativeChunk, nativeRate, SAMPLE_RATE)
+            const monoChunk = needsDownmix
+              ? downmixPCM16ToMono(nativeChunk, nativeChannels)
               : nativeChunk;
+            const chunk = needsResample
+              ? resamplePCM16(monoChunk, nativeRate, SAMPLE_RATE)
+              : monoChunk;
             chunkQueue.push(chunk);
           }
         }
@@ -618,6 +655,24 @@ export async function waitForInput(
   if (hasCancelSignal()) {
     clearCancelSignal();
     console.error("[voicelayer] Recording cancelled — discarding audio");
+    broadcast({ type: "state", state: "idle" });
+    return null;
+  }
+
+  const noSpeechGate = evaluateNoSpeechGate(pcmData);
+  console.error(
+    `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
+      `rms=${noSpeechGate.rms.toFixed(0)}, ` +
+      `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"}, ` +
+      `allowed=${noSpeechGate.allowed}`,
+  );
+  if (!noSpeechGate.allowed) {
+    console.error(
+      `[voicelayer] Dropping recording before STT: ${noSpeechGate.reason} ` +
+        `(duration=${noSpeechGate.durationMs}ms, rms=${noSpeechGate.rms.toFixed(0)}, ` +
+        `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
+    );
+    clearCancelSignal();
     broadcast({ type: "state", state: "idle" });
     return null;
   }

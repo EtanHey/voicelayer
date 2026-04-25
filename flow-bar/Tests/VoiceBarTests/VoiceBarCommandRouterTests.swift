@@ -35,6 +35,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(state.mode, .idle)
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands.first?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.first?["press_to_talk"] as? Bool, true)
         XCTAssertNotNil(commands.first?["id"] as? String)
     }
 
@@ -63,6 +64,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(idleState.mode, .idle)
         XCTAssertEqual(idleCommands.count, 1)
         XCTAssertEqual(idleCommands.first?["cmd"] as? String, "record")
+        XCTAssertEqual(idleCommands.first?["press_to_talk"] as? Bool, true)
         XCTAssertNotNil(idleCommands.first?["id"] as? String)
 
         let transcribingState = VoiceState()
@@ -97,6 +99,61 @@ final class VoiceBarCommandRouterTests: XCTestCase {
             url: XCTUnwrap(URL(string: "voicebar://stop-recording"))
         )
         XCTAssertEqual(commands.count, 1)
+    }
+
+    func testHotkeyHoldStartUsesPressToTalkRecording() {
+        let state = VoiceState()
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyHoldStart()
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.first?["press_to_talk"] as? Bool, true)
+    }
+
+    func testHotkeyHoldStartIgnoresNonIdleStates() {
+        let state = VoiceState()
+        state.mode = .recording
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyHoldStart()
+
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testPrimaryTapUsesPressToTalkRecording() {
+        let state = VoiceState()
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handlePrimaryTap()
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "record")
+        XCTAssertEqual(commands.first?["press_to_talk"] as? Bool, true)
+    }
+
+    func testHotkeyHoldEndStopsRecordingAfterShortHold() {
+        let state = VoiceState()
+        state.mode = .recording
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyHoldEnd(holdDuration: 0.35)
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
     }
 
     func testIgnoresUnknownOrNonVoiceBarUrls() throws {
