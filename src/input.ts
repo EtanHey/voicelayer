@@ -63,7 +63,7 @@ const CHANNELS = 1;
 const BITS_PER_SAMPLE = 16;
 // AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
 const MIN_TRANSCRIBE_DURATION_MS = 600;
-const MIN_TRANSCRIBE_DBFS = -40;
+const MIN_TRANSCRIBE_DBFS = -55;
 
 /**
  * Pre-speech timeout: if no speech is detected within this many seconds,
