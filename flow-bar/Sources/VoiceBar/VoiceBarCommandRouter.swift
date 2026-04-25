@@ -30,7 +30,7 @@ class VoiceBarCommandRouter {
 
     func handlePrimaryTap() {
         guard voiceState.mode == .idle || voiceState.mode == .error else { return }
-        voiceState.record()
+        voiceState.record(pressToTalk: true)
     }
 
     func handleCancel() {
@@ -48,11 +48,12 @@ class VoiceBarCommandRouter {
     }
 
     func handleHotkeyHoldStart() {
-        voiceState.record()
+        guard voiceState.mode == .idle || voiceState.mode == .error else { return }
+        voiceState.record(pressToTalk: true)
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
-        guard holdDuration >= 1.0 else { return }
+        guard holdDuration > 0 else { return }
         voiceState.stop()
     }
 
@@ -62,7 +63,7 @@ class VoiceBarCommandRouter {
 
     private func handleToggle() {
         if voiceState.mode == .idle || voiceState.mode == .error {
-            voiceState.record()
+            voiceState.record(pressToTalk: true)
         } else if voiceState.mode == .recording {
             voiceState.stop()
         }
@@ -70,6 +71,6 @@ class VoiceBarCommandRouter {
 
     private func handleStartRecording() {
         guard voiceState.mode == .idle || voiceState.mode == .error else { return }
-        voiceState.record()
+        voiceState.record(pressToTalk: true)
     }
 }
