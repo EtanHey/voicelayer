@@ -170,6 +170,14 @@ describe("input module", () => {
       expect(result.reason).toBe("too-quiet");
     });
 
+    it("rejects invalid sample rates without producing NaN duration", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(4000, 700), 0);
+
+      expect(result.allowed).toBe(false);
+      expect(result.durationMs).toBe(0);
+      expect(result.reason).toBe("invalid-sample-rate");
+    });
+
     it("allows normal-duration audible recordings", () => {
       const result = evaluateNoSpeechGate(pcmWithConstantSample(4000, 700));
 

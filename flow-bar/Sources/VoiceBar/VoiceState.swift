@@ -743,7 +743,7 @@ final class VoiceState {
     /// Returns true if paste was posted, false if blocked (S3 fix: caller checks this).
     @discardableResult
     private static func simulatePaste() -> Bool {
-        guard isAccessibilityTrusted(prompt: true) else {
+        guard isAccessibilityTrusted(prompt: false) else {
             NSLog("[VoiceBar] simulatePaste: Accessibility not granted")
             return false
         }

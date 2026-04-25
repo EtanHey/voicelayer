@@ -86,17 +86,27 @@ export interface NoSpeechGateResult {
   durationMs: number;
   rms: number;
   dbfs: number;
-  reason?: "too-short" | "too-quiet";
+  reason?: "invalid-sample-rate" | "too-short" | "too-quiet";
 }
 
 export function evaluateNoSpeechGate(
   pcmData: Uint8Array,
   sampleRate = SAMPLE_RATE,
 ): NoSpeechGateResult {
-  const samples = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
-  const durationMs = Math.round((samples / sampleRate) * 1000);
   const rms = calculateRMS(pcmData);
   const dbfs = rms > 0 ? 20 * Math.log10(rms / 32768) : -Infinity;
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
+    return {
+      allowed: false,
+      durationMs: 0,
+      rms,
+      dbfs,
+      reason: "invalid-sample-rate",
+    };
+  }
+
+  const samples = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
+  const durationMs = Math.round((samples / sampleRate) * 1000);
 
   if (durationMs < MIN_TRANSCRIBE_DURATION_MS) {
     return { allowed: false, durationMs, rms, dbfs, reason: "too-short" };

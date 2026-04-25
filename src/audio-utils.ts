@@ -41,14 +41,9 @@ export function calculateRMS(buffer: Uint8Array): number {
 }
 
 /**
- * Detect the native sample rate of the default audio input device.
- * Runs `rec -n stat` which reports device info to stderr.
- * Returns the device rate, or 16000 as fallback.
- *
- * AIDEV-NOTE: Some devices (e.g., AirPods) only support specific rates (24kHz).
- * Sox can't set arbitrary rates on these devices and will silently resample,
- * which causes buffer overruns and data loss when piping to stdout.
- * Recording at the native rate avoids this entirely.
+ * Parse the native input preamble emitted by `rec`.
+ * Extracts sample rate and channel count, capped to supported bounds with
+ * DEFAULT_NATIVE_INPUT_FORMAT fallback for missing or out-of-range values.
  */
 export function parseNativeInputFormat(output: string): NativeInputFormat {
   const rateMatch = output.match(/Sample Rate\s*:\s*(\d+)/);
@@ -68,6 +63,13 @@ export function parseNativeInputFormat(output: string): NativeInputFormat {
   };
 }
 
+/**
+ * Detect the native sample rate and channel count of the default input device.
+ *
+ * AIDEV-NOTE: Some devices only support specific rates or channel counts.
+ * Recording at the native format avoids sox-side format coercion when piping
+ * to stdout; the recorder downmixes/resamples the resulting PCM explicitly.
+ */
 export function detectNativeInputFormat(): NativeInputFormat {
   try {
     // AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
@@ -137,6 +139,10 @@ export function resamplePCM16(
 
 /**
  * Downmix interleaved PCM16 audio to mono by averaging each frame.
+ * downmixPCM16ToMono averages Int16 channel samples with Math.round(sum /
+ * channels), so anti-correlated channels can phase-cancel into a quiet signal.
+ * Partial trailing frames are intentionally dropped via Math.floor; switch this
+ * algorithm here if a future device needs max, RMS, or phase-preserving downmix.
  *
  * @param input - Raw PCM16 interleaved audio
  * @param channels - Number of interleaved channels in input
