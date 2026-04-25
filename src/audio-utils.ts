@@ -8,6 +8,12 @@
 import { resolveBinary } from "./resolve-binary";
 
 const BYTES_PER_SAMPLE = 2;
+const DEFAULT_NATIVE_INPUT_FORMAT = { sampleRate: 16000, channels: 1 };
+
+export interface NativeInputFormat {
+  sampleRate: number;
+  channels: number;
+}
 
 /**
  * Calculate RMS energy of a 16-bit signed PCM audio buffer.
@@ -35,16 +41,36 @@ export function calculateRMS(buffer: Uint8Array): number {
 }
 
 /**
- * Detect the native sample rate of the default audio input device.
- * Runs `rec -n stat` which reports device info to stderr.
- * Returns the device rate, or 16000 as fallback.
- *
- * AIDEV-NOTE: Some devices (e.g., AirPods) only support specific rates (24kHz).
- * Sox can't set arbitrary rates on these devices and will silently resample,
- * which causes buffer overruns and data loss when piping to stdout.
- * Recording at the native rate avoids this entirely.
+ * Parse the native input preamble emitted by `rec`.
+ * Extracts sample rate and channel count, capped to supported bounds with
+ * DEFAULT_NATIVE_INPUT_FORMAT fallback for missing or out-of-range values.
  */
-export function detectNativeSampleRate(): number {
+export function parseNativeInputFormat(output: string): NativeInputFormat {
+  const rateMatch = output.match(/Sample Rate\s*:\s*(\d+)/);
+  const channelsMatch = output.match(/Channels\s*:\s*(\d+)/);
+  const sampleRate = rateMatch ? parseInt(rateMatch[1], 10) : 16000;
+  const channels = channelsMatch ? parseInt(channelsMatch[1], 10) : 1;
+
+  return {
+    sampleRate:
+      sampleRate > 0 && sampleRate <= 192000
+        ? sampleRate
+        : DEFAULT_NATIVE_INPUT_FORMAT.sampleRate,
+    channels:
+      channels > 0 && channels <= 16
+        ? channels
+        : DEFAULT_NATIVE_INPUT_FORMAT.channels,
+  };
+}
+
+/**
+ * Detect the native sample rate and channel count of the default input device.
+ *
+ * AIDEV-NOTE: Some devices only support specific rates or channel counts.
+ * Recording at the native format avoids sox-side format coercion when piping
+ * to stdout; the recorder downmixes/resamples the resulting PCM explicitly.
+ */
+export function detectNativeInputFormat(): NativeInputFormat {
   try {
     // AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
     // the full audio stream and blocks forever. trim 0 0 opens the device, prints
@@ -59,14 +85,13 @@ export function detectNativeSampleRate(): number {
     // Device preamble (Input File, Channels, Sample Rate) goes to stderr
     const stderr = probe.stderr.toString("utf-8");
     const stdout = probe.stdout.toString("utf-8");
-    const combined = stderr + "\n" + stdout;
-    const match = combined.match(/Sample Rate\s*:\s*(\d+)/);
-    if (match) {
-      const rate = parseInt(match[1], 10);
-      if (rate > 0 && rate <= 192000) return rate;
-    }
+    return parseNativeInputFormat(stderr + "\n" + stdout);
   } catch {}
-  return 16000;
+  return DEFAULT_NATIVE_INPUT_FORMAT;
+}
+
+export function detectNativeSampleRate(): number {
+  return detectNativeInputFormat().sampleRate;
 }
 
 /**
@@ -107,6 +132,52 @@ export function resamplePCM16(
     const sampleHigh = inputView.getInt16(high * BYTES_PER_SAMPLE, true);
     const interpolated = Math.round(sampleLow * (1 - frac) + sampleHigh * frac);
     outputView.setInt16(i * BYTES_PER_SAMPLE, interpolated, true);
+  }
+
+  return output;
+}
+
+/**
+ * Downmix interleaved PCM16 audio to mono by averaging each frame.
+ * downmixPCM16ToMono averages Int16 channel samples with Math.round(sum /
+ * channels), so anti-correlated channels can phase-cancel into a quiet signal.
+ * Partial trailing frames are intentionally dropped via Math.floor; switch this
+ * algorithm here if a future device needs max, RMS, or phase-preserving downmix.
+ *
+ * @param input - Raw PCM16 interleaved audio
+ * @param channels - Number of interleaved channels in input
+ * @returns Mono PCM16 audio
+ */
+export function downmixPCM16ToMono(
+  input: Uint8Array,
+  channels: number,
+): Uint8Array {
+  if (channels <= 1) return input;
+
+  const inputView = new DataView(
+    input.buffer,
+    input.byteOffset,
+    input.byteLength,
+  );
+  const frameBytes = channels * BYTES_PER_SAMPLE;
+  const frameCount = Math.floor(input.byteLength / frameBytes);
+  const output = new Uint8Array(frameCount * BYTES_PER_SAMPLE);
+  const outputView = new DataView(output.buffer);
+
+  for (let frame = 0; frame < frameCount; frame++) {
+    let sum = 0;
+    const frameOffset = frame * frameBytes;
+    for (let channel = 0; channel < channels; channel++) {
+      sum += inputView.getInt16(
+        frameOffset + channel * BYTES_PER_SAMPLE,
+        true,
+      );
+    }
+    outputView.setInt16(
+      frame * BYTES_PER_SAMPLE,
+      Math.round(sum / channels),
+      true,
+    );
   }
 
   return output;
