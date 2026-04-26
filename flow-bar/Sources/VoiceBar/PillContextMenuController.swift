@@ -15,6 +15,7 @@ struct MicrophoneDeviceOption: Equatable {
 
 final class PillContextMenuController: NSObject {
     var transcriptProvider: () -> String = { "" }
+    var recentTranscriptionsProvider: () -> [String] = { [] }
     var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     var selectedDeviceIDProvider: () -> String? = { nil }
 
@@ -50,6 +51,10 @@ final class PillContextMenuController: NSObject {
         microphoneItem.submenu = makeMicrophoneSubmenu()
         menu.addItem(microphoneItem)
 
+        let historyItem = NSMenuItem(title: "Transcript History", action: nil, keyEquivalent: "")
+        historyItem.submenu = makeTranscriptHistorySubmenu()
+        menu.addItem(historyItem)
+
         let pasteItem = NSMenuItem(
             title: "Paste last transcript",
             action: #selector(handlePasteLastTranscript),
@@ -68,6 +73,32 @@ final class PillContextMenuController: NSObject {
         )
         quitItem.target = self
         menu.addItem(quitItem)
+
+        return menu
+    }
+
+    func makeTranscriptHistorySubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let recent = recentTranscriptionsProvider()
+
+        guard !recent.isEmpty else {
+            let empty = NSMenuItem(title: "No recent transcriptions yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return menu
+        }
+
+        for (index, transcript) in recent.enumerated() {
+            if index == 0 {
+                let latest = NSMenuItem(title: "Latest", action: nil, keyEquivalent: "")
+                latest.isEnabled = false
+                menu.addItem(latest)
+            }
+
+            let item = NSMenuItem(title: transcript, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
 
         return menu
     }
