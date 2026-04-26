@@ -20,7 +20,7 @@ final class PillResizePlanTests: XCTestCase {
         XCTAssertTrue(plan.animate)
     }
 
-    func testIdleToRecordingKeepsCenterButDoesNotOptIntoTransitionAnimation() {
+    func testIdleToRecordingPreservesCenterAndAnimatesResize() {
         let oldFrame = CGRect(x: 40, y: 60, width: 140, height: 34)
 
         let plan = PillResizePlan.make(
@@ -33,6 +33,6 @@ final class PillResizePlanTests: XCTestCase {
 
         XCTAssertEqual(plan.frame.midX, oldFrame.midX, accuracy: 0.001)
         XCTAssertEqual(plan.frame.midY, oldFrame.midY, accuracy: 0.001)
-        XCTAssertFalse(plan.animate)
+        XCTAssertTrue(plan.animate)
     }
 }
