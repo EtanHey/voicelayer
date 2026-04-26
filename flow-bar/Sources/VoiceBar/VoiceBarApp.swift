@@ -135,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
         _ = daemonController.activateIfNeeded()
 
-        // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
+        // Hotkey setup — primary user contract is F6; modifier-mode observer is fallback only.
         setupHotkey()
         configureWakeRecovery()
 
@@ -318,12 +318,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
 
-        // Single tap is intentionally ignored so double-tap can toggle hands-free mode.
+        // Single tap is intentionally ignored on the fallback modifier-mode lane.
         gestureStateMachine.onSingleTap = {
             NSLog("[VoiceBar] Hotkey single tap — ignored")
         }
 
-        // Double tap → toggle hands-free recording
+        // Double tap remains a fallback modifier-mode toggle lane, not the primary F6 contract.
         gestureStateMachine.onDoubleTap = { [weak self] in
             guard let self else { return }
             if voiceState.mode == .idle {
@@ -343,7 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyEnabled = true
             missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
-            NSLog("[VoiceBar] Hotkey system active — Cmd+F6 hold for push-to-talk, double-tap for hands-free")
+            NSLog(VoiceBarHotkeyContract.activationLogMessage)
         } else {
             hotkeyEnabled = false
             missingHotkeyPermissions = manager.permissionStatus.missingPermissions

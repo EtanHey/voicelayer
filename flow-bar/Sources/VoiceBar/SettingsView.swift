@@ -23,7 +23,7 @@ struct SettingsView: View {
         Form {
             Section("Hotkey") {
                 LabeledContent("Shortcut") {
-                    Text("Cmd + F6")
+                    Text(VoiceBarHotkeyContract.primaryShortcutLabel)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Status") {
@@ -44,16 +44,20 @@ struct SettingsView: View {
             }
 
             Section("Gestures") {
+                LabeledContent("Single tap") {
+                    Text(VoiceBarHotkeyContract.singleTapDescription)
+                        .foregroundStyle(.secondary)
+                }
                 LabeledContent("Hold") {
-                    Text("Push-to-talk recording")
+                    Text(VoiceBarHotkeyContract.holdDescription)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Double-tap") {
-                    Text("Toggle hands-free recording")
+                    Text(VoiceBarHotkeyContract.doubleTapDescription)
                         .foregroundStyle(.secondary)
                 }
-                LabeledContent("Cmd+Shift+V") {
-                    Text("Re-paste last transcript")
+                LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
+                    Text(VoiceBarHotkeyContract.repasteDescription)
                         .foregroundStyle(.secondary)
                 }
             }
