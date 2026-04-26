@@ -16,6 +16,7 @@ struct MicrophoneDeviceOption: Equatable {
 final class PillContextMenuController: NSObject {
     var transcriptProvider: () -> String = { "" }
     var recentTranscriptionsProvider: () -> [String] = { [] }
+    var hasRetranscribableCaptureProvider: () -> Bool = { false }
     var transcriptionVocabularyTermsProvider: () -> [String] = { [] }
     var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
@@ -26,6 +27,7 @@ final class PillContextMenuController: NSObject {
     var isSnoozedProvider: () -> Bool = { false }
     var onSelectDevice: (String) -> Void = { _ in }
     var onPasteLastTranscript: () -> Void = {}
+    var onRetranscribeLastCapture: () -> Void = {}
     var onQuit: () -> Void = {}
 
     func makeMenu() -> NSMenu {
@@ -56,6 +58,15 @@ final class PillContextMenuController: NSObject {
         let historyItem = NSMenuItem(title: "Transcript History", action: nil, keyEquivalent: "")
         historyItem.submenu = makeTranscriptHistorySubmenu()
         menu.addItem(historyItem)
+
+        let retranscribeItem = NSMenuItem(
+            title: "Retranscribe Last Capture",
+            action: #selector(handleRetranscribeLastCapture),
+            keyEquivalent: ""
+        )
+        retranscribeItem.target = self
+        retranscribeItem.isEnabled = hasRetranscribableCaptureProvider()
+        menu.addItem(retranscribeItem)
 
         let vocabularyItem = NSMenuItem(title: "Vocabulary", action: nil, keyEquivalent: "")
         vocabularyItem.submenu = makeVocabularySubmenu()
@@ -215,6 +226,10 @@ final class PillContextMenuController: NSObject {
 
     @objc private func handlePasteLastTranscript() {
         onPasteLastTranscript()
+    }
+
+    @objc private func handleRetranscribeLastCapture() {
+        onRetranscribeLastCapture()
     }
 
     @objc private func handleQuit() {

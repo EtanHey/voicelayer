@@ -217,6 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
             self?.voiceState.recentTranscriptions ?? []
         }
+        pillContextMenuController.hasRetranscribableCaptureProvider = {
+            RetainedRecordingPreview.exists()
+        }
         pillContextMenuController.transcriptionVocabularyTermsProvider = {
             STTVocabularySnapshotLoader.load().promptTerms
         }
@@ -246,6 +249,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.voiceState.repasteLastTranscript()
+        }
+        pillContextMenuController.onRetranscribeLastCapture = { [weak self] in
+            self?.voiceState.retranscribeLastCapture()
         }
         pillContextMenuController.onQuit = {
             NSApplication.shared.terminate(nil)

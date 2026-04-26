@@ -203,6 +203,11 @@ describe("socket-protocol", () => {
       expect(result).toEqual({ cmd: "replay" });
     });
 
+    it("parses retranscribe-last command", () => {
+      const result = parseCommand('{"cmd":"retranscribe_last"}');
+      expect(result).toEqual({ cmd: "retranscribe_last" });
+    });
+
     it("parses health command", () => {
       const result = parseCommand('{"cmd":"health"}');
       expect(result).toEqual({ cmd: "health" });

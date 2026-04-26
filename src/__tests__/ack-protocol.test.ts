@@ -57,6 +57,8 @@ describe("ack protocol", () => {
   let historySpy: ReturnType<typeof spyOn>;
   let setCancelSignalSpy: ReturnType<typeof spyOn>;
   let broadcastSpy: ReturnType<typeof spyOn>;
+  let hasRetainedRecordingSpy: ReturnType<typeof spyOn>;
+  let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     cleanup();
@@ -87,6 +89,14 @@ describe("ack protocol", () => {
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
+    hasRetainedRecordingSpy = spyOn(
+      input,
+      "hasRetainedRecording",
+    ).mockReturnValue(true);
+    retranscribeLastCaptureSpy = spyOn(
+      input,
+      "retranscribeLastCapture",
+    ).mockResolvedValue("retranscribed note");
     writeFileSync(TEST_REPLAY_FILE, "mp3");
   });
 
@@ -100,6 +110,8 @@ describe("ack protocol", () => {
     historySpy.mockRestore();
     setCancelSignalSpy.mockRestore();
     broadcastSpy.mockRestore();
+    hasRetainedRecordingSpy.mockRestore();
+    retranscribeLastCaptureSpy.mockRestore();
     cleanup();
   });
 
@@ -218,6 +230,44 @@ describe("ack protocol", () => {
       command: "replay",
       outcome: "accept",
       id: "replay-1",
+    });
+  });
+
+  it("returns accept ack for retranscribe-last under happy path", () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_last",
+      id: "retranscribe-1",
+    } as unknown as SocketCommand);
+
+    expect(retranscribeLastCaptureSpy).toHaveBeenCalled();
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_last",
+      outcome: "accept",
+      id: "retranscribe-1",
+    });
+  });
+
+  it("returns noop ack for retranscribe-last when no retained capture exists", () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    hasRetainedRecordingSpy.mockReturnValue(false);
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_last",
+      id: "retranscribe-empty",
+    } as unknown as SocketCommand);
+
+    expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_last",
+      outcome: "noop",
+      id: "retranscribe-empty",
+      reason: "nothing to retranscribe",
     });
   });
 
