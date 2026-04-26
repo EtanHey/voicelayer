@@ -49,7 +49,7 @@ import {
   downmixPCM16ToMono,
   resamplePCM16,
 } from "./audio-utils";
-import { applyRules } from "./rules-engine";
+import { cleanupTranscriptionText } from "./stt-cleanup";
 import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
@@ -224,7 +224,7 @@ export async function transcribeChunkSequence(
     }
   }
 
-  return applyRules(mergeChunkTranscripts(transcripts));
+  return cleanupTranscriptionText(mergeChunkTranscripts(transcripts));
 }
 
 /**
@@ -725,7 +725,7 @@ export async function waitForInput(
       const wavData = createWavBuffer(pcmData);
       writeFileSync(wavPath, wavData);
       const result = await backend.transcribe(wavPath);
-      text = result.text;
+      text = cleanupTranscriptionText(result.text);
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 

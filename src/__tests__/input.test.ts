@@ -242,5 +242,18 @@ describe("input module", () => {
       expect(result).toContain("useEffect");
       expect(result).toContain("onClick");
     });
+
+    it("applies STT cleanup aliases to merged chunk text", async () => {
+      const result = await transcribeChunkSequence(
+        [new Uint8Array([1]), new Uint8Array([2])],
+        async (_chunk, _prompt) =>
+          "whisperflow orc clawed skill creator clawed seamux",
+      );
+
+      expect(result).toContain("Wispr Flow");
+      expect(result).toContain("orcClaude");
+      expect(result).toContain("SkillCreatorClaude");
+      expect(result).toContain("cmux");
+    });
   });
 });
