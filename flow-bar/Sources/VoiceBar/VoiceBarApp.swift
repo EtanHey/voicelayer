@@ -217,6 +217,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
             self?.voiceState.recentTranscriptions ?? []
         }
+        pillContextMenuController.transcriptionVocabularyTermsProvider = {
+            STTVocabularySnapshotLoader.load().promptTerms
+        }
+        pillContextMenuController.transcriptionVocabularyAliasesProvider = {
+            STTVocabularySnapshotLoader.load().aliases
+        }
         pillContextMenuController.availableDevicesProvider = {
             MicrophoneDeviceManager.availableInputDevices()
         }

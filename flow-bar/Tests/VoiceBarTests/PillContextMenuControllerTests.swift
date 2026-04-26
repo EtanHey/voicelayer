@@ -15,6 +15,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Hide for 1 hour",
             "Microphone",
             "Transcript History",
+            "Vocabulary",
             "Paste last transcript",
             "",
             "Quit VoiceBar",
@@ -40,6 +41,55 @@ final class PillContextMenuControllerTests: XCTestCase {
         let submenu = try XCTUnwrap(historyItem.submenu)
 
         XCTAssertEqual(submenu.items.map(\.title), ["No recent transcriptions yet"])
+        XCTAssertFalse(submenu.items[0].isEnabled)
+    }
+
+    func testMenuIncludesVocabularySubmenuBetweenHistoryAndPaste() throws {
+        let controller = PillContextMenuController()
+        controller.transcriptionVocabularyTermsProvider = {
+            ["VoiceLayer", "Wispr Flow"]
+        }
+        controller.transcriptionVocabularyAliasesProvider = {
+            [STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")]
+        }
+
+        let menu = controller.makeMenu()
+        let titles = menu.items.map(\.title)
+
+        XCTAssertEqual(titles, [
+            "Hide for 1 hour",
+            "Microphone",
+            "Transcript History",
+            "Vocabulary",
+            "Paste last transcript",
+            "",
+            "Quit VoiceBar",
+        ])
+
+        let vocabularyItem = try XCTUnwrap(menu.items.first { $0.title == "Vocabulary" })
+        let submenu = try XCTUnwrap(vocabularyItem.submenu)
+        XCTAssertEqual(submenu.items.map(\.title), [
+            "Terms",
+            "Corrections",
+        ])
+
+        let terms = submenu.items[0].submenu?.items.map(\.title)
+        XCTAssertEqual(terms, ["VoiceLayer", "Wispr Flow"])
+
+        let corrections = submenu.items[1].submenu?.items.map(\.title)
+        XCTAssertEqual(corrections, ["work claude → orcClaude"])
+    }
+
+    func testVocabularySubmenuShowsEmptyStateWhenSnapshotHasNoTermsOrCorrections() throws {
+        let controller = PillContextMenuController()
+        controller.transcriptionVocabularyTermsProvider = { [] }
+        controller.transcriptionVocabularyAliasesProvider = { [] }
+
+        let menu = controller.makeMenu()
+        let vocabularyItem = try XCTUnwrap(menu.items.first { $0.title == "Vocabulary" })
+        let submenu = try XCTUnwrap(vocabularyItem.submenu)
+
+        XCTAssertEqual(submenu.items.map(\.title), ["Vocabulary not loaded yet"])
         XCTAssertFalse(submenu.items[0].isEnabled)
     }
 
