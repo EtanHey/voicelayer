@@ -62,6 +62,91 @@ struct WaveformView: View {
     }
 }
 
+enum WaveformMetrics {
+    static func normalizedLevel(
+        mode: WaveformMode,
+        audioLevel: Double?,
+        time: Double,
+        index: Int,
+        barCount: Int
+    ) -> Double {
+        let phaseOffset = Self.phaseOffset(for: index)
+        let centerWeight = Self.centerWeight(index: index, barCount: barCount)
+
+        let normalized: Double = switch mode {
+        case .idle:
+            idleLevel(time: time, phaseOffset: phaseOffset, centerWeight: centerWeight)
+        case .listening:
+            if let level = audioLevel, level > 0.01 {
+                audioLevelDriven(
+                    level * 0.7,
+                    time: time,
+                    phaseOffset: phaseOffset,
+                    centerWeight: centerWeight
+                )
+            } else {
+                0
+            }
+        case .speechDetected:
+            if let level = audioLevel {
+                audioLevelDriven(
+                    level,
+                    time: time,
+                    phaseOffset: phaseOffset,
+                    centerWeight: centerWeight
+                )
+            } else {
+                speechSimulatedLevel(time: time, phaseOffset: phaseOffset, centerWeight: centerWeight)
+            }
+        }
+
+        return max(0, min(1, normalized))
+    }
+
+    private static func phaseOffset(for index: Int) -> Double {
+        let phi = 1.618033988749895
+        return Double(index) * phi
+    }
+
+    private static func centerWeight(index: Int, barCount: Int) -> Double {
+        let center = Double(barCount - 1) / 2.0
+        let distance = abs(Double(index) - center) / center
+        return 1.0 - distance * 0.35
+    }
+
+    private static func idleLevel(time: Double, phaseOffset: Double, centerWeight: Double) -> Double {
+        let breath = sin(time * 1.2 + phaseOffset * 2.0) * 0.5 + 0.5
+        let shimmer = sin(time * 3.7 + phaseOffset * 5.0) * 0.03
+        return 0.05 + breath * 0.1 * centerWeight + shimmer
+    }
+
+    private static func speechSimulatedLevel(
+        time: Double,
+        phaseOffset: Double,
+        centerWeight: Double
+    ) -> Double {
+        let fast = sin(time * 8.5 + phaseOffset * 2.3) * 0.25
+        let medium = sin(time * 4.2 + phaseOffset * 3.7) * 0.2
+        let slow = sin(time * 1.8 + phaseOffset * 1.1) * 0.15
+        let pulse = sin(time * 6.1 + phaseOffset * 4.9) * 0.1
+        let jitter = sin(time * 13.7 + phaseOffset * 7.3) * sin(time * 9.1 + phaseOffset * 5.2) * 0.12
+        let base = 0.55 * centerWeight
+        return base + fast + medium + slow + pulse + jitter
+    }
+
+    private static func audioLevelDriven(
+        _ level: Double,
+        time: Double,
+        phaseOffset: Double,
+        centerWeight: Double
+    ) -> Double {
+        let fast = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
+        let jitter = sin(time * 12.0 + phaseOffset * 6.0) * 0.05
+        let envelope = level * centerWeight
+        return 0.15 + envelope * 0.75 + fast + jitter
+    }
+}
+
 // MARK: - Individual Bar
 
 private struct WaveformBar: View {
@@ -73,19 +158,6 @@ private struct WaveformBar: View {
     let maxHeight: CGFloat
     let minHeight: CGFloat
     let barWidth: CGFloat
-
-    /// Golden-ratio-based offsets so bars never sync up
-    private var phaseOffset: Double {
-        let phi = 1.618033988749895
-        return Double(index) * phi
-    }
-
-    /// Center bars are "louder" -- natural arc shape
-    private var centerWeight: Double {
-        let center = Double(barCount - 1) / 2.0
-        let distance = abs(Double(index) - center) / center
-        return 1.0 - distance * 0.35
-    }
 
     var body: some View {
         let height = barHeight
@@ -100,59 +172,14 @@ private struct WaveformBar: View {
     // MARK: - Height Calculation
 
     private var barHeight: CGFloat {
-        let normalized: Double = switch mode {
-        case .idle:
-            idleLevel
-        case .listening:
-            // AIDEV-NOTE: Use real audio level when available (from MCP audio_level events).
-            // Shows minimal static bars until real audio data arrives — no fake animation.
-            if let level = audioLevel, level > 0.01 {
-                audioLevelDriven(level * 0.7) // Attenuated — pre-speech is quieter
-            } else {
-                waitingLevel
-            }
-        case .speechDetected:
-            if let level = audioLevel {
-                audioLevelDriven(level)
-            } else {
-                speechSimulatedLevel
-            }
-        }
-
-        let clamped = max(0, min(1, normalized))
-        return minHeight + (maxHeight - minHeight) * clamped
-    }
-
-    // Idle: gentle breathing
-    private var idleLevel: Double {
-        let breath = sin(time * 1.2 + phaseOffset * 2.0) * 0.5 + 0.5
-        let shimmer = sin(time * 3.7 + phaseOffset * 5.0) * 0.03
-        return 0.05 + breath * 0.1 * centerWeight + shimmer
-    }
-
-    // Waiting: minimal static bars with subtle pulse (no fake waveform)
-    private var waitingLevel: Double {
-        let pulse = sin(time * 2.5) * 0.03
-        return 0.12 * centerWeight + pulse
-    }
-
-    /// Speech detected: lively
-    private var speechSimulatedLevel: Double {
-        let fast = sin(time * 8.5 + phaseOffset * 2.3) * 0.25
-        let medium = sin(time * 4.2 + phaseOffset * 3.7) * 0.2
-        let slow = sin(time * 1.8 + phaseOffset * 1.1) * 0.15
-        let pulse = sin(time * 6.1 + phaseOffset * 4.9) * 0.1
-        let jitter = sin(time * 13.7 + phaseOffset * 7.3) * sin(time * 9.1 + phaseOffset * 5.2) * 0.12
-        let base = 0.55 * centerWeight
-        return base + fast + medium + slow + pulse + jitter
-    }
-
-    /// Audio-driven — maps real RMS level to bar height with organic micro-movement
-    private func audioLevelDriven(_ level: Double) -> Double {
-        let fast = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
-        let jitter = sin(time * 12.0 + phaseOffset * 6.0) * 0.05
-        let envelope = level * centerWeight
-        return 0.15 + envelope * 0.75 + fast + jitter
+        let normalized = WaveformMetrics.normalizedLevel(
+            mode: mode,
+            audioLevel: audioLevel,
+            time: time,
+            index: index,
+            barCount: barCount
+        )
+        return minHeight + (maxHeight - minHeight) * normalized
     }
 
     // MARK: - Color
