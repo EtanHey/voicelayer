@@ -31,7 +31,11 @@ import {
   clearCancelSignal,
 } from "./session-booking";
 import { getBackend } from "./stt";
-import { recordingFilePath, MIC_DISABLED_FILE } from "./paths";
+import {
+  recordingFilePath,
+  retainedRecordingFilePath,
+  MIC_DISABLED_FILE,
+} from "./paths";
 import {
   processVADChunk,
   isSpeech,
@@ -694,6 +698,9 @@ export async function waitForInput(
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
   try {
+    const retainedWavData = createWavBuffer(pcmData);
+    writeFileSync(retainedRecordingFilePath(), retainedWavData);
+
     // Transcribe with selected backend
     const backend = await getBackend();
     console.error(
@@ -722,8 +729,7 @@ export async function waitForInput(
         }
       });
     } else {
-      const wavData = createWavBuffer(pcmData);
-      writeFileSync(wavPath, wavData);
+      writeFileSync(wavPath, retainedWavData);
       const result = await backend.transcribe(wavPath);
       text = cleanupTranscriptionText(result.text);
     }
@@ -764,4 +770,42 @@ export function clearInput(): void {
 
 export function getRecordingState(): "idle" | "recording" | "transcribing" {
   return recordingState;
+}
+
+export function hasRetainedRecording(): boolean {
+  return existsSync(retainedRecordingFilePath());
+}
+
+export async function retranscribeLastCapture(): Promise<string | null> {
+  const wavPath = retainedRecordingFilePath();
+  if (!existsSync(wavPath)) {
+    return null;
+  }
+
+  recordingState = "transcribing";
+  broadcast({ type: "state", state: "transcribing" });
+
+  try {
+    const backend = await getBackend();
+    console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
+    const result = await backend.transcribe(wavPath);
+    const text = cleanupTranscriptionText(result.text);
+    console.error(`[voicelayer] Retranscription: ${text}`);
+
+    if (text) {
+      broadcast({ type: "transcription", text });
+    }
+    recordingState = "idle";
+    broadcast({ type: "state", state: "idle" });
+    return text || null;
+  } catch (err) {
+    recordingState = "idle";
+    broadcast({
+      type: "error",
+      message: `Retranscription failed: ${err instanceof Error ? err.message : String(err)}`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle" });
+    throw err;
+  }
 }

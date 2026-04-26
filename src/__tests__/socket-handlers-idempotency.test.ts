@@ -14,6 +14,8 @@ describe("socket handler idempotency matrix", () => {
   let queueDepthSpy: ReturnType<typeof spyOn>;
   let recordingStateSpy: ReturnType<typeof spyOn>;
   let historySpy: ReturnType<typeof spyOn>;
+  let hasRetainedRecordingSpy: ReturnType<typeof spyOn>;
+  let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
@@ -38,6 +40,14 @@ describe("socket handler idempotency matrix", () => {
       voice: "jenny",
       timestamp: Date.now(),
     });
+    hasRetainedRecordingSpy = spyOn(
+      input,
+      "hasRetainedRecording",
+    ).mockReturnValue(true);
+    retranscribeLastCaptureSpy = spyOn(
+      input,
+      "retranscribeLastCapture",
+    ).mockResolvedValue("retranscribed note");
   });
 
   afterEach(() => {
@@ -49,6 +59,8 @@ describe("socket handler idempotency matrix", () => {
     queueDepthSpy.mockRestore();
     recordingStateSpy.mockRestore();
     historySpy.mockRestore();
+    hasRetainedRecordingSpy.mockRestore();
+    retranscribeLastCaptureSpy.mockRestore();
   });
 
   it("returns noop for stop while idle without broadcasting or stopping playback", () => {
@@ -135,5 +147,23 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(playAudioSpy).not.toHaveBeenCalled();
     expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("rejects retranscribe-last while recording without starting a new transcription", () => {
+    recordingStateSpy.mockReturnValue("recording");
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_last",
+      id: "retranscribe-busy",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_last",
+      outcome: "reject",
+      id: "retranscribe-busy",
+      reason: "busy",
+    });
+    expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
   });
 });

@@ -215,6 +215,13 @@ final class VoiceState {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
+    func retranscribeLastCapture() {
+        sendIntent(
+            command: .retranscribeLast,
+            payload: ["cmd": "retranscribe_last"]
+        )
+    }
+
     func snooze() {
         switch mode {
         case .recording, .transcribing:

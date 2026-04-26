@@ -132,6 +132,7 @@ export type AckCommand =
   | "stop"
   | "cancel"
   | "replay"
+  | "retranscribe_last"
   | "toggle"
   | "record"
   | "command"
@@ -175,6 +176,10 @@ export interface ReplayCommand extends SocketCommandBase {
   cmd: "replay";
 }
 
+export interface RetranscribeLastCommand extends SocketCommandBase {
+  cmd: "retranscribe_last";
+}
+
 export interface ToggleCommand extends SocketCommandBase {
   cmd: "toggle";
   scope: "all" | "tts" | "mic";
@@ -212,6 +217,7 @@ export type SocketCommand =
   | StopCommand
   | CancelCommand
   | ReplayCommand
+  | RetranscribeLastCommand
   | ToggleCommand
   | RecordCommand
   | HealthCommand
@@ -253,6 +259,11 @@ export function parseCommand(line: string): SocketCommand | null {
         return withCommandId<CancelCommand>({ cmd: "cancel" }, id);
       case "replay":
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
+      case "retranscribe_last":
+        return withCommandId<RetranscribeLastCommand>(
+          { cmd: "retranscribe_last" },
+          id,
+        );
       case "health":
         return withCommandId<HealthCommand>({ cmd: "health" }, id);
       case "command": {

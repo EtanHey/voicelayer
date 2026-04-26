@@ -24,6 +24,7 @@ import { join } from "path";
 const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
 const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
 /**
@@ -73,6 +74,17 @@ export function ttsFilePath(pid: number, counter: number): string {
 /** Recording audio file — temporary WAV for STT transcription. */
 export function recordingFilePath(pid: number, timestamp: number): string {
   return tmpPath(`voicelayer-recording-${pid}-${timestamp}.wav`);
+}
+
+/** Retained WAV for "retranscribe last capture". */
+export function retainedRecordingFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return readOverride(
+    RETAINED_RECORDING_OVERRIDE_ENV,
+    tmpPath("voicelayer-last-recording.wav"),
+    env,
+  );
 }
 
 /** Ring buffer history file — JSON array of last 20 TTS entries. */

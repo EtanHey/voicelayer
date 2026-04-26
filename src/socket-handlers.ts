@@ -14,7 +14,11 @@ import {
   safeWriteFileSync,
 } from "./paths";
 import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
-import { waitForInput } from "./input";
+import {
+  waitForInput,
+  hasRetainedRecording,
+  retranscribeLastCapture,
+} from "./input";
 import { isVoiceBooked, setCancelSignal } from "./session-booking";
 import { broadcast } from "./socket-client";
 import type {
@@ -84,6 +88,21 @@ export function handleSocketCommand(
         return buildAck(command, "accept");
       }
       return buildAck(command, "noop", "nothing to replay");
+    }
+    case "retranscribe_last": {
+      if (recordingState === "recording" || recordingState === "transcribing" || isSpeaking) {
+        return buildAck(command, "reject", "busy");
+      }
+      if (!hasRetainedRecording()) {
+        return buildAck(command, "noop", "nothing to retranscribe");
+      }
+      retranscribeLastCapture().catch((err) => {
+        console.error(
+          `[voicelayer] Retranscribe last capture failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        broadcast({ type: "state", state: "idle" });
+      });
+      return buildAck(command, "accept");
     }
     case "record": {
       if (recordingState === "recording") {
