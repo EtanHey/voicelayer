@@ -27,4 +27,21 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("OrcClawed");
     expect(cleaned).not.toContain("Seamux");
   });
+
+  it("keeps Meytal and MaiLinh as distinct contacts", () => {
+    const cleaned = cleanupTranscriptionText(
+      "meital maital may tall maytal mailing mylan myelin mai linh mailinh",
+    );
+
+    expect(cleaned).toBe(
+      "Meytal Meytal Meytal Meytal MaiLinh MaiLinh MaiLinh MaiLinh MaiLinh",
+    );
+    expect(cleaned).not.toContain("Meital");
+    expect(cleaned).not.toContain("Maital");
+    expect(cleaned).not.toContain("mailing");
+    expect(cleaned).not.toContain("Mylan");
+    expect(cleaned).not.toContain("myelin");
+    expect(cleaned).toContain("MaiLinh");
+    expect(cleaned).not.toContain("maytal");
+  });
 });
