@@ -22,7 +22,8 @@ struct PillResizePlan {
 
         return PillResizePlan(
             frame: newFrame,
-            animate: oldMode == .transcribing && newMode == .speaking
+            animate: (oldMode == .transcribing && newMode == .speaking)
+                || (oldMode == .idle && newMode == .recording)
         )
     }
 }
