@@ -15,6 +15,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Hide for 1 hour",
             "Microphone",
             "Transcript History",
+            "Retranscribe Last Capture",
             "Vocabulary",
             "Paste last transcript",
             "",
@@ -60,6 +61,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Hide for 1 hour",
             "Microphone",
             "Transcript History",
+            "Retranscribe Last Capture",
             "Vocabulary",
             "Paste last transcript",
             "",
@@ -91,6 +93,37 @@ final class PillContextMenuControllerTests: XCTestCase {
 
         XCTAssertEqual(submenu.items.map(\.title), ["Vocabulary not loaded yet"])
         XCTAssertFalse(submenu.items[0].isEnabled)
+    }
+
+    func testMenuIncludesRetranscribeActionBetweenHistoryAndVocabulary() throws {
+        let controller = PillContextMenuController()
+        controller.hasRetranscribableCaptureProvider = { true }
+
+        let menu = controller.makeMenu()
+
+        XCTAssertEqual(menu.items.map(\.title), [
+            "Hide for 1 hour",
+            "Microphone",
+            "Transcript History",
+            "Retranscribe Last Capture",
+            "Vocabulary",
+            "Paste last transcript",
+            "",
+            "Quit VoiceBar",
+        ])
+
+        let item = try XCTUnwrap(menu.items.first { $0.title == "Retranscribe Last Capture" })
+        XCTAssertTrue(item.isEnabled)
+    }
+
+    func testRetranscribeActionStaysVisibleButDisabledWithoutRetainedCapture() throws {
+        let controller = PillContextMenuController()
+        controller.hasRetranscribableCaptureProvider = { false }
+
+        let menu = controller.makeMenu()
+        let item = try XCTUnwrap(menu.items.first { $0.title == "Retranscribe Last Capture" })
+
+        XCTAssertFalse(item.isEnabled)
     }
 
     func testDeviceOptionsMarkSelectedMicrophone() {
