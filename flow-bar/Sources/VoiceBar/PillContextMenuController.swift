@@ -16,6 +16,8 @@ struct MicrophoneDeviceOption: Equatable {
 final class PillContextMenuController: NSObject {
     var transcriptProvider: () -> String = { "" }
     var recentTranscriptionsProvider: () -> [String] = { [] }
+    var transcriptionVocabularyTermsProvider: () -> [String] = { [] }
+    var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     var selectedDeviceIDProvider: () -> String? = { nil }
 
@@ -55,6 +57,10 @@ final class PillContextMenuController: NSObject {
         historyItem.submenu = makeTranscriptHistorySubmenu()
         menu.addItem(historyItem)
 
+        let vocabularyItem = NSMenuItem(title: "Vocabulary", action: nil, keyEquivalent: "")
+        vocabularyItem.submenu = makeVocabularySubmenu()
+        menu.addItem(vocabularyItem)
+
         let pasteItem = NSMenuItem(
             title: "Paste last transcript",
             action: #selector(handlePasteLastTranscript),
@@ -73,6 +79,33 @@ final class PillContextMenuController: NSObject {
         )
         quitItem.target = self
         menu.addItem(quitItem)
+
+        return menu
+    }
+
+    func makeVocabularySubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let terms = transcriptionVocabularyTermsProvider()
+        let aliases = transcriptionVocabularyAliasesProvider()
+
+        guard !terms.isEmpty || !aliases.isEmpty else {
+            let empty = NSMenuItem(title: "Vocabulary not loaded yet", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return menu
+        }
+
+        if !terms.isEmpty {
+            let termsItem = NSMenuItem(title: "Terms", action: nil, keyEquivalent: "")
+            termsItem.submenu = makeVocabularyTermsSubmenu(terms)
+            menu.addItem(termsItem)
+        }
+
+        if !aliases.isEmpty {
+            let aliasesItem = NSMenuItem(title: "Corrections", action: nil, keyEquivalent: "")
+            aliasesItem.submenu = makeVocabularyCorrectionsSubmenu(aliases)
+            menu.addItem(aliasesItem)
+        }
 
         return menu
     }
@@ -100,6 +133,28 @@ final class PillContextMenuController: NSObject {
             menu.addItem(item)
         }
 
+        return menu
+    }
+
+    private func makeVocabularyTermsSubmenu(_ terms: [String]) -> NSMenu {
+        let menu = NSMenu()
+        for term in terms {
+            let item = NSMenuItem(title: term, action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private func makeVocabularyCorrectionsSubmenu(
+        _ aliases: [STTVocabularyAliasPreview]
+    ) -> NSMenu {
+        let menu = NSMenu()
+        for alias in aliases {
+            let item = NSMenuItem(title: "\(alias.from) → \(alias.to)", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+            menu.addItem(item)
+        }
         return menu
     }
 
