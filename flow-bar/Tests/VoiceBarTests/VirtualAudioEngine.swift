@@ -6,6 +6,7 @@ final class VirtualAudioEngine: AudioStreamable {
     private let chunkFrameCount: Int
 
     init(mockFile: String, chunkFrameCount: Int = 1024) {
+        precondition(chunkFrameCount > 0, "chunkFrameCount must be greater than 0")
         self.mockFile = mockFile
         self.chunkFrameCount = chunkFrameCount
     }
@@ -117,7 +118,7 @@ private struct PCM16WAV {
 
         sampleRate = parsedSampleRate
         samples = stride(from: 0, to: pcmData.count - 1, by: 2).map { byteOffset in
-            Float(pcmData.int16LE(at: byteOffset)) / Float(Int16.max)
+            Float(pcmData.int16LE(at: byteOffset)) / 32768.0
         }
     }
 }

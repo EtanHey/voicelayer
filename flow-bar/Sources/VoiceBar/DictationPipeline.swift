@@ -27,6 +27,7 @@ final class DictationPipeline {
             group.addTask { [audioSource, vad] in
                 var speechDuration: TimeInterval = 0
                 for try await buffer in audioSource.audioStream() {
+                    try Task.checkCancellation()
                     speechDuration = vad.isSpeech(buffer)
                         ? speechDuration + buffer.duration
                         : 0
