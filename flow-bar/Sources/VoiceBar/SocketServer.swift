@@ -14,6 +14,7 @@ final class SocketServer {
     private let socketPath = VoiceLayerPaths.socketPath
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
+    private let controlHandler: ((SocketControlCommand) -> Void)?
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -25,8 +26,9 @@ final class SocketServer {
 
     // MARK: - Lifecycle
 
-    init(state: VoiceState) {
+    init(state: VoiceState, controlHandler: ((SocketControlCommand) -> Void)? = nil) {
         self.state = state
+        self.controlHandler = controlHandler
     }
 
     /// Start the server: bind, listen, accept loop.
@@ -187,11 +189,23 @@ final class SocketServer {
         clients[fd] = entry
     }
 
-    private func parseLine(_ json: String) {
+    func parseLine(_ json: String) {
         guard let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             NSLog("[VoiceBar] Bad JSON from client: %@", json)
+            return
+        }
+
+        if dict["type"] as? String == "control" {
+            guard let command = SocketControlCommand(event: dict) else {
+                NSLog("[VoiceBar] Unknown control command from client: %@", String(describing: dict["command"]))
+                return
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                self?.controlHandler?(command)
+            }
             return
         }
 

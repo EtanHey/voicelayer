@@ -172,12 +172,11 @@ final class VoiceBarDaemonController {
             return .alreadyRunning
         }
 
-        // If another daemon is running (e.g., from LaunchAgent or manual start),
-        // don't fight it — but warn that it may not have mic permission
+        // External MCP processes can share the PID file, but they do not inherit
+        // VoiceBar's TCC microphone grant. Keep an owned child for VoiceBar;
+        // mcp-server-daemon.ts serializes ownership with acquireProcessLock().
         if livenessProbe() {
-            ownsLaunchedProcess = false
-            NSLog("[VoiceBar] External daemon already running — mic may not work (TCC inheritance)")
-            return .alreadyRunning
+            NSLog("[VoiceBar] External daemon already running — launching owned child for TCC inheritance")
         }
 
         return launch()
