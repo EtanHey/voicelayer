@@ -138,11 +138,10 @@ export function resamplePCM16(
 }
 
 /**
- * Downmix interleaved PCM16 audio to mono by averaging each frame.
- * downmixPCM16ToMono averages Int16 channel samples with Math.round(sum /
- * channels), so anti-correlated channels can phase-cancel into a quiet signal.
- * Partial trailing frames are intentionally dropped via Math.floor; switch this
- * algorithm here if a future device needs max, RMS, or phase-preserving downmix.
+ * Downmix interleaved PCM16 audio to mono by keeping each frame's dominant peak.
+ * This preserves valid anti-phase stereo input instead of averaging it into
+ * silence before VAD/STT. Partial trailing frames are intentionally dropped via
+ * Math.floor.
  *
  * @param input - Raw PCM16 interleaved audio
  * @param channels - Number of interleaved channels in input
@@ -165,19 +164,21 @@ export function downmixPCM16ToMono(
   const outputView = new DataView(output.buffer);
 
   for (let frame = 0; frame < frameCount; frame++) {
-    let sum = 0;
+    let dominantSample = 0;
+    let dominantAbs = -1;
     const frameOffset = frame * frameBytes;
     for (let channel = 0; channel < channels; channel++) {
-      sum += inputView.getInt16(
+      const sample = inputView.getInt16(
         frameOffset + channel * BYTES_PER_SAMPLE,
         true,
       );
+      const sampleAbs = Math.abs(sample);
+      if (sampleAbs > dominantAbs) {
+        dominantSample = sample;
+        dominantAbs = sampleAbs;
+      }
     }
-    outputView.setInt16(
-      frame * BYTES_PER_SAMPLE,
-      Math.round(sum / channels),
-      true,
-    );
+    outputView.setInt16(frame * BYTES_PER_SAMPLE, dominantSample, true);
   }
 
   return output;
