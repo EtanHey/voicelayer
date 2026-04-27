@@ -28,6 +28,23 @@ class VoiceBarCommandRouter {
         }
     }
 
+    func handle(controlCommand command: SocketControlCommand) {
+        NSLog("[VoiceBar] Socket control command received: %@ (mode: %@)", command.rawValue, voiceState.mode.rawValue)
+
+        switch command {
+        case .toggle:
+            handleToggle()
+        case .startRecording:
+            handleStartRecording()
+        case .stopRecording:
+            handleStop()
+        case .cancel:
+            handleCancel()
+        case .replay:
+            handleReplay()
+        }
+    }
+
     func handlePrimaryTap() {
         guard voiceState.mode == .idle || voiceState.mode == .error else { return }
         voiceState.record(pressToTalk: true)
