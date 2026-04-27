@@ -178,6 +178,36 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-mcp.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
         )
     }
+
+    func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {
+        let pidFile = temporaryPIDFile()
+        try Data("{\"pid\":\(ProcessInfo.processInfo.processIdentifier)}".utf8)
+            .write(to: URL(fileURLWithPath: pidFile))
+        defer { try? FileManager.default.removeItem(atPath: pidFile) }
+
+        let isRunning = VoiceBarDaemonLivenessProbe.isDaemonRunning(
+            pidFilePath: pidFile,
+            socketPath: "/tmp/nonexistent-voicelayer-mcp.sock",
+            socketProbe: { _ in false }
+        )
+
+        XCTAssertFalse(isRunning)
+    }
+
+    func testFreshSessionLivenessProbeAcceptsAlivePidWithLiveSocket() throws {
+        let pidFile = temporaryPIDFile()
+        try Data("{\"pid\":\(ProcessInfo.processInfo.processIdentifier)}".utf8)
+            .write(to: URL(fileURLWithPath: pidFile))
+        defer { try? FileManager.default.removeItem(atPath: pidFile) }
+
+        let isRunning = VoiceBarDaemonLivenessProbe.isDaemonRunning(
+            pidFilePath: pidFile,
+            socketPath: "/tmp/test-live-voicelayer-mcp.sock",
+            socketProbe: { _ in true }
+        )
+
+        XCTAssertTrue(isRunning)
+    }
 }
 
 private func testLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
@@ -186,6 +216,10 @@ private func testLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
         arguments: ["run", testRepoDaemonPath],
         workingDirectory: testRepoRoot
     )
+}
+
+private func temporaryPIDFile() -> String {
+    "\(NSTemporaryDirectory())voicebar-daemon-\(UUID().uuidString).pid"
 }
 
 private final class ProcessSpy: Process, @unchecked Sendable {

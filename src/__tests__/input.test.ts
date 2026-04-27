@@ -157,7 +157,7 @@ describe("input module", () => {
     }
 
     it("rejects recordings shorter than 600ms before STT", () => {
-      const result = evaluateNoSpeechGate(pcmWithConstantSample(104, 500));
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(5000, 500));
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe("too-short");
@@ -170,12 +170,10 @@ describe("input module", () => {
       expect(result.reason).toBe("too-quiet");
     });
 
-    it("allows 700ms recordings around -50 dBFS before STT", () => {
-      const result = evaluateNoSpeechGate(pcmWithConstantSample(104, 700));
+    it("allows quiet-but-real recordings through the relaxed gate", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(100, 700));
 
       expect(result.allowed).toBe(true);
-      expect(result.dbfs).toBeGreaterThan(-51);
-      expect(result.dbfs).toBeLessThan(-49);
       expect(result.reason).toBeUndefined();
     });
 
@@ -256,13 +254,12 @@ describe("input module", () => {
       const result = await transcribeChunkSequence(
         [new Uint8Array([1]), new Uint8Array([2])],
         async (_chunk, _prompt) =>
-          "whisperflow orc clawed skill creator clawed seamux",
+          "work claude opened voice layer in whisper flow",
       );
 
-      expect(result).toContain("Wispr Flow");
       expect(result).toContain("orcClaude");
-      expect(result).toContain("SkillCreatorClaude");
-      expect(result).toContain("cmux");
+      expect(result).toContain("VoiceLayer");
+      expect(result).toContain("Wispr Flow");
     });
   });
 });

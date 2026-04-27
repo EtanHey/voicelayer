@@ -10,11 +10,36 @@
 
 import Foundation
 
+enum SocketWriteResult: Equatable {
+    case wrote(Int)
+    case retry
+    case peerClosed(Int32)
+    case failed(Int32)
+}
+
+func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWriteResult {
+    if bytesWritten > 0 {
+        return .wrote(bytesWritten)
+    }
+    if bytesWritten == 0 {
+        return .peerClosed(0)
+    }
+
+    switch errnoCode {
+    case EINTR, EAGAIN, EWOULDBLOCK:
+        return .retry
+    case EPIPE, ECONNRESET:
+        return .peerClosed(errnoCode)
+    default:
+        return .failed(errnoCode)
+    }
+}
+
 final class SocketServer {
     private let socketPath = VoiceLayerPaths.socketPath
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
-    private let controlHandler: ((SocketControlCommand) -> Void)?
+    var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -26,9 +51,8 @@ final class SocketServer {
 
     // MARK: - Lifecycle
 
-    init(state: VoiceState, controlHandler: ((SocketControlCommand) -> Void)? = nil) {
+    init(state: VoiceState) {
         self.state = state
-        self.controlHandler = controlHandler
     }
 
     /// Start the server: bind, listen, accept loop.
@@ -197,14 +221,9 @@ final class SocketServer {
             return
         }
 
-        if dict["type"] as? String == "control" {
-            guard let command = SocketControlCommand(event: dict) else {
-                NSLog("[VoiceBar] Unknown control command from client: %@", String(describing: dict["command"]))
-                return
-            }
-
+        if let controlCommand = VoiceBarLocalControlCommand(payload: dict) {
             DispatchQueue.main.async { [weak self] in
-                self?.controlHandler?(command)
+                self?.onControlCommand?(controlCommand)
             }
             return
         }
@@ -229,15 +248,28 @@ final class SocketServer {
             var deadFDs: [Int32] = []
             for (fd, _) in clients {
                 var totalWritten = 0
+                var transientRetryCount = 0
                 while totalWritten < bytes.count {
-                    let n = bytes.withUnsafeBufferPointer { ptr in
-                        write(fd, ptr.baseAddress!.advanced(by: totalWritten), bytes.count - totalWritten)
-                    }
-                    if n <= 0 {
+                    switch writeToClient(fd: fd, bytes: bytes, offset: totalWritten) {
+                    case let .wrote(count):
+                        totalWritten += count
+                        transientRetryCount = 0
+                    case .retry:
+                        transientRetryCount += 1
+                        if transientRetryCount >= 3 {
+                            NSLog("[VoiceBar] Socket write stalled (fd: %d) after %d retries", fd, transientRetryCount)
+                            deadFDs.append(fd)
+                            totalWritten = bytes.count
+                        }
+                    case let .peerClosed(errnoCode):
+                        NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", fd, errnoCode)
                         deadFDs.append(fd)
-                        break
+                        totalWritten = bytes.count
+                    case let .failed(errnoCode):
+                        NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", fd, errnoCode)
+                        deadFDs.append(fd)
+                        totalWritten = bytes.count
                     }
-                    totalWritten += n
                 }
             }
             // Clean up clients that failed on write
@@ -245,6 +277,14 @@ final class SocketServer {
                 clients[fd]?.source.cancel()
             }
         }
+    }
+
+    private func writeToClient(fd: Int32, bytes: [UInt8], offset: Int) -> SocketWriteResult {
+        let result = bytes.withUnsafeBufferPointer { ptr in
+            write(fd, ptr.baseAddress!.advanced(by: offset), bytes.count - offset)
+        }
+        let errnoCode = errno
+        return classifySocketWriteResult(bytesWritten: result, errnoCode: errnoCode)
     }
 
     // MARK: - Client management

@@ -86,8 +86,11 @@ export function getLanguageConfig(mode: LanguageMode | string): LanguageConfig {
     args.push("-l", langCode);
   }
 
-  // Initial prompt for vocabulary priming
-  args.push("--initial-prompt", prompt);
+  // Initial prompt for vocabulary priming. In auto mode we skip prompting,
+  // because weak/no-speech captures can hallucinate prompt-biased output.
+  if (normalized !== "auto") {
+    args.push("--prompt", prompt);
+  }
 
   return {
     mode: normalized,

@@ -54,6 +54,7 @@ struct BarView: View {
     var commandRouter: VoiceBarCommandRouter
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
+    @State private var isVocabularyPresented = false
 
     var body: some View {
         pillContent
@@ -152,6 +153,11 @@ struct BarView: View {
                 isHistoryPresented = false
             }
         }
+        .onChange(of: state.transcriptionVocabularyTerms.count) { _, count in
+            if count == 0 {
+                isVocabularyPresented = false
+            }
+        }
         .onTapGesture {
             if state.mode == .idle || state.mode == .error {
                 NSHapticFeedbackManager.defaultPerformer.perform(
@@ -168,6 +174,7 @@ struct BarView: View {
         errorDismissTask?.cancel()
         if newMode != .idle {
             isHistoryPresented = false
+            isVocabularyPresented = false
         }
     }
 
@@ -419,6 +426,10 @@ struct BarView: View {
             if state.mode == .idle, !state.recentTranscriptions.isEmpty {
                 historyButton
             }
+            if state.mode == .idle,
+               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+                vocabularyButton
+            }
             if state.mode == .idle, state.canReplay {
                 pillButton(icon: "arrow.counterclockwise") { commandRouter.handleReplay() }
             }
@@ -444,10 +455,23 @@ struct BarView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(state.recentTranscriptions.enumerated()), id: \.offset) { index, item in
                         VStack(alignment: .leading, spacing: 4) {
-                            if index == 0 {
-                                Text("Latest")
-                                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                                    .foregroundStyle(.secondary)
+                            HStack(alignment: .top, spacing: 8) {
+                                if index == 0 {
+                                    Text("Latest")
+                                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                                HStack(spacing: 6) {
+                                    historyActionButton(title: "Copy") {
+                                        state.copyTranscript(item)
+                                        isHistoryPresented = false
+                                    }
+                                    historyActionButton(title: "Paste") {
+                                        state.repasteTranscript(item)
+                                        isHistoryPresented = false
+                                    }
+                                }
                             }
                             Text(item)
                                 .font(.system(size: 12, weight: .medium))
@@ -467,6 +491,101 @@ struct BarView: View {
             .frame(width: 320, height: 220)
         }
         .padding(14)
+    }
+
+    private var vocabularyButton: some View {
+        pillButton(icon: "text.book.closed") {
+            isVocabularyPresented.toggle()
+        }
+        .popover(isPresented: $isVocabularyPresented, arrowEdge: .bottom) {
+            vocabularyPopover
+        }
+    }
+
+    private var vocabularyPopover: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Transcription Vocabulary")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+
+            Text("Built-ins plus Wispr-derived hints used by local STT cleanup.")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !state.transcriptionVocabularyTerms.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Preserved Terms (\(state.transcriptionVocabularyTerms.count))")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    if index == 0 {
+                                        Text("Highest priority")
+                                            .font(.system(size: 10, weight: .bold, design: .rounded))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Text(item)
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .textSelection(.enabled)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+
+                                if index < state.transcriptionVocabularyTerms.count - 1 {
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+
+                    if !state.transcriptionVocabularyAliases.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Learned Corrections (\(state.transcriptionVocabularyAliases.count))")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(.secondary)
+
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(alias.to)
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(.primary)
+                                    Text(alias.from)
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(.secondary)
+                                        .textSelection(.enabled)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 6)
+
+                                if index < state.transcriptionVocabularyAliases.count - 1 {
+                                    Divider()
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(width: 320, height: 260)
+        }
+        .padding(14)
+    }
+
+    private func historyActionButton(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.primary.opacity(0.08))
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
     }
 
     private func pillButton(icon: String, action: @escaping () -> Void) -> some View {

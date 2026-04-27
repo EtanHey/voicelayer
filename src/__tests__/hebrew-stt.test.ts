@@ -60,7 +60,7 @@ describe("language-config", () => {
     });
 
     it("prompt is under 224 tokens (~900 chars)", () => {
-      // whisper --initial-prompt is limited to 224 tokens
+      // whisper prompt text is limited to 224 tokens
       for (const mode of ["auto", "hebrew", "english"] as LanguageMode[]) {
         const prompt = getInitialPrompt(mode);
         expect(prompt.length).toBeLessThan(900);
@@ -130,10 +130,15 @@ describe("whisper language args", () => {
     expect(config.whisperArgs).toContain("en");
   });
 
-  it("all modes include --initial-prompt", () => {
-    for (const mode of ["auto", "hebrew", "english"] as LanguageMode[]) {
+  it("auto mode omits prompt to reduce silence hallucinations", () => {
+    const config = getLanguageConfig("auto");
+    expect(config.whisperArgs).not.toContain("--prompt");
+  });
+
+  it("explicit language modes include --prompt", () => {
+    for (const mode of ["hebrew", "english"] as LanguageMode[]) {
       const config = getLanguageConfig(mode);
-      expect(config.whisperArgs).toContain("--initial-prompt");
+      expect(config.whisperArgs).toContain("--prompt");
     }
   });
 });
