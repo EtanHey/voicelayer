@@ -14,7 +14,8 @@ let package = Package(
         .testTarget(
             name: "VoiceBarTests",
             dependencies: ["VoiceBar"],
-            path: "Tests/VoiceBarTests"
+            path: "Tests/VoiceBarTests",
+            resources: [.process("Fixtures")]
         ),
     ]
 )
