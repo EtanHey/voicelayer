@@ -18,10 +18,10 @@ struct AudioStreamBuffer {
         return sqrt(sum / Float(samples.count))
     }
 
-    var peakAmplitude: Float {
-        samples.reduce(Float(0)) { partial, sample in
-            max(partial, abs(sample))
-        }
+    var normalizedAveragePower: Double {
+        guard rms > 0 else { return 0 }
+        let averagePower = 20 * log10(rms)
+        return AudioLevelMonitor.normalizeAveragePower(averagePower)
     }
 }
 

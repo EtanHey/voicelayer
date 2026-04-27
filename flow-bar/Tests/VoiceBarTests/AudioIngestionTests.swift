@@ -58,7 +58,7 @@ private struct ListeningNoiseGate {
 
         for try await buffer in audioSource.audioStream() {
             try Task.checkCancellation()
-            if buffer.peakAmplitude >= floor {
+            if buffer.normalizedAveragePower >= Double(floor) {
                 return ListeningGateResult(
                     didTriggerRecording: true,
                     timeToFirstSpeech: elapsed,
