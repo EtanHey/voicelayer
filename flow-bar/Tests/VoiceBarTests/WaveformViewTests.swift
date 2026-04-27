@@ -33,14 +33,14 @@ final class WaveformViewTests: XCTestCase {
     func testListeningModeRespondsOnceRealAudioArrives() {
         let quiet = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 0.45,
+            audioLevel: 0.9,
             time: 0.5,
             index: 3,
             barCount: 7
         )
         let louder = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 0.75,
+            audioLevel: 1,
             time: 0.5,
             index: 3,
             barCount: 7
@@ -67,7 +67,7 @@ final class WaveformViewTests: XCTestCase {
     func testListeningModeStillRespondsAboveSilenceGate() {
         let sample = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 0.45,
+            audioLevel: 0.9,
             time: 0.5,
             index: 3,
             barCount: 7
