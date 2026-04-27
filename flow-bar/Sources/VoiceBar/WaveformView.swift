@@ -63,6 +63,8 @@ struct WaveformView: View {
 }
 
 enum WaveformMetrics {
+    private static let listeningSilenceFloor = 0.38
+
     static func normalizedLevel(
         mode: WaveformMode,
         audioLevel: Double?,
@@ -77,7 +79,7 @@ enum WaveformMetrics {
         case .idle:
             idleLevel(time: time, phaseOffset: phaseOffset, centerWeight: centerWeight)
         case .listening:
-            if let level = audioLevel, level > 0.01 {
+            if let level = audioLevel, level >= listeningSilenceFloor {
                 audioLevelDriven(
                     level * 0.7,
                     time: time,
