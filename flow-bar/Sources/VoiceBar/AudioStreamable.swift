@@ -17,6 +17,12 @@ struct AudioStreamBuffer {
         }
         return sqrt(sum / Float(samples.count))
     }
+
+    var peakAmplitude: Float {
+        samples.reduce(Float(0)) { partial, sample in
+            max(partial, abs(sample))
+        }
+    }
 }
 
 protocol AudioStreamable {

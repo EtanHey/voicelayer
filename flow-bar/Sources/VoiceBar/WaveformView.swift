@@ -63,7 +63,7 @@ struct WaveformView: View {
 }
 
 enum WaveformMetrics {
-    private static let listeningSilenceFloor = 0.38
+    static let listeningSilenceFloor = 0.38
 
     static func normalizedLevel(
         mode: WaveformMode,
