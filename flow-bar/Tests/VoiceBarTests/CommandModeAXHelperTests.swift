@@ -23,7 +23,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(storedValue, "hello VoiceBar")
     }
 
-    func testApplyReplacementFallsBackToClipboardWhenAXVerificationFails() {
+    func testApplyReplacementTreatsSuccessfulAXWriteWithStaleReadBackAsSuccess() {
         var pastedText: String?
         let helper = CommandModeAXHelper(
             readSelection: {
@@ -37,7 +37,36 @@ final class CommandModeAXHelperTests: XCTestCase {
 
         let result = helper.applyReplacement("VoiceBar")
 
+        XCTAssertEqual(result, .axVerified("Applied to selection"))
+        XCTAssertNil(pastedText)
+    }
+
+    func testApplyReplacementFallsBackToClipboardWhenAXWriteFails() {
+        var pastedText: String?
+        let helper = CommandModeAXHelper(
+            readSelection: {
+                CommandModeSelectionSnapshot(value: "hello world", selectedRange: NSRange(location: 6, length: 5))
+            },
+            writeValue: { _ in false },
+            readBackValue: { nil },
+            writePasteboard: { pastedText = $0 },
+            postPasteShortcut: { true }
+        )
+
+        let result = helper.applyReplacement("VoiceBar")
+
         XCTAssertEqual(result, .clipboardFallback("Pasted fallback"))
         XCTAssertEqual(pastedText, "VoiceBar")
+    }
+
+    func testAssessAXWriteTreatsMismatchAsAppliedUnverified() {
+        XCTAssertEqual(
+            CommandModeAXHelper.assessAXWrite(
+                expectedValue: "new text",
+                didWrite: true,
+                readBackValue: "stale text"
+            ),
+            .appliedUnverified
+        )
     }
 }

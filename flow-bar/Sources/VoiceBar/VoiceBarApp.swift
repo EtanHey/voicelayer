@@ -9,6 +9,7 @@
 // All discovery file logic removed (no more polling, no file watchers).
 
 import AppKit
+import Darwin
 import SwiftUI
 
 // MARK: - App Delegate
@@ -37,10 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Last reported pill size — used to avoid layout loops.
     private var lastPillSize: CGSize = .zero
-    /// Last transition seen by the panel resize path. Used to decide whether a
-    /// given geometry change should tween instead of snap.
-    private var previousVoiceMode: VoiceMode = .idle
-    private var currentVoiceMode: VoiceMode = .idle
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -82,6 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        signal(SIGPIPE, SIG_IGN)
+        NSLog("[VoiceBar] SIGPIPE ignored process-wide")
+
         // Register Apple Event handler for voicebar:// URL scheme.
         // Must happen after SwiftUI scene setup completes, so we defer
         // registration to the next run loop iteration.
@@ -124,10 +124,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         promptForAccessibilityIfNeeded()
 
         // Socket server — listens on VoiceLayerPaths.socketPath
-        let server = SocketServer(state: voiceState) { [weak self] command in
-            self?.commandRouter.handle(controlCommand: command)
-        }
+        let server = SocketServer(state: voiceState)
         socketServer = server
+        server.onControlCommand = { [weak self] command in
+            self?.handleLocalControlCommand(command)
+        }
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in
@@ -136,12 +137,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceState.onModeChange = { [weak self] mode in
             self?.handleVoiceModeChange(mode)
         }
+        voiceState.diagnosticLogger = { [weak self] event, details in
+            self?.logDiagnostic(event: event, details: details)
+        }
         configurePillContextMenu()
 
         server.start()
         _ = daemonController.activateIfNeeded()
 
-        // Hotkey setup — primary user contract is F6; modifier-mode observer is fallback only.
+        // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
         setupHotkey()
         configureWakeRecovery()
 
@@ -214,25 +218,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configurePillContextMenu() {
         pillContextMenuController.transcriptProvider = { [weak self] in
-            self?.voiceState.transcript ?? ""
+            self?.voiceState.latestReusableTranscript ?? ""
         }
         pillContextMenuController.recentTranscriptionsProvider = { [weak self] in
             self?.voiceState.recentTranscriptions ?? []
         }
-        pillContextMenuController.hasRetranscribableCaptureProvider = {
-            RetainedRecordingPreview.exists()
+        pillContextMenuController.transcriptionVocabularyTermsProvider = { [weak self] in
+            self?.voiceState.transcriptionVocabularyTerms ?? []
         }
-        pillContextMenuController.transcriptionVocabularyTermsProvider = {
-            STTVocabularySnapshotLoader.load().promptTerms
-        }
-        pillContextMenuController.transcriptionVocabularyAliasesProvider = {
-            STTVocabularySnapshotLoader.load().aliases
+        pillContextMenuController.transcriptionVocabularyAliasesProvider = { [weak self] in
+            self?.voiceState.transcriptionVocabularyAliases ?? []
         }
         pillContextMenuController.availableDevicesProvider = {
             MicrophoneDeviceManager.availableInputDevices()
         }
         pillContextMenuController.selectedDeviceIDProvider = {
             MicrophoneDeviceManager.selectedInputDeviceID()
+        }
+        pillContextMenuController.onOpenSettings = { [weak self] in
+            self?.openSettingsWindow()
         }
         pillContextMenuController.isSnoozedProvider = { [weak self] in
             self?.isSnoozed ?? false
@@ -250,10 +254,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
+            self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
             self?.voiceState.repasteLastTranscript()
         }
-        pillContextMenuController.onRetranscribeLastCapture = { [weak self] in
-            self?.voiceState.retranscribeLastCapture()
+        pillContextMenuController.onCopyLastTranscript = { [weak self] in
+            self?.logDiagnostic(event: "context_menu_copy_last_transcript_tapped")
+            self?.voiceState.copyLastTranscript()
+        }
+        pillContextMenuController.onPasteTranscript = { [weak self] transcript in
+            self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
+            self?.voiceState.repasteTranscript(transcript)
         }
         pillContextMenuController.onQuit = {
             NSApplication.shared.terminate(nil)
@@ -339,12 +349,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
 
-        // Single tap is intentionally ignored on the fallback modifier-mode lane.
+        // Single tap is intentionally ignored so double-tap can toggle hands-free mode.
         gestureStateMachine.onSingleTap = {
             NSLog("[VoiceBar] Hotkey single tap — ignored")
         }
 
-        // Double tap remains a fallback modifier-mode toggle lane, not the primary F6 contract.
+        // Double tap → toggle hands-free recording
         gestureStateMachine.onDoubleTap = { [weak self] in
             guard let self else { return }
             if voiceState.mode == .idle {
@@ -364,7 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyEnabled = true
             missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
-            NSLog(VoiceBarHotkeyContract.activationLogMessage)
+            NSLog("[VoiceBar] Hotkey system active — Cmd+F6 hold for push-to-talk, double-tap for hands-free")
         } else {
             hotkeyEnabled = false
             missingHotkeyPermissions = manager.permissionStatus.missingPermissions
@@ -382,15 +392,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleVoiceModeChange(_ mode: VoiceMode) {
-        previousVoiceMode = currentVoiceMode
-        currentVoiceMode = mode
-
+        logDiagnostic(event: "mode_changed", details: [
+            "newMode": mode.rawValue,
+        ])
         switch mode {
         case .recording:
             audioLevelMonitor.start()
         default:
             audioLevelMonitor.stop()
         }
+    }
+
+    private func logDiagnostic(event: String, details: [String: String] = [:]) {
+        let frontmostApp = NSWorkspace.shared.frontmostApplication
+        let panelFrameDescription = panel.map { NSStringFromRect($0.frame) } ?? "nil"
+        let appKeyWindowTitle = NSApp.keyWindow?.title ?? "nil"
+        let mergedDetails = [
+            "appActive": boolString(NSApp.isActive),
+            "panelVisible": boolString(panel?.isVisible ?? false),
+            "panelKey": boolString(panel?.isKeyWindow ?? false),
+            "panelMain": boolString(panel?.isMainWindow ?? false),
+            "panelFrame": panelFrameDescription,
+            "frontmostApp": frontmostApp?.bundleIdentifier ?? frontmostApp?.localizedName ?? "nil",
+            "voiceMode": voiceState.mode.rawValue,
+            "appKeyWindowTitle": appKeyWindowTitle,
+        ].merging(details) { _, new in new }
+
+        let payload = mergedDetails
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: " ")
+
+        NSLog("[VoiceBar][diag] %@ %@", event, payload)
+    }
+
+    private func boolString(_ value: Bool) -> String {
+        value ? "true" : "false"
     }
 
     func handleHotkeyHoldStart() {
@@ -403,6 +440,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func handleHotkeyDoubleTap() {
         commandRouter.handleHotkeyDoubleTap()
+    }
+
+    private func handleLocalControlCommand(_ command: VoiceBarLocalControlCommand) {
+        switch command {
+        case .startRecording:
+            commandRouter.handle(url: URL(string: "voicebar://start-recording")!)
+        case .stopRecording:
+            commandRouter.handle(url: URL(string: "voicebar://stop-recording")!)
+        case .toggle:
+            commandRouter.handle(url: URL(string: "voicebar://toggle")!)
+        case .pasteLastTranscript:
+            voiceState.repasteLastTranscript()
+        }
     }
 
     private func configureWakeRecovery() {
@@ -438,15 +488,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         lastPillSize = pillSize
 
+        let padding = Theme.panelPadding
+        let newWidth = max(pillSize.width + padding * 2, 50)
+        let newHeight = max(pillSize.height + padding * 2, 30)
+
+        // Anchor at visual center — pill stays in place across state changes
         let oldFrame = panel.frame
-        let plan = PillResizePlan.make(
-            oldFrame: oldFrame,
-            pillSize: pillSize,
-            from: previousVoiceMode,
-            to: currentVoiceMode,
-            padding: Theme.panelPadding
+        let centerX = oldFrame.midX
+        let centerY = oldFrame.midY
+        let newFrame = NSRect(
+            x: centerX - newWidth / 2,
+            y: centerY - newHeight / 2,
+            width: newWidth,
+            height: newHeight
         )
-        panel.setFrame(plan.frame, display: true, animate: plan.animate)
+        panel.setFrame(newFrame, display: true, animate: false)
     }
 
     // MARK: - Mouse tracking
@@ -493,7 +549,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 if isSnoozed { unsnoozeNow() } else { snoozeForOneHour() }
             },
-            pasteLastTranscript: { [weak self] in self?.voiceState.repasteLastTranscript() },
+            pasteLastTranscript: { [weak self] in
+                self?.logDiagnostic(event: "menu_bar_paste_last_transcript_tapped")
+                self?.voiceState.repasteLastTranscript()
+            },
             quit: { NSApplication.shared.terminate(nil) }
         )
     }

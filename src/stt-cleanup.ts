@@ -43,6 +43,11 @@ const ORDERED_BUILTIN_STT_ALIASES = Object.fromEntries(
   Object.entries(BUILTIN_STT_ALIASES).sort((a, b) => b[0].length - a[0].length),
 );
 
+export function getSTTVocabularyPrompt(): string {
+  const canonicalTerms = [...new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES))];
+  return canonicalTerms.join(", ");
+}
+
 export function cleanupTranscriptionText(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";

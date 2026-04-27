@@ -6,11 +6,12 @@ final class SocketServerTests: XCTestCase {
 
     func testControlStartRecordingRoutesToControlHandler() {
         let expectation = expectation(description: "control command routed")
-        let server = SocketServer(state: VoiceState(), controlHandler: { command in
+        let server = SocketServer(state: VoiceState())
+        server.onControlCommand = { command in
             XCTAssertTrue(Thread.isMainThread)
             XCTAssertEqual(command, .startRecording)
             expectation.fulfill()
-        })
+        }
 
         server.parseLine(#"{"type":"control","command":"start-recording"}"#)
 
@@ -20,9 +21,10 @@ final class SocketServerTests: XCTestCase {
     func testControlUnknownCommandDoesNotRouteToControlHandler() {
         let expectation = expectation(description: "unknown control command ignored")
         expectation.isInverted = true
-        let server = SocketServer(state: VoiceState(), controlHandler: { _ in
+        let server = SocketServer(state: VoiceState())
+        server.onControlCommand = { _ in
             expectation.fulfill()
-        })
+        }
 
         server.parseLine(#"{"type":"control","command":"unknown-command"}"#)
 

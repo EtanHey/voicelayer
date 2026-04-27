@@ -12,6 +12,7 @@
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
+import { resolveBinary } from "./resolve-binary";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -44,10 +45,11 @@ let serverState: WhisperServerState | null = null;
 /** Find whisper-server binary. */
 function findServerBinary(): string | null {
   for (const name of SERVER_BINARY_NAMES) {
-    const result = Bun.spawnSync(["which", name]);
-    if (result.exitCode === 0) {
-      return result.stdout.toString().trim();
-    }
+    const resolved = resolveBinary(name, [
+      `/opt/homebrew/bin/${name}`,
+      `/usr/local/bin/${name}`,
+    ]);
+    if (resolved) return resolved;
   }
   return null;
 }
@@ -128,8 +130,14 @@ export async function ensureServer(): Promise<number> {
 
   // Get brew prefix for Metal shaders
   let metalPath: string | undefined;
-  const brewResult = Bun.spawnSync(["brew", "--prefix", "whisper-cpp"]);
-  if (brewResult.exitCode === 0) {
+  const brewBinary = resolveBinary("brew", [
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+  ]);
+  const brewResult = brewBinary
+    ? Bun.spawnSync([brewBinary, "--prefix", "whisper-cpp"])
+    : null;
+  if (brewResult?.exitCode === 0) {
     metalPath = join(
       brewResult.stdout.toString().trim(),
       "share",

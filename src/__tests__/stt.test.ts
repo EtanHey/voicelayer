@@ -57,6 +57,165 @@ describe("STT backends", () => {
         "whisper-cpp",
       );
     });
+
+    it("transcribe resolves brew by absolute path for launchd-style PATHs", async () => {
+      const backend = new WhisperCppBackend();
+      const originalSpawn = Bun.spawn;
+      const originalSpawnSync = Bun.spawnSync;
+      const spawnSyncCalls: string[][] = [];
+      let whisperEnv: Record<string, string> | undefined;
+
+      Object.defineProperty(backend, "binaryPath", {
+        configurable: true,
+        get: () => "/opt/homebrew/bin/whisper-cli",
+        set: () => {},
+      });
+      Object.defineProperty(backend, "modelPath", {
+        configurable: true,
+        get: () => "/tmp/test-model.bin",
+        set: () => {},
+      });
+
+      // @ts-ignore - test double
+      Bun.spawnSync = (cmd: string[]) => {
+        spawnSyncCalls.push([...cmd]);
+
+        if (cmd[0] === "which" && cmd[1] === "brew") {
+          return {
+            exitCode: 1,
+            stdout: new Uint8Array(0),
+            stderr: new Uint8Array(0),
+          };
+        }
+
+        if (cmd[0] === "/opt/homebrew/bin/brew" && cmd[1] === "--version") {
+          return {
+            exitCode: 0,
+            stdout: Buffer.from("Homebrew 4.0.0\n"),
+            stderr: new Uint8Array(0),
+          };
+        }
+
+        if (
+          cmd[0] === "/opt/homebrew/bin/brew" &&
+          cmd[1] === "--prefix" &&
+          cmd[2] === "whisper-cpp"
+        ) {
+          return {
+            exitCode: 0,
+            stdout: Buffer.from("/opt/homebrew/opt/whisper-cpp\n"),
+            stderr: new Uint8Array(0),
+          };
+        }
+
+        return {
+          exitCode: 1,
+          stdout: new Uint8Array(0),
+          stderr: new Uint8Array(0),
+        };
+      };
+
+      // @ts-ignore - test double
+      Bun.spawn = (cmd: string[], opts?: { env?: Record<string, string> }) => {
+        whisperEnv = opts?.env;
+        const stdout = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("transcribed text\n"));
+            controller.close();
+          },
+        });
+        const stderr = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        });
+        return {
+          stdout,
+          stderr,
+          exited: Promise.resolve(0),
+          pid: 12345,
+          kill: () => {},
+        };
+      };
+
+      try {
+        const result = await backend.transcribe("/tmp/test.wav");
+        expect(result.text).toBe("transcribed text");
+        expect(whisperEnv?.GGML_METAL_PATH_RESOURCES).toBe(
+          "/opt/homebrew/opt/whisper-cpp/share/whisper-cpp",
+        );
+        expect(spawnSyncCalls).toContainEqual(["/opt/homebrew/bin/brew", "--prefix", "whisper-cpp"]);
+      } finally {
+        Bun.spawn = originalSpawn;
+        Bun.spawnSync = originalSpawnSync;
+      }
+    });
+
+    it("transcribe uses the whisper-cli prompt flag for explicit language modes", async () => {
+      const backend = new WhisperCppBackend();
+      const originalSpawn = Bun.spawn;
+      const originalSpawnSync = Bun.spawnSync;
+      let whisperCmd: string[] | undefined;
+      const savedLang = process.env.QA_VOICE_WHISPER_LANG;
+      process.env.QA_VOICE_WHISPER_LANG = "english";
+
+      Object.defineProperty(backend, "binaryPath", {
+        configurable: true,
+        get: () => "/opt/homebrew/bin/whisper-cli",
+        set: () => {},
+      });
+      Object.defineProperty(backend, "modelPath", {
+        configurable: true,
+        get: () => "/tmp/test-model.bin",
+        set: () => {},
+      });
+
+      // @ts-ignore - test double
+      Bun.spawnSync = (_cmd: string[]) => ({
+        exitCode: 1,
+        stdout: new Uint8Array(0),
+        stderr: new Uint8Array(0),
+      });
+
+      // @ts-ignore - test double
+      Bun.spawn = (cmd: string[]) => {
+        whisperCmd = [...cmd];
+        const stdout = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("transcribed text\n"));
+            controller.close();
+          },
+        });
+        const stderr = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.close();
+          },
+        });
+        return {
+          stdout,
+          stderr,
+          exited: Promise.resolve(0),
+          pid: 12345,
+          kill: () => {},
+        };
+      };
+
+      try {
+        const result = await backend.transcribe("/tmp/test.wav");
+        expect(result.text).toBe("transcribed text");
+        expect(whisperCmd).toContain("--prompt");
+        expect(whisperCmd).not.toContain("--initial-prompt");
+        const promptIndex = whisperCmd!.indexOf("--prompt");
+        expect(promptIndex).toBeGreaterThan(-1);
+        expect(whisperCmd![promptIndex + 1]).toContain("Wispr Flow");
+        expect(whisperCmd![promptIndex + 1]).toContain("VoiceLayer");
+      } finally {
+        if (savedLang) process.env.QA_VOICE_WHISPER_LANG = savedLang;
+        else delete process.env.QA_VOICE_WHISPER_LANG;
+        Bun.spawn = originalSpawn;
+        Bun.spawnSync = originalSpawnSync;
+      }
+    });
   });
 
   describe("WisprFlowBackend", () => {
