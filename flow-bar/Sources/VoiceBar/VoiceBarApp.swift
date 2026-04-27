@@ -124,7 +124,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         promptForAccessibilityIfNeeded()
 
         // Socket server — listens on VoiceLayerPaths.socketPath
-        let server = SocketServer(state: voiceState)
+        let server = SocketServer(state: voiceState) { [weak self] command in
+            self?.commandRouter.handle(controlCommand: command)
+        }
         socketServer = server
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients

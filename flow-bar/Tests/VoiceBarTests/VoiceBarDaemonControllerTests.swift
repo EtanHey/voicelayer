@@ -60,7 +60,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
-    func testActivationReturnsAlreadyRunningWhenProbeSucceeds() {
+    func testActivationStillLaunchesOwnedChildWhenExternalProbeSucceeds() {
         let process = ProcessSpy()
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
@@ -71,9 +71,9 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
         let result = controller.activateIfNeeded()
 
-        XCTAssertEqual(result, .alreadyRunning)
-        XCTAssertFalse(process.didRun)
-        XCTAssertFalse(controller.ownsLaunchedProcess)
+        XCTAssertEqual(result, .launched)
+        XCTAssertTrue(process.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
     func testActivationLaunchesDaemonWhenProbeFails() {
@@ -126,18 +126,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(ownedProcess.didTerminate)
         XCTAssertFalse(ownedController.ownsLaunchedProcess)
 
-        let externalProcess = ProcessSpy()
-        let externalController = VoiceBarDaemonController(
-            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
-            configurationProvider: { _ in testLaunchConfiguration() },
-            livenessProbe: { true },
-            processFactory: { externalProcess }
-        )
-        _ = externalController.activateIfNeeded()
-
-        externalController.stop()
-
-        XCTAssertFalse(externalProcess.didTerminate)
+        XCTAssertFalse(ownedProcess.isRunning)
     }
 
     func testCheckoutBuildLaunchesRepoDaemonWithBunRun() throws {
