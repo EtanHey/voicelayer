@@ -157,17 +157,26 @@ describe("input module", () => {
     }
 
     it("rejects recordings shorter than 600ms before STT", () => {
-      const result = evaluateNoSpeechGate(pcmWithConstantSample(5000, 500));
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(104, 500));
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe("too-short");
     });
 
     it("rejects near-silent recordings before STT", () => {
-      const result = evaluateNoSpeechGate(pcmWithConstantSample(100, 700));
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(20, 700));
 
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe("too-quiet");
+    });
+
+    it("allows 700ms recordings around -50 dBFS before STT", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(104, 700));
+
+      expect(result.allowed).toBe(true);
+      expect(result.dbfs).toBeGreaterThan(-51);
+      expect(result.dbfs).toBeLessThan(-49);
+      expect(result.reason).toBeUndefined();
     });
 
     it("rejects invalid sample rates without producing NaN duration", () => {
