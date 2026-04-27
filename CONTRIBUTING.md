@@ -26,6 +26,10 @@ bun test src/__tests__/tts.test.ts   # Single file
 
 Tests mock external dependencies (sox, edge-tts, whisper.cpp) — no hardware required.
 
+### Regression Harness Pre-Push Hook
+
+Enable the local regression gate with `git config core.hooksPath .githooks`. The pre-push hook runs `scripts/run_tests.sh` and blocks non-zero results; do not bypass it with `--no-verify` or silence failures. A failing harness is critical review time, rooted in the ecosystem-regression-harness plan and the Apr 2 -> Apr 27 Zero-RMS Hang recurrence.
+
 ## Architecture
 
 ```
