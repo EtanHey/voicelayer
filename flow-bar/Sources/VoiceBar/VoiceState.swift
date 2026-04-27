@@ -50,11 +50,25 @@ struct ClipMarkerState: Equatable {
     var status: String
 }
 
+struct PasteboardSnapshot: Equatable {
+    var changeCount: Int
+    var items: [[String: Data]]
+}
+
+private enum VoicePasteOutcome: Equatable {
+    case insertedAtCursor
+    case pasted
+    case failed(String)
+}
+
 // MARK: - Observable state
 
 @Observable
 final class VoiceState {
     private static let maxRecentTranscriptions = 8
+    private static let recentTranscriptionsDefaultsKey = "VoiceBar.recentTranscriptions"
+    private static let maxVocabularyTerms = 512
+    private static let maxVocabularyAliases = 512
 
     // UI-bound properties -- all mutations must happen on the main thread.
     var mode: VoiceMode = .idle
@@ -85,6 +99,15 @@ final class VoiceState {
 
     /// Recent transcription history with the newest item first.
     var recentTranscriptions: [String] = []
+
+    /// Active STT vocabulary hints loaded from the daemon snapshot.
+    var transcriptionVocabularyTerms: [String] = []
+    var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = []
+
+    /// Latest completed transcript safe for re-paste/copy actions.
+    var latestReusableTranscript: String {
+        recentTranscriptions.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
 
     /// Total queued + currently playing TTS items.
     var queueDepth: Int = 0
@@ -120,6 +143,7 @@ final class VoiceState {
 
     /// The app that was frontmost when bar-initiated recording started.
     private var frontmostAppOnRecordStart: NSRunningApplication?
+    private var recordStartInsertionHandler: ((String) -> Bool)?
 
     /// The most recent app we pasted into. Reused for Cmd+Shift+V re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
@@ -141,6 +165,11 @@ final class VoiceState {
         app.activate()
     }
 
+    /// Test seam for the frontmost app at record/paste time.
+    var frontmostAppProvider: () -> NSRunningApplication? = {
+        NSWorkspace.shared.frontmostApplication
+    }
+
     /// Test seam for the final Cmd+V event posting.
     var simulatedPasteHandler: () -> Bool = {
         VoiceState.simulatePaste()
@@ -151,7 +180,32 @@ final class VoiceState {
         VoiceState.isAccessibilityTrusted(prompt: prompt)
     }
 
+    /// Test seam for capturing a direct insertion closure tied to the focused input.
+    var dictationInsertionHandlerProvider: () -> ((String) -> Bool)? = {
+        CommandModeAXHelper.captureFocusedInsertionHandler()
+    }
+
+    /// Test seam for clipboard writes used by fallback paste.
+    var pasteboardWriter: (String) -> Void = { string in
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+    }
+    var pasteboardSnapshotter: () -> PasteboardSnapshot? = {
+        VoiceState.capturePasteboardSnapshot()
+    }
+    var pasteboardSnapshotRestorer: (PasteboardSnapshot) -> Void = { snapshot in
+        VoiceState.restorePasteboardSnapshot(snapshot)
+    }
+    var pasteboardChangeCountProvider: () -> Int = {
+        NSPasteboard.general.changeCount
+    }
+    var pasteboardRestoreDelay: TimeInterval = 0.2
+
     private let commandModeAXHelper = CommandModeAXHelper()
+    private let recentTranscriptionsSaver: ([String]) -> Void
+    private let transcriptionVocabularyLoader: () -> [String]
+    private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
 
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
@@ -165,7 +219,32 @@ final class VoiceState {
 
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     var onModeChange: ((VoiceMode) -> Void)?
+    var diagnosticLogger: ((String, [String: String]) -> Void)?
     var transcriptionTimeout: Duration = .seconds(30)
+
+    init(
+        recentTranscriptionsLoader: @escaping () -> [String] = {
+            VoiceState.loadRecentTranscriptions()
+        },
+        recentTranscriptionsSaver: @escaping ([String]) -> Void = {
+            VoiceState.saveRecentTranscriptions($0)
+        },
+        transcriptionVocabularyLoader: @escaping () -> [String] = {
+            STTVocabularySnapshotLoader.load().promptTerms
+        },
+        transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = {
+            STTVocabularySnapshotLoader.load().aliases
+        }
+    ) {
+        self.recentTranscriptionsSaver = recentTranscriptionsSaver
+        self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
+        self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
+        recentTranscriptions = Self.normalizeRecentTranscriptions(recentTranscriptionsLoader())
+        self.transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+        self.transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+            transcriptionVocabularyAliasLoader()
+        )
+    }
 
     // MARK: - Commands
 
@@ -176,6 +255,8 @@ final class VoiceState {
     func dismissError() {
         pendingIntent = nil
         errorMessage = nil
+        frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         speechDetected = false
         recordingMode = nil
         silenceMode = nil
@@ -198,6 +279,7 @@ final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         speechDetected = false
         resetAudioLevels()
         statusText = ""
@@ -235,6 +317,7 @@ final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         speechDetected = false
         resetAudioLevels()
         hotkeyPhase = .idle
@@ -259,8 +342,32 @@ final class VoiceState {
 
     /// Paste the most recent transcript into the current target app again.
     func repasteLastTranscript() {
-        guard !transcript.isEmpty else { return }
-        pasteTranscript(transcript, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+        repasteTranscript(latestReusableTranscript)
+    }
+
+    /// Paste a specific transcript from history into the current target app.
+    func repasteTranscript(_ text: String) {
+        let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reusableText.isEmpty else { return }
+        logDiagnostic("repaste_requested", details: [
+            "transcriptLength": String(reusableText.count),
+            "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+        ])
+        pasteTranscript(reusableText, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+    }
+
+    func copyLastTranscript() {
+        copyTranscript(latestReusableTranscript)
+    }
+
+    func copyTranscript(_ text: String) {
+        let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reusableText.isEmpty else { return }
+        pasteboardWriter(reusableText)
+        logDiagnostic("copy_transcript", details: [
+            "transcriptLength": String(reusableText.count),
+        ])
+        showConfirmation("Copied")
     }
 
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
@@ -269,10 +376,19 @@ final class VoiceState {
         guard pendingIntent?.command != .record else { return }
         confirmationText = nil
         errorMessage = nil
-        let front = NSWorkspace.shared.frontmostApplication
+        let front = frontmostAppProvider()
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
+            recordStartInsertionHandler = dictationInsertionHandlerProvider()
+        } else {
+            frontmostAppOnRecordStart = nil
+            recordStartInsertionHandler = nil
         }
+        logDiagnostic("record_start", details: [
+            "pressToTalk": boolString(pressToTalk),
+            "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
+            "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+        ])
         barInitiatedRecording = true
 
         // Safety timeout: if no transcription arrives within 2.5 minutes, clear the flag
@@ -282,6 +398,7 @@ final class VoiceState {
             if !Task.isCancelled, barInitiatedRecording {
                 barInitiatedRecording = false
                 frontmostAppOnRecordStart = nil
+                recordStartInsertionHandler = nil
             }
         }
 
@@ -353,6 +470,11 @@ final class VoiceState {
                 refreshAudioLevel()
                 startTranscriptionTimeout()
                 hotkeyPhase = .idle
+                logDiagnostic("state_transcribing", details: [
+                    "barInitiatedRecording": boolString(barInitiatedRecording),
+                    "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
+                    "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+                ])
                 onModeChange?(.transcribing)
                 expandFromCollapse()
             default:
@@ -369,15 +491,31 @@ final class VoiceState {
 
         case "transcription":
             if let text = event["text"] as? String {
+                let isPartial = (event["partial"] as? Bool) == true
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
+                    if isPartial {
+                        return
+                    }
                     failTranscription()
+                    return
+                }
+
+                if isPartial {
+                    transcript = trimmed
                     return
                 }
 
                 transcriptionTimeoutTask?.cancel()
                 transcript = trimmed
                 rememberRecentTranscription(trimmed)
+                refreshTranscriptionVocabulary()
+                logDiagnostic("transcription_final", details: [
+                    "textLength": String(trimmed.count),
+                    "barInitiatedRecording": boolString(barInitiatedRecording),
+                    "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
+                    "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+                ])
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
@@ -479,6 +617,7 @@ final class VoiceState {
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         speechDetected = false
         recordingMode = nil
         silenceMode = nil
@@ -547,6 +686,14 @@ final class VoiceState {
         if recentTranscriptions.count > Self.maxRecentTranscriptions {
             recentTranscriptions = Array(recentTranscriptions.prefix(Self.maxRecentTranscriptions))
         }
+        recentTranscriptionsSaver(recentTranscriptions)
+    }
+
+    private func refreshTranscriptionVocabulary() {
+        transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+        transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+            transcriptionVocabularyAliasLoader()
+        )
     }
 
     private func refreshAudioLevel() {
@@ -561,6 +708,58 @@ final class VoiceState {
         socketAudioLevel = nil
         localRecordingLevel = nil
         audioLevel = nil
+    }
+
+    private static func normalizeRecentTranscriptions(_ items: [String]) -> [String] {
+        var unique: [String] = []
+        for raw in items {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !unique.contains(trimmed) else { continue }
+            unique.append(trimmed)
+            if unique.count == maxRecentTranscriptions {
+                break
+            }
+        }
+        return unique
+    }
+
+    private static func normalizeVocabularyTerms(_ items: [String]) -> [String] {
+        var unique: [String] = []
+        for raw in items {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !unique.contains(trimmed) else { continue }
+            unique.append(trimmed)
+            if unique.count == maxVocabularyTerms {
+                break
+            }
+        }
+        return unique
+    }
+
+    private static func normalizeVocabularyAliases(
+        _ items: [STTVocabularyAliasPreview]
+    ) -> [STTVocabularyAliasPreview] {
+        var unique: [STTVocabularyAliasPreview] = []
+        for item in items {
+            let from = item.from.trimmingCharacters(in: .whitespacesAndNewlines)
+            let to = item.to.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !from.isEmpty, !to.isEmpty else { continue }
+            let normalized = STTVocabularyAliasPreview(from: from, to: to)
+            guard !unique.contains(normalized) else { continue }
+            unique.append(normalized)
+            if unique.count == maxVocabularyAliases {
+                break
+            }
+        }
+        return unique
+    }
+
+    private static func loadRecentTranscriptions() -> [String] {
+        UserDefaults.standard.stringArray(forKey: recentTranscriptionsDefaultsKey) ?? []
+    }
+
+    private static func saveRecentTranscriptions(_ items: [String]) {
+        UserDefaults.standard.set(items, forKey: recentTranscriptionsDefaultsKey)
     }
 
     private func startTranscriptionTimeout() {
@@ -579,6 +778,7 @@ final class VoiceState {
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         speechDetected = false
         recordingMode = nil
         silenceMode = nil
@@ -592,7 +792,7 @@ final class VoiceState {
     // MARK: - Paste transcription at cursor
 
     private func resolvedPasteTarget(forRepaste repaste: Bool) -> NSRunningApplication? {
-        let currentFront = NSWorkspace.shared.frontmostApplication
+        let currentFront = frontmostAppProvider()
         let isSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
 
         if repaste {
@@ -608,58 +808,132 @@ final class VoiceState {
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan
     ) {
-        let pasted: Bool
+        let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
+        let targetBundleID = targetApp?.bundleIdentifier ?? "nil"
+        logDiagnostic("paste_begin", details: [
+            "plan": String(describing: plan),
+            "targetApp": targetBundleID,
+            "textLength": String(text.count),
+            "hasCapturedInsertion": boolString(insertionHandler != nil),
+            "axTrusted": boolString(accessibilityTrustChecker(false)),
+        ])
 
         if let pasteHandler {
-            pasted = pasteHandler(text)
+            if let targetApp {
+                lastPasteTargetApp = targetApp
+            }
+            frontmostAppOnRecordStart = nil
+            recordStartInsertionHandler = nil
+            finishPasteConfirmation(
+                outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage)
+            )
+            return
         } else {
-            guard accessibilityTrustChecker(true) else {
-                NSLog("[VoiceBar] pasteTranscript: Accessibility not granted")
-                pasted = false
-                frontmostAppOnRecordStart = nil
-                finishPasteConfirmation(pasted: pasted)
-                return
-            }
-
             guard let targetApp else {
-                pasted = false
                 frontmostAppOnRecordStart = nil
-                finishPasteConfirmation(pasted: pasted)
+                recordStartInsertionHandler = nil
+                logDiagnostic("paste_no_target", details: [
+                    "plan": String(describing: plan),
+                    "hasCapturedInsertion": boolString(insertionHandler != nil),
+                ])
+                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage))
                 return
             }
-
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(text, forType: .string)
 
             let pasteDelay = plan == .autoPaste ? pasteConfirmationDelay : plan.pasteDelay
             pasteScheduler(plan.activationDelay) { [weak self] in
                 guard let self else { return }
+                logDiagnostic("paste_before_activate", details: [
+                    "plan": String(describing: plan),
+                    "targetApp": targetBundleID,
+                    "hasCapturedInsertion": boolString(insertionHandler != nil),
+                ])
                 targetAppActivator(targetApp)
                 lastPasteTargetApp = targetApp
+                logDiagnostic("paste_after_activate", details: [
+                    "plan": String(describing: plan),
+                    "targetApp": targetBundleID,
+                    "hasCapturedInsertion": boolString(insertionHandler != nil),
+                ])
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    if let insertionHandler, insertionHandler(text) {
+                        logDiagnostic("paste_ax_insert_success", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": targetBundleID,
+                        ])
+                        finishPasteConfirmation(outcome: .insertedAtCursor)
+                        return
+                    }
+
+                    logDiagnostic("paste_ax_insert_miss", details: [
+                        "plan": String(describing: plan),
+                        "targetApp": targetBundleID,
+                        "hadCapturedInsertion": boolString(insertionHandler != nil),
+                    ])
+                    let pasteboardSnapshot = pasteboardSnapshotter()
+                    pasteboardWriter(text)
+                    let changeCountAfterWrite = pasteboardChangeCountProvider()
                     let pasted = simulatedPasteHandler()
-                    finishPasteConfirmation(pasted: pasted)
+                    scheduleClipboardRestoreIfNeeded(
+                        from: pasteboardSnapshot,
+                        expectedChangeCount: changeCountAfterWrite
+                    )
+                    logDiagnostic("paste_cmdv_result", details: [
+                        "plan": String(describing: plan),
+                        "targetApp": targetBundleID,
+                        "pasted": boolString(pasted),
+                    ])
+                    finishPasteConfirmation(
+                        outcome: pasted ? .pasted : .failed(Self.genericPasteFailureMessage)
+                    )
                 }
             }
             frontmostAppOnRecordStart = nil
+            recordStartInsertionHandler = nil
             return
         }
-
-        if let targetApp {
-            lastPasteTargetApp = targetApp
-        }
-        frontmostAppOnRecordStart = nil
-        finishPasteConfirmation(pasted: pasted)
     }
 
-    private func finishPasteConfirmation(pasted: Bool) {
-        showConfirmation(
-            pasted ? "Pasted!" : "Paste blocked — grant Accessibility in System Settings",
-            duration: pasted ? 1.5 : 4.0
-        )
+    private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
+
+    private func scheduleClipboardRestoreIfNeeded(
+        from snapshot: PasteboardSnapshot?,
+        expectedChangeCount: Int
+    ) {
+        guard let snapshot else { return }
+
+        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
+            guard let self else { return }
+            let currentChangeCount = pasteboardChangeCountProvider()
+            guard currentChangeCount == expectedChangeCount else {
+                logDiagnostic("paste_clipboard_restore_skipped", details: [
+                    "expectedChangeCount": String(expectedChangeCount),
+                    "currentChangeCount": String(currentChangeCount),
+                ])
+                return
+            }
+
+            pasteboardSnapshotRestorer(snapshot)
+            logDiagnostic("paste_clipboard_restored", details: [
+                "restoredItems": String(snapshot.items.count),
+            ])
+        }
+    }
+
+    private func finishPasteConfirmation(outcome: VoicePasteOutcome) {
+        logDiagnostic("paste_confirmation", details: [
+            "outcome": String(describing: outcome),
+        ])
+        switch outcome {
+        case .insertedAtCursor:
+            showConfirmation("Inserted at cursor")
+        case .pasted:
+            showConfirmation("Pasted!")
+        case let .failed(message):
+            showConfirmation(message, duration: 4.0)
+        }
     }
 
     private func showConfirmation(_ message: String, duration: TimeInterval = 1.5) {
@@ -685,6 +959,14 @@ final class VoiceState {
         sendCommand?(payloadWithID)
     }
 
+    private func logDiagnostic(_ event: String, details: [String: String] = [:]) {
+        diagnosticLogger?(event, details)
+    }
+
+    private func boolString(_ value: Bool) -> String {
+        value ? "true" : "false"
+    }
+
     private func handleAckEvent(_ event: [String: Any]) {
         guard let ack = SocketAckEvent(event: event),
               pendingIntent?.id == ack.id,
@@ -700,6 +982,7 @@ final class VoiceState {
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
         frontmostAppOnRecordStart = nil
+        recordStartInsertionHandler = nil
         mode = .error
         errorMessage = ack.reason ?? "Unable to start recording"
         onModeChange?(.error)
@@ -778,5 +1061,33 @@ final class VoiceState {
             return AXIsProcessTrustedWithOptions(options)
         }
         return AXIsProcessTrusted()
+    }
+
+    private static func capturePasteboardSnapshot() -> PasteboardSnapshot? {
+        let pasteboard = NSPasteboard.general
+        let items = pasteboard.pasteboardItems?.compactMap { item -> [String: Data]? in
+            let values = item.types.reduce(into: [String: Data]()) { result, type in
+                if let data = item.data(forType: type) {
+                    result[type.rawValue] = data
+                }
+            }
+            return values.isEmpty ? nil : values
+        } ?? []
+
+        guard !items.isEmpty else { return nil }
+        return PasteboardSnapshot(changeCount: pasteboard.changeCount, items: items)
+    }
+
+    private static func restorePasteboardSnapshot(_ snapshot: PasteboardSnapshot) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        let items = snapshot.items.map { itemSnapshot -> NSPasteboardItem in
+            let item = NSPasteboardItem()
+            for (type, data) in itemSnapshot {
+                item.setData(data, forType: NSPasteboard.PasteboardType(type))
+            }
+            return item
+        }
+        pasteboard.writeObjects(items)
     }
 }

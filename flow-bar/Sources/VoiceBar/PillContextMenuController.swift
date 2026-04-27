@@ -16,22 +16,31 @@ struct MicrophoneDeviceOption: Equatable {
 final class PillContextMenuController: NSObject {
     var transcriptProvider: () -> String = { "" }
     var recentTranscriptionsProvider: () -> [String] = { [] }
-    var hasRetranscribableCaptureProvider: () -> Bool = { false }
     var transcriptionVocabularyTermsProvider: () -> [String] = { [] }
     var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     var selectedDeviceIDProvider: () -> String? = { nil }
 
+    var onOpenSettings: () -> Void = {}
     var onSnooze: () -> Void = {}
     var onUnsnooze: () -> Void = {}
     var isSnoozedProvider: () -> Bool = { false }
     var onSelectDevice: (String) -> Void = { _ in }
     var onPasteLastTranscript: () -> Void = {}
-    var onRetranscribeLastCapture: () -> Void = {}
+    var onCopyLastTranscript: () -> Void = {}
+    var onPasteTranscript: (String) -> Void = { _ in }
     var onQuit: () -> Void = {}
 
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
+
+        let settingsItem = NSMenuItem(
+            title: "Settings",
+            action: #selector(handleOpenSettings),
+            keyEquivalent: ""
+        )
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
         if isSnoozedProvider() {
             let unsnoozeItem = NSMenuItem(
@@ -51,26 +60,17 @@ final class PillContextMenuController: NSObject {
             menu.addItem(snoozeItem)
         }
 
+        let historyItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
+        historyItem.submenu = makeRecentTranscriptsSubmenu()
+        menu.addItem(historyItem)
+
+        let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
+        vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
+        menu.addItem(vocabularyItem)
+
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
         menu.addItem(microphoneItem)
-
-        let historyItem = NSMenuItem(title: "Transcript History", action: nil, keyEquivalent: "")
-        historyItem.submenu = makeTranscriptHistorySubmenu()
-        menu.addItem(historyItem)
-
-        let retranscribeItem = NSMenuItem(
-            title: "Retranscribe Last Capture",
-            action: #selector(handleRetranscribeLastCapture),
-            keyEquivalent: ""
-        )
-        retranscribeItem.target = self
-        retranscribeItem.isEnabled = hasRetranscribableCaptureProvider()
-        menu.addItem(retranscribeItem)
-
-        let vocabularyItem = NSMenuItem(title: "Vocabulary", action: nil, keyEquivalent: "")
-        vocabularyItem.submenu = makeVocabularySubmenu()
-        menu.addItem(vocabularyItem)
 
         let pasteItem = NSMenuItem(
             title: "Paste last transcript",
@@ -80,6 +80,15 @@ final class PillContextMenuController: NSObject {
         pasteItem.target = self
         pasteItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
         menu.addItem(pasteItem)
+
+        let copyItem = NSMenuItem(
+            title: "Copy last transcript",
+            action: #selector(handleCopyLastTranscript),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        copyItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        menu.addItem(copyItem)
 
         menu.addItem(.separator())
 
@@ -94,7 +103,32 @@ final class PillContextMenuController: NSObject {
         return menu
     }
 
-    func makeVocabularySubmenu() -> NSMenu {
+    func makeRecentTranscriptsSubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let transcripts = recentTranscriptionsProvider()
+
+        guard !transcripts.isEmpty else {
+            let empty = NSMenuItem(title: "No recent transcripts", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+            return menu
+        }
+
+        for (index, transcript) in transcripts.enumerated() {
+            let item = NSMenuItem(
+                title: Self.recentTranscriptMenuTitle(for: transcript, isLatest: index == 0),
+                action: #selector(handlePasteRecentTranscript(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = transcript
+            menu.addItem(item)
+        }
+
+        return menu
+    }
+
+    func makeTranscriptionVocabularySubmenu() -> NSMenu {
         let menu = NSMenu()
         let terms = transcriptionVocabularyTermsProvider()
         let aliases = transcriptionVocabularyAliasesProvider()
@@ -108,46 +142,20 @@ final class PillContextMenuController: NSObject {
 
         if !terms.isEmpty {
             let termsItem = NSMenuItem(title: "Terms", action: nil, keyEquivalent: "")
-            termsItem.submenu = makeVocabularyTermsSubmenu(terms)
+            termsItem.submenu = makeTranscriptionVocabularyTermsSubmenu(terms)
             menu.addItem(termsItem)
         }
 
         if !aliases.isEmpty {
             let aliasesItem = NSMenuItem(title: "Corrections", action: nil, keyEquivalent: "")
-            aliasesItem.submenu = makeVocabularyCorrectionsSubmenu(aliases)
+            aliasesItem.submenu = makeTranscriptionVocabularyAliasesSubmenu(aliases)
             menu.addItem(aliasesItem)
         }
 
         return menu
     }
 
-    func makeTranscriptHistorySubmenu() -> NSMenu {
-        let menu = NSMenu()
-        let recent = recentTranscriptionsProvider()
-
-        guard !recent.isEmpty else {
-            let empty = NSMenuItem(title: "No recent transcriptions yet", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-            return menu
-        }
-
-        for (index, transcript) in recent.enumerated() {
-            if index == 0 {
-                let latest = NSMenuItem(title: "Latest", action: nil, keyEquivalent: "")
-                latest.isEnabled = false
-                menu.addItem(latest)
-            }
-
-            let item = NSMenuItem(title: transcript, action: nil, keyEquivalent: "")
-            item.isEnabled = false
-            menu.addItem(item)
-        }
-
-        return menu
-    }
-
-    private func makeVocabularyTermsSubmenu(_ terms: [String]) -> NSMenu {
+    private func makeTranscriptionVocabularyTermsSubmenu(_ terms: [String]) -> NSMenu {
         let menu = NSMenu()
         for term in terms {
             let item = NSMenuItem(title: term, action: nil, keyEquivalent: "")
@@ -157,12 +165,16 @@ final class PillContextMenuController: NSObject {
         return menu
     }
 
-    private func makeVocabularyCorrectionsSubmenu(
+    private func makeTranscriptionVocabularyAliasesSubmenu(
         _ aliases: [STTVocabularyAliasPreview]
     ) -> NSMenu {
         let menu = NSMenu()
         for alias in aliases {
-            let item = NSMenuItem(title: "\(alias.from) → \(alias.to)", action: nil, keyEquivalent: "")
+            let item = NSMenuItem(
+                title: "\(alias.from) → \(alias.to)",
+                action: nil,
+                keyEquivalent: ""
+            )
             item.isEnabled = false
             menu.addItem(item)
         }
@@ -216,6 +228,24 @@ final class PillContextMenuController: NSObject {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    static func recentTranscriptMenuTitle(for transcript: String, isLatest: Bool) -> String {
+        let flattened = transcript
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\r", with: " ")
+            .split(separator: " ", omittingEmptySubsequences: true)
+            .joined(separator: " ")
+        let trimmed = flattened.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previewLimit = 54
+        let preview = trimmed.count > previewLimit
+            ? String(trimmed.prefix(previewLimit - 1)) + "…"
+            : trimmed
+        return isLatest ? "Latest — \(preview)" : preview
+    }
+
+    @objc private func handleOpenSettings() {
+        onOpenSettings()
+    }
+
     @objc private func handleSnooze() {
         onSnooze()
     }
@@ -228,12 +258,17 @@ final class PillContextMenuController: NSObject {
         onPasteLastTranscript()
     }
 
-    @objc private func handleRetranscribeLastCapture() {
-        onRetranscribeLastCapture()
+    @objc private func handleCopyLastTranscript() {
+        onCopyLastTranscript()
     }
 
     @objc private func handleQuit() {
         onQuit()
+    }
+
+    @objc private func handlePasteRecentTranscript(_ sender: NSMenuItem) {
+        guard let transcript = sender.representedObject as? String else { return }
+        onPasteTranscript(transcript)
     }
 
     @objc private func handleSelectDevice(_ sender: NSMenuItem) {

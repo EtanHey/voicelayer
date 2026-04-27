@@ -94,9 +94,46 @@ enum VoiceBarDaemonLivenessProbe {
     static let freshSessionCheckCommand =
         "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-mcp.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
 
+    static func isSocketLive(at socketPath: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: socketPath) else {
+            return false
+        }
+
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            return false
+        }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let pathBytes = socketPath.utf8CString
+        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+            return false
+        }
+
+        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: pathBytes.count) { dest in
+                pathBytes.withUnsafeBufferPointer { src in
+                    _ = memcpy(dest, src.baseAddress!, src.count)
+                }
+            }
+        }
+
+        let result = withUnsafePointer(to: &addr) { addrPtr in
+            addrPtr.withMemoryRebound(to: sockaddr.self, capacity: 1) { ptr in
+                connect(fd, ptr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+
+        return result == 0
+    }
+
     static func isDaemonRunning(
         pidFilePath: String = VoiceLayerPaths.daemonPIDPath,
-        fileManager: FileManager = .default
+        socketPath: String = VoiceLayerPaths.mcpSocketPath,
+        fileManager: FileManager = .default,
+        socketProbe: (String) -> Bool = VoiceBarDaemonLivenessProbe.isSocketLive
     ) -> Bool {
         guard fileManager.fileExists(atPath: pidFilePath),
               let data = try? Data(contentsOf: URL(fileURLWithPath: pidFilePath)),
@@ -106,7 +143,17 @@ enum VoiceBarDaemonLivenessProbe {
             return false
         }
 
-        return kill(pid, 0) == 0 || errno == EPERM
+        let processAlive = kill(pid, 0) == 0 || errno == EPERM
+        guard processAlive else {
+            return false
+        }
+
+        guard socketProbe(socketPath) else {
+            NSLog("[VoiceBar] Ignoring stale daemon PID %d because MCP socket is not live", pid)
+            return false
+        }
+
+        return true
     }
 }
 

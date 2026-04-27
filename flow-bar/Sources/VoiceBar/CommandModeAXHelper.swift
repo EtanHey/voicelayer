@@ -13,6 +13,12 @@ enum CommandModeApplyResult: Equatable {
     case failed(String)
 }
 
+enum AXWriteDisposition: Equatable {
+    case failed
+    case appliedVerified
+    case appliedUnverified
+}
+
 final class CommandModeAXHelper {
     private let readSelection: () -> CommandModeSelectionSnapshot?
     private let writeValue: (String) -> Bool
@@ -50,21 +56,25 @@ final class CommandModeAXHelper {
         }
 
         let updatedValue = snapshot.value.replacingCharacters(in: swiftRange, with: replacement)
-        guard writeValue(updatedValue) else {
+        let disposition = Self.assessAXWrite(
+            expectedValue: updatedValue,
+            didWrite: writeValue(updatedValue),
+            readBackValue: readBackValue()
+        )
+        guard disposition != .failed else {
             writePasteboard(replacement)
             return postPasteShortcut()
                 ? .clipboardFallback("Pasted fallback")
                 : .failed("AX write failed")
         }
+        return .axVerified("Applied to selection")
+    }
 
-        if readBackValue() == updatedValue {
-            return .axVerified("Applied to selection")
+    static func captureFocusedInsertionHandler() -> ((String) -> Bool)? {
+        guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
+        return { text in
+            insertText(text, into: element)
         }
-
-        writePasteboard(replacement)
-        return postPasteShortcut()
-            ? .clipboardFallback("Pasted fallback")
-            : .failed("AX verification failed")
     }
 
     private static func focusedElement() -> AXUIElement? {
@@ -103,6 +113,43 @@ final class CommandModeAXHelper {
         ) == .success
     }
 
+    private static func insertText(_ text: String, into element: AXUIElement) -> Bool {
+        guard let value = readAttributeString(element, attribute: kAXValueAttribute as CFString),
+              let selectedRange = readSelectedRange(element),
+              let swiftRange = Range(selectedRange, in: value)
+        else {
+            return false
+        }
+
+        let updatedValue = value.replacingCharacters(in: swiftRange, with: text)
+        let disposition = assessAXWrite(
+            expectedValue: updatedValue,
+            didWrite: AXUIElementSetAttributeValue(
+                element,
+                kAXValueAttribute as CFString,
+                updatedValue as CFTypeRef
+            ) == .success,
+            readBackValue: readAttributeString(element, attribute: kAXValueAttribute as CFString)
+        )
+        guard disposition != .failed else {
+            return false
+        }
+
+        let insertionLocation = selectedRange.location + (text as NSString).length
+        _ = writeSelectedRange(NSRange(location: insertionLocation, length: 0), to: element)
+        return true
+    }
+
+    static func assessAXWrite(
+        expectedValue: String,
+        didWrite: Bool,
+        readBackValue: String?
+    ) -> AXWriteDisposition {
+        guard didWrite else { return .failed }
+        guard let readBackValue else { return .appliedUnverified }
+        return readBackValue == expectedValue ? .appliedVerified : .appliedUnverified
+    }
+
     private static func readAttributeString(_ element: AXUIElement, attribute: CFString) -> String? {
         var raw: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, attribute, &raw)
@@ -126,6 +173,16 @@ final class CommandModeAXHelper {
             return nil
         }
         return NSRange(location: range.location, length: range.length)
+    }
+
+    private static func writeSelectedRange(_ range: NSRange, to element: AXUIElement) -> Bool {
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let value = AXValueCreate(.cfRange, &cfRange) else { return false }
+        return AXUIElementSetAttributeValue(
+            element,
+            kAXSelectedTextRangeAttribute as CFString,
+            value
+        ) == .success
     }
 
     private static func writeStringToPasteboard(_ string: String) {

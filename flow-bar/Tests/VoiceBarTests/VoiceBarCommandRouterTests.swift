@@ -192,4 +192,25 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(spyRouter.doubleTapCount, 1)
         XCTAssertEqual(app.voiceState.mode, .idle)
     }
+
+    func testLocalControlCommandParsing() {
+        XCTAssertEqual(
+            VoiceBarLocalControlCommand(payload: ["type": "control", "command": "start-recording"]),
+            .startRecording
+        )
+        XCTAssertEqual(
+            VoiceBarLocalControlCommand(payload: ["type": "control", "command": "stop-recording"]),
+            .stopRecording
+        )
+        XCTAssertEqual(
+            VoiceBarLocalControlCommand(payload: ["type": "control", "command": "toggle"]),
+            .toggle
+        )
+        XCTAssertEqual(
+            VoiceBarLocalControlCommand(payload: ["type": "control", "command": "paste-last-transcript"]),
+            .pasteLastTranscript
+        )
+        XCTAssertNil(VoiceBarLocalControlCommand(payload: ["type": "state", "command": "toggle"]))
+        XCTAssertNil(VoiceBarLocalControlCommand(payload: ["type": "control", "command": "bogus"]))
+    }
 }

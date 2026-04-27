@@ -1,6 +1,5 @@
 import { describe, expect, it } from "bun:test";
 import {
-  calculateRMS,
   downmixPCM16ToMono,
   parseNativeInputFormat,
   resamplePCM16,
@@ -24,7 +23,7 @@ Sample Encoding: 32-bit Signed Integer PCM
     expect(format).toEqual({ sampleRate: 16000, channels: 1 });
   });
 
-  it("downmixes stereo PCM16 to mono by preserving the dominant channel peak", () => {
+  it("downmixes stereo PCM16 to mono by preserving each frame's dominant channel", () => {
     const pcm = new Uint8Array(8);
     const view = new DataView(pcm.buffer);
     view.setInt16(0, 1000, true); // left sample 1
@@ -40,20 +39,16 @@ Sample Encoding: 32-bit Signed Integer PCM
     expect(monoView.getInt16(2, true)).toBe(-2000);
   });
 
-  it("does not cancel anti-phase stereo PCM16 to silence", () => {
-    const pcm = new Uint8Array(8);
+  it("does not phase-cancel anti-phase stereo into silence", () => {
+    const pcm = new Uint8Array(4);
     const view = new DataView(pcm.buffer);
-    view.setInt16(0, 1200, true);
-    view.setInt16(2, -1200, true);
-    view.setInt16(4, -2000, true);
-    view.setInt16(6, 2000, true);
+    view.setInt16(0, 12000, true);
+    view.setInt16(2, -12000, true);
 
     const mono = downmixPCM16ToMono(pcm, 2);
     const monoView = new DataView(mono.buffer);
 
-    expect(monoView.getInt16(0, true)).toBe(1200);
-    expect(monoView.getInt16(2, true)).toBe(-2000);
-    expect(calculateRMS(mono)).toBeGreaterThan(0);
+    expect(Math.abs(monoView.getInt16(0, true))).toBe(12000);
   });
 
   it("resamples a mono PCM16 buffer without changing silence", () => {

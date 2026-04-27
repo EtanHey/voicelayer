@@ -10,7 +10,16 @@
 import { Database } from "bun:sqlite";
 import { existsSync } from "fs";
 
-const WISPR_DB_PATH = `${process.env.HOME}/Library/Application Support/Wispr Flow/flow.sqlite`;
+const DEFAULT_WISPR_DB_PATH = `${process.env.HOME}/Library/Application Support/Wispr Flow/flow.sqlite`;
+
+export interface WisprDictionaryEntry {
+  phrase: string;
+  replacement: string | null;
+}
+
+export function getWisprDbPath(): string {
+  return process.env.QA_VOICE_WISPR_DB_PATH || DEFAULT_WISPR_DB_PATH;
+}
 
 export interface WisprTranscription {
   transcriptEntityId: string;
@@ -38,7 +47,7 @@ export interface ComparisonPair {
 
 /** Open Wispr Flow's database read-only. Safe to use while Wispr is running (WAL). */
 export function openWisprDb(path?: string): Database {
-  const dbPath = path ?? WISPR_DB_PATH;
+  const dbPath = path ?? getWisprDbPath();
   if (!existsSync(dbPath)) {
     throw new Error(`Wispr Flow database not found at ${dbPath}`);
   }
@@ -144,6 +153,21 @@ export function getUserDictionary(db: Database): string[] {
   }
 
   return [...terms].sort();
+}
+
+/** Extract active Wispr dictionary phrase/replacement rows. */
+export function getWisprDictionaryEntries(db: Database): WisprDictionaryEntry[] {
+  return db
+    .query(
+      `SELECT phrase, replacement
+       FROM Dictionary
+       WHERE isDeleted = 0
+         AND isSnippet = 0
+         AND phrase IS NOT NULL
+         AND phrase != ''
+       ORDER BY frequencyUsed DESC, createdAt DESC`,
+    )
+    .all() as WisprDictionaryEntry[];
 }
 
 /** Get comparison pairs — entries with both asrText and formattedText + audio info. */

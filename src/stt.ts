@@ -21,6 +21,7 @@ import {
   getLanguageConfig,
   getLanguageModeFromEnv,
 } from "./language-config";
+import { getSTTVocabularyPrompt } from "./stt-cleanup";
 
 // --- Types ---
 
@@ -148,7 +149,15 @@ function findModel(): string | null {
 let cachedBrewPrefix: string | null | undefined = undefined;
 function getBrewPrefix(): string | null {
   if (cachedBrewPrefix !== undefined) return cachedBrewPrefix;
-  const result = Bun.spawnSync(["brew", "--prefix", "whisper-cpp"]);
+  const brewBinary = resolveBinary("brew", [
+    "/opt/homebrew/bin/brew",
+    "/usr/local/bin/brew",
+  ]);
+  if (!brewBinary) {
+    cachedBrewPrefix = null;
+    return cachedBrewPrefix;
+  }
+  const result = Bun.spawnSync([brewBinary, "--prefix", "whisper-cpp"]);
   cachedBrewPrefix =
     result.exitCode === 0 ? result.stdout.toString().trim() : null;
   return cachedBrewPrefix;
@@ -205,12 +214,18 @@ export class WhisperCppBackend implements STTBackend {
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
-    const basePrompt = getInitialPrompt(langMode);
+    const basePrompt = [
+      getInitialPrompt(langMode),
+      getSTTVocabularyPrompt(),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     const prompt = options?.promptOverride
       ? `${basePrompt} ${options.promptOverride}`.trim()
       : basePrompt;
     const whisperArgs = [...langConfig.whisperArgs];
-    const promptIndex = whisperArgs.indexOf("--initial-prompt");
+    const promptIndex = whisperArgs.indexOf("--prompt");
     if (promptIndex >= 0 && promptIndex + 1 < whisperArgs.length) {
       whisperArgs[promptIndex + 1] = prompt;
     }
@@ -475,4 +490,5 @@ export async function getBackend(): Promise<STTBackend> {
  */
 export function resetBackendCache(): void {
   cachedBackend = null;
+  cachedBrewPrefix = undefined;
 }
