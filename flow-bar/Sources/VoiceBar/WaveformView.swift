@@ -91,7 +91,14 @@ struct WaveformView: View {
     private func updateListeningEnvelope(for rawLevel: Double?, animated: Bool) {
         let targetLevel = WaveformMetrics.listeningTargetLevel(from: rawLevel)
         if targetLevel >= listeningEnvelopeLevel {
-            listeningEnvelopeLevel = targetLevel
+            guard animated else {
+                listeningEnvelopeLevel = targetLevel
+                return
+            }
+
+            withAnimation(.easeOut(duration: WaveformMetrics.listeningAttackDuration)) {
+                listeningEnvelopeLevel = targetLevel
+            }
             return
         }
 
@@ -110,6 +117,7 @@ enum WaveformMetrics {
     // Keep the listening waveform flat around typical room tone
     // until real speech pushes the local meter above roughly -50 dBFS.
     static let listeningSilenceFloor = AudioLevelMonitor.normalizeAveragePower(-50)
+    static let listeningAttackDuration = 0.06
     static let listeningReleaseDuration = 0.40
 
     static func listeningTargetLevel(from audioLevel: Double?) -> Double {

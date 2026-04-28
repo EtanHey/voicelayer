@@ -187,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         pill.orderFront(nil)
         panel = pill
+        if let panelScreen = pill.screen {
+            currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
+        }
 
         // Save position when user drags the pill
         moveObserver = NotificationCenter.default.addObserver(
@@ -194,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: pill,
             queue: .main
         ) { [weak self] _ in
+            guard NSEvent.pressedMouseButtons != 0 else { return }
             self?.savePanelPosition()
         }
 

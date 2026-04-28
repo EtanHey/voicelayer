@@ -121,6 +121,12 @@ struct BarView: View {
         .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
+            if state.mode == .recording {
+                Capsule()
+                    .fill(Theme.recordingColor.opacity(0.12))
+            }
+        }
+        .overlay {
             // State-dependent border glow
             Capsule()
                 .strokeBorder(borderColor, lineWidth: borderWidth)
