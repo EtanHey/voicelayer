@@ -124,17 +124,20 @@ struct BarView: View {
             if state.mode == .recording {
                 Capsule()
                     .fill(Theme.recordingColor.opacity(0.12))
+                    .allowsHitTesting(false)
             }
         }
         .overlay {
             // State-dependent border glow
             Capsule()
                 .strokeBorder(borderColor, lineWidth: borderWidth)
+                .allowsHitTesting(false)
         }
         .overlay {
             // Subtle inner edge for depth
             Capsule()
                 .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
+                .allowsHitTesting(false)
         }
         // No drop shadow — clean edges like Wispr Flow
         .opacity(1.0)
@@ -164,13 +167,11 @@ struct BarView: View {
                 isVocabularyPresented = false
             }
         }
-        .onTapGesture {
-            if state.mode == .idle || state.mode == .error {
-                NSHapticFeedbackManager.defaultPerformer.perform(
-                    .alignment, performanceTime: .now
-                )
-                commandRouter.handlePrimaryTap()
-            }
+        .primaryPillTapGesture(enabled: state.mode == .idle || state.mode == .error) {
+            NSHapticFeedbackManager.defaultPerformer.perform(
+                .alignment, performanceTime: .now
+            )
+            commandRouter.handlePrimaryTap()
         }
     }
 
@@ -615,5 +616,16 @@ struct BarView: View {
         }
         .buttonStyle(.plain)
         .transition(.scale.combined(with: .opacity))
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func primaryPillTapGesture(enabled: Bool, action: @escaping () -> Void) -> some View {
+        if enabled {
+            onTapGesture(perform: action)
+        } else {
+            self
+        }
     }
 }
