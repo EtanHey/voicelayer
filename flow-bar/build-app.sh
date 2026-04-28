@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Build VoiceBar as a proper macOS .app bundle.
 #
-# Usage: bash flow-bar/build-app.sh
+# Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app]
 #
-# Output: /Applications/VoiceBar.app
+# Output: /Applications/VoiceBar.app by default
 
 set -euo pipefail
 
@@ -13,6 +13,27 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Apple Development: Etan Heyman (DXHB5E7P2D)}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --install-path)
+            if [[ $# -lt 2 ]]; then
+                echo "[build-app] ERROR: --install-path requires a target path"
+                exit 1
+            fi
+            APP_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app]"
+            exit 0
+            ;;
+        *)
+            echo "[build-app] ERROR: Unknown argument: $1"
+            exit 1
+            ;;
+    esac
+done
 
 echo "[build-app] Building VoiceBar (release)..."
 swift build -c release --package-path "$PACKAGE_DIR"
@@ -61,4 +82,4 @@ fi
 
 echo "[build-app] Done: $APP_DIR"
 echo "[build-app] To add to Login Items: System Settings > General > Login Items > +"
-echo "[build-app] Or run: osascript -e 'tell application \"System Events\" to make login item at end with properties {path:\"/Applications/VoiceBar.app\", hidden:true}'"
+echo "[build-app] Or run: osascript -e 'tell application \"System Events\" to make login item at end with properties {path:\"$APP_DIR\", hidden:true}'"
