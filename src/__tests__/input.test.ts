@@ -265,7 +265,7 @@ describe("input module", () => {
     it("returns empty text when chunk STT only produces no-input labels", async () => {
       const result = await transcribeChunkSequence(
         [new Uint8Array([1]), new Uint8Array([2])],
-        async (_chunk, _prompt) => "(Music)",
+        async (_chunk, _prompt) => "- Oh, my God.",
       );
 
       expect(result).toBe("");

@@ -6,6 +6,8 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("thank you")).toBe("");
     expect(cleanupTranscriptionText("Thank you.")).toBe("");
     expect(cleanupTranscriptionText("sad music")).toBe("");
+    expect(cleanupTranscriptionText("Oh, my God.")).toBe("");
+    expect(cleanupTranscriptionText("- Oh, my God.")).toBe("");
     expect(cleanupTranscriptionText("-")).toBe("");
     expect(cleanupTranscriptionText("(Music)")).toBe("");
     expect(cleanupTranscriptionText("[music]")).toBe("");

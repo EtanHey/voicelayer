@@ -67,7 +67,7 @@ function isMeaningfulTranscription(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
 
-  if (trimmed === "?" || /^[/@]\S/.test(trimmed) || /^-\s+\S/.test(trimmed)) {
+  if (trimmed === "?" || /^[/@]\S/.test(trimmed)) {
     return true;
   }
 
@@ -76,11 +76,19 @@ function isMeaningfulTranscription(text: string): boolean {
     .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
     .replace(/[.!?]+$/g, "")
     .trim();
+  const speechWords = lower
+    .replace(/[^\p{L}\p{N}\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   if (
     normalizedWords === "thank you" ||
     normalizedWords === "thanks" ||
-    normalizedWords === "sad music"
+    normalizedWords === "sad music" ||
+    speechWords === "thank you" ||
+    speechWords === "thanks" ||
+    speechWords === "sad music" ||
+    speechWords === "oh my god"
   ) {
     return false;
   }
@@ -97,6 +105,10 @@ function isMeaningfulTranscription(text: string): boolean {
 
   if (/^[\p{P}\p{S}\s]+$/u.test(trimmed)) {
     return false;
+  }
+
+  if (/^-\s+\S/.test(trimmed)) {
+    return true;
   }
 
   return true;
