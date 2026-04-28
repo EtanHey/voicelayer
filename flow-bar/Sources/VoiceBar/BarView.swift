@@ -256,6 +256,10 @@ struct BarView: View {
                         }
                     }
                 }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(
+                    recordingContent.statusText.isEmpty ? "Recording" : recordingContent.statusText
+                )
             case .speaking:
                 if state.queueItems.count > 1 {
                     queueVisualization
