@@ -136,7 +136,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testLiveStatusTextShowsThinkingDuringTranscribing() {
+    func testLiveStatusTextShowsTranscribingDuringTranscribing() {
         XCTAssertEqual(
             VoiceBarPresentation.liveStatusText(
                 mode: .transcribing,
@@ -148,7 +148,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            "Thinking..."
+            "Transcribing..."
         )
     }
 

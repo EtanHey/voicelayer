@@ -56,10 +56,50 @@ export function cleanupTranscriptionText(text: string): string {
     aliases: ORDERED_BUILTIN_STT_ALIASES,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
-  return normalizeCanonicalTerms(
+  const normalized = normalizeCanonicalTerms(
     cleaned,
     new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES)),
   );
+  return isMeaningfulTranscription(normalized) ? normalized : "";
+}
+
+function isMeaningfulTranscription(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  if (trimmed === "?" || /^[/@]\S/.test(trimmed) || /^-\s+\S/.test(trimmed)) {
+    return true;
+  }
+
+  const lower = trimmed.toLowerCase();
+  const normalizedWords = lower
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, "")
+    .replace(/[.!?]+$/g, "")
+    .trim();
+
+  if (
+    normalizedWords === "thank you" ||
+    normalizedWords === "thanks" ||
+    normalizedWords === "sad music"
+  ) {
+    return false;
+  }
+
+  const nonSpeechCue =
+    "\\s*(?:music|sad music|applause|laughter|laughs|noise|silence|inaudible)\\s*";
+  const bracketedCuePattern = new RegExp(
+    `^(?:\\(${nonSpeechCue}\\)|\\[${nonSpeechCue}\\]|\\{${nonSpeechCue}\\}|<${nonSpeechCue}>)$`,
+    "iu",
+  );
+  if (bracketedCuePattern.test(trimmed)) {
+    return false;
+  }
+
+  if (/^[\p{P}\p{S}\s]+$/u.test(trimmed)) {
+    return false;
+  }
+
+  return true;
 }
 
 function normalizeCanonicalTerms(text: string, canonicalTerms: Set<string>): string {
