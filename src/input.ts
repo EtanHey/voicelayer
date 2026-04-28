@@ -732,6 +732,11 @@ export async function waitForInput(
       writeFileSync(wavPath, retainedWavData);
       const result = await backend.transcribe(wavPath);
       text = cleanupTranscriptionText(result.text);
+      if (result.text.trim() && !text) {
+        console.error(
+          `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
+        );
+      }
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
@@ -790,6 +795,11 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
     const text = cleanupTranscriptionText(result.text);
+    if (result.text.trim() && !text) {
+      console.error(
+        `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+      );
+    }
     console.error(`[voicelayer] Retranscription: ${text}`);
 
     if (text) {

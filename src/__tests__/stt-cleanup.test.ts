@@ -2,6 +2,27 @@ import { describe, expect, it } from "bun:test";
 import { cleanupTranscriptionText } from "../stt-cleanup";
 
 describe("stt-cleanup", () => {
+  it("suppresses no-input STT hallucinations and non-speech labels", () => {
+    expect(cleanupTranscriptionText("thank you")).toBe("");
+    expect(cleanupTranscriptionText("Thank you.")).toBe("");
+    expect(cleanupTranscriptionText("sad music")).toBe("");
+    expect(cleanupTranscriptionText("Oh, my God.")).toBe("");
+    expect(cleanupTranscriptionText("- Oh, my God.")).toBe("");
+    expect(cleanupTranscriptionText("-")).toBe("");
+    expect(cleanupTranscriptionText("(Music)")).toBe("");
+    expect(cleanupTranscriptionText("[music]")).toBe("");
+    expect(cleanupTranscriptionText("[music>")).not.toBe("");
+    expect(cleanupTranscriptionText("...")).toBe("");
+  });
+
+  it("preserves intentional short syntax dictation", () => {
+    expect(cleanupTranscriptionText("/ foo")).toBe("/ foo");
+    expect(cleanupTranscriptionText("@name")).toBe("@name");
+    expect(cleanupTranscriptionText("?")).toBe("?");
+    expect(cleanupTranscriptionText("- word")).toBe("- word");
+    expect(cleanupTranscriptionText("yes")).not.toBe("");
+  });
+
   it("preserves exact canonical casing for product and agent aliases", () => {
     const cleaned = cleanupTranscriptionText(
       "work claude opened voice layer codex in whisper flow",
