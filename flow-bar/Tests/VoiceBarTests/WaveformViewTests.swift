@@ -50,6 +50,26 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertGreaterThan(louder, quiet)
     }
 
+    func testListeningModePreservesDynamicRangeAboveSilenceGate() {
+        let justAboveGate = WaveformMetrics.normalizedLevel(
+            mode: .listening,
+            audioLevel: WaveformMetrics.listeningTargetLevel(from: WaveformMetrics.listeningSilenceFloor + 0.01),
+            time: 0.5,
+            index: 3,
+            barCount: 7
+        )
+        let loudSpeech = WaveformMetrics.normalizedLevel(
+            mode: .listening,
+            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.9),
+            time: 0.5,
+            index: 3,
+            barCount: 7
+        )
+
+        XCTAssertLessThan(justAboveGate, 0.2)
+        XCTAssertGreaterThan(loudSpeech - justAboveGate, 0.35)
+    }
+
     func testListeningModeNoiseGatesObservedSilentMicFloor() {
         let samples = stride(from: 0.0, through: 1.0, by: 0.25).map { time in
             WaveformMetrics.normalizedLevel(

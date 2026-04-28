@@ -122,7 +122,7 @@ enum WaveformMetrics {
 
     static func listeningTargetLevel(from audioLevel: Double?) -> Double {
         guard let audioLevel, audioLevel >= listeningSilenceFloor else { return 0 }
-        return audioLevel
+        return (audioLevel - listeningSilenceFloor) / (1 - listeningSilenceFloor)
     }
 
     static func normalizedLevel(
@@ -204,8 +204,10 @@ enum WaveformMetrics {
     ) -> Double {
         let fast = sin(time * 7.0 + phaseOffset * 2.5) * 0.08
         let jitter = sin(time * 12.0 + phaseOffset * 6.0) * 0.05
-        let envelope = level * centerWeight
-        return 0.15 + envelope * 0.75 + fast + jitter
+        let motionScale = 0.4 + level * 0.6
+        let base = 0.04 + level * 0.12
+        let envelope = pow(level, 0.9) * centerWeight
+        return base + envelope * 0.82 + (fast + jitter) * motionScale
     }
 }
 
