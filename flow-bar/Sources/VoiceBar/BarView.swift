@@ -238,14 +238,16 @@ struct BarView: View {
                             audioLevel: state.audioLevel
                         )
                     }
-                    if recordingContent.usesPulsingLabelOpacity {
-                        PulsingStatusLabel(text: recordingContent.statusText)
-                    } else {
-                        Text(recordingContent.statusText)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
+                    if !recordingContent.statusText.isEmpty {
+                        if recordingContent.usesPulsingLabelOpacity {
+                            PulsingStatusLabel(text: recordingContent.statusText)
+                        } else {
+                            Text(recordingContent.statusText)
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.9))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                        }
                     }
                 }
             case .speaking:
