@@ -15,7 +15,7 @@ struct PillResizePlan {
         let newHeight = max(pillSize.height + padding * 2, 30)
         let newFrame = CGRect(
             x: oldFrame.midX - newWidth / 2,
-            y: oldFrame.midY - newHeight / 2,
+            y: oldFrame.minY,
             width: newWidth,
             height: newHeight
         )
