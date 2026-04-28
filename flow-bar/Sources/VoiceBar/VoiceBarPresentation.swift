@@ -53,9 +53,9 @@ enum VoiceBarPresentation {
 
     static func recordingContent(hotkeyPhase: HotkeyPhase) -> VoiceBarRecordingContent {
         VoiceBarRecordingContent(
-            statusText: hotkeyPhase == .holding ? "Release to send" : "Listening...",
+            statusText: hotkeyPhase == .holding ? "Release to send" : "",
             showsWaveform: true,
-            usesPulsingLabelOpacity: true
+            usesPulsingLabelOpacity: hotkeyPhase == .holding
         )
     }
 

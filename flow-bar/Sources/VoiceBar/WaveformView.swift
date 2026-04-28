@@ -23,6 +23,7 @@ enum WaveformMode: String, CaseIterable {
 struct WaveformView: View {
     let mode: WaveformMode
     let audioLevel: Double?
+    @State private var listeningEnvelopeLevel: Double = 0
 
     private let barCount = 7
     private let barWidth: CGFloat = 4
@@ -45,7 +46,7 @@ struct WaveformView: View {
                         barCount: barCount,
                         time: now,
                         mode: mode,
-                        audioLevel: audioLevel,
+                        audioLevel: displayedAudioLevel,
                         maxHeight: maxHeight,
                         minHeight: minHeight,
                         barWidth: barWidth
@@ -55,15 +56,74 @@ struct WaveformView: View {
             }
             .frame(width: totalWidth, height: maxHeight)
         }
+        .onAppear {
+            updateListeningEnvelope(for: audioLevel, animated: false)
+        }
+        .onChange(of: mode) { _, newMode in
+            if newMode == .listening {
+                updateListeningEnvelope(for: audioLevel, animated: false)
+            } else {
+                listeningEnvelopeLevel = audioLevel ?? 0
+            }
+        }
+        .onChange(of: audioLevel) { _, newLevel in
+            if mode == .listening {
+                updateListeningEnvelope(for: newLevel, animated: true)
+            } else {
+                listeningEnvelopeLevel = newLevel ?? 0
+            }
+        }
     }
 
     private var totalWidth: CGFloat {
         CGFloat(barCount) * barWidth + CGFloat(barCount - 1) * barSpacing
     }
+
+    private var displayedAudioLevel: Double? {
+        switch mode {
+        case .listening:
+            listeningEnvelopeLevel
+        case .idle, .speechDetected:
+            audioLevel
+        }
+    }
+
+    private func updateListeningEnvelope(for rawLevel: Double?, animated: Bool) {
+        let targetLevel = WaveformMetrics.listeningTargetLevel(from: rawLevel)
+        if targetLevel >= listeningEnvelopeLevel {
+            guard animated else {
+                listeningEnvelopeLevel = targetLevel
+                return
+            }
+
+            withAnimation(.easeOut(duration: WaveformMetrics.listeningAttackDuration)) {
+                listeningEnvelopeLevel = targetLevel
+            }
+            return
+        }
+
+        guard animated else {
+            listeningEnvelopeLevel = targetLevel
+            return
+        }
+
+        withAnimation(.easeOut(duration: WaveformMetrics.listeningReleaseDuration)) {
+            listeningEnvelopeLevel = targetLevel
+        }
+    }
 }
 
 enum WaveformMetrics {
-    static let listeningSilenceFloor = 0.85
+    // Keep the listening waveform flat around typical room tone
+    // until real speech pushes the local meter above roughly -50 dBFS.
+    static let listeningSilenceFloor = AudioLevelMonitor.normalizeAveragePower(-50)
+    static let listeningAttackDuration = 0.06
+    static let listeningReleaseDuration = 0.40
+
+    static func listeningTargetLevel(from audioLevel: Double?) -> Double {
+        guard let audioLevel, audioLevel >= listeningSilenceFloor else { return 0 }
+        return audioLevel
+    }
 
     static func normalizedLevel(
         mode: WaveformMode,
@@ -79,7 +139,7 @@ enum WaveformMetrics {
         case .idle:
             idleLevel(time: time, phaseOffset: phaseOffset, centerWeight: centerWeight)
         case .listening:
-            if let level = audioLevel, level >= listeningSilenceFloor {
+            if let level = audioLevel, level > 0 {
                 audioLevelDriven(
                     level * 0.7,
                     time: time,

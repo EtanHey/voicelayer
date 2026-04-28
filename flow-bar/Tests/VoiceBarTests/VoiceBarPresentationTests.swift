@@ -2,13 +2,13 @@
 import XCTest
 
 final class VoiceBarPresentationTests: XCTestCase {
-    func testRecordingContentShowsListeningLabelPulseAndWaveformImmediately() {
+    func testRecordingContentShowsWaveformWithoutListeningLabelByDefault() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingContent(hotkeyPhase: .idle),
             VoiceBarRecordingContent(
-                statusText: "Listening...",
+                statusText: "",
                 showsWaveform: true,
-                usesPulsingLabelOpacity: true
+                usesPulsingLabelOpacity: false
             )
         )
     }

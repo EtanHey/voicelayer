@@ -43,7 +43,9 @@ private struct ListeningGateResult {
 }
 
 private struct ListeningNoiseGate {
-    private let floor = Float(WaveformMetrics.listeningSilenceFloor)
+    // Backend speech-trigger sensitivity is intentionally stricter than the
+    // pill waveform's visual animation threshold.
+    private let floor: Float = 0.85
     private let expectedTranscript: String?
 
     init(expectedTranscript: String? = nil) {

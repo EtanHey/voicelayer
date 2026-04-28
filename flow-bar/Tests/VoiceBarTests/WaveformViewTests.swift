@@ -33,14 +33,14 @@ final class WaveformViewTests: XCTestCase {
     func testListeningModeRespondsOnceRealAudioArrives() {
         let quiet = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 0.9,
+            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.59),
             time: 0.5,
             index: 3,
             barCount: 7
         )
         let louder = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 1,
+            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.8),
             time: 0.5,
             index: 3,
             barCount: 7
@@ -54,7 +54,7 @@ final class WaveformViewTests: XCTestCase {
         let samples = stride(from: 0.0, through: 1.0, by: 0.25).map { time in
             WaveformMetrics.normalizedLevel(
                 mode: .listening,
-                audioLevel: 0.375,
+                audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.55),
                 time: time,
                 index: 3,
                 barCount: 7
@@ -67,12 +67,17 @@ final class WaveformViewTests: XCTestCase {
     func testListeningModeStillRespondsAboveSilenceGate() {
         let sample = WaveformMetrics.normalizedLevel(
             mode: .listening,
-            audioLevel: 0.9,
+            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.59),
             time: 0.5,
             index: 3,
             barCount: 7
         )
 
         XCTAssertGreaterThan(sample, 0)
+    }
+
+    func testListeningTargetLevelNoiseGatesQuietRoomTone() {
+        XCTAssertEqual(WaveformMetrics.listeningTargetLevel(from: 0.55), 0)
+        XCTAssertGreaterThan(WaveformMetrics.listeningTargetLevel(from: 0.59), 0)
     }
 }

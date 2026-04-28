@@ -38,6 +38,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Last reported pill size — used to avoid layout loops.
     private var lastPillSize: CGSize = .zero
+    /// Last transition seen by the panel resize path. Used to decide whether a
+    /// given geometry change should tween instead of snap.
+    private var previousVoiceMode: VoiceMode = .idle
+    private var currentVoiceMode: VoiceMode = .idle
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -183,6 +187,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         pill.orderFront(nil)
         panel = pill
+        if let panelScreen = pill.screen {
+            currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
+        }
 
         // Save position when user drags the pill
         moveObserver = NotificationCenter.default.addObserver(
@@ -190,6 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: pill,
             queue: .main
         ) { [weak self] _ in
+            guard NSEvent.pressedMouseButtons != 0 else { return }
             self?.savePanelPosition()
         }
 
@@ -392,6 +400,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleVoiceModeChange(_ mode: VoiceMode) {
+        previousVoiceMode = currentVoiceMode
+        currentVoiceMode = mode
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -488,21 +498,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         lastPillSize = pillSize
 
-        let padding = Theme.panelPadding
-        let newWidth = max(pillSize.width + padding * 2, 50)
-        let newHeight = max(pillSize.height + padding * 2, 30)
-
-        // Anchor at visual center — pill stays in place across state changes
         let oldFrame = panel.frame
-        let centerX = oldFrame.midX
-        let centerY = oldFrame.midY
-        let newFrame = NSRect(
-            x: centerX - newWidth / 2,
-            y: centerY - newHeight / 2,
-            width: newWidth,
-            height: newHeight
+        let plan = PillResizePlan.make(
+            oldFrame: oldFrame,
+            pillSize: pillSize,
+            from: previousVoiceMode,
+            to: currentVoiceMode,
+            padding: Theme.panelPadding
         )
-        panel.setFrame(newFrame, display: true, animate: false)
+        panel.setFrame(plan.frame, display: true, animate: plan.animate)
     }
 
     // MARK: - Mouse tracking
