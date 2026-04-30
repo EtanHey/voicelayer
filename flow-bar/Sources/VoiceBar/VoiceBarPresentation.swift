@@ -134,7 +134,7 @@ enum VoiceBarPresentation {
         case .recording:
             recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
-            "Thinking..."
+            "Transcribing..."
         case .error:
             errorMessage ?? "Error"
         }

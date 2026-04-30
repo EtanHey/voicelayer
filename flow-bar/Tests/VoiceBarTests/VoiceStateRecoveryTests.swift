@@ -45,4 +45,19 @@ final class VoiceStateRecoveryTests: XCTestCase {
         XCTAssertFalse(state.isConnected)
         XCTAssertEqual(state.mode, .disconnected)
     }
+
+    func testBarInitiatedBrokenMicErrorIsShown() {
+        let state = VoiceState()
+
+        state.record()
+        state.handleEvent([
+            "type": "error",
+            "message": "Microphone input looks silent",
+            "recoverable": true,
+            "show_during_bar_recording": true,
+        ])
+
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertEqual(state.errorMessage, "Microphone input looks silent")
+    }
 }

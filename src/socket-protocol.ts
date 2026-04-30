@@ -58,6 +58,8 @@ export interface ErrorEvent {
   message: string;
   /** true = transient error (will recover), false = needs user action. */
   recoverable: boolean;
+  /** true = surface this error even during a bar-initiated recording. */
+  show_during_bar_recording?: boolean;
 }
 
 /** Word boundary from edge-tts WordBoundary event. */

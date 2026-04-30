@@ -68,6 +68,11 @@ const BITS_PER_SAMPLE = 16;
 // AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
 const MIN_TRANSCRIBE_DURATION_MS = 600;
 const MIN_TRANSCRIBE_DBFS = -55;
+const BROKEN_MIC_MIN_DURATION_MS = 1500;
+const BROKEN_MIC_MAX_RMS = 1;
+const BROKEN_MIC_MAX_DBFS = -90;
+const BROKEN_MIC_MESSAGE =
+  "Microphone input looks silent. Check VoiceBar > Microphone and macOS microphone access.";
 
 /**
  * Pre-speech timeout: if no speech is detected within this many seconds,
@@ -91,6 +96,11 @@ export interface NoSpeechGateResult {
   rms: number;
   dbfs: number;
   reason?: "invalid-sample-rate" | "too-short" | "too-quiet";
+}
+
+export interface CaptureFailure {
+  type: "broken-mic";
+  message: string;
 }
 
 export function evaluateNoSpeechGate(
@@ -119,6 +129,24 @@ export function evaluateNoSpeechGate(
     return { allowed: false, durationMs, rms, dbfs, reason: "too-quiet" };
   }
   return { allowed: true, durationMs, rms, dbfs };
+}
+
+export function classifyCaptureFailure(
+  gate: NoSpeechGateResult,
+): CaptureFailure | null {
+  if (
+    gate.reason === "too-quiet" &&
+    gate.durationMs >= BROKEN_MIC_MIN_DURATION_MS &&
+    gate.rms <= BROKEN_MIC_MAX_RMS &&
+    gate.dbfs <= BROKEN_MIC_MAX_DBFS
+  ) {
+    return {
+      type: "broken-mic",
+      message: BROKEN_MIC_MESSAGE,
+    };
+  }
+
+  return null;
 }
 
 function flattenChunks(chunks: Uint8Array[]): Uint8Array {
@@ -656,12 +684,12 @@ export async function waitForInput(
       message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
     throw err;
   }
   if (!pcmData) {
     clearCancelSignal();
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
     return null;
   }
 
@@ -687,7 +715,20 @@ export async function waitForInput(
         `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
     );
     clearCancelSignal();
-    broadcast({ type: "state", state: "idle" });
+    const captureFailure = classifyCaptureFailure(noSpeechGate);
+    if (captureFailure) {
+      console.error(
+        `[voicelayer] Surfacing capture failure: ${captureFailure.type}`,
+      );
+      broadcast({
+        type: "error",
+        message: captureFailure.message,
+        recoverable: true,
+        show_during_bar_recording: true,
+      });
+    } else {
+      broadcast({ type: "state", state: "idle" });
+    }
     return null;
   }
 
@@ -732,6 +773,11 @@ export async function waitForInput(
       writeFileSync(wavPath, retainedWavData);
       const result = await backend.transcribe(wavPath);
       text = cleanupTranscriptionText(result.text);
+      if (result.text.trim() && !text) {
+        console.error(
+          `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
+        );
+      }
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
@@ -740,7 +786,7 @@ export async function waitForInput(
       broadcast({ type: "transcription", text });
     }
     recordingState = "idle";
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
 
     return text || null;
   } catch (err) {
@@ -790,13 +836,18 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
     const text = cleanupTranscriptionText(result.text);
+    if (result.text.trim() && !text) {
+      console.error(
+        `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+      );
+    }
     console.error(`[voicelayer] Retranscription: ${text}`);
 
     if (text) {
       broadcast({ type: "transcription", text });
     }
     recordingState = "idle";
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
     return text || null;
   } catch (err) {
     recordingState = "idle";

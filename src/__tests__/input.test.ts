@@ -193,6 +193,35 @@ describe("input module", () => {
     });
   });
 
+  describe("broken mic detection", () => {
+    function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      for (let i = 0; i < samples; i++) {
+        view.setInt16(i * 2, sample, true);
+      }
+      return buffer;
+    }
+
+    it("flags long near-zero captures as broken mic instead of ordinary silence", async () => {
+      const input = (await import("../input")) as Record<string, any>;
+      const gate = evaluateNoSpeechGate(pcmWithConstantSample(1, 3500));
+
+      expect(input.classifyCaptureFailure?.(gate)).toEqual({
+        type: "broken-mic",
+        message: expect.stringContaining("Microphone"),
+      });
+    });
+
+    it("keeps ordinary quiet silence as a silent dismiss", async () => {
+      const input = (await import("../input")) as Record<string, any>;
+      const gate = evaluateNoSpeechGate(pcmWithConstantSample(20, 700));
+
+      expect(input.classifyCaptureFailure?.(gate)).toBeNull();
+    });
+  });
+
   describe("PTT mode exports", () => {
     it("recordToBuffer accepts pressToTalk parameter (type check)", async () => {
       const { recordToBuffer } = await import("../input");
@@ -260,6 +289,15 @@ describe("input module", () => {
       expect(result).toContain("orcClaude");
       expect(result).toContain("VoiceLayer");
       expect(result).toContain("Wispr Flow");
+    });
+
+    it("returns empty text when chunk STT only produces no-input labels", async () => {
+      const result = await transcribeChunkSequence(
+        [new Uint8Array([1]), new Uint8Array([2])],
+        async (_chunk, _prompt) => "- Oh, my God.",
+      );
+
+      expect(result).toBe("");
     });
   });
 });

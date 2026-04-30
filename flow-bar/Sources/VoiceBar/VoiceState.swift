@@ -420,7 +420,8 @@ final class VoiceState {
             guard let stateStr = event["state"] as? String else { return }
             switch stateStr {
             case "idle":
-                if barInitiatedRecording, mode == .transcribing {
+                let idleSource = event["source"] as? String
+                if barInitiatedRecording, mode == .transcribing, idleSource != "recording" {
                     // Ignore stale idle from losing clients so the bar keeps
                     // the thinking state until the winning transcription lands.
                     return
@@ -430,6 +431,12 @@ final class VoiceState {
                 // Clients that fail (no sox, session busy) broadcast error+idle
                 // BEFORE the successful client finishes. These stale idle events
                 // would kill the paste flag. Only transcription and cancel() reset it.
+                if idleSource == "recording" {
+                    barInitiatedRecording = false
+                    barInitiatedTimeout?.cancel()
+                    frontmostAppOnRecordStart = nil
+                    recordStartInsertionHandler = nil
+                }
                 mode = .idle
                 statusText = ""
                 speechDetected = false
@@ -581,11 +588,18 @@ final class VoiceState {
 
         case "error":
             transcriptionTimeoutTask?.cancel()
+            let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
             // the successful client is still recording. Show error UI only if
             // we're not in an active bar-initiated recording.
-            if !barInitiatedRecording {
+            if showDuringBarRecording {
+                barInitiatedRecording = false
+                barInitiatedTimeout?.cancel()
+                frontmostAppOnRecordStart = nil
+                recordStartInsertionHandler = nil
+            }
+            if showDuringBarRecording || !barInitiatedRecording {
                 mode = .error
                 errorMessage = event["message"] as? String ?? "Unknown error"
                 expandFromCollapse()

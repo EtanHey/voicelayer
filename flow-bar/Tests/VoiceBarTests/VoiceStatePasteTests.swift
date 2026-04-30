@@ -162,6 +162,28 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.mode, .transcribing)
     }
 
+    func testBarInitiatedTranscribingAcceptsRecordingIdleForSuppressedResult() async {
+        let state = VoiceState()
+        state.transcriptionTimeout = .milliseconds(20)
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testRepasteUsesStoredTranscript() {
         let state = VoiceState()
         state.pasteConfirmationDelay = 0
