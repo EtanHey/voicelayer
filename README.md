@@ -6,7 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP%20tools-11-38BDF8.svg)](#voice-tools)
-[![Tests](https://img.shields.io/badge/tests-536%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-585%20Bun%20%2B%20144%20Swift-brightgreen.svg)](#testing)
 
 **Voice I/O for AI coding assistants.** Press F6, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
@@ -236,10 +236,41 @@ voicelayer daemon --port 8880      # Run Qwen3-TTS server
 ## Testing
 
 ```bash
-bun test   # 536 tests, 1638 assertions, 48 test files
+bun test                              # 585 Bun tests + 1 skip (latest verified on PR #190 pre-push gate)
+bash flow-bar/run_tests.sh            # 144 Swift tests for VoiceBar
+git config core.hooksPath .githooks   # install repo pre-push hook once per clone (#181, #182)
 ```
 
 Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, schema validation, Hebrew STT eval baselines, daemon resilience, ToolAnnotations, SSML sanitization, and secure path hardening.
+
+## Recent Hardening (2026-04-27 → 2026-05-02)
+
+One-week sprint focused on VoiceBar reliability and a recording corpus to fight STT regressions. Every line below traces to a merged PR.
+
+**Recording reliability**
+- Recording control clickability restored — F6 socket controls remained interactive while the pill animated ([#188](https://github.com/EtanHey/voicelayer/pull/188)).
+- Pill bottom anchor preserved during resize so the UI doesn't drift off-screen ([#187](https://github.com/EtanHey/voicelayer/pull/187)).
+- Waveform animates again on real audio input + redundant "listening" copy removed ([#184](https://github.com/EtanHey/voicelayer/pull/184)).
+- Waveform dynamic range restored above the silence gate ([#185](https://github.com/EtanHey/voicelayer/pull/185)).
+- Custom VoiceBar install paths supported (no more hard-coded `/Applications/VoiceBar.app`) ([#186](https://github.com/EtanHey/voicelayer/pull/186)).
+- VoiceBar transcription preserved through the recording RMS gate so quiet speech survives ([#177](https://github.com/EtanHey/voicelayer/pull/177)).
+- Stale daemon restart detection — VoiceBar transcription resumes automatically after the daemon restarts ([#183](https://github.com/EtanHey/voicelayer/pull/183)).
+
+**STT quality**
+- No-input STT hallucinations suppressed ([#189](https://github.com/EtanHey/voicelayer/pull/189)).
+- Zero-RMS audio ingestion watchdog catches a silent mic before whisper.cpp guesses ([#178](https://github.com/EtanHey/voicelayer/pull/178)).
+
+**VoiceBar dictation corpus (Phase 1)** — [#190](https://github.com/EtanHey/voicelayer/pull/190)
+- Every successful VoiceBar dictation is archived under `~/.local/share/voicelayer/recordings/YYYY-MM-DD/<timestamp-id>/` with `audio.wav` + `voicelayer-transcript.txt` + `metadata.json` (schema v1, SHA-256 over WAV bytes).
+- Atomic rename + fsync so partial writes never appear in the corpus.
+- Cancelled or empty transcriptions are skipped — only real dictations land on disk.
+- Re-paste hotkey moved to `Shift+F6`; plain `F6` is now the default record-start/stop activation (consuming event tap to stop focus traversal leakage).
+
+**Test infrastructure**
+- VoiceLayer pre-push regression gate ([#181](https://github.com/EtanHey/voicelayer/pull/181)) plus exit-0 fix on the success path ([#182](https://github.com/EtanHey/voicelayer/pull/182)).
+- `voicelayer run_tests.sh` orchestrator script unifies Bun + Swift + daemon-boot + Karabiner smoke runs ([#180](https://github.com/EtanHey/voicelayer/pull/180)).
+- VoiceBar audio fixtures for golden-path STT regressions ([#179](https://github.com/EtanHey/voicelayer/pull/179)).
+
 
 ## Project Structure
 
