@@ -357,20 +357,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             handleHotkeyHoldEnd(holdDuration: holdDuration)
         }
 
-        // Single tap is intentionally ignored so double-tap can toggle hands-free mode.
+        // Single/double tap are intentionally not assigned in the immediate PTT model.
         gestureStateMachine.onSingleTap = {
-            NSLog("[VoiceBar] Hotkey single tap — ignored")
+            NSLog("[VoiceBar] Hotkey single tap — not assigned")
         }
 
-        // Double tap → toggle hands-free recording
-        gestureStateMachine.onDoubleTap = { [weak self] in
-            guard let self else { return }
-            if voiceState.mode == .idle {
-                NSLog("[VoiceBar] Hotkey double tap — starting hands-free recording")
-            } else if voiceState.mode == .recording {
-                NSLog("[VoiceBar] Hotkey double tap — stopping hands-free recording")
-            }
-            handleHotkeyDoubleTap()
+        gestureStateMachine.onDoubleTap = {
+            NSLog("[VoiceBar] Hotkey double tap — not assigned")
         }
 
         let manager = HotkeyManager(gesture: gestureStateMachine)

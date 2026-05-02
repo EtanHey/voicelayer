@@ -3,7 +3,8 @@
 // Uses a consuming event tap so plain F6 does not leak to the focused app
 // and trigger macOS keyboard-focus traversal.
 //
-// Gesture state machine: hold (250ms) = push-to-talk, double-tap (400ms) = toggle.
+// Gesture state machine: F6 keyDown starts push-to-talk immediately;
+// keyUp stops and transcribes.
 //
 // AIDEV-NOTE: Cmd+F6 arrives as F6 keyDown/keyUp events with the Command flag
 // set, not as flagsChanged events. We listen for the dual F6 keycodes:
@@ -45,24 +46,16 @@ private func describeFlags(_ flags: CGEventFlags) -> String {
 
 // MARK: - Gesture State Machine
 
-/// Detects hold vs tap vs double-tap from raw key events.
-/// - Hold (250ms+): push-to-talk recording
-/// - Single tap: no-op
-/// - Double-tap (within 400ms): toggle hands-free recording
+/// Maps raw key events to immediate push-to-talk recording.
+/// - F6 down: push-to-talk recording starts immediately
+/// - F6 up: recording stops and transcribes
 final class GestureStateMachine {
     enum State: Sendable {
         case idle
-        case waitingForHoldThreshold // keyDown received, 250ms timer running
-        case holding // threshold exceeded, recording active
-        case waitingForDoubleTap // first tap released, 400ms timer running
+        case holding
     }
 
     private(set) var state: State = .idle
-    private var holdTimer: DispatchWorkItem?
-    private var doubleTapTimer: DispatchWorkItem?
-
-    static let holdThresholdMs: Int = 250
-    static let doubleTapWindowMs: Int = 400
 
     // Callbacks — set by the owner (AppDelegate)
     var onHoldStart: () -> Void = {}
@@ -73,25 +66,10 @@ final class GestureStateMachine {
 
     func handleKeyDown() {
         switch state {
-        case .waitingForDoubleTap:
-            doubleTapTimer?.cancel()
-            state = .idle
-            onPreviewPhaseChange(.idle)
-            onDoubleTap()
         case .idle:
-            state = .waitingForHoldThreshold
-            onPreviewPhaseChange(.pressing)
-            let timer = DispatchWorkItem { [weak self] in
-                guard let self, state == .waitingForHoldThreshold else { return }
-                state = .holding
-                onPreviewPhaseChange(.holding)
-                onHoldStart()
-            }
-            holdTimer = timer
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Self.holdThresholdMs),
-                execute: timer
-            )
+            state = .holding
+            onPreviewPhaseChange(.holding)
+            onHoldStart()
         default:
             break
         }
@@ -99,21 +77,6 @@ final class GestureStateMachine {
 
     func handleKeyUp() {
         switch state {
-        case .waitingForHoldThreshold:
-            holdTimer?.cancel()
-            state = .waitingForDoubleTap
-            onPreviewPhaseChange(.awaitingSecondTap)
-            let timer = DispatchWorkItem { [weak self] in
-                guard let self, state == .waitingForDoubleTap else { return }
-                state = .idle
-                onPreviewPhaseChange(.idle)
-                onSingleTap()
-            }
-            doubleTapTimer = timer
-            DispatchQueue.main.asyncAfter(
-                deadline: .now() + .milliseconds(Self.doubleTapWindowMs),
-                execute: timer
-            )
         case .holding:
             state = .idle
             onPreviewPhaseChange(.idle)
@@ -125,8 +88,6 @@ final class GestureStateMachine {
 
     /// Reset state (e.g., on permission changes).
     func reset() {
-        holdTimer?.cancel()
-        doubleTapTimer?.cancel()
         state = .idle
         onPreviewPhaseChange(.idle)
     }
@@ -176,7 +137,7 @@ func shouldDebounceHotkeyAction(
     guard action == .keyDown else { return false }
     let timestamp = clock.now()
     if let lastProcessedKeyDownTime = debounceState.lastProcessedKeyDownTime,
-       (timestamp - lastProcessedKeyDownTime) < 0.3 {
+       (timestamp - lastProcessedKeyDownTime) < 0.05 {
         return true
     }
     debounceState.lastProcessedKeyDownTime = timestamp
@@ -216,6 +177,15 @@ func hotkeyAction(
             describeEventType(type)
         )
         return .ignore
+    }
+
+    if type == .keyUp {
+        NSLog(
+            "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",
+            keycode,
+            describeFlags(flags)
+        )
+        return .keyUp
     }
 
     let exactShiftOnly = flags.contains(.maskShift)

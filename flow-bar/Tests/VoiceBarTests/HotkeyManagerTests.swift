@@ -112,6 +112,34 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testShiftF6ReleaseTriggersKeyUpToUnwindHoldInNonModifierMode() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 97,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: false
+            ),
+            .keyUp
+        )
+    }
+
+    func testShiftF6ReleaseTriggersKeyUpToUnwindHoldInModifierMode() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 97,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: true
+            ),
+            .keyUp
+        )
+    }
+
     func testCmdShiftVIsIgnoredInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
@@ -283,21 +311,54 @@ final class HotkeyManagerTests: XCTestCase {
             shouldDebounceHotkeyAction(
                 action: .keyDown,
                 debounceState: &state,
-                clock: DebounceClock(now: { 1.2 })
+                clock: DebounceClock(now: { 1.02 })
             )
         )
     }
 
-    func testDebounceAllowsKeyDownAfterCooldown() {
+    func testDebounceAllowsFastSecondPressAfterCooldown() {
         var state = HotkeyDebounceState(lastProcessedKeyDownTime: 1.0)
 
         XCTAssertFalse(
             shouldDebounceHotkeyAction(
                 action: .keyDown,
                 debounceState: &state,
-                clock: DebounceClock(now: { 1.31 })
+                clock: DebounceClock(now: { 1.08 })
             )
         )
+    }
+
+    func testGestureStartsRecordingImmediatelyOnKeyDown() {
+        let gesture = GestureStateMachine()
+        var holdStartCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldStart = { holdStartCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleKeyDown()
+
+        XCTAssertEqual(holdStartCount, 1)
+        XCTAssertEqual(phases, [.holding])
+    }
+
+    func testGestureStopsRecordingOnKeyUpWithoutWaitingForDoubleTap() {
+        let gesture = GestureStateMachine()
+        var holdEndCount = 0
+        var singleTapCount = 0
+        var doubleTapCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldEnd = { holdEndCount += 1 }
+        gesture.onSingleTap = { singleTapCount += 1 }
+        gesture.onDoubleTap = { doubleTapCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+
+        XCTAssertEqual(holdEndCount, 1)
+        XCTAssertEqual(singleTapCount, 0)
+        XCTAssertEqual(doubleTapCount, 0)
+        XCTAssertEqual(phases, [.holding, .idle])
     }
 
     func testHotkeyPermissionStatusRequiresBothListenEventAndAccessibility() {
