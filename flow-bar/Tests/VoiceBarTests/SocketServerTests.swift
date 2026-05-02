@@ -4,6 +4,25 @@ import XCTest
 final class SocketServerTests: XCTestCase {
     deinit {}
 
+    func testUnstartedServerDeinitDoesNotUnlinkSocketPathItDoesNotOwn() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SocketServerTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        FileManager.default.createFile(atPath: socketURL.path, contents: Data("owned by another server".utf8))
+
+        weak var releasedServer: SocketServer?
+        do {
+            let server = SocketServer(state: VoiceState(), socketPath: socketURL.path)
+            releasedServer = server
+        }
+
+        XCTAssertNil(releasedServer)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: socketURL.path))
+    }
+
     func testControlStartRecordingRoutesToControlHandler() {
         let expectation = expectation(description: "control command routed")
         let server = SocketServer(state: VoiceState())

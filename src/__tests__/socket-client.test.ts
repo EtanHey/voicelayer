@@ -71,6 +71,19 @@ function createMockVoiceBarServer(socketPath: string): MockServer {
   };
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  timeoutMs = 3000,
+  intervalMs = 50,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await Bun.sleep(intervalMs);
+  }
+  return predicate();
+}
+
 // --- Tests ---
 
 describe("socket-client", () => {
@@ -164,8 +177,8 @@ describe("socket-client", () => {
 
     // Restart the server — client should auto-reconnect
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
-    // Wait for reconnect (first backoff is 1s)
-    await Bun.sleep(1500);
+    // Wait for reconnect (first backoff is 1s, plus scheduler load in full suite)
+    expect(await waitFor(() => isConnected())).toBe(true);
     expect(isConnected()).toBe(true);
   });
 
@@ -186,14 +199,18 @@ describe("socket-client", () => {
     expect(isConnected()).toBe(false);
 
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
-    await Bun.sleep(1500);
+    expect(await waitFor(() => isConnected())).toBe(true);
     expect(isConnected()).toBe(true);
 
     broadcast({ type: "state", state: "idle" });
     mockServer.sendToAll('{"cmd":"health"}\n');
-    await Bun.sleep(100);
 
-    expect(mockServer.received).toContain('{"type":"state","state":"idle"}');
+    expect(
+      await waitFor(() =>
+        mockServer!.received.includes('{"type":"state","state":"idle"}'),
+      ),
+    ).toBe(true);
+    expect(await waitFor(() => commands.at(-1)?.cmd === "health")).toBe(true);
     expect(commands.at(-1)).toEqual({ cmd: "health" });
   });
 

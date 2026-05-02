@@ -158,6 +158,9 @@ describe("ack protocol", () => {
     } as unknown as SocketCommand);
 
     expect(waitForInputSpy).toHaveBeenCalled();
+    expect(waitForInputSpy).toHaveBeenCalledWith(30000, "standard", false, {
+      archiveSource: "voicebar",
+    });
     expect(response).toEqual({
       type: "ack",
       command: "record",

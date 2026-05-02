@@ -23,7 +23,20 @@
  *   brew install whisper-cpp (or set QA_VOICE_WISPR_KEY for cloud fallback)
  */
 
-import { existsSync, unlinkSync, writeFileSync } from "fs";
+import { createHash, randomBytes } from "crypto";
+import {
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { homedir } from "os";
+import { dirname, join } from "path";
 import {
   hasStopSignal,
   clearStopSignal,
@@ -60,6 +73,7 @@ import {
   mergeChunkTranscripts,
   type STTBackend,
 } from "./stt";
+import { getLanguageModeFromEnv } from "./language-config";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -96,6 +110,179 @@ export interface NoSpeechGateResult {
   rms: number;
   dbfs: number;
   reason?: "invalid-sample-rate" | "too-short" | "too-quiet";
+}
+
+export function consumeCancelSignalForRecording(): boolean {
+  if (!hasCancelSignal()) return false;
+  clearCancelSignal();
+  return true;
+}
+
+export interface VoiceBarRecordingArchiveInput {
+  audioBytes: Uint8Array;
+  transcript: string | null;
+  createdAt?: Date;
+  source: "voicebar";
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+  durationMs: number;
+  backend: string;
+}
+
+export interface WaitForInputOptions {
+  archiveSource?: "voicebar";
+}
+
+interface WaitForInputArchiveInput {
+  options: WaitForInputOptions;
+  audioBytes: Uint8Array;
+  transcript: string | null;
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+  durationMs: number;
+  backend: string;
+}
+
+interface VoiceBarRecordingMetadata {
+  id: string;
+  created_at: string;
+  source: "voicebar";
+  mode: "vad" | "ptt";
+  silence_mode: SilenceMode;
+  duration_ms: number;
+  sample_rate: number;
+  channels: number;
+  backend: string;
+  language_mode: string;
+  voicelayer_transcript_chars: number;
+  audio_sha256: string;
+  app_version: string | null;
+  schema_version: number;
+}
+
+function recordingsArchiveRoot(): string {
+  return (
+    process.env.QA_VOICE_RECORDINGS_DIR ||
+    join(homedir(), ".local", "share", "voicelayer", "recordings")
+  );
+}
+
+function fsyncPath(path: string): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r");
+    fsyncSync(fd);
+  } catch {
+    // Directory fsync is best-effort across platforms and filesystems.
+  } finally {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {}
+    }
+  }
+}
+
+function atomicWriteFile(path: string, data: string | Uint8Array): void {
+  const tmpPath = `${path}.tmp-${process.pid}-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  let fd: number | undefined;
+  let completed = false;
+  try {
+    try {
+      fd = openSync(tmpPath, "w", 0o600);
+      writeFileSync(fd, data);
+      fsyncSync(fd);
+    } finally {
+      if (fd !== undefined) closeSync(fd);
+    }
+    renameSync(tmpPath, path);
+    fsyncPath(dirname(path));
+    completed = true;
+  } finally {
+    if (!completed) {
+      try {
+        if (existsSync(tmpPath)) unlinkSync(tmpPath);
+      } catch {}
+    }
+  }
+}
+
+function archiveId(createdAt: Date): string {
+  return `${createdAt.toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}`;
+}
+
+export function archiveVoiceBarRecording(
+  input: VoiceBarRecordingArchiveInput,
+): string | null {
+  if (!input.transcript || input.transcript.trim().length === 0) {
+    return null;
+  }
+
+  const createdAt = input.createdAt ?? new Date();
+  const createdAtIso = createdAt.toISOString();
+  const id = archiveId(createdAt);
+  const archiveRoot = recordingsArchiveRoot();
+  const dayDir = join(archiveRoot, createdAtIso.slice(0, 10));
+  const stagingDir = join(dayDir, `.tmp-${id}`);
+  const finalDir = join(dayDir, id);
+  const metadata: VoiceBarRecordingMetadata = {
+    id,
+    created_at: createdAtIso,
+    source: input.source,
+    mode: input.pressToTalk ? "ptt" : "vad",
+    silence_mode: input.silenceMode,
+    duration_ms: input.durationMs,
+    sample_rate: SAMPLE_RATE,
+    channels: CHANNELS,
+    backend: input.backend,
+    language_mode: getLanguageModeFromEnv(),
+    voicelayer_transcript_chars: input.transcript.length,
+    audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
+    app_version: null,
+    schema_version: 1,
+  };
+
+  try {
+    mkdirSync(dayDir, { recursive: true, mode: 0o700 });
+    fsyncPath(archiveRoot);
+    mkdirSync(stagingDir, { mode: 0o700 });
+    atomicWriteFile(join(stagingDir, "audio.wav"), input.audioBytes);
+    atomicWriteFile(
+      join(stagingDir, "voicelayer-transcript.txt"),
+      input.transcript,
+    );
+    atomicWriteFile(
+      join(stagingDir, "metadata.json"),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+    renameSync(stagingDir, finalDir);
+    fsyncPath(dayDir);
+  } catch (err) {
+    try {
+      rmSync(stagingDir, { recursive: true, force: true });
+    } catch {}
+    throw err;
+  }
+
+  return finalDir;
+}
+
+export function archiveWaitForInputRecording(
+  input: WaitForInputArchiveInput,
+): string | null {
+  if (input.options.archiveSource !== "voicebar") {
+    return null;
+  }
+
+  return archiveVoiceBarRecording({
+    audioBytes: input.audioBytes,
+    transcript: input.transcript,
+    source: input.options.archiveSource,
+    silenceMode: input.silenceMode,
+    pressToTalk: input.pressToTalk,
+    durationMs: input.durationMs,
+    backend: input.backend,
+  });
 }
 
 export interface CaptureFailure {
@@ -660,6 +847,7 @@ export async function waitForInput(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
   pressToTalk: boolean = false,
+  options: WaitForInputOptions = {},
 ): Promise<string | null> {
   if (recordingState !== "idle") {
     throw new Error(`Recording already in progress (state: ${recordingState})`);
@@ -694,8 +882,7 @@ export async function waitForInput(
   }
 
   // Check if recording was cancelled (X button) — discard audio, don't transcribe
-  if (hasCancelSignal()) {
-    clearCancelSignal();
+  if (consumeCancelSignalForRecording()) {
     console.error("[voicelayer] Recording cancelled — discarding audio");
     broadcast({ type: "state", state: "idle" });
     return null;
@@ -780,6 +967,33 @@ export async function waitForInput(
       }
     }
     console.error(`[voicelayer] Transcription: ${text}`);
+
+    if (consumeCancelSignalForRecording()) {
+      console.error(
+        "[voicelayer] Recording cancelled during transcription — discarding transcript",
+      );
+      recordingState = "idle";
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return null;
+    }
+
+    if (text) {
+      try {
+        archiveWaitForInputRecording({
+          options,
+          audioBytes: retainedWavData,
+          transcript: text,
+          silenceMode,
+          pressToTalk,
+          durationMs: noSpeechGate.durationMs,
+          backend: backend.name,
+        });
+      } catch (err) {
+        console.error(
+          `[voicelayer] Failed to archive recording: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {

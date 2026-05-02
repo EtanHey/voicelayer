@@ -36,7 +36,7 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
 }
 
 final class SocketServer {
-    private let socketPath = VoiceLayerPaths.socketPath
+    private let socketPath: String
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
@@ -45,14 +45,17 @@ final class SocketServer {
     private var listenFD: Int32 = -1
     /// GCD source watching the listen socket for incoming connections.
     private var listenSource: DispatchSourceRead?
+    /// True only after this instance successfully binds the socket path.
+    private var ownsSocketPath = false
 
     /// Connected clients: fd → (readSource, NDJSON buffer).
     private var clients: [Int32: (source: DispatchSourceRead, buffer: String)] = [:]
 
     // MARK: - Lifecycle
 
-    init(state: VoiceState) {
+    init(state: VoiceState, socketPath: String = VoiceLayerPaths.socketPath) {
         self.state = state
+        self.socketPath = socketPath
     }
 
     /// Start the server: bind, listen, accept loop.
@@ -109,6 +112,7 @@ final class SocketServer {
             close(fd)
             return
         }
+        ownsSocketPath = true
 
         // Restrict to current user (0600)
         chmod(socketPath, 0o600)
@@ -117,7 +121,7 @@ final class SocketServer {
         guard listen(fd, 5) == 0 else {
             NSLog("[VoiceBar] Failed to listen: errno %d", errno)
             close(fd)
-            unlink(socketPath)
+            unlinkOwnedSocketPath()
             return
         }
 
@@ -334,6 +338,12 @@ final class SocketServer {
             listenFD = -1
         }
 
+        unlinkOwnedSocketPath()
+    }
+
+    private func unlinkOwnedSocketPath() {
+        guard ownsSocketPath else { return }
         unlink(socketPath)
+        ownsSocketPath = false
     }
 }

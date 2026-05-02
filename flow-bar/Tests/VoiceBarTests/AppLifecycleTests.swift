@@ -102,4 +102,33 @@ final class AppLifecycleTests: XCTestCase {
         let successfulExit = keepAlive["SuccessfulExit"] as? Bool
         XCTAssertEqual(successfulExit, false, "SuccessfulExit:false means only restart on crash, not clean quit")
     }
+
+    func testKarabinerRuleDoesNotMatchShiftF6AsPlainHoldToRecord() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let ruleURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("karabiner")
+            .appendingPathComponent("voicebar-f6.json")
+
+        let data = try Data(contentsOf: ruleURL)
+        let object = try JSONSerialization.jsonObject(with: data)
+        let root = try XCTUnwrap(object as? [String: Any])
+        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
+        let plainF6 = try XCTUnwrap(manipulators.first { manipulator in
+            guard let from = manipulator["from"] as? [String: Any] else { return false }
+            return from["key_code"] as? String == "f6"
+                && (manipulator["to_after_key_up"] as? [[String: Any]]) != nil
+        })
+        let from = try XCTUnwrap(plainF6["from"] as? [String: Any])
+        let modifiers = from["modifiers"] as? [String: Any]
+
+        XCTAssertNil(
+            modifiers?["optional"],
+            "Plain F6 hold-to-record must not use optional:any because Shift+F6 is reserved for re-paste"
+        )
+    }
 }

@@ -23,9 +23,9 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testDefaultHotkeyConfigurationUsesCmdF6Keycodes() {
+    func testDefaultHotkeyConfigurationUsesPlainF6() {
         XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [97, 177])
-        XCTAssertTrue(HotkeyManager.defaultUsesModifierMode)
+        XCTAssertFalse(HotkeyManager.defaultUsesModifierMode)
     }
 
     func testCmdF6StandardFunctionKeyInModifierModeTriggersKeyDown() {
@@ -84,7 +84,35 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testCmdShiftVTriggersPasteLastTranscript() {
+    func testShiftF6TriggersPasteLastTranscript() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 97,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: true
+            ),
+            .pasteLastTranscript
+        )
+    }
+
+    func testShiftF6TriggersPasteLastTranscriptInNonModifierMode() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 97,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: false
+            ),
+            .pasteLastTranscript
+        )
+    }
+
+    func testCmdShiftVIsIgnoredInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
@@ -92,9 +120,9 @@ final class HotkeyManagerTests: XCTestCase {
                 flags: [.maskCommand, .maskShift],
                 autorepeat: 0,
                 targetKeycodes: [97, 177],
-                useModifierMode: true
+                useModifierMode: false
             ),
-            .pasteLastTranscript
+            .ignore
         )
     }
 
@@ -181,6 +209,20 @@ final class HotkeyManagerTests: XCTestCase {
                 useModifierMode: false
             ),
             .keyUp
+        )
+    }
+
+    func testPlainVInNonModifierModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 9,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: [97, 177],
+                useModifierMode: false
+            ),
+            .ignore
         )
     }
 

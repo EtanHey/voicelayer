@@ -1,8 +1,7 @@
 // HotkeyManager.swift — Global hotkey detection via CGEventTap.
 //
-// Uses .listenOnly tap (Input Monitoring permission) with Cmd+F6
-// as the default hotkey. No event consumption needed because the tap
-// only observes matching events and lets the system handle them normally.
+// Uses a consuming event tap so plain F6 does not leak to the focused app
+// and trigger macOS keyboard-focus traversal.
 //
 // Gesture state machine: hold (250ms) = push-to-talk, double-tap (400ms) = toggle.
 //
@@ -193,7 +192,7 @@ func shouldConsumeHotkeyEvent(
     case .keyDown, .keyUp:
         targetKeycodes.contains(keycode)
     case .pasteLastTranscript:
-        keycode == 9
+        targetKeycodes.contains(keycode)
     case .ignore:
         false
     }
@@ -208,9 +207,8 @@ func hotkeyAction(
     useModifierMode: Bool,
     currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState)
 ) -> HotkeyAction {
-    let repasteKeycode: Int64 = 9
-    let isRepasteKey = keycode == repasteKeycode
-    guard targetKeycodes.contains(keycode) || isRepasteKey else {
+    let isTargetHotkey = targetKeycodes.contains(keycode)
+    guard isTargetHotkey else {
         NSLog(
             "[HotkeyManager] Keycode %lld does not match hotkey set %@ for event %@",
             keycode,
@@ -220,35 +218,41 @@ func hotkeyAction(
         return .ignore
     }
 
-    if useModifierMode {
-        if isRepasteKey {
-            guard type == .keyDown else {
-                NSLog(
-                    "[HotkeyManager] Ignoring repaste key event %@ for keycode %lld",
-                    describeEventType(type),
-                    keycode
-                )
-                return .ignore
-            }
-            guard autorepeat == 0 else {
-                NSLog("[HotkeyManager] Ignoring autorepeat for repaste keycode %lld", keycode)
-                return .ignore
-            }
-            guard flags.contains(.maskCommand), flags.contains(.maskShift) else {
-                NSLog(
-                    "[HotkeyManager] Ignoring repaste keyDown for keycode %lld because Cmd+Shift not held (flags=%@)",
-                    keycode,
-                    describeFlags(flags)
-                )
-                return .ignore
-            }
+    let exactShiftOnly = flags.contains(.maskShift)
+        && !flags.contains(.maskCommand)
+        && !flags.contains(.maskAlternate)
+        && !flags.contains(.maskControl)
+    if exactShiftOnly {
+        guard type == .keyDown else {
             NSLog(
-                "[HotkeyManager] Matched repaste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
-                keycode,
-                describeFlags(flags)
+                "[HotkeyManager] Ignoring re-paste hotkey event %@ for keycode %lld",
+                describeEventType(type),
+                keycode
             )
-            return .pasteLastTranscript
+            return .ignore
         }
+        guard autorepeat == 0 else {
+            NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
+            return .ignore
+        }
+        NSLog(
+            "[HotkeyManager] Matched Shift+F6 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
+            keycode,
+            describeFlags(flags)
+        )
+        return .pasteLastTranscript
+    }
+
+    if flags.contains(.maskShift) {
+        NSLog(
+            "[HotkeyManager] Ignoring modified F6 for keycode %lld because Shift+F6 is the exact re-paste shortcut (flags=%@)",
+            keycode,
+            describeFlags(flags)
+        )
+        return .ignore
+    }
+
+    if useModifierMode {
         guard type == .keyDown || type == .keyUp else {
             NSLog(
                 "[HotkeyManager] Matched keycode %lld but ignored event type %@ in modifier mode",
@@ -406,10 +410,10 @@ private func hotkeyCallback(
 // MARK: - Hotkey Manager
 
 /// Manages CGEventTap for global hotkey detection.
-/// Uses .listenOnly (Input Monitoring) — does not consume events.
+/// Matched hotkey events are consumed so F6 does not move focus in the target app.
 final class HotkeyManager {
     static let defaultTargetKeycodes: Set<Int64> = [97, 177]
-    static let defaultUsesModifierMode = true
+    static let defaultUsesModifierMode = false
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -427,7 +431,7 @@ final class HotkeyManager {
     /// Retained context for the C callback — must live as long as the tap.
     private var tapContext: TapContext?
 
-    /// Callback for Cmd+Shift+V re-paste hotkey.
+    /// Callback for Shift+F6 re-paste hotkey.
     var onPasteLastTranscript: () -> Void = {}
     private(set) var permissionStatus = HotkeyPermissionStatus(
         listenEventGranted: false,

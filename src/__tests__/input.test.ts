@@ -1,14 +1,161 @@
-import { describe, it, expect } from "bun:test";
+import { afterEach, beforeEach, describe, it, expect } from "bun:test";
+import { createHash } from "crypto";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
+  archiveVoiceBarRecording,
+  archiveWaitForInputRecording,
   calculateRMS,
+  consumeCancelSignalForRecording,
   createWavBuffer,
   clearInput,
   evaluateNoSpeechGate,
   isChunkedSTTEnabled,
   transcribeChunkSequence,
 } from "../input";
+import {
+  clearCancelSignal,
+  hasCancelSignal,
+  setCancelSignal,
+} from "../session-booking";
 
 describe("input module", () => {
+  describe("VoiceBar recording archive", () => {
+    let archiveRoot: string | undefined;
+    let savedRecordingsDir: string | undefined;
+    let savedLanguage: string | undefined;
+
+    beforeEach(() => {
+      savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
+      savedLanguage = process.env.QA_VOICE_WHISPER_LANG;
+      archiveRoot = mkdtempSync(join(tmpdir(), "voicelayer-recordings-test-"));
+      process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
+      process.env.QA_VOICE_WHISPER_LANG = "hebrew";
+      clearCancelSignal();
+    });
+
+    afterEach(() => {
+      clearCancelSignal();
+      if (archiveRoot) rmSync(archiveRoot, { recursive: true, force: true });
+      if (savedRecordingsDir === undefined) {
+        delete process.env.QA_VOICE_RECORDINGS_DIR;
+      } else {
+        process.env.QA_VOICE_RECORDINGS_DIR = savedRecordingsDir;
+      }
+      if (savedLanguage === undefined) {
+        delete process.env.QA_VOICE_WHISPER_LANG;
+      } else {
+        process.env.QA_VOICE_WHISPER_LANG = savedLanguage;
+      }
+    });
+
+    it("creates a durable archive entry for a successful dictation with complete metadata", () => {
+      const audioBytes = createWavBuffer(new Uint8Array([1, 2, 3, 4]));
+      const transcript = "He told me, why don't you come here?";
+      const archivedPath = archiveVoiceBarRecording({
+        audioBytes,
+        transcript,
+        createdAt: new Date("2026-05-02T07:08:09.123Z"),
+        source: "voicebar",
+        silenceMode: "thoughtful",
+        pressToTalk: true,
+        durationMs: 900,
+        backend: "whisper.cpp",
+      });
+
+      expect(archivedPath).toBeTruthy();
+      const dayDir = join(archiveRoot!, "2026-05-02");
+      const archiveIds = readdirSync(dayDir);
+      expect(archiveIds).toHaveLength(1);
+      expect(archivedPath).toBe(join(dayDir, archiveIds[0]));
+
+      const archivedAudio = readFileSync(join(archivedPath!, "audio.wav"));
+      expect(archivedAudio).toEqual(Buffer.from(audioBytes));
+      expect(
+        readFileSync(
+          join(archivedPath!, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe(transcript);
+
+      const metadata = JSON.parse(
+        readFileSync(join(archivedPath!, "metadata.json"), "utf8"),
+      );
+      expect(metadata).toMatchObject({
+        id: archiveIds[0],
+        created_at: "2026-05-02T07:08:09.123Z",
+        source: "voicebar",
+        mode: "ptt",
+        silence_mode: "thoughtful",
+        duration_ms: 900,
+        sample_rate: 16000,
+        channels: 1,
+        backend: "whisper.cpp",
+        language_mode: "hebrew",
+        voicelayer_transcript_chars: transcript.length,
+        app_version: null,
+        schema_version: 1,
+      });
+      expect(metadata.audio_sha256).toBe(
+        createHash("sha256").update(audioBytes).digest("hex"),
+      );
+    });
+
+    it("skips archive creation when a recording is cancelled before transcription", () => {
+      const archivedPath = archiveVoiceBarRecording({
+        audioBytes: createWavBuffer(new Uint8Array([1, 2])),
+        transcript: null,
+        source: "voicebar",
+        silenceMode: "standard",
+        pressToTalk: false,
+        durationMs: 700,
+        backend: "whisper.cpp",
+      });
+
+      expect(archivedPath).toBeNull();
+      expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("skips archive creation when no speech produces an empty transcript", () => {
+      const archivedPath = archiveVoiceBarRecording({
+        audioBytes: createWavBuffer(new Uint8Array([1, 2])),
+        transcript: "",
+        source: "voicebar",
+        silenceMode: "standard",
+        pressToTalk: false,
+        durationMs: 700,
+        backend: "whisper.cpp",
+      });
+
+      expect(archivedPath).toBeNull();
+      expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("does not archive shared waitForInput results unless VoiceBar opts in", () => {
+      const archivedPath = archiveWaitForInputRecording({
+        options: {},
+        audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+        transcript: "MCP voice ask response",
+        silenceMode: "standard",
+        pressToTalk: false,
+        durationMs: 900,
+        backend: "whisper.cpp",
+      });
+
+      expect(archivedPath).toBeNull();
+      expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("consumes a late cancel signal before publishing or archiving transcription", () => {
+      setCancelSignal();
+
+      expect(consumeCancelSignalForRecording()).toBe(true);
+      expect(hasCancelSignal()).toBe(false);
+      expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+  });
+
   describe("calculateRMS", () => {
     it("returns 0 for empty buffer", () => {
       const buffer = new Uint8Array(0);

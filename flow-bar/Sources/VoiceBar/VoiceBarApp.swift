@@ -149,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
         _ = daemonController.activateIfNeeded()
 
-        // Hotkey setup — Cmd+F6 hold for push-to-talk, double-tap for hands-free toggle
+        // Hotkey setup — F6 hold for push-to-talk.
         setupHotkey()
         configureWakeRecovery()
 
@@ -382,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyEnabled = true
             missingHotkeyPermissions = []
             voiceState.setHotkeyEnabled(true)
-            NSLog("[VoiceBar] Hotkey system active — Cmd+F6 hold for push-to-talk, double-tap for hands-free")
+            NSLog("%@", VoiceBarHotkeyContract.activationLogMessage)
         } else {
             hotkeyEnabled = false
             missingHotkeyPermissions = manager.permissionStatus.missingPermissions

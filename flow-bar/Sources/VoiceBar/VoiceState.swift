@@ -145,7 +145,7 @@ final class VoiceState {
     private var frontmostAppOnRecordStart: NSRunningApplication?
     private var recordStartInsertionHandler: ((String) -> Bool)?
 
-    /// The most recent app we pasted into. Reused for Cmd+Shift+V re-paste.
+    /// The most recent app we pasted into. Reused for Shift+F6 re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
 
     /// Test seam for paste side effects. When set, bypasses system paste.

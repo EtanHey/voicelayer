@@ -10,6 +10,10 @@ final class VoiceBarHotkeyContractTests: XCTestCase {
         XCTAssertEqual(VoiceBarHotkeyContract.doubleTapDescription, "Not assigned")
     }
 
+    func testRepasteShortcutUsesShiftF6() {
+        XCTAssertEqual(VoiceBarHotkeyContract.repasteShortcutLabel, "Shift+F6")
+    }
+
     func testActivationLogDoesNotAdvertiseCmdF6OrDoubleTap() {
         XCTAssertEqual(
             VoiceBarHotkeyContract.activationLogMessage,
