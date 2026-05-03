@@ -23,12 +23,13 @@
       --border-hover: #38383f;
       --text: #fafaf9;
       --text-secondary: #a8a29e;
-      --text-dim: #6b6660;
+      --text-dim: #8a847d;
       --accent: #38BDF8;
       --accent-bright: #7DD3FC;
       --accent-subtle: rgba(56, 189, 248, 0.08);
       --teal: #5eead4;
       --red: #cf6060;
+      --section-space: 80px;
       --display: 'Newsreader', Georgia, serif;
       --sans: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
       --mono: 'JetBrains Mono', 'SF Mono', Menlo, monospace;
@@ -44,6 +45,8 @@
       -webkit-font-smoothing: antialiased;
       overflow-x: hidden;
     }
+
+    main { display: block; }
 
     /* Grain */
     body::before {
@@ -68,6 +71,26 @@
     }
 
     /* ─── Nav ─── */
+    .skip-link {
+      position: fixed;
+      top: 16px;
+      left: 24px;
+      z-index: 140;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: var(--text);
+      color: var(--bg);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      transform: translateY(-160%);
+      transition: transform 0.2s ease;
+    }
+
+    .skip-link:focus-visible {
+      transform: translateY(0);
+    }
+
     nav {
       position: fixed;
       top: 0;
@@ -155,8 +178,8 @@
       top: 45%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 700px;
-      height: 500px;
+      width: clamp(320px, 72vw, 700px);
+      height: clamp(240px, 52vw, 500px);
       background: radial-gradient(ellipse, rgba(56, 189, 248, 0.04), transparent 70%);
       pointer-events: none;
     }
@@ -224,6 +247,7 @@
       font-weight: 700;
       letter-spacing: -0.035em;
       line-height: 1.08;
+      text-wrap: balance;
       margin-bottom: 24px;
       max-width: 720px;
       margin-left: auto;
@@ -242,7 +266,7 @@
       max-width: 520px;
       margin: 0 auto 40px;
       line-height: 1.65;
-      font-weight: 300;
+      font-weight: 400;
     }
 
     .hero-actions {
@@ -397,7 +421,7 @@
 
     .voicebar-transcript-label {
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-dim);
       text-transform: uppercase;
       letter-spacing: 0.1em;
@@ -409,7 +433,7 @@
       font-size: 15px;
       color: var(--text-secondary);
       line-height: 1.65;
-      font-weight: 300;
+      font-weight: 400;
       max-width: 440px;
       margin: 0 auto;
     }
@@ -464,7 +488,7 @@
 
     /* ─── Sections ─── */
     .section {
-      padding: 100px 0;
+      padding: var(--section-space) 0;
     }
 
     .section-label {
@@ -482,6 +506,7 @@
       font-size: clamp(26px, 3.5vw, 36px);
       font-weight: 600;
       letter-spacing: -0.025em;
+      text-wrap: balance;
       text-align: center;
       margin-bottom: 56px;
       line-height: 1.15;
@@ -518,7 +543,7 @@
     .stat-label {
       font-size: 12px;
       color: var(--text-dim);
-      font-weight: 300;
+      font-weight: 400;
       text-transform: uppercase;
       letter-spacing: 0.06em;
     }
@@ -592,14 +617,14 @@
     .pipe-desc {
       font-size: 12px;
       color: var(--text-dim);
-      font-weight: 300;
+      font-weight: 400;
       max-width: 120px;
       margin-top: 4px;
     }
 
     /* ─── Feature Cards ─── */
     .features-section {
-      padding: 60px 0 80px;
+      padding: var(--section-space) 0;
     }
 
     .feature-cards {
@@ -648,7 +673,7 @@
       font-size: 14px;
       color: var(--text-secondary);
       line-height: 1.6;
-      font-weight: 300;
+      font-weight: 400;
     }
 
     .feature-card code {
@@ -659,7 +684,7 @@
 
     /* ─── How it Works ─── */
     .flow-section {
-      padding: 60px 0 80px;
+      padding: var(--section-space) 0;
     }
 
     .keycap {
@@ -679,7 +704,7 @@
 
     /* ─── Integrations ─── */
     .integrations-section {
-      padding: 80px 0 100px;
+      padding: var(--section-space) 0;
       text-align: center;
     }
 
@@ -759,14 +784,19 @@
       font-size: 14px;
       color: var(--text-secondary);
       line-height: 1.6;
-      font-weight: 300;
+      font-weight: 400;
       margin-bottom: 10px;
     }
 
+    .setup-label { margin-top: 16px; }
+
     .setup-code {
+      appearance: none;
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 8px;
+      width: 100%;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -777,6 +807,7 @@
       cursor: pointer;
       transition: border-color 0.2s;
       margin-top: auto;
+      text-align: left;
     }
 
     .setup-code:hover { border-color: var(--accent); }
@@ -795,7 +826,7 @@
 
     /* ─── Voice Demo ─── */
     .vdemo-section {
-      padding: 80px 0;
+      padding: var(--section-space) 0;
     }
 
     .vdemo-frame {
@@ -831,19 +862,19 @@
       display: flex;
       gap: 16px;
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-dim);
     }
 
     .vdemo-status .active { color: var(--accent); }
 
     .vdemo-body {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(300px, 340px) minmax(0, 1fr);
       min-height: 320px;
     }
 
     .vdemo-voice {
-      width: 44%;
       border-right: 1px solid rgba(255,255,255,0.05);
       display: flex;
       flex-direction: column;
@@ -856,7 +887,7 @@
 
     .vdemo-voice-label {
       font-family: var(--mono);
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-dim);
       text-transform: uppercase;
       letter-spacing: 0.1em;
@@ -910,7 +941,7 @@
       line-height: 1.6;
       max-width: 240px;
       min-height: 44px;
-      font-weight: 300;
+      font-weight: 400;
     }
 
     .vdemo-transcript .demo-cursor {
@@ -925,7 +956,7 @@
 
     .vdemo-meta {
       font-family: var(--mono);
-      font-size: 10px;
+      font-size: 12px;
       color: var(--text-dim);
       text-align: center;
     }
@@ -958,7 +989,7 @@
       background: rgba(255,255,255,0.02);
       border-top: 1px solid rgba(255,255,255,0.05);
       font-family: var(--mono);
-      font-size: 10px;
+      font-size: 12px;
       color: var(--text-dim);
     }
 
@@ -971,14 +1002,39 @@
     }
 
     @media (prefers-reduced-motion: reduce) {
-      .vdemo-eq-bar, .demo-cursor, .eq-bar,
+      html { scroll-behavior: auto; }
+      .vdemo-eq-bar, .demo-cursor, .cursor-blink, .eq-bar,
       .wave-bar, .pill-mic, .sound-ring { animation: none !important; }
+      .reveal,
+      .reveal.visible {
+        opacity: 1 !important;
+        transform: none !important;
+        transition: none !important;
+      }
+      .skip-link,
+      .logo,
+      .nav-right a,
+      .btn,
+      .setup-code,
+      .install-cmd,
+      .footer-left a,
+      .footer-right a,
+      .copy-btn,
+      .copy-icon {
+        transition: none !important;
+      }
+    }
+
+    @media (max-width: 1024px) {
+      .wrap, .wrap-wide { padding: 0 20px; }
+      .hero { padding: 152px 0 56px; }
+      .stat-strip { gap: 32px; }
+      .vdemo-body { grid-template-columns: minmax(280px, 320px) minmax(0, 1fr); }
     }
 
     @media (max-width: 768px) {
-      .vdemo-body { flex-direction: column; }
+      .vdemo-body { grid-template-columns: 1fr; }
       .vdemo-voice {
-        width: 100%;
         border-right: none;
         border-bottom: 1px solid rgba(255,255,255,0.05);
         padding: 24px;
@@ -992,7 +1048,7 @@
 
     /* ─── CTA ─── */
     .cta-section {
-      padding: 64px 0 64px;
+      padding: var(--section-space) 0;
       text-align: center;
     }
 
@@ -1001,6 +1057,7 @@
       font-size: clamp(26px, 4vw, 42px);
       font-weight: 600;
       letter-spacing: -0.03em;
+      text-wrap: balance;
       margin-bottom: 12px;
     }
 
@@ -1008,7 +1065,7 @@
       color: var(--text-secondary);
       font-size: 15px;
       margin-bottom: 36px;
-      font-weight: 300;
+      font-weight: 400;
     }
 
     .install-block {
@@ -1017,8 +1074,10 @@
     }
 
     .install-cmd {
+      appearance: none;
       display: flex;
       align-items: center;
+      width: 100%;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -1029,6 +1088,7 @@
       cursor: pointer;
       transition: border-color 0.25s;
       position: relative;
+      text-align: left;
     }
 
     .install-cmd:hover {
@@ -1038,22 +1098,19 @@
     .install-cmd code { color: var(--text); flex: 1; }
     .install-cmd .dim { color: var(--text-dim); }
 
+    .install-cmd:hover .copy-btn { color: var(--accent); }
+
     .copy-btn {
-      background: none;
-      border: none;
       color: var(--text-dim);
-      cursor: pointer;
-      padding: 4px;
       transition: color 0.2s;
       width: 24px;
       height: 24px;
-      display: flex;
+      display: inline-flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      pointer-events: none;
     }
-
-    .copy-btn:hover { color: var(--accent); }
 
     /* ─── Footer ─── */
     footer {
@@ -1070,7 +1127,7 @@
     .footer-left {
       font-size: 13px;
       color: var(--text-dim);
-      font-weight: 300;
+      font-weight: 400;
     }
 
     .footer-left a {
@@ -1095,6 +1152,18 @@
 
     .footer-right a:hover { color: var(--text-secondary); }
 
+    .logo:focus-visible,
+    .nav-right a:focus-visible,
+    .btn:focus-visible,
+    .setup-code:focus-visible,
+    .install-cmd:focus-visible,
+    .footer-left a:focus-visible,
+    .footer-right a:focus-visible {
+      outline: 2px solid var(--accent-bright);
+      outline-offset: 4px;
+      border-color: var(--accent);
+    }
+
     /* ─── Responsive ─── */
     @media (max-width: 768px) {
       .nav-right a:not(.nav-gh) { display: none; }
@@ -1114,7 +1183,17 @@
       .btn { width: 100%; justify-content: center; }
       .voicebar-frame { padding: 32px 16px 40px; }
       .stat-strip { grid-template-columns: 1fr 1fr; display: grid; gap: 20px; }
-      .vdemo-terminal { font-size: 11px; padding: 12px 14px; }
+      .vdemo-terminal { font-size: 12px; padding: 12px 14px; }
+    }
+
+    @media (max-width: 375px) {
+      .wrap, .wrap-wide { padding: 0 18px; }
+      .hero { padding: 132px 0 56px; }
+      .voicebar-frame { padding: 28px 14px 36px; }
+      .stat-strip { gap: 16px; }
+      .setup-code,
+      .install-cmd { padding: 10px 12px; }
+      .vdemo-statusbar { padding: 8px 14px; }
     }
 
     /* ─── Animations ─── */
@@ -1135,6 +1214,7 @@
   </style>
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
 
   <nav id="nav">
     <div class="wrap">
@@ -1152,6 +1232,7 @@
     </div>
   </nav>
 
+  <main id="main-content">
   <!-- Hero -->
   <section class="hero">
     <div class="hero-eq" aria-hidden="true">
@@ -1216,20 +1297,16 @@
   <div class="wrap">
     <div class="stat-strip reveal">
       <div class="stat-item">
+        <span class="stat-value">11</span>
+        <span class="stat-label">MCP tools</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-value">546</span>
+        <span class="stat-label">tests passing</span>
+      </div>
+      <div class="stat-item">
         <span class="stat-value">&lt;1.5s</span>
-        <span class="stat-label">transcription</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-value">150 WPM</span>
-        <span class="stat-label">speech vs 40 typing</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-value">HE + EN</span>
-        <span class="stat-label">bilingual</span>
-      </div>
-      <div class="stat-item">
-        <span class="stat-value">On-device</span>
-        <span class="stat-label">whisper.cpp</span>
+        <span class="stat-label">local STT</span>
       </div>
     </div>
   </div>
@@ -1260,7 +1337,7 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
           </div>
           <h3>MCP tools</h3>
-          <p><code>voice_speak</code> for non-blocking TTS with auto mode detection (announce, brief, consult, think). <code>voice_ask</code> speaks a question aloud, records your voice response via Silero VAD, and returns the transcription.</p>
+          <p><code>voice_speak</code> and <code>voice_ask</code> cover the core speak-and-listen loop, while aliases like <code>qa_voice_announce</code>, <code>qa_voice_brief</code>, <code>qa_voice_consult</code>, and <code>qa_voice_ask</code> keep backward-compatible QA shortcuts across all 11 MCP tools.</p>
         </div>
       </div>
     </div>
@@ -1412,33 +1489,33 @@
         </div>
       </div>
 
-      <div class="section-label" style="margin-top:16px">Getting started</div>
+      <div class="section-label setup-label">Getting started</div>
       <h2 class="section-heading">Three steps</h2>
 
       <div class="setup-grid reveal">
         <div class="setup-card">
           <div class="setup-num">01</div>
           <p class="setup-text">Install from npm</p>
-          <div class="setup-code" onclick="copyText(this, 'bun add -g voicelayer-mcp')">
+          <button type="button" class="setup-code" aria-label="Copy bun add -g voicelayer-mcp command" data-copy="bun add -g voicelayer-mcp">
             <span>bun add -g voicelayer-mcp</span>
             <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
-          </div>
+          </button>
         </div>
         <div class="setup-card">
           <div class="setup-num">02</div>
           <p class="setup-text">Launch VoiceBar</p>
-          <div class="setup-code" onclick="copyText(this, 'voicelayer bar')">
+          <button type="button" class="setup-code" aria-label="Copy voicelayer bar command" data-copy="voicelayer bar">
             <span>voicelayer bar</span>
             <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
-          </div>
+          </button>
         </div>
         <div class="setup-card">
           <div class="setup-num">03</div>
           <p class="setup-text">Press F6 and start talking</p>
-          <div class="setup-code" onclick="copyText(this, 'open karabiner://karabiner/assets/complex_modifications/import?url=https://raw.githubusercontent.com/EtanHey/voicelayer/main/flow-bar/karabiner/voicebar-cmd-f6.json')">
+          <button type="button" class="setup-code" aria-label="Copy Karabiner import command" data-copy="open karabiner://karabiner/assets/complex_modifications/import?url=https://raw.githubusercontent.com/EtanHey/voicelayer/main/flow-bar/karabiner/voicebar-cmd-f6.json">
             <span>Import F6 hotkey</span>
             <svg class="copy-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
-          </div>
+          </button>
         </div>
       </div>
     </div>
@@ -1450,15 +1527,16 @@
       <h2 class="cta-heading reveal">Stop typing. Start talking.</h2>
       <p class="cta-sub reveal reveal-d1">One install. On-device STT. Works with any MCP client.</p>
       <div class="install-block reveal reveal-d2">
-        <div class="install-cmd" onclick="copyText(this, 'bun add -g voicelayer-mcp')">
+        <button type="button" class="install-cmd" aria-label="Copy bun add -g voicelayer-mcp command" data-copy="bun add -g voicelayer-mcp">
           <code><span class="dim">$</span> bun add -g voicelayer-mcp</code>
-          <button class="copy-btn" aria-label="Copy">
+          <span class="copy-btn" aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5" y="5" width="9" height="9" rx="1.5"/><path d="M5 11H3.5A1.5 1.5 0 012 9.5v-6A1.5 1.5 0 013.5 2h6A1.5 1.5 0 0111 3.5V5"/></svg>
-          </button>
-        </div>
+          </span>
+        </button>
       </div>
     </div>
   </section>
+  </main>
 
   <footer>
     <div class="wrap">
@@ -1511,6 +1589,11 @@
         setTimeout(() => { check.outerHTML = original; }, 1500);
       });
     }
+
+    document.querySelectorAll('[data-copy]').forEach(el => {
+      el.addEventListener('click', () => copyText(el, el.dataset.copy || ''));
+    });
+
     // ─── Voice Demo Animation ───
     (function() {
       const term = document.getElementById('vd-term');
@@ -1566,7 +1649,7 @@
           userResponse: "Keep cookies for admin, move JWT to its own middleware",
           lang: "en", sttTime: "1.1s",
           agentReply: "Got it. Extracting JWT validation to jwt-middleware.ts.",
-          speakText: "Done. Three files changed, all tests passing.",
+          speakText: "Done. Three files changed, 546 tests passing.",
           speakMode: "announce"
         },
         {
@@ -1662,31 +1745,51 @@
       }
 
       // Start on viewport entry, pause when off-screen
+      const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)');
       let demoVisible = false;
-      let demoStarted = false;
-      const waitVisible = () => new Promise(r => {
-        if (demoVisible) return r();
-        const check = setInterval(() => { if (demoVisible) { clearInterval(check); r(); } }, 200);
-      });
+      let cycleIndex = 0;
+      let cycleTimer = null;
+      let cycleRunning = false;
+
+      async function tickCycle() {
+        if (!demoVisible || cycleRunning) return;
+        cycleRunning = true;
+        await runCycle(scenarios[cycleIndex % scenarios.length]);
+        cycleIndex = (cycleIndex + 1) % scenarios.length;
+        cycleRunning = false;
+        if (prefersReduced.matches) stopCycle();
+      }
+
+      function stopCycle() {
+        if (cycleTimer) {
+          clearInterval(cycleTimer);
+          cycleTimer = null;
+        }
+      }
+
+      function startCycle() {
+        if (!demoVisible || cycleTimer) return;
+        void tickCycle();
+        if (prefersReduced.matches) return;
+        cycleTimer = setInterval(() => {
+          void tickCycle();
+        }, 14000);
+      }
+
+      function syncCycleState() {
+        if (demoVisible && document.visibilityState === 'visible') {
+          startCycle();
+          return;
+        }
+        stopCycle();
+      }
 
       const visObs = new IntersectionObserver((entries) => {
         demoVisible = entries[0].isIntersecting;
-        if (demoVisible && !demoStarted) {
-          demoStarted = true;
-          (async () => {
-            const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-            let i = 0;
-            while (true) {
-              await waitVisible();
-              await runCycle(scenarios[i % scenarios.length]);
-              if (prefersReduced) break;
-              i = (i + 1) % scenarios.length;
-              await sleep(1000);
-            }
-          })();
-        }
+        syncCycleState();
       }, { threshold: 0.15 });
 
+      document.addEventListener('visibilitychange', syncCycleState);
       visObs.observe(document.getElementById('vdemo'));
     })();
   </script>

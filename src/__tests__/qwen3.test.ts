@@ -1,5 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  spyOn,
+} from "bun:test";
+import { chmodSync, existsSync, mkdirSync, writeFileSync, rmSync } from "fs";
 import { join } from "path";
 
 // --- Profile YAML parsing tests ---
@@ -143,6 +150,43 @@ describe("isDaemonHealthy", () => {
     const result = await isDaemonHealthy();
     expect(result).toBe(false);
   });
+
+  it("sends bearer auth from the shared token file", async () => {
+    const tokenFile = join("/tmp", `voicelayer-tts-token-${process.pid}`);
+    process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = tokenFile;
+    writeFileSync(tokenFile, "test-token\n", { mode: 0o600 });
+
+    const fetchSpy = spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: "ok",
+          model_loaded: true,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    try {
+      const { isDaemonHealthy } = await import("../tts/qwen3");
+      const result = await isDaemonHealthy();
+
+      expect(result).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(fetchSpy.mock.calls[0]?.[1]).toMatchObject({
+        headers: {
+          Authorization: "Bearer test-token",
+        },
+      });
+    } finally {
+      fetchSpy.mockRestore();
+      delete process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE;
+      delete process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
+      rmSync(tokenFile, { force: true });
+    }
+  });
 });
 
 describe("synthesizeCloned", () => {
@@ -150,6 +194,47 @@ describe("synthesizeCloned", () => {
     const { synthesizeCloned } = await import("../tts/qwen3");
     const result = await synthesizeCloned("hello", "nonexistent");
     expect(result).toBeNull();
+  });
+});
+
+describe("daemon auth token helpers", () => {
+  const tokenFile = join("/tmp", `voicelayer-tts-token-helper-${process.pid}`);
+
+  afterEach(() => {
+    delete process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE;
+    delete process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
+    rmSync(tokenFile, { force: true });
+  });
+
+  it("builds Authorization headers when the token file is 0600", async () => {
+    process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = tokenFile;
+    writeFileSync(tokenFile, "helper-token\n", { mode: 0o600 });
+
+    const { buildDaemonRequestHeaders } = await import("../tts/qwen3");
+    expect(buildDaemonRequestHeaders(true)).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer helper-token",
+    });
+  });
+
+  it("rejects token files with broad permissions", async () => {
+    process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = tokenFile;
+    writeFileSync(tokenFile, "helper-token\n", { mode: 0o600 });
+    chmodSync(tokenFile, 0o644);
+
+    const { buildDaemonRequestHeaders } = await import("../tts/qwen3");
+    expect(buildDaemonRequestHeaders(true)).toBeNull();
+  });
+
+  it("prefers VOICELAYER_TTS_DAEMON_SECRET_FILE when set", async () => {
+    process.env.VOICELAYER_TTS_DAEMON_SECRET_FILE = tokenFile;
+    writeFileSync(tokenFile, "preferred-token\n", { mode: 0o600 });
+
+    const { buildDaemonRequestHeaders } = await import("../tts/qwen3");
+    expect(buildDaemonRequestHeaders(true)).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer preferred-token",
+    });
   });
 });
 

@@ -223,6 +223,16 @@ voicelayer clone <name>            # Build voice profile
 voicelayer daemon --port 8880      # Run Qwen3-TTS server
 ```
 
+The Qwen3 daemon now uses bearer auth from `~/.voicelayer/daemon.secret`
+(created on first launch with mode `0600`). The TypeScript bridge reads the
+same file automatically. Override the location with
+`VOICELAYER_TTS_DAEMON_SECRET_FILE`,
+`VOICELAYER_TTS_AUTH_TOKEN_FILE`, or
+`voicelayer daemon --daemon-secret-file ...` if you need a custom launcher
+path. The daemon only accepts `Host: 127.0.0.1:8880` /
+`Host: localhost:8880`, rejects non-local `Origin` headers, and only reads
+`reference_wav` files that resolve under `~/.voicelayer/voices/`.
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -232,6 +242,8 @@ voicelayer daemon --port 8880      # Run Qwen3-TTS server
 | `QA_VOICE_WISPR_KEY` | -- | Wispr Flow API key (cloud fallback) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate |
+| `VOICELAYER_TTS_DAEMON_SECRET_FILE` | `~/.voicelayer/daemon.secret` | Preferred override for the shared Qwen3 daemon bearer secret file |
+| `VOICELAYER_TTS_AUTH_TOKEN_FILE` | `~/.voicelayer/daemon.secret` | Backward-compatible override for the shared Qwen3 daemon bearer secret file |
 
 ## Testing
 
