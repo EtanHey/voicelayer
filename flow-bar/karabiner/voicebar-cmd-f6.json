@@ -1,0 +1,16 @@
+{
+  "description": "VoiceBar: Cmd+F6 → voicebar://toggle",
+  "manipulators": [
+    {
+      "type": "basic",
+      "from": {
+        "key_code": "f6",
+        "modifiers": {
+          "mandatory": ["command"],
+          "optional": ["any"]
+        }
+      },
+      "to": [{ "shell_command": "open 'voicebar://toggle'" }]
+    }
+  ]
+}
