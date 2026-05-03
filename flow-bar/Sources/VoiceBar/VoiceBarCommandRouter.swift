@@ -2,9 +2,11 @@ import Foundation
 
 class VoiceBarCommandRouter {
     private let voiceState: VoiceState
+    private let resetHotkeyState: () -> Void
 
-    init(voiceState: VoiceState) {
+    init(voiceState: VoiceState, resetHotkeyState: @escaping () -> Void = {}) {
         self.voiceState = voiceState
+        self.resetHotkeyState = resetHotkeyState
     }
 
     func handle(url: URL) {
@@ -51,6 +53,7 @@ class VoiceBarCommandRouter {
     }
 
     func handleCancel() {
+        resetHotkeyState()
         voiceState.cancel()
     }
 
@@ -75,7 +78,8 @@ class VoiceBarCommandRouter {
     }
 
     func handleHotkeyDoubleTap() {
-        handleToggle()
+        // The first tap already sent the record intent. Double-tap only locks
+        // the gesture state so releasing F6 does not stop the active recording.
     }
 
     private func handleToggle() {

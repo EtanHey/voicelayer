@@ -4,16 +4,30 @@
 // .nonactivatingPanel MUST be in the styleMask at init time (FB16484811).
 
 import AppKit
+import SwiftUI
+
+final class PillHostingView<Content: View>: NSHostingView<Content> {
+    var activeHitRectProvider: (() -> NSRect)?
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let activeHitRectProvider, !activeHitRectProvider().contains(point) {
+            return nil
+        }
+        return super.hitTest(point)
+    }
+}
 
 final class FloatingPillPanel: NSPanel {
     var contextMenuProvider: (() -> NSMenu)?
+    var activeHitRectProvider: (() -> NSRect)?
+    private var dragStartWasInVisiblePill = false
 
     init(content: NSView) {
         super.init(
             contentRect: NSRect(
                 x: 0, y: 0,
                 width: Theme.panelWidth,
-                height: 300
+                height: Theme.panelHeight
             ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
@@ -41,7 +55,7 @@ final class FloatingPillPanel: NSPanel {
         hasShadow = false // SwiftUI adds its own shadow
 
         // --- Interaction ---
-        isMovableByWindowBackground = true // pill is draggable via background
+        isMovableByWindowBackground = false
         ignoresMouseEvents = false // NOT click-through
 
         contentView = content
@@ -64,6 +78,16 @@ final class FloatingPillPanel: NSPanel {
             NSMenu.popUpContextMenu(menu, with: event, for: contentView)
             return
         }
+
+        if event.type == .leftMouseDown {
+            dragStartWasInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
+        } else if event.type == .leftMouseDragged, dragStartWasInVisiblePill {
+            performDrag(with: event)
+            return
+        } else if event.type == .leftMouseUp {
+            dragStartWasInVisiblePill = false
+        }
+
         super.sendEvent(event)
     }
 
@@ -75,8 +99,8 @@ final class FloatingPillPanel: NSPanel {
     /// macOS coordinates: origin at bottom-left, Y increases upward.
     /// - Parameters:
     ///   - horizontalOffset: 0.0–1.0 fraction of screen width for pill center.
-    ///   - verticalOffset: 0.0–1.0 fraction of screen height for pill origin.
-    ///     nil = default bottom padding.
+    ///   - verticalOffset: 0.0–1.0 fraction of screen height for pill center.
+    ///     nil = fixed top-center island placement.
     func positionOnScreen(
         _ screen: NSScreen? = nil,
         horizontalOffset: CGFloat = Theme.horizontalOffset,
@@ -88,9 +112,9 @@ final class FloatingPillPanel: NSPanel {
         let size = frame.size
         let x = visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
         let y: CGFloat = if let vOffset = verticalOffset {
-            visible.origin.y + (visible.height * vOffset)
+            visible.origin.y + (visible.height * vOffset) - (size.height / 2)
         } else {
-            visible.origin.y + Theme.bottomPadding
+            visible.maxY - Theme.topPadding - size.height
         }
         setFrameOrigin(NSPoint(x: x, y: y))
     }

@@ -20,7 +20,7 @@ final class PillResizePlanTests: XCTestCase {
         XCTAssertTrue(plan.animate)
     }
 
-    func testIdleToRecordingPreservesBottomCenterAndAnimatesResize() {
+    func testIdleToRecordingPreservesBottomCenterWithoutAnimatingFrameDrift() {
         let oldFrame = CGRect(x: 40, y: 60, width: 140, height: 34)
 
         let plan = PillResizePlan.make(
@@ -33,10 +33,10 @@ final class PillResizePlanTests: XCTestCase {
 
         XCTAssertEqual(plan.frame.midX, oldFrame.midX, accuracy: 0.001)
         XCTAssertEqual(plan.frame.minY, oldFrame.minY, accuracy: 0.001)
-        XCTAssertTrue(plan.animate)
+        XCTAssertFalse(plan.animate)
     }
 
-    func testRepeatedActivationResizeCycleDoesNotAccumulateLeftOrUpDrift() {
+    func testRepeatedActivationResizeCycleDoesNotMoveOrigin() {
         let anchoredFrame = CGRect(x: 300, y: 24, width: 136, height: 38)
         var frame = anchoredFrame
 
@@ -60,5 +60,83 @@ final class PillResizePlanTests: XCTestCase {
 
         XCTAssertEqual(frame.midX, anchoredFrame.midX, accuracy: 0.001)
         XCTAssertEqual(frame.minY, anchoredFrame.minY, accuracy: 0.001)
+    }
+
+    func testAnchoredResizeStartsFromSavedPosition() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+
+        let plan = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.8,
+            verticalOffset: 0.02,
+            topPadding: 12,
+            pillSize: CGSize(width: 180, height: 40),
+            from: .idle,
+            to: .recording,
+            padding: 4
+        )
+
+        XCTAssertEqual(plan.frame.midX, 800, accuracy: 0.001)
+        XCTAssertEqual(plan.frame.midY, 14, accuracy: 0.001)
+    }
+
+    func testDefaultAnchorUsesTopCenterAndGrowsDownward() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+
+        let compact = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.5,
+            verticalOffset: nil,
+            topPadding: 12,
+            pillSize: CGSize(width: 120, height: 30),
+            from: .idle,
+            to: .recording,
+            padding: 4
+        ).frame
+
+        let expanded = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.5,
+            verticalOffset: nil,
+            topPadding: 12,
+            pillSize: CGSize(width: 220, height: 70),
+            from: .recording,
+            to: .transcribing,
+            padding: 4
+        ).frame
+
+        XCTAssertEqual(compact.midX, 500, accuracy: 0.001)
+        XCTAssertEqual(expanded.midX, 500, accuracy: 0.001)
+        XCTAssertEqual(compact.maxY, 688, accuracy: 0.001)
+        XCTAssertEqual(expanded.maxY, 688, accuracy: 0.001)
+    }
+
+    func testSavedVerticalPositionPreservesCenterDuringHeightChanges() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1000, height: 700)
+
+        let compact = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.5,
+            verticalOffset: 0.85,
+            topPadding: 12,
+            pillSize: CGSize(width: 120, height: 30),
+            from: .idle,
+            to: .recording,
+            padding: 4
+        ).frame
+
+        let expanded = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.5,
+            verticalOffset: 0.85,
+            topPadding: 12,
+            pillSize: CGSize(width: 220, height: 70),
+            from: .recording,
+            to: .transcribing,
+            padding: 4
+        ).frame
+
+        XCTAssertEqual(compact.midX, expanded.midX, accuracy: 0.001)
+        XCTAssertEqual(compact.midY, expanded.midY, accuracy: 0.001)
     }
 }

@@ -58,6 +58,7 @@ struct PasteboardSnapshot: Equatable {
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
+    case unverifiedClipboardPaste
     case failed(String)
 }
 
@@ -282,8 +283,19 @@ final class VoiceState {
         recordStartInsertionHandler = nil
         speechDetected = false
         resetAudioLevels()
+        hotkeyPhase = .idle
         statusText = ""
         sendIntent(command: .cancel, payload: ["cmd": "cancel"])
+        if mode == .recording || mode == .transcribing || mode == .speaking {
+            mode = isConnected ? .idle : .disconnected
+            onModeChange?(mode)
+            if mode == .idle {
+                startCollapseTimer()
+            } else {
+                collapseTimer?.cancel()
+                isCollapsed = false
+            }
+        }
     }
 
     func toggle(scope: String = "all", enabled: Bool) {
@@ -390,6 +402,11 @@ final class VoiceState {
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
         ])
         barInitiatedRecording = true
+        if pressToTalk, isConnected {
+            mode = .recording
+            onModeChange?(.recording)
+            expandFromCollapse()
+        }
 
         // Safety timeout: if no transcription arrives within 2.5 minutes, clear the flag
         barInitiatedTimeout?.cancel()
@@ -900,7 +917,11 @@ final class VoiceState {
                         "pasted": boolString(pasted),
                     ])
                     finishPasteConfirmation(
-                        outcome: pasted ? .pasted : .failed(Self.genericPasteFailureMessage)
+                        outcome: Self.pasteOutcome(
+                            pasted: pasted,
+                            plan: plan,
+                            hadCapturedInsertion: insertionHandler != nil
+                        )
                     )
                 }
             }
@@ -911,6 +932,19 @@ final class VoiceState {
     }
 
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
+    private static let unverifiedClipboardPasteMessage = "Sent paste — if nothing appeared, click input and press Shift+F6"
+
+    private static func pasteOutcome(
+        pasted: Bool,
+        plan: VoicePastePlan,
+        hadCapturedInsertion: Bool
+    ) -> VoicePasteOutcome {
+        guard pasted else { return .failed(Self.genericPasteFailureMessage) }
+        if plan == .autoPaste, !hadCapturedInsertion {
+            return .unverifiedClipboardPaste
+        }
+        return .pasted
+    }
 
     private func scheduleClipboardRestoreIfNeeded(
         from snapshot: PasteboardSnapshot?,
@@ -942,9 +976,11 @@ final class VoiceState {
         ])
         switch outcome {
         case .insertedAtCursor:
-            showConfirmation("Inserted at cursor")
+            showConfirmation(transcript, duration: 5.0)
         case .pasted:
-            showConfirmation("Pasted!")
+            showConfirmation(transcript, duration: 5.0)
+        case .unverifiedClipboardPaste:
+            showConfirmation(Self.unverifiedClipboardPasteMessage, duration: 5.0)
         case let .failed(message):
             showConfirmation(message, duration: 4.0)
         }

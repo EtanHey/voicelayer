@@ -12,11 +12,23 @@ import AppKit
 import Darwin
 import SwiftUI
 
+private let legacySocketHotkeyDuplicateWindow: TimeInterval = 0.75
+
 // MARK: - App Delegate
+
+enum HotkeyInputSource {
+    case native
+    case legacySocket
+}
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let voiceState = VoiceState()
-    lazy var commandRouter = VoiceBarCommandRouter(voiceState: voiceState)
+    lazy var commandRouter = VoiceBarCommandRouter(
+        voiceState: voiceState,
+        resetHotkeyState: { [weak self] in
+            self?.resetHotkeyTracking()
+        }
+    )
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
     }
@@ -32,12 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var snoozeTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
-    /// Saved offsets (0.0–1.0) for pill positioning on screen.
+    /// Saved offsets (0.0-1.0) for pill center positioning on screen.
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
-    private var verticalOffset: CGFloat? // nil = use default bottomPadding
+    private var verticalOffset: CGFloat? // nil = fixed top-center island placement
 
-    /// Last reported pill size — used to avoid layout loops.
-    private var lastPillSize: CGSize = .zero
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
     private var previousVoiceMode: VoiceMode = .idle
@@ -52,12 +62,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.audioLevelMonitor.restart()
         },
         resetHotkeyState: { [weak self] in
-            self?.gestureStateMachine.reset()
-            self?.voiceState.setHotkeyPhase(.idle)
+            self?.resetHotkeyTracking()
         }
     )
     /// Track when F6 hold started — for minimum recording duration guard.
     private var holdStartTime: Date?
+    /// Last moment any hotkey input source was accepted.
+    private var lastHotkeyActivityAt: TimeInterval?
+    private var lastHotkeyActivitySource: HotkeyInputSource?
+    private var activeHotkeySource: HotkeyInputSource?
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
@@ -153,20 +166,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupHotkey()
         configureWakeRecovery()
 
-        // Resize panel dynamically when pill content changes
-        voiceState.onPillSizeChange = { [weak self] size in
-            DispatchQueue.main.async {
-                self?.resizePanelToFit(size)
-            }
-        }
-
         // Floating pill
         let barView = BarView(state: voiceState, commandRouter: commandRouter)
-        let hosting = NSHostingView(rootView: barView)
+        let hosting = PillHostingView(
+            rootView: barView.frame(
+                width: Theme.panelWidth,
+                height: Theme.panelHeight,
+                alignment: .top
+            )
+        )
+        hosting.activeHitRectProvider = { [weak self] in
+            Self.panelHitRect(for: self?.voiceState)
+        }
         hosting.frame = NSRect(
             x: 0, y: 0,
             width: Theme.panelWidth,
-            height: 300
+            height: Theme.panelHeight
         )
 
         // Load saved position
@@ -181,10 +196,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
+        pill.activeHitRectProvider = { [weak self] in
+            Self.panelHitRect(for: self?.voiceState)
+        }
         pill.positionOnScreen(
             horizontalOffset: horizontalOffset,
             verticalOffset: verticalOffset
         )
+        pill.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
         if let panelScreen = pill.screen {
@@ -337,36 +356,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Wire gesture callbacks to VoiceState and start the event tap.
     private func setupHotkey() {
-        // Hold start → push-to-talk recording
-        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
-            self?.voiceState.setHotkeyPhase(phase)
-        }
-
-        gestureStateMachine.onHoldStart = { [weak self] in
-            guard let self else { return }
-            NSLog("[VoiceBar] Hotkey hold start — starting recording")
-            holdStartTime = Date()
-            handleHotkeyHoldStart()
-        }
-
-        // Hold end → stop the active PTT recording and transcribe whatever was captured.
-        gestureStateMachine.onHoldEnd = { [weak self] in
-            guard let self else { return }
-            let holdDuration = Date().timeIntervalSince(holdStartTime ?? Date())
-            NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
-            handleHotkeyHoldEnd(holdDuration: holdDuration)
-        }
-
-        // Single/double tap are intentionally not assigned in the immediate PTT model.
-        gestureStateMachine.onSingleTap = {
-            NSLog("[VoiceBar] Hotkey single tap — not assigned")
-        }
-
-        gestureStateMachine.onDoubleTap = {
-            NSLog("[VoiceBar] Hotkey double tap — not assigned")
-        }
+        configureHotkeyCallbacks()
 
         let manager = HotkeyManager(gesture: gestureStateMachine)
+        manager.onKeyDown = { [weak self] in
+            self?.handleHotkeyKeyDown(from: .native)
+        }
+        manager.onKeyUp = { [weak self] in
+            self?.handleHotkeyKeyUp(from: .native)
+        }
+        manager.onCancel = { [weak self] in
+            self?.noteHotkeyActivity(from: .native)
+            self?.commandRouter.handleCancel()
+        }
         manager.onPasteLastTranscript = { [weak self] in
             self?.voiceState.repasteLastTranscript()
         }
@@ -392,9 +394,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func configureHotkeyCallbacksForTesting() {
+        configureHotkeyCallbacks()
+    }
+
+    private func configureHotkeyCallbacks() {
+        // Hold start → push-to-talk recording
+        gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+            self?.voiceState.setHotkeyPhase(phase)
+        }
+
+        gestureStateMachine.onHoldStart = { [weak self] in
+            guard let self else { return }
+            NSLog("[VoiceBar] Hotkey hold start — starting recording")
+            holdStartTime = Date()
+            handleHotkeyHoldStart()
+        }
+
+        // Hold end → stop the active PTT recording and transcribe whatever was captured.
+        gestureStateMachine.onHoldEnd = { [weak self] in
+            guard let self else { return }
+            let holdDuration = Date().timeIntervalSince(holdStartTime ?? Date())
+            NSLog("[VoiceBar] Hotkey hold end (%.1fs) — stopping recording", holdDuration)
+            handleHotkeyHoldEnd(holdDuration: holdDuration)
+        }
+
+        // Single/double tap are intentionally not assigned in the immediate PTT model.
+        gestureStateMachine.onSingleTap = {
+            NSLog("[VoiceBar] Hotkey single tap — not assigned")
+        }
+
+        gestureStateMachine.onDoubleTap = { [weak self] in
+            NSLog("[VoiceBar] Hotkey double tap — locking active recording")
+            self?.handleHotkeyDoubleTap()
+        }
+
+        gestureStateMachine.onCancel = { [weak self] in
+            NSLog("[VoiceBar] Hotkey cancel — cancelling active recording")
+            self?.commandRouter.handleCancel()
+        }
+    }
+
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        panel?.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: mode)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -403,6 +447,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             audioLevelMonitor.start()
         default:
             audioLevelMonitor.stop()
+        }
+    }
+
+    private static func panelHitRect(for state: VoiceState?) -> NSRect {
+        let compactHeight = Theme.pillCompactHeight + (Theme.panelPadding * 2)
+        let mode = state?.mode ?? .idle
+        let previewText = VoiceBarPresentation.transcriptPreviewText(
+            mode: mode,
+            confirmationText: state?.confirmationText,
+            commandModeState: state?.commandModeState,
+            activeClipMarker: state?.activeClipMarker
+        )
+        let hasTranscriptPreview = previewText != nil
+        let height = hasTranscriptPreview ? Theme.pillTranscriptPreviewHeight : compactHeight
+        let width = panelHitWidth(
+            mode: mode,
+            isCollapsed: state?.isCollapsed ?? false,
+            hasTranscriptPreview: hasTranscriptPreview,
+            transcript: previewText ?? ""
+        )
+        let x = (Theme.panelWidth - width) / 2
+        let y = Theme.panelHeight - height
+        return NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    private static func panelHitWidth(
+        mode: VoiceMode,
+        isCollapsed: Bool,
+        hasTranscriptPreview: Bool,
+        transcript: String
+    ) -> CGFloat {
+        if isCollapsed {
+            return 30
+        }
+        if hasTranscriptPreview {
+            return min(Theme.panelWidth, Theme.transcriptPreviewWidth(for: transcript) + 58)
+        }
+        switch mode {
+        case .recording:
+            return 154
+        case .transcribing:
+            return 150
+        case .speaking:
+            return 340
+        case .error:
+            return 210
+        case .idle, .disconnected:
+            return Theme.pillCompactWidth + 14
         }
     }
 
@@ -445,12 +537,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commandRouter.handleHotkeyDoubleTap()
     }
 
-    private func handleLocalControlCommand(_ command: VoiceBarLocalControlCommand) {
+    func handleLocalControlCommand(_ command: VoiceBarLocalControlCommand) {
         switch command {
         case .startRecording:
-            commandRouter.handle(url: URL(string: "voicebar://start-recording")!)
+            handleHotkeyKeyDown(from: .legacySocket)
         case .stopRecording:
-            commandRouter.handle(url: URL(string: "voicebar://stop-recording")!)
+            handleHotkeyKeyUp(from: .legacySocket)
         case .toggle:
             commandRouter.handle(url: URL(string: "voicebar://toggle")!)
         case .pasteLastTranscript:
@@ -475,31 +567,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.wakeRecoveryCoordinator.handleDidWake()
         }
         workspaceNotificationObservers = [willSleepObserver, didWakeObserver]
-    }
-
-    // MARK: - Dynamic panel sizing
-
-    /// Resize the panel to tightly fit the pill content, anchored at bottom-center.
-    /// Called via onPillSizeChange callback from the SwiftUI GeometryReader.
-    private func resizePanelToFit(_ pillSize: CGSize) {
-        guard let panel else { return }
-        // Avoid layout loops — only resize on meaningful change
-        let epsilon: CGFloat = 2
-        if abs(pillSize.width - lastPillSize.width) < epsilon,
-           abs(pillSize.height - lastPillSize.height) < epsilon {
-            return
-        }
-        lastPillSize = pillSize
-
-        let oldFrame = panel.frame
-        let plan = PillResizePlan.make(
-            oldFrame: oldFrame,
-            pillSize: pillSize,
-            from: previousVoiceMode,
-            to: currentVoiceMode,
-            padding: Theme.panelPadding
-        )
-        panel.setFrame(plan.frame, display: true, animate: plan.animate)
     }
 
     // MARK: - Mouse tracking
@@ -531,7 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
-        let vOffset = (panel.frame.origin.y - visible.origin.y) / visible.height
+        let vOffset = (panel.frame.midY - visible.origin.y) / visible.height
         horizontalOffset = max(0.05, min(0.95, CGFloat(hOffset)))
         verticalOffset = max(0.0, min(0.95, CGFloat(vOffset)))
         UserDefaults.standard.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
@@ -558,6 +625,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
+
+    private func resetHotkeyTracking() {
+        gestureStateMachine.reset()
+        activeHotkeySource = nil
+        voiceState.setHotkeyPhase(.idle)
+    }
+
+    private func noteHotkeyActivity(from source: HotkeyInputSource) {
+        lastHotkeyActivityAt = CFAbsoluteTimeGetCurrent()
+        lastHotkeyActivitySource = source
+    }
+
+    private func handleHotkeyKeyDown(from source: HotkeyInputSource) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
+            NSLog("[VoiceBar] Ignoring duplicate %@ keyDown", source == .native ? "native" : "legacy socket")
+            return
+        }
+        noteHotkeyActivity(from: source)
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = source
+        }
+        gestureStateMachine.handleKeyDown()
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = nil
+        }
+    }
+
+    private func handleHotkeyKeyUp(from source: HotkeyInputSource) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
+            NSLog("[VoiceBar] Ignoring duplicate %@ keyUp", source == .native ? "native" : "legacy socket")
+            return
+        }
+        noteHotkeyActivity(from: source)
+        gestureStateMachine.handleKeyUp()
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = nil
+        }
+    }
+
+    private func shouldIgnoreIncomingHotkeyEvent(
+        from source: HotkeyInputSource,
+        now: TimeInterval
+    ) -> Bool {
+        shouldIgnoreHotkeyEvent(
+            source: source,
+            gestureState: gestureStateMachine.state,
+            activeHotkeySource: activeHotkeySource,
+            lastHotkeyActivityAt: lastHotkeyActivityAt,
+            lastHotkeyActivitySource: lastHotkeyActivitySource,
+            now: now
+        )
+    }
+}
+
+func shouldIgnoreHotkeyEvent(
+    source: HotkeyInputSource,
+    gestureState: GestureStateMachine.State,
+    activeHotkeySource: HotkeyInputSource?,
+    lastHotkeyActivityAt: TimeInterval?,
+    lastHotkeyActivitySource: HotkeyInputSource?,
+    now: TimeInterval
+) -> Bool {
+    if let activeHotkeySource,
+       gestureState != .idle,
+       source != activeHotkeySource {
+        return true
+    }
+    if gestureState == .idle,
+       let lastHotkeyActivityAt,
+       let lastHotkeyActivitySource,
+       source != lastHotkeyActivitySource,
+       (now - lastHotkeyActivityAt) <= legacySocketHotkeyDuplicateWindow {
+        return true
+    }
+    return false
 }
 
 // MARK: - SwiftUI App entry point

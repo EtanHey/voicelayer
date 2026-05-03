@@ -5,6 +5,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
     final class SpyCommandRouter: VoiceBarCommandRouter {
         var handledURLs: [URL] = []
         var holdStartCount = 0
+        var holdEndCount = 0
         var doubleTapCount = 0
 
         init() {
@@ -17,6 +18,10 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         override func handleHotkeyHoldStart() {
             holdStartCount += 1
+        }
+
+        override func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
+            holdEndCount += 1
         }
 
         override func handleHotkeyDoubleTap() {
@@ -156,6 +161,38 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
     }
 
+    func testHotkeyDoubleTapDoesNotToggleOrStopActiveRecording() {
+        let state = VoiceState()
+        state.mode = .recording
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleHotkeyDoubleTap()
+
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testCancelRunsGestureResetHookBeforeCancelIntent() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.mode = .recording
+        var resetCount = 0
+        var commands: [[String: Any]] = []
+        let router = VoiceBarCommandRouter(voiceState: state) {
+            resetCount += 1
+        }
+        state.sendCommand = { commands.append($0) }
+
+        router.handleCancel()
+
+        XCTAssertEqual(resetCount, 1)
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+    }
+
     func testIgnoresUnknownOrNonVoiceBarUrls() throws {
         let state = VoiceState()
         let router = VoiceBarCommandRouter(voiceState: state)
@@ -212,5 +249,40 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         )
         XCTAssertNil(VoiceBarLocalControlCommand(payload: ["type": "state", "command": "toggle"]))
         XCTAssertNil(VoiceBarLocalControlCommand(payload: ["type": "control", "command": "bogus"]))
+    }
+
+    func testLocalControlHoldUsesHotkeyGestureCallbacksInsteadOfDirectURLs() {
+        let app = AppDelegate()
+        let spyRouter = SpyCommandRouter()
+        app.commandRouter = spyRouter
+        app.hotkeyEnabled = true
+        app.configureHotkeyCallbacksForTesting()
+
+        app.handleLocalControlCommand(.startRecording)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        app.handleLocalControlCommand(.stopRecording)
+
+        XCTAssertEqual(spyRouter.holdStartCount, 1)
+        XCTAssertEqual(spyRouter.holdEndCount, 1)
+        XCTAssertEqual(spyRouter.doubleTapCount, 0)
+        XCTAssertTrue(spyRouter.handledURLs.isEmpty)
+    }
+
+    func testLocalControlDoubleTapUsesHotkeyGestureCallbacksInsteadOfDirectURLs() {
+        let app = AppDelegate()
+        let spyRouter = SpyCommandRouter()
+        app.commandRouter = spyRouter
+        app.hotkeyEnabled = true
+        app.configureHotkeyCallbacksForTesting()
+
+        app.handleLocalControlCommand(.startRecording)
+        app.handleLocalControlCommand(.stopRecording)
+        app.handleLocalControlCommand(.startRecording)
+        app.handleLocalControlCommand(.stopRecording)
+
+        XCTAssertEqual(spyRouter.holdStartCount, 1)
+        XCTAssertEqual(spyRouter.holdEndCount, 0)
+        XCTAssertEqual(spyRouter.doubleTapCount, 1)
+        XCTAssertTrue(spyRouter.handledURLs.isEmpty)
     }
 }

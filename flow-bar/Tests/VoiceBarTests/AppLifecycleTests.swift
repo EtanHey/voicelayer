@@ -103,7 +103,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(successfulExit, false, "SuccessfulExit:false means only restart on crash, not clean quit")
     }
 
-    func testKarabinerRuleDoesNotMatchShiftF6AsPlainHoldToRecord() throws {
+    func testKarabinerRuleDoesNotOwnPlainF6HoldToRecord() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -118,17 +118,200 @@ final class AppLifecycleTests: XCTestCase {
         let object = try JSONSerialization.jsonObject(with: data)
         let root = try XCTUnwrap(object as? [String: Any])
         let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
-        let plainF6 = try XCTUnwrap(manipulators.first { manipulator in
+        let plainF6 = manipulators.first { manipulator in
             guard let from = manipulator["from"] as? [String: Any] else { return false }
+            let modifiers = from["modifiers"] as? [String: Any]
             return from["key_code"] as? String == "f6"
+                && modifiers == nil
                 && (manipulator["to_after_key_up"] as? [[String: Any]]) != nil
-        })
-        let from = try XCTUnwrap(plainF6["from"] as? [String: Any])
-        let modifiers = from["modifiers"] as? [String: Any]
+        }
 
         XCTAssertNil(
-            modifiers?["optional"],
-            "Plain F6 hold-to-record must not use optional:any because Shift+F6 is reserved for re-paste"
+            plainF6,
+            "Plain F6 should be owned by the native hotkey manager, not Karabiner socket start/stop commands"
+        )
+    }
+
+    func testKarabinerRuleMapsDoNotDisturbConsumerKeyToInternalF18Relay() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let ruleURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("karabiner")
+            .appendingPathComponent("voicebar-f6.json")
+
+        let data = try Data(contentsOf: ruleURL)
+        let object = try JSONSerialization.jsonObject(with: data)
+        let root = try XCTUnwrap(object as? [String: Any])
+        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
+        let consumerMapping = manipulators.first { manipulator in
+            guard let from = manipulator["from"] as? [String: Any],
+                  from["consumer_key_code"] as? String == "do_not_disturb",
+                  from["modifiers"] == nil,
+                  let to = manipulator["to"] as? [[String: Any]],
+                  let firstTo = to.first else { return false }
+            return firstTo["key_code"] as? String == "f18"
+        }
+
+        XCTAssertNotNil(
+            consumerMapping,
+            "The shipped Karabiner rule should translate the hardware Do Not Disturb key into an internal F18 relay for VoiceBar"
+        )
+    }
+
+    func testKarabinerRuleMapsPlainF6ToInternalF18Relay() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let ruleURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("karabiner")
+            .appendingPathComponent("voicebar-f6.json")
+
+        let data = try Data(contentsOf: ruleURL)
+        let object = try JSONSerialization.jsonObject(with: data)
+        let root = try XCTUnwrap(object as? [String: Any])
+        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
+        let relayMapping = manipulators.first { manipulator in
+            guard let from = manipulator["from"] as? [String: Any],
+                  from["key_code"] as? String == "f6",
+                  from["modifiers"] == nil,
+                  let to = manipulator["to"] as? [[String: Any]],
+                  let firstTo = to.first else { return false }
+            return firstTo["key_code"] as? String == "f18"
+        }
+
+        XCTAssertNotNil(
+            relayMapping,
+            "The shipped Karabiner rule should translate plain F6 into the same internal F18 relay for VoiceBar"
+        )
+    }
+
+    func testHotkeyEventFromSameSourceIsAllowedWhenNoOverlapExists() {
+        let now = 10.0
+
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .legacySocket,
+                gestureState: .idle,
+                activeHotkeySource: nil,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .native,
+                gestureState: .idle,
+                activeHotkeySource: nil,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+    }
+
+    func testHotkeyEventFromOtherSourceIsIgnoredWhileGestureIsActive() {
+        let now = 10.0
+
+        XCTAssertTrue(
+            shouldIgnoreHotkeyEvent(
+                source: .legacySocket,
+                gestureState: .pressing,
+                activeHotkeySource: .native,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+        XCTAssertTrue(
+            shouldIgnoreHotkeyEvent(
+                source: .native,
+                gestureState: .holding,
+                activeHotkeySource: .legacySocket,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+    }
+
+    func testHotkeyEventFromOwningSourceIsAllowedWhileGestureIsActive() {
+        let now = 10.0
+
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .legacySocket,
+                gestureState: .waitingForDoubleTap,
+                activeHotkeySource: .legacySocket,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .native,
+                gestureState: .holding,
+                activeHotkeySource: .native,
+                lastHotkeyActivityAt: nil,
+                lastHotkeyActivitySource: nil,
+                now: now
+            )
+        )
+    }
+
+    func testHotkeyEventFromOtherSourceIsIgnoredShortlyAfterRecentAcceptedActivity() {
+        let now = 10.0
+
+        XCTAssertTrue(
+            shouldIgnoreHotkeyEvent(
+                source: .legacySocket,
+                gestureState: .idle,
+                activeHotkeySource: nil,
+                lastHotkeyActivityAt: 9.5,
+                lastHotkeyActivitySource: .native,
+                now: now
+            )
+        )
+        XCTAssertTrue(
+            shouldIgnoreHotkeyEvent(
+                source: .native,
+                gestureState: .idle,
+                activeHotkeySource: nil,
+                lastHotkeyActivityAt: 9.5,
+                lastHotkeyActivitySource: .legacySocket,
+                now: now
+            )
+        )
+    }
+
+    func testHotkeyEventFromSameRecentSourceIsNotIgnored() {
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .native,
+                gestureState: .idle,
+                activeHotkeySource: .native,
+                lastHotkeyActivityAt: 10.0,
+                lastHotkeyActivitySource: .native,
+                now: 10.2
+            )
+        )
+        XCTAssertFalse(
+            shouldIgnoreHotkeyEvent(
+                source: .legacySocket,
+                gestureState: .idle,
+                activeHotkeySource: nil,
+                lastHotkeyActivityAt: 10.0,
+                lastHotkeyActivitySource: .legacySocket,
+                now: 10.2
+            )
         )
     }
 }

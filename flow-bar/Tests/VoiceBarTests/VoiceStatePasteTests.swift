@@ -321,7 +321,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
         XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertEqual(state.confirmationText, "Inserted at cursor")
+        XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
     func testAutoPasteFallsBackToClipboardWhenRecordedInputInsertionFails() {
@@ -377,7 +377,29 @@ final class VoiceStatePasteTests: XCTestCase {
             ),
         ])
         XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertEqual(state.confirmationText, "Pasted!")
+        XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
+    }
+
+    func testAutoPasteShowsUnverifiedMessageWhenNoFocusedInputWasCaptured() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.frontmostAppProvider = { NSRunningApplication.current }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+        state.dictationInsertionHandlerProvider = { nil }
+        state.pasteboardWriter = { _ in }
+        state.simulatedPasteHandler = { true }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": "this might not have an input",
+        ])
+
+        XCTAssertEqual(
+            state.confirmationText,
+            "Sent paste — if nothing appeared, click input and press Shift+F6"
+        )
     }
 
     func testAutoPasteSkipsClipboardRestoreIfClipboardChangedAgainAfterWrite() {

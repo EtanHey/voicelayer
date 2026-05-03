@@ -13,13 +13,13 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testRecordingContentUsesReleaseToSendCopyWhileHolding() {
+    func testRecordingContentShowsOnlyWaveformWhileHolding() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingContent(hotkeyPhase: .holding),
             VoiceBarRecordingContent(
-                statusText: "Release to send",
+                statusText: "",
                 showsWaveform: true,
-                usesPulsingLabelOpacity: true
+                usesPulsingLabelOpacity: false
             )
         )
     }
@@ -112,7 +112,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true
             ),
-            "two three four"
+            "F6 to talk"
         )
 
         XCTAssertEqual(
@@ -149,6 +149,63 @@ final class VoiceBarPresentationTests: XCTestCase {
                 activeClipMarker: nil
             ),
             "Transcribing..."
+        )
+    }
+
+    func testNativeBackgroundDraggingIsDisabledAcrossVoiceStates() {
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .idle))
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .error))
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .disconnected))
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .recording))
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .transcribing))
+        XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .speaking))
+    }
+
+    func testTranscriptPreviewUsesConfirmationTextOnlyWhenIdleAndUnclaimed() {
+        XCTAssertEqual(
+            VoiceBarPresentation.transcriptPreviewText(
+                mode: .idle,
+                confirmationText: " Copied ",
+                commandModeState: nil,
+                activeClipMarker: nil
+            ),
+            "Copied"
+        )
+
+        XCTAssertNil(
+            VoiceBarPresentation.transcriptPreviewText(
+                mode: .transcribing,
+                confirmationText: "Copied",
+                commandModeState: nil,
+                activeClipMarker: nil
+            )
+        )
+
+        XCTAssertNil(
+            VoiceBarPresentation.transcriptPreviewText(
+                mode: .idle,
+                confirmationText: "Copied",
+                commandModeState: CommandModeState(
+                    phase: .done,
+                    operation: "replace_selection",
+                    prompt: nil
+                ),
+                activeClipMarker: nil
+            )
+        )
+
+        XCTAssertNil(
+            VoiceBarPresentation.transcriptPreviewText(
+                mode: .idle,
+                confirmationText: "Copied",
+                commandModeState: nil,
+                activeClipMarker: ClipMarkerState(
+                    id: "clip-1",
+                    label: "Action item",
+                    source: "command",
+                    status: "marked"
+                )
+            )
         )
     }
 

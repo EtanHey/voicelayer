@@ -26,10 +26,22 @@ enum Theme {
     /// Dynamic width: pill shrink-wraps content with minimum size.
     static let pillMinWidth: CGFloat = 100
     static let pillCompactWidth: CGFloat = 136
-    static let pillStatusMaxWidth: CGFloat = 180
+    static let pillCompactHeight: CGFloat = 42
+    static let pillStatusMaxWidth: CGFloat = 160
+    static let pillTranscriptPreviewWidth: CGFloat = 330
+    static let pillTranscriptPreviewHeight: CGFloat = 70
     static let pillQueueWidth: CGFloat = 300
-    /// Panel needs to be large enough to never clip the pill.
-    static let panelWidth: CGFloat = 500
+    /// Fixed panel envelope that keeps AppKit out of resize loops without
+    /// leaving a large invisible draggable surface around the pill.
+    static let panelWidth: CGFloat = 420
+    static let panelHeight: CGFloat = 74
+
+    static func transcriptPreviewWidth(for text: String) -> CGFloat {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        let estimated = CGFloat(trimmed.count) * 6.2
+        return min(pillTranscriptPreviewWidth, max(120, estimated))
+    }
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     static let teleprompterViewportWidth: CGFloat = 280
@@ -42,12 +54,12 @@ enum Theme {
 
     // MARK: - Position
 
-    /// Horizontal position: 80% from left edge of screen (avoids covering Wispr Flow)
-    static let horizontalOffset: CGFloat = 0.8
+    /// Horizontal position: centered like a small macOS island.
+    static let horizontalOffset: CGFloat = 0.5
     /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
     static let panelPadding: CGFloat = 4
-    /// Vertical offset from bottom of visible area
-    static let bottomPadding: CGFloat = 12
+    /// Vertical offset from top of visible area.
+    static let topPadding: CGFloat = 12
 
     // MARK: - Animation
 

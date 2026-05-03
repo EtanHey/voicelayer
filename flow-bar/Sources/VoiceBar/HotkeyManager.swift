@@ -3,12 +3,13 @@
 // Uses a consuming event tap so plain F6 does not leak to the focused app
 // and trigger macOS keyboard-focus traversal.
 //
-// Gesture state machine: F6 keyDown starts push-to-talk immediately;
-// keyUp stops and transcribes.
+// Gesture state machine: F6 keyDown shows an immediate preview; holding past
+// the threshold starts push-to-talk, and double-tap locks recording on.
 //
 // AIDEV-NOTE: Cmd+F6 arrives as F6 keyDown/keyUp events with the Command flag
 // set, not as flagsChanged events. We listen for the dual F6 keycodes:
-// 97 (standard function key mode) or 177 (media mode).
+// 97 (standard function key mode) or 177 (media mode). On keyboards where the
+// top-row F6 key is hard-wired to Do Not Disturb, Karabiner relays it to F18.
 
 import ApplicationServices
 import CoreGraphics
@@ -46,38 +47,64 @@ private func describeFlags(_ flags: CGEventFlags) -> String {
 
 // MARK: - Gesture State Machine
 
-/// Maps raw key events to immediate push-to-talk recording.
-/// - F6 down: push-to-talk recording starts immediately
-/// - F6 up: recording stops and transcribes
+/// Maps raw key events to push-to-talk and double-tap lock.
+/// - F6 down: shows a pressing preview immediately
+/// - F6 held past threshold: starts push-to-talk recording
+/// - F6 double-tap: starts a locked recording
 final class GestureStateMachine {
-    enum State: Sendable {
+    enum State: Sendable, Equatable {
         case idle
+        case pressing
         case holding
+        case waitingForDoubleTap
+        case locked
+    }
+
+    private enum DoubleTapExpiryBehavior {
+        case singleTap
+        case holdEnd
     }
 
     private(set) var state: State = .idle
+    private var keyDownTime: TimeInterval?
+    private var holdTimer: DispatchWorkItem?
+    private var doubleTapTimer: DispatchWorkItem?
+    private var holdTimerGeneration = 0
+    private var doubleTapTimerGeneration = 0
+    private var doubleTapDeadline: TimeInterval?
+    private var doubleTapExpiryBehavior: DoubleTapExpiryBehavior?
+
+    static let doubleTapWindowMs: Int = 400
+    static let holdThresholdMs: Int = 160
 
     // Callbacks — set by the owner (AppDelegate)
     var onHoldStart: () -> Void = {}
     var onHoldEnd: () -> Void = {}
     var onSingleTap: () -> Void = {}
     var onDoubleTap: () -> Void = {}
+    var onCancel: () -> Void = {}
     var onPreviewPhaseChange: (HotkeyPhase) -> Void = { _ in }
 
     func handleKeyDown() {
+        let now = CFAbsoluteTimeGetCurrent()
         switch state {
         case .idle:
-            state = .holding
+            startPressing(now: now)
+        case .waitingForDoubleTap:
+            if isDoubleTapWindowExpired(now: now) {
+                expireDoubleTapWindow()
+                startPressing(now: now)
+                return
+            }
+            clearDoubleTapTimer()
+            doubleTapDeadline = nil
+            doubleTapExpiryBehavior = nil
+            keyDownTime = nil
+            state = .locked
             onPreviewPhaseChange(.holding)
             onHoldStart()
-        default:
-            break
-        }
-    }
-
-    func handleKeyUp() {
-        switch state {
-        case .holding:
+            onDoubleTap()
+        case .locked:
             state = .idle
             onPreviewPhaseChange(.idle)
             onHoldEnd()
@@ -86,10 +113,126 @@ final class GestureStateMachine {
         }
     }
 
+    func handleKeyUp() {
+        switch state {
+        case .pressing:
+            clearHoldTimer()
+            keyDownTime = nil
+            startDoubleTapWindow(expiryBehavior: .singleTap)
+        case .holding:
+            keyDownTime = nil
+            state = .idle
+            onPreviewPhaseChange(.idle)
+            onHoldEnd()
+        case .locked:
+            break
+        default:
+            break
+        }
+    }
+
+    func cancel() {
+        switch state {
+        case .idle:
+            reset()
+        case .pressing, .waitingForDoubleTap:
+            reset()
+        case .holding, .locked:
+            reset()
+            onCancel()
+        }
+    }
+
     /// Reset state (e.g., on permission changes).
     func reset() {
+        clearHoldTimer()
+        clearDoubleTapTimer()
+        doubleTapDeadline = nil
+        doubleTapExpiryBehavior = nil
+        keyDownTime = nil
         state = .idle
         onPreviewPhaseChange(.idle)
+    }
+
+    private func startPressing(now: TimeInterval) {
+        clearHoldTimer()
+        holdTimerGeneration += 1
+        let generation = holdTimerGeneration
+        keyDownTime = now
+        state = .pressing
+        onPreviewPhaseChange(.pressing)
+        let timer = DispatchWorkItem { [weak self] in
+            guard let self, state == .pressing, holdTimerGeneration == generation else { return }
+            holdTimer = nil
+            state = .holding
+            onPreviewPhaseChange(.holding)
+            onHoldStart()
+        }
+        holdTimer = timer
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.holdThresholdMs),
+            execute: timer
+        )
+    }
+
+    private func startDoubleTapWindow(expiryBehavior: DoubleTapExpiryBehavior) {
+        clearDoubleTapTimer()
+        doubleTapTimerGeneration += 1
+        let generation = doubleTapTimerGeneration
+        state = .waitingForDoubleTap
+        doubleTapDeadline = CFAbsoluteTimeGetCurrent() + Double(Self.doubleTapWindowMs) / 1000
+        doubleTapExpiryBehavior = expiryBehavior
+        onPreviewPhaseChange(.awaitingSecondTap)
+        let timer = DispatchWorkItem { [weak self] in
+            guard let self, state == .waitingForDoubleTap, doubleTapTimerGeneration == generation else { return }
+            expireDoubleTapWindow()
+        }
+        doubleTapTimer = timer
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(Self.doubleTapWindowMs),
+            execute: timer
+        )
+    }
+
+    private func isDoubleTapWindowExpired(now: TimeInterval) -> Bool {
+        guard let doubleTapDeadline else { return true }
+        return now > doubleTapDeadline
+    }
+
+    private func expireDoubleTapWindow() {
+        guard state == .waitingForDoubleTap else {
+            clearDoubleTapTimer()
+            doubleTapDeadline = nil
+            doubleTapExpiryBehavior = nil
+            return
+        }
+        clearDoubleTapTimer()
+        doubleTapDeadline = nil
+        let expiryBehavior = doubleTapExpiryBehavior
+        doubleTapExpiryBehavior = nil
+        keyDownTime = nil
+        state = .idle
+        onPreviewPhaseChange(.idle)
+        switch expiryBehavior {
+        case .singleTap:
+            onSingleTap()
+        case .holdEnd:
+            onHoldEnd()
+        case nil:
+            break
+        }
+    }
+
+    private func clearDoubleTapTimer() {
+        doubleTapTimer?.cancel()
+        doubleTapTimer = nil
+        doubleTapTimerGeneration += 1
+    }
+
+    private func clearHoldTimer() {
+        holdTimer?.cancel()
+        holdTimer = nil
+        holdTimerGeneration += 1
     }
 }
 
@@ -98,6 +241,7 @@ enum HotkeyAction: Equatable {
     case keyDown
     case keyUp
     case pasteLastTranscript
+    case cancel
 }
 
 enum HotkeyPermission: Equatable {
@@ -129,6 +273,8 @@ struct HotkeyDebounceState {
     var lastProcessedKeyDownTime: TimeInterval?
 }
 
+private let hotkeyDuplicateEventDebounceSeconds: TimeInterval = 0.01
+
 func shouldDebounceHotkeyAction(
     action: HotkeyAction,
     debounceState: inout HotkeyDebounceState,
@@ -137,7 +283,7 @@ func shouldDebounceHotkeyAction(
     guard action == .keyDown else { return false }
     let timestamp = clock.now()
     if let lastProcessedKeyDownTime = debounceState.lastProcessedKeyDownTime,
-       (timestamp - lastProcessedKeyDownTime) < 0.05 {
+       (timestamp - lastProcessedKeyDownTime) < hotkeyDuplicateEventDebounceSeconds {
         return true
     }
     debounceState.lastProcessedKeyDownTime = timestamp
@@ -152,6 +298,8 @@ func shouldConsumeHotkeyEvent(
     switch hotkeyAction {
     case .keyDown, .keyUp:
         targetKeycodes.contains(keycode)
+    case .cancel:
+        true
     case .pasteLastTranscript:
         targetKeycodes.contains(keycode)
     case .ignore:
@@ -166,8 +314,14 @@ func hotkeyAction(
     autorepeat: Int64,
     targetKeycodes: Set<Int64>,
     useModifierMode: Bool,
-    currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState)
+    currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState),
+    gestureIsActive: Bool = false
 ) -> HotkeyAction {
+    if type == .keyDown, keycode == 53, autorepeat == 0, gestureIsActive {
+        NSLog("[HotkeyManager] Matched Escape while gesture active -> cancel")
+        return .cancel
+    }
+
     let isTargetHotkey = targetKeycodes.contains(keycode)
     guard isTargetHotkey else {
         NSLog(
@@ -285,6 +439,9 @@ private final class TapContext {
     let gesture: GestureStateMachine
     let targetKeycodes: Set<Int64>
     let useModifierMode: Bool
+    let onKeyDown: () -> Void
+    let onKeyUp: () -> Void
+    let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
     var debounceState = HotkeyDebounceState()
     /// CFMachPort reference for re-enabling the tap after system disables it.
@@ -294,11 +451,17 @@ private final class TapContext {
         gesture: GestureStateMachine,
         keycodes: Set<Int64>,
         modifierMode: Bool,
+        onKeyDown: @escaping () -> Void,
+        onKeyUp: @escaping () -> Void,
+        onCancel: @escaping () -> Void,
         onPasteLastTranscript: @escaping () -> Void
     ) {
         self.gesture = gesture
         targetKeycodes = keycodes
         useModifierMode = modifierMode
+        self.onKeyDown = onKeyDown
+        self.onKeyUp = onKeyUp
+        self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
     }
 }
@@ -343,7 +506,8 @@ private func hotkeyCallback(
         flags: event.flags,
         autorepeat: autorepeat,
         targetKeycodes: ctx.targetKeycodes,
-        useModifierMode: ctx.useModifierMode
+        useModifierMode: ctx.useModifierMode,
+        gestureIsActive: ctx.gesture.state != .idle
     )
     if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {
         NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
@@ -354,11 +518,15 @@ private func hotkeyCallback(
         break
     case .keyDown:
         DispatchQueue.main.async {
-            ctx.gesture.handleKeyDown()
+            ctx.onKeyDown()
         }
     case .keyUp:
         DispatchQueue.main.async {
-            ctx.gesture.handleKeyUp()
+            ctx.onKeyUp()
+        }
+    case .cancel:
+        DispatchQueue.main.async {
+            ctx.onCancel()
         }
     case .pasteLastTranscript:
         DispatchQueue.main.async {
@@ -382,14 +550,14 @@ private func hotkeyCallback(
 /// Manages CGEventTap for global hotkey detection.
 /// Matched hotkey events are consumed so F6 does not move focus in the target app.
 final class HotkeyManager {
-    static let defaultTargetKeycodes: Set<Int64> = [97, 177]
+    static let defaultTargetKeycodes: Set<Int64> = [79, 97, 177]
     static let defaultUsesModifierMode = false
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     /// Keycodes to listen for.
-    /// F6 standard = 97, F6 media = 177.
+    /// F18 relay = 79, F6 standard = 97, F6 media = 177.
     private var targetKeycodes = HotkeyManager.defaultTargetKeycodes
 
     /// Whether the hotkey requires Command while the function key still emits
@@ -402,6 +570,9 @@ final class HotkeyManager {
     private var tapContext: TapContext?
 
     /// Callback for Shift+F6 re-paste hotkey.
+    var onKeyDown: () -> Void
+    var onKeyUp: () -> Void
+    var onCancel: () -> Void
     var onPasteLastTranscript: () -> Void = {}
     private(set) var permissionStatus = HotkeyPermissionStatus(
         listenEventGranted: false,
@@ -410,6 +581,9 @@ final class HotkeyManager {
 
     init(gesture: GestureStateMachine) {
         self.gesture = gesture
+        onKeyDown = { gesture.handleKeyDown() }
+        onKeyUp = { gesture.handleKeyUp() }
+        onCancel = { gesture.cancel() }
     }
 
     deinit {
@@ -467,6 +641,9 @@ final class HotkeyManager {
             gesture: gesture,
             keycodes: targetKeycodes,
             modifierMode: useModifierMode,
+            onKeyDown: onKeyDown,
+            onKeyUp: onKeyUp,
+            onCancel: onCancel,
             onPasteLastTranscript: onPasteLastTranscript
         )
         tapContext = ctx

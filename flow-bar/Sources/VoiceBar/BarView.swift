@@ -99,6 +99,7 @@ struct BarView: View {
             }
         }
         .buttonStyle(.plain)
+        .contentShape(Capsule())
     }
 
     // MARK: - Expanded pill (full content)
@@ -110,14 +111,17 @@ struct BarView: View {
             if state.queueDepth > 1 {
                 queueBadge
             }
-            actionButtons
+            if !transcriptPreviewIsVisible {
+                actionButtons
+            }
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
+        .padding(.vertical, pillVerticalPadding)
         .frame(
             minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
             alignment: .leading
         )
+        .frame(height: pillFixedHeight, alignment: .leading)
         .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
@@ -141,15 +145,7 @@ struct BarView: View {
         }
         // No drop shadow — clean edges like Wispr Flow
         .opacity(1.0)
-        .fixedSize()
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { state.onPillSizeChange?(geo.size) }
-                    .onChange(of: geo.size.width) { _, _ in state.onPillSizeChange?(geo.size) }
-                    .onChange(of: geo.size.height) { _, _ in state.onPillSizeChange?(geo.size) }
-            }
-        )
+        .fixedSize(horizontal: false, vertical: true)
         .animation(Theme.pillTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .animation(Theme.pillTransition, value: state.queueDepth)
@@ -167,6 +163,7 @@ struct BarView: View {
                 isVocabularyPresented = false
             }
         }
+        .contentShape(Capsule())
         .primaryPillTapGesture(enabled: state.mode == .idle || state.mode == .error) {
             NSHapticFeedbackManager.defaultPerformer.perform(
                 .alignment, performanceTime: .now
@@ -365,36 +362,28 @@ struct BarView: View {
     // MARK: - Status text
 
     private var statusLabel: some View {
-        Text(statusText)
+        Group {
+            if transcriptPreviewIsVisible {
+                Text(statusText)
+                    .frame(width: transcriptPreviewWidth, alignment: .leading)
+            } else {
+                Text(statusText)
+            }
+        }
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white.opacity(0.9))
-            .lineLimit(1)
+            .lineLimit(statusLineLimit)
             .truncationMode(.tail)
             .contentTransition(.interpolate)
-            .frame(maxWidth: Theme.pillStatusMaxWidth, alignment: .leading)
-            .mask {
-                // Leading fade when text is trimmed — words ghost out to the left
-                if textIsTrimmed {
-                    HStack(spacing: 0) {
-                        LinearGradient(
-                            colors: [.clear, .white],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: 20)
-                        Color.white
-                    }
-                } else {
-                    Color.white
-                }
-            }
+            .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// Max words shown in the pill for speaking/transcript text.
-    private static let maxDisplayWords = 3
-
     private var statusText: String {
-        VoiceBarPresentation.liveStatusText(
+        if let transcriptPreviewText {
+            return transcriptPreviewText
+        }
+
+        return VoiceBarPresentation.liveStatusText(
             mode: state.mode,
             transcript: state.transcript,
             confirmationText: state.confirmationText,
@@ -408,18 +397,46 @@ struct BarView: View {
 
     /// Whether the displayed text was trimmed (needs leading fade).
     private var textIsTrimmed: Bool {
-        switch state.mode {
-        case .idle:
-            !state.transcript.isEmpty
-                && state.transcript.split(separator: " ").count > Self.maxDisplayWords
-        default:
-            false
-        }
+        transcriptPreviewIsVisible
     }
 
-    /// Return the last N words of a string (no ellipsis — leading fade handles it).
-    private static func lastWords(_ text: String) -> String {
-        VoiceBarPresentation.lastWords(text)
+    private var compactPillUsesFixedHeight: Bool {
+        state.mode != .speaking && !transcriptPreviewIsVisible && state.queueDepth <= 1
+    }
+
+    private var pillFixedHeight: CGFloat? {
+        if transcriptPreviewIsVisible {
+            return Theme.pillTranscriptPreviewHeight
+        }
+        if compactPillUsesFixedHeight {
+            return Theme.pillCompactHeight
+        }
+        return nil
+    }
+
+    private var pillVerticalPadding: CGFloat {
+        transcriptPreviewIsVisible ? 8 : 0
+    }
+
+    private var statusLineLimit: Int {
+        transcriptPreviewIsVisible ? 2 : 1
+    }
+
+    private var transcriptPreviewWidth: CGFloat {
+        Theme.transcriptPreviewWidth(for: statusText)
+    }
+
+    private var transcriptPreviewIsVisible: Bool {
+        transcriptPreviewText != nil
+    }
+
+    private var transcriptPreviewText: String? {
+        VoiceBarPresentation.transcriptPreviewText(
+            mode: state.mode,
+            confirmationText: state.confirmationText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker
+        )
     }
 
     // MARK: - Action buttons

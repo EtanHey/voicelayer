@@ -21,7 +21,6 @@ struct VoiceBarQueuePreview: Equatable {
 }
 
 enum VoiceBarPresentation {
-    private static let maxIdleWords = 3
     static let readyHotkeyHint = "F6 to talk"
 
     static func hotkeyPermissionHint(
@@ -53,10 +52,29 @@ enum VoiceBarPresentation {
 
     static func recordingContent(hotkeyPhase: HotkeyPhase) -> VoiceBarRecordingContent {
         VoiceBarRecordingContent(
-            statusText: hotkeyPhase == .holding ? "Release to send" : "",
+            statusText: "",
             showsWaveform: true,
-            usesPulsingLabelOpacity: hotkeyPhase == .holding
+            usesPulsingLabelOpacity: false
         )
+    }
+
+    static func isPanelDraggable(mode: VoiceMode) -> Bool {
+        false
+    }
+
+    static func transcriptPreviewText(
+        mode: VoiceMode,
+        confirmationText: String?,
+        commandModeState: CommandModeState?,
+        activeClipMarker: ClipMarkerState?
+    ) -> String? {
+        guard mode == .idle,
+              commandModeState == nil,
+              activeClipMarker == nil else {
+            return nil
+        }
+        let text = confirmationText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
     }
 
     static func idleStatusText(
@@ -78,10 +96,6 @@ enum VoiceBarPresentation {
             return "Tap again to lock"
         case .idle:
             break
-        }
-
-        if !transcript.isEmpty {
-            return lastWords(transcript)
         }
 
         return hotkeyEnabled ? readyHotkeyHint : "Enable hotkey"
@@ -140,9 +154,4 @@ enum VoiceBarPresentation {
         }
     }
 
-    static func lastWords(_ text: String) -> String {
-        let words = text.split(separator: " ")
-        if words.count <= maxIdleWords { return text }
-        return words.suffix(maxIdleWords).joined(separator: " ")
-    }
 }

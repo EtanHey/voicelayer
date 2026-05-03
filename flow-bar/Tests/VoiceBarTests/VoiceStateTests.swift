@@ -19,6 +19,27 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.pendingIntent?.id, sentCommand?["id"] as? String)
     }
 
+    func testPressToTalkRecordShowsRecordingImmediately() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        var sentCommand: [String: Any]?
+        var modes: [VoiceMode] = []
+
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+        state.onModeChange = { mode in
+            modes.append(mode)
+        }
+
+        state.record(pressToTalk: true)
+
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(modes, [.recording])
+        XCTAssertEqual(sentCommand?["cmd"] as? String, "record")
+        XCTAssertEqual(sentCommand?["press_to_talk"] as? Bool, true)
+    }
+
     func testPendingIntentClearsOnMatchingAck() throws {
         let state = VoiceState()
         var sentCommand: [String: Any]?
@@ -41,8 +62,9 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.mode, .idle)
     }
 
-    func testCancelIntentDoesNotTransitionLocally() {
+    func testCancelIntentExitsRecordingLocallyEvenWithoutDaemonAck() {
         let state = VoiceState()
+        state.setConnectionStatus(true)
         state.handleEvent([
             "type": "state",
             "state": "recording",
@@ -51,7 +73,7 @@ final class VoiceStateTests: XCTestCase {
 
         state.cancel()
 
-        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.mode, .idle)
     }
 
     func testStopWithoutDaemonResponseDoesNotFallbackToIdle() async {
