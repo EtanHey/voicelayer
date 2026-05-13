@@ -44,6 +44,44 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(savedSnapshots.last, ["persist this transcript"])
     }
 
+    func testFinalTranscriptionHistoryAccessoryRequestsPanelLayoutRefresh() {
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            transcriptionVocabularyLoader: { [] },
+            transcriptionVocabularyAliasLoader: { [] }
+        )
+
+        assertVoiceStateEventTriggersPanelLayoutRefresh(
+            [
+                "type": "transcription",
+                "text": "new idle history item",
+            ],
+            state: state
+        )
+    }
+
+    func testFinalTranscriptionVocabularyAccessoryRequestsPanelLayoutRefresh() {
+        var vocabularyTerms: [String] = []
+        var vocabularyAliases: [STTVocabularyAliasPreview] = []
+        let state = VoiceState(
+            recentTranscriptionsLoader: { ["already visible history"] },
+            recentTranscriptionsSaver: { _ in },
+            transcriptionVocabularyLoader: { vocabularyTerms },
+            transcriptionVocabularyAliasLoader: { vocabularyAliases }
+        )
+        vocabularyTerms = ["VoiceLayer"]
+        vocabularyAliases = [STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")]
+
+        assertVoiceStateEventTriggersPanelLayoutRefresh(
+            [
+                "type": "transcription",
+                "text": "refresh vocabulary",
+            ],
+            state: state
+        )
+    }
+
     func testRecordLeavesModeIdleUntilDaemonStateArrives() {
         let state = VoiceState()
         var sentCommand: [String: Any]?
@@ -253,6 +291,23 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pastedTexts, ["older history item"])
     }
 
+    func testRepasteTranscriptShowsRequestedHistoryItemInConfirmation() {
+        let state = VoiceState()
+        state.pasteConfirmationDelay = 0
+        state.transcript = "current unrelated transcript"
+
+        let expectation = expectation(description: "paste invoked")
+        state.pasteHandler = { _ in
+            expectation.fulfill()
+            return true
+        }
+
+        state.repasteTranscript("older history item")
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(state.confirmationText, "older history item")
+    }
+
     func testCopyTranscriptWritesRequestedHistoryItemToPasteboard() {
         let state = VoiceState()
 
@@ -377,7 +432,10 @@ final class VoiceStatePasteTests: XCTestCase {
             ),
         ])
         XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
+        XCTAssertEqual(
+            state.confirmationText,
+            "Sent paste — if nothing appeared, click input and press Shift+F6"
+        )
     }
 
     func testAutoPasteShowsUnverifiedMessageWhenNoFocusedInputWasCaptured() {

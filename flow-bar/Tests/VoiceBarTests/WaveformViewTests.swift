@@ -100,4 +100,43 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(WaveformMetrics.listeningTargetLevel(from: 0.55), 0)
         XCTAssertGreaterThan(WaveformMetrics.listeningTargetLevel(from: 0.59), 0)
     }
+
+    func testProcessingModeIsSymmetricAroundCenter() {
+        let time = 0.42
+        let left = WaveformMetrics.normalizedLevel(
+            mode: .processing,
+            audioLevel: nil,
+            time: time,
+            index: 1,
+            barCount: 7
+        )
+        let right = WaveformMetrics.normalizedLevel(
+            mode: .processing,
+            audioLevel: nil,
+            time: time,
+            index: 5,
+            barCount: 7
+        )
+
+        XCTAssertEqual(left, right, accuracy: 0.0001)
+    }
+
+    func testProcessingModeAnimatesWithoutAudioInput() {
+        let early = WaveformMetrics.normalizedLevel(
+            mode: .processing,
+            audioLevel: nil,
+            time: 0.1,
+            index: 3,
+            barCount: 7
+        )
+        let later = WaveformMetrics.normalizedLevel(
+            mode: .processing,
+            audioLevel: nil,
+            time: 0.6,
+            index: 3,
+            barCount: 7
+        )
+
+        XCTAssertNotEqual(early, later)
+    }
 }

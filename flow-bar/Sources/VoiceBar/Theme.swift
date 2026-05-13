@@ -31,6 +31,9 @@ enum Theme {
     static let pillTranscriptPreviewWidth: CGFloat = 330
     static let pillTranscriptPreviewHeight: CGFloat = 70
     static let pillQueueWidth: CGFloat = 300
+    static let pillActionButtonSize: CGFloat = 26
+    static let pillActionButtonSpacing: CGFloat = 2
+    static let pillSpeakingQueueWidth: CGFloat = 412
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
     static let panelWidth: CGFloat = 420
@@ -41,6 +44,60 @@ enum Theme {
         guard !trimmed.isEmpty else { return 0 }
         let estimated = CGFloat(trimmed.count) * 6.2
         return min(pillTranscriptPreviewWidth, max(120, estimated))
+    }
+
+    static func compactStatusWidth(for text: String) -> CGFloat {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        let estimated = CGFloat(trimmed.count) * 6.6
+        return min(220, max(64, estimated))
+    }
+
+    static func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
+        let textWidth = compactStatusWidth(for: statusText)
+        let safeButtonCount = max(0, accessoryButtonCount)
+        let accessoryWidth: CGFloat
+        if safeButtonCount > 0 {
+            accessoryWidth =
+                (CGFloat(safeButtonCount) * pillActionButtonSize) +
+                (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing) +
+                8
+        } else {
+            accessoryWidth = 0
+        }
+        return min(panelWidth - (panelPadding * 2), max(190, textWidth + 126 + accessoryWidth))
+    }
+
+    static let hotkeyTransitionPillWidth: CGFloat = compactPillWidth(for: "Tap again to lock")
+
+    static func pillContentWidth(
+        for mode: VoiceMode,
+        statusText: String,
+        idleAccessoryButtonCount: Int = 0,
+        queueItemCount: Int = 0
+    ) -> CGFloat {
+        switch mode {
+        case .recording:
+            return 154
+        case .transcribing:
+            return 102
+        case .speaking:
+            return queueItemCount > 1 ? pillSpeakingQueueWidth : 340
+        case .error:
+            return 210
+        case .idle, .disconnected:
+            let statusWidth = compactPillWidth(
+                for: statusText,
+                accessoryButtonCount: mode == .idle ? idleAccessoryButtonCount : 0
+            )
+            return VoiceBarPresentation.isHotkeyTransitionStatus(statusText)
+                ? max(statusWidth, hotkeyTransitionPillWidth)
+                : statusWidth
+        }
+    }
+
+    static func transcriptPreviewPillWidth(for text: String) -> CGFloat {
+        min(panelWidth - (panelPadding * 2), transcriptPreviewWidth(for: text) + 82)
     }
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.

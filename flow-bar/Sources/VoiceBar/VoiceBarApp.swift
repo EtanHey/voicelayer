@@ -154,6 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceState.onModeChange = { [weak self] mode in
             self?.handleVoiceModeChange(mode)
         }
+        voiceState.onPanelLayoutChange = { [weak self] in
+            self?.applyPanelLayout(animated: true)
+        }
         voiceState.diagnosticLogger = { [weak self] event, details in
             self?.logDiagnostic(event: event, details: details)
         }
@@ -167,21 +170,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureWakeRecovery()
 
         // Floating pill
+        let initialLayout = Self.panelLayout(for: voiceState)
         let barView = BarView(state: voiceState, commandRouter: commandRouter)
-        let hosting = PillHostingView(
-            rootView: barView.frame(
-                width: Theme.panelWidth,
-                height: Theme.panelHeight,
-                alignment: .top
-            )
-        )
+        let hosting = PillHostingView(rootView: barView)
         hosting.activeHitRectProvider = { [weak self] in
-            Self.panelHitRect(for: self?.voiceState)
+            Self.panelLayout(for: self?.voiceState).activeHitRect
         }
         hosting.frame = NSRect(
             x: 0, y: 0,
-            width: Theme.panelWidth,
-            height: Theme.panelHeight
+            width: initialLayout.panelSize.width,
+            height: initialLayout.panelSize.height
         )
 
         // Load saved position
@@ -197,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitRectProvider = { [weak self] in
-            Self.panelHitRect(for: self?.voiceState)
+            Self.panelLayout(for: self?.voiceState).activeHitRect
         }
         pill.positionOnScreen(
             horizontalOffset: horizontalOffset,
@@ -206,6 +204,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
+        applyPanelLayout(animated: false)
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
         }
@@ -439,6 +438,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
         panel?.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: mode)
+        applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -450,8 +450,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func panelHitRect(for state: VoiceState?) -> NSRect {
-        let compactHeight = Theme.pillCompactHeight + (Theme.panelPadding * 2)
+    private func applyPanelLayout(animated: Bool) {
+        guard let panel else { return }
+        let targetScreen = panel.screen ?? NSScreen.main
+        guard let visibleFrame = targetScreen?.visibleFrame else { return }
+        let layout = Self.panelLayout(for: voiceState)
+        let plan = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: horizontalOffset,
+            verticalOffset: verticalOffset,
+            topPadding: Theme.topPadding,
+            pillSize: layout.panelSize,
+            from: previousVoiceMode,
+            to: currentVoiceMode,
+            padding: 0
+        )
+        panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
+        panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
+    }
+
+    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
         let mode = state?.mode ?? .idle
         let previewText = VoiceBarPresentation.transcriptPreviewText(
             mode: mode,
@@ -459,43 +477,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             commandModeState: state?.commandModeState,
             activeClipMarker: state?.activeClipMarker
         )
-        let hasTranscriptPreview = previewText != nil
-        let height = hasTranscriptPreview ? Theme.pillTranscriptPreviewHeight : compactHeight
-        let width = panelHitWidth(
+        let statusText = VoiceBarPresentation.liveStatusText(
+            mode: mode,
+            transcript: state?.transcript ?? "",
+            confirmationText: state?.confirmationText,
+            hotkeyPhase: state?.hotkeyPhase ?? .idle,
+            hotkeyEnabled: state?.hotkeyEnabled ?? false,
+            errorMessage: state?.errorMessage,
+            commandModeState: state?.commandModeState,
+            activeClipMarker: state?.activeClipMarker
+        )
+        return VoiceBarPanelLayout.make(
             mode: mode,
             isCollapsed: state?.isCollapsed ?? false,
-            hasTranscriptPreview: hasTranscriptPreview,
-            transcript: previewText ?? ""
+            previewText: previewText,
+            statusText: statusText,
+            idleAccessoryButtonCount: VoiceBarPresentation.idleAccessoryButtonCount(
+                recentTranscriptions: state?.recentTranscriptions ?? [],
+                transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
+                transcriptionVocabularyAliases: state?.transcriptionVocabularyAliases ?? [],
+                canReplay: state?.canReplay ?? false
+            ),
+            queueItemCount: state?.queueItems.count ?? 0,
+            padding: Theme.panelPadding
         )
-        let x = (Theme.panelWidth - width) / 2
-        let y = Theme.panelHeight - height
-        return NSRect(x: x, y: y, width: width, height: height)
-    }
-
-    private static func panelHitWidth(
-        mode: VoiceMode,
-        isCollapsed: Bool,
-        hasTranscriptPreview: Bool,
-        transcript: String
-    ) -> CGFloat {
-        if isCollapsed {
-            return 30
-        }
-        if hasTranscriptPreview {
-            return min(Theme.panelWidth, Theme.transcriptPreviewWidth(for: transcript) + 58)
-        }
-        switch mode {
-        case .recording:
-            return 154
-        case .transcribing:
-            return 150
-        case .speaking:
-            return 340
-        case .error:
-            return 210
-        case .idle, .disconnected:
-            return Theme.pillCompactWidth + 14
-        }
     }
 
     private func logDiagnostic(event: String, details: [String: String] = [:]) {

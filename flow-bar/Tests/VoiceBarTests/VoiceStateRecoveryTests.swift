@@ -60,4 +60,13 @@ final class VoiceStateRecoveryTests: XCTestCase {
         XCTAssertEqual(state.mode, .error)
         XCTAssertEqual(state.errorMessage, "Microphone input looks silent")
     }
+
+    func testErrorEventRequestsPanelLayoutRefresh() {
+        assertVoiceStateEventTriggersPanelLayoutRefresh([
+            "type": "error",
+            "message": "Microphone input looks silent",
+            "recoverable": true,
+            "show_during_bar_recording": true,
+        ])
+    }
 }

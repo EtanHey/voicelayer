@@ -168,14 +168,20 @@ enum VoiceBarDaemonLivenessProbe {
 /// Pattern from Ollama: menu bar app spawns server, monitors via terminationHandler,
 /// restarts on crash with exponential backoff.
 final class VoiceBarDaemonController {
+    typealias RestartScheduler = (_ delay: TimeInterval, _ block: @escaping () -> Void) -> Void
+
+    private static let stabilityResetDelay: TimeInterval = 300
+
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
     private let livenessProbe: () -> Bool
     private let processFactory: () -> Process
+    private let restartScheduler: RestartScheduler
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
     private var restartCount = 0
+    private var isRestartScheduled = false
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -199,12 +205,16 @@ final class VoiceBarDaemonController {
         livenessProbe: @escaping () -> Bool = {
             VoiceBarDaemonLivenessProbe.isDaemonRunning()
         },
-        processFactory: @escaping () -> Process = { Process() }
+        processFactory: @escaping () -> Process = { Process() },
+        restartScheduler: @escaping RestartScheduler = { delay, block in
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+        }
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
         self.livenessProbe = livenessProbe
         self.processFactory = processFactory
+        self.restartScheduler = restartScheduler
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
@@ -230,6 +240,13 @@ final class VoiceBarDaemonController {
     }
 
     private func launch() -> VoiceBarDaemonActivationResult {
+        guard !VoiceLayerPaths.isVoicelayerDisabled() else {
+            process = nil
+            ownsLaunchedProcess = false
+            NSLog("[VoiceBar] VoiceLayer disabled — refusing daemon launch")
+            return .unavailable
+        }
+
         guard let executableURL = executableURLProvider(),
               let configuration = configurationProvider(executableURL)
         else {
@@ -247,29 +264,25 @@ final class VoiceBarDaemonController {
         env["PATH"] = Self.daemonPATH
         proc.environment = env
 
-        // Monitor: restart on crash (non-zero exit), don't restart on clean exit
+        // Monitor: restart on any unexpected exit. A clean daemon exit is only
+        // intentional when VoiceLayer was explicitly disabled.
         proc.terminationHandler = { [weak self] terminated in
-            guard let self, !stopping else { return }
             let code = terminated.terminationStatus
             let reason = terminated.terminationReason
+            DispatchQueue.main.async { [weak self, terminated] in
+                guard let self, !self.stopping else { return }
+                if self.process === terminated {
+                    self.process = nil
+                    self.ownsLaunchedProcess = false
+                }
 
-            if code == 0 {
-                NSLog("[VoiceBar] Daemon exited cleanly (code 0)")
-                ownsLaunchedProcess = false
-                return
-            }
+                if VoiceLayerPaths.isVoicelayerDisabled() {
+                    NSLog("[VoiceBar] Daemon exited (code %d) while VoiceLayer disabled — not restarting", code)
+                    return
+                }
 
-            NSLog("[VoiceBar] Daemon crashed (code %d, reason %d) — scheduling restart #%d",
-                  code, reason.rawValue, restartCount + 1)
-
-            // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
-            restartCount += 1
-            let delay = min(15.0, pow(2.0, Double(restartCount - 1)))
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, !stopping else { return }
-                NSLog("[VoiceBar] Restarting daemon (attempt %d, after %.0fs)", restartCount, delay)
-                _ = launch()
+                let exitKind = code == 0 ? "exited unexpectedly" : "crashed"
+                self.scheduleRestart(exitKind: exitKind, code: code, reason: reason)
             }
         }
 
@@ -277,6 +290,8 @@ final class VoiceBarDaemonController {
             try proc.run()
             process = proc
             ownsLaunchedProcess = true
+            isRestartScheduled = false
+            scheduleStabilityReset(for: proc)
             NSLog("[VoiceBar] Daemon launched as child (PID %d, PPID %d)",
                   proc.processIdentifier, ProcessInfo.processInfo.processIdentifier)
             return .launched
@@ -288,8 +303,68 @@ final class VoiceBarDaemonController {
         }
     }
 
+    private func scheduleRestart(
+        exitKind: String,
+        code: Int32,
+        reason: Process.TerminationReason
+    ) {
+        guard !VoiceLayerPaths.isVoicelayerDisabled() else {
+            isRestartScheduled = false
+            ownsLaunchedProcess = false
+            NSLog("[VoiceBar] Daemon %@ (code %d, reason %d) while VoiceLayer disabled — not restarting",
+                  exitKind, code, reason.rawValue)
+            return
+        }
+
+        guard !isRestartScheduled else {
+            NSLog("[VoiceBar] Daemon %@ (code %d, reason %d) — restart already scheduled",
+                  exitKind, code, reason.rawValue)
+            return
+        }
+        isRestartScheduled = true
+
+        NSLog("[VoiceBar] Daemon %@ (code %d, reason %d) — scheduling restart #%d",
+              exitKind, code, reason.rawValue, restartCount + 1)
+
+        // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
+        restartCount += 1
+        let delay = min(15.0, pow(2.0, Double(restartCount - 1)))
+
+        restartScheduler(delay) { [weak self] in
+            guard let self, !stopping else { return }
+            isRestartScheduled = false
+            if let process, process.isRunning {
+                NSLog("[VoiceBar] Skipping daemon restart; child process is already running")
+                return
+            }
+            NSLog("[VoiceBar] Restarting daemon (attempt %d, after %.0fs)", restartCount, delay)
+            let result = launch()
+            if result == .unavailable, !VoiceLayerPaths.isVoicelayerDisabled() {
+                NSLog("[VoiceBar] Daemon restart attempt failed — rescheduling")
+                scheduleRestart(exitKind: "relaunch failed", code: -1, reason: .exit)
+            }
+        }
+    }
+
+    private func scheduleStabilityReset(for launchedProcess: Process) {
+        restartScheduler(Self.stabilityResetDelay) { [weak self, weak launchedProcess] in
+            guard let self,
+                  !stopping,
+                  let launchedProcess,
+                  process === launchedProcess,
+                  launchedProcess.isRunning,
+                  restartCount > 0
+            else {
+                return
+            }
+            restartCount = 0
+            NSLog("[VoiceBar] Daemon stable for %.0fs — reset restart counter", Self.stabilityResetDelay)
+        }
+    }
+
     func stop() {
         stopping = true
+        isRestartScheduled = false
         guard ownsLaunchedProcess, let process else { return }
         if process.isRunning {
             process.terminate()

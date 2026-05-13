@@ -56,4 +56,41 @@ final class VoiceStateCommandModeTests: XCTestCase {
         XCTAssertEqual(state.activeClipMarker?.label, "Action item")
         XCTAssertEqual(state.activeClipMarker?.source, "command")
     }
+
+    func testCommandModeEventRequestsPanelLayoutRefresh() {
+        assertVoiceStateEventTriggersPanelLayoutRefresh([
+            "type": "command_mode",
+            "phase": "capturing",
+            "operation": "replace_selection",
+            "prompt": "Rewrite selection",
+        ])
+    }
+
+    func testClipMarkerEventRequestsPanelLayoutRefresh() {
+        assertVoiceStateEventTriggersPanelLayoutRefresh([
+            "type": "clip_marker",
+            "marker_id": "clip-22",
+            "label": "Action item",
+            "source": "command",
+            "status": "marked",
+        ])
+    }
+}
+
+extension XCTestCase {
+    func assertVoiceStateEventTriggersPanelLayoutRefresh(
+        _ event: [String: Any],
+        state: VoiceState = VoiceState(),
+        timeout: TimeInterval = 1
+    ) {
+        let layoutChanged = expectation(description: "panel layout refreshed")
+        layoutChanged.assertForOverFulfill = false
+        state.onPanelLayoutChange = {
+            layoutChanged.fulfill()
+        }
+
+        state.handleEvent(event)
+
+        wait(for: [layoutChanged], timeout: timeout)
+    }
 }

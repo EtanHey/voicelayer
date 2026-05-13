@@ -136,7 +136,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testLiveStatusTextShowsTranscribingDuringTranscribing() {
+    func testLiveStatusTextHidesTranscribingLabelDuringTranscribing() {
         XCTAssertEqual(
             VoiceBarPresentation.liveStatusText(
                 mode: .transcribing,
@@ -148,7 +148,23 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            "Transcribing..."
+            ""
+        )
+    }
+
+    func testDisconnectedStatusDoesNotShowHotkeyPrompts() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .disconnected,
+                transcript: "",
+                confirmationText: nil,
+                hotkeyPhase: .awaitingSecondTap,
+                hotkeyEnabled: true,
+                errorMessage: nil,
+                commandModeState: nil,
+                activeClipMarker: nil
+            ),
+            "Disconnected"
         )
     }
 
@@ -207,6 +223,24 @@ final class VoiceBarPresentationTests: XCTestCase {
                 )
             )
         )
+    }
+
+    func testTranscriptPreviewLayoutKeepsShortConfirmationsCompact() {
+        let short = VoiceBarPresentation.transcriptPreviewLayout(for: "Short sentence into an input.")
+
+        XCTAssertEqual(short.height, Theme.pillCompactHeight)
+        XCTAssertEqual(short.lineLimit, 1)
+        XCTAssertFalse(short.isMultiline)
+    }
+
+    func testTranscriptPreviewLayoutUsesTwoLinesForLongConfirmations() {
+        let long = VoiceBarPresentation.transcriptPreviewLayout(
+            for: "This is a long transcript preview that should be allowed to wrap onto two lines instead of making the short confirmation state feel oversized."
+        )
+
+        XCTAssertEqual(long.height, Theme.pillTranscriptPreviewHeight)
+        XCTAssertEqual(long.lineLimit, 2)
+        XCTAssertTrue(long.isMultiline)
     }
 
     func testLiveStatusTextPrefersCommandModeAndClipMarkerStatus() {

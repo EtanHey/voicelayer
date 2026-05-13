@@ -36,6 +36,35 @@ final class VoiceStateQueueTests: XCTestCase {
         XCTAssertEqual(state.queueItems[1].progress, 0.0, accuracy: 0.001)
     }
 
+    func testQueueItemCountChangeRequestsPanelLayoutRefresh() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "queue",
+            "depth": 2,
+        ])
+        assertVoiceStateEventTriggersPanelLayoutRefresh(
+            [
+                "type": "queue",
+                "depth": 2,
+                "items": [
+                    [
+                        "text": "Current line",
+                        "voice": "jenny",
+                        "priority": "normal",
+                        "is_current": true,
+                    ],
+                    [
+                        "text": "Queued line",
+                        "voice": "jenny",
+                        "priority": "high",
+                        "is_current": false,
+                    ],
+                ],
+            ],
+            state: state
+        )
+    }
+
     func testHandleQueueClampsInvalidProgress() {
         let state = VoiceState()
 

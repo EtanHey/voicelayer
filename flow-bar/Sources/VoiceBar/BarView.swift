@@ -47,6 +47,27 @@ struct PulsingStatusLabel: View {
     }
 }
 
+struct ProcessingSpinner: View {
+    private let size: CGFloat = 14
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            let angle = timeline.date.timeIntervalSinceReferenceDate * 360
+
+            Circle()
+                .trim(from: 0.08, to: 0.74)
+                .stroke(
+                    Theme.speakingColor.opacity(0.98),
+                    style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
+                )
+                .rotationEffect(.degrees(angle))
+            .frame(width: size, height: size)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Bar View
 
 struct BarView: View {
@@ -121,21 +142,21 @@ struct BarView: View {
             minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
             alignment: .leading
         )
-        .frame(height: pillFixedHeight, alignment: .leading)
+        .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
         .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
-            if state.mode == .recording {
-                Capsule()
-                    .fill(Theme.recordingColor.opacity(0.12))
-                    .allowsHitTesting(false)
-            }
+            Capsule()
+                .fill(stateWashColor)
+                .allowsHitTesting(false)
+                .animation(Theme.modeTransition, value: state.mode)
         }
         .overlay {
             // State-dependent border glow
             Capsule()
                 .strokeBorder(borderColor, lineWidth: borderWidth)
                 .allowsHitTesting(false)
+                .animation(Theme.modeTransition, value: state.mode)
         }
         .overlay {
             // Subtle inner edge for depth
@@ -149,7 +170,7 @@ struct BarView: View {
         .animation(Theme.pillTransition, value: state.mode)
         .animation(Theme.connectionTransition, value: state.isConnected)
         .animation(Theme.pillTransition, value: state.queueDepth)
-        .animation(Theme.pillTransition, value: state.hotkeyPhase)
+        .animation(Theme.modeTransition, value: state.hotkeyPhase)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
@@ -186,7 +207,8 @@ struct BarView: View {
 
     private var borderColor: Color {
         switch state.mode {
-        case .recording: Theme.recordingColor.opacity(0.5)
+        case .recording: Theme.recordingColor.opacity(0.50)
+        case .transcribing: Theme.speakingColor.opacity(0.48)
         case .speaking: Theme.speakingColor.opacity(0.3)
         case .error: Theme.errorColor.opacity(0.5)
         case .disconnected: Theme.errorColor.opacity(0.35)
@@ -197,8 +219,19 @@ struct BarView: View {
     private var borderWidth: CGFloat {
         switch state.mode {
         case .recording, .error, .disconnected: 1.5
-        case .speaking: 1.0
+        case .speaking, .transcribing: 1.0
         default: 0
+        }
+    }
+
+    private var stateWashColor: Color {
+        switch state.mode {
+        case .recording:
+            Theme.recordingColor.opacity(0.12)
+        case .transcribing:
+            Theme.speakingColor.opacity(0.10)
+        default:
+            .clear
         }
     }
 
@@ -208,6 +241,8 @@ struct BarView: View {
     private var leadingIndicator: some View {
         if state.mode == .recording {
             PulsingDot()
+        } else if state.mode == .transcribing {
+            ProcessingSpinner()
         } else {
             Circle()
                 .fill(state.mode == .disconnected ? Theme.errorColor : Color.green)
@@ -277,6 +312,9 @@ struct BarView: View {
                         statusLabel
                     }
                 }
+            case .transcribing:
+                WaveformView(mode: .processing)
+                    .accessibilityLabel("Transcribing")
             default:
                 statusIcon
                 statusLabel
@@ -342,9 +380,11 @@ struct BarView: View {
 
     private var statusIcon: some View {
         Image(systemName: iconName)
-            .font(.system(size: 14, weight: .semibold))
+            .font(.system(size: transcriptPreviewIsVisible ? 16 : 14, weight: .semibold))
             .foregroundStyle(Theme.stateColor(for: state.mode))
-            .frame(width: 18)
+            .frame(width: transcriptPreviewIsVisible ? 22 : 18)
+            .fixedSize()
+            .layoutPriority(2)
             .contentTransition(.interpolate)
     }
 
@@ -354,7 +394,7 @@ struct BarView: View {
         case .disconnected: "bolt.horizontal.circle.fill"
         case .speaking: "speaker.wave.2.fill"
         case .recording: "waveform"
-        case .transcribing: "text.bubble"
+        case .transcribing: "waveform"
         case .error: "exclamationmark.triangle.fill"
         }
     }
@@ -374,8 +414,9 @@ struct BarView: View {
             .foregroundStyle(.white.opacity(0.9))
             .lineLimit(statusLineLimit)
             .truncationMode(.tail)
-            .contentTransition(.interpolate)
+            .contentTransition(.opacity)
             .fixedSize(horizontal: false, vertical: true)
+            .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -405,8 +446,8 @@ struct BarView: View {
     }
 
     private var pillFixedHeight: CGFloat? {
-        if transcriptPreviewIsVisible {
-            return Theme.pillTranscriptPreviewHeight
+        if let transcriptPreviewLayout {
+            return transcriptPreviewLayout.height
         }
         if compactPillUsesFixedHeight {
             return Theme.pillCompactHeight
@@ -414,12 +455,25 @@ struct BarView: View {
         return nil
     }
 
+    private var pillFixedWidth: CGFloat? {
+        if let transcriptPreviewText {
+            return Theme.transcriptPreviewPillWidth(for: transcriptPreviewText)
+        }
+
+        return Theme.pillContentWidth(
+            for: state.mode,
+            statusText: statusText,
+            idleAccessoryButtonCount: idleAccessoryButtonCount,
+            queueItemCount: state.queueItems.count
+        )
+    }
+
     private var pillVerticalPadding: CGFloat {
-        transcriptPreviewIsVisible ? 8 : 0
+        transcriptPreviewLayout?.isMultiline == true ? 8 : 0
     }
 
     private var statusLineLimit: Int {
-        transcriptPreviewIsVisible ? 2 : 1
+        transcriptPreviewLayout?.lineLimit ?? 1
     }
 
     private var transcriptPreviewWidth: CGFloat {
@@ -430,12 +484,25 @@ struct BarView: View {
         transcriptPreviewText != nil
     }
 
+    private var transcriptPreviewLayout: VoiceBarTranscriptPreviewLayout? {
+        transcriptPreviewText.map(VoiceBarPresentation.transcriptPreviewLayout(for:))
+    }
+
     private var transcriptPreviewText: String? {
         VoiceBarPresentation.transcriptPreviewText(
             mode: state.mode,
             confirmationText: state.confirmationText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker
+        )
+    }
+
+    private var idleAccessoryButtonCount: Int {
+        VoiceBarPresentation.idleAccessoryButtonCount(
+            recentTranscriptions: state.recentTranscriptions,
+            transcriptionVocabularyTerms: state.transcriptionVocabularyTerms,
+            transcriptionVocabularyAliases: state.transcriptionVocabularyAliases,
+            canReplay: state.canReplay
         )
     }
 

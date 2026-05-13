@@ -4,9 +4,10 @@
 //   idle           — gentle breathing, barely visible
 //   listening      — minimal bars until real audio arrives, then audio-driven
 //   speechDetected — active, lively movement
+//   processing     — blue synthetic motion while STT runs
 //
-// Uses TimelineView at 60fps with golden-ratio phase offsets
-// so bars never synchronize. Center bars are "louder" for a natural arc.
+// Uses TimelineView at 60fps. Recording modes stay organic; processing mode
+// is intentionally symmetrical/mechanical so it reads as compute, not speech.
 
 import SwiftUI
 
@@ -16,6 +17,7 @@ enum WaveformMode: String, CaseIterable {
     case idle
     case listening
     case speechDetected
+    case processing
 }
 
 // MARK: - Waveform View
@@ -83,7 +85,7 @@ struct WaveformView: View {
         switch mode {
         case .listening:
             listeningEnvelopeLevel
-        case .idle, .speechDetected:
+        case .idle, .speechDetected, .processing:
             audioLevel
         }
     }
@@ -138,6 +140,8 @@ enum WaveformMetrics {
         let normalized: Double = switch mode {
         case .idle:
             idleLevel(time: time, phaseOffset: phaseOffset, centerWeight: centerWeight)
+        case .processing:
+            processingLevel(time: time, index: index, barCount: barCount, centerWeight: centerWeight)
         case .listening:
             if let level = audioLevel, level > 0 {
                 audioLevelDriven(
@@ -196,6 +200,20 @@ enum WaveformMetrics {
         return base + fast + medium + slow + pulse + jitter
     }
 
+    private static func processingLevel(
+        time: Double,
+        index: Int,
+        barCount: Int,
+        centerWeight: Double
+    ) -> Double {
+        let center = Double(barCount - 1) / 2.0
+        let distanceFromCenter = abs(Double(index) - center)
+        let normalizedDistance = center == 0 ? 0 : distanceFromCenter / center
+        let inwardOutward = sin(time * 4.8 - normalizedDistance * .pi) * 0.5 + 0.5
+        let centerPulse = sin(time * 2.4) * 0.5 + 0.5
+        return 0.12 + inwardOutward * 0.38 + centerPulse * 0.16 * centerWeight
+    }
+
     private static func audioLevelDriven(
         _ level: Double,
         time: Double,
@@ -231,6 +249,7 @@ private struct WaveformBar: View {
             .fill(color)
             .frame(height: height)
             .shadow(color: color.opacity(glowOpacity), radius: glowRadius, y: 0)
+            .animation(.easeInOut(duration: 0.22), value: mode)
     }
 
     // MARK: - Height Calculation
@@ -251,6 +270,7 @@ private struct WaveformBar: View {
     private var barColor: Color {
         switch mode {
         case .idle: Theme.idleColor
+        case .processing: Theme.speakingColor
         case .listening: Theme.recordingColor
         case .speechDetected: Theme.recordingColor
         }
@@ -259,6 +279,7 @@ private struct WaveformBar: View {
     private var glowOpacity: Double {
         switch mode {
         case .idle: 0
+        case .processing: 0.35
         case .listening: 0.25
         case .speechDetected: 0.45
         }
@@ -267,6 +288,7 @@ private struct WaveformBar: View {
     private var glowRadius: CGFloat {
         switch mode {
         case .idle: 0
+        case .processing: 4
         case .listening: 3
         case .speechDetected: 5
         }

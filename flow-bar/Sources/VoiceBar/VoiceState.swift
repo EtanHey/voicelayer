@@ -72,7 +72,9 @@ final class VoiceState {
     private static let maxVocabularyAliases = 512
 
     // UI-bound properties -- all mutations must happen on the main thread.
-    var mode: VoiceMode = .idle
+    var mode: VoiceMode = .idle {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != mode) }
+    }
     var statusText: String = ""
     var transcript: String = ""
     var speechDetected: Bool = false
@@ -84,7 +86,9 @@ final class VoiceState {
     var silenceMode: String? // "quick" | "standard" | "thoughtful"
 
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
-    var confirmationText: String?
+    var confirmationText: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != confirmationText) }
+    }
 
     /// Real-time audio level (0.0–1.0) from RMS events.
     var audioLevel: Double?
@@ -99,11 +103,17 @@ final class VoiceState {
     var canReplay: Bool = false
 
     /// Recent transcription history with the newest item first.
-    var recentTranscriptions: [String] = []
+    var recentTranscriptions: [String] = [] {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptions.isEmpty) }
+    }
 
     /// Active STT vocabulary hints loaded from the daemon snapshot.
-    var transcriptionVocabularyTerms: [String] = []
-    var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = []
+    var transcriptionVocabularyTerms: [String] = [] {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
+    }
+    var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = [] {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty) }
+    }
 
     /// Latest completed transcript safe for re-paste/copy actions.
     var latestReusableTranscript: String {
@@ -111,17 +121,29 @@ final class VoiceState {
     }
 
     /// Total queued + currently playing TTS items.
-    var queueDepth: Int = 0
-    var queueItems: [QueueItemState] = []
-    var commandModeState: CommandModeState?
-    var activeClipMarker: ClipMarkerState?
+    var queueDepth: Int = 0 {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != queueDepth) }
+    }
+    var queueItems: [QueueItemState] = [] {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
+    }
+    var commandModeState: CommandModeState? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != commandModeState) }
+    }
+    var activeClipMarker: ClipMarkerState? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != activeClipMarker) }
+    }
 
     /// Global hotkey availability and live gesture hint state.
     var hotkeyEnabled: Bool = false
-    var hotkeyPhase: HotkeyPhase = .idle
+    var hotkeyPhase: HotkeyPhase = .idle {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != hotkeyPhase) }
+    }
 
     /// Whether the pill is collapsed (idle for too long).
-    var isCollapsed: Bool = false
+    var isCollapsed: Bool = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != isCollapsed) }
+    }
 
     /// Whether the mouse is hovering over the pill.
     var isHovering: Bool = false
@@ -220,6 +242,7 @@ final class VoiceState {
 
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     var onModeChange: ((VoiceMode) -> Void)?
+    var onPanelLayoutChange: (() -> Void)?
     var diagnosticLogger: ((String, [String: String]) -> Void)?
     var transcriptionTimeout: Duration = .seconds(30)
 
@@ -856,7 +879,8 @@ final class VoiceState {
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
             finishPasteConfirmation(
-                outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage)
+                outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage),
+                text: text
             )
             return
         } else {
@@ -867,7 +891,7 @@ final class VoiceState {
                     "plan": String(describing: plan),
                     "hasCapturedInsertion": boolString(insertionHandler != nil),
                 ])
-                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage))
+                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
                 return
             }
 
@@ -894,7 +918,7 @@ final class VoiceState {
                             "plan": String(describing: plan),
                             "targetApp": targetBundleID,
                         ])
-                        finishPasteConfirmation(outcome: .insertedAtCursor)
+                        finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
                         return
                     }
 
@@ -919,9 +943,9 @@ final class VoiceState {
                     finishPasteConfirmation(
                         outcome: Self.pasteOutcome(
                             pasted: pasted,
-                            plan: plan,
-                            hadCapturedInsertion: insertionHandler != nil
-                        )
+                            plan: plan
+                        ),
+                        text: text
                     )
                 }
             }
@@ -936,11 +960,10 @@ final class VoiceState {
 
     private static func pasteOutcome(
         pasted: Bool,
-        plan: VoicePastePlan,
-        hadCapturedInsertion: Bool
+        plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(Self.genericPasteFailureMessage) }
-        if plan == .autoPaste, !hadCapturedInsertion {
+        if plan == .autoPaste {
             return .unverifiedClipboardPaste
         }
         return .pasted
@@ -970,15 +993,15 @@ final class VoiceState {
         }
     }
 
-    private func finishPasteConfirmation(outcome: VoicePasteOutcome) {
+    private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
         logDiagnostic("paste_confirmation", details: [
             "outcome": String(describing: outcome),
         ])
         switch outcome {
         case .insertedAtCursor:
-            showConfirmation(transcript, duration: 5.0)
+            showConfirmation(text, duration: 5.0)
         case .pasted:
-            showConfirmation(transcript, duration: 5.0)
+            showConfirmation(text, duration: 5.0)
         case .unverifiedClipboardPaste:
             showConfirmation(Self.unverifiedClipboardPasteMessage, duration: 5.0)
         case let .failed(message):
@@ -1015,6 +1038,13 @@ final class VoiceState {
 
     private func boolString(_ value: Bool) -> String {
         value ? "true" : "false"
+    }
+
+    private func notifyPanelLayoutChangedIfNeeded(_ changed: Bool) {
+        guard changed else { return }
+        DispatchQueue.main.async { [weak self] in
+            self?.onPanelLayoutChange?()
+        }
     }
 
     private func handleAckEvent(_ event: [String: Any]) {

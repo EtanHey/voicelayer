@@ -26,8 +26,8 @@ final class FloatingPillPanel: NSPanel {
         super.init(
             contentRect: NSRect(
                 x: 0, y: 0,
-                width: Theme.panelWidth,
-                height: Theme.panelHeight
+                width: max(content.frame.width, 1),
+                height: max(content.frame.height, 1)
             ),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,

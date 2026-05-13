@@ -95,6 +95,157 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
+    func testUnexpectedCleanExitSchedulesRelaunch() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 0
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testCrashWhileDisabledDoesNotScheduleRelaunch() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        setenv("DISABLE_VOICELAYER", "1", 1)
+        defer { unsetenv("DISABLE_VOICELAYER") }
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { !controller.ownsLaunchedProcess })
+
+        XCTAssertTrue(scheduledBlocks.filter { $0.delay < 300 }.isEmpty)
+        XCTAssertFalse(secondProcess.didRun)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
+    }
+
+    func testFailedRestartAttemptReschedulesWithBackoff() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var launchConfiguration: VoiceBarDaemonLaunchConfiguration? = testLaunchConfiguration()
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in launchConfiguration },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        launchConfiguration = nil
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        XCTAssertEqual(restartDelays, [1, 2])
+        XCTAssertFalse(secondProcess.didRun)
+    }
+
+    func testScheduledRestartSkipsWhenAnotherActivationAlreadyLaunchedChild() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 0
+        let secondProcess = ProcessSpy()
+        let thirdProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess, thirdProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        _ = controller.activateIfNeeded()
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertFalse(thirdProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testRestartCounterResetsAfterStableDaemonPeriod() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        secondProcess.capturedTerminationStatus = 1
+        let thirdProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess, thirdProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+        scheduledBlocks.last(where: { $0.delay == 300 })?.block()
+        secondProcess.capturedTerminationHandler?(secondProcess)
+        drainMainQueue(until: { scheduledBlocks.map(\.delay).filter { $0 < 300 }.count == 2 })
+
+        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        XCTAssertEqual(restartDelays, [1, 1])
+    }
+
+    func testDuplicateTerminationsScheduleOnlyOneRestart() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+
+        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        XCTAssertEqual(restartDelays, [1])
+    }
+
     func testActivationReturnsUnavailableWithoutLaunchConfiguration() {
         let process = ProcessSpy()
         let controller = VoiceBarDaemonController(
@@ -222,6 +373,16 @@ private func temporaryPIDFile() -> String {
     "\(NSTemporaryDirectory())voicebar-daemon-\(UUID().uuidString).pid"
 }
 
+private func drainMainQueue(
+    until condition: @escaping () -> Bool,
+    timeout: TimeInterval = 1
+) {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition(), Date() < deadline {
+        _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.005))
+    }
+}
+
 private final class ProcessSpy: Process, @unchecked Sendable {
     var didRun = false
     var didTerminate = false
@@ -230,6 +391,8 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     var capturedCurrentDirectoryURL: URL?
     var capturedEnvironment: [String: String]?
     var capturedTerminationHandler: (@Sendable (Process) -> Void)?
+    var capturedTerminationStatus: Int32 = 1
+    var capturedTerminationReason: Process.TerminationReason = .exit
 
     override var executableURL: URL? {
         get { capturedExecutableURL }
@@ -262,6 +425,14 @@ private final class ProcessSpy: Process, @unchecked Sendable {
 
     override var processIdentifier: Int32 {
         4321
+    }
+
+    override var terminationStatus: Int32 {
+        capturedTerminationStatus
+    }
+
+    override var terminationReason: Process.TerminationReason {
+        capturedTerminationReason
     }
 
     override func run() throws {

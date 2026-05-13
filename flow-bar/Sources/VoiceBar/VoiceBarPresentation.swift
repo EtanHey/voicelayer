@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 enum HotkeyPhase: Equatable {
@@ -20,8 +21,17 @@ struct VoiceBarQueuePreview: Equatable {
     var progress: Double
 }
 
+struct VoiceBarTranscriptPreviewLayout: Equatable {
+    var height: CGFloat
+    var lineLimit: Int
+    var isMultiline: Bool
+}
+
 enum VoiceBarPresentation {
     static let readyHotkeyHint = "F6 to talk"
+    static let holdToTalkHint = "Hold to talk"
+    static let releaseToSendHint = "Release to send"
+    static let tapAgainToLockHint = "Tap again to lock"
 
     static func hotkeyPermissionHint(
         hotkeyEnabled: Bool,
@@ -58,8 +68,36 @@ enum VoiceBarPresentation {
         )
     }
 
+    static func isHotkeyTransitionStatus(_ statusText: String) -> Bool {
+        switch statusText {
+        case holdToTalkHint, releaseToSendHint, tapAgainToLockHint:
+            return true
+        default:
+            return false
+        }
+    }
+
     static func isPanelDraggable(mode: VoiceMode) -> Bool {
         false
+    }
+
+    static func idleAccessoryButtonCount(
+        recentTranscriptions: [String],
+        transcriptionVocabularyTerms: [String],
+        transcriptionVocabularyAliases: [STTVocabularyAliasPreview],
+        canReplay: Bool
+    ) -> Int {
+        var count = 0
+        if !recentTranscriptions.isEmpty {
+            count += 1
+        }
+        if !transcriptionVocabularyTerms.isEmpty || !transcriptionVocabularyAliases.isEmpty {
+            count += 1
+        }
+        if canReplay {
+            count += 1
+        }
+        return count
     }
 
     static func transcriptPreviewText(
@@ -77,6 +115,18 @@ enum VoiceBarPresentation {
         return text.isEmpty ? nil : text
     }
 
+    static func transcriptPreviewLayout(for text: String) -> VoiceBarTranscriptPreviewLayout {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let width = Theme.transcriptPreviewWidth(for: trimmed)
+        let isMultiline = trimmed.count > 52 || width >= Theme.pillTranscriptPreviewWidth
+
+        return VoiceBarTranscriptPreviewLayout(
+            height: isMultiline ? Theme.pillTranscriptPreviewHeight : Theme.pillCompactHeight,
+            lineLimit: isMultiline ? 2 : 1,
+            isMultiline: isMultiline
+        )
+    }
+
     static func idleStatusText(
         transcript: String,
         confirmationText: String?,
@@ -89,11 +139,11 @@ enum VoiceBarPresentation {
 
         switch hotkeyPhase {
         case .pressing:
-            return "Hold to talk"
+            return holdToTalkHint
         case .holding:
-            return "Release to send"
+            return releaseToSendHint
         case .awaitingSecondTap:
-            return "Tap again to lock"
+            return tapAgainToLockHint
         case .idle:
             break
         }
@@ -136,19 +186,21 @@ enum VoiceBarPresentation {
         }
 
         return switch mode {
-        case .idle, .disconnected:
+        case .idle:
             idleStatusText(
                 transcript: transcript,
                 confirmationText: confirmationText,
                 hotkeyPhase: hotkeyPhase,
                 hotkeyEnabled: hotkeyEnabled
             )
+        case .disconnected:
+            "Disconnected"
         case .speaking:
             "Speaking..."
         case .recording:
             recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
-            "Transcribing..."
+            ""
         case .error:
             errorMessage ?? "Error"
         }
