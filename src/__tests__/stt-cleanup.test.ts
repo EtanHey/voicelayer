@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { cleanupTranscriptionText } from "../stt-cleanup";
+import { cleanupTranscriptionText, getSTTVocabularyPrompt } from "../stt-cleanup";
 
 describe("stt-cleanup", () => {
   it("suppresses no-input STT hallucinations and non-speech labels", () => {
@@ -64,5 +64,43 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("myelin");
     expect(cleaned).toContain("MaiLinh");
     expect(cleaned).not.toContain("maytal");
+  });
+
+  it("biases STT toward project and domain vocabulary", () => {
+    const prompt = getSTTVocabularyPrompt();
+
+    expect(prompt).toContain("cmux");
+    expect(prompt).toContain("BrainLayer");
+    expect(prompt).toContain("VoiceLayer");
+    expect(prompt).toContain("Golems");
+    expect(prompt).toContain("T3 Code");
+    expect(prompt).toContain("Qelos");
+    expect(prompt).toContain("nanoClaw");
+    expect(prompt).toContain("Apple Container");
+    expect(prompt).toContain("Docker");
+    expect(prompt).toContain("Telegram");
+    expect(prompt).toContain("WhatsApp");
+    expect(prompt).not.toContain("kilos");
+    expect(prompt).not.toContain("nanoClawed");
+    expect(prompt).not.toContain("nanoclawed");
+  });
+
+  it("cleans spoken project and domain aliases to canonical spelling", () => {
+    const cleaned = cleanupTranscriptionText(
+      "c mux brain layer voice layer golems t three code kilos project nano clawed apple container docker telegram whats app",
+    );
+
+    expect(cleaned).toBe(
+      "cmux BrainLayer VoiceLayer Golems T3 Code Qelos project nanoClaw Apple Container Docker Telegram WhatsApp",
+    );
+    expect(cleaned).not.toContain("kilos");
+    expect(cleaned).not.toContain("nanoClawed");
+    expect(cleaned).not.toContain("nanoclawed");
+  });
+
+  it("does not rewrite ordinary kilos weight units as Qelos", () => {
+    expect(cleanupTranscriptionText("ship 10 kilos of flour")).toBe(
+      "Ship 10 kilos of flour",
+    );
   });
 });
