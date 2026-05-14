@@ -51,8 +51,44 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 280)
+        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 220)
+        XCTAssertLessThanOrEqual(layout.panelSize.width, 250)
         XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
+    }
+
+    func testExpandedIdlePanelWithTwoAccessoryButtonsDoesNotReserveEmptyRightRail() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            idleAccessoryButtonCount: 2,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 190)
+        XCTAssertLessThanOrEqual(layout.panelSize.width, 205)
+    }
+
+    func testExpandedIdlePanelAccessoriesNeverShrinkEmptyStatusBelowBaseMinimum() {
+        let noAccessoryLayout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "",
+            idleAccessoryButtonCount: 0,
+            padding: Theme.panelPadding
+        )
+        let accessoryLayout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "",
+            idleAccessoryButtonCount: 1,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertGreaterThanOrEqual(accessoryLayout.panelSize.width, noAccessoryLayout.panelSize.width)
     }
 
     func testExpandedIdlePanelGrowsForLongerStatusWithoutUsingFullPanel() {

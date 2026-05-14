@@ -56,16 +56,21 @@ enum Theme {
     static func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
         let textWidth = compactStatusWidth(for: statusText)
         let safeButtonCount = max(0, accessoryButtonCount)
-        let accessoryWidth: CGFloat
+        let accessoryButtonWidth: CGFloat
         if safeButtonCount > 0 {
-            accessoryWidth =
+            accessoryButtonWidth =
                 (CGFloat(safeButtonCount) * pillActionButtonSize) +
-                (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing) +
-                8
+                (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing)
         } else {
-            accessoryWidth = 0
+            accessoryButtonWidth = 0
         }
-        return min(panelWidth - (panelPadding * 2), max(190, textWidth + 126 + accessoryWidth))
+        let accessoryLeadingGap: CGFloat = safeButtonCount > 0 ? 8 : 0
+        let compactChromeWidth: CGFloat = 68
+        let minimumWidth: CGFloat = 190
+        return min(
+            panelWidth - (panelPadding * 2),
+            max(minimumWidth, textWidth + compactChromeWidth + accessoryLeadingGap + accessoryButtonWidth)
+        )
     }
 
     static let hotkeyTransitionPillWidth: CGFloat = compactPillWidth(for: "Tap again to lock")
