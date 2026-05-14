@@ -46,7 +46,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
-    func testIdlePillTapStillRoutesPrimaryAction() {
+    func testIdlePillBackgroundTapDoesNotRoutePrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
         state.isConnected = true
@@ -57,9 +57,59 @@ final class BarViewClickabilityTests: XCTestCase {
 
         click(host, at: NSPoint(x: host.bounds.midX, y: host.bounds.midY))
 
+        XCTAssertEqual(router.primaryTapCount, 0)
+        XCTAssertEqual(router.cancelCount, 0)
+        XCTAssertEqual(router.stopCount, 0)
+    }
+
+    func testIdleMicButtonRoutesPrimaryAction() {
+        let state = VoiceState()
+        state.mode = .idle
+        state.isConnected = true
+        state.isCollapsed = false
+
+        let router = SpyCommandRouter()
+        let host = makeHost(state: state, router: router)
+
+        click(host, at: statusIconCenter(in: host))
+
         XCTAssertEqual(router.primaryTapCount, 1)
         XCTAssertEqual(router.cancelCount, 0)
         XCTAssertEqual(router.stopCount, 0)
+    }
+
+    func testErrorStatusIconRoutesPrimaryAction() {
+        let state = VoiceState()
+        state.mode = .error
+        state.isConnected = true
+        state.isCollapsed = false
+
+        let router = SpyCommandRouter()
+        let host = makeHost(state: state, router: router)
+
+        click(host, at: statusIconCenter(in: host))
+
+        XCTAssertEqual(router.primaryTapCount, 1)
+        XCTAssertEqual(router.cancelCount, 0)
+        XCTAssertEqual(router.stopCount, 0)
+    }
+
+    func testDraggingFromRecordingStopButtonDoesNotClickStop() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.isConnected = true
+        state.isCollapsed = false
+
+        let router = SpyCommandRouter()
+        let host = makeHost(state: state, router: router)
+        let start = recordingStopButtonCenter(in: host)
+        let end = NSPoint(x: start.x + 24, y: start.y + 2)
+
+        drag(host, from: start, to: end)
+
+        XCTAssertEqual(router.stopCount, 0)
+        XCTAssertEqual(router.cancelCount, 0)
+        XCTAssertEqual(router.primaryTapCount, 0)
     }
 
     private func makeHost(state: VoiceState, router: SpyCommandRouter) -> NSHostingView<BarView> {
@@ -86,6 +136,10 @@ final class BarViewClickabilityTests: XCTestCase {
         NSPoint(x: host.bounds.maxX - 14 - 13, y: host.bounds.midY)
     }
 
+    private func statusIconCenter(in host: NSView) -> NSPoint {
+        NSPoint(x: host.bounds.minX + 14 + 3 + 8 + 9, y: host.bounds.midY)
+    }
+
     private func click(_ host: NSView, at point: NSPoint) {
         guard host.hitTest(point) != nil else {
             XCTFail("Expected a hit-test target at \(point)")
@@ -100,6 +154,25 @@ final class BarViewClickabilityTests: XCTestCase {
         }
 
         window.sendEvent(downEvent)
+        window.sendEvent(upEvent)
+    }
+
+    private func drag(_ host: NSView, from start: NSPoint, to end: NSPoint) {
+        guard host.hitTest(start) != nil else {
+            XCTFail("Expected a hit-test target at \(start)")
+            return
+        }
+
+        guard let window = host.window,
+              let downEvent = mouseEvent(type: .leftMouseDown, at: start, windowNumber: window.windowNumber),
+              let dragEvent = mouseEvent(type: .leftMouseDragged, at: end, windowNumber: window.windowNumber),
+              let upEvent = mouseEvent(type: .leftMouseUp, at: end, windowNumber: window.windowNumber) else {
+            XCTFail("Expected to create mouse events")
+            return
+        }
+
+        window.sendEvent(downEvent)
+        window.sendEvent(dragEvent)
         window.sendEvent(upEvent)
     }
 

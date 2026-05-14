@@ -185,12 +185,6 @@ struct BarView: View {
             }
         }
         .contentShape(Capsule())
-        .primaryPillTapGesture(enabled: state.mode == .idle || state.mode == .error) {
-            NSHapticFeedbackManager.defaultPerformer.perform(
-                .alignment, performanceTime: .now
-            )
-            commandRouter.handlePrimaryTap()
-        }
     }
 
     // MARK: - Error state
@@ -378,7 +372,25 @@ struct BarView: View {
 
     // MARK: - Status icon
 
+    @ViewBuilder
     private var statusIcon: some View {
+        if state.mode == .idle || state.mode == .error {
+            Button {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                commandRouter.handlePrimaryTap()
+            } label: {
+                statusIconImage
+                    .frame(width: 26, height: 26)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(state.mode == .error ? "Retry voice recording" : "Start voice recording")
+        } else {
+            statusIconImage
+        }
+    }
+
+    private var statusIconImage: some View {
         Image(systemName: iconName)
             .font(.system(size: transcriptPreviewIsVisible ? 16 : 14, weight: .semibold))
             .foregroundStyle(Theme.stateColor(for: state.mode))
@@ -700,16 +712,5 @@ struct BarView: View {
         }
         .buttonStyle(.plain)
         .transition(.scale.combined(with: .opacity))
-    }
-}
-
-private extension View {
-    @ViewBuilder
-    func primaryPillTapGesture(enabled: Bool, action: @escaping () -> Void) -> some View {
-        if enabled {
-            onTapGesture(perform: action)
-        } else {
-            self
-        }
     }
 }

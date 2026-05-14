@@ -53,7 +53,7 @@ During recording, a real-time waveform visualization shows microphone levels:
 
 ### Click-to-Record
 
-Tap the pill to start recording. When recording stops, the transcribed text is automatically pasted into the active application via `Cmd+V` (CGEvent).
+Click the microphone icon to start recording, or press F6. When recording stops, the transcribed text is automatically pasted into the active application via `Cmd+V` (CGEvent).
 
 ### Draggable Positioning
 
