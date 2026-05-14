@@ -213,6 +213,11 @@ describe("socket-protocol", () => {
       expect(result).toEqual({ cmd: "health" });
     });
 
+    it("allows long VoiceBar recording timeouts", () => {
+      const result = parseCommand('{"cmd":"record","timeout_seconds":3600}');
+      expect(result).toEqual({ cmd: "record", timeout_seconds: 3600 });
+    });
+
     it("parses toggle command with all fields", () => {
       const result = parseCommand(
         '{"cmd":"toggle","scope":"tts","enabled":false}',

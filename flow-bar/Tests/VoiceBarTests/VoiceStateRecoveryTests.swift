@@ -24,7 +24,6 @@ final class VoiceStateRecoveryTests: XCTestCase {
         let state = VoiceState()
         state.transcriptionTimeout = .milliseconds(20)
 
-        state.record()
         state.handleEvent([
             "type": "state",
             "state": "transcribing",
@@ -34,6 +33,51 @@ final class VoiceStateRecoveryTests: XCTestCase {
 
         XCTAssertEqual(state.mode, .error)
         XCTAssertEqual(state.errorMessage, "Transcription failed")
+    }
+
+    func testBarInitiatedTranscribingUsesLongerTimeout() async {
+        let state = VoiceState()
+        state.transcriptionTimeout = .milliseconds(20)
+        state.barInitiatedTranscriptionTimeout = .seconds(30)
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertNil(state.errorMessage)
+    }
+
+    func testBarSafetyTimeoutDoesNotClearPasteTargetDuringTranscribing() async {
+        let state = VoiceState()
+        state.barInitiatedSafetyTimeout = .milliseconds(20)
+        state.barInitiatedTranscriptionTimeout = .seconds(30)
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "long dictation final transcript",
+        ])
+
+        XCTAssertEqual(pastedTexts, ["long dictation final transcript"])
+        XCTAssertEqual(state.confirmationText, "long dictation final transcript")
     }
 
     func testConnectionDropShowsDisconnectedState() {

@@ -40,6 +40,19 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(sentCommand?["press_to_talk"] as? Bool, true)
     }
 
+    func testBarRecordingUsesLongSafetyTimeout() {
+        let state = VoiceState()
+        var sentCommand: [String: Any]?
+
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+
+        state.record(pressToTalk: true)
+
+        XCTAssertEqual(sentCommand?["timeout_seconds"] as? Int, 3600)
+    }
+
     func testPendingIntentClearsOnMatchingAck() throws {
         let state = VoiceState()
         var sentCommand: [String: Any]?

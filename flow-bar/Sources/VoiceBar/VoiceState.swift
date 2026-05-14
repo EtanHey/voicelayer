@@ -245,6 +245,8 @@ final class VoiceState {
     var onPanelLayoutChange: (() -> Void)?
     var diagnosticLogger: ((String, [String: String]) -> Void)?
     var transcriptionTimeout: Duration = .seconds(30)
+    var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
+    var barInitiatedSafetyTimeout: Duration = .seconds(3660)
 
     init(
         recentTranscriptionsLoader: @escaping () -> [String] = {
@@ -431,11 +433,13 @@ final class VoiceState {
             expandFromCollapse()
         }
 
-        // Safety timeout: if no transcription arrives within 2.5 minutes, clear the flag
+        // Safety timeout: keep bar-initiated dictation state from leaking if the
+        // daemon disappears, without ending normal long-form dictation.
         barInitiatedTimeout?.cancel()
         barInitiatedTimeout = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(150))
+            try? await Task.sleep(for: barInitiatedSafetyTimeout)
             if !Task.isCancelled, barInitiatedRecording {
+                guard mode != .transcribing else { return }
                 barInitiatedRecording = false
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
@@ -445,7 +449,7 @@ final class VoiceState {
         sendIntent(command: .record, payload: [
             "cmd": "record",
             "silence_mode": "thoughtful",
-            "timeout_seconds": 120,
+            "timeout_seconds": 3600,
             "press_to_talk": pressToTalk,
         ])
     }
@@ -818,7 +822,7 @@ final class VoiceState {
 
     private func startTranscriptionTimeout() {
         transcriptionTimeoutTask?.cancel()
-        let timeout = transcriptionTimeout
+        let timeout = barInitiatedRecording ? barInitiatedTranscriptionTimeout : transcriptionTimeout
         transcriptionTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard let self, !Task.isCancelled, mode == .transcribing else { return }

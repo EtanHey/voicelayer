@@ -190,7 +190,7 @@ export interface ToggleCommand extends SocketCommandBase {
 
 export interface RecordCommand extends SocketCommandBase {
   cmd: "record";
-  /** Recording timeout in seconds (default: 30). */
+  /** Recording timeout in seconds (default: 30, max: 3600). */
   timeout_seconds?: number;
   /** Silence detection mode (default: "standard"). */
   silence_mode?: "quick" | "standard" | "thoughtful";
@@ -313,7 +313,7 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
         if (typeof parsed.timeout_seconds === "number") {
-          command.timeout_seconds = Math.max(5, Math.min(300, parsed.timeout_seconds));
+          command.timeout_seconds = Math.max(5, Math.min(3600, parsed.timeout_seconds));
         }
         if (
           parsed.silence_mode === "quick" ||
