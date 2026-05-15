@@ -234,17 +234,24 @@ export function stopServer(): void {
 /** Inference timeout: 8s per request (generous for 3s audio windows). */
 const INFERENCE_TIMEOUT = 8000;
 
+export interface WhisperServerTranscribeOptions {
+  language?: string;
+  prompt?: string;
+}
+
 export async function transcribeViaServer(
   wavData: Uint8Array,
   port?: number,
+  options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
-  return transcribeViaServerAttempt(wavData, port, true);
+  return transcribeViaServerAttempt(wavData, port, true, options);
 }
 
 async function transcribeViaServerAttempt(
   wavData: Uint8Array,
   port: number | undefined,
   allowRetry: boolean,
+  options?: WhisperServerTranscribeOptions,
 ): Promise<string> {
   const serverPort = port ?? (await ensureServer());
 
@@ -256,6 +263,12 @@ async function transcribeViaServerAttempt(
   );
   formData.append("response_format", "json");
   formData.append("temperature", "0.0");
+  if (options?.language) {
+    formData.append("language", options.language);
+  }
+  if (options?.prompt) {
+    formData.append("prompt", options.prompt);
+  }
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
@@ -271,7 +284,7 @@ async function transcribeViaServerAttempt(
       if (allowRetry) {
         markServerUnhealthy();
         const retryPort = await ensureServer(port);
-        return transcribeViaServerAttempt(wavData, retryPort, false);
+        return transcribeViaServerAttempt(wavData, retryPort, false, options);
       }
       throw err;
     }
@@ -280,7 +293,7 @@ async function transcribeViaServerAttempt(
       if (allowRetry && resp.status >= 500) {
         markServerUnhealthy();
         const retryPort = await ensureServer(port);
-        return transcribeViaServerAttempt(wavData, retryPort, false);
+        return transcribeViaServerAttempt(wavData, retryPort, false, options);
       }
       throw new Error(
         `whisper-server inference failed: ${resp.status} ${resp.statusText}`,

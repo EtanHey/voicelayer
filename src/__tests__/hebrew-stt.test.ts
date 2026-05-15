@@ -73,14 +73,14 @@ describe("language-config", () => {
 
 describe("Hebrew rules in rules-engine", () => {
   describe("Hebrew filler removal", () => {
-    it("removes Hebrew fillers (אמ, אה, כאילו, בעצם)", () => {
+    it("removes acoustic Hebrew fillers without deleting discourse markers", () => {
       expect(applyRules("אמ אני חושב אה שזה בעצם עובד")).toBe(
-        "אני חושב שזה עובד",
+        "אני חושב שזה בעצם עובד",
       );
     });
 
-    it("removes כאילו as filler", () => {
-      expect(applyRules("זה כאילו ממש מהיר")).toBe("זה ממש מהיר");
+    it("preserves כאילו in Hebrew prose", () => {
+      expect(applyRules("זה כאילו ממש מהיר")).toBe("זה כאילו ממש מהיר");
     });
   });
 

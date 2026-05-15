@@ -83,6 +83,15 @@ describe("rules-engine", () => {
     it("converts backtick", () => {
       expect(applyRules("backtick code backtick")).toBe("`code`");
     });
+
+    it("converts multi-word operators before shorter operator phrases", () => {
+      expect(applyRules("if value double equals null")).toBe("If value == null");
+      expect(applyRules("if value triple equals undefined")).toBe(
+        "If value === undefined",
+      );
+      expect(applyRules("if value not equals zero")).toBe("If value != 0");
+      expect(applyRules("left double pipe right")).toBe("Left || right");
+    });
   });
 
   // --- Stage 3: Case formatting commands ---
@@ -162,6 +171,18 @@ describe("rules-engine", () => {
       const result = applyRules("תשתמש ב use effect בשביל on click handler");
       expect(result).toContain("useEffect");
       expect(result).toContain("onClick");
+    });
+
+    it("preserves lower-camel code terms at sentence starts", () => {
+      expect(applyRules("use effect should rerun")).toBe(
+        "useEffect should rerun",
+      );
+      expect(applyRules("on click handler should call use callback")).toBe(
+        "onClick handler should call useCallback",
+      );
+      expect(applyRules("first sentence. use state keeps the count")).toBe(
+        "First sentence. useState keeps the count",
+      );
     });
   });
 

@@ -1,10 +1,17 @@
 import { describe, expect, it } from "bun:test";
-import { cleanupTranscriptionText, getSTTVocabularyPrompt } from "../stt-cleanup";
+import {
+  cleanupTranscriptionText,
+  getSTTVocabularyPrompt,
+} from "../stt-cleanup";
 
 describe("stt-cleanup", () => {
   it("suppresses no-input STT hallucinations and non-speech labels", () => {
     expect(cleanupTranscriptionText("thank you")).toBe("");
     expect(cleanupTranscriptionText("Thank you.")).toBe("");
+    expect(cleanupTranscriptionText("thanks for watching")).toBe("");
+    expect(cleanupTranscriptionText("[BLANK_AUDIO]")).toBe("");
+    expect(cleanupTranscriptionText("[Music playing]")).toBe("");
+    expect(cleanupTranscriptionText("subtitle by rev dot com")).toBe("");
     expect(cleanupTranscriptionText("sad music")).toBe("");
     expect(cleanupTranscriptionText("Oh, my God.")).toBe("");
     expect(cleanupTranscriptionText("- Oh, my God.")).toBe("");
@@ -12,6 +19,9 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("(Music)")).toBe("");
     expect(cleanupTranscriptionText("[music]")).toBe("");
     expect(cleanupTranscriptionText("[music>")).not.toBe("");
+    expect(
+      cleanupTranscriptionText("thanks for watching this failing test"),
+    ).not.toBe("");
     expect(cleanupTranscriptionText("...")).toBe("");
   });
 
@@ -47,6 +57,52 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("Whisperflow");
     expect(cleaned).not.toContain("OrcClawed");
     expect(cleaned).not.toContain("Seamux");
+  });
+
+  it("cleans YashClaude spoken forms used in agent routing", () => {
+    expect(
+      cleanupTranscriptionText("ask yash claude to watch the pr loop"),
+    ).toBe("Ask YashClaude to watch the pr loop");
+    expect(cleanupTranscriptionText("tell yash clawed to review the pr")).toBe(
+      "Tell YashClaude to review the pr",
+    );
+  });
+
+  it("preserves mixed Hebrew and lower-case dev dictation", () => {
+    expect(cleanupTranscriptionText("use effect לא עובד")).toBe(
+      "useEffect לא עובד",
+    );
+    expect(cleanupTranscriptionText("on click handler שבור")).toBe(
+      "onClick handler שבור",
+    );
+    expect(cleanupTranscriptionText("bun test נכשל")).toBe("bun test נכשל");
+  });
+
+  it("cleans high-confidence Hebrew dev loanwords without romanizing normal prose", () => {
+    expect(cleanupTranscriptionText("תעשה פוש לברנץ ותפתח פול ריקווסט")).toBe(
+      "תעשה push ל-branch ותפתח Pull Request",
+    );
+    expect(cleanupTranscriptionText("צריך פונקציה חדשה עם טסטים")).toBe(
+      "צריך פונקציה חדשה עם טסטים",
+    );
+  });
+
+  it("keeps Hebrew discourse markers while removing acoustic fillers", () => {
+    expect(cleanupTranscriptionText("אני רוצה כאילו שזה יישאר בעברית")).toBe(
+      "אני רוצה כאילו שזה יישאר בעברית",
+    );
+    expect(cleanupTranscriptionText("אמ אני חושב אה שזה עובד")).toBe(
+      "אני חושב שזה עובד",
+    );
+  });
+
+  it("does not corrupt Hebrew words that start with אמ/אה (regression: אמש 'last night')", () => {
+    // The filler regex must not match the prefix of legitimate words like
+    // אמש (last night) or אהבה (love). Previously the lookahead
+    // `(?=\s|ש|$)` allowed `אמ` in `אמש` to match, leaving a stray `ש`.
+    expect(cleanupTranscriptionText("ראיתי אותו אמש")).toBe("ראיתי אותו אמש");
+    expect(cleanupTranscriptionText("לפני אמש פגשתי")).toBe("לפני אמש פגשתי");
+    expect(cleanupTranscriptionText("אהבה לכל")).toBe("אהבה לכל");
   });
 
   it("keeps Meytal and MaiLinh as distinct contacts", () => {
@@ -153,27 +209,27 @@ describe("stt-cleanup", () => {
   });
 
   it("does not rewrite ordinary audio/UI cues as queues", () => {
-    expect(cleanupTranscriptionText("there are three pending cues for playback")).toBe(
-      "There are 3 pending cues for playback",
-    );
+    expect(
+      cleanupTranscriptionText("there are three pending cues for playback"),
+    ).toBe("There are 3 pending cues for playback");
 
     expect(cleanupTranscriptionText("pending cues for the recorder")).toBe(
       "Pending cues for the recorder",
     );
 
-    expect(cleanupTranscriptionText("check if pending cues are processed")).toBe(
-      "Check if pending cues are processed",
-    );
+    expect(
+      cleanupTranscriptionText("check if pending cues are processed"),
+    ).toBe("Check if pending cues are processed");
   });
 
   it("preserves sentence-start capitalization for converted aliases", () => {
     expect(cleanupTranscriptionText("pending cues are working")).toBe(
       "Pending queues are working",
     );
-    
-    expect(cleanupTranscriptionText("pending cues are working in brain layer")).toBe(
-      "Pending queues are working in BrainLayer",
-    );
+
+    expect(
+      cleanupTranscriptionText("pending cues are working in brain layer"),
+    ).toBe("Pending queues are working in BrainLayer");
   });
 
   it("formats certainty percentages in migration planning dictation", () => {
@@ -183,9 +239,9 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("i'm not 100 sure")).toBe(
       "I'm not 100% sure",
     );
-    expect(cleanupTranscriptionText("there are two sure ways to fix this")).toBe(
-      "There are 2 sure ways to fix this",
-    );
+    expect(
+      cleanupTranscriptionText("there are two sure ways to fix this"),
+    ).toBe("There are 2 sure ways to fix this");
   });
 
   it("removes article from 'a hundred percent' with trailing punctuation", () => {

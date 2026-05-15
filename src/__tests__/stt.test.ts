@@ -7,6 +7,7 @@ import {
   resetBackendCache,
   buildChunkPrompt,
   mergeChunkTranscripts,
+  buildWhisperServerOptions,
 } from "../stt";
 
 describe("STT backends", () => {
@@ -145,7 +146,11 @@ describe("STT backends", () => {
         expect(whisperEnv?.GGML_METAL_PATH_RESOURCES).toBe(
           "/opt/homebrew/opt/whisper-cpp/share/whisper-cpp",
         );
-        expect(spawnSyncCalls).toContainEqual(["/opt/homebrew/bin/brew", "--prefix", "whisper-cpp"]);
+        expect(spawnSyncCalls).toContainEqual([
+          "/opt/homebrew/bin/brew",
+          "--prefix",
+          "whisper-cpp",
+        ]);
       } finally {
         Bun.spawn = originalSpawn;
         Bun.spawnSync = originalSpawnSync;
@@ -254,7 +259,7 @@ describe("STT backends", () => {
       try {
         const backend = new WisprFlowBackend();
         await expect(backend.transcribe("/tmp/test.wav")).rejects.toThrow(
-          "QA_VOICE_WISPR_KEY"
+          "QA_VOICE_WISPR_KEY",
         );
       } finally {
         if (saved) process.env.QA_VOICE_WISPR_KEY = saved;
@@ -284,6 +289,36 @@ describe("STT backends", () => {
       expect(result.text).toBe("resident text");
       expect(result.backend).toBe("whisper-server");
       expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("passes explicit language and prompt context to the resident server", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-language-test.wav";
+      await Bun.write(wavPath, new Uint8Array([1, 2, 3, 4]));
+      const savedLang = process.env.QA_VOICE_WHISPER_LANG;
+      process.env.QA_VOICE_WHISPER_LANG = "hebrew";
+      let capturedOptions: { language?: string; prompt?: string } | undefined;
+
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          capturedOptions = options;
+          return "resident text";
+        },
+      });
+
+      try {
+        const result = await backend.transcribe(wavPath, {
+          promptOverride: "previous chunk context",
+        });
+
+        expect(result.text).toBe("resident text");
+        expect(capturedOptions?.language).toBe("he");
+        expect(capturedOptions?.prompt).toContain("פוש ברנץ");
+        expect(capturedOptions?.prompt).toContain("previous chunk context");
+      } finally {
+        if (savedLang) process.env.QA_VOICE_WHISPER_LANG = savedLang;
+        else delete process.env.QA_VOICE_WHISPER_LANG;
+      }
     });
 
     it("falls back to whisper-cli when resident inference fails", async () => {
@@ -417,6 +452,122 @@ describe("STT backends", () => {
           "TypeScript היום עם עוד טקסט",
         ]),
       ).toBe("אני בודק TypeScript היום עם עוד טקסט");
+    });
+
+    it("deduplicates chunk overlap when punctuation differs at the boundary", () => {
+      expect(
+        mergeChunkTranscripts(["hello world,", "world and then continue"]),
+      ).toBe("hello world, and then continue");
+    });
+
+    it("does not collapse distinct operator-only tokens at chunk boundaries", () => {
+      // Regression: `normalizeChunkWordForOverlap` previously stripped all
+      // non-alphanumeric chars, so punctuation-only tokens like `==` and
+      // `!=` both became `""` and falsely overlapped, dropping the second
+      // chunk's operator in code dictation.
+      expect(mergeChunkTranscripts(["if value ==", "!= null"])).toBe(
+        "if value == != null",
+      );
+      expect(
+        mergeChunkTranscripts(["totalCount +", "- delta then continue"]),
+      ).toBe("totalCount + - delta then continue");
+    });
+
+    it("still deduplicates when identical operator-only tokens overlap", () => {
+      // Sanity check: same operator on both sides should still merge as a
+      // single overlap.
+      expect(mergeChunkTranscripts(["if value ==", "== check"])).toBe(
+        "if value == check",
+      );
+    });
+
+    it("preserves symbol-bearing code tokens during overlap (regression: C++ / C#)", () => {
+      // Blanket non-alphanumeric stripping collapsed `C++` and `C#` (both ->
+      // `c`), falsely overlapping and dropping the second chunk's token.
+      // Strip only natural-language sentence punctuation from token edges
+      // so trailing operator/symbol chars (++, #, --, .) survive as
+      // identifying suffixes.
+      expect(mergeChunkTranscripts(["write in C++", "C# is different"])).toBe(
+        "write in C++ C# is different",
+      );
+      expect(mergeChunkTranscripts(["counter is i++", "x-- elsewhere"])).toBe(
+        "counter is i++ x-- elsewhere",
+      );
+    });
+
+    it("still deduplicates trailing sentence punctuation (regression guard)", () => {
+      // Comma-tagged token should still match the bare word so natural-
+      // language chunk overlap still de-dupes after the operator-aware fix.
+      expect(
+        mergeChunkTranscripts(["hello world,", "world and then continue"]),
+      ).toBe("hello world, and then continue");
+    });
+
+    it("preserves leading `!` operator while still stripping sentence-ending `!`", () => {
+      // Regression (Cursor Bugbot Low on 94d85d8): `!` was in the leading
+      // strip set, so `!flag` collapsed to `flag` and `!=` collapsed to `=`.
+      // That made distinct operator tokens at chunk boundaries falsely
+      // overlap. Strip `!` only from the trailing edge (sentence-ending
+      // exclamation) so leading-`!` operator tokens keep their identity.
+      expect(mergeChunkTranscripts(["set flag", "!flag elsewhere"])).toBe(
+        "set flag !flag elsewhere",
+      );
+      expect(mergeChunkTranscripts(["if value =", "!= null"])).toBe(
+        "if value = != null",
+      );
+      // Sentence-ending `!` still strips so natural-language overlap works.
+      expect(mergeChunkTranscripts(["hello world!", "world is great"])).toBe(
+        "hello world! is great",
+      );
+    });
+  });
+
+  describe("buildWhisperServerOptions", () => {
+    let savedLang: string | undefined;
+
+    beforeEach(() => {
+      savedLang = process.env.QA_VOICE_WHISPER_LANG;
+    });
+
+    afterEach(() => {
+      if (savedLang === undefined) {
+        delete process.env.QA_VOICE_WHISPER_LANG;
+      } else {
+        process.env.QA_VOICE_WHISPER_LANG = savedLang;
+      }
+    });
+
+    it("includes promptOverride even when language mode is auto (default)", () => {
+      // Regression: previously the auto-mode early-return dropped
+      // options.promptOverride, breaking transcribeChunkSequence's
+      // previous-chunk continuity prompt for chunked dictation in the
+      // default (unset/auto) configuration.
+      delete process.env.QA_VOICE_WHISPER_LANG;
+      const result = buildWhisperServerOptions({
+        promptOverride: "previous chunk transcript here",
+      });
+      expect(result).toBeDefined();
+      expect(result?.language).toBeUndefined();
+      expect(result?.prompt).toContain("previous chunk transcript here");
+    });
+
+    it("includes language and prompt when an explicit language is configured", () => {
+      process.env.QA_VOICE_WHISPER_LANG = "hebrew";
+      const result = buildWhisperServerOptions({
+        promptOverride: "extra context",
+      });
+      expect(result?.language).toBe("he");
+      expect(result?.prompt).toContain("extra context");
+    });
+
+    it("omits prompt in auto mode when no promptOverride is present", () => {
+      delete process.env.QA_VOICE_WHISPER_LANG;
+      const result = buildWhisperServerOptions();
+      // Keep parity with language-config: auto mode avoids prompt priming on
+      // one-shot audio so borderline silence/noise cannot decode into
+      // prompt-biased dev phrases. promptOverride is still forwarded by the
+      // previous test for chunk-continuity.
+      expect(result).toBeUndefined();
     });
   });
 });

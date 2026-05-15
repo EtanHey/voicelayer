@@ -34,6 +34,33 @@ describe("whisper-server", () => {
   });
 
   describe("transcribeViaServer", () => {
+    it("sends language and prompt fields to whisper-server inference", async () => {
+      const originalFetch = globalThis.fetch;
+      let inferenceForm: FormData | undefined;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+        inferenceForm = init?.body as FormData;
+        return new Response(JSON.stringify({ text: "שלום" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      try {
+        const text = await transcribeViaServer(new Uint8Array([1, 2]), 5555, {
+          language: "he",
+          prompt: "פוש ברנץ Pull Request",
+        });
+
+        expect(text).toBe("שלום");
+        expect(inferenceForm?.get("language")).toBe("he");
+        expect(inferenceForm?.get("prompt")).toBe("פוש ברנץ Pull Request");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("retries once after an inference transport failure", async () => {
       const originalFetch = globalThis.fetch;
       let attempts = 0;

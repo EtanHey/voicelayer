@@ -111,11 +111,11 @@ const FILLER_PATTERNS: RegExp[] = [
   /\blike\b(?=\s+(?:really|very|so|just|totally|super))/gi, // "like" before intensifiers
   /^like\b\s*/gi, // "like" at start
   /\s+like$/gi, // "like" at end
-  // Hebrew fillers (אמ, אה, כאילו, בעצם, בקיצור, נו)
-  /(?:^|\s)(?:אמ|אה|נו)(?:\s|$)/g,
-  /(?:^|\s)כאילו(?:\s|$)/g,
-  /(?:^|\s)בעצם(?:\s|$)/g,
-  /(?:^|\s)בקיצור(?:\s|$)/g,
+  // Hebrew acoustic fillers. Keep discourse markers like "כאילו" in prose.
+  // The lookahead excludes ש so legitimate words starting with אמ
+  // (e.g. אמש "last night", אמת "truth") and אה (e.g. אהבה "love") are
+  // never partially matched and corrupted.
+  /(?:^|\s)(?:אמ|אה)(?=\s|$)/g,
 ];
 
 function removeFillers(text: string): string {
@@ -147,18 +147,18 @@ const PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bhyphen\b/gi, "-"],
   [/\bunderscore\b/gi, "_"],
   [/\barrow\b/gi, "=>"],
-  [/\bequals\b/gi, "="],
-  [/\bdouble equals\b/gi, "=="],
   [/\btriple equals\b/gi, "==="],
+  [/\bdouble equals\b/gi, "=="],
   [/\bnot equals\b/gi, "!="],
+  [/\bequals\b/gi, "="],
   [/\bplus\b/gi, "+"],
   [/\bminus\b/gi, "-"],
   [/\basterisk\b/gi, "*"],
   [/\bslash\b/gi, "/"],
   [/\bbackslash\b/gi, "\\"],
-  [/\bpipe\b/gi, "|"],
   [/\bdouble pipe\b/gi, "||"],
   [/\bdouble ampersand\b/gi, "&&"],
+  [/\bpipe\b/gi, "|"],
   [/\bampersand\b/gi, "&"],
   [/\bat sign\b/gi, "@"],
   [/\bhash\b/gi, "#"],
@@ -182,7 +182,7 @@ function applyPunctuation(text: string): string {
     result = result.replace(pattern, ` ${replacement}`);
   }
   // Clean up space before punctuation that should attach left
-  result = result.replace(/\s+([.,;:?!%)}\]`'"])/g, "$1");
+  result = result.replace(/\s+([.,;:?%)}\]`'"]|!(?!=))/g, "$1");
   // Clean up space after open brackets
   result = result.replace(/([({[\[`'"])\s+/g, "$1");
   return result;
@@ -388,30 +388,52 @@ function applyTechVocab(text: string): string {
 function autoCapitalize(text: string): string {
   if (!text) return text;
 
-  // Capitalize first character
-  let result = text[0].toUpperCase() + text.slice(1);
+  let result = capitalizeLeadingToken(text);
 
   // Capitalize after sentence-ending punctuation followed by space
-  result = result.replace(/([.!?])\s+([a-z])/g, (_m, punct, letter) => {
-    return `${punct} ${letter.toUpperCase()}`;
+  result = result.replace(/([.!?]\s+)([a-z][\w$]*)/g, (_m, prefix, word) => {
+    return `${prefix}${capitalizeWordUnlessCodeIdentifier(word)}`;
   });
 
   // Capitalize after newline
-  result = result.replace(/\n\s*([a-z])/g, (_m, letter) => {
-    return `\n${letter.toUpperCase()}`;
+  result = result.replace(/(\n\s*)([a-z][\w$]*)/g, (_m, prefix, word) => {
+    return `${prefix}${capitalizeWordUnlessCodeIdentifier(word)}`;
   });
 
-  result = result.replace(/\bi\b/g, (match: string, offset: number, source: string) => {
-    if (isLikelyCodeIdentifierI(source, offset)) {
-      return match;
-    }
-    return "I";
-  });
-  result = result.replace(/\bi(['’](?:m|d|ll|ve))\b/gi, (_m, suffix: string) => {
-    return `I${suffix}`;
-  });
+  result = result.replace(
+    /\bi\b/g,
+    (match: string, offset: number, source: string) => {
+      if (isLikelyCodeIdentifierI(source, offset)) {
+        return match;
+      }
+      return "I";
+    },
+  );
+  result = result.replace(
+    /\bi(['’](?:m|d|ll|ve))\b/gi,
+    (_m, suffix: string) => {
+      return `I${suffix}`;
+    },
+  );
 
   return result;
+}
+
+function capitalizeLeadingToken(text: string): string {
+  return text.replace(/^(\s*)([a-z][\w$]*)/, (_m, prefix, word) => {
+    return `${prefix}${capitalizeWordUnlessCodeIdentifier(word)}`;
+  });
+}
+
+function capitalizeWordUnlessCodeIdentifier(word: string): string {
+  if (isLowerCamelCodeIdentifier(word)) {
+    return word;
+  }
+  return word[0].toUpperCase() + word.slice(1);
+}
+
+function isLowerCamelCodeIdentifier(word: string): boolean {
+  return /^[a-z][\w$]*[A-Z][\w$]*$/.test(word);
 }
 
 function isLikelyCodeIdentifierI(source: string, offset: number): boolean {

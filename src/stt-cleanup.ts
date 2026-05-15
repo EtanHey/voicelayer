@@ -5,6 +5,23 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "sessions of codecs": "sessions of Codex",
   "session of codecs": "session of Codex",
   "skill creator claude": "SkillCreatorClaude",
+  "פול ריקווסט": "Pull Request",
+  "לבראנץ": "ל-branch",
+  "לבראנץ'": "ל-branch",
+  "לברנץ": "ל-branch",
+  "לברנץ'": "ל-branch",
+  "בראנץ": "branch",
+  "בראנץ'": "branch",
+  "ברנץ": "branch",
+  "ברנץ'": "branch",
+  "קומיט": "commit",
+  "פוש": "push",
+  "yash claude": "YashClaude",
+  "yash claud": "YashClaude",
+  "yash clawed": "YashClaude",
+  yashclaude: "YashClaude",
+  yashclaud: "YashClaude",
+  yashclawed: "YashClaude",
   whisperflow: "Wispr Flow",
   "whisper flow": "Wispr Flow",
   "wisper flow": "Wispr Flow",
@@ -65,6 +82,7 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "claude dot md": "CLAUDE.md",
   "gpt 5.5": "GPT-5.5",
   "gpt 5 5": "GPT-5.5",
+  bun: "bun",
 };
 
 const ORDERED_BUILTIN_STT_ALIASES = Object.fromEntries(
@@ -110,20 +128,25 @@ function isMeaningfulTranscription(text: string): boolean {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (
-    normalizedWords === "thank you" ||
-    normalizedWords === "thanks" ||
-    normalizedWords === "sad music" ||
-    speechWords === "thank you" ||
-    speechWords === "thanks" ||
-    speechWords === "sad music" ||
-    speechWords === "oh my god"
-  ) {
+  const exactNoisePhrases = new Set([
+    "blank audio",
+    "music playing",
+    "sad music",
+    "subtitle by rev com",
+    "subtitle by rev.com",
+    "subtitle by rev dot com",
+    "thank you",
+    "thanks",
+    "thanks for watching",
+    "oh my god",
+  ]);
+
+  if (exactNoisePhrases.has(normalizedWords) || exactNoisePhrases.has(speechWords)) {
     return false;
   }
 
   const nonSpeechCue =
-    "\\s*(?:music|sad music|applause|laughter|laughs|noise|silence|inaudible)\\s*";
+    "\\s*(?:blank[_\\s-]*audio|music|music playing|sad music|applause|laughter|laughs|noise|silence|inaudible)\\s*";
   const bracketedCuePattern = new RegExp(
     `^(?:\\(${nonSpeechCue}\\)|\\[${nonSpeechCue}\\]|\\{${nonSpeechCue}\\}|<${nonSpeechCue}>)$`,
     "iu",

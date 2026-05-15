@@ -16,7 +16,11 @@ import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
 import { resolveBinary } from "./resolve-binary";
-import { isServerAvailable, transcribeViaServer } from "./whisper-server";
+import {
+  isServerAvailable,
+  transcribeViaServer,
+  type WhisperServerTranscribeOptions,
+} from "./whisper-server";
 import {
   getInitialPrompt,
   getLanguageConfig,
@@ -55,6 +59,33 @@ function normalizeChunkWords(text: string): string[] {
   return text.trim().split(/\s+/).filter(Boolean);
 }
 
+// Sentence-ending punctuation stripped from token edges for overlap
+// comparison. Operator/symbol chars (+ - # * / = & | < > ~ ^ @ $ %) are
+// intentionally absent so code tokens like C++, C#, i++, x-- keep their
+// identifying suffixes at chunk boundaries.
+//
+// `!` is stripped ONLY from the trailing edge (sentence-ending exclamation,
+// e.g. "world!"). A leading `!` is treated as a code operator (`!flag`,
+// `!=`, `!==`) and preserved so distinct operator tokens don't collapse to
+// the same key.
+const OVERLAP_EDGE_PUNCTUATION_LEADING = /^[.,?;:"'`()\[\]{}«»…]+/gu;
+const OVERLAP_EDGE_PUNCTUATION_TRAILING = /[.,!?;:"'`()\[\]{}«»…]+$/gu;
+
+function normalizeChunkWordForOverlap(word: string): string {
+  const stripped = word
+    .toLowerCase()
+    .replace(OVERLAP_EDGE_PUNCTUATION_LEADING, "")
+    .replace(OVERLAP_EDGE_PUNCTUATION_TRAILING, "");
+  // Pure-punctuation tokens (e.g. a standalone "," from Whisper symbol emits)
+  // would strip to "" and falsely overlap with each other. Fall back to the
+  // original lower-cased form so distinct punctuation tokens stay distinct.
+  return stripped || word.toLowerCase();
+}
+
+function overlapKey(words: string[]): string {
+  return words.map(normalizeChunkWordForOverlap).join(" ");
+}
+
 export function mergeChunkTranscripts(chunks: string[]): string {
   const merged: string[] = [];
 
@@ -71,8 +102,8 @@ export function mergeChunkTranscripts(chunks: string[]): string {
     let overlap = 0;
 
     for (let size = maxOverlap; size > 0; size--) {
-      const mergedTail = merged.slice(-size).join(" ").toLowerCase();
-      const nextHead = nextWords.slice(0, size).join(" ").toLowerCase();
+      const mergedTail = overlapKey(merged.slice(-size));
+      const nextHead = overlapKey(nextWords.slice(0, size));
       if (mergedTail === nextHead) {
         overlap = size;
         break;
@@ -215,10 +246,7 @@ export class WhisperCppBackend implements STTBackend {
     // Initial prompt primes vocabulary for dev terms in the configured language.
     const langMode = getLanguageModeFromEnv();
     const langConfig = getLanguageConfig(langMode);
-    const basePrompt = [
-      getInitialPrompt(langMode),
-      getSTTVocabularyPrompt(),
-    ]
+    const basePrompt = [getInitialPrompt(langMode), getSTTVocabularyPrompt()]
       .filter(Boolean)
       .join(" ")
       .trim();
@@ -288,19 +316,27 @@ export class WhisperCppBackend implements STTBackend {
 
 interface WhisperServerBackendDeps {
   isServerAvailable?: () => boolean;
-  transcribeViaServer?: (wavData: Uint8Array) => Promise<string>;
+  transcribeViaServer?: (
+    wavData: Uint8Array,
+    options?: WhisperServerTranscribeOptions,
+  ) => Promise<string>;
   fallbackBackend?: STTBackend;
 }
 
 export class WhisperServerBackend implements STTBackend {
   name = "whisper-server";
   private readonly isResidentAvailable: () => boolean;
-  private readonly transcribeResident: (wavData: Uint8Array) => Promise<string>;
+  private readonly transcribeResident: (
+    wavData: Uint8Array,
+    options?: WhisperServerTranscribeOptions,
+  ) => Promise<string>;
   private readonly fallbackBackend: STTBackend;
 
   constructor(deps: WhisperServerBackendDeps = {}) {
     this.isResidentAvailable = deps.isServerAvailable ?? isServerAvailable;
-    this.transcribeResident = deps.transcribeViaServer ?? transcribeViaServer;
+    this.transcribeResident =
+      deps.transcribeViaServer ??
+      ((wavData, options) => transcribeViaServer(wavData, undefined, options));
     this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend();
   }
 
@@ -316,7 +352,10 @@ export class WhisperServerBackend implements STTBackend {
     const wavData = new Uint8Array(await Bun.file(audioPath).arrayBuffer());
 
     try {
-      const text = await this.transcribeResident(wavData);
+      const text = await this.transcribeResident(
+        wavData,
+        buildWhisperServerOptions(options),
+      );
       return {
         text,
         backend: this.name,
@@ -339,6 +378,34 @@ export class WhisperServerBackend implements STTBackend {
       };
     }
   }
+}
+
+export function buildWhisperServerOptions(
+  options?: STTTranscribeOptions,
+): WhisperServerTranscribeOptions | undefined {
+  const langMode = getLanguageModeFromEnv();
+  const languageConfig = getLanguageConfig(langMode);
+
+  // In auto mode, preserve language-config's safety behavior for one-shot
+  // audio: no vocabulary prompt unless a chunk-continuity prompt is present.
+  // Otherwise borderline silence/noise can decode into prompt-biased dev terms.
+  const basePrompt =
+    languageConfig.mode === "auto"
+      ? ""
+      : `${getInitialPrompt(langMode)} ${getSTTVocabularyPrompt()}`.trim();
+  const prompt = [basePrompt, options?.promptOverride]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  const result: WhisperServerTranscribeOptions = {};
+  if (languageConfig.mode !== "auto") {
+    result.language = languageConfig.whisperLang;
+  }
+  if (prompt) {
+    result.prompt = prompt;
+  }
+  return result.language || result.prompt ? result : undefined;
 }
 
 // --- Wispr Flow Backend ---
@@ -502,7 +569,7 @@ export async function getBackend(): Promise<STTBackend> {
     }
     throw new Error(
       "whisper backend requested but not available. " +
-      "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/",
+        "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/",
     );
   }
 
