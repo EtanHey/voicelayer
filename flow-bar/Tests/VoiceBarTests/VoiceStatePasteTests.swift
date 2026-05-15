@@ -203,6 +203,7 @@ final class VoiceStatePasteTests: XCTestCase {
     func testBarInitiatedTranscribingAcceptsRecordingIdleForSuppressedResult() async {
         let state = VoiceState()
         state.transcriptionTimeout = .milliseconds(20)
+        state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
 
         state.record()
         state.handleEvent([
@@ -220,6 +221,104 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(state.mode, .idle)
         XCTAssertNil(state.errorMessage)
+    }
+
+    func testRecordingIdleWithoutFinalTranscriptionDoesNotAutoPasteNextTranscript() async {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "unrelated later transcript",
+        ])
+
+        XCTAssertEqual(pastedTexts, [])
+    }
+
+    func testRecordingIdleCleanupClearsPasteIntentEvenIfModeChanges() async {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "follow-up prompt",
+        ])
+
+        try? await Task.sleep(for: .milliseconds(100))
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "unrelated later transcript",
+        ])
+
+        XCTAssertEqual(pastedTexts, [])
+    }
+
+    func testRecordingIdleBeforeFinalTranscriptionStillAutoPastes() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.pasteConfirmationDelay = 0
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "final text after recording idle",
+        ])
+
+        XCTAssertEqual(pastedTexts, ["final text after recording idle"])
     }
 
     func testRepasteUsesStoredTranscript() {
@@ -434,7 +533,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertTrue(pasteShortcutPosted)
         XCTAssertEqual(
             state.confirmationText,
-            "Sent paste — if nothing appeared, click input and press Shift+F6"
+            "Sent paste — if nothing appeared, click input and press Shift+F5"
         )
     }
 
@@ -456,7 +555,7 @@ final class VoiceStatePasteTests: XCTestCase {
 
         XCTAssertEqual(
             state.confirmationText,
-            "Sent paste — if nothing appeared, click input and press Shift+F6"
+            "Sent paste — if nothing appeared, click input and press Shift+F5"
         )
     }
 

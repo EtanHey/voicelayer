@@ -157,10 +157,11 @@ final class VoiceState {
     /// Safety timeout for barInitiatedRecording — prevents stuck state.
     private var barInitiatedTimeout: Task<Void, Never>?
     private var transcriptionTimeoutTask: Task<Void, Never>?
+    private var recordingIdleCleanupTask: Task<Void, Never>?
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
-    /// Cleared after transcription, cancel, disconnect, or a rejected record ack.
+    /// Cleared after transcription, recording-idle cleanup, cancel, disconnect, or a rejected record ack.
     /// Never cleared by idle/error alone — those are ambiguous with multiple MCP clients.
     private var barInitiatedRecording = false
 
@@ -168,7 +169,7 @@ final class VoiceState {
     private var frontmostAppOnRecordStart: NSRunningApplication?
     private var recordStartInsertionHandler: ((String) -> Bool)?
 
-    /// The most recent app we pasted into. Reused for Shift+F6 re-paste.
+    /// The most recent app we pasted into. Reused for Shift+F5 re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
 
     /// Test seam for paste side effects. When set, bypasses system paste.
@@ -247,6 +248,7 @@ final class VoiceState {
     var transcriptionTimeout: Duration = .seconds(30)
     var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
     var barInitiatedSafetyTimeout: Duration = .seconds(3660)
+    var recordingIdleFinalTranscriptGrace: Duration = .seconds(2)
 
     init(
         recentTranscriptionsLoader: @escaping () -> [String] = {
@@ -304,6 +306,7 @@ final class VoiceState {
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
+        recordingIdleCleanupTask?.cancel()
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -353,6 +356,7 @@ final class VoiceState {
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
+        recordingIdleCleanupTask?.cancel()
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -436,6 +440,7 @@ final class VoiceState {
         // Safety timeout: keep bar-initiated dictation state from leaking if the
         // daemon disappears, without ending normal long-form dictation.
         barInitiatedTimeout?.cancel()
+        recordingIdleCleanupTask?.cancel()
         barInitiatedTimeout = Task { @MainActor in
             try? await Task.sleep(for: barInitiatedSafetyTimeout)
             if !Task.isCancelled, barInitiatedRecording {
@@ -470,16 +475,15 @@ final class VoiceState {
                     // the thinking state until the winning transcription lands.
                     return
                 }
-                // AIDEV-NOTE: NEVER reset barInitiatedRecording on idle.
+                // AIDEV-NOTE: Do not reset barInitiatedRecording on generic idle.
                 // Multiple MCP clients receive the record command via sendToAll.
                 // Clients that fail (no sox, session busy) broadcast error+idle
                 // BEFORE the successful client finishes. These stale idle events
-                // would kill the paste flag. Only transcription and cancel() reset it.
+                // would kill the paste flag. Recording-sourced idle gets a short
+                // final-transcript grace before clearing the paste flag.
                 if idleSource == "recording" {
-                    barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
-                    frontmostAppOnRecordStart = nil
-                    recordStartInsertionHandler = nil
+                    scheduleRecordingIdleCleanupIfNeeded()
                 }
                 mode = .idle
                 statusText = ""
@@ -570,6 +574,7 @@ final class VoiceState {
                 if barInitiatedRecording {
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
+                    recordingIdleCleanupTask?.cancel()
                     pasteTranscript(trimmed, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
                 }
             }
@@ -640,6 +645,7 @@ final class VoiceState {
             if showDuringBarRecording {
                 barInitiatedRecording = false
                 barInitiatedTimeout?.cancel()
+                recordingIdleCleanupTask?.cancel()
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
             }
@@ -672,6 +678,7 @@ final class VoiceState {
 
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
+        recordingIdleCleanupTask?.cancel()
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -830,9 +837,24 @@ final class VoiceState {
         }
     }
 
+    private func scheduleRecordingIdleCleanupIfNeeded() {
+        guard barInitiatedRecording else { return }
+
+        recordingIdleCleanupTask?.cancel()
+        let grace = recordingIdleFinalTranscriptGrace
+        recordingIdleCleanupTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: grace)
+            guard let self, !Task.isCancelled, barInitiatedRecording else { return }
+            barInitiatedRecording = false
+            frontmostAppOnRecordStart = nil
+            recordStartInsertionHandler = nil
+        }
+    }
+
     private func failTranscription() {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
+        recordingIdleCleanupTask?.cancel()
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -960,7 +982,7 @@ final class VoiceState {
     }
 
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
-    private static let unverifiedClipboardPasteMessage = "Sent paste — if nothing appeared, click input and press Shift+F6"
+    private static let unverifiedClipboardPasteMessage = "Sent paste — if nothing appeared, click input and press Shift+F5"
 
     private static func pasteOutcome(
         pasted: Bool,
@@ -1065,6 +1087,7 @@ final class VoiceState {
 
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
+        recordingIdleCleanupTask?.cancel()
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         mode = .error

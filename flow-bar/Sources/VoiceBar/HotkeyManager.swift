@@ -1,15 +1,15 @@
 // HotkeyManager.swift — Global hotkey detection via CGEventTap.
 //
-// Uses a consuming event tap so plain F6 does not leak to the focused app
+// Uses a consuming event tap so plain F5 does not leak to the focused app
 // and trigger macOS keyboard-focus traversal.
 //
-// Gesture state machine: F6 keyDown shows an immediate preview; holding past
+// Gesture state machine: F5 keyDown shows an immediate preview; holding past
 // the threshold starts push-to-talk, and double-tap locks recording on.
 //
-// AIDEV-NOTE: Cmd+F6 arrives as F6 keyDown/keyUp events with the Command flag
-// set, not as flagsChanged events. We listen for the dual F6 keycodes:
-// 97 (standard function key mode) or 177 (media mode). On keyboards where the
-// top-row F6 key is hard-wired to Do Not Disturb, Karabiner relays it to F18.
+// AIDEV-NOTE: Cmd+F5 arrives as F5 keyDown/keyUp events with the Command flag
+// set, not as flagsChanged events. We listen for keycode 96 directly. On
+// keyboards where the top-row F5 key is hard-wired to Dictation, hidutil maps
+// it to the internal F18 relay.
 
 import ApplicationServices
 import CoreGraphics
@@ -48,9 +48,9 @@ private func describeFlags(_ flags: CGEventFlags) -> String {
 // MARK: - Gesture State Machine
 
 /// Maps raw key events to push-to-talk and double-tap lock.
-/// - F6 down: shows a pressing preview immediately
-/// - F6 held past threshold: starts push-to-talk recording
-/// - F6 double-tap: starts a locked recording
+/// - F5 down: shows a pressing preview immediately
+/// - F5 held past threshold: starts push-to-talk recording
+/// - F5 double-tap: starts a locked recording
 final class GestureStateMachine {
     enum State: Sendable, Equatable {
         case idle
@@ -333,6 +333,38 @@ func hotkeyAction(
         return .ignore
     }
 
+    // In plain mode, system chords like Cmd+F5 (VoiceOver toggle), Ctrl+F5
+    // (Full Keyboard Access), and Option+F5 must pass through to the OS for
+    // BOTH keyDown and keyUp — otherwise VoiceBar's event tap eats the keyUp
+    // and leaves the OS with an unpaired keyDown (stuck modifier state, broken
+    // accessibility chords). Must run before the keyUp early-return so it
+    // covers both event types.
+    //
+    // Exception: when a VoiceBar gesture is already active and the user
+    // happens to be holding a modifier on release, let the keyUp through so
+    // GestureStateMachine.handleKeyUp() can unwind the hold. Otherwise the
+    // recording would sit open until manually cancelled.
+    if !useModifierMode, type == .keyDown || type == .keyUp {
+        let blockingModifiers: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl]
+        if !flags.isDisjoint(with: blockingModifiers) {
+            let shouldUnwindActiveHold = type == .keyUp && gestureIsActive
+            if !shouldUnwindActiveHold {
+                NSLog(
+                    "[HotkeyManager] Ignoring modified plain-mode chord for keycode %lld so system shortcut reaches the OS (event=%@, flags=%@)",
+                    keycode,
+                    describeEventType(type),
+                    describeFlags(flags)
+                )
+                return .ignore
+            }
+            NSLog(
+                "[HotkeyManager] Letting modified keyUp through for keycode %lld because a gesture is active — unwinding hold (flags=%@)",
+                keycode,
+                describeFlags(flags)
+            )
+        }
+    }
+
     if type == .keyUp {
         NSLog(
             "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",
@@ -360,7 +392,7 @@ func hotkeyAction(
             return .ignore
         }
         NSLog(
-            "[HotkeyManager] Matched Shift+F6 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
+            "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
             keycode,
             describeFlags(flags)
         )
@@ -369,7 +401,7 @@ func hotkeyAction(
 
     if flags.contains(.maskShift) {
         NSLog(
-            "[HotkeyManager] Ignoring modified F6 for keycode %lld because Shift+F6 is the exact re-paste shortcut (flags=%@)",
+            "[HotkeyManager] Ignoring modified F5 for keycode %lld because Shift+F5 is the exact re-paste shortcut (flags=%@)",
             keycode,
             describeFlags(flags)
         )
@@ -548,16 +580,16 @@ private func hotkeyCallback(
 // MARK: - Hotkey Manager
 
 /// Manages CGEventTap for global hotkey detection.
-/// Matched hotkey events are consumed so F6 does not move focus in the target app.
+/// Matched hotkey events are consumed so F5 does not move focus in the target app.
 final class HotkeyManager {
-    static let defaultTargetKeycodes: Set<Int64> = [79, 97, 177]
+    static let defaultTargetKeycodes: Set<Int64> = [79, 96]
     static let defaultUsesModifierMode = false
 
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
     /// Keycodes to listen for.
-    /// F18 relay = 79, F6 standard = 97, F6 media = 177.
+    /// F18 relay = 79, F5 standard = 96.
     private var targetKeycodes = HotkeyManager.defaultTargetKeycodes
 
     /// Whether the hotkey requires Command while the function key still emits
@@ -569,7 +601,7 @@ final class HotkeyManager {
     /// Retained context for the C callback — must live as long as the tap.
     private var tapContext: TapContext?
 
-    /// Callback for Shift+F6 re-paste hotkey.
+    /// Callback for Shift+F5 re-paste hotkey.
     var onKeyDown: () -> Void
     var onKeyUp: () -> Void
     var onCancel: () -> Void
@@ -623,7 +655,7 @@ final class HotkeyManager {
         }
 
         // Event mask depends on whether we require a modifier chord or a plain
-        // function key. Cmd+F6 still arrives as keyDown/keyUp.
+        // function key. Cmd+F5 still arrives as keyDown/keyUp.
         let mask = if useModifierMode {
             CGEventMask(
                 (1 << CGEventType.keyDown.rawValue) |

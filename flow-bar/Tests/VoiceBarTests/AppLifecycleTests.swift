@@ -103,92 +103,64 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(successfulExit, false, "SuccessfulExit:false means only restart on crash, not clean quit")
     }
 
-    func testKarabinerRuleDoesNotOwnPlainF6HoldToRecord() throws {
+    func testF5HidutilLaunchAgentRunsMergeHelper() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let ruleURL = repoRoot
-            .appendingPathComponent("flow-bar")
-            .appendingPathComponent("karabiner")
-            .appendingPathComponent("voicebar-f6.json")
+        let plistURL = repoRoot
+            .appendingPathComponent("launchd")
+            .appendingPathComponent("com.voicelayer.f5-to-f18-hidutil.plist")
 
-        let data = try Data(contentsOf: ruleURL)
-        let object = try JSONSerialization.jsonObject(with: data)
-        let root = try XCTUnwrap(object as? [String: Any])
-        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
-        let plainF6 = manipulators.first { manipulator in
-            guard let from = manipulator["from"] as? [String: Any] else { return false }
-            let modifiers = from["modifiers"] as? [String: Any]
-            return from["key_code"] as? String == "f6"
-                && modifiers == nil
-                && (manipulator["to_after_key_up"] as? [[String: Any]]) != nil
-        }
+        let data = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
+        let dict = try XCTUnwrap(plist as? [String: Any])
+        let args = try XCTUnwrap(dict["ProgramArguments"] as? [String])
 
-        XCTAssertNil(
-            plainF6,
-            "Plain F6 should be owned by the native hotkey manager, not Karabiner socket start/stop commands"
+        XCTAssertEqual(dict["Label"] as? String, "com.voicelayer.f5-to-f18-hidutil")
+        XCTAssertEqual(args.prefix(2), ["/bin/sh", "-c"])
+
+        let command = try XCTUnwrap(args.last)
+        XCTAssertTrue(
+            command.contains("apply-voicebar-f5-hidutil.sh"),
+            "LaunchAgent should run the helper that preserves non-VoiceBar hidutil mappings"
         )
     }
 
-    func testKarabinerRuleMapsDoNotDisturbConsumerKeyToInternalF18Relay() throws {
+    func testF5HidutilHelperMapsDictationToF18AndFiltersStaleF5() throws {
+        // Architecture: only the Apple Dictation consumer key (0xC000000CF)
+        // is remapped to F18 globally. The physical F5 (0x70000003E) is
+        // intentionally NOT pushed — VoiceBar's CGEventTap listens for keycode
+        // 96 directly. A global F5 -> F18 remap would hide F5 from the OS
+        // for every app, breaking system chords like Cmd+F5 (VoiceOver).
+        // F5_SRC_DEC stays in the filter set to clean up stale F5 -> F18
+        // entries from earlier VoiceBar installs.
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-        let ruleURL = repoRoot
-            .appendingPathComponent("flow-bar")
-            .appendingPathComponent("karabiner")
-            .appendingPathComponent("voicebar-f6.json")
+        let helperURL = repoRoot
+            .appendingPathComponent("scripts")
+            .appendingPathComponent("apply-voicebar-f5-hidutil.sh")
 
-        let data = try Data(contentsOf: ruleURL)
-        let object = try JSONSerialization.jsonObject(with: data)
-        let root = try XCTUnwrap(object as? [String: Any])
-        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
-        let consumerMapping = manipulators.first { manipulator in
-            guard let from = manipulator["from"] as? [String: Any],
-                  from["consumer_key_code"] as? String == "do_not_disturb",
-                  from["modifiers"] == nil,
-                  let to = manipulator["to"] as? [[String: Any]],
-                  let firstTo = to.first else { return false }
-            return firstTo["key_code"] as? String == "f18"
-        }
-
-        XCTAssertNotNil(
-            consumerMapping,
-            "The shipped Karabiner rule should translate the hardware Do Not Disturb key into an internal F18 relay for VoiceBar"
+        let helper = try String(contentsOf: helperURL)
+        XCTAssertTrue(
+            helper.contains("30064771134"),
+            "F5 source must remain referenced so the filter strips stale F5 -> F18 entries"
         )
-    }
-
-    func testKarabinerRuleMapsPlainF6ToInternalF18Relay() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let ruleURL = repoRoot
-            .appendingPathComponent("flow-bar")
-            .appendingPathComponent("karabiner")
-            .appendingPathComponent("voicebar-f6.json")
-
-        let data = try Data(contentsOf: ruleURL)
-        let object = try JSONSerialization.jsonObject(with: data)
-        let root = try XCTUnwrap(object as? [String: Any])
-        let manipulators = try XCTUnwrap(root["manipulators"] as? [[String: Any]])
-        let relayMapping = manipulators.first { manipulator in
-            guard let from = manipulator["from"] as? [String: Any],
-                  from["key_code"] as? String == "f6",
-                  from["modifiers"] == nil,
-                  let to = manipulator["to"] as? [[String: Any]],
-                  let firstTo = to.first else { return false }
-            return firstTo["key_code"] as? String == "f18"
-        }
-
-        XCTAssertNotNil(
-            relayMapping,
-            "The shipped Karabiner rule should translate plain F6 into the same internal F18 relay for VoiceBar"
+        XCTAssertTrue(
+            helper.contains("51539607759"),
+            "Apple Dictation source must be remapped to F18"
+        )
+        XCTAssertTrue(
+            helper.contains("30064771181"),
+            "F18 destination must be present"
+        )
+        XCTAssertTrue(
+            helper.contains("preserved.push"),
+            "helper must merge VoiceBar's Dictation entry with existing user mappings"
         )
     }
 

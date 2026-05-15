@@ -79,7 +79,7 @@ class VoiceBarCommandRouter {
 
     func handleHotkeyDoubleTap() {
         // The first tap already sent the record intent. Double-tap only locks
-        // the gesture state so releasing F6 does not stop the active recording.
+        // the gesture state so releasing F5 does not stop the active recording.
     }
 
     private func handleToggle() {

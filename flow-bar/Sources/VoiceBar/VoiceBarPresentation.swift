@@ -28,7 +28,7 @@ struct VoiceBarTranscriptPreviewLayout: Equatable {
 }
 
 enum VoiceBarPresentation {
-    static let readyHotkeyHint = "F6 to talk"
+    static let readyHotkeyHint = "F5 to talk"
     static let holdToTalkHint = "Hold to talk"
     static let releaseToSendHint = "Release to send"
     static let tapAgainToLockHint = "Tap again to lock"
@@ -37,7 +37,7 @@ enum VoiceBarPresentation {
         hotkeyEnabled: Bool,
         missingPermissions: [HotkeyPermission]
     ) -> String {
-        guard !hotkeyEnabled else { return "Hotkey: F6" }
+        guard !hotkeyEnabled else { return "Hotkey: F5" }
         let labels = missingPermissions.map {
             switch $0 {
             case .inputMonitoring: "Input Monitoring"

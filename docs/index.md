@@ -2,7 +2,7 @@
 
 > Your AI agent can't hear you. VoiceLayer gives it ears and a voice.
 
-**Voice I/O for AI coding assistants.** You type 40 words per minute. You speak 150. VoiceLayer adds voice input and output to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and any [MCP](https://modelcontextprotocol.io) client. Press F6, speak, ship.
+**Voice I/O for AI coding assistants.** You type 40 words per minute. You speak 150. VoiceLayer adds voice input and output to [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and any [MCP](https://modelcontextprotocol.io) client. Press F5, speak, ship.
 
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You

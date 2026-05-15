@@ -8,7 +8,7 @@
 [![Tools](https://img.shields.io/badge/MCP%20tools-11-38BDF8.svg)](#voice-tools)
 [![Tests](https://img.shields.io/badge/tests-585%20Bun%20%2B%20144%20Swift-brightgreen.svg)](#testing)
 
-**Voice I/O for AI coding assistants.** Press F6, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
+**Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
 ```
   You ──🎤──> whisper.cpp ──> Claude Code ──> edge-tts ──🔊──> You
@@ -197,16 +197,18 @@ Floating SwiftUI widget providing visual feedback during voice interactions. Con
 - Waveform visualization during recording
 - Expandable pill UI — collapses to dot after 5s idle
 - Draggable, position persisted across launches
-- **Global hotkey:** Cmd+F6 (hold for push-to-talk, double-tap to toggle hands-free)
+- **Global hotkey:** F5 (hold for push-to-talk)
 
 ```bash
-cd flow-bar && ./build-app.sh   # Build, codesign, install to /Applications
+bun add -g voicelayer-mcp
+voicelayer hotkey install       # Install F5/Dictation -> F18 relay
+voicelayer bar                  # Build and launch Voice Bar
 ```
 
 **Hotkey Notes:**
 - Requires Input Monitoring permission (System Settings > Privacy & Security)
-- Cmd+F6 is chosen to avoid conflicts with VoiceOver (Cmd+F5) — if conflicts occur, the hotkey can be reconfigured via `HotkeyManager.configure()`
-- Supports both F6 keyboard modes (function-key and media-key)
+- On keyboards where the physical key is Apple's Dictation key, `voicelayer hotkey install` installs a `hidutil` LaunchAgent to map F5/Dictation to VoiceBar's internal F18 relay.
+- The installer preserves non-VoiceBar `hidutil` mappings and is safe to rerun. `Shift+F5` re-pastes the latest transcript.
 
 ### Advanced: Voice Cloning
 
@@ -276,7 +278,7 @@ One-week sprint focused on VoiceBar reliability and a recording corpus to fight 
 - Every successful VoiceBar dictation is archived under `~/.local/share/voicelayer/recordings/YYYY-MM-DD/<timestamp-id>/` with `audio.wav` + `voicelayer-transcript.txt` + `metadata.json` (schema v1, SHA-256 over WAV bytes).
 - Atomic rename + fsync so partial writes never appear in the corpus.
 - Cancelled or empty transcriptions are skipped — only real dictations land on disk.
-- Re-paste hotkey moved to `Shift+F6`; plain `F6` is now the default record-start/stop activation (consuming event tap to stop focus traversal leakage).
+- Re-paste hotkey moved to `Shift+F5`; plain `F5` is now the default record-start/stop activation through VoiceBar's F18 relay.
 
 **Test infrastructure**
 - VoiceLayer pre-push regression gate ([#181](https://github.com/EtanHey/voicelayer/pull/181)) plus exit-0 fix on the success path ([#182](https://github.com/EtanHey/voicelayer/pull/182)).
@@ -330,7 +332,7 @@ VoiceLayer is one of three open-source MCP servers in the [Golems](https://etanh
 | Server | What it does | Tools |
 |--------|-------------|:-----:|
 | **[BrainLayer](https://brainlayer.etanheyman.com)** | Persistent memory for AI agents — knowledge graph + hybrid search | 12 |
-| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, F6 push-to-talk | 11 |
+| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, F5 push-to-talk | 11 |
 | **[cmuxLayer](https://cmuxlayer.etanheyman.com)** | Terminal orchestration — spawn panes, read screens, coordinate agents | 22 |
 
 Pair with BrainLayer to remember voice conversations across sessions.

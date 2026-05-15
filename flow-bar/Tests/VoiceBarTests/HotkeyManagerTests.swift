@@ -8,7 +8,7 @@ final class HotkeyManagerTests: XCTestCase {
             shouldConsumeHotkeyEvent(
                 hotkeyAction: .keyDown,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-                keycode: 97
+                keycode: 96
             )
         )
     }
@@ -24,7 +24,7 @@ final class HotkeyManagerTests: XCTestCase {
     }
 
     func testDefaultHotkeyConfigurationIncludesInternalF18Relay() {
-        XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [79, 97, 177])
+        XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [79, 96])
         XCTAssertFalse(HotkeyManager.defaultUsesModifierMode)
     }
 
@@ -56,11 +56,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testCmdF6StandardFunctionKeyInModifierModeTriggersKeyDown() {
+    func testCmdF5StandardFunctionKeyInModifierModeTriggersKeyDown() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskCommand,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -70,7 +70,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testCmdF6MediaKeyInModifierModeTriggersKeyDown() {
+    func testCmdF6MediaKeyInModifierModeIsIgnored() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
@@ -80,15 +80,15 @@ final class HotkeyManagerTests: XCTestCase {
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: true
             ),
-            .keyDown
+            .ignore
         )
     }
 
-    func testCmdF6ReleaseTriggersKeyUp() {
+    func testCmdF5ReleaseTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskCommand,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -98,7 +98,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testCmdF6MediaKeyReleaseTriggersKeyUp() {
+    func testCmdF6MediaKeyReleaseInModifierModeIsIgnored() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
@@ -108,15 +108,15 @@ final class HotkeyManagerTests: XCTestCase {
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: true
             ),
-            .keyUp
+            .ignore
         )
     }
 
-    func testShiftF6TriggersPasteLastTranscript() {
+    func testShiftF5TriggersPasteLastTranscript() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -126,11 +126,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF6TriggersPasteLastTranscriptInNonModifierMode() {
+    func testShiftF5TriggersPasteLastTranscriptInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -140,11 +140,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF6ReleaseTriggersKeyUpToUnwindHoldInNonModifierMode() {
+    func testShiftF5ReleaseTriggersKeyUpToUnwindHoldInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -154,11 +154,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF6ReleaseTriggersKeyUpToUnwindHoldInModifierMode() {
+    func testShiftF5ReleaseTriggersKeyUpToUnwindHoldInModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -200,7 +200,7 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .flagsChanged,
-                keycode: 97,
+                keycode: 96,
                 flags: .maskCommand,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -214,7 +214,7 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -229,7 +229,7 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -240,11 +240,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testPlainF6InNonModifierModeTriggersKeyDown() {
+    func testPlainF5InNonModifierModeTriggersKeyDown() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -254,11 +254,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testPlainF6InNonModifierModeTriggersKeyUp() {
+    func testPlainF5InNonModifierModeTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -274,6 +274,172 @@ final class HotkeyManagerTests: XCTestCase {
                 type: .keyDown,
                 keycode: 9,
                 flags: [],
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    // MARK: - Plain-mode system shortcuts must pass through
+    //
+    // In plain mode the hotkey is the bare F5 (or F18 from the hidutil relay),
+    // plus the Shift+F5 re-paste chord. Any other modifier+F5 combo (Cmd+F5
+    // toggles VoiceOver, Ctrl+F5 toggles full keyboard access, Option+F5 is a
+    // common user-defined chord) must NOT be consumed by VoiceBar's event tap;
+    // returning .ignore lets the event reach the OS / focused app.
+
+    func testCmdF5InPlainModeIsIgnoredSoVoiceOverShortcutPassesThrough() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskCommand,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    func testCmdF5KeyUpInPlainModeIsIgnoredToKeepEventPairing() {
+        // Both keyDown AND keyUp must be ignored. If VoiceBar's tap consumed
+        // only the keyUp, the OS would see an unpaired keyDown for the
+        // VoiceOver chord and could leave modifier state stuck. The niche
+        // case of "plain F5 hold + Cmd added mid-hold" unwinds via the
+        // gesture state machine's timeouts rather than this code path.
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskCommand,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    func testCtrlF5KeyUpInPlainModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskControl,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    func testOptF5KeyUpInPlainModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskAlternate,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    // MARK: - Active-hold escape hatch for modified releases
+    //
+    // The plain-mode modifier guard returns .ignore so system chords pass
+    // through, BUT when a VoiceBar gesture is already active and the user
+    // happens to be holding a modifier on release, we still need .keyUp so
+    // GestureStateMachine.handleKeyUp() can unwind the hold — otherwise the
+    // recording stays open until manually cancelled.
+
+    func testCmdF5KeyUpDuringActiveHoldStillUnwindsGesture() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskCommand,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
+            ),
+            .keyUp
+        )
+    }
+
+    func testCtrlF5KeyUpDuringActiveHoldStillUnwindsGesture() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskControl,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
+            ),
+            .keyUp
+        )
+    }
+
+    func testCmdF5KeyDownDuringActiveHoldStillIgnoredForOSChord() {
+        // keyDown is the chord-trigger; even with a stale active gesture
+        // VoiceBar should not eat the system shortcut.
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskCommand,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
+            ),
+            .ignore
+        )
+    }
+
+    func testCmdF18RelayInPlainModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 79,
+                flags: .maskCommand,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    func testCtrlF5InPlainModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskControl,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false
+            ),
+            .ignore
+        )
+    }
+
+    func testOptF5InPlainModeIsIgnored() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskAlternate,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: false
@@ -313,7 +479,7 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 1,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -323,11 +489,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testCmdF5InModifierModeIsIgnored() {
+    func testCmdF6InModifierModeIsIgnored() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
-                keycode: 96,
+                keycode: 97,
                 flags: .maskCommand,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
@@ -337,11 +503,11 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testF6WithoutCmdInModifierModeTriggersKeyUp() {
+    func testF5WithoutCmdInModifierModeTriggersKeyUp() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
-                keycode: 97,
+                keycode: 96,
                 flags: [],
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,

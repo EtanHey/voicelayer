@@ -65,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.resetHotkeyTracking()
         }
     )
-    /// Track when F6 hold started — for minimum recording duration guard.
+    /// Track when F5 hold started — for minimum recording duration guard.
     private var holdStartTime: Date?
     /// Last moment any hotkey input source was accepted.
     private var lastHotkeyActivityAt: TimeInterval?
@@ -165,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.start()
         _ = daemonController.activateIfNeeded()
 
-        // Hotkey setup — F6 hold for push-to-talk.
+        // Hotkey setup — F5 hold for push-to-talk.
         setupHotkey()
         configureWakeRecovery()
 

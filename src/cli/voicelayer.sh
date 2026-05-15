@@ -4,7 +4,37 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve $0 through symlinks so PACKAGE_ROOT points at the real package even
+# when this script is invoked via a bin symlink (`bun add -g`, `npm i -g`, etc).
+# `readlink -f` is supported on Linux and macOS 12+; the manual fallback covers
+# older macOS without GNU coreutils.
+voicelayer_resolve_self() {
+    local src="${BASH_SOURCE[0]}"
+    local resolved
+    if resolved="$(readlink -f "$src" 2>/dev/null)" && [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+        return
+    fi
+    while [ -L "$src" ]; do
+        local link
+        link="$(readlink "$src")" || break
+        case "$link" in
+            /*) src="$link" ;;
+            *)  src="$(cd "$(dirname "$src")" && cd "$(dirname "$link")" && pwd -P)/$(basename "$link")" ;;
+        esac
+    done
+    printf '%s\n' "$src"
+}
+
+SCRIPT_PATH="$(voicelayer_resolve_self)"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Debug seam — tests assert symlink resolution by reading this value.
+if [[ "${VOICELAYER_DEBUG_PACKAGE_ROOT:-0}" = "1" ]]; then
+    printf '%s\n' "$PACKAGE_ROOT"
+    exit 0
+fi
 
 case "${1:-}" in
     extract)
@@ -25,12 +55,28 @@ case "${1:-}" in
         ;;
     bar)
         shift
-        FLOW_BAR_DIR="$(cd "$SCRIPT_DIR/../../flow-bar" && pwd)"
+        FLOW_BAR_DIR="$(cd "$PACKAGE_ROOT/flow-bar" && pwd)"
         echo "[voicelayer] Building Voice Bar..."
         cd "$FLOW_BAR_DIR"
         swift build -c release 2>&1 | tail -1
         echo "[voicelayer] Launching Voice Bar..."
         exec ".build/release/VoiceBar" "$@"
+        ;;
+    hotkey)
+        shift
+        case "${1:-install}" in
+            install)
+                exec "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
+                ;;
+            status)
+                launchctl print "gui/$(id -u)/com.voicelayer.f5-to-f18-hidutil" 2>/dev/null || true
+                hidutil property --get UserKeyMapping
+                ;;
+            *)
+                echo "Usage: voicelayer hotkey [install|status]"
+                exit 1
+                ;;
+        esac
         ;;
     bar-stop)
         if pkill -f "VoiceBar" 2>/dev/null; then
@@ -48,6 +94,7 @@ case "${1:-}" in
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
         echo "  bar        Build and launch Voice Bar (floating pill widget)"
+        echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
         echo "  bar-stop   Stop the Voice Bar if running"
         echo ""
         echo "Examples:"
@@ -55,6 +102,7 @@ case "${1:-}" in
         echo "  voicelayer clone --name theo"
         echo "  voicelayer daemon --port 8880"
         echo "  voicelayer bar"
+        echo "  voicelayer hotkey install"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."
         ;;

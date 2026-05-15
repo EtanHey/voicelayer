@@ -112,7 +112,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true
             ),
-            "F6 to talk"
+            "F5 to talk"
         )
 
         XCTAssertEqual(
@@ -122,7 +122,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true
             ),
-            "F6 to talk"
+            "F5 to talk"
         )
 
         XCTAssertEqual(

@@ -9,8 +9,14 @@
   },
   "files": [
     "src/**/*.ts",
+    "src/**/*.py",
     "!src/__tests__/**",
+    "flow-bar/Package.swift",
+    "flow-bar/Sources/",
+    "flow-bar/Tests/",
+    "launchd/",
     "scripts/",
+    "!scripts/__pycache__/**",
     "models/",
     "README.md",
     "LICENSE"

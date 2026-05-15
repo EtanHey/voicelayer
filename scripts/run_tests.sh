@@ -108,22 +108,30 @@ for _ in $(seq 1 150); do
 done
 record_status "bun MCP daemon boot" "$daemon_status"
 
-printf '\n== Karabiner CLI hotkey injection smoke ==\n'
-karabiner_status=0
-KARABINER_CLI="${KARABINER_CLI:-karabiner_cli}"
-if ! command -v "$KARABINER_CLI" >/dev/null 2>&1; then
-  printf '[fail] karabiner_cli not found: %s\n' "$KARABINER_CLI"
-  karabiner_status=1
-else
-  # karabiner_cli does not synthesize physical keys; this toggles a dedicated
-  # test variable through the same supported Karabiner control plane.
-  "$KARABINER_CLI" --set-variables '{"voicebar_p4a_f6_down":1}'
-  karabiner_down_status=$?
-  "$KARABINER_CLI" --set-variables '{"voicebar_p4a_f6_down":0}'
-  karabiner_up_status=$?
-  karabiner_status=$((karabiner_down_status | karabiner_up_status))
+printf '\n== F5 hidutil LaunchAgent smoke ==\n'
+hidutil_plist_status=0
+HIDUTIL_PLIST="$ROOT_DIR/launchd/com.voicelayer.f5-to-f18-hidutil.plist"
+HIDUTIL_HELPER="$ROOT_DIR/scripts/apply-voicebar-f5-hidutil.sh"
+if [ ! -f "$HIDUTIL_PLIST" ]; then
+  printf '[fail] missing hidutil plist: %s\n' "$HIDUTIL_PLIST"
+  hidutil_plist_status=1
+elif ! plutil -lint "$HIDUTIL_PLIST" >/dev/null; then
+  printf '[fail] invalid hidutil plist: %s\n' "$HIDUTIL_PLIST"
+  hidutil_plist_status=1
+elif ! grep -q 'apply-voicebar-f5-hidutil.sh' "$HIDUTIL_PLIST"; then
+  printf '[fail] hidutil plist does not run merge helper\n'
+  hidutil_plist_status=1
+elif [ ! -f "$HIDUTIL_HELPER" ]; then
+  printf '[fail] missing hidutil helper: %s\n' "$HIDUTIL_HELPER"
+  hidutil_plist_status=1
+elif ! grep -q '30064771134' "$HIDUTIL_HELPER" || \
+  ! grep -q '51539607759' "$HIDUTIL_HELPER" || \
+  ! grep -q '30064771181' "$HIDUTIL_HELPER" || \
+  ! grep -q 'preserved.push' "$HIDUTIL_HELPER"; then
+  printf '[fail] hidutil helper does not merge F5/Dictation to F18\n'
+  hidutil_plist_status=1
 fi
-record_status "karabiner_cli variable injection" "$karabiner_status"
+record_status "hidutil F5 relay plist" "$hidutil_plist_status"
 
 printf '\n== Bun tests ==\n'
 (

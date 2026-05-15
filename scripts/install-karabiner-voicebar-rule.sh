@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install VoiceBar Karabiner rule into ~/.config/karabiner/karabiner.json
+# Deprecated: VoiceBar F5 routing now uses macOS hidutil, not Karabiner.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec python3 "$SCRIPT_DIR/install-karabiner-voicebar-rule.py" "$@"
+echo "VoiceBar F5 routing uses hidutil now; installing hidutil LaunchAgent instead." >&2
+exec "$SCRIPT_DIR/install-voicebar-f5-hidutil.sh" "$@"

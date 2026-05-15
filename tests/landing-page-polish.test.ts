@@ -33,6 +33,10 @@ describe("landing page polish audit", () => {
     expect(html).toMatch(
       /<button type="button" class="install-cmd"[^>]*aria-label="Copy bun add -g voicelayer-mcp command"[^>]*data-copy="bun add -g voicelayer-mcp">/,
     );
+    expect(html).toMatch(
+      /<button type="button" class="setup-code"[^>]*aria-label="Copy voicelayer hotkey install command"[^>]*data-copy="voicelayer hotkey install">/,
+    );
+    expect(html).not.toContain("cp launchd/com.voicelayer.f5-to-f18-hidutil.plist");
 
     expect(html).toContain(".skip-link:focus-visible");
     expect(html).toMatch(
