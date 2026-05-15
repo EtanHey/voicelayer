@@ -130,8 +130,9 @@ describe("whisper language args", () => {
     expect(config.whisperArgs).toContain("en");
   });
 
-  it("auto mode omits prompt to reduce silence hallucinations", () => {
+  it("auto mode omits prompt context to avoid prompt-biased silence", () => {
     const config = getLanguageConfig("auto");
+    expect(config.whisperArgs).not.toContain("-l");
     expect(config.whisperArgs).not.toContain("--prompt");
   });
 

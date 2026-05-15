@@ -62,6 +62,11 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = applyPunctuation(result);
   }
 
+  // Percent normalization (depends on number formatting and punctuation stages)
+  if (!disabled?.has("numbers") && !disabled?.has("punctuation")) {
+    result = normalizePercentPhrases(result);
+  }
+
   // Stage 6: Auto-capitalization (last — after all text transformations)
   if (!disabled?.has("capitalization")) {
     result = autoCapitalize(result);
@@ -177,10 +182,16 @@ function applyPunctuation(text: string): string {
     result = result.replace(pattern, ` ${replacement}`);
   }
   // Clean up space before punctuation that should attach left
-  result = result.replace(/\s+([.,;:?!)}\]`'"])/g, "$1");
+  result = result.replace(/\s+([.,;:?!%)}\]`'"])/g, "$1");
   // Clean up space after open brackets
   result = result.replace(/([({[\[`'"])\s+/g, "$1");
   return result;
+}
+
+function normalizePercentPhrases(text: string): string {
+  return text
+    .replace(/\ba\s+(100%)(?=\s+sure\b|[.!?,;:]|$)/gi, "$1")
+    .replace(/\b(\d{1,3})\s+sure(?=\s*[.!?,;]|\s*$)/gi, "$1% sure");
 }
 
 // --- Stage 3: Case formatting commands ---
@@ -390,7 +401,28 @@ function autoCapitalize(text: string): string {
     return `\n${letter.toUpperCase()}`;
   });
 
+  result = result.replace(/\bi\b/g, (match: string, offset: number, source: string) => {
+    if (isLikelyCodeIdentifierI(source, offset)) {
+      return match;
+    }
+    return "I";
+  });
+  result = result.replace(/\bi(['’](?:m|d|ll|ve))\b/gi, (_m, suffix: string) => {
+    return `I${suffix}`;
+  });
+
   return result;
+}
+
+function isLikelyCodeIdentifierI(source: string, offset: number): boolean {
+  const before = source.slice(Math.max(0, offset - 12), offset);
+  const after = source.slice(offset + 1, offset + 8);
+
+  if (/[\[({.=+\-*/%]\s*$/.test(before)) return true;
+  if (/^\s*[\])}.=+\-*/%]/.test(after)) return true;
+  if (/\b(?:let|const|var|for)\s+$/.test(before)) return true;
+
+  return false;
 }
 
 // --- Stage 7: Custom aliases ---

@@ -103,4 +103,112 @@ describe("stt-cleanup", () => {
       "Ship 10 kilos of flour",
     );
   });
+
+  it("cleans Codex session-mining dictation without rewriting ordinary codecs", () => {
+    expect(
+      cleanupTranscriptionText(
+        "if it's sessions of codecs i need to save them so we can do session mining",
+      ),
+    ).toBe(
+      "If it's sessions of Codex I need to save them so we can do session mining",
+    );
+
+    expect(cleanupTranscriptionText("audio codecs need testing")).toBe(
+      "Audio codecs need testing",
+    );
+  });
+
+  it("cleans BrainLayer coordination terms from long dictation", () => {
+    expect(
+      cleanupTranscriptionText(
+        "go back to orc claud and ask whether pending cues are working",
+      ),
+    ).toBe("Go back to orcClaude and ask whether pending queues are working");
+
+    expect(
+      cleanupTranscriptionText(
+        "go back to orcclaud and ask the skill creator claude",
+      ),
+    ).toBe("Go back to orcClaude and ask the SkillCreatorClaude");
+
+    expect(
+      cleanupTranscriptionText(
+        "ask or claude whether pending cues are working in brain layer",
+      ),
+    ).toBe("Ask orcClaude whether pending queues are working in BrainLayer");
+
+    expect(
+      cleanupTranscriptionText(
+        "then tell or claude whether pending cues are working",
+      ),
+    ).toBe("Then tell orcClaude whether pending queues are working");
+
+    expect(cleanupTranscriptionText("ask Gemini or Claude")).toBe(
+      "Ask Gemini or Claude",
+    );
+
+    expect(cleanupTranscriptionText("please ask or claude about this")).toBe(
+      "Please ask orcClaude about this",
+    );
+  });
+
+  it("does not rewrite ordinary audio/UI cues as queues", () => {
+    expect(cleanupTranscriptionText("there are three pending cues for playback")).toBe(
+      "There are 3 pending cues for playback",
+    );
+
+    expect(cleanupTranscriptionText("pending cues for the recorder")).toBe(
+      "Pending cues for the recorder",
+    );
+
+    expect(cleanupTranscriptionText("check if pending cues are processed")).toBe(
+      "Check if pending cues are processed",
+    );
+  });
+
+  it("preserves sentence-start capitalization for converted aliases", () => {
+    expect(cleanupTranscriptionText("pending cues are working")).toBe(
+      "Pending queues are working",
+    );
+    
+    expect(cleanupTranscriptionText("pending cues are working in brain layer")).toBe(
+      "Pending queues are working in BrainLayer",
+    );
+  });
+
+  it("formats certainty percentages in migration planning dictation", () => {
+    expect(cleanupTranscriptionText("i'm not a hundred percent sure")).toBe(
+      "I'm not 100% sure",
+    );
+    expect(cleanupTranscriptionText("i'm not 100 sure")).toBe(
+      "I'm not 100% sure",
+    );
+    expect(cleanupTranscriptionText("there are two sure ways to fix this")).toBe(
+      "There are 2 sure ways to fix this",
+    );
+  });
+
+  it("removes article from 'a hundred percent' with trailing punctuation", () => {
+    expect(cleanupTranscriptionText("i am a hundred percent.")).toBe(
+      "I am 100%.",
+    );
+    expect(cleanupTranscriptionText("not a hundred percent!")).toBe(
+      "Not 100%!",
+    );
+    expect(cleanupTranscriptionText("are you a hundred percent?")).toBe(
+      "Are you 100%?",
+    );
+  });
+
+  it("preserves article in ordinary percent adjective phrases", () => {
+    expect(cleanupTranscriptionText("a hundred percent reliable fix")).toBe(
+      "A 100% reliable fix",
+    );
+    expect(cleanupTranscriptionText("it's a hundred percent improvement")).toBe(
+      "It's a 100% improvement",
+    );
+    expect(cleanupTranscriptionText("we need a hundred percent uptime")).toBe(
+      "We need a 100% uptime",
+    );
+  });
 });

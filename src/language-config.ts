@@ -12,6 +12,8 @@
  *
  * Initial prompts help whisper recognize domain-specific vocabulary.
  * Limited to ~224 tokens (~900 chars). Most critical terms first.
+ * VOCABULARY-ONLY format (no complete sentences) reduces hallucination risk on
+ * silence/noise while still priming for correct casing and term recognition.
  */
 
 export type LanguageMode = "auto" | "hebrew" | "english";
@@ -26,32 +28,29 @@ export interface LanguageConfig {
 
 /**
  * English dev vocabulary for initial prompt.
- * Helps whisper recognize technical terms it might otherwise garble.
+ * Vocabulary-only format (no imperative sentences) reduces hallucination risk
+ * while still priming Whisper for correct casing and recognition.
  */
 const ENGLISH_DEV_PROMPT =
-  "The developer discussed the TypeScript deployment and Docker containerization, " +
-  "mentioning the handleSocketCommand function in socket-handlers.ts and the CI/CD pipeline. " +
-  "They used useEffect, useState, and React hooks with Next.js and Node.js. " +
-  "The PR was merged after CodeRabbit review. Run bun test and check the WebSocket connection.";
+  "TypeScript JavaScript React Next.js Node.js Docker Kubernetes " +
+  "useEffect useState useCallback handleSocketCommand socket-handlers.ts " +
+  "CI/CD pipeline deployment CodeRabbit GitHub WebSocket bun test";
 
 /**
  * Hebrew dev vocabulary for initial prompt.
- * Contains common Hebrew phrases Israeli developers use, mixed with English code terms.
+ * Common Hebrew dev terms mixed with English code terms. Vocabulary format only.
  */
 const HEBREW_DEV_PROMPT =
-  "המפתח דיבר על TypeScript ועל Docker, והזכיר את הפונקציה handleSocketCommand. " +
-  "צריך לתקן באג בפונקציה של הלוגין ולהריץ את הטסטים. " +
-  "תעשה פוש לברנץ' ותפתח פול ריקווסט. הפגישה על השינויים בארכיטקטורה. " +
-  "השרת לא מגיב, צריך לעשות ריסטארט לקונטיינר.";
+  "TypeScript Docker handleSocketCommand באג פונקציה לוגין טסטים " +
+  "פוש ברנץ' פול ריקווסט ארכיטקטורה שרת ריסטארט קונטיינר";
 
 /**
  * Mixed prompt for auto-detect mode — both languages represented.
+ * Vocabulary-only to prevent hallucinating imperative commands on silence.
  */
 const AUTO_PROMPT =
-  "The developer discussed TypeScript and React with useEffect hooks. " +
-  "They mentioned the handleSocketCommand function and CI/CD pipeline. " +
-  "צריך לתקן באג בפונקציה של הלוגין. תעשה פוש לברנץ' ותפתח פול ריקווסט. " +
-  "Run bun test, check the WebSocket, and deploy to Docker.";
+  "TypeScript React useEffect handleSocketCommand CI/CD WebSocket Docker " +
+  "באג פונקציה לוגין פוש ברנץ' פול ריקווסט bun test";
 
 /**
  * Get the initial prompt for the given language mode.
@@ -86,8 +85,8 @@ export function getLanguageConfig(mode: LanguageMode | string): LanguageConfig {
     args.push("-l", langCode);
   }
 
-  // Initial prompt for vocabulary priming. In auto mode we skip prompting,
-  // because weak/no-speech captures can hallucinate prompt-biased output.
+  // Initial prompt for vocabulary priming. Auto mode skips prompts so
+  // borderline silence/noise cannot decode into prompt-biased dev phrases.
   if (normalized !== "auto") {
     args.push("--prompt", prompt);
   }

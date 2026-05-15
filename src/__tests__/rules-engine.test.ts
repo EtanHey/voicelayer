@@ -180,6 +180,41 @@ describe("rules-engine", () => {
     it("capitalizes after question mark", () => {
       expect(applyRules("what? something else")).toBe("What? Something else");
     });
+
+    it("capitalizes common I contractions", () => {
+      expect(applyRules("i'll check if i've finished")).toBe(
+        "I'll check if I've finished",
+      );
+    });
+
+    it("preserves code index variables while capitalizing prose pronouns", () => {
+      expect(applyRules("array open bracket i close bracket equals value")).toBe(
+        "Array [i] = value",
+      );
+      expect(applyRules("let i equals zero")).toBe("Let i = 0");
+      expect(applyRules("if i can fix it")).toBe("If I can fix it");
+    });
+  });
+
+  describe("stage toggles", () => {
+    it("does not normalize percent phrases when number formatting is disabled", () => {
+      const config: RulesConfig = {
+        disabledStages: new Set(["numbers"]),
+      };
+
+      expect(applyRules("i'm 100 sure", config)).toBe("I'm 100 sure");
+    });
+  });
+
+  describe("percent phrase normalization", () => {
+    it("normalizes common confidence percentages without corrupting ordinary sure phrases", () => {
+      expect(applyRules("i'm 100 sure")).toBe("I'm 100% sure");
+      expect(applyRules("i am a hundred percent period")).toBe("I am 100%.");
+      expect(applyRules("this is a hundred percent reliable fix")).toBe(
+        "This is a 100% reliable fix",
+      );
+      expect(applyRules("two sure ways")).toBe("2 sure ways");
+    });
   });
 
   // --- Stage 7: Custom aliases ---

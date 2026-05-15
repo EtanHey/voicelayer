@@ -2,6 +2,8 @@ import { applyRules, type RulesConfig } from "./rules-engine";
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   "voice layer codex": "VoiceLayerCodex",
+  "sessions of codecs": "sessions of Codex",
+  "session of codecs": "session of Codex",
   "skill creator claude": "SkillCreatorClaude",
   whisperflow: "Wispr Flow",
   "whisper flow": "Wispr Flow",
@@ -12,8 +14,15 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "voice bar": "VoiceBar",
   "voice layer": "VoiceLayer",
   "orc claude": "orcClaude",
+  "orc claud": "orcClaude",
   "orc clawed": "orcClaude",
+  orcclaud: "orcClaude",
   orcclawed: "orcClaude",
+  "ask or claude": "ask orcClaude",
+  "tell or claude": "tell orcClaude",
+  "message or claude": "message orcClaude",
+  "pending cue is working": "pending queue is working",
+  "pending cues are working": "pending queues are working",
   meital: "Meytal",
   maital: "Meytal",
   "may tall": "Meytal",
@@ -79,7 +88,8 @@ export function cleanupTranscriptionText(text: string): string {
     cleaned,
     new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES)),
   );
-  return isMeaningfulTranscription(normalized) ? normalized : "";
+  const sentenceCased = normalizeSentenceStarts(normalized);
+  return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
 }
 
 function isMeaningfulTranscription(text: string): boolean {
@@ -143,5 +153,22 @@ function normalizeCanonicalTerms(text: string, canonicalTerms: Set<string>): str
     );
     result = result.replace(pattern, term);
   }
+  return result;
+}
+
+function normalizeSentenceStarts(text: string): string {
+  if (!text) return text;
+  let result = text.replace(
+    /(^|[.!?]\s+)(ask|tell|message) orcClaude\b/giu,
+    (_match, prefix: string, verb: string) => {
+      return `${prefix}${verb[0].toUpperCase()}${verb.slice(1).toLowerCase()} orcClaude`;
+    },
+  );
+  result = result.replace(
+    /(^|[.!?]\s+)pending queue(s?) (is|are) working\b/giu,
+    (_match, prefix: string, plural: string, verb: string) => {
+      return `${prefix}Pending queue${plural.toLowerCase()} ${verb.toLowerCase()} working`;
+    },
+  );
   return result;
 }
