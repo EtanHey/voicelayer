@@ -6,7 +6,7 @@
  *   2. Wispr Flow WebSocket API → cloud fallback (requires QA_VOICE_WISPR_KEY)
  *
  * Environment variables:
- *   QA_VOICE_STT_BACKEND   — "whisper" | "wispr" | "auto" (default: "auto")
+ *   QA_VOICE_STT_BACKEND   — "whisper-server" | "whisper" | "wispr" | "auto" (default: "auto")
  *   QA_VOICE_WHISPER_MODEL — path to GGML model file (auto-detected if not set)
  *   QA_VOICE_WISPR_KEY     — Wispr Flow API key (required for wispr backend)
  */
@@ -16,6 +16,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
 import { resolveBinary } from "./resolve-binary";
+import { isServerAvailable, transcribeViaServer } from "./whisper-server";
 import {
   getInitialPrompt,
   getLanguageConfig,
@@ -283,6 +284,63 @@ export class WhisperCppBackend implements STTBackend {
   }
 }
 
+// --- Resident Whisper Server Backend ---
+
+interface WhisperServerBackendDeps {
+  isServerAvailable?: () => boolean;
+  transcribeViaServer?: (wavData: Uint8Array) => Promise<string>;
+  fallbackBackend?: STTBackend;
+}
+
+export class WhisperServerBackend implements STTBackend {
+  name = "whisper-server";
+  private readonly isResidentAvailable: () => boolean;
+  private readonly transcribeResident: (wavData: Uint8Array) => Promise<string>;
+  private readonly fallbackBackend: STTBackend;
+
+  constructor(deps: WhisperServerBackendDeps = {}) {
+    this.isResidentAvailable = deps.isServerAvailable ?? isServerAvailable;
+    this.transcribeResident = deps.transcribeViaServer ?? transcribeViaServer;
+    this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend();
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.isResidentAvailable();
+  }
+
+  async transcribe(
+    audioPath: string,
+    options?: STTTranscribeOptions,
+  ): Promise<STTResult> {
+    const start = Date.now();
+    const wavData = new Uint8Array(await Bun.file(audioPath).arrayBuffer());
+
+    try {
+      const text = await this.transcribeResident(wavData);
+      return {
+        text,
+        backend: this.name,
+        durationMs: Date.now() - start,
+      };
+    } catch (err) {
+      console.error(
+        `[voicelayer] whisper-server failed, falling back to whisper-cli: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      const fallback = await this.fallbackBackend.transcribe(
+        audioPath,
+        options,
+      );
+      return {
+        ...fallback,
+        backend: `${this.name}->${fallback.backend}`,
+        durationMs: Date.now() - start,
+      };
+    }
+  }
+}
+
 // --- Wispr Flow Backend ---
 
 export class WisprFlowBackend implements STTBackend {
@@ -444,7 +502,19 @@ export async function getBackend(): Promise<STTBackend> {
     }
     throw new Error(
       "whisper backend requested but not available. " +
-        "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/",
+      "Install whisper-cpp (macOS: brew install whisper-cpp) and download a model to ~/.cache/whisper/",
+    );
+  }
+
+  if (preference === "whisper-server" || preference === "resident") {
+    const backend = new WhisperServerBackend();
+    if (await backend.isAvailable()) {
+      cachedBackend = backend;
+      return backend;
+    }
+    throw new Error(
+      "whisper-server backend requested but not available. " +
+        "Install whisper-cpp with whisper-server and download a model to ~/.cache/whisper/",
     );
   }
 
@@ -457,7 +527,16 @@ export async function getBackend(): Promise<STTBackend> {
     throw new Error("wispr backend requested but QA_VOICE_WISPR_KEY not set.");
   }
 
-  // Auto-detect: prefer whisper.cpp, fall back to Wispr Flow
+  // Auto-detect: prefer resident whisper-server, then whisper.cpp CLI,
+  // then Wispr Flow. Resident requests still fall back to CLI per request
+  // if the sidecar dies during inference.
+  const resident = new WhisperServerBackend();
+  if (await resident.isAvailable()) {
+    cachedBackend = resident;
+    console.error("[voicelayer] STT backend: whisper-server (resident)");
+    return resident;
+  }
+
   const whisper = new WhisperCppBackend();
   if (await whisper.isAvailable()) {
     cachedBackend = whisper;

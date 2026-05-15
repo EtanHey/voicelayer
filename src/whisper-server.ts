@@ -90,8 +90,9 @@ export async function isServerHealthy(
  * Ensure whisper-server is running. Starts it if needed.
  * Returns the port number.
  */
-export async function ensureServer(): Promise<number> {
+export async function ensureServer(portOverride?: number): Promise<number> {
   const port =
+    portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||
     DEFAULT_PORT;
 
@@ -237,6 +238,14 @@ export async function transcribeViaServer(
   wavData: Uint8Array,
   port?: number,
 ): Promise<string> {
+  return transcribeViaServerAttempt(wavData, port, true);
+}
+
+async function transcribeViaServerAttempt(
+  wavData: Uint8Array,
+  port: number | undefined,
+  allowRetry: boolean,
+): Promise<string> {
   const serverPort = port ?? (await ensureServer());
 
   const formData = new FormData();
@@ -251,13 +260,28 @@ export async function transcribeViaServer(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
   try {
-    const resp = await fetch(`http://127.0.0.1:${serverPort}/inference`, {
-      method: "POST",
-      body: formData,
-      signal: controller.signal,
-    });
+    let resp: Response;
+    try {
+      resp = await fetch(`http://127.0.0.1:${serverPort}/inference`, {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      if (allowRetry) {
+        markServerUnhealthy();
+        const retryPort = await ensureServer(port);
+        return transcribeViaServerAttempt(wavData, retryPort, false);
+      }
+      throw err;
+    }
 
     if (!resp.ok) {
+      if (allowRetry && resp.status >= 500) {
+        markServerUnhealthy();
+        const retryPort = await ensureServer(port);
+        return transcribeViaServerAttempt(wavData, retryPort, false);
+      }
       throw new Error(
         `whisper-server inference failed: ${resp.status} ${resp.statusText}`,
       );
@@ -268,6 +292,20 @@ export async function transcribeViaServer(
   } finally {
     clearTimeout(timer);
   }
+}
+
+function markServerUnhealthy(): void {
+  if (!serverState) return;
+  try {
+    serverState.proc.kill();
+  } catch {}
+  serverState = null;
+}
+
+export function __resetWhisperServerStateForTests(
+  state: WhisperServerState | null,
+): void {
+  serverState = state;
 }
 
 /** Check if whisper-server binary is available (for feature detection). */

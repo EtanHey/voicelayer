@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import {
   WhisperCppBackend,
+  WhisperServerBackend,
   WisprFlowBackend,
   getBackend,
   resetBackendCache,
@@ -261,6 +262,57 @@ describe("STT backends", () => {
     });
   });
 
+  describe("WhisperServerBackend", () => {
+    it("has correct name", () => {
+      const backend = new WhisperServerBackend();
+      expect(backend.name).toBe("whisper-server");
+    });
+
+    it("transcribes an existing WAV file through the resident server", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-backend-test.wav";
+      await Bun.write(wavPath, new Uint8Array([1, 2, 3, 4]));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (wavData) => {
+          expect(Array.from(wavData)).toEqual([1, 2, 3, 4]);
+          return "resident text";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe("resident text");
+      expect(result.backend).toBe("whisper-server");
+      expect(result.durationMs).toBeGreaterThanOrEqual(0);
+    });
+
+    it("falls back to whisper-cli when resident inference fails", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-fallback-test.wav";
+      await Bun.write(wavPath, new Uint8Array([5, 6]));
+      const fallback = {
+        name: "whisper.cpp",
+        isAvailable: async () => true,
+        transcribe: async (_audioPath: string) => ({
+          text: "fallback text",
+          backend: "whisper.cpp",
+          durationMs: 12,
+        }),
+      };
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          throw new Error("server crashed");
+        },
+        fallbackBackend: fallback,
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe("fallback text");
+      expect(result.backend).toBe("whisper-server->whisper.cpp");
+    });
+  });
+
   describe("getBackend", () => {
     it("caches the backend on repeated calls", async () => {
       try {
@@ -313,9 +365,25 @@ describe("STT backends", () => {
       try {
         // Should not throw — picks whatever is available
         const backend = await getBackend();
-        expect(["whisper.cpp", "wispr-flow"]).toContain(backend.name);
+        expect(["whisper-server", "whisper.cpp", "wispr-flow"]).toContain(
+          backend.name,
+        );
       } catch {
         // If nothing is available, that's OK for CI
+      } finally {
+        if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
+        else delete process.env.QA_VOICE_STT_BACKEND;
+      }
+    });
+
+    it("supports explicit QA_VOICE_STT_BACKEND=whisper-server", async () => {
+      const saved = process.env.QA_VOICE_STT_BACKEND;
+      process.env.QA_VOICE_STT_BACKEND = "whisper-server";
+      try {
+        const backend = await getBackend();
+        expect(backend.name).toBe("whisper-server");
+      } catch (err: any) {
+        expect(err.message).toContain("whisper-server");
       } finally {
         if (saved) process.env.QA_VOICE_STT_BACKEND = saved;
         else delete process.env.QA_VOICE_STT_BACKEND;

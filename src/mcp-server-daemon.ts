@@ -86,14 +86,6 @@ async function main() {
     `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
   );
 
-  // Acquire process lock (kills orphans)
-  const lockResult = acquireProcessLock();
-  if (lockResult.killedStale) {
-    console.error(
-      `[voicelayer-daemon] Killed orphan MCP server (PID ${lockResult.stalePid})`,
-    );
-  }
-
   // Startup validation: refuse if another instance is actively listening.
   // Retry with backoff — the old process may still be tearing down after SIGTERM.
   let socketStillLive = false;
@@ -131,8 +123,17 @@ async function main() {
     console.error(
       `[voicelayer-daemon] If this is stale, remove the socket: rm ${MCP_SOCKET_PATH}`,
     );
-    releaseProcessLock();
     process.exit(1);
+  }
+
+  // Acquire process lock after socket validation so a test or accidental start
+  // against the live daily-driver socket cannot kill the existing daemon via
+  // the PID file before discovering the socket is still owned.
+  const lockResult = acquireProcessLock();
+  if (lockResult.killedStale) {
+    console.error(
+      `[voicelayer-daemon] Killed orphan MCP server (PID ${lockResult.stalePid})`,
+    );
   }
 
   // Start log rotation (10MB threshold, 60s interval)

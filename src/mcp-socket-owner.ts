@@ -1,3 +1,6 @@
+const DEFAULT_MCP_SOCKET_PATH = "/tmp/voicelayer-mcp.sock";
+const ALLOW_SOCKET_RECLAIM_ENV = "QA_VOICE_ALLOW_SOCKET_RECLAIM";
+
 export function parseLsofSocketOwnerPids(
   output: string,
   socketPath: string,
@@ -36,12 +39,27 @@ export function findSocketOwnerPids(socketPath: string): number[] {
   }
 }
 
+export function canReclaimSocketOwners(
+  socketPath: string,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (socketPath !== DEFAULT_MCP_SOCKET_PATH) return true;
+  return env[ALLOW_SOCKET_RECLAIM_ENV]?.trim() === "1";
+}
+
 /**
  * Best-effort reclamation for a live MCP socket owner.
  * Returns the PIDs that were targeted for SIGTERM, not a guarantee that every
  * process exited before the function returned.
  */
 export function terminateSocketOwners(socketPath: string): number[] {
+  if (!canReclaimSocketOwners(socketPath)) {
+    console.error(
+      `[voicelayer-daemon] Refusing to reclaim default MCP socket without ${ALLOW_SOCKET_RECLAIM_ENV}=1: ${socketPath}`,
+    );
+    return [];
+  }
+
   const pids = findSocketOwnerPids(socketPath);
   for (const pid of pids) {
     try {

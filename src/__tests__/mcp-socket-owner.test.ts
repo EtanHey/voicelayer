@@ -1,5 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { parseLsofSocketOwnerPids } from "../mcp-socket-owner";
+import {
+  canReclaimSocketOwners,
+  parseLsofSocketOwnerPids,
+} from "../mcp-socket-owner";
 
 describe("MCP socket owner detection", () => {
   it("extracts only exact listener owners for the MCP socket", () => {
@@ -11,7 +14,9 @@ describe("MCP socket owner detection", () => {
       "bun      7777 etan   12u unix 0xdef      0t0      /tmp/voicelayer-mcp.sock.backup",
     ].join("\n");
 
-    expect(parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234)).toEqual([2699]);
+    expect(
+      parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234),
+    ).toEqual([2699]);
   });
 
   it("deduplicates owners and excludes the current process", () => {
@@ -21,7 +26,9 @@ describe("MCP socket owner detection", () => {
       "bun      1234 etan   13u unix 0xff2dc30798108f76      0t0      /tmp/voicelayer-mcp.sock",
     ].join("\n");
 
-    expect(parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234)).toEqual([2699]);
+    expect(
+      parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234),
+    ).toEqual([2699]);
   });
 
   it("handles lsof NAME metadata after the socket path", () => {
@@ -31,6 +38,31 @@ describe("MCP socket owner detection", () => {
       "bun      7777 etan   12u unix 0xdef      0t0      /tmp/voicelayer-mcp.sock.backup (LISTEN)",
     ].join("\n");
 
-    expect(parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234)).toEqual([2699]);
+    expect(
+      parseLsofSocketOwnerPids(output, "/tmp/voicelayer-mcp.sock", 1234),
+    ).toEqual([2699]);
+  });
+
+  it("refuses to reclaim the default MCP socket unless explicitly allowed", () => {
+    expect(
+      canReclaimSocketOwners("/tmp/voicelayer-mcp.sock", {
+        QA_VOICE_ALLOW_SOCKET_RECLAIM: undefined,
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+
+    expect(
+      canReclaimSocketOwners("/tmp/voicelayer-mcp.sock", {
+        QA_VOICE_ALLOW_SOCKET_RECLAIM: "1",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
+  });
+
+  it("allows reclaiming isolated test sockets without the default-socket opt-in", () => {
+    expect(
+      canReclaimSocketOwners(
+        "/tmp/voicelayer-test-daemon.sock",
+        {} as NodeJS.ProcessEnv,
+      ),
+    ).toBe(true);
   });
 });

@@ -85,6 +85,10 @@ const MIN_TRANSCRIBE_DBFS = -55;
 const BROKEN_MIC_MIN_DURATION_MS = 1500;
 const BROKEN_MIC_MAX_RMS = 1;
 const BROKEN_MIC_MAX_DBFS = -90;
+const PRE_ROLL_MS = 500;
+const PRE_ROLL_CHUNKS = Math.ceil(
+  (PRE_ROLL_MS / 1000) * (SAMPLE_RATE / VAD_CHUNK_SAMPLES),
+);
 const BROKEN_MIC_MESSAGE =
   "Microphone input looks silent. Check VoiceBar > Microphone and macOS microphone access.";
 
@@ -347,6 +351,18 @@ function flattenChunks(chunks: Uint8Array[]): Uint8Array {
   return flat;
 }
 
+export function selectChunksWithPreRoll(
+  chunks: Uint8Array[],
+  firstSpeechChunkIndex: number,
+  preRollChunks = PRE_ROLL_CHUNKS,
+): Uint8Array[] {
+  if (chunks.length === 0) return [];
+  if (firstSpeechChunkIndex <= 0) return [...chunks];
+
+  const startIndex = Math.max(0, firstSpeechChunkIndex - preRollChunks);
+  return chunks.slice(startIndex);
+}
+
 export class ChunkedRecordingSession {
   private readonly sampleRate: number;
   private readonly silenceMode: SilenceMode;
@@ -577,6 +593,7 @@ export async function recordToBuffer(
     let consecutiveSilentChunks = 0;
     let totalChunksProcessed = 0;
     let hasSpeech = false;
+    let firstSpeechChunkIndex = -1;
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
     const pcmChunks: Uint8Array[] = [];
@@ -603,10 +620,18 @@ export async function recordToBuffer(
       } else if (totalPcmBytes === 0 || (!pressToTalk && !hasSpeech)) {
         resolve(null); // No speech detected (PTT mode always returns audio)
       } else {
+        const selectedChunks =
+          !pressToTalk && firstSpeechChunkIndex >= 0
+            ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
+            : pcmChunks;
+        const selectedPcmBytes = selectedChunks.reduce(
+          (sum, chunk) => sum + chunk.byteLength,
+          0,
+        );
         // Concatenate all PCM chunks
-        const result = new Uint8Array(totalPcmBytes);
+        const result = new Uint8Array(selectedPcmBytes);
         let offset = 0;
-        for (const chunk of pcmChunks) {
+        for (const chunk of selectedChunks) {
           result.set(chunk, offset);
           offset += chunk.byteLength;
         }
@@ -781,6 +806,7 @@ export async function recordToBuffer(
 
             if (speechDetected) {
               if (!hasSpeech) {
+                firstSpeechChunkIndex = pcmChunks.length - 1;
                 broadcast({ type: "speech", detected: true });
               }
               hasSpeech = true;
@@ -927,7 +953,7 @@ export async function waitForInput(
   const wavPath = recordingFilePath(process.pid, Date.now());
   try {
     const retainedWavData = createWavBuffer(pcmData);
-    writeFileSync(retainedRecordingFilePath(), retainedWavData);
+    writeFileSync(wavPath, retainedWavData);
 
     // Transcribe with selected backend
     const backend = await getBackend();
@@ -957,7 +983,6 @@ export async function waitForInput(
         }
       });
     } else {
-      writeFileSync(wavPath, retainedWavData);
       const result = await backend.transcribe(wavPath);
       text = cleanupTranscriptionText(result.text);
       if (result.text.trim() && !text) {
@@ -976,6 +1001,8 @@ export async function waitForInput(
       broadcast({ type: "state", state: "idle", source: "recording" });
       return null;
     }
+
+    writeFileSync(retainedRecordingFilePath(), retainedWavData);
 
     if (text) {
       try {

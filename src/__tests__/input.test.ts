@@ -12,6 +12,7 @@ import {
   clearInput,
   evaluateNoSpeechGate,
   isChunkedSTTEnabled,
+  selectChunksWithPreRoll,
   transcribeChunkSequence,
 } from "../input";
 import {
@@ -337,6 +338,43 @@ describe("input module", () => {
 
       expect(result.allowed).toBe(true);
       expect(result.reason).toBeUndefined();
+    });
+
+    it("aborts a zero-RMS payload at the gate in under 100ms", () => {
+      const silence = new Uint8Array(16000 * 2 * 5);
+      const started = performance.now();
+      const result = evaluateNoSpeechGate(silence);
+      const elapsedMs = performance.now() - started;
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toBe("too-quiet");
+      expect(elapsedMs).toBeLessThan(100);
+    });
+  });
+
+  describe("pre-roll chunk selection", () => {
+    function chunk(marker: number): Uint8Array {
+      return new Uint8Array([marker, marker]);
+    }
+
+    it("keeps only bounded pre-roll before first speech to avoid retaining stale room audio", () => {
+      const selected = selectChunksWithPreRoll(
+        [chunk(1), chunk(2), chunk(3), chunk(4), chunk(5)],
+        3,
+        2,
+      );
+
+      expect(selected.map((c) => c[0])).toEqual([2, 3, 4, 5]);
+    });
+
+    it("keeps the first speech chunk when speech begins inside the first 32ms frame", () => {
+      const selected = selectChunksWithPreRoll(
+        [chunk(9), chunk(10), chunk(11)],
+        0,
+        16,
+      );
+
+      expect(selected.map((c) => c[0])).toEqual([9, 10, 11]);
     });
   });
 
