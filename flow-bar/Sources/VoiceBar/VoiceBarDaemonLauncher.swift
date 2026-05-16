@@ -39,7 +39,7 @@ final class VoiceBarDaemonLauncher {
         process.arguments = configuration.arguments
         process.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
         process.environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
-            path: ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
+            path: VoiceBarDaemonController.daemonPATH
         )
 
         do {

@@ -17,7 +17,7 @@ import {
   type SocketCommand,
   type SocketResponse,
 } from "./socket-protocol";
-import { SOCKET_PATH } from "./paths";
+import { SOCKET_PATH, getMcpSocketOverridePath } from "./paths";
 
 // --- Connection state ---
 
@@ -214,7 +214,7 @@ function writeClientHello(target: { write: (payload: string) => void }): void {
     pid: process.pid,
     role: connectionOptions.role ?? "mcp-server",
     accepts_commands: connectionOptions.acceptsCommands === true,
-    mcp_socket_path: process.env.QA_VOICE_MCP_SOCKET_PATH ?? null,
+    mcp_socket_path: getMcpSocketOverridePath(),
     voicebar_socket_path: targetPath,
   };
   try {

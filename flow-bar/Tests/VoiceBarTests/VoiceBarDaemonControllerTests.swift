@@ -96,15 +96,24 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
     }
 
     func testDaemonLaunchDoesNotInheritExperimentalOrTestIsolationEnvironment() {
+        let previousValues: [String: String?] = [
+            "QA_VOICE_CHUNKED_STT": ProcessInfo.processInfo.environment["QA_VOICE_CHUNKED_STT"],
+            "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
+            "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
+            "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
+        ]
         setenv("QA_VOICE_CHUNKED_STT", "1", 1)
         setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
         setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
         setenv("CODEX_CI", "1", 1)
         defer {
-            unsetenv("QA_VOICE_CHUNKED_STT")
-            unsetenv("QA_VOICE_SOCKET_PATH")
-            unsetenv("QA_VOICE_MCP_SOCKET_PATH")
-            unsetenv("CODEX_CI")
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
         }
 
         let process = ProcessSpy()

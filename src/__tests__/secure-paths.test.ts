@@ -46,6 +46,30 @@ describe("secure session paths", () => {
     );
   });
 
+  it("reports default socket paths from centralized override state", () => {
+    expect(paths.isDefaultVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(paths.isDefaultMcpSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(
+      paths.isDefaultVoiceBarSocketPath({
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+    expect(
+      paths.isDefaultMcpSocketPath({
+        QA_VOICE_MCP_SOCKET_PATH: "/tmp/voicelayer-mcp-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+  });
+
+  it("returns MCP socket override for client hello without duplicating env lookup", () => {
+    expect(paths.getMcpSocketOverridePath({} as NodeJS.ProcessEnv)).toBeNull();
+    expect(
+      paths.getMcpSocketOverridePath({
+        QA_VOICE_MCP_SOCKET_PATH: "/tmp/voicelayer-mcp-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-mcp-private-test.sock");
+  });
+
   it("LOCK_FILE contains session token", () => {
     expect(paths.LOCK_FILE).toContain(paths.SESSION_TOKEN);
   });

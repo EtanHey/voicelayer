@@ -149,7 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in
-            server?.sendToAll(command: cmd)
+            server?.sendCommandToOwner(command: cmd)
         }
         voiceState.onModeChange = { [weak self] mode in
             self?.handleVoiceModeChange(mode)

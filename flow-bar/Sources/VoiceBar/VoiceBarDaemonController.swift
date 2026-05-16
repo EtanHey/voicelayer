@@ -222,7 +222,7 @@ final class VoiceBarDaemonController {
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
-    private static let daemonPATH: String = {
+    static let daemonPATH: String = {
         let base = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         let extras = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
         var parts = base.split(separator: ":").map(String.init)

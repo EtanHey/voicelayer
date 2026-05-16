@@ -288,7 +288,7 @@ final class SocketServer {
     // MARK: - Send to command client
 
     /// Send a command (JSON + newline) to the single command-owning daemon.
-    func sendToAll(command: [String: Any]) {
+    func sendCommandToOwner(command: [String: Any]) {
         queue.async { [weak self] in
             guard let self else { return }
             guard let jsonData = try? JSONSerialization.data(withJSONObject: command),
@@ -360,10 +360,10 @@ final class SocketServer {
     }
 
     private func updateConnectionState() {
-        let count = clients.count
+        let hasCommandClient = clients.values.contains { $0.acceptsCommands }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            state.setConnectionStatus(count > 0)
+            state.setConnectionStatus(hasCommandClient)
         }
     }
 

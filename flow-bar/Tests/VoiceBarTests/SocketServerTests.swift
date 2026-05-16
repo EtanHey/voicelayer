@@ -91,12 +91,41 @@ final class SocketServerTests: XCTestCase {
         try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
 
         Thread.sleep(forTimeInterval: 0.1)
-        server.sendToAll(command: ["cmd": "record"])
+        server.sendCommandToOwner(command: ["cmd": "record"])
 
         let commandLine = try readLine(from: commandClient, timeout: 1)
         XCTAssertNotNil(commandLine)
         XCTAssertTrue(commandLine?.contains(#""cmd":"record""#) == true || commandLine?.contains(#""record""#) == true)
         XCTAssertNil(try readLine(from: passiveClient, timeout: 0.2))
+    }
+
+    func testPassiveClientDoesNotMarkVoiceBarConnectedUntilCommandOwnerRegisters() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+
+        let passiveClient = try connectUnixSocket(path: socketURL.path)
+        let commandClient = try connectUnixSocket(path: socketURL.path)
+        defer {
+            close(passiveClient)
+            close(commandClient)
+        }
+
+        try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: passiveClient)
+        XCTAssertFalse(waitForConnectionStatus(state, connected: true, timeout: 0.2))
+        XCTAssertFalse(state.isConnected)
+
+        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
+        XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
     }
 }
 
@@ -150,12 +179,32 @@ private func connectUnixSocket(path: String) throws -> Int32 {
 
 private func writeLine(_ line: String, to fd: Int32) throws {
     let payload = Array((line + "\n").utf8)
-    let written = payload.withUnsafeBufferPointer { ptr in
-        write(fd, ptr.baseAddress!, payload.count)
-    }
-    guard written == payload.count else {
+    var offset = 0
+    while offset < payload.count {
+        let written = payload.withUnsafeBufferPointer { ptr in
+            write(fd, ptr.baseAddress!.advanced(by: offset), payload.count - offset)
+        }
+        if written > 0 {
+            offset += written
+            continue
+        }
+        if written == -1, errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK {
+            Thread.sleep(forTimeInterval: 0.01)
+            continue
+        }
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
     }
+}
+
+private func waitForConnectionStatus(_ state: VoiceState, connected: Bool, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if state.isConnected == connected {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+    return state.isConnected == connected
 }
 
 private func readLine(from fd: Int32, timeout: TimeInterval) throws -> String? {

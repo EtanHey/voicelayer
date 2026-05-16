@@ -138,6 +138,12 @@ export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): str
   return readOverride(SOCKET_OVERRIDE_ENV, tmpPath("voicelayer.sock"), env);
 }
 
+export function isDefaultVoiceBarSocketPath(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !env[SOCKET_OVERRIDE_ENV]?.trim();
+}
+
 export const SOCKET_PATH = getVoiceBarSocketPath();
 
 /**
@@ -147,6 +153,19 @@ export const SOCKET_PATH = getVoiceBarSocketPath();
  */
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+}
+
+export function getMcpSocketOverridePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
+  return value ? value : null;
+}
+
+export function isDefaultMcpSocketPath(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
 }
 
 export const MCP_SOCKET_PATH = getMcpSocketPath();

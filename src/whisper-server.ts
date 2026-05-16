@@ -466,6 +466,12 @@ function commandForPid(pid: number): string {
   return result.stdout.toString().trim();
 }
 
+function isWhisperServerCommand(command: string): boolean {
+  const firstToken = command.trim().split(/\s+/)[0] ?? "";
+  const executable = firstToken.replace(/^"(.*)"$/, "$1");
+  return executable.split("/").pop() === "whisper-server";
+}
+
 function findExternalWhisperServerPids(port: number): number[] {
   if (testHooks.findExternalWhisperServerPids) {
     return testHooks.findExternalWhisperServerPids(port);
@@ -482,7 +488,7 @@ function findExternalWhisperServerPids(port: number): number[] {
     .split(/\s+/)
     .map((raw) => Number.parseInt(raw, 10))
     .filter((pid) => Number.isFinite(pid) && pid > 0)
-    .filter((pid) => commandForPid(pid).includes("whisper-server"));
+    .filter((pid) => isWhisperServerCommand(commandForPid(pid)));
 }
 
 async function waitForPidExit(
