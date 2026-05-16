@@ -23,6 +23,12 @@ const HEALTH_TIMEOUT = 2000;
 /** Max time to wait for server startup in ms. */
 const STARTUP_TIMEOUT = 30000;
 
+/** Max time to wait for `whisper-server --help` capability probing. */
+const HELP_PROBE_TIMEOUT = 2000;
+
+/** Max time to wait for a killed failed launch to release its port. */
+const FAILED_LAUNCH_EXIT_TIMEOUT = 1000;
+
 /** Known whisper-server binary names. */
 const SERVER_BINARY_NAMES = ["whisper-server"];
 
@@ -40,7 +46,102 @@ interface WhisperServerState {
   pid: number;
 }
 
+type WhisperServerProcess = ReturnType<typeof Bun.spawn>;
+type WhisperServerSpawn = (
+  args: string[],
+  options: {
+    stdout: "pipe";
+    stderr: "pipe";
+    env: Record<string, string>;
+  },
+) => Pick<WhisperServerProcess, "pid" | "kill"> & {
+  exited?: Promise<number>;
+  stderr?: ReadableStream<Uint8Array> | null;
+};
+
+export type WhisperAccelerationRequest = "auto" | "metal" | "coreml" | "cpu";
+export type WhisperAccelerationMode = "metal" | "coreml" | "cpu";
+
+export interface WhisperAccelerationPlan {
+  requested: WhisperAccelerationRequest;
+  mode: WhisperAccelerationMode;
+  args: string[];
+  env: Record<string, string>;
+  warnings: string[];
+}
+
+interface ResolveAccelerationOptions {
+  requested?: WhisperAccelerationRequest;
+  helpText?: string;
+  metalResourcesPath?: string;
+  coreMLModelPath?: string;
+  exists?: (path: string) => boolean;
+}
+
+interface BuildLaunchPlanOptions {
+  binary: string;
+  model: string;
+  port: number;
+  helpText?: string;
+  metalResourcesPath?: string;
+  coreMLModelPath?: string;
+  requestedAcceleration?: WhisperAccelerationRequest;
+  inheritedEnv?: Record<string, string | undefined>;
+  exists?: (path: string) => boolean;
+}
+
+export interface WhisperServerLaunchPlan {
+  args: string[];
+  env: Record<string, string>;
+  acceleration: WhisperAccelerationPlan;
+}
+
+interface WhisperServerHelpProbeResult {
+  helpText: string;
+  warning?: string;
+}
+
+type WhisperServerHelpRunner = (
+  args: string[],
+  options: {
+    stdout: "pipe";
+    stderr: "pipe";
+    timeout: number;
+    killSignal: string;
+  },
+) => {
+  stdout?: { toString(): string } | string;
+  stderr?: { toString(): string } | string;
+  exitCode?: number | null;
+  exitedDueToTimeout?: boolean;
+  error?: unknown;
+};
+
+interface CoreMLRuntimeFlag {
+  flag: string;
+  requiresModelPath: boolean;
+}
+
 let serverState: WhisperServerState | null = null;
+const launchPromises = new Map<number, Promise<number>>();
+
+interface WhisperServerTestHooks {
+  findServerBinary?: () => string | null;
+  findModel?: () => string | null;
+  readHelpText?: (binary: string) => WhisperServerHelpProbeResult;
+  spawn?: WhisperServerSpawn;
+  isServerHealthy?: (port: number) => Promise<boolean>;
+  sleep?: (ms: number) => Promise<void>;
+  startupTimeoutMs?: number;
+}
+
+let testHooks: WhisperServerTestHooks = {};
+
+export function __setWhisperServerTestHooksForTests(
+  hooks: WhisperServerTestHooks,
+): void {
+  testHooks = hooks;
+}
 
 /** Find whisper-server binary. */
 function findServerBinary(): string | null {
@@ -66,6 +167,202 @@ function findModel(): string | null {
   return null;
 }
 
+function normalizeAccelerationRequest(value?: string): WhisperAccelerationRequest {
+  const normalized = (value || "auto").trim().toLowerCase();
+  if (
+    normalized === "auto" ||
+    normalized === "metal" ||
+    normalized === "coreml" ||
+    normalized === "cpu"
+  ) {
+    return normalized;
+  }
+  return "auto";
+}
+
+function getRequestedAccelerationFromEnv(): WhisperAccelerationRequest {
+  const explicit = process.env.QA_VOICE_WHISPER_ACCELERATION;
+  if (explicit) return normalizeAccelerationRequest(explicit);
+
+  const coreML = (process.env.QA_VOICE_WHISPER_COREML || "")
+    .trim()
+    .toLowerCase();
+  if (coreML === "1" || coreML === "true" || coreML === "yes") {
+    return "coreml";
+  }
+
+  return "auto";
+}
+
+function findCoreMLRuntimeFlag(helpText: string): CoreMLRuntimeFlag | null {
+  for (const line of helpText.split("\n")) {
+    const optionTokens = line.match(/--[A-Za-z0-9][A-Za-z0-9-]*/g) ?? [];
+    for (const token of optionTokens) {
+      if (token === "--coreml" || token === "--core-ml") {
+        return { flag: token, requiresModelPath: false };
+      }
+      if (token === "--coreml-model" || token === "--core-ml-model") {
+        return { flag: token, requiresModelPath: true };
+      }
+    }
+  }
+  return null;
+}
+
+export function resolveWhisperAccelerationPlan(
+  options: ResolveAccelerationOptions = {},
+): WhisperAccelerationPlan {
+  const requested = options.requested ?? "auto";
+  const helpText = options.helpText ?? "";
+  const exists = options.exists ?? existsSync;
+  const warnings: string[] = [];
+
+  const metalPlan = (): WhisperAccelerationPlan => {
+    const env: Record<string, string> = {};
+    if (options.metalResourcesPath) {
+      env.GGML_METAL_PATH_RESOURCES = options.metalResourcesPath;
+    }
+    return { requested, mode: "metal", args: [], env, warnings };
+  };
+
+  if (requested === "cpu") {
+    return { requested, mode: "cpu", args: ["--no-gpu"], env: {}, warnings };
+  }
+
+  if (requested === "coreml") {
+    const coreMLPath = options.coreMLModelPath;
+    const coreMLFlag = findCoreMLRuntimeFlag(helpText);
+
+    if (!coreMLFlag) {
+      warnings.push(
+        "Core ML requested but this whisper-server binary exposes no Core ML runtime flag; falling back to Metal.",
+      );
+      return metalPlan();
+    }
+
+    if (!coreMLFlag.requiresModelPath) {
+      return {
+        requested,
+        mode: "coreml",
+        args: [coreMLFlag.flag],
+        env: {},
+        warnings,
+      };
+    }
+
+    if (!coreMLPath) {
+      warnings.push(
+        "Core ML requested but QA_VOICE_WHISPER_COREML_MODEL is not set; falling back to Metal.",
+      );
+      return metalPlan();
+    }
+
+    if (!exists(coreMLPath)) {
+      warnings.push(
+        `Core ML requested but .mlpackage path does not exist: ${coreMLPath}; falling back to Metal.`,
+      );
+      return metalPlan();
+    }
+
+    return {
+      requested,
+      mode: "coreml",
+      args: [coreMLFlag.flag, coreMLPath],
+      env: {},
+      warnings,
+    };
+  }
+
+  return metalPlan();
+}
+
+export function buildWhisperServerLaunchPlan(
+  options: BuildLaunchPlanOptions,
+): WhisperServerLaunchPlan {
+  const inheritedEnv = options.inheritedEnv ?? process.env;
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(inheritedEnv)) {
+    if (typeof v === "string") env[k] = v;
+  }
+
+  const acceleration = resolveWhisperAccelerationPlan({
+    requested: options.requestedAcceleration ?? "auto",
+    helpText: options.helpText,
+    metalResourcesPath: options.metalResourcesPath,
+    coreMLModelPath: options.coreMLModelPath,
+    exists: options.exists,
+  });
+
+  Object.assign(env, acceleration.env);
+
+  const args = [
+    options.binary,
+    "-m",
+    options.model,
+    "--port",
+    String(options.port),
+    "--host",
+    "127.0.0.1",
+    "-t",
+    "4",
+    "-nt", // no timestamps
+    "--convert", // auto-convert audio formats
+    ...acceleration.args,
+  ];
+
+  return { args, env, acceleration };
+}
+
+export function readWhisperServerHelpText(
+  binary: string,
+  runner: WhisperServerHelpRunner = (args, options) =>
+    Bun.spawnSync({
+      cmd: args,
+      stdout: options.stdout,
+      stderr: options.stderr,
+      timeout: options.timeout,
+      killSignal: options.killSignal,
+    }),
+): WhisperServerHelpProbeResult {
+  try {
+    const result = runner([binary, "--help"], {
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: HELP_PROBE_TIMEOUT,
+      killSignal: "SIGKILL",
+    });
+
+    if (result.exitedDueToTimeout) {
+      return {
+        helpText: "",
+        warning:
+          "whisper-server --help probe timed out; falling back to Metal-safe launch defaults.",
+      };
+    }
+
+    if (result.error || result.exitCode !== 0) {
+      return {
+        helpText: "",
+        warning:
+          "whisper-server --help probe failed; falling back to Metal-safe launch defaults.",
+      };
+    }
+
+    return {
+      helpText: `${result.stdout?.toString() ?? ""}\n${
+        result.stderr?.toString() ?? ""
+      }`,
+    };
+  } catch (err) {
+    return {
+      helpText: "",
+      warning: `whisper-server --help probe failed: ${
+        err instanceof Error ? err.message : String(err)
+      }; falling back to Metal-safe launch defaults.`,
+    };
+  }
+}
+
 /** Check if the server is healthy. */
 export async function isServerHealthy(
   port: number = DEFAULT_PORT,
@@ -86,41 +383,89 @@ export async function isServerHealthy(
   }
 }
 
+async function checkServerHealthy(port: number): Promise<boolean> {
+  if (testHooks.isServerHealthy) return testHooks.isServerHealthy(port);
+  return isServerHealthy(port);
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (testHooks.sleep) return testHooks.sleep(ms);
+  return Bun.sleep(ms);
+}
+
+function getStartupTimeoutMs(): number {
+  return testHooks.startupTimeoutMs ?? STARTUP_TIMEOUT;
+}
+
+async function terminateFailedLaunch(
+  proc: Pick<WhisperServerProcess, "kill"> & {
+    exited?: Promise<number>;
+  },
+): Promise<void> {
+  try {
+    proc.kill();
+  } catch {}
+
+  if (!proc.exited) return;
+  await Promise.race([
+    proc.exited.catch(() => undefined),
+    Bun.sleep(FAILED_LAUNCH_EXIT_TIMEOUT),
+  ]);
+}
+
 /**
  * Ensure whisper-server is running. Starts it if needed.
  * Returns the port number.
  */
-export async function ensureServer(portOverride?: number): Promise<number> {
+export function ensureServer(portOverride?: number): Promise<number> {
   const port =
     portOverride ||
     parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT || "", 10) ||
     DEFAULT_PORT;
 
+  const existingLaunch = launchPromises.get(port);
+  if (existingLaunch) return existingLaunch;
+
+  const launchPromise = ensureServerUnlocked(port);
+  launchPromises.set(port, launchPromise);
+  const clearLaunchPromise = () => {
+    if (launchPromises.get(port) === launchPromise) {
+      launchPromises.delete(port);
+    }
+  };
+  launchPromise.then(clearLaunchPromise, clearLaunchPromise);
+  return launchPromise;
+}
+
+async function ensureServerUnlocked(port: number): Promise<number> {
   // Already running?
   if (serverState && serverState.port === port) {
-    if (await isServerHealthy(port)) return port;
+    if (await checkServerHealthy(port)) return port;
     // Server died — clean up and restart
     console.error("[voicelayer] whisper-server died, restarting...");
     serverState = null;
   }
 
   // Check if an external server is already running on the port
-  if (await isServerHealthy(port)) {
+  if (await checkServerHealthy(port)) {
     console.error(
       `[voicelayer] whisper-server already running on port ${port}`,
     );
+    // TODO(VL Phase 2.1 LOW-3): validate external server provenance/capabilities
+    // before accepting it. Tracked in docs.local/plans/2026-05-15-vl-overhaul/
+    // phase-2.1-followups.md per PR #201 review scope.
     return port;
   }
 
   // Find binary and model
-  const binary = findServerBinary();
+  const binary = testHooks.findServerBinary?.() ?? findServerBinary();
   if (!binary) {
     throw new Error(
       "whisper-server not found. Install: brew install whisper-cpp",
     );
   }
 
-  const model = findModel();
+  const model = testHooks.findModel?.() ?? findModel();
   if (!model) {
     throw new Error(
       "No whisper model found. Download:\n" +
@@ -146,74 +491,107 @@ export async function ensureServer(portOverride?: number): Promise<number> {
     );
   }
 
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string") env[k] = v;
-  }
-  if (metalPath) {
-    env.GGML_METAL_PATH_RESOURCES = metalPath;
+  const requestedAcceleration = getRequestedAccelerationFromEnv();
+  const helpProbe =
+    requestedAcceleration === "coreml"
+      ? (testHooks.readHelpText?.(binary) ?? readWhisperServerHelpText(binary))
+      : { helpText: "" };
+  if (helpProbe.warning) {
+    console.error(`[voicelayer] ${helpProbe.warning}`);
   }
 
-  console.error(
-    `[voicelayer] Starting whisper-server on port ${port} with model ${model}`,
-  );
-
-  const proc = Bun.spawn(
-    [
+  const buildLaunch = (
+    requestedAcceleration: WhisperAccelerationRequest,
+  ): WhisperServerLaunchPlan =>
+    buildWhisperServerLaunchPlan({
       binary,
-      "-m",
       model,
-      "--port",
-      String(port),
-      "--host",
-      "127.0.0.1",
-      "-t",
-      "4",
-      "-nt", // no timestamps
-      "--convert", // auto-convert audio formats
-    ],
-    {
-      stdout: "pipe",
-      stderr: "pipe",
-      env,
-    },
-  );
+      port,
+      helpText: helpProbe.helpText,
+      metalResourcesPath: metalPath,
+      coreMLModelPath: process.env.QA_VOICE_WHISPER_COREML_MODEL,
+      requestedAcceleration,
+      inheritedEnv: process.env,
+    });
 
-  // Drain stderr in background (server logs)
-  if (proc.stderr) {
-    const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
-    (async () => {
-      try {
-        while (true) {
-          const { done } = await reader.read();
-          if (done) break;
-        }
-      } catch {}
-    })();
-  }
+  let launch = buildLaunch(requestedAcceleration);
 
-  // Wait for server to become healthy
-  const deadline = Date.now() + STARTUP_TIMEOUT;
-  while (Date.now() < deadline) {
-    if (await isServerHealthy(port)) {
-      serverState = { proc, port, pid: proc.pid };
-      console.error(
-        `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
-      );
-      return port;
+  const startLaunch = async (
+    plan: WhisperServerLaunchPlan,
+  ): Promise<boolean> => {
+    console.error(
+      `[voicelayer] Starting whisper-server on port ${port} with model ${model} (acceleration: ${plan.acceleration.mode})`,
+    );
+    for (const warning of plan.acceleration.warnings) {
+      console.error(`[voicelayer] ${warning}`);
     }
-    await Bun.sleep(500);
+
+    const proc =
+      testHooks.spawn?.(plan.args, {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: plan.env,
+      }) ??
+      Bun.spawn(plan.args, {
+        stdout: "pipe",
+        stderr: "pipe",
+        env: plan.env,
+      });
+
+    // Drain stderr in background (server logs)
+    if (proc.stderr) {
+      const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader();
+      (async () => {
+        try {
+          while (true) {
+            const { done } = await reader.read();
+            if (done) break;
+          }
+        } catch {}
+      })();
+    }
+
+    // Wait for server to become healthy
+    const startupTimeoutMs = getStartupTimeoutMs();
+    const deadline = Date.now() + startupTimeoutMs;
+    while (Date.now() < deadline) {
+      if (await checkServerHealthy(port)) {
+        serverState = {
+          proc: proc as WhisperServerProcess,
+          port,
+          pid: proc.pid,
+        };
+        console.error(
+          `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
+        );
+        return true;
+      }
+      await sleep(500);
+    }
+
+    // Timeout — kill and report failure to caller.
+    await terminateFailedLaunch(proc);
+    return false;
+  };
+
+  if (await startLaunch(launch)) return port;
+
+  if (launch.acceleration.mode === "coreml") {
+    console.error(
+      "[voicelayer] whisper-server Core ML startup failed; retrying with Metal fallback.",
+    );
+    launch = buildLaunch("metal");
+    if (await startLaunch(launch)) return port;
   }
 
-  // Timeout — kill and throw
-  proc.kill();
   throw new Error(
-    `whisper-server failed to start within ${STARTUP_TIMEOUT / 1000}s`,
+    `whisper-server failed to start within ${getStartupTimeoutMs() / 1000}s`,
   );
 }
 
 /** Stop the whisper-server sidecar. */
 export function stopServer(): void {
+  launchPromises.clear();
   if (serverState) {
     console.error(
       `[voicelayer] Stopping whisper-server (PID ${serverState.pid})`,
@@ -319,6 +697,7 @@ export function __resetWhisperServerStateForTests(
   state: WhisperServerState | null,
 ): void {
   serverState = state;
+  launchPromises.clear();
 }
 
 /** Check if whisper-server binary is available (for feature detection). */

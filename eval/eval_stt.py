@@ -36,6 +36,14 @@ from metrics import TranscriptionResult, compute_metrics, aggregate_metrics, Lat
 from report import generate_baseline_report, generate_json_results
 
 
+def backend_matches_filter(backend, backend_filter: str) -> bool:
+    """Return true when a backend name or explicit alias matches the CLI filter."""
+    normalized = backend_filter.lower()
+    name = backend.name.lower()
+    aliases = tuple(alias.lower() for alias in getattr(backend, "aliases", ()))
+    return normalized == name or normalized in aliases or normalized in name
+
+
 def run_evaluation(
     backend_filter: str | None = None,
     regenerate: bool = False,
@@ -80,7 +88,7 @@ def run_evaluation(
 
     backends = get_available_backends(project_root=PROJECT_ROOT)
     if backend_filter:
-        backends = [b for b in backends if backend_filter.lower() in b.name.lower()]
+        backends = [b for b in backends if backend_matches_filter(b, backend_filter)]
 
     if not backends:
         print("[eval] ERROR: No STT backends available.")
@@ -105,11 +113,20 @@ def run_evaluation(
             print(f"  {sample.id}...", end=" ", flush=True)
             try:
                 text, latency_ms = backend.transcribe(sample.audio_path, sample.language)
+                observed_backend = getattr(backend, "last_backend", None) or backend.name
+                if (
+                    backend.name == "voicelayer-resident"
+                    and observed_backend.startswith("whisper-server->")
+                ):
+                    raise RuntimeError(
+                        f"resident backend fell back to {observed_backend}; "
+                        "not counting sample as resident"
+                    )
 
                 tr = TranscriptionResult(
                     reference=sample.reference_text,
                     hypothesis=text,
-                    backend=backend.name,
+                    backend=observed_backend,
                     sample_id=sample.id,
                     latency_ms=latency_ms,
                     audio_duration_ms=sample.duration_ms,
@@ -117,7 +134,12 @@ def run_evaluation(
                 )
                 mr = compute_metrics(tr)
                 metric_results.append(mr)
-                print(f"WER={mr.wer:.1%} CER={mr.cer:.1%} {latency_ms:.0f}ms")
+                backend_note = (
+                    f" via {observed_backend}"
+                    if observed_backend != backend.name
+                    else ""
+                )
+                print(f"WER={mr.wer:.1%} CER={mr.cer:.1%} {latency_ms:.0f}ms{backend_note}")
 
             except Exception as e:
                 print(f"ERROR: {e}")
@@ -181,7 +203,7 @@ def main():
         "--backend",
         type=str,
         default=None,
-        help="Filter to a specific backend (whisper, voicelayer, wispr)",
+        help="Filter to a backend or alias (whisper, voicelayer, resident, cli, wispr)",
     )
     parser.add_argument(
         "--regenerate",

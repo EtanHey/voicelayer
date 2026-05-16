@@ -16,6 +16,7 @@ class STTBackendProto(Protocol):
     """Protocol for STT evaluation backends."""
 
     name: str
+    aliases: tuple[str, ...]
 
     def is_available(self) -> bool: ...
     def transcribe(self, audio_path: str, language: str = "he") -> tuple[str, float]: ...
@@ -31,6 +32,7 @@ class WhisperCppBackend:
     """
 
     name: str = "whisper-cpp"
+    aliases: tuple[str, ...] = ("whisper", "whisper-cpp")
     binary_path: Optional[str] = None
     model_path: Optional[str] = None
 
@@ -143,7 +145,10 @@ class VoiceLayerBackend:
     """
 
     name: str = "voicelayer"
+    aliases: tuple[str, ...] = ()
     project_root: Optional[str] = None
+    stt_backend: str = "auto"
+    last_backend: Optional[str] = None
 
     def __post_init__(self):
         if not self.project_root:
@@ -151,27 +156,61 @@ class VoiceLayerBackend:
 
     def is_available(self) -> bool:
         stt_path = os.path.join(self.project_root or "", "src", "stt.ts")
-        return os.path.exists(stt_path)
+        if not os.path.exists(stt_path):
+            return False
+
+        script = """
+import { getBackend, resetBackendCache } from "./src/stt.ts";
+resetBackendCache();
+try {
+  const backend = await getBackend();
+  console.log((await backend.isAvailable()) ? "AVAILABLE" : "UNAVAILABLE");
+} catch {
+  console.log("UNAVAILABLE");
+}
+"""
+        try:
+            result = subprocess.run(
+                ["bun", "--eval", script],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                cwd=self.project_root,
+                env={**os.environ, "QA_VOICE_STT_BACKEND": self.stt_backend},
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return False
+
+        return result.returncode == 0 and "AVAILABLE" in result.stdout.splitlines()
 
     def transcribe(self, audio_path: str, language: str = "he") -> tuple[str, float]:
         import json as _json
         safe_path = _json.dumps(audio_path)  # JSON-escaped string literal for JS
         script = f"""
-import {{ WhisperCppBackend }} from "./src/stt.ts";
-const backend = new WhisperCppBackend();
+import {{ getBackend, resetBackendCache }} from "./src/stt.ts";
+resetBackendCache();
+const backend = await getBackend();
 const available = await backend.isAvailable();
 if (!available) {{ console.log("UNAVAILABLE"); process.exit(0); }}
 const result = await backend.transcribe({safe_path});
-console.log(JSON.stringify({{ text: result.text, durationMs: result.durationMs }}));
+console.log(JSON.stringify({{
+  text: result.text,
+  durationMs: result.durationMs,
+  backend: result.backend,
+}}));
 """
         start = time.perf_counter()
         result = subprocess.run(
-            ["bun", "eval", script],
+            ["bun", "--eval", script],
             capture_output=True,
             text=True,
             timeout=120,
             cwd=self.project_root,
-            env={**os.environ, "QA_VOICE_WHISPER_LANG": language},
+            env={
+                **os.environ,
+                "QA_VOICE_STT_BACKEND": self.stt_backend,
+                "QA_VOICE_WHISPER_LANG": language,
+            },
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -187,6 +226,7 @@ console.log(JSON.stringify({{ text: result.text, durationMs: result.durationMs }
             line = line.strip()
             if line.startswith("{"):
                 data = json.loads(line)
+                self.last_backend = data.get("backend") or self.stt_backend
                 return data["text"], data.get("durationMs", elapsed_ms)
 
         raise RuntimeError(f"Could not parse VoiceLayer output: {stdout[:200]}")
@@ -203,6 +243,7 @@ class WisprFlowBackend:
     """
 
     name: str = "wispr-flow"
+    aliases: tuple[str, ...] = ("wispr", "wispr-flow")
 
     def is_available(self) -> bool:
         return bool(os.environ.get("QA_VOICE_WISPR_KEY"))
@@ -222,9 +263,23 @@ def get_available_backends(project_root: Optional[str] = None) -> list[STTBacken
     if whisper.is_available():
         backends.append(whisper)
 
-    voicelayer = VoiceLayerBackend(project_root=project_root)
-    if voicelayer.is_available():
-        backends.append(voicelayer)
+    resident = VoiceLayerBackend(
+        name="voicelayer-resident",
+        aliases=("voicelayer", "resident", "whisper-server"),
+        project_root=project_root,
+        stt_backend="whisper-server",
+    )
+    if resident.is_available():
+        backends.append(resident)
+
+    cli = VoiceLayerBackend(
+        name="voicelayer-cli",
+        aliases=("voicelayer", "cli", "whisper"),
+        project_root=project_root,
+        stt_backend="whisper",
+    )
+    if cli.is_available():
+        backends.append(cli)
 
     wispr = WisprFlowBackend()
     if wispr.is_available():
