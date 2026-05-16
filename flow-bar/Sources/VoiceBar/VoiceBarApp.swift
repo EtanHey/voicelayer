@@ -366,6 +366,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         manager.onKeyUp = { [weak self] in
             self?.handleHotkeyKeyUp(from: .native)
         }
+        manager.onMouseDown = { [weak self] in
+            self?.handleHotkeyMouseDown(from: .native)
+        }
+        manager.onMouseUp = { [weak self] in
+            self?.handleHotkeyMouseUp(from: .native)
+        }
         manager.onCancel = { [weak self] in
             self?.noteHotkeyActivity(from: .native)
             self?.commandRouter.handleCancel()
@@ -673,6 +679,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         noteHotkeyActivity(from: source)
         gestureStateMachine.handleKeyUp()
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = nil
+        }
+    }
+
+    private func handleHotkeyMouseDown(from source: HotkeyInputSource) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
+            NSLog("[VoiceBar] Ignoring duplicate %@ mouseDown", source == .native ? "native" : "legacy socket")
+            return
+        }
+        noteHotkeyActivity(from: source)
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = source
+        }
+        gestureStateMachine.handleMouseButtonDown()
+        if gestureStateMachine.state == .idle {
+            activeHotkeySource = nil
+        }
+    }
+
+    private func handleHotkeyMouseUp(from source: HotkeyInputSource) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
+            NSLog("[VoiceBar] Ignoring duplicate %@ mouseUp", source == .native ? "native" : "legacy socket")
+            return
+        }
+        noteHotkeyActivity(from: source)
+        gestureStateMachine.handleMouseButtonUp()
         if gestureStateMachine.state == .idle {
             activeHotkeySource = nil
         }

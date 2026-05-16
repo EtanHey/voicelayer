@@ -639,6 +639,45 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(phases, [.pressing, .awaitingSecondTap])
     }
 
+    func testMouseQuickClickLocksRecordingImmediately() {
+        let gesture = GestureStateMachine()
+        var holdStartCount = 0
+        var holdEndCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldStart = { holdStartCount += 1 }
+        gesture.onHoldEnd = { holdEndCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+
+        XCTAssertEqual(gesture.state, .locked)
+        XCTAssertEqual(holdStartCount, 1)
+        XCTAssertEqual(holdEndCount, 0)
+        XCTAssertEqual(phases, [.pressing, .holding])
+        gesture.reset()
+    }
+
+    func testMouseHoldStillStopsOnRelease() {
+        let gesture = GestureStateMachine()
+        var holdStartCount = 0
+        var holdEndCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldStart = { holdStartCount += 1 }
+        gesture.onHoldEnd = { holdEndCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleMouseButtonDown()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        gesture.handleMouseButtonUp()
+
+        XCTAssertEqual(gesture.state, .idle)
+        XCTAssertEqual(holdStartCount, 1)
+        XCTAssertEqual(holdEndCount, 1)
+        XCTAssertEqual(phases, [.pressing, .holding, .idle])
+        gesture.reset()
+    }
+
     func testGestureDoubleTapLocksActiveRecordingWithoutStopping() {
         let gesture = GestureStateMachine()
         var holdStartCount = 0

@@ -134,6 +134,38 @@ final class GestureStateMachine {
         }
     }
 
+    func handleMouseButtonDown() {
+        let now = CFAbsoluteTimeGetCurrent()
+        switch state {
+        case .idle:
+            startPressing(now: now)
+        case .locked:
+            state = .idle
+            onPreviewPhaseChange(.idle)
+            onHoldEnd()
+        default:
+            break
+        }
+    }
+
+    func handleMouseButtonUp() {
+        switch state {
+        case .pressing:
+            clearHoldTimer()
+            keyDownTime = nil
+            state = .locked
+            onPreviewPhaseChange(.holding)
+            onHoldStart()
+        case .holding:
+            keyDownTime = nil
+            state = .idle
+            onPreviewPhaseChange(.idle)
+            onHoldEnd()
+        default:
+            break
+        }
+    }
+
     func cancel() {
         switch state {
         case .idle:
@@ -511,6 +543,8 @@ private final class TapContext {
     let useModifierMode: Bool
     let onKeyDown: () -> Void
     let onKeyUp: () -> Void
+    let onMouseDown: () -> Void
+    let onMouseUp: () -> Void
     let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
     let shouldHandleEscape: () -> Bool
@@ -525,6 +559,8 @@ private final class TapContext {
         modifierMode: Bool,
         onKeyDown: @escaping () -> Void,
         onKeyUp: @escaping () -> Void,
+        onMouseDown: @escaping () -> Void,
+        onMouseUp: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onPasteLastTranscript: @escaping () -> Void,
         shouldHandleEscape: @escaping () -> Bool
@@ -535,6 +571,8 @@ private final class TapContext {
         useModifierMode = modifierMode
         self.onKeyDown = onKeyDown
         self.onKeyUp = onKeyUp
+        self.onMouseDown = onMouseDown
+        self.onMouseUp = onMouseUp
         self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
         self.shouldHandleEscape = shouldHandleEscape
@@ -577,8 +615,9 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
 
+    let isMouseHotkeyEvent = type == .otherMouseDown || type == .otherMouseUp
     let action: HotkeyAction
-    if type == .otherMouseDown || type == .otherMouseUp {
+    if isMouseHotkeyEvent {
         action = mouseHotkeyAction(
             type: type,
             buttonNumber: mouseButtonNumber,
@@ -605,11 +644,19 @@ private func hotkeyCallback(
         break
     case .keyDown:
         DispatchQueue.main.async {
-            ctx.onKeyDown()
+            if isMouseHotkeyEvent {
+                ctx.onMouseDown()
+            } else {
+                ctx.onKeyDown()
+            }
         }
     case .keyUp:
         DispatchQueue.main.async {
-            ctx.onKeyUp()
+            if isMouseHotkeyEvent {
+                ctx.onMouseUp()
+            } else {
+                ctx.onKeyUp()
+            }
         }
     case .cancel:
         DispatchQueue.main.async {
@@ -625,7 +672,7 @@ private func hotkeyCallback(
         hotkeyAction: action,
         targetKeycodes: ctx.targetKeycodes,
         keycode: keycode
-    ) || ((type == .otherMouseDown || type == .otherMouseUp) && action != .ignore) {
+    ) || (isMouseHotkeyEvent && action != .ignore) {
         return nil
     }
 
@@ -661,6 +708,8 @@ final class HotkeyManager {
     /// Callback for Shift+F5 re-paste hotkey.
     var onKeyDown: () -> Void
     var onKeyUp: () -> Void
+    var onMouseDown: () -> Void
+    var onMouseUp: () -> Void
     var onCancel: () -> Void
     var onPasteLastTranscript: () -> Void = {}
     var shouldHandleEscape: () -> Bool = { false }
@@ -673,6 +722,8 @@ final class HotkeyManager {
         self.gesture = gesture
         onKeyDown = { gesture.handleKeyDown() }
         onKeyUp = { gesture.handleKeyUp() }
+        onMouseDown = { gesture.handleMouseButtonDown() }
+        onMouseUp = { gesture.handleMouseButtonUp() }
         onCancel = { gesture.cancel() }
     }
 
@@ -737,6 +788,8 @@ final class HotkeyManager {
             modifierMode: useModifierMode,
             onKeyDown: onKeyDown,
             onKeyUp: onKeyUp,
+            onMouseDown: onMouseDown,
+            onMouseUp: onMouseUp,
             onCancel: onCancel,
             onPasteLastTranscript: onPasteLastTranscript,
             shouldHandleEscape: shouldHandleEscape
