@@ -89,8 +89,10 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.mode, .idle)
     }
 
-    func testStopWithoutDaemonResponseDoesNotFallbackToIdle() async {
+    func testStopShowsTranscribingImmediatelyWhileWaitingForDaemon() async {
         let state = VoiceState()
+        var modes: [VoiceMode] = []
+        state.onModeChange = { modes.append($0) }
         state.handleEvent([
             "type": "state",
             "state": "recording",
@@ -100,6 +102,7 @@ final class VoiceStateTests: XCTestCase {
         state.stop()
         try? await Task.sleep(for: .milliseconds(2200))
 
-        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertEqual(modes, [.recording, .transcribing])
     }
 }

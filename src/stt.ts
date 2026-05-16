@@ -356,6 +356,20 @@ export class WhisperServerBackend implements STTBackend {
         wavData,
         buildWhisperServerOptions(options),
       );
+      if (!text.trim()) {
+        console.error(
+          "[voicelayer] whisper-server returned empty text, falling back to whisper-cli",
+        );
+        const fallback = await this.fallbackBackend.transcribe(
+          audioPath,
+          options,
+        );
+        return {
+          ...fallback,
+          backend: `${this.name}->${fallback.backend}`,
+          durationMs: Date.now() - start,
+        };
+      }
       return {
         text,
         backend: this.name,

@@ -346,6 +346,30 @@ describe("STT backends", () => {
       expect(result.text).toBe("fallback text");
       expect(result.backend).toBe("whisper-server->whisper.cpp");
     });
+
+    it("falls back to whisper-cli when resident inference returns empty text", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-empty-fallback-test.wav";
+      await Bun.write(wavPath, new Uint8Array([7, 8]));
+      const fallback = {
+        name: "whisper.cpp",
+        isAvailable: async () => true,
+        transcribe: async (_audioPath: string) => ({
+          text: "fallback from empty",
+          backend: "whisper.cpp",
+          durationMs: 15,
+        }),
+      };
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => "",
+        fallbackBackend: fallback,
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe("fallback from empty");
+      expect(result.backend).toBe("whisper-server->whisper.cpp");
+    });
   });
 
   describe("getBackend", () => {
