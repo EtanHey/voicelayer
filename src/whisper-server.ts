@@ -397,20 +397,35 @@ function getStartupTimeoutMs(): number {
   return testHooks.startupTimeoutMs ?? STARTUP_TIMEOUT;
 }
 
-async function terminateFailedLaunch(
-  proc: Pick<WhisperServerProcess, "kill"> & {
-    exited?: Promise<number>;
-  },
-): Promise<void> {
-  try {
-    proc.kill();
-  } catch {}
+type KillableWhisperServerProcess = Pick<WhisperServerProcess, "kill"> & {
+  exited?: Promise<number>;
+};
 
-  if (!proc.exited) return;
-  await Promise.race([
-    proc.exited.catch(() => undefined),
-    Bun.sleep(FAILED_LAUNCH_EXIT_TIMEOUT),
+function killWhisperProcess(proc: KillableWhisperServerProcess, signal: NodeJS.Signals): void {
+  try {
+    proc.kill(signal);
+  } catch {}
+}
+
+async function waitForWhisperProcessExit(proc: KillableWhisperServerProcess): Promise<boolean> {
+  if (!proc.exited) return true;
+
+  const result = await Promise.race([
+    proc.exited.then(
+      () => "exited" as const,
+      () => "exited" as const,
+    ),
+    Bun.sleep(FAILED_LAUNCH_EXIT_TIMEOUT).then(() => "timeout" as const),
   ]);
+  return result === "exited";
+}
+
+async function terminateFailedLaunch(proc: KillableWhisperServerProcess): Promise<void> {
+  killWhisperProcess(proc, "SIGTERM");
+  if (await waitForWhisperProcessExit(proc)) return;
+
+  killWhisperProcess(proc, "SIGKILL");
+  await waitForWhisperProcessExit(proc);
 }
 
 /**
@@ -660,7 +675,7 @@ async function transcribeViaServerAttempt(
       });
     } catch (err) {
       if (allowRetry) {
-        markServerUnhealthy();
+        await markServerUnhealthy();
         const retryPort = await ensureServer(port);
         return transcribeViaServerAttempt(wavData, retryPort, false, options);
       }
@@ -669,7 +684,7 @@ async function transcribeViaServerAttempt(
 
     if (!resp.ok) {
       if (allowRetry && resp.status >= 500) {
-        markServerUnhealthy();
+        await markServerUnhealthy();
         const retryPort = await ensureServer(port);
         return transcribeViaServerAttempt(wavData, retryPort, false, options);
       }
@@ -685,12 +700,11 @@ async function transcribeViaServerAttempt(
   }
 }
 
-function markServerUnhealthy(): void {
+async function markServerUnhealthy(): Promise<void> {
   if (!serverState) return;
-  try {
-    serverState.proc.kill();
-  } catch {}
+  const unhealthyState = serverState;
   serverState = null;
+  await terminateFailedLaunch(unhealthyState.proc);
 }
 
 export function __resetWhisperServerStateForTests(

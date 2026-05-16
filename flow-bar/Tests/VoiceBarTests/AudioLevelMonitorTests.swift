@@ -71,6 +71,18 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertEqual(engine.stopCallCount, 0)
     }
 
+    func testStartFailureRemovesTapAndStopsEngineDefensively() {
+        let engine = AudioLevelMonitorEngineSpy()
+        engine.shouldThrowOnStart = true
+        let monitor = AudioLevelMonitor(engine: engine) { _ in }
+
+        monitor.start()
+
+        XCTAssertEqual(engine.inputNode.installTapCallCount, 1)
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, 2)
+        XCTAssertEqual(engine.stopCallCount, 1)
+    }
+
     func testNormalizePowerClampsAndMapsIntoWaveformRange() {
         XCTAssertEqual(AudioLevelMonitor.normalizeAveragePower(-120), 0, accuracy: 0.001)
         XCTAssertEqual(AudioLevelMonitor.normalizeAveragePower(-10), 0.917, accuracy: 0.01)
@@ -84,6 +96,7 @@ private final class AudioLevelMonitorEngineSpy: AudioLevelMonitoringEngine {
     private(set) var prepareCallCount = 0
     private(set) var startCallCount = 0
     private(set) var stopCallCount = 0
+    var shouldThrowOnStart = false
 
     var monitoringInputNode: AudioLevelMonitoringInputNode {
         inputNodeAccessCount += 1
@@ -96,6 +109,9 @@ private final class AudioLevelMonitorEngineSpy: AudioLevelMonitoringEngine {
 
     func start() throws {
         startCallCount += 1
+        if shouldThrowOnStart {
+            throw NSError(domain: "AudioLevelMonitorEngineSpy", code: 1)
+        }
     }
 
     func stop() {

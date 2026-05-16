@@ -228,6 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         snoozeTask?.cancel()
         hotkeyManager?.stop()
+        audioLevelMonitor.stop()
         daemonController.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
@@ -321,6 +322,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // does NOT respawn. Only crashes (non-zero) trigger restart.
         snoozeTask?.cancel()
         hotkeyManager?.stop()
+        audioLevelMonitor.stop()
         daemonController.stop()
         socketServer?.stop()
         return .terminateNow

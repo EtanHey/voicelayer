@@ -450,5 +450,58 @@ usage: whisper-server [options]
         __resetWhisperServerStateForTests(null);
       }
     });
+
+    it("waits for an unhealthy managed process to exit before retrying inference", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let exited = false;
+      let resolveExit: (code: number) => void = () => {};
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (url: string | URL | Request) => {
+        if (String(url).endsWith("/health")) {
+          return new Response(JSON.stringify({ status: "ok" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+
+        attempts++;
+        if (attempts === 1) {
+          throw new Error("connection reset");
+        }
+
+        expect(exited).toBe(true);
+        return new Response(JSON.stringify({ text: "after clean restart" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      try {
+        __resetWhisperServerStateForTests({
+          proc: {
+            kill: () => {
+              setTimeout(() => resolveExit(0), 0);
+            },
+            exited: new Promise<number>((resolve) => {
+              resolveExit = resolve;
+            }).then((code) => {
+              exited = true;
+              return code;
+            }),
+          } as any,
+          port: 5555,
+          pid: 123,
+        });
+        const text = await transcribeViaServer(new Uint8Array([1, 2]), 5555);
+
+        expect(text).toBe("after clean restart");
+        expect(attempts).toBe(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __resetWhisperServerStateForTests(null);
+      }
+    });
   });
 });

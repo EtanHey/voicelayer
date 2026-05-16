@@ -280,6 +280,36 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(ownedProcess.isRunning)
     }
 
+    func testStopForceKillsOwnedProcessIfTerminateDoesNotExit() {
+        let ownedProcess = ProcessSpy()
+        ownedProcess.ignoresTerminate = true
+        var waitedTimeouts: [TimeInterval] = []
+        var forceKilledPIDs: [Int32] = []
+        let ownedController = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { ownedProcess },
+            processExitWaiter: { _, timeout in
+                waitedTimeouts.append(timeout)
+                return false
+            },
+            forceKillProcess: { pid in
+                forceKilledPIDs.append(pid)
+                ownedProcess.forceExit()
+            }
+        )
+        _ = ownedController.activateIfNeeded()
+
+        ownedController.stop()
+
+        XCTAssertTrue(ownedProcess.didReceiveTerminate)
+        XCTAssertEqual(forceKilledPIDs, [ownedProcess.processIdentifier])
+        XCTAssertEqual(waitedTimeouts.count, 2)
+        XCTAssertFalse(ownedController.ownsLaunchedProcess)
+        XCTAssertFalse(ownedProcess.isRunning)
+    }
+
     func testCheckoutBuildLaunchesRepoDaemonWithBunRun() throws {
         let executableURL = URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar")
 
@@ -386,6 +416,8 @@ private func drainMainQueue(
 private final class ProcessSpy: Process, @unchecked Sendable {
     var didRun = false
     var didTerminate = false
+    var didReceiveTerminate = false
+    var ignoresTerminate = false
     var capturedExecutableURL: URL?
     var capturedArguments: [String]?
     var capturedCurrentDirectoryURL: URL?
@@ -440,6 +472,13 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     }
 
     override func terminate() {
+        didReceiveTerminate = true
+        if !ignoresTerminate {
+            didTerminate = true
+        }
+    }
+
+    func forceExit() {
         didTerminate = true
     }
 }

@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 enum VoiceBarDaemonActivationResult: Equatable {
@@ -169,14 +170,19 @@ enum VoiceBarDaemonLivenessProbe {
 /// restarts on crash with exponential backoff.
 final class VoiceBarDaemonController {
     typealias RestartScheduler = (_ delay: TimeInterval, _ block: @escaping () -> Void) -> Void
+    typealias ProcessExitWaiter = (_ process: Process, _ timeout: TimeInterval) -> Bool
+    typealias ForceKillProcess = (_ pid: Int32) -> Void
 
     private static let stabilityResetDelay: TimeInterval = 300
+    private static let gracefulStopTimeout: TimeInterval = 1.0
 
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
     private let livenessProbe: () -> Bool
     private let processFactory: () -> Process
     private let restartScheduler: RestartScheduler
+    private let processExitWaiter: ProcessExitWaiter
+    private let forceKillProcess: ForceKillProcess
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
@@ -208,6 +214,10 @@ final class VoiceBarDaemonController {
         processFactory: @escaping () -> Process = { Process() },
         restartScheduler: @escaping RestartScheduler = { delay, block in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
+        },
+        processExitWaiter: @escaping ProcessExitWaiter = VoiceBarDaemonController.waitForProcessExit,
+        forceKillProcess: @escaping ForceKillProcess = { pid in
+            _ = Darwin.kill(pid, SIGKILL)
         }
     ) {
         self.executableURLProvider = executableURLProvider
@@ -215,6 +225,8 @@ final class VoiceBarDaemonController {
         self.livenessProbe = livenessProbe
         self.processFactory = processFactory
         self.restartScheduler = restartScheduler
+        self.processExitWaiter = processExitWaiter
+        self.forceKillProcess = forceKillProcess
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
@@ -368,8 +380,22 @@ final class VoiceBarDaemonController {
         guard ownsLaunchedProcess, let process else { return }
         if process.isRunning {
             process.terminate()
+            if !processExitWaiter(process, Self.gracefulStopTimeout), process.isRunning {
+                NSLog("[VoiceBar] Daemon did not exit after SIGTERM — sending SIGKILL to PID %d",
+                      process.processIdentifier)
+                forceKillProcess(process.processIdentifier)
+                _ = processExitWaiter(process, Self.gracefulStopTimeout)
+            }
         }
         self.process = nil
         ownsLaunchedProcess = false
+    }
+
+    private static func waitForProcessExit(_ process: Process, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning, Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        return !process.isRunning
     }
 }

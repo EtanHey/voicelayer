@@ -108,6 +108,7 @@ final class AudioLevelMonitor {
             isRunning = true
         } catch {
             inputNode.removeTap()
+            engine.stop()
             DispatchQueue.main.async {
                 self.onLevel(nil)
             }

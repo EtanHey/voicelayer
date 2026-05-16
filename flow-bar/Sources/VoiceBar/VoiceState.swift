@@ -844,7 +844,7 @@ final class VoiceState {
         let grace = recordingIdleFinalTranscriptGrace
         recordingIdleCleanupTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: grace)
-            guard let self, !Task.isCancelled, barInitiatedRecording else { return }
+            guard let self, !Task.isCancelled, barInitiatedRecording, mode != .transcribing else { return }
             barInitiatedRecording = false
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
