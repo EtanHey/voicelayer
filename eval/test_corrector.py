@@ -64,6 +64,33 @@ def _write_manifest(path: Path):
             "tags": ["no-op"],
             "notes": "unit fixture",
         },
+        {
+            "id": "row-3",
+            "source": "test",
+            "source_ref": "local-3",
+            "split": "heldout",
+            "language": "en",
+            "app": "test",
+            "audio_ref": None,
+            "audio_path": None,
+            "asr_text": "I said question mark, and it dictated it.",
+            "formatted_text": "I said question mark, and it dictated it.",
+            "edited_text": "I said question mark, and it dictated it.",
+            "input_text": "I said question mark, and it dictated it.",
+            "input_source": "formatted_text",
+            "target_text": "I said question mark, and it dictated it.",
+            "target_source": "formatted_text",
+            "should_change": False,
+            "protected_terms": [],
+            "dictionary_terms": [],
+            "num_words": 8,
+            "speech_duration": None,
+            "num_dictionary_replacements": 0,
+            "num_words_corrected": 0,
+            "average_log_prob": None,
+            "tags": ["content-edit"],
+            "notes": "unit fixture",
+        },
     ]
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
@@ -76,7 +103,7 @@ def test_load_corrector_manifest_requires_contract_fields(tmp_path):
 
     rows = load_corrector_manifest(manifest)
 
-    assert [row.id for row in rows] == ["row-1", "row-2"]
+    assert [row.id for row in rows] == ["row-1", "row-2", "row-3"]
     assert rows[0].input_text == "brain layer"
     assert rows[0].target_text == "BrainLayer"
 
@@ -100,7 +127,7 @@ def test_run_corrector_evaluation_writes_json_and_markdown_reports(tmp_path):
         backends=("identity", "rules"),
     )
 
-    assert result["dataset"]["total"] == 2
+    assert result["dataset"]["total"] == 3
     assert {b["name"] for b in result["backends"]} == {"identity", "rules"}
     identity = next(b for b in result["backends"] if b["name"] == "identity")
     rules = next(b for b in result["backends"] if b["name"] == "rules")
@@ -108,9 +135,16 @@ def test_run_corrector_evaluation_writes_json_and_markdown_reports(tmp_path):
     assert rules["mean_latency_ms"] < 10
     assert "dictionary-heavy" in rules["categories"]
     assert rules["categories"]["dictionary-heavy"]["num_samples"] == 1
+    assert rules["categories"]["no-op"]["mean_wer"] == 0.0
+    assert rules["categories"]["content-edit"]["mean_wer"] == 0.0
+    assert (
+        rules["categories"]["dictionary-heavy"]["mean_wer"]
+        <= identity["categories"]["dictionary-heavy"]["mean_wer"]
+    )
     assert rules["per_sample"][0]["sample_id"] == "row-1"
+    assert rules["per_sample"][0]["context"] == "dictionary-heavy"
     assert rules["per_sample"][0]["input_words"] == 2
-    assert result["sanity_row"]["sample_id"] == "row-1"
+    assert result["sanity_row"]["sample_id"] == "row-3"
 
     assert result["json_path"].name.startswith("corrector-")
     assert result["json_path"].suffix == ".json"
@@ -124,8 +158,10 @@ def test_run_corrector_evaluation_writes_json_and_markdown_reports(tmp_path):
     assert "## Per-Row Breakdown" in markdown
     assert "## Sanity Row" in markdown
     assert "row-1" in markdown
-    assert result["sanity_row"]["sample_id"] == "row-1"
-    assert result["sanity_row"]["rules_output"] == "BrainLayer"
+    assert result["sanity_row"]["sample_id"] == "row-3"
+    assert result["sanity_row"]["rules_output"] == (
+        "I said question mark, and it dictated it."
+    )
 
 
 def test_run_corrector_evaluation_reports_layer_trace_columns(tmp_path):
@@ -140,15 +176,16 @@ def test_run_corrector_evaluation_reports_layer_trace_columns(tmp_path):
     )
 
     traces = result["layer_traces"]
-    assert len(traces) == 2
+    assert len(traces) == 3
     first_trace = traces[0]
     assert first_trace["sample_id"] == "row-1"
     assert first_trace["raw_asr_text"] == "brain layer"
-    assert first_trace["cleanup_text"] == "BrainLayer"
+    assert first_trace["cleanup_text"] == "brain layer"
     assert first_trace["rules_text"] == "BrainLayer"
+    assert first_trace["cleanup_text"] != first_trace["rules_text"]
     assert first_trace["target_text"] == "BrainLayer"
     assert first_trace["metrics"]["raw_asr"]["wer"] == 2.0
-    assert first_trace["metrics"]["cleanup"]["wer"] == 0.0
+    assert first_trace["metrics"]["cleanup"]["wer"] == 2.0
     assert first_trace["metrics"]["rules"]["wer"] == 0.0
     second_trace = traces[1]
     assert second_trace["input_source"] == "formatted_text"
