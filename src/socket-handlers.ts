@@ -141,7 +141,7 @@ export function handleSocketCommand(
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        broadcast({ type: "state", state: "idle" });
+        broadcast({ type: "state", state: "idle", source: "recording" });
       });
       return buildAck(command, "accept");
     }

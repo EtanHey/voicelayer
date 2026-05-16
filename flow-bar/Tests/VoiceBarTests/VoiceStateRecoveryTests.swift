@@ -56,6 +56,7 @@ final class VoiceStateRecoveryTests: XCTestCase {
         let state = VoiceState()
         state.barInitiatedSafetyTimeout = .milliseconds(20)
         state.barInitiatedTranscriptionTimeout = .seconds(30)
+        state.minimumTranscribingDisplayDuration = 0
 
         var pastedTexts: [String] = []
         state.pasteHandler = { text in
