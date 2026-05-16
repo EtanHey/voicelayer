@@ -46,12 +46,12 @@ def _write_manifest(path: Path):
             "app": "test",
             "audio_ref": None,
             "audio_path": None,
-            "asr_text": "already fine",
-            "formatted_text": "already fine",
-            "edited_text": "already fine",
-            "input_text": "already fine",
+            "asr_text": "raw transcript still messy",
+            "formatted_text": "Already fine",
+            "edited_text": "Already fine",
+            "input_text": "Already fine",
             "input_source": "formatted_text",
-            "target_text": "already fine",
+            "target_text": "Already fine",
             "target_source": "formatted_text",
             "should_change": False,
             "protected_terms": [],
@@ -126,3 +126,41 @@ def test_run_corrector_evaluation_writes_json_and_markdown_reports(tmp_path):
     assert "row-1" in markdown
     assert result["sanity_row"]["sample_id"] == "row-1"
     assert result["sanity_row"]["rules_output"] == "BrainLayer"
+
+
+def test_run_corrector_evaluation_reports_layer_trace_columns(tmp_path):
+    manifest = tmp_path / "heldout-corrector.jsonl"
+    reports = tmp_path / "reports"
+    _write_manifest(manifest)
+
+    result = run_corrector_evaluation(
+        manifest_path=manifest,
+        output_dir=reports,
+        backends=("identity", "rules"),
+    )
+
+    traces = result["layer_traces"]
+    assert len(traces) == 2
+    first_trace = traces[0]
+    assert first_trace["sample_id"] == "row-1"
+    assert first_trace["raw_asr_text"] == "brain layer"
+    assert first_trace["cleanup_text"] == "BrainLayer"
+    assert first_trace["rules_text"] == "BrainLayer"
+    assert first_trace["target_text"] == "BrainLayer"
+    assert first_trace["metrics"]["raw_asr"]["wer"] == 2.0
+    assert first_trace["metrics"]["cleanup"]["wer"] == 0.0
+    assert first_trace["metrics"]["rules"]["wer"] == 0.0
+    second_trace = traces[1]
+    assert second_trace["input_source"] == "formatted_text"
+    assert second_trace["raw_asr_text"] == "raw transcript still messy"
+    assert second_trace["cleanup_text"] == "Already fine"
+    assert second_trace["target_text"] == "Already fine"
+    assert second_trace["metrics"]["raw_asr"]["wer"] > 0
+
+    json_payload = json.loads(result["json_path"].read_text(encoding="utf-8"))
+    assert json_payload["layer_traces"][0]["raw_asr_text"] == "brain layer"
+    assert json_payload["layer_traces"][1]["raw_asr_text"] == "raw transcript still messy"
+
+    markdown = result["markdown_path"].read_text(encoding="utf-8")
+    assert "## Layer-Isolated Breakdown" in markdown
+    assert "| Sample | Categories | Raw ASR | Cleanup | Rules | Target | Raw WER | Cleanup WER | Rules WER |" in markdown

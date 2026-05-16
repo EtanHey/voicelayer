@@ -1,6 +1,10 @@
 import { cleanupTranscriptionText } from "./stt-cleanup";
 
 export type STTCorrectorMode = "off" | "identity" | "rules";
+export interface STTCorrectorEnv {
+  [key: string]: string | undefined;
+  QA_VOICE_CORRECTOR?: string;
+}
 
 export interface STTCorrectorResult {
   inputText: string;
@@ -12,11 +16,11 @@ export interface STTCorrectorResult {
 
 export interface STTCorrectorOptions {
   mode?: STTCorrectorMode;
-  env?: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR">;
+  env?: STTCorrectorEnv;
 }
 
 export function getSTTCorrectorMode(
-  env: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR"> = process.env,
+  env: STTCorrectorEnv = process.env,
 ): STTCorrectorMode {
   const raw = env.QA_VOICE_CORRECTOR?.trim().toLowerCase();
   if (raw === "identity" || raw === "rules") return raw;

@@ -70,6 +70,7 @@ import { cleanupTranscriptionText } from "./stt-cleanup";
 import {
   correctTranscriptionText,
   getSTTCorrectorMode,
+  type STTCorrectorEnv,
 } from "./stt-corrector";
 import { resolveBinary } from "./resolve-binary";
 import {
@@ -114,7 +115,7 @@ export function isChunkedSTTEnabled(): boolean {
 
 export function finalizeTranscriptionText(
   text: string,
-  env: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR"> = process.env,
+  env: STTCorrectorEnv = process.env,
 ): string {
   const mode = getSTTCorrectorMode(env);
   if (mode === "off") return cleanupTranscriptionText(text);
