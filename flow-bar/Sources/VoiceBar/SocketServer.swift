@@ -35,6 +35,20 @@ func classifySocketWriteResult(bytesWritten: Int, errnoCode: Int32) -> SocketWri
     }
 }
 
+private struct ClientConnection {
+    let source: DispatchSourceRead
+    var buffer: String
+    var role: String?
+    var pid: Int?
+    var acceptsCommands: Bool
+
+    init(source: DispatchSourceRead) {
+        self.source = source
+        buffer = ""
+        acceptsCommands = false
+    }
+}
+
 final class SocketServer {
     private let socketPath: String
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
@@ -48,8 +62,8 @@ final class SocketServer {
     /// True only after this instance successfully binds the socket path.
     private var ownsSocketPath = false
 
-    /// Connected clients: fd → (readSource, NDJSON buffer).
-    private var clients: [Int32: (source: DispatchSourceRead, buffer: String)] = [:]
+    /// Connected clients: fd → read source, NDJSON buffer, and command eligibility.
+    private var clients: [Int32: ClientConnection] = [:]
 
     // MARK: - Lifecycle
 
@@ -176,7 +190,7 @@ final class SocketServer {
         }
         readSource.resume()
 
-        clients[clientFD] = (source: readSource, buffer: "")
+        clients[clientFD] = ClientConnection(source: readSource)
         updateConnectionState()
     }
 
@@ -200,24 +214,24 @@ final class SocketServer {
             return
         }
 
-        guard var entry = clients[fd] else { return }
+        guard clients[fd] != nil else { return }
 
         let chunk = String(bytes: buf[0 ..< bytesRead], encoding: .utf8) ?? ""
-        entry.buffer.append(chunk)
+        clients[fd]?.buffer.append(chunk)
 
         // NDJSON framing: split on newlines
-        while let idx = entry.buffer.firstIndex(of: "\n") {
-            let line = String(entry.buffer[entry.buffer.startIndex ..< idx])
-            entry.buffer = String(entry.buffer[entry.buffer.index(after: idx)...])
+        while let buffer = clients[fd]?.buffer,
+              let idx = buffer.firstIndex(of: "\n")
+        {
+            let line = String(buffer[buffer.startIndex ..< idx])
+            clients[fd]?.buffer = String(buffer[buffer.index(after: idx)...])
             if !line.isEmpty {
-                parseLine(line)
+                parseLine(line, from: fd)
             }
         }
-
-        clients[fd] = entry
     }
 
-    func parseLine(_ json: String) {
+    func parseLine(_ json: String, from fd: Int32? = nil) {
         guard let data = json.data(using: .utf8),
               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
@@ -232,14 +246,48 @@ final class SocketServer {
             return
         }
 
+        if dict["type"] as? String == "client_hello" {
+            handleClientHello(dict, from: fd)
+            return
+        }
+
         DispatchQueue.main.async { [weak self] in
             self?.state.handleEvent(dict)
         }
     }
 
-    // MARK: - Send to all clients
+    private func handleClientHello(_ payload: [String: Any], from fd: Int32?) {
+        guard let fd, clients[fd] != nil else {
+            return
+        }
 
-    /// Send a command (JSON + newline) to all connected MCP clients.
+        let role = payload["role"] as? String
+        let acceptsCommands = payload["accepts_commands"] as? Bool ?? false
+        let pid = payload["pid"] as? Int ?? (payload["pid"] as? NSNumber)?.intValue
+
+        if acceptsCommands {
+            for otherFD in clients.keys where otherFD != fd {
+                clients[otherFD]?.acceptsCommands = false
+            }
+        }
+
+        clients[fd]?.role = role
+        clients[fd]?.pid = pid
+        clients[fd]?.acceptsCommands = acceptsCommands
+
+        NSLog(
+            "[VoiceBar] Client hello (fd: %d, role: %@, pid: %@, acceptsCommands: %@)",
+            fd,
+            role ?? "unknown",
+            pid.map(String.init) ?? "unknown",
+            acceptsCommands ? "true" : "false"
+        )
+        updateConnectionState()
+    }
+
+    // MARK: - Send to command client
+
+    /// Send a command (JSON + newline) to the single command-owning daemon.
     func sendToAll(command: [String: Any]) {
         queue.async { [weak self] in
             guard let self else { return }
@@ -249,31 +297,43 @@ final class SocketServer {
             jsonString.append("\n")
             let bytes = Array(jsonString.utf8)
 
+            let commandFDs = clients
+                .filter { $0.value.acceptsCommands }
+                .map(\.key)
+                .sorted()
+
+            guard let targetFD = commandFDs.first else {
+                NSLog("[VoiceBar] No command client registered; dropping command %@", jsonString.trimmingCharacters(in: .whitespacesAndNewlines))
+                return
+            }
+
+            if commandFDs.count > 1 {
+                NSLog("[VoiceBar] Multiple command clients registered (%d); using fd %d", commandFDs.count, targetFD)
+            }
+
             var deadFDs: [Int32] = []
-            for (fd, _) in clients {
-                var totalWritten = 0
-                var transientRetryCount = 0
-                while totalWritten < bytes.count {
-                    switch writeToClient(fd: fd, bytes: bytes, offset: totalWritten) {
-                    case let .wrote(count):
-                        totalWritten += count
-                        transientRetryCount = 0
-                    case .retry:
-                        transientRetryCount += 1
-                        if transientRetryCount >= 3 {
-                            NSLog("[VoiceBar] Socket write stalled (fd: %d) after %d retries", fd, transientRetryCount)
-                            deadFDs.append(fd)
-                            totalWritten = bytes.count
-                        }
-                    case let .peerClosed(errnoCode):
-                        NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", fd, errnoCode)
-                        deadFDs.append(fd)
-                        totalWritten = bytes.count
-                    case let .failed(errnoCode):
-                        NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", fd, errnoCode)
-                        deadFDs.append(fd)
+            var totalWritten = 0
+            var transientRetryCount = 0
+            while totalWritten < bytes.count {
+                switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
+                case let .wrote(count):
+                    totalWritten += count
+                    transientRetryCount = 0
+                case .retry:
+                    transientRetryCount += 1
+                    if transientRetryCount >= 3 {
+                        NSLog("[VoiceBar] Socket write stalled (fd: %d) after %d retries", targetFD, transientRetryCount)
+                        deadFDs.append(targetFD)
                         totalWritten = bytes.count
                     }
+                case let .peerClosed(errnoCode):
+                    NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
+                    deadFDs.append(targetFD)
+                    totalWritten = bytes.count
+                case let .failed(errnoCode):
+                    NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
+                    deadFDs.append(targetFD)
+                    totalWritten = bytes.count
                 }
             }
             // Clean up clients that failed on write

@@ -29,10 +29,21 @@ describe("secure session paths", () => {
     expect(paths.STOP_FILE).toContain("stop-");
   });
 
-  it("SOCKET_PATH is fixed well-known path (no session token)", () => {
+  it("SOCKET_PATH defaults to fixed well-known path (no session token)", () => {
     expect(paths.SOCKET_PATH).toBe("/tmp/voicelayer.sock");
     // Should NOT contain session token — fixed path for VoiceBar server
     expect(paths.SOCKET_PATH).not.toContain(paths.SESSION_TOKEN);
+  });
+
+  it("getVoiceBarSocketPath allows test isolation via env override", () => {
+    expect(
+      paths.getVoiceBarSocketPath({
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-private-test.sock");
+    expect(paths.getVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(
+      "/tmp/voicelayer.sock",
+    );
   });
 
   it("LOCK_FILE contains session token", () => {

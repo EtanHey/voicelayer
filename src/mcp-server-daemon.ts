@@ -24,6 +24,7 @@ import { getBackend } from "./stt";
 import {
   DISABLE_VOICELAYER,
   MCP_SOCKET_PATH,
+  SOCKET_PATH,
   isVoicelayerDisabled,
 } from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
@@ -156,7 +157,12 @@ async function main() {
 
   // Connect to Voice Bar for UI state
   onCommand(handleSocketCommand);
-  connectToBar();
+  connectToBar(undefined, {
+    role: "mcp-daemon",
+    acceptsCommands:
+      SOCKET_PATH === "/tmp/voicelayer.sock" &&
+      MCP_SOCKET_PATH === "/tmp/voicelayer-mcp.sock",
+  });
 
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)
   const daemon = await createMcpDaemon({

@@ -1007,6 +1007,8 @@ export async function waitForInput(
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
+    writeFileSync(retainedRecordingFilePath(), retainedWavData);
+
     if (consumeCancelSignalForRecording()) {
       console.error(
         "[voicelayer] Recording cancelled during transcription — discarding transcript",
@@ -1015,8 +1017,6 @@ export async function waitForInput(
       broadcast({ type: "state", state: "idle", source: "recording" });
       return null;
     }
-
-    writeFileSync(retainedRecordingFilePath(), retainedWavData);
 
     if (text) {
       try {

@@ -84,6 +84,10 @@ async function waitFor(
   return predicate();
 }
 
+function parseReceived(mockServer: MockServer): Record<string, unknown>[] {
+  return mockServer.received.map((line) => JSON.parse(line));
+}
+
 // --- Tests ---
 
 describe("socket-client", () => {
@@ -136,12 +140,61 @@ describe("socket-client", () => {
     };
     broadcast(event);
 
-    await Bun.sleep(100);
-    expect(mockServer.received.length).toBe(1);
-    const parsed = JSON.parse(mockServer.received[0]);
+    expect(
+      await waitFor(() =>
+        parseReceived(mockServer!).some(
+          (message) =>
+            message.type === "state" && message.state === "speaking",
+        ),
+      ),
+    ).toBe(true);
+    const parsed = parseReceived(mockServer).find(
+      (message) => message.type === "state",
+    )!;
     expect(parsed.type).toBe("state");
     expect(parsed.state).toBe("speaking");
     expect(parsed.text).toBe("hello");
+  });
+
+  it("sends a client_hello that is not command-eligible by default", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+
+    const { connectToBar } = await import("../socket-client");
+    connectToBar(TEST_SOCKET);
+
+    expect(
+      await waitFor(() =>
+        parseReceived(mockServer!).some(
+          (message) => message.type === "client_hello",
+        ),
+      ),
+    ).toBe(true);
+    const hello = parseReceived(mockServer).find(
+      (message) => message.type === "client_hello",
+    )!;
+    expect(hello.role).toBe("mcp-server");
+    expect(hello.accepts_commands).toBe(false);
+    expect(hello.voicebar_socket_path).toBe(TEST_SOCKET);
+  });
+
+  it("can declare the persistent daemon as the command owner", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+
+    const { connectToBar } = await import("../socket-client");
+    connectToBar(TEST_SOCKET, { role: "mcp-daemon", acceptsCommands: true });
+
+    expect(
+      await waitFor(() =>
+        parseReceived(mockServer!).some(
+          (message) => message.type === "client_hello",
+        ),
+      ),
+    ).toBe(true);
+    const hello = parseReceived(mockServer).find(
+      (message) => message.type === "client_hello",
+    )!;
+    expect(hello.role).toBe("mcp-daemon");
+    expect(hello.accepts_commands).toBe(true);
   });
 
   it("onCommand receives parsed commands from the server", async () => {

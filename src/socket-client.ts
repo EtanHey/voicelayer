@@ -32,6 +32,12 @@ let reconnectDelay = 1000; // Start at 1s, backoff to 15s max
 const MAX_RECONNECT_DELAY = 15000;
 let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
 const KEEPALIVE_INTERVAL_MS = 30_000;
+let connectionOptions: VoiceBarConnectionOptions = {};
+
+export interface VoiceBarConnectionOptions {
+  role?: "mcp-server" | "mcp-daemon" | "standalone-daemon" | "test";
+  acceptsCommands?: boolean;
+}
 
 // --- Command handler callback ---
 let commandHandler:
@@ -49,11 +55,15 @@ let targetPath: string = SOCKET_PATH;
  *
  * @param path Optional socket path override (for testing). Defaults to SOCKET_PATH.
  */
-export function connectToBar(path?: string): void {
+export function connectToBar(
+  path?: string,
+  options: VoiceBarConnectionOptions = {},
+): void {
   if (connected || (connection && !intentionallyClosed)) return;
 
   intentionallyClosed = false;
   if (path) targetPath = path;
+  connectionOptions = options;
 
   startConnection();
 }
@@ -124,6 +134,7 @@ function startConnection(): void {
         buffer = "";
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
+        writeClientHello(socket as any);
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
 
@@ -195,6 +206,20 @@ function startConnection(): void {
     // Bun.connect throws if socket file doesn't exist
     scheduleReconnect();
   });
+}
+
+function writeClientHello(target: { write: (payload: string) => void }): void {
+  const hello = {
+    type: "client_hello",
+    pid: process.pid,
+    role: connectionOptions.role ?? "mcp-server",
+    accepts_commands: connectionOptions.acceptsCommands === true,
+    mcp_socket_path: process.env.QA_VOICE_MCP_SOCKET_PATH ?? null,
+    voicebar_socket_path: targetPath,
+  };
+  try {
+    target.write(JSON.stringify(hello) + "\n");
+  } catch {}
 }
 
 // --- Internal: reconnection with backoff ---

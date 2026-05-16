@@ -156,6 +156,20 @@ describe("input module", () => {
       expect(hasCancelSignal()).toBe(false);
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
     });
+
+    it("retains the last wav before honoring a late cancel during transcription", () => {
+      const source = readFileSync(join(import.meta.dir, "../input.ts"), "utf8");
+      const retainIndex = source.indexOf(
+        "writeFileSync(retainedRecordingFilePath(), retainedWavData);",
+      );
+      const lateCancelIndex = source.indexOf(
+        '"[voicelayer] Recording cancelled during transcription — discarding transcript"',
+      );
+
+      expect(retainIndex).toBeGreaterThan(-1);
+      expect(lateCancelIndex).toBeGreaterThan(-1);
+      expect(retainIndex).toBeLessThan(lateCancelIndex);
+    });
   });
 
   describe("calculateRMS", () => {

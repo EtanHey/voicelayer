@@ -79,6 +79,7 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     var capturedExecutableURL: URL?
     var capturedArguments: [String]?
     var capturedCurrentDirectoryURL: URL?
+    var capturedEnvironment: [String: String]?
 
     override var executableURL: URL? {
         get { capturedExecutableURL }
@@ -93,6 +94,11 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     override var currentDirectoryURL: URL? {
         get { capturedCurrentDirectoryURL }
         set { capturedCurrentDirectoryURL = newValue }
+    }
+
+    override var environment: [String: String]? {
+        get { capturedEnvironment }
+        set { capturedEnvironment = newValue }
     }
 
     override var isRunning: Bool {
