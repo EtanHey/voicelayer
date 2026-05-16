@@ -321,11 +321,48 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pastedTexts, ["final text after recording idle"])
     }
 
+    func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.minimumTranscribingDisplayDuration = 0.12
+        state.pasteConfirmationDelay = 0
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "fast final transcript",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertEqual(pastedTexts, [])
+
+        try? await Task.sleep(for: .milliseconds(180))
+
+        XCTAssertEqual(pastedTexts, ["fast final transcript"])
+        XCTAssertEqual(state.mode, .idle)
+    }
+
     func testRecordingIdleCleanupDoesNotClearPasteIntentAfterTranscribingResumes() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.recordingIdleFinalTranscriptGrace = .milliseconds(20)
         state.pasteConfirmationDelay = 0
+        state.minimumTranscribingDisplayDuration = 0
 
         var pastedTexts: [String] = []
         state.pasteHandler = { text in

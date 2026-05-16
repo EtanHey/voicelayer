@@ -954,7 +954,7 @@ export async function waitForInput(
         show_during_bar_recording: true,
       });
     } else {
-      broadcast({ type: "state", state: "idle" });
+      broadcast({ type: "state", state: "idle", source: "recording" });
     }
     return null;
   }
@@ -1051,7 +1051,7 @@ export async function waitForInput(
       message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
     throw err;
   } finally {
     // Clean up temp file
@@ -1111,7 +1111,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       message: `Retranscription failed: ${err instanceof Error ? err.message : String(err)}`,
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle" });
+    broadcast({ type: "state", state: "idle", source: "recording" });
     throw err;
   }
 }

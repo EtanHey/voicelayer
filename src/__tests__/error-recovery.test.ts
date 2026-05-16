@@ -97,7 +97,11 @@ describe("H4: waitForInput broadcasts idle on recordToBuffer error", () => {
     const idleBroadcast = calls.find(
       (b: any) => b.type === "state" && b.state === "idle",
     );
-    expect(idleBroadcast).toBeDefined();
+    expect(idleBroadcast).toEqual({
+      type: "state",
+      state: "idle",
+      source: "recording",
+    });
   });
 
   it("broadcasts error event with helpful message when sox is missing", async () => {

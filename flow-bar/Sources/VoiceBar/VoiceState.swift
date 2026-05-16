@@ -158,6 +158,10 @@ final class VoiceState {
     private var barInitiatedTimeout: Task<Void, Never>?
     private var transcriptionTimeoutTask: Task<Void, Never>?
     private var recordingIdleCleanupTask: Task<Void, Never>?
+    private var deferredFinalTranscriptionTask: Task<Void, Never>?
+    private var transcribingStartedAt: Date?
+    private var pendingRecordingIdleAfterFinal = false
+    private var pendingIdleAfterAutoPasteCompletion = false
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
@@ -224,6 +228,9 @@ final class VoiceState {
     var pasteboardChangeCountProvider: () -> Int = {
         NSPasteboard.general.changeCount
     }
+    var currentDateProvider: () -> Date = {
+        Date()
+    }
     var pasteboardRestoreDelay: TimeInterval = 0.2
 
     private let commandModeAXHelper = CommandModeAXHelper()
@@ -249,6 +256,7 @@ final class VoiceState {
     var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
     var barInitiatedSafetyTimeout: Duration = .seconds(3660)
     var recordingIdleFinalTranscriptGrace: Duration = .seconds(2)
+    var minimumTranscribingDisplayDuration: TimeInterval = 0.65
 
     init(
         recentTranscriptionsLoader: @escaping () -> [String] = {
@@ -287,6 +295,10 @@ final class VoiceState {
     func dismissError() {
         pendingIntent = nil
         errorMessage = nil
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -311,6 +323,10 @@ final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -361,6 +377,10 @@ final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -419,6 +439,10 @@ final class VoiceState {
     func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         confirmationText = nil
         errorMessage = nil
         let front = frontmostAppProvider()
@@ -474,10 +498,20 @@ final class VoiceState {
             switch stateStr {
             case "idle":
                 let idleSource = event["source"] as? String
-                if barInitiatedRecording, mode == .transcribing, idleSource != "recording" {
+                if barInitiatedRecording, mode == .transcribing {
+                    if idleSource == "recording", deferredFinalTranscriptionTask != nil {
+                        pendingRecordingIdleAfterFinal = true
+                        return
+                    }
+
                     // Ignore stale idle from losing clients so the bar keeps
                     // the thinking state until the winning transcription lands.
-                    return
+                    // If a final transcript is already pending its minimum UI
+                    // display window, ignore even recording-sourced idle so the
+                    // pill stays blue until paste/history handling completes.
+                    if idleSource != "recording" {
+                        return
+                    }
                 }
                 // AIDEV-NOTE: Do not reset barInitiatedRecording on generic idle.
                 // Multiple MCP clients receive the record command via sendToAll.
@@ -489,23 +523,12 @@ final class VoiceState {
                     barInitiatedTimeout?.cancel()
                     scheduleRecordingIdleCleanupIfNeeded()
                 }
-                mode = .idle
-                statusText = ""
-                speechDetected = false
-                recordingMode = nil
-                silenceMode = nil
-                errorMessage = nil
-                transcriptionTimeoutTask?.cancel()
-                resetAudioLevels()
-                wordBoundaries = []
-                if (event["source"] as? String) == "playback" {
-                    queueDepth = 0
-                    queueItems = []
-                }
-                hotkeyPhase = .idle
-                onModeChange?(.idle)
-                startCollapseTimer()
+                enterIdleState(clearQueue: idleSource == "playback")
             case "speaking":
+                deferredFinalTranscriptionTask?.cancel()
+                pendingRecordingIdleAfterFinal = false
+                pendingIdleAfterAutoPasteCompletion = false
+                transcribingStartedAt = nil
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
@@ -513,6 +536,10 @@ final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                deferredFinalTranscriptionTask?.cancel()
+                pendingRecordingIdleAfterFinal = false
+                pendingIdleAfterAutoPasteCompletion = false
+                transcribingStartedAt = nil
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
@@ -553,22 +580,10 @@ final class VoiceState {
                     return
                 }
 
-                transcriptionTimeoutTask?.cancel()
-                transcript = trimmed
-                rememberRecentTranscription(trimmed)
-                refreshTranscriptionVocabulary()
-                logDiagnostic("transcription_final", details: [
-                    "textLength": String(trimmed.count),
-                    "barInitiatedRecording": boolString(barInitiatedRecording),
-                    "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
-                    "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-                ])
-                if barInitiatedRecording {
-                    barInitiatedRecording = false
-                    barInitiatedTimeout?.cancel()
-                    recordingIdleCleanupTask?.cancel()
-                    pasteTranscript(trimmed, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+                if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(trimmed) {
+                    return
                 }
+                handleFinalTranscription(trimmed)
             }
 
         case "subtitle":
@@ -638,6 +653,10 @@ final class VoiceState {
                 barInitiatedRecording = false
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
+                deferredFinalTranscriptionTask?.cancel()
+                pendingRecordingIdleAfterFinal = false
+                pendingIdleAfterAutoPasteCompletion = false
+                transcribingStartedAt = nil
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
             }
@@ -671,6 +690,10 @@ final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -829,9 +852,32 @@ final class VoiceState {
         }
     }
 
+    private func enterIdleState(clearQueue: Bool) {
+        mode = .idle
+        statusText = ""
+        speechDetected = false
+        recordingMode = nil
+        silenceMode = nil
+        errorMessage = nil
+        transcriptionTimeoutTask?.cancel()
+        transcribingStartedAt = nil
+        resetAudioLevels()
+        wordBoundaries = []
+        if clearQueue {
+            queueDepth = 0
+            queueItems = []
+        }
+        hotkeyPhase = .idle
+        onModeChange?(.idle)
+        startCollapseTimer()
+    }
+
     private func enterTranscribingMode() {
         let modeChanged = mode != .transcribing
         mode = .transcribing
+        if modeChanged || transcribingStartedAt == nil {
+            transcribingStartedAt = currentDateProvider()
+        }
         statusText = ""
         localRecordingLevel = nil
         refreshAudioLevel()
@@ -847,6 +893,55 @@ final class VoiceState {
             onModeChange?(.transcribing)
         }
         expandFromCollapse()
+    }
+
+    private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(_ text: String) -> Bool {
+        guard mode == .transcribing, let transcribingStartedAt else { return false }
+
+        let elapsed = currentDateProvider().timeIntervalSince(transcribingStartedAt)
+        let remainingDisplayDuration = minimumTranscribingDisplayDuration - elapsed
+        guard remainingDisplayDuration > 0 else { return false }
+
+        deferredFinalTranscriptionTask?.cancel()
+        deferredFinalTranscriptionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(remainingDisplayDuration))
+            guard let self, !Task.isCancelled else { return }
+            deferredFinalTranscriptionTask = nil
+            handleFinalTranscription(text)
+        }
+        return true
+    }
+
+    private func handleFinalTranscription(_ text: String) {
+        transcriptionTimeoutTask?.cancel()
+        deferredFinalTranscriptionTask?.cancel()
+        deferredFinalTranscriptionTask = nil
+        transcribingStartedAt = nil
+        transcript = text
+        rememberRecentTranscription(text)
+        refreshTranscriptionVocabulary()
+        logDiagnostic("transcription_final", details: [
+            "textLength": String(text.count),
+            "barInitiatedRecording": boolString(barInitiatedRecording),
+            "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
+            "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+        ])
+
+        let shouldAutoPaste = barInitiatedRecording
+        let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = shouldAutoPaste && mode == .transcribing
+
+        if shouldAutoPaste {
+            barInitiatedRecording = false
+            barInitiatedTimeout?.cancel()
+            recordingIdleCleanupTask?.cancel()
+            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+        }
+
+        if shouldApplyPendingRecordingIdle && !shouldAutoPaste {
+            enterIdleState(clearQueue: false)
+        }
     }
 
     private func scheduleRecordingIdleCleanupIfNeeded() {
@@ -867,6 +962,10 @@ final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
+        deferredFinalTranscriptionTask?.cancel()
+        pendingRecordingIdleAfterFinal = false
+        pendingIdleAfterAutoPasteCompletion = false
+        transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -1044,6 +1143,11 @@ final class VoiceState {
             showConfirmation(Self.unverifiedClipboardPasteMessage, duration: 5.0)
         case let .failed(message):
             showConfirmation(message, duration: 4.0)
+        }
+
+        if pendingIdleAfterAutoPasteCompletion {
+            pendingIdleAfterAutoPasteCompletion = false
+            enterIdleState(clearQueue: false)
         }
     }
 
