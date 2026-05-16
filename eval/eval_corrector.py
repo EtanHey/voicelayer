@@ -138,6 +138,14 @@ def _write_json(path: Path, payload: dict):
         f.write("\n")
 
 
+def _markdown_cell(value: str) -> str:
+    return (
+        value.replace("\n", "<br>")
+        .replace("|", "\\|")
+        .replace("\r", "")
+    )
+
+
 def _write_markdown(path: Path, payload: dict):
     lines = [
         "# Corrector Evaluation Report",
@@ -191,6 +199,28 @@ def _write_markdown(path: Path, payload: dict):
                 f"{row['input_words']} | {row['target_words']} |"
             )
 
+    lines.extend(
+        [
+            "",
+            "## Layer-Isolated Breakdown",
+            "",
+            "| Sample | Categories | Raw ASR | Cleanup | Rules | Target | Raw WER | Cleanup WER | Rules WER |",
+            "|--------|------------|---------|---------|-------|--------|---------|-------------|-----------|",
+        ]
+    )
+    for trace in payload.get("layer_traces", []):
+        metrics = trace["metrics"]
+        lines.append(
+            f"| {trace['sample_id']} | {', '.join(trace['tags'])} | "
+            f"{_markdown_cell(trace['raw_asr_text'])} | "
+            f"{_markdown_cell(trace['cleanup_text'])} | "
+            f"{_markdown_cell(trace['rules_text'])} | "
+            f"{_markdown_cell(trace['target_text'])} | "
+            f"{metrics['raw_asr']['wer']:.1%} | "
+            f"{metrics['cleanup']['wer']:.1%} | "
+            f"{metrics['rules']['wer']:.1%} |"
+        )
+
     sanity = payload.get("sanity_row")
     if sanity:
         lines.extend(
@@ -215,6 +245,65 @@ def _write_markdown(path: Path, payload: dict):
         )
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _metric_payload(reference: str, hypothesis: str, sample_id: str, language: str) -> dict:
+    metric = compute_metrics(
+        TranscriptionResult(
+            reference=reference,
+            hypothesis=hypothesis,
+            backend="layer-trace",
+            sample_id=sample_id,
+            latency_ms=0.0,
+            audio_duration_ms=0.0,
+            language=language,
+        )
+    )
+    return {
+        "wer": metric.wer,
+        "cer": metric.cer,
+    }
+
+
+def _build_layer_traces(
+    rows: Sequence[CorrectorRow],
+    backend_results_by_name: dict[str, dict[str, dict]],
+) -> list[dict]:
+    traces = []
+    rules_results = backend_results_by_name.get("rules", {})
+
+    for row in rows:
+        raw_asr_text = str(row.raw.get("asr_text") or row.input_text)
+        # The current cleanup stage is implemented by the existing rules backend.
+        # PR 1 only makes that layer visible; it does not alter production routing.
+        cleanup_text = str(rules_results.get(row.id, {}).get("text", raw_asr_text))
+        rules_text = str(rules_results.get(row.id, {}).get("text", cleanup_text))
+        target_text = row.target_text
+
+        traces.append(
+            {
+                "sample_id": row.id,
+                "tags": row.tags,
+                "input_source": row.raw.get("input_source"),
+                "raw_asr_text": raw_asr_text,
+                "cleanup_text": cleanup_text,
+                "rules_text": rules_text,
+                "target_text": target_text,
+                "metrics": {
+                    "raw_asr": _metric_payload(
+                        target_text, raw_asr_text, row.id, row.language
+                    ),
+                    "cleanup": _metric_payload(
+                        target_text, cleanup_text, row.id, row.language
+                    ),
+                    "rules": _metric_payload(
+                        target_text, rules_text, row.id, row.language
+                    ),
+                },
+            }
+        )
+
+    return traces
 
 
 def run_corrector_evaluation(
@@ -325,6 +414,7 @@ def run_corrector_evaluation(
             "languages": sorted({row.language for row in rows}),
             "tags": sorted({tag for row in rows for tag in row.tags}),
         },
+        "layer_traces": _build_layer_traces(rows, backend_results_by_name),
         "backends": backends_payload,
         "deltas": compute_correction_deltas(backends_payload, baseline="identity"),
         "sanity_row": sanity_row,
