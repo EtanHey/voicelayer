@@ -274,9 +274,7 @@ def _build_layer_traces(
 
     for row in rows:
         raw_asr_text = str(row.raw.get("asr_text") or row.input_text)
-        # The current cleanup stage is implemented by the existing rules backend.
-        # PR 1 only makes that layer visible; it does not alter production routing.
-        cleanup_text = str(rules_results.get(row.id, {}).get("text", raw_asr_text))
+        cleanup_text = str(row.raw.get("formatted_text") or row.input_text)
         rules_text = str(rules_results.get(row.id, {}).get("text", cleanup_text))
         target_text = row.target_text
 
@@ -346,6 +344,7 @@ def run_corrector_evaluation(
                     "cer": metric.cer,
                     "latency_ms": metric.latency_ms,
                     "changed": bool(result.get("changed")),
+                    "context": result.get("context"),
                     "input_words": len(row.input_text.split()),
                     "target_words": len(row.target_text.split()),
                 }

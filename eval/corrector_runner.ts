@@ -25,6 +25,7 @@ const results = request.items.map((item) => {
     latency_ms: result.latencyMs,
     changed: result.changed,
     mode: result.mode,
+    context: result.context,
   };
 });
 
