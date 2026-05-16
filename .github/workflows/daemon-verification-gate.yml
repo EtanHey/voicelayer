@@ -1,0 +1,60 @@
+name: Daemon Verification Gate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  daemon-verification-gate:
+    name: daemon-verification-gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check runtime verification marker
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+
+          changed_files="$(mktemp)"
+          git diff --name-only "$BASE_SHA" "$HEAD_SHA" > "$changed_files"
+
+          daemon_files="$(mktemp)"
+          grep -E '^(flow-bar/|launchd/|src/whisper-server\.ts$|src/mcp-server[^/]*\.ts$|src/mcp-daemon\.ts$|src/mcp-framing\.ts$|src/mcp-handler\.ts$|src/mcp-socket-owner\.ts$|src/mcp-tools\.ts$|src/daemon\.ts$|src/daemon-health\.ts$|src/log-rotation\.ts$|src/paths\.ts$|src/process-lock\.ts$|src/resolve-binary\.ts$|src/socket-[^/]*\.ts$|src/socket-client\.ts$|src/socket-handlers\.ts$|src/socket-protocol\.ts$|src/cli/voicelayer\.sh$)' "$changed_files" > "$daemon_files" || true
+
+          if [ ! -s "$daemon_files" ]; then
+            echo "No daemon/socket/MCP files changed; runtime gate not required."
+            exit 0
+          fi
+
+          echo "Daemon/socket/MCP files changed:"
+          sed 's/^/- /' "$daemon_files"
+
+          marker="Verified-Runtime: $HEAD_SHA"
+          if printf '%s\n' "$PR_BODY" | grep -Fqx "$marker"; then
+            echo "Found runtime verification marker for head sha $HEAD_SHA."
+            exit 0
+          fi
+
+          {
+            echo "Missing runtime verification marker."
+            echo
+            echo "This PR touches daemon/socket/MCP files and must be verified with a real VoiceBar client before merge."
+            echo
+            echo "Run locally:"
+            echo "  ./scripts/voicelayer-verify.sh"
+            echo
+            echo "Then add this exact line to the PR body:"
+            echo "  $marker"
+          } >&2
+          exit 1
