@@ -9,6 +9,7 @@ from metrics import (
     TranscriptionResult,
     MetricResult,
     LatencyTimer,
+    compute_correction_deltas,
 )
 
 
@@ -157,6 +158,25 @@ class TestAggregateMetrics:
         ]
         agg = aggregate_metrics(results, "test")
         assert agg.median_wer == pytest.approx(0.2)
+
+
+class TestCorrectionDeltas:
+    def test_computes_deltas_against_identity_baseline(self):
+        deltas = compute_correction_deltas(
+            [
+                {"name": "identity", "mean_wer": 0.5, "mean_cer": 0.4},
+                {"name": "rules", "mean_wer": 0.3, "mean_cer": 0.35},
+            ]
+        )
+
+        assert deltas == [
+            {
+                "backend": "rules",
+                "baseline": "identity",
+                "wer_delta": pytest.approx(-0.2),
+                "cer_delta": pytest.approx(-0.05),
+            }
+        ]
 
 
 class TestLatencyTimer:

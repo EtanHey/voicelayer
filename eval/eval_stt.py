@@ -34,6 +34,7 @@ from backends import WhisperCppBackend, VoiceLayerBackend, WisprFlowBackend, get
 from datasets import load_dataset, load_real_recordings, save_dataset_manifest
 from metrics import TranscriptionResult, compute_metrics, aggregate_metrics, LatencyTimer
 from report import generate_baseline_report, generate_json_results
+from eval_corrector import run_corrector_evaluation
 
 
 def backend_matches_filter(backend, backend_filter: str) -> bool:
@@ -226,7 +227,31 @@ def main():
         action="store_true",
         help="Only evaluate Hebrew samples (skip English baseline)",
     )
+    parser.add_argument(
+        "--corrector",
+        action="store_true",
+        help="Run text-only post-STT corrector eval instead of audio STT eval",
+    )
+    parser.add_argument(
+        "--corrector-manifest",
+        type=str,
+        default=os.path.join(EVAL_DIR, "heldout-corrector.jsonl"),
+        help="JSONL manifest for --corrector mode",
+    )
     args = parser.parse_args()
+
+    if args.corrector:
+        results = run_corrector_evaluation(
+            manifest_path=args.corrector_manifest,
+            output_dir=args.output_dir or os.path.join(EVAL_DIR, "reports"),
+        )
+        print("\n[eval] === CORRECTOR DONE ===")
+        for backend in results.get("backends", []):
+            print(
+                f"  {backend['name']}: WER={backend['mean_wer']:.1%} "
+                f"CER={backend['mean_cer']:.1%} ({backend['num_samples']} samples)"
+            )
+        return
 
     results = run_evaluation(
         backend_filter=args.backend,

@@ -14,6 +14,7 @@ import {
   isChunkedSTTEnabled,
   selectChunksWithPreRoll,
   transcribeChunkSequence,
+  finalizeTranscriptionText,
 } from "../input";
 import {
   clearCancelSignal,
@@ -442,6 +443,27 @@ describe("input module", () => {
         if (saved) process.env.QA_VOICE_CHUNKED_STT = saved;
         else delete process.env.QA_VOICE_CHUNKED_STT;
       }
+    });
+  });
+
+  describe("STT corrector feature flag", () => {
+    it("preserves existing cleanup when QA_VOICE_CORRECTOR is unset or off", () => {
+      expect(finalizeTranscriptionText("brain layer", {})).toBe("BrainLayer");
+      expect(finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "off" })).toBe(
+        "BrainLayer",
+      );
+    });
+
+    it("can bypass cleanup with identity mode for baseline evals", () => {
+      expect(
+        finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "identity" }),
+      ).toBe("brain layer");
+    });
+
+    it("runs the explicit rules backend when enabled", () => {
+      expect(
+        finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "rules" }),
+      ).toBe("BrainLayer");
     });
   });
 

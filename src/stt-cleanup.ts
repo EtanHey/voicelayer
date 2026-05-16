@@ -88,6 +88,19 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
 const ORDERED_BUILTIN_STT_ALIASES = Object.fromEntries(
   Object.entries(BUILTIN_STT_ALIASES).sort((a, b) => b[0].length - a[0].length),
 );
+const CANONICAL_TERM_PATTERNS: [string, RegExp, string][] = [
+  ...new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES)),
+].map((term) => {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return [
+    term.toLowerCase(),
+    new RegExp(
+      `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+      "giu",
+    ),
+    term,
+  ];
+});
 
 export function getSTTVocabularyPrompt(): string {
   const canonicalTerms = [...new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES))];
@@ -102,10 +115,7 @@ export function cleanupTranscriptionText(text: string): string {
     aliases: ORDERED_BUILTIN_STT_ALIASES,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
-  const normalized = normalizeCanonicalTerms(
-    cleaned,
-    new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES)),
-  );
+  const normalized = normalizeCanonicalTerms(cleaned);
   const sentenceCased = normalizeSentenceStarts(normalized);
   return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
 }
@@ -166,14 +176,11 @@ function isMeaningfulTranscription(text: string): boolean {
   return true;
 }
 
-function normalizeCanonicalTerms(text: string, canonicalTerms: Set<string>): string {
+function normalizeCanonicalTerms(text: string): string {
   let result = text;
-  for (const term of canonicalTerms) {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pattern = new RegExp(
-      `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-      "giu",
-    );
+  const lowerResult = result.toLowerCase();
+  for (const [termLower, pattern, term] of CANONICAL_TERM_PATTERNS) {
+    if (!lowerResult.includes(termLower)) continue;
     result = result.replace(pattern, term);
   }
   return result;

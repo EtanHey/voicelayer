@@ -1,0 +1,42 @@
+import { cleanupTranscriptionText } from "./stt-cleanup";
+
+export type STTCorrectorMode = "off" | "identity" | "rules";
+
+export interface STTCorrectorResult {
+  inputText: string;
+  text: string;
+  mode: STTCorrectorMode;
+  changed: boolean;
+  latencyMs: number;
+}
+
+export interface STTCorrectorOptions {
+  mode?: STTCorrectorMode;
+  env?: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR">;
+}
+
+export function getSTTCorrectorMode(
+  env: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR"> = process.env,
+): STTCorrectorMode {
+  const raw = env.QA_VOICE_CORRECTOR?.trim().toLowerCase();
+  if (raw === "identity" || raw === "rules") return raw;
+  return "off";
+}
+
+export function correctTranscriptionText(
+  text: string,
+  options: STTCorrectorOptions = {},
+): STTCorrectorResult {
+  const mode = options.mode ?? getSTTCorrectorMode(options.env);
+  const start = performance.now();
+  const corrected = mode === "rules" ? cleanupTranscriptionText(text) : text;
+  const latencyMs = performance.now() - start;
+
+  return {
+    inputText: text,
+    text: corrected,
+    mode,
+    changed: corrected !== text,
+    latencyMs,
+  };
+}

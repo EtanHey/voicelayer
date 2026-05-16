@@ -449,15 +449,33 @@ function isLikelyCodeIdentifierI(source: string, offset: number): boolean {
 
 // --- Stage 7: Custom aliases ---
 
+const ALIAS_PATTERN_CACHE = new WeakMap<
+  Record<string, string>,
+  [string, RegExp, string][]
+>();
+
 function applyAliases(text: string, aliases: Record<string, string>): string {
   let result = text;
-  for (const [from, to] of Object.entries(aliases)) {
-    // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
-    const escaped = escapeRegex(from);
-    const pattern = new RegExp(
-      `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-      "giu",
-    );
+  let patterns = ALIAS_PATTERN_CACHE.get(aliases);
+  if (!patterns) {
+    patterns = Object.entries(aliases).map(([from, to]) => {
+      // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
+      const escaped = escapeRegex(from);
+      return [
+        from.toLowerCase(),
+        new RegExp(
+          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+          "giu",
+        ),
+        to,
+      ];
+    });
+    ALIAS_PATTERN_CACHE.set(aliases, patterns);
+  }
+
+  const lowerResult = result.toLowerCase();
+  for (const [fromLower, pattern, to] of patterns) {
+    if (!lowerResult.includes(fromLower)) continue;
     result = result.replace(pattern, to);
   }
   return result;

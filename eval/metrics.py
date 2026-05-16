@@ -178,6 +178,29 @@ def aggregate_metrics(results: list[MetricResult], backend: str) -> AggregateMet
     )
 
 
+def compute_correction_deltas(backends: list[dict], baseline: str = "identity") -> list[dict]:
+    """Compute aggregate WER/CER deltas relative to a baseline backend payload."""
+    baseline_payload = next((b for b in backends if b.get("name") == baseline), None)
+    if not baseline_payload:
+        return []
+
+    deltas = []
+    for backend_payload in backends:
+        if backend_payload.get("name") == baseline:
+            continue
+        deltas.append(
+            {
+                "backend": backend_payload.get("name"),
+                "baseline": baseline,
+                "wer_delta": backend_payload.get("mean_wer", 0.0)
+                - baseline_payload.get("mean_wer", 0.0),
+                "cer_delta": backend_payload.get("mean_cer", 0.0)
+                - baseline_payload.get("mean_cer", 0.0),
+            }
+        )
+    return deltas
+
+
 class LatencyTimer:
     """Context manager for measuring transcription latency."""
 

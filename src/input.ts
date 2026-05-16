@@ -67,6 +67,10 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
+import {
+  correctTranscriptionText,
+  getSTTCorrectorMode,
+} from "./stt-corrector";
 import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
@@ -106,6 +110,15 @@ export { calculateRMS };
 export function isChunkedSTTEnabled(): boolean {
   const raw = process.env.QA_VOICE_CHUNKED_STT?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+export function finalizeTranscriptionText(
+  text: string,
+  env: Pick<NodeJS.ProcessEnv, "QA_VOICE_CORRECTOR"> = process.env,
+): string {
+  const mode = getSTTCorrectorMode(env);
+  if (mode === "off") return cleanupTranscriptionText(text);
+  return correctTranscriptionText(text, { mode }).text;
 }
 
 export interface NoSpeechGateResult {
@@ -459,7 +472,7 @@ export async function transcribeChunkSequence(
     }
   }
 
-  return cleanupTranscriptionText(mergeChunkTranscripts(transcripts));
+  return finalizeTranscriptionText(mergeChunkTranscripts(transcripts));
 }
 
 /**
@@ -984,7 +997,7 @@ export async function waitForInput(
       });
     } else {
       const result = await backend.transcribe(wavPath);
-      text = cleanupTranscriptionText(result.text);
+      text = finalizeTranscriptionText(result.text);
       if (result.text.trim() && !text) {
         console.error(
           `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
@@ -1076,7 +1089,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     const backend = await getBackend();
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
-    const text = cleanupTranscriptionText(result.text);
+    const text = finalizeTranscriptionText(result.text);
     if (result.text.trim() && !text) {
       console.error(
         `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,

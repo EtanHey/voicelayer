@@ -3,3 +3,6 @@ results/
 __pycache__/
 .pytest_cache/
 *.pyc
+heldout-corrector.jsonl
+reports/corrector-*.json
+reports/corrector-*.md
