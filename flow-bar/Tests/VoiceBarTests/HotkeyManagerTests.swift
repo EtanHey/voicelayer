@@ -25,7 +25,52 @@ final class HotkeyManagerTests: XCTestCase {
 
     func testDefaultHotkeyConfigurationIncludesInternalF18Relay() {
         XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [79, 96])
+        XCTAssertEqual(HotkeyManager.defaultTargetMouseButtons, [4, 5])
         XCTAssertFalse(HotkeyManager.defaultUsesModifierMode)
+    }
+
+    func testMouseButtonFiveTriggersHotkeyDown() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 4,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyDown
+        )
+    }
+
+    func testMouseButtonFiveReleaseTriggersHotkeyUp() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseUp,
+                buttonNumber: 4,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyUp
+        )
+    }
+
+    func testHidUsageNumberedMouseButtonFiveAlsoTriggersHotkey() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 5,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyDown
+        )
+    }
+
+    func testOtherMouseButtonsAreIgnored() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 3,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .ignore
+        )
     }
 
     func testInternalF18RelayTriggersKeyDownInPlainMode() {
