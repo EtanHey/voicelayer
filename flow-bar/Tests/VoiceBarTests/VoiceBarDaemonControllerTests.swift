@@ -121,6 +121,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
+        XCTAssertEqual(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
         XCTAssertNotNil(process.capturedEnvironment?["PATH"])
     }
 

@@ -115,6 +115,9 @@ enum VoiceBarDaemonEnvironment {
             env.removeValue(forKey: key)
         }
         env["PATH"] = path
+        // VoiceBar owns the daily-driver daemon lifecycle; allow its child to
+        // reclaim a stale default MCP socket left by a prior app instance.
+        env["VOICELAYER_ALLOW_SOCKET_RECLAIM"] = "1"
         return env
     }
 }
