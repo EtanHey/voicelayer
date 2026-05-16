@@ -526,6 +526,9 @@ struct BarView: View {
                 pillButton(icon: "xmark") { commandRouter.handleCancel() }
                 pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }
+            if state.mode == .transcribing {
+                pillButton(icon: "xmark") { commandRouter.handleCancel() }
+            }
             if state.mode == .speaking {
                 pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }

@@ -448,7 +448,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testEscapeCancelsOnlyWhenGestureIsActive() {
+    func testEscapeCancelsWhenGestureOrVoiceBarSessionIsActive() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
@@ -457,7 +457,7 @@ final class HotkeyManagerTests: XCTestCase {
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: false,
-                gestureIsActive: true
+                cancellationIsActive: true
             ),
             .cancel
         )
@@ -469,7 +469,7 @@ final class HotkeyManagerTests: XCTestCase {
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: false,
-                gestureIsActive: false
+                cancellationIsActive: false
             ),
             .ignore
         )

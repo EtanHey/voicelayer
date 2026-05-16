@@ -373,6 +373,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         manager.onPasteLastTranscript = { [weak self] in
             self?.voiceState.repasteLastTranscript()
         }
+        manager.shouldHandleEscape = { [weak self] in
+            guard let mode = self?.voiceState.mode else { return false }
+            return mode == .recording || mode == .transcribing || mode == .speaking
+        }
         if manager.start() {
             hotkeyManager = manager
             hotkeyEnabled = true
@@ -421,8 +425,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Single/double tap are intentionally not assigned in the immediate PTT model.
-        gestureStateMachine.onSingleTap = {
-            NSLog("[VoiceBar] Hotkey single tap — not assigned")
+        gestureStateMachine.onSingleTap = { [weak self] in
+            NSLog("[VoiceBar] Hotkey single tap — checking active recording/transcription")
+            self?.commandRouter.handleHotkeySingleTap()
         }
 
         gestureStateMachine.onDoubleTap = { [weak self] in

@@ -58,8 +58,14 @@ class VoiceBarCommandRouter {
     }
 
     func handleStop() {
-        guard voiceState.mode == .recording || voiceState.mode == .speaking else { return }
-        voiceState.stop()
+        switch voiceState.mode {
+        case .recording, .speaking:
+            voiceState.stop()
+        case .transcribing:
+            handleCancel()
+        default:
+            return
+        }
     }
 
     func handleReplay() {
@@ -68,13 +74,19 @@ class VoiceBarCommandRouter {
     }
 
     func handleHotkeyHoldStart() {
-        guard voiceState.mode == .idle || voiceState.mode == .error else { return }
-        voiceState.record(pressToTalk: true)
+        switch voiceState.mode {
+        case .idle, .error:
+            voiceState.record(pressToTalk: true)
+        case .transcribing:
+            handleCancel()
+        default:
+            return
+        }
     }
 
     func handleHotkeyHoldEnd(holdDuration: TimeInterval) {
         guard holdDuration > 0 else { return }
-        voiceState.stop()
+        handleStop()
     }
 
     func handleHotkeyDoubleTap() {
@@ -82,11 +94,24 @@ class VoiceBarCommandRouter {
         // the gesture state so releasing F5 does not stop the active recording.
     }
 
+    func handleHotkeySingleTap() {
+        switch voiceState.mode {
+        case .recording, .speaking:
+            voiceState.stop()
+        case .transcribing:
+            handleCancel()
+        default:
+            return
+        }
+    }
+
     private func handleToggle() {
         if voiceState.mode == .idle || voiceState.mode == .error {
             voiceState.record(pressToTalk: true)
         } else if voiceState.mode == .recording {
             voiceState.stop()
+        } else if voiceState.mode == .transcribing {
+            handleCancel()
         }
     }
 

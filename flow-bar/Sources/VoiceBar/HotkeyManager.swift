@@ -315,10 +315,12 @@ func hotkeyAction(
     targetKeycodes: Set<Int64>,
     useModifierMode: Bool,
     currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState),
-    gestureIsActive: Bool = false
+    gestureIsActive: Bool = false,
+    cancellationIsActive: Bool? = nil
 ) -> HotkeyAction {
-    if type == .keyDown, keycode == 53, autorepeat == 0, gestureIsActive {
-        NSLog("[HotkeyManager] Matched Escape while gesture active -> cancel")
+    let escapeCancellationIsActive = cancellationIsActive ?? gestureIsActive
+    if type == .keyDown, keycode == 53, autorepeat == 0, escapeCancellationIsActive {
+        NSLog("[HotkeyManager] Matched Escape while cancellation active -> cancel")
         return .cancel
     }
 
@@ -475,6 +477,7 @@ private final class TapContext {
     let onKeyUp: () -> Void
     let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
+    let shouldHandleEscape: () -> Bool
     var debounceState = HotkeyDebounceState()
     /// CFMachPort reference for re-enabling the tap after system disables it.
     var tap: CFMachPort?
@@ -486,7 +489,8 @@ private final class TapContext {
         onKeyDown: @escaping () -> Void,
         onKeyUp: @escaping () -> Void,
         onCancel: @escaping () -> Void,
-        onPasteLastTranscript: @escaping () -> Void
+        onPasteLastTranscript: @escaping () -> Void,
+        shouldHandleEscape: @escaping () -> Bool
     ) {
         self.gesture = gesture
         targetKeycodes = keycodes
@@ -495,6 +499,7 @@ private final class TapContext {
         self.onKeyUp = onKeyUp
         self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
+        self.shouldHandleEscape = shouldHandleEscape
     }
 }
 
@@ -539,7 +544,8 @@ private func hotkeyCallback(
         autorepeat: autorepeat,
         targetKeycodes: ctx.targetKeycodes,
         useModifierMode: ctx.useModifierMode,
-        gestureIsActive: ctx.gesture.state != .idle
+        gestureIsActive: ctx.gesture.state != .idle,
+        cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape()
     )
     if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {
         NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
@@ -606,6 +612,7 @@ final class HotkeyManager {
     var onKeyUp: () -> Void
     var onCancel: () -> Void
     var onPasteLastTranscript: () -> Void = {}
+    var shouldHandleEscape: () -> Bool = { false }
     private(set) var permissionStatus = HotkeyPermissionStatus(
         listenEventGranted: false,
         accessibilityGranted: false
@@ -676,7 +683,8 @@ final class HotkeyManager {
             onKeyDown: onKeyDown,
             onKeyUp: onKeyUp,
             onCancel: onCancel,
-            onPasteLastTranscript: onPasteLastTranscript
+            onPasteLastTranscript: onPasteLastTranscript,
+            shouldHandleEscape: shouldHandleEscape
         )
         tapContext = ctx
         let ctxPtr = Unmanaged.passUnretained(ctx).toOpaque()

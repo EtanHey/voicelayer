@@ -277,7 +277,11 @@ final class VoiceState {
     // MARK: - Commands
 
     func stop() {
+        let shouldShowTranscribing = mode == .recording
         sendIntent(command: .stop, payload: ["cmd": "stop"])
+        if shouldShowTranscribing {
+            enterTranscribingMode()
+        }
     }
 
     func dismissError() {
@@ -519,19 +523,7 @@ final class VoiceState {
                 onModeChange?(.recording)
                 expandFromCollapse()
             case "transcribing":
-                mode = .transcribing
-                statusText = ""
-                localRecordingLevel = nil
-                refreshAudioLevel()
-                startTranscriptionTimeout()
-                hotkeyPhase = .idle
-                logDiagnostic("state_transcribing", details: [
-                    "barInitiatedRecording": boolString(barInitiatedRecording),
-                    "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
-                    "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-                ])
-                onModeChange?(.transcribing)
-                expandFromCollapse()
+                enterTranscribingMode()
             default:
                 break
             }
@@ -835,6 +827,26 @@ final class VoiceState {
             guard let self, !Task.isCancelled, mode == .transcribing else { return }
             failTranscription()
         }
+    }
+
+    private func enterTranscribingMode() {
+        let modeChanged = mode != .transcribing
+        mode = .transcribing
+        statusText = ""
+        localRecordingLevel = nil
+        refreshAudioLevel()
+        startTranscriptionTimeout()
+        hotkeyPhase = .idle
+        logDiagnostic("state_transcribing", details: [
+            "barInitiatedRecording": boolString(barInitiatedRecording),
+            "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
+            "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+            "source": modeChanged ? "transition" : "refresh",
+        ])
+        if modeChanged {
+            onModeChange?(.transcribing)
+        }
+        expandFromCollapse()
     }
 
     private func scheduleRecordingIdleCleanupIfNeeded() {
