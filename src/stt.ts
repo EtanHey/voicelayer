@@ -86,6 +86,241 @@ function overlapKey(words: string[]): string {
   return words.map(normalizeChunkWordForOverlap).join(" ");
 }
 
+const TRAILING_SENTENCE_PUNCTUATION = /[.,!?;:]+$/u;
+const MAX_PREFIX_SHIFTED_SKIP_WORDS = 3;
+const MIN_PREFIX_SHIFTED_MATCH_WORDS = 4;
+const MIN_MEANINGFUL_TAIL_OVERLAP_WORDS = 2;
+const MIN_ECHOED_TAIL_WORDS = 3;
+const MAX_ECHOED_TAIL_WORDS = 6;
+const MAX_ECHOED_TAIL_LOOKBACK_WORDS = 18;
+const MAX_LEADING_PUNCTUATION_INSERTED_WORDS = 4;
+const MIN_LEADING_PUNCTUATION_OVERLAP_WORDS = 3;
+const TRAILING_FILLER_AFTER_QUESTION = /\?\s+(?:yeah|ok|okay)\.?$/iu;
+const LEADING_PUNCTUATION = /^[,.;:!?]+(?:\s+|$)/u;
+const PUNCTUATION_ONLY_TOKEN = /^[,.;:!?]+$/u;
+
+function preferPunctuatedOverlapWord(
+  current: string,
+  next: string,
+  nextContinues: boolean,
+): string {
+  if (
+    nextContinues &&
+    /[?]+$/u.test(current) &&
+    TRAILING_SENTENCE_PUNCTUATION.test(next) &&
+    !/[?]+$/u.test(next) &&
+    overlapKey([current]) === overlapKey([next])
+  ) {
+    return next;
+  }
+  if (TRAILING_SENTENCE_PUNCTUATION.test(current)) return current;
+  if (!TRAILING_SENTENCE_PUNCTUATION.test(next)) return current;
+  if (overlapKey([current]) !== overlapKey([next])) return current;
+  return next;
+}
+
+function findChunkOverlap(
+  mergedWords: string[],
+  nextWords: string[],
+): { overlap: number; skipPrefix: number } {
+  const maxOverlap = Math.min(mergedWords.length, nextWords.length);
+
+  for (let size = maxOverlap; size > 0; size--) {
+    const mergedTail = overlapKey(mergedWords.slice(-size));
+    const nextHead = overlapKey(nextWords.slice(0, size));
+    if (mergedTail === nextHead) {
+      return { overlap: size, skipPrefix: 0 };
+    }
+  }
+
+  for (
+    let prefix = 1;
+    prefix <= Math.min(MAX_PREFIX_SHIFTED_SKIP_WORDS, nextWords.length - 1);
+    prefix++
+  ) {
+    const shiftedMaxOverlap = Math.min(
+      mergedWords.length,
+      nextWords.length - prefix,
+    );
+    for (
+      let size = shiftedMaxOverlap;
+      size >= MIN_PREFIX_SHIFTED_MATCH_WORDS;
+      size--
+    ) {
+      const mergedTail = overlapKey(mergedWords.slice(-size));
+      const nextHead = overlapKey(nextWords.slice(prefix, prefix + size));
+      if (mergedTail === nextHead) {
+        return { overlap: size, skipPrefix: prefix };
+      }
+    }
+  }
+
+  return { overlap: 0, skipPrefix: 0 };
+}
+
+function hasMeaningfulTranscriptOverlap(current: string, next: string): boolean {
+  const currentWords = normalizeChunkWords(current);
+  const nextWords = normalizeChunkWords(next);
+  return (
+    findChunkOverlap(currentWords, nextWords).overlap >=
+    MIN_MEANINGFUL_TAIL_OVERLAP_WORDS
+  );
+}
+
+function hasLeadingPunctuationRepairOverlap(
+  originalText: string,
+  retryText: string,
+): boolean {
+  const originalWords = normalizeChunkWords(originalText).filter(
+    (word) => !PUNCTUATION_ONLY_TOKEN.test(word),
+  );
+  const retryWords = normalizeChunkWords(retryText);
+  const overlapWords = Math.min(
+    MIN_LEADING_PUNCTUATION_OVERLAP_WORDS,
+    originalWords.length,
+  );
+
+  if (overlapWords === 0) return false;
+
+  const originalPrefix = overlapKey(originalWords.slice(0, overlapWords));
+  for (
+    let insertedWords = 0;
+    insertedWords <=
+    Math.min(MAX_LEADING_PUNCTUATION_INSERTED_WORDS, retryWords.length);
+    insertedWords++
+  ) {
+    if (
+      overlapKey(
+        retryWords.slice(insertedWords, insertedWords + overlapWords),
+      ) === originalPrefix
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+interface WavPcmInfo {
+  durationSeconds: number;
+  dataOffset: number;
+  dataSize: number;
+  byteRate: number;
+  blockAlign: number;
+}
+
+const WAV_TAIL_VERIFY_MIN_SECONDS = 20;
+const WAV_TAIL_VERIFY_SECONDS = 12;
+const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
+const WAV_CHUNK_SECONDS = 30;
+const WAV_CHUNK_OVERLAP_SECONDS = 5;
+
+function readAscii(bytes: Uint8Array, offset: number, length: number): string {
+  return String.fromCharCode(...bytes.slice(offset, offset + length));
+}
+
+function parseWavPcmInfo(wavData: Uint8Array): WavPcmInfo | null {
+  if (wavData.byteLength < 44) return null;
+  const view = new DataView(
+    wavData.buffer,
+    wavData.byteOffset,
+    wavData.byteLength,
+  );
+  if (readAscii(wavData, 0, 4) !== "RIFF" || readAscii(wavData, 8, 4) !== "WAVE") {
+    return null;
+  }
+
+  let dataOffset = -1;
+  let dataSize = 0;
+  let byteRate = 0;
+  let blockAlign = 0;
+
+  for (let offset = 12; offset + 8 <= wavData.byteLength; ) {
+    const chunkId = readAscii(wavData, offset, 4);
+    const chunkSize = view.getUint32(offset + 4, true);
+    const chunkDataOffset = offset + 8;
+    if (chunkDataOffset + chunkSize > wavData.byteLength) return null;
+
+    if (chunkId === "fmt " && chunkSize >= 16) {
+      byteRate = view.getUint32(chunkDataOffset + 8, true);
+      blockAlign = view.getUint16(chunkDataOffset + 12, true);
+    } else if (chunkId === "data") {
+      dataOffset = chunkDataOffset;
+      dataSize = chunkSize;
+      break;
+    }
+
+    offset = chunkDataOffset + chunkSize + (chunkSize % 2);
+  }
+
+  if (dataOffset < 0 || dataSize <= 0 || byteRate <= 0 || blockAlign <= 0) {
+    return null;
+  }
+
+  return {
+    durationSeconds: dataSize / byteRate,
+    dataOffset,
+    dataSize,
+    byteRate,
+    blockAlign,
+  };
+}
+
+function sliceWavSegment(
+  wavData: Uint8Array,
+  startSeconds: number,
+  durationSeconds: number,
+): Uint8Array | null {
+  const info = parseWavPcmInfo(wavData);
+  if (!info || durationSeconds <= 0 || startSeconds >= info.durationSeconds) {
+    return null;
+  }
+
+  const startByte =
+    Math.floor((startSeconds * info.byteRate) / info.blockAlign) *
+    info.blockAlign;
+  const requestedEndByte =
+    Math.floor(
+      (Math.min(startSeconds + durationSeconds, info.durationSeconds) *
+        info.byteRate) /
+        info.blockAlign,
+    ) * info.blockAlign;
+  const segmentStart = Math.max(0, Math.min(startByte, info.dataSize));
+  const segmentEnd = Math.max(
+    segmentStart,
+    Math.min(requestedEndByte, info.dataSize),
+  );
+  const segmentSize = segmentEnd - segmentStart;
+  if (segmentSize <= 0) return null;
+
+  const header = wavData.slice(0, info.dataOffset);
+  const segment = new Uint8Array(header.byteLength + segmentSize);
+  segment.set(header, 0);
+  segment.set(
+    wavData.slice(
+      info.dataOffset + segmentStart,
+      info.dataOffset + segmentEnd,
+    ),
+    header.byteLength,
+  );
+
+  const segmentView = new DataView(segment.buffer);
+  segmentView.setUint32(4, segment.byteLength - 8, true);
+  segmentView.setUint32(info.dataOffset - 4, segmentSize, true);
+  return segment;
+}
+
+function sliceWavTail(wavData: Uint8Array, seconds: number): Uint8Array | null {
+  const info = parseWavPcmInfo(wavData);
+  if (!info || info.durationSeconds <= seconds) return null;
+
+  return sliceWavSegment(
+    wavData,
+    Math.max(0, info.durationSeconds - seconds),
+    seconds,
+  );
+}
+
 export function mergeChunkTranscripts(chunks: string[]): string {
   const merged: string[] = [];
 
@@ -98,22 +333,67 @@ export function mergeChunkTranscripts(chunks: string[]): string {
       continue;
     }
 
-    const maxOverlap = Math.min(merged.length, nextWords.length);
-    let overlap = 0;
+    const { overlap, skipPrefix } = findChunkOverlap(merged, nextWords);
 
-    for (let size = maxOverlap; size > 0; size--) {
-      const mergedTail = overlapKey(merged.slice(-size));
-      const nextHead = overlapKey(nextWords.slice(0, size));
-      if (mergedTail === nextHead) {
-        overlap = size;
-        break;
+    if (overlap > 0) {
+      for (let index = 0; index < overlap; index++) {
+        const mergedIndex = merged.length - overlap + index;
+        merged[mergedIndex] = preferPunctuatedOverlapWord(
+          merged[mergedIndex],
+          nextWords[skipPrefix + index],
+          skipPrefix + index < nextWords.length - 1,
+        );
       }
     }
 
-    merged.push(...nextWords.slice(overlap));
+    merged.push(...nextWords.slice(skipPrefix + overlap));
   }
 
   return merged.join(" ").trim();
+}
+
+function stripTailVerificationArtifact(text: string, fullText: string): string {
+  if (TRAILING_FILLER_AFTER_QUESTION.test(fullText.trim())) return text;
+  return text.replace(TRAILING_FILLER_AFTER_QUESTION, "?");
+}
+
+function trimEchoedTrailingPhrase(text: string): string {
+  const words = normalizeChunkWords(text);
+  const maxPhraseWords = Math.min(
+    MAX_ECHOED_TAIL_WORDS,
+    Math.floor(words.length / 2),
+  );
+
+  for (
+    let phraseWords = maxPhraseWords;
+    phraseWords >= MIN_ECHOED_TAIL_WORDS;
+    phraseWords--
+  ) {
+    const tailStart = words.length - phraseWords;
+    const tailKey = overlapKey(words.slice(tailStart));
+    const searchStart = Math.max(
+      0,
+      tailStart - MAX_ECHOED_TAIL_LOOKBACK_WORDS,
+    );
+
+    for (let index = tailStart - phraseWords; index >= searchStart; index--) {
+      const candidate = words.slice(index, index + phraseWords);
+      const interveningWords = tailStart - (index + phraseWords);
+      if (interveningWords >= 2 && overlapKey(candidate) === tailKey) {
+        return words.slice(0, tailStart).join(" ").trim();
+      }
+    }
+  }
+
+  return text.trim();
+}
+
+function combinePromptOverride(
+  original: string | undefined,
+  transcript: string,
+): string | undefined {
+  const tailPrompt = buildChunkPrompt(transcript);
+  return [original, tailPrompt].filter(Boolean).join(" ").trim() || undefined;
 }
 
 // --- WhisperCpp Backend ---
@@ -352,6 +632,18 @@ export class WhisperServerBackend implements STTBackend {
     const wavData = new Uint8Array(await Bun.file(audioPath).arrayBuffer());
 
     try {
+      const chunkedText = await this.transcribeChunkedLongRecording(
+        wavData,
+        options,
+      );
+      if (chunkedText) {
+        return {
+          text: chunkedText,
+          backend: `${this.name}+chunks`,
+          durationMs: Date.now() - start,
+        };
+      }
+
       const text = await this.transcribeResident(
         wavData,
         buildWhisperServerOptions(options),
@@ -370,9 +662,24 @@ export class WhisperServerBackend implements STTBackend {
           durationMs: Date.now() - start,
         };
       }
-      return {
+      const headResult = await this.verifyLeadingPunctuation(
+        wavData,
         text,
-        backend: this.name,
+        options,
+      );
+      const verifiedText = await this.verifyTailForLongRecording(
+        wavData,
+        headResult.text,
+        options,
+      );
+      const cleanedText = trimEchoedTrailingPhrase(verifiedText);
+      const backendParts = [this.name];
+      if (headResult.changed) backendParts.push("head");
+      if (verifiedText !== headResult.text) backendParts.push("tail");
+      if (cleanedText !== verifiedText) backendParts.push("clean");
+      return {
+        text: cleanedText,
+        backend: backendParts.join("+"),
         durationMs: Date.now() - start,
       };
     } catch (err) {
@@ -391,6 +698,117 @@ export class WhisperServerBackend implements STTBackend {
         durationMs: Date.now() - start,
       };
     }
+  }
+
+  private async verifyLeadingPunctuation(
+    wavData: Uint8Array,
+    fullText: string,
+    options?: STTTranscribeOptions,
+  ): Promise<{ text: string; changed: boolean }> {
+    if (!LEADING_PUNCTUATION.test(fullText.trim())) {
+      return { text: fullText, changed: false };
+    }
+
+    try {
+      const retryText = await this.transcribeResident(
+        wavData,
+        buildWhisperServerOptions(options),
+      );
+      const trimmedRetry = retryText.trim();
+      if (
+        trimmedRetry &&
+        !LEADING_PUNCTUATION.test(trimmedRetry) &&
+        hasLeadingPunctuationRepairOverlap(fullText, trimmedRetry)
+      ) {
+        return { text: trimmedRetry, changed: true };
+      }
+    } catch (err) {
+      console.error(
+        `[voicelayer] whisper-server head verification failed; keeping full-window text: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    return { text: fullText, changed: false };
+  }
+
+  private async verifyTailForLongRecording(
+    wavData: Uint8Array,
+    fullText: string,
+    options?: STTTranscribeOptions,
+  ): Promise<string> {
+    const info = parseWavPcmInfo(wavData);
+    if (!info || info.durationSeconds < WAV_TAIL_VERIFY_MIN_SECONDS) {
+      return fullText;
+    }
+
+    const tailWav = sliceWavTail(wavData, WAV_TAIL_VERIFY_SECONDS);
+    if (!tailWav) return fullText;
+
+    try {
+      const tailText = await this.transcribeResident(
+        tailWav,
+        buildWhisperServerOptions({
+          promptOverride: combinePromptOverride(options?.promptOverride, fullText),
+        }),
+      );
+      if (!hasMeaningfulTranscriptOverlap(fullText, tailText)) {
+        return fullText;
+      }
+      const merged = mergeChunkTranscripts([fullText, tailText]);
+      return merged ? stripTailVerificationArtifact(merged, fullText) : fullText;
+    } catch (err) {
+      console.error(
+        `[voicelayer] whisper-server tail verification failed; keeping full-window text: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      return fullText;
+    }
+  }
+
+  private async transcribeChunkedLongRecording(
+    wavData: Uint8Array,
+    options?: STTTranscribeOptions,
+  ): Promise<string | null> {
+    const info = parseWavPcmInfo(wavData);
+    if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
+      return null;
+    }
+
+    const transcripts: string[] = [];
+    const stepSeconds = WAV_CHUNK_SECONDS - WAV_CHUNK_OVERLAP_SECONDS;
+    for (
+      let startSeconds = 0;
+      startSeconds < info.durationSeconds;
+      startSeconds += stepSeconds
+    ) {
+      const segment = sliceWavSegment(
+        wavData,
+        startSeconds,
+        WAV_CHUNK_SECONDS,
+      );
+      if (!segment) continue;
+
+      const mergedSoFar = mergeChunkTranscripts(transcripts);
+      const text = await this.transcribeResident(
+        segment,
+        buildWhisperServerOptions({
+          promptOverride: mergedSoFar
+            ? combinePromptOverride(options?.promptOverride, mergedSoFar)
+            : options?.promptOverride,
+        }),
+      );
+      if (!text.trim()) return null;
+      transcripts.push(text);
+
+      if (startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds) {
+        break;
+      }
+    }
+
+    return mergeChunkTranscripts(transcripts) || null;
   }
 }
 
