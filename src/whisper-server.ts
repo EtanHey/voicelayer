@@ -309,6 +309,10 @@ export function buildWhisperServerLaunchPlan(
     "-t",
     "4",
     "-nt", // no timestamps
+    "-bo",
+    "5",
+    "-bs",
+    "5",
     ...acceleration.args,
   ];
 

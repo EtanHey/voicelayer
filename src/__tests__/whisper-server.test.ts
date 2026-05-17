@@ -154,6 +154,10 @@ usage: whisper-server [options]
         "-t",
         "4",
         "-nt",
+        "-bo",
+        "5",
+        "-bs",
+        "5",
         "--no-gpu",
       ]);
       expect(launch.env.PATH).toBe("/opt/homebrew/bin");
