@@ -37,3 +37,20 @@ The resident `whisper-server` path reads these environment variables:
 Live resident evals require both Bun and an available whisper backend. Tests or
 scripts that launch real `whisper-server` processes should be treated as live
 integration coverage rather than hermetic unit tests.
+
+## Decode Quality Benchmark
+
+Use the local-only decode benchmark when resident `whisper-server` quality
+diverges from `whisper-cli` or when tuning latency-vs-quality flags:
+
+```bash
+bun run scripts/benchmark-stt-decode.ts \
+  --audio /path/to/audio.wav \
+  --plans server-bo5-bs5,server-bo5-bs3,server-defaults,cli \
+  --language auto
+```
+
+The script launches temporary `whisper-server` processes on non-8178 ports and
+writes private reports under `docs.local/research/` by default. It does not
+touch the running VoiceBar resident server and does not upload audio or
+transcripts.
