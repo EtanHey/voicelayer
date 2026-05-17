@@ -11,6 +11,7 @@ FLOW_BAR_DIR="$ROOT_DIR/flow-bar"
 FIXTURE_DIR="$FLOW_BAR_DIR/Tests/VoiceBarTests/Fixtures"
 RUN_DIR="${TMPDIR:-/tmp}/voicelayer-run-tests.$$"
 MCP_SOCKET="$RUN_DIR/voicelayer-mcp.sock"
+VOICEBAR_SOCKET="$RUN_DIR/voicelayer.sock"
 MCP_PID_FILE="$RUN_DIR/voicelayer-mcp.pid"
 DISABLE_FLAG="$RUN_DIR/voicelayer-disabled"
 DAEMON_OUT="$RUN_DIR/mcp-daemon.out.log"
@@ -39,7 +40,7 @@ cleanup() {
     kill "$daemon_pid" 2>/dev/null
     wait "$daemon_pid" 2>/dev/null
   fi
-  rm -f "$MCP_SOCKET" "$MCP_PID_FILE" "$DISABLE_FLAG"
+  rm -f "$MCP_SOCKET" "$VOICEBAR_SOCKET" "$MCP_PID_FILE" "$DISABLE_FLAG"
 }
 
 print_log_tail() {
@@ -88,6 +89,7 @@ printf '\n== Bun MCP daemon boot ==\n'
 (
   cd "$ROOT_DIR" || exit 1
   QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
+    QA_VOICE_SOCKET_PATH="$VOICEBAR_SOCKET" \
     QA_VOICE_MCP_PID_PATH="$MCP_PID_FILE" \
     QA_VOICE_DISABLE_FLAG_PATH="$DISABLE_FLAG" \
     bun run src/mcp-server-daemon.ts

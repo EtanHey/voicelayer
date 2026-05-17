@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, it, expect } from "bun:test";
 import { createHash } from "crypto";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -15,12 +21,15 @@ import {
   selectChunksWithPreRoll,
   transcribeChunkSequence,
   finalizeTranscriptionText,
+  terminateRecorderProcess,
 } from "../input";
 import {
   clearCancelSignal,
+  clearStopSignal,
   hasCancelSignal,
   setCancelSignal,
 } from "../session-booking";
+import { STOP_FILE } from "../paths";
 
 describe("input module", () => {
   describe("VoiceBar recording archive", () => {
@@ -155,6 +164,20 @@ describe("input module", () => {
       expect(consumeCancelSignalForRecording()).toBe(true);
       expect(hasCancelSignal()).toBe(false);
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("retains the last wav before honoring a late cancel during transcription", () => {
+      const source = readFileSync(join(import.meta.dir, "../input.ts"), "utf8");
+      const retainIndex = source.indexOf(
+        "writeFileSync(retainedRecordingFilePath(), retainedWavData);",
+      );
+      const lateCancelIndex = source.indexOf(
+        '"[voicelayer] Recording cancelled during transcription — discarding transcript"',
+      );
+
+      expect(retainIndex).toBeGreaterThan(-1);
+      expect(lateCancelIndex).toBeGreaterThan(-1);
+      expect(retainIndex).toBeLessThan(lateCancelIndex);
     });
   });
 
@@ -420,6 +443,79 @@ describe("input module", () => {
       const { waitForInput } = await import("../input");
       expect(typeof waitForInput).toBe("function");
       expect(waitForInput.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("stops PTT recording promptly even when no audio chunks are processed", async () => {
+      const originalSpawn = Bun.spawn;
+      const originalSpawnSync = Bun.spawnSync;
+      let spawned = false;
+      let stdoutController: ReadableStreamDefaultController<Uint8Array>;
+      let stderrController: ReadableStreamDefaultController<Uint8Array>;
+
+      Bun.spawnSync = (() => ({
+        exitCode: 0,
+        stdout: Buffer.from(""),
+        stderr: Buffer.from("Sample Rate : 16000\nChannels : 1\n"),
+      })) as typeof Bun.spawnSync;
+      Bun.spawn = (() => {
+        spawned = true;
+        return {
+          stdout: new ReadableStream<Uint8Array>({
+            start(controller) {
+              stdoutController = controller;
+            },
+          }),
+          stderr: new ReadableStream<Uint8Array>({
+            start(controller) {
+              stderrController = controller;
+            },
+          }),
+          kill: () => {
+            try {
+              stdoutController.close();
+            } catch {}
+            try {
+              stderrController.close();
+            } catch {}
+          },
+          exited: Promise.resolve(0),
+        };
+      }) as typeof Bun.spawn;
+
+      try {
+        clearStopSignal();
+        const { recordToBuffer } = await import("../input");
+        const startedAt = Date.now();
+        const recording = recordToBuffer(1000, "standard", true);
+
+        while (!spawned) {
+          await Bun.sleep(1);
+        }
+        writeFileSync(STOP_FILE, "stop");
+
+        await recording;
+        expect(Date.now() - startedAt).toBeLessThan(500);
+      } finally {
+        clearStopSignal();
+        Bun.spawn = originalSpawn;
+        Bun.spawnSync = originalSpawnSync;
+      }
+    });
+
+    it("escalates recorder shutdown from SIGTERM to SIGKILL when rec does not exit", async () => {
+      const signals: string[] = [];
+
+      await terminateRecorderProcess(
+        {
+          kill: (signal?: string) => {
+            signals.push(signal ?? "SIGTERM");
+          },
+          exited: new Promise(() => {}),
+        },
+        1,
+      );
+
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     });
   });
 

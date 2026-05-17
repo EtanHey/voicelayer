@@ -23,6 +23,44 @@ final class VoiceBarDaemonLauncherTests: XCTestCase {
         XCTAssertEqual(process.capturedCurrentDirectoryURL?.path, launcherTestRepoRoot)
     }
 
+    func testLauncherUsesSanitizedDaemonEnvironmentWithEnrichedPath() throws {
+        let previousValues: [String: String?] = [
+            "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
+            "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
+            "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
+        ]
+        setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
+        setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
+        setenv("CODEX_CI", "1", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        let process = ProcessSpy()
+        let launcher = VoiceBarDaemonLauncher(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in launcherTestLaunchConfiguration() },
+            processFactory: { process }
+        )
+
+        launcher.startIfNeeded()
+
+        let environment = try XCTUnwrap(process.capturedEnvironment)
+        XCTAssertNil(environment["QA_VOICE_SOCKET_PATH"])
+        XCTAssertNil(environment["QA_VOICE_MCP_SOCKET_PATH"])
+        XCTAssertNil(environment["CODEX_CI"])
+        XCTAssertEqual(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
+        let path = try XCTUnwrap(environment["PATH"])
+        XCTAssertTrue(path.contains("/opt/homebrew/bin"))
+        XCTAssertTrue(path.contains("/usr/local/bin"))
+    }
+
     func testCheckoutBuildLaunchesRepoDaemonWithBunRun() throws {
         let executableURL = URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar")
 
@@ -79,6 +117,7 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     var capturedExecutableURL: URL?
     var capturedArguments: [String]?
     var capturedCurrentDirectoryURL: URL?
+    var capturedEnvironment: [String: String]?
 
     override var executableURL: URL? {
         get { capturedExecutableURL }
@@ -93,6 +132,11 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     override var currentDirectoryURL: URL? {
         get { capturedCurrentDirectoryURL }
         set { capturedCurrentDirectoryURL = newValue }
+    }
+
+    override var environment: [String: String]? {
+        get { capturedEnvironment }
+        set { capturedEnvironment = newValue }
     }
 
     override var isRunning: Bool {

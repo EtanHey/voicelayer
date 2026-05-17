@@ -95,6 +95,45 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
+    func testDaemonLaunchDoesNotInheritExperimentalOrTestIsolationEnvironment() {
+        let previousValues: [String: String?] = [
+            "QA_VOICE_CHUNKED_STT": ProcessInfo.processInfo.environment["QA_VOICE_CHUNKED_STT"],
+            "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
+            "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
+            "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
+        ]
+        setenv("QA_VOICE_CHUNKED_STT", "1", 1)
+        setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
+        setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
+        setenv("CODEX_CI", "1", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        let process = ProcessSpy()
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { process }
+        )
+
+        _ = controller.activateIfNeeded()
+
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_CHUNKED_STT"])
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_SOCKET_PATH"])
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_SOCKET_PATH"])
+        XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
+        XCTAssertEqual(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
+        XCTAssertNotNil(process.capturedEnvironment?["PATH"])
+    }
+
     func testUnexpectedCleanExitSchedulesRelaunch() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 0

@@ -514,11 +514,10 @@ final class VoiceState {
                     }
                 }
                 // AIDEV-NOTE: Do not reset barInitiatedRecording on generic idle.
-                // Multiple MCP clients receive the record command via sendToAll.
-                // Clients that fail (no sox, session busy) broadcast error+idle
-                // BEFORE the successful client finishes. These stale idle events
-                // would kill the paste flag. Recording-sourced idle gets a short
-                // final-transcript grace before clearing the paste flag.
+                // Non-recording idle can still arrive from passive clients or
+                // playback while the command-owning daemon is transcribing. These
+                // stale idle events would kill the paste flag. Recording-sourced
+                // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
                     barInitiatedTimeout?.cancel()
                     scheduleRecordingIdleCleanupIfNeeded()

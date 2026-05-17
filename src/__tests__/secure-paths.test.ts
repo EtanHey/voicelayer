@@ -29,10 +29,45 @@ describe("secure session paths", () => {
     expect(paths.STOP_FILE).toContain("stop-");
   });
 
-  it("SOCKET_PATH is fixed well-known path (no session token)", () => {
+  it("SOCKET_PATH defaults to fixed well-known path (no session token)", () => {
     expect(paths.SOCKET_PATH).toBe("/tmp/voicelayer.sock");
     // Should NOT contain session token — fixed path for VoiceBar server
     expect(paths.SOCKET_PATH).not.toContain(paths.SESSION_TOKEN);
+  });
+
+  it("getVoiceBarSocketPath allows test isolation via env override", () => {
+    expect(
+      paths.getVoiceBarSocketPath({
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-private-test.sock");
+    expect(paths.getVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(
+      "/tmp/voicelayer.sock",
+    );
+  });
+
+  it("reports default socket paths from centralized override state", () => {
+    expect(paths.isDefaultVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(paths.isDefaultMcpSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(
+      paths.isDefaultVoiceBarSocketPath({
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+    expect(
+      paths.isDefaultMcpSocketPath({
+        QA_VOICE_MCP_SOCKET_PATH: "/tmp/voicelayer-mcp-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+  });
+
+  it("returns MCP socket override for client hello without duplicating env lookup", () => {
+    expect(paths.getMcpSocketOverridePath({} as NodeJS.ProcessEnv)).toBeNull();
+    expect(
+      paths.getMcpSocketOverridePath({
+        QA_VOICE_MCP_SOCKET_PATH: "/tmp/voicelayer-mcp-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-mcp-private-test.sock");
   });
 
   it("LOCK_FILE contains session token", () => {

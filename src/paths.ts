@@ -23,6 +23,7 @@ import { join } from "path";
 
 const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
+const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
 const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
@@ -128,10 +129,22 @@ export function isVoicelayerDisabled(options?: {
 }
 
 /**
- * Fixed Unix domain socket path for VoiceBar IPC.
+ * Unix domain socket path for VoiceBar IPC.
  * VoiceBar listens here as a persistent server. MCP servers connect as clients.
+ * Tests and diagnostics must override this; otherwise they can attach to the
+ * production VoiceBar and race record/stop commands.
  */
-export const SOCKET_PATH = tmpPath("voicelayer.sock");
+export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): string {
+  return readOverride(SOCKET_OVERRIDE_ENV, tmpPath("voicelayer.sock"), env);
+}
+
+export function isDefaultVoiceBarSocketPath(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !env[SOCKET_OVERRIDE_ENV]?.trim();
+}
+
+export const SOCKET_PATH = getVoiceBarSocketPath();
 
 /**
  * MCP daemon socket path.
@@ -140,6 +153,19 @@ export const SOCKET_PATH = tmpPath("voicelayer.sock");
  */
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+}
+
+export function getMcpSocketOverridePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
+  return value ? value : null;
+}
+
+export function isDefaultMcpSocketPath(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
 }
 
 export const MCP_SOCKET_PATH = getMcpSocketPath();

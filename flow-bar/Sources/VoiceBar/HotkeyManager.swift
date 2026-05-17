@@ -22,6 +22,9 @@ private func describeEventType(_ type: CGEventType) -> String {
     case .leftMouseUp: "leftMouseUp"
     case .rightMouseDown: "rightMouseDown"
     case .rightMouseUp: "rightMouseUp"
+    case .otherMouseDown: "otherMouseDown"
+    case .otherMouseUp: "otherMouseUp"
+    case .otherMouseDragged: "otherMouseDragged"
     case .mouseMoved: "mouseMoved"
     case .leftMouseDragged: "leftMouseDragged"
     case .rightMouseDragged: "rightMouseDragged"
@@ -126,6 +129,38 @@ final class GestureStateMachine {
             onHoldEnd()
         case .locked:
             break
+        default:
+            break
+        }
+    }
+
+    func handleMouseButtonDown() {
+        let now = CFAbsoluteTimeGetCurrent()
+        switch state {
+        case .idle:
+            startPressing(now: now)
+        case .locked:
+            state = .idle
+            onPreviewPhaseChange(.idle)
+            onHoldEnd()
+        default:
+            break
+        }
+    }
+
+    func handleMouseButtonUp() {
+        switch state {
+        case .pressing:
+            clearHoldTimer()
+            keyDownTime = nil
+            state = .locked
+            onPreviewPhaseChange(.holding)
+            onHoldStart()
+        case .holding:
+            keyDownTime = nil
+            state = .idle
+            onPreviewPhaseChange(.idle)
+            onHoldEnd()
         default:
             break
         }
@@ -238,8 +273,10 @@ final class GestureStateMachine {
 
 enum HotkeyAction: Equatable {
     case ignore
+    case consume
     case keyDown
     case keyUp
+    case sendEnter
     case pasteLastTranscript
     case cancel
 }
@@ -299,6 +336,8 @@ func shouldConsumeHotkeyEvent(
     case .keyDown, .keyUp:
         targetKeycodes.contains(keycode)
     case .cancel:
+        true
+    case .consume, .sendEnter:
         true
     case .pasteLastTranscript:
         targetKeycodes.contains(keycode)
@@ -465,6 +504,67 @@ func hotkeyAction(
     return action
 }
 
+func mouseHotkeyAction(
+    type: CGEventType,
+    buttonNumber: Int64,
+    targetMouseButtons: Set<Int64>,
+    enterMouseButtons: Set<Int64> = []
+) -> HotkeyAction {
+    if enterMouseButtons.contains(buttonNumber) {
+        switch type {
+        case .otherMouseDown:
+            NSLog("[HotkeyManager] Matched mouse button %lld press -> sendEnter", buttonNumber)
+            return .sendEnter
+        case .otherMouseUp:
+            NSLog("[HotkeyManager] Matched mouse button %lld release -> consume", buttonNumber)
+            return .consume
+        default:
+            NSLog(
+                "[HotkeyManager] Matched enter mouse button %lld but ignored event type %@",
+                buttonNumber,
+                describeEventType(type)
+            )
+            return .ignore
+        }
+    }
+
+    guard targetMouseButtons.contains(buttonNumber) else {
+        NSLog(
+            "[HotkeyManager] Mouse button %lld does not match hotkey mouse set %@ for event %@",
+            buttonNumber,
+            String(describing: targetMouseButtons),
+            describeEventType(type)
+        )
+        return .ignore
+    }
+
+    switch type {
+    case .otherMouseDown:
+        NSLog("[HotkeyManager] Matched mouse button %lld press -> keyDown", buttonNumber)
+        return .keyDown
+    case .otherMouseUp:
+        NSLog("[HotkeyManager] Matched mouse button %lld release -> keyUp", buttonNumber)
+        return .keyUp
+    default:
+        NSLog(
+            "[HotkeyManager] Matched mouse button %lld but ignored event type %@",
+            buttonNumber,
+            describeEventType(type)
+        )
+        return .ignore
+    }
+}
+
+private func postReturnKeyPress() {
+    let source = CGEventSource(stateID: .hidSystemState)
+    let returnKeycode = CGKeyCode(36)
+    CGEvent(keyboardEventSource: source, virtualKey: returnKeycode, keyDown: true)?
+        .post(tap: .cghidEventTap)
+    usleep(10_000)
+    CGEvent(keyboardEventSource: source, virtualKey: returnKeycode, keyDown: false)?
+        .post(tap: .cghidEventTap)
+}
+
 // MARK: - Tap Context (passed through userInfo)
 
 /// Holds configuration and gesture reference for the C callback.
@@ -472,9 +572,13 @@ func hotkeyAction(
 private final class TapContext {
     let gesture: GestureStateMachine
     let targetKeycodes: Set<Int64>
+    let targetMouseButtons: Set<Int64>
+    let enterMouseButtons: Set<Int64>
     let useModifierMode: Bool
     let onKeyDown: () -> Void
     let onKeyUp: () -> Void
+    let onMouseDown: () -> Void
+    let onMouseUp: () -> Void
     let onCancel: () -> Void
     let onPasteLastTranscript: () -> Void
     let shouldHandleEscape: () -> Bool
@@ -485,18 +589,26 @@ private final class TapContext {
     init(
         gesture: GestureStateMachine,
         keycodes: Set<Int64>,
+        mouseButtons: Set<Int64>,
+        enterMouseButtons: Set<Int64>,
         modifierMode: Bool,
         onKeyDown: @escaping () -> Void,
         onKeyUp: @escaping () -> Void,
+        onMouseDown: @escaping () -> Void,
+        onMouseUp: @escaping () -> Void,
         onCancel: @escaping () -> Void,
         onPasteLastTranscript: @escaping () -> Void,
         shouldHandleEscape: @escaping () -> Bool
     ) {
         self.gesture = gesture
         targetKeycodes = keycodes
+        targetMouseButtons = mouseButtons
+        self.enterMouseButtons = enterMouseButtons
         useModifierMode = modifierMode
         self.onKeyDown = onKeyDown
         self.onKeyUp = onKeyUp
+        self.onMouseDown = onMouseDown
+        self.onMouseUp = onMouseUp
         self.onCancel = onCancel
         self.onPasteLastTranscript = onPasteLastTranscript
         self.shouldHandleEscape = shouldHandleEscape
@@ -518,12 +630,14 @@ private func hotkeyCallback(
     }
     let ctx = Unmanaged<TapContext>.fromOpaque(userInfo).takeUnretainedValue()
     let keycode = event.getIntegerValueField(.keyboardEventKeycode)
+    let mouseButtonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
     let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
 
     NSLog(
-        "[HotkeyManager] Callback entry type=%@ keycode=%lld flags=%@ autorepeat=%lld",
+        "[HotkeyManager] Callback entry type=%@ keycode=%lld mouseButton=%lld flags=%@ autorepeat=%lld",
         describeEventType(type),
         keycode,
+        mouseButtonNumber,
         describeFlags(event.flags),
         autorepeat
     )
@@ -537,16 +651,27 @@ private func hotkeyCallback(
         return Unmanaged.passUnretained(event)
     }
 
-    let action = hotkeyAction(
-        type: type,
-        keycode: keycode,
-        flags: event.flags,
-        autorepeat: autorepeat,
-        targetKeycodes: ctx.targetKeycodes,
-        useModifierMode: ctx.useModifierMode,
-        gestureIsActive: ctx.gesture.state != .idle,
-        cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape()
-    )
+    let isMouseHotkeyEvent = type == .otherMouseDown || type == .otherMouseUp
+    let action: HotkeyAction
+    if isMouseHotkeyEvent {
+        action = mouseHotkeyAction(
+            type: type,
+            buttonNumber: mouseButtonNumber,
+            targetMouseButtons: ctx.targetMouseButtons,
+            enterMouseButtons: ctx.enterMouseButtons
+        )
+    } else {
+        action = hotkeyAction(
+            type: type,
+            keycode: keycode,
+            flags: event.flags,
+            autorepeat: autorepeat,
+            targetKeycodes: ctx.targetKeycodes,
+            useModifierMode: ctx.useModifierMode,
+            gestureIsActive: ctx.gesture.state != .idle,
+            cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape()
+        )
+    }
     if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {
         NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
         return nil
@@ -556,16 +681,28 @@ private func hotkeyCallback(
         break
     case .keyDown:
         DispatchQueue.main.async {
-            ctx.onKeyDown()
+            if isMouseHotkeyEvent {
+                ctx.onMouseDown()
+            } else {
+                ctx.onKeyDown()
+            }
         }
     case .keyUp:
         DispatchQueue.main.async {
-            ctx.onKeyUp()
+            if isMouseHotkeyEvent {
+                ctx.onMouseUp()
+            } else {
+                ctx.onKeyUp()
+            }
         }
     case .cancel:
         DispatchQueue.main.async {
             ctx.onCancel()
         }
+    case .consume:
+        break
+    case .sendEnter:
+        postReturnKeyPress()
     case .pasteLastTranscript:
         DispatchQueue.main.async {
             ctx.onPasteLastTranscript()
@@ -576,7 +713,7 @@ private func hotkeyCallback(
         hotkeyAction: action,
         targetKeycodes: ctx.targetKeycodes,
         keycode: keycode
-    ) {
+    ) || (isMouseHotkeyEvent && action != .ignore) {
         return nil
     }
 
@@ -589,6 +726,8 @@ private func hotkeyCallback(
 /// Matched hotkey events are consumed so F5 does not move focus in the target app.
 final class HotkeyManager {
     static let defaultTargetKeycodes: Set<Int64> = [79, 96]
+    static let defaultTargetMouseButtons: Set<Int64> = [4, 5]
+    static let defaultEnterMouseButtons: Set<Int64> = [3]
     static let defaultUsesModifierMode = false
 
     private var eventTap: CFMachPort?
@@ -597,6 +736,8 @@ final class HotkeyManager {
     /// Keycodes to listen for.
     /// F18 relay = 79, F5 standard = 96.
     private var targetKeycodes = HotkeyManager.defaultTargetKeycodes
+    private var targetMouseButtons = HotkeyManager.defaultTargetMouseButtons
+    private var enterMouseButtons = HotkeyManager.defaultEnterMouseButtons
 
     /// Whether the hotkey requires Command while the function key still emits
     /// ordinary keyDown/keyUp events.
@@ -610,6 +751,8 @@ final class HotkeyManager {
     /// Callback for Shift+F5 re-paste hotkey.
     var onKeyDown: () -> Void
     var onKeyUp: () -> Void
+    var onMouseDown: () -> Void
+    var onMouseUp: () -> Void
     var onCancel: () -> Void
     var onPasteLastTranscript: () -> Void = {}
     var shouldHandleEscape: () -> Bool = { false }
@@ -622,6 +765,8 @@ final class HotkeyManager {
         self.gesture = gesture
         onKeyDown = { gesture.handleKeyDown() }
         onKeyUp = { gesture.handleKeyUp() }
+        onMouseDown = { gesture.handleMouseButtonDown() }
+        onMouseUp = { gesture.handleMouseButtonUp() }
         onCancel = { gesture.cancel() }
     }
 
@@ -663,7 +808,7 @@ final class HotkeyManager {
 
         // Event mask depends on whether we require a modifier chord or a plain
         // function key. Cmd+F5 still arrives as keyDown/keyUp.
-        let mask = if useModifierMode {
+        let keyMask = if useModifierMode {
             CGEventMask(
                 (1 << CGEventType.keyDown.rawValue) |
                     (1 << CGEventType.keyUp.rawValue)
@@ -674,14 +819,21 @@ final class HotkeyManager {
                     (1 << CGEventType.keyUp.rawValue)
             )
         }
+        let mask = keyMask |
+            CGEventMask(1 << CGEventType.otherMouseDown.rawValue) |
+            CGEventMask(1 << CGEventType.otherMouseUp.rawValue)
 
         // Create context for the C callback
         let ctx = TapContext(
             gesture: gesture,
             keycodes: targetKeycodes,
+            mouseButtons: targetMouseButtons,
+            enterMouseButtons: enterMouseButtons,
             modifierMode: useModifierMode,
             onKeyDown: onKeyDown,
             onKeyUp: onKeyUp,
+            onMouseDown: onMouseDown,
+            onMouseUp: onMouseUp,
             onCancel: onCancel,
             onPasteLastTranscript: onPasteLastTranscript,
             shouldHandleEscape: shouldHandleEscape

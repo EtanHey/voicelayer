@@ -1,5 +1,6 @@
 const DEFAULT_MCP_SOCKET_PATH = "/tmp/voicelayer-mcp.sock";
 const ALLOW_SOCKET_RECLAIM_ENV = "QA_VOICE_ALLOW_SOCKET_RECLAIM";
+const VOICEBAR_ALLOW_SOCKET_RECLAIM_ENV = "VOICELAYER_ALLOW_SOCKET_RECLAIM";
 
 export function parseLsofSocketOwnerPids(
   output: string,
@@ -44,7 +45,10 @@ export function canReclaimSocketOwners(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   if (socketPath !== DEFAULT_MCP_SOCKET_PATH) return true;
-  return env[ALLOW_SOCKET_RECLAIM_ENV]?.trim() === "1";
+  return (
+    env[ALLOW_SOCKET_RECLAIM_ENV]?.trim() === "1" ||
+    env[VOICEBAR_ALLOW_SOCKET_RECLAIM_ENV]?.trim() === "1"
+  );
 }
 
 /**

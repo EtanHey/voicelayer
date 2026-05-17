@@ -91,6 +91,37 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
     }
 }
 
+enum VoiceBarDaemonEnvironment {
+    private static let inheritedEnvironmentDenylist: Set<String> = [
+        "CODEX_CI",
+        "DISABLE_VOICELAYER",
+        "QA_VOICE_ALLOW_SOCKET_RECLAIM",
+        "QA_VOICE_CHUNKED_STT",
+        "QA_VOICE_DISABLE_FLAG_PATH",
+        "QA_VOICE_MCP_PID_PATH",
+        "QA_VOICE_MCP_SOCKET_PATH",
+        "QA_VOICE_RECORDINGS_DIR",
+        "QA_VOICE_RETAINED_RECORDING_PATH",
+        "QA_VOICE_SOCKET_PATH",
+        "QA_VOICE_WISPR_DB_PATH",
+    ]
+
+    static func sanitizedDaemonEnvironment(
+        from inherited: [String: String] = ProcessInfo.processInfo.environment,
+        path: String
+    ) -> [String: String] {
+        var env = inherited
+        for key in inheritedEnvironmentDenylist {
+            env.removeValue(forKey: key)
+        }
+        env["PATH"] = path
+        // VoiceBar owns the daily-driver daemon lifecycle; allow its child to
+        // reclaim a stale default MCP socket left by a prior app instance.
+        env["VOICELAYER_ALLOW_SOCKET_RECLAIM"] = "1"
+        return env
+    }
+}
+
 enum VoiceBarDaemonLivenessProbe {
     static let freshSessionCheckCommand =
         "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-mcp.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
@@ -191,7 +222,7 @@ final class VoiceBarDaemonController {
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
-    private static let daemonPATH: String = {
+    static let daemonPATH: String = {
         let base = ProcessInfo.processInfo.environment["PATH"] ?? "/usr/bin:/bin"
         let extras = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
         var parts = base.split(separator: ":").map(String.init)
@@ -272,9 +303,7 @@ final class VoiceBarDaemonController {
         proc.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
 
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
-        var env = ProcessInfo.processInfo.environment
-        env["PATH"] = Self.daemonPATH
-        proc.environment = env
+        proc.environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
 
         // Monitor: restart on any unexpected exit. A clean daemon exit is only
         // intentional when VoiceLayer was explicitly disabled.

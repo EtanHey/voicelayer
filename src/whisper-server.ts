@@ -131,6 +131,9 @@ interface WhisperServerTestHooks {
   readHelpText?: (binary: string) => WhisperServerHelpProbeResult;
   spawn?: WhisperServerSpawn;
   isServerHealthy?: (port: number) => Promise<boolean>;
+  findExternalWhisperServerPids?: (port: number) => number[];
+  killExternalPid?: (pid: number, signal: NodeJS.Signals) => void;
+  isPidAlive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
 }
@@ -306,7 +309,10 @@ export function buildWhisperServerLaunchPlan(
     "-t",
     "4",
     "-nt", // no timestamps
-    "--convert", // auto-convert audio formats
+    "-bo",
+    "5",
+    "-bs",
+    "5",
     ...acceleration.args,
   ];
 
@@ -401,13 +407,18 @@ type KillableWhisperServerProcess = Pick<WhisperServerProcess, "kill"> & {
   exited?: Promise<number>;
 };
 
-function killWhisperProcess(proc: KillableWhisperServerProcess, signal: NodeJS.Signals): void {
+function killWhisperProcess(
+  proc: KillableWhisperServerProcess,
+  signal: NodeJS.Signals,
+): void {
   try {
     proc.kill(signal);
   } catch {}
 }
 
-async function waitForWhisperProcessExit(proc: KillableWhisperServerProcess): Promise<boolean> {
+async function waitForWhisperProcessExit(
+  proc: KillableWhisperServerProcess,
+): Promise<boolean> {
   if (!proc.exited) return true;
 
   const result = await Promise.race([
@@ -420,12 +431,102 @@ async function waitForWhisperProcessExit(proc: KillableWhisperServerProcess): Pr
   return result === "exited";
 }
 
-async function terminateFailedLaunch(proc: KillableWhisperServerProcess): Promise<void> {
+async function terminateFailedLaunch(
+  proc: KillableWhisperServerProcess,
+): Promise<void> {
   killWhisperProcess(proc, "SIGTERM");
   if (await waitForWhisperProcessExit(proc)) return;
 
   killWhisperProcess(proc, "SIGKILL");
   await waitForWhisperProcessExit(proc);
+}
+
+function isPidAlive(pid: number): boolean {
+  if (testHooks.isPidAlive) return testHooks.isPidAlive(pid);
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killExternalPid(pid: number, signal: NodeJS.Signals): void {
+  if (testHooks.killExternalPid) {
+    testHooks.killExternalPid(pid, signal);
+    return;
+  }
+  try {
+    process.kill(pid, signal);
+  } catch {}
+}
+
+function commandForPid(pid: number): string {
+  const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  if (result.exitCode !== 0) return "";
+  return result.stdout.toString().trim();
+}
+
+function isWhisperServerCommand(command: string): boolean {
+  const firstToken = command.trim().split(/\s+/)[0] ?? "";
+  const executable = firstToken.replace(/^"(.*)"$/, "$1");
+  return executable.split("/").pop() === "whisper-server";
+}
+
+function findExternalWhisperServerPids(port: number): number[] {
+  if (testHooks.findExternalWhisperServerPids) {
+    return testHooks.findExternalWhisperServerPids(port);
+  }
+
+  const result = Bun.spawnSync(
+    ["lsof", "-nP", `-tiTCP:${port}`, "-sTCP:LISTEN"],
+    { stdout: "pipe", stderr: "ignore" },
+  );
+  if (result.exitCode !== 0) return [];
+
+  return result.stdout
+    .toString()
+    .split(/\s+/)
+    .map((raw) => Number.parseInt(raw, 10))
+    .filter((pid) => Number.isFinite(pid) && pid > 0)
+    .filter((pid) => isWhisperServerCommand(commandForPid(pid)));
+}
+
+async function waitForPidExit(
+  pid: number,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await sleep(100);
+  }
+  return !isPidAlive(pid);
+}
+
+async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
+  const pids = findExternalWhisperServerPids(port);
+  if (pids.length === 0) return false;
+
+  console.error(
+    `[voicelayer] Reclaiming whisper-server port ${port} from stale PID(s): ${pids.join(", ")}`,
+  );
+  for (const pid of pids) killExternalPid(pid, "SIGTERM");
+
+  const termResults = await Promise.all(
+    pids.map((pid) => waitForPidExit(pid, FAILED_LAUNCH_EXIT_TIMEOUT)),
+  );
+  for (const [index, exited] of termResults.entries()) {
+    if (!exited) killExternalPid(pids[index], "SIGKILL");
+  }
+
+  await Promise.all(
+    pids.map((pid) => waitForPidExit(pid, FAILED_LAUNCH_EXIT_TIMEOUT)),
+  );
+  return true;
 }
 
 /**
@@ -461,15 +562,21 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     serverState = null;
   }
 
-  // Check if an external server is already running on the port
+  // Port 8178 is reserved for the daemon-owned VoiceLayer sidecar. Do not
+  // silently reuse stale orphan servers: they can have incompatible launch
+  // flags while still answering the health page.
   if (await checkServerHealthy(port)) {
-    console.error(
-      `[voicelayer] whisper-server already running on port ${port}`,
-    );
-    // TODO(VL Phase 2.1 LOW-3): validate external server provenance/capabilities
-    // before accepting it. Tracked in docs.local/plans/2026-05-15-vl-overhaul/
-    // phase-2.1-followups.md per PR #201 review scope.
-    return port;
+    if (await reclaimExternalWhisperServers(port)) {
+      if (await checkServerHealthy(port)) {
+        throw new Error(
+          `whisper-server port ${port} is still occupied after reclaim attempt`,
+        );
+      }
+    } else {
+      throw new Error(
+        `whisper-server port ${port} is already occupied by a non-VoiceLayer process`,
+      );
+    }
   }
 
   // Find binary and model
@@ -693,7 +800,10 @@ async function transcribeViaServerAttempt(
       );
     }
 
-    const result = (await resp.json()) as { text?: string };
+    const result = (await resp.json()) as { text?: string; error?: string };
+    if (result.error) {
+      throw new Error(`whisper-server inference error: ${result.error}`);
+    }
     return (result.text || "").trim();
   } finally {
     clearTimeout(timer);

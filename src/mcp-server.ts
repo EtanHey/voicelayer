@@ -130,7 +130,7 @@ async function main() {
   }
 
   onCommand(handleSocketCommand);
-  connectToBar();
+  connectToBar(undefined, { role: "mcp-server", acceptsCommands: false });
 
   const transport = new StdioServerTransport();
   await server.connect(transport);

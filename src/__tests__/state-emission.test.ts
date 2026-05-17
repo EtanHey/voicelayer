@@ -37,7 +37,10 @@ function createMockVoiceBarServer(socketPath: string): MockServer {
           if (line.trim()) {
             rawLines.push(line);
             try {
-              received.push(JSON.parse(line));
+              const parsed = JSON.parse(line);
+              if (parsed.type !== "client_hello") {
+                received.push(parsed);
+              }
             } catch {}
           }
         }

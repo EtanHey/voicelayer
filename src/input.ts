@@ -524,6 +524,41 @@ function isMicDisabled(): boolean {
   return existsSync(MIC_DISABLED_FILE);
 }
 
+type RecorderKillSignal = Parameters<ReturnType<typeof Bun.spawn>["kill"]>[0];
+
+interface RecorderProcess {
+  stdout?: ReadableStream<Uint8Array> | null;
+  stderr?: ReadableStream<Uint8Array> | null;
+  kill(signal?: RecorderKillSignal): void;
+  exited: Promise<unknown>;
+}
+
+export async function terminateRecorderProcess(
+  recorder: RecorderProcess,
+  graceMs = 300,
+): Promise<void> {
+  const waitForExit = async () =>
+    Promise.race([
+      recorder.exited.then(
+        () => true,
+        () => true,
+      ),
+      Bun.sleep(graceMs).then(() => false),
+    ]);
+
+  try {
+    recorder.kill("SIGTERM");
+  } catch {}
+
+  if (await waitForExit()) return;
+
+  try {
+    recorder.kill("SIGKILL");
+  } catch {}
+
+  await waitForExit();
+}
+
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
@@ -613,19 +648,22 @@ export async function recordToBuffer(
     const pcmChunks: Uint8Array[] = [];
     let totalPcmBytes = 0;
     let resolved = false;
-    let recorder: ReturnType<typeof Bun.spawn> | null = null;
+    let recorder: RecorderProcess | null = null;
+    let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
 
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
       recordingState = "idle";
       clearTimeout(timer);
+      if (stopSignalPoll) clearInterval(stopSignalPoll);
 
-      // Kill recorder
       if (recorder) {
-        try {
-          recorder.kill();
-        } catch {}
+        void terminateRecorderProcess(recorder).catch((err) => {
+          console.error(
+            `[voicelayer] Failed to terminate recorder: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
         recorder = null;
       }
 
@@ -655,12 +693,23 @@ export async function recordToBuffer(
 
     // Timeout handler
     const timer = setTimeout(() => finish(), timeoutMs);
+    stopSignalPoll = setInterval(() => {
+      if (!hasStopSignal()) return;
+      clearStopSignal();
+      console.error(
+        pressToTalk
+          ? "[voicelayer] Stop signal received — ending PTT recording"
+          : "[voicelayer] Stop signal received — ending recording",
+      );
+      finish();
+    }, 50);
+    stopSignalPoll.unref?.();
 
     try {
       // Start mic recording via sox — raw PCM to stdout at device's native rate
       // AIDEV-NOTE: We record at native rate (not 16kHz) to avoid sox buffer overruns
       // when the device rate differs (e.g., AirPods at 24kHz). Resampling happens in JS.
-      recorder = Bun.spawn(
+      const spawnedRecorder = Bun.spawn(
         [
           recPath,
           "-r",
@@ -678,16 +727,17 @@ export async function recordToBuffer(
         ],
         { stdout: "pipe", stderr: "pipe" },
       );
+      recorder = spawnedRecorder;
 
-      if (!recorder.stdout) {
+      if (!spawnedRecorder.stdout) {
         finish(new Error("rec: stdout not available"));
         return;
       }
 
       // Capture stderr for diagnostics — rec errors (permissions, no device) go here
-      if (recorder.stderr) {
+      if (spawnedRecorder.stderr) {
         const stderrReader = (
-          recorder.stderr as ReadableStream<Uint8Array>
+          spawnedRecorder.stderr as ReadableStream<Uint8Array>
         ).getReader();
         (async () => {
           const chunks: Uint8Array[] = [];
@@ -723,7 +773,7 @@ export async function recordToBuffer(
       );
 
       const reader = (
-        recorder.stdout as ReadableStream<Uint8Array>
+        spawnedRecorder.stdout as ReadableStream<Uint8Array>
       ).getReader();
 
       // R66 Fix 1: Decouple pipe reading from VAD processing.
@@ -1007,6 +1057,8 @@ export async function waitForInput(
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
+    writeFileSync(retainedRecordingFilePath(), retainedWavData);
+
     if (consumeCancelSignalForRecording()) {
       console.error(
         "[voicelayer] Recording cancelled during transcription — discarding transcript",
@@ -1015,8 +1067,6 @@ export async function waitForInput(
       broadcast({ type: "state", state: "idle", source: "recording" });
       return null;
     }
-
-    writeFileSync(retainedRecordingFilePath(), retainedWavData);
 
     if (text) {
       try {

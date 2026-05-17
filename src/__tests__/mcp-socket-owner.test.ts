@@ -55,6 +55,12 @@ describe("MCP socket owner detection", () => {
         QA_VOICE_ALLOW_SOCKET_RECLAIM: "1",
       } as NodeJS.ProcessEnv),
     ).toBe(true);
+
+    expect(
+      canReclaimSocketOwners("/tmp/voicelayer-mcp.sock", {
+        VOICELAYER_ALLOW_SOCKET_RECLAIM: "1",
+      } as NodeJS.ProcessEnv),
+    ).toBe(true);
   });
 
   it("allows reclaiming isolated test sockets without the default-socket opt-in", () => {

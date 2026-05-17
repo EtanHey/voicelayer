@@ -154,7 +154,10 @@ usage: whisper-server [options]
         "-t",
         "4",
         "-nt",
-        "--convert",
+        "-bo",
+        "5",
+        "-bs",
+        "5",
         "--no-gpu",
       ]);
       expect(launch.env.PATH).toBe("/opt/homebrew/bin");
@@ -255,6 +258,63 @@ usage: whisper-server [options]
         } else {
           process.env.QA_VOICE_WHISPER_ACCELERATION = previousAcceleration;
         }
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("reclaims a stale whisper-server on the reserved port before launching its own sidecar", async () => {
+      let externalServerAlive = true;
+      let managedServerHealthy = false;
+      let spawnCalls = 0;
+      const killed: Array<{ pid: number; signal: string }> = [];
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        readHelpText: () => ({ helpText: "" }),
+        findExternalWhisperServerPids: () =>
+          externalServerAlive ? [99881] : [],
+        killExternalPid: (pid, signal) => {
+          killed.push({ pid, signal });
+          externalServerAlive = false;
+        },
+        isPidAlive: (pid) => pid === 99881 && externalServerAlive,
+        spawn: () => {
+          spawnCalls += 1;
+          managedServerHealthy = true;
+          return {
+            pid: 12348,
+            stderr: null,
+            kill: () => {},
+          };
+        },
+        isServerHealthy: async () => externalServerAlive || managedServerHealthy,
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(18886)).resolves.toBe(18886);
+        expect(killed).toEqual([{ pid: 99881, signal: "SIGTERM" }]);
+        expect(spawnCalls).toBe(1);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("refuses to reuse a port occupied by a non-VoiceLayer process", async () => {
+      __setWhisperServerTestHooksForTests({
+        findExternalWhisperServerPids: () => [],
+        isServerHealthy: async () => true,
+      });
+
+      try {
+        await expect(ensureServer(18887)).rejects.toThrow(
+          "already occupied by a non-VoiceLayer process",
+        );
+      } finally {
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
@@ -412,18 +472,33 @@ usage: whisper-server [options]
       }
     });
 
+    it("throws when whisper-server returns a JSON error payload with HTTP 200", async () => {
+      const originalFetch = globalThis.fetch;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ error: "FFmpeg conversion failed." }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+
+      try {
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+        ).rejects.toThrow("FFmpeg conversion failed");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("retries once after an inference transport failure", async () => {
       const originalFetch = globalThis.fetch;
       let attempts = 0;
+      let serverHealthy = false;
 
       // @ts-ignore - test double
       globalThis.fetch = async (url: string | URL | Request) => {
-        if (String(url).endsWith("/health")) {
-          return new Response(JSON.stringify({ status: "ok" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
+        if (String(url).endsWith("/health")) throw new Error("use test hook");
 
         attempts++;
         if (attempts === 1) {
@@ -436,8 +511,27 @@ usage: whisper-server [options]
       };
 
       try {
+        __setWhisperServerTestHooksForTests({
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => {
+            serverHealthy = true;
+            return {
+              pid: 124,
+              stderr: null,
+              kill: () => {},
+            };
+          },
+          isServerHealthy: async () => serverHealthy,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
         __resetWhisperServerStateForTests({
-          proc: { kill: () => {} } as any,
+          proc: {
+            kill: () => {
+              serverHealthy = false;
+            },
+          } as any,
           port: 5555,
           pid: 123,
         });
@@ -447,6 +541,7 @@ usage: whisper-server [options]
         expect(attempts).toBe(2);
       } finally {
         globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
     });
@@ -455,16 +550,12 @@ usage: whisper-server [options]
       const originalFetch = globalThis.fetch;
       let attempts = 0;
       let exited = false;
+      let serverHealthy = false;
       let resolveExit: (code: number) => void = () => {};
 
       // @ts-ignore - test double
       globalThis.fetch = async (url: string | URL | Request) => {
-        if (String(url).endsWith("/health")) {
-          return new Response(JSON.stringify({ status: "ok" }), {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          });
-        }
+        if (String(url).endsWith("/health")) throw new Error("use test hook");
 
         attempts++;
         if (attempts === 1) {
@@ -479,6 +570,22 @@ usage: whisper-server [options]
       };
 
       try {
+        __setWhisperServerTestHooksForTests({
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => {
+            expect(exited).toBe(true);
+            serverHealthy = true;
+            return {
+              pid: 124,
+              stderr: null,
+              kill: () => {},
+            };
+          },
+          isServerHealthy: async () => serverHealthy,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
         __resetWhisperServerStateForTests({
           proc: {
             kill: () => {
@@ -488,6 +595,7 @@ usage: whisper-server [options]
               resolveExit = resolve;
             }).then((code) => {
               exited = true;
+              serverHealthy = false;
               return code;
             }),
           } as any,
@@ -500,6 +608,7 @@ usage: whisper-server [options]
         expect(attempts).toBe(2);
       } finally {
         globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
       }
     });

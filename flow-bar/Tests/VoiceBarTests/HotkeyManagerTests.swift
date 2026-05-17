@@ -25,7 +25,78 @@ final class HotkeyManagerTests: XCTestCase {
 
     func testDefaultHotkeyConfigurationIncludesInternalF18Relay() {
         XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [79, 96])
+        XCTAssertEqual(HotkeyManager.defaultTargetMouseButtons, [4, 5])
+        XCTAssertEqual(HotkeyManager.defaultEnterMouseButtons, [3])
         XCTAssertFalse(HotkeyManager.defaultUsesModifierMode)
+    }
+
+    func testMouseButtonFiveTriggersHotkeyDown() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 4,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyDown
+        )
+    }
+
+    func testMouseButtonFiveReleaseTriggersHotkeyUp() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseUp,
+                buttonNumber: 4,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyUp
+        )
+    }
+
+    func testHidUsageNumberedMouseButtonFiveAlsoTriggersHotkey() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 5,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+            ),
+            .keyDown
+        )
+    }
+
+    func testOtherMouseButtonsAreIgnored() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 2,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
+            ),
+            .ignore
+        )
+    }
+
+    func testMouseButtonFourSendsEnterOnPress() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 3,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
+            ),
+            .sendEnter
+        )
+    }
+
+    func testMouseButtonFourReleaseIsConsumed() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseUp,
+                buttonNumber: 3,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
+            ),
+            .consume
+        )
     }
 
     func testInternalF18RelayTriggersKeyDownInPlainMode() {
@@ -592,6 +663,45 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(singleTapCount, 0)
         XCTAssertEqual(doubleTapCount, 0)
         XCTAssertEqual(phases, [.pressing, .awaitingSecondTap])
+    }
+
+    func testMouseQuickClickLocksRecordingImmediately() {
+        let gesture = GestureStateMachine()
+        var holdStartCount = 0
+        var holdEndCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldStart = { holdStartCount += 1 }
+        gesture.onHoldEnd = { holdEndCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+
+        XCTAssertEqual(gesture.state, .locked)
+        XCTAssertEqual(holdStartCount, 1)
+        XCTAssertEqual(holdEndCount, 0)
+        XCTAssertEqual(phases, [.pressing, .holding])
+        gesture.reset()
+    }
+
+    func testMouseHoldStillStopsOnRelease() {
+        let gesture = GestureStateMachine()
+        var holdStartCount = 0
+        var holdEndCount = 0
+        var phases: [HotkeyPhase] = []
+        gesture.onHoldStart = { holdStartCount += 1 }
+        gesture.onHoldEnd = { holdEndCount += 1 }
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+
+        gesture.handleMouseButtonDown()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        gesture.handleMouseButtonUp()
+
+        XCTAssertEqual(gesture.state, .idle)
+        XCTAssertEqual(holdStartCount, 1)
+        XCTAssertEqual(holdEndCount, 1)
+        XCTAssertEqual(phases, [.pressing, .holding, .idle])
+        gesture.reset()
     }
 
     func testGestureDoubleTapLocksActiveRecordingWithoutStopping() {

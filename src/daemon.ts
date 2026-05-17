@@ -95,7 +95,10 @@ async function main() {
 
   // 4. Connect to Voice Bar for UI state + command handling
   onCommand(handleSocketCommand);
-  connectToBar(getServeSocketPath());
+  connectToBar(getServeSocketPath(), {
+    role: "standalone-daemon",
+    acceptsCommands: true,
+  });
 
   console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);
   console.error(

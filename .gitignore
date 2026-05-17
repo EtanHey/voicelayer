@@ -24,6 +24,9 @@ flow-bar/.build/
 # Machine-local Claude config
 .claude.local.md
 
+# Local runtime verification receipts
+.verified/
+
 # Generated static export artifacts for the site app
 site/404.html
 site/index.html
