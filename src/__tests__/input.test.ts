@@ -13,6 +13,7 @@ import {
   archiveVoiceBarRecording,
   archiveWaitForInputRecording,
   calculateRMS,
+  ChunkedRecordingSession,
   consumeCancelSignalForRecording,
   createWavBuffer,
   clearInput,
@@ -21,6 +22,7 @@ import {
   selectChunksWithPreRoll,
   transcribeChunkSequence,
   finalizeTranscriptionText,
+  trimTrailingSilenceForSTT,
   terminateRecorderProcess,
 } from "../input";
 import {
@@ -100,6 +102,8 @@ describe("input module", () => {
         mode: "ptt",
         silence_mode: "thoughtful",
         duration_ms: 900,
+        raw_duration_ms: 900,
+        transcribed_duration_ms: 900,
         sample_rate: 16000,
         channels: 1,
         backend: "whisper.cpp",
@@ -169,7 +173,7 @@ describe("input module", () => {
     it("retains the last wav before honoring a late cancel during transcription", () => {
       const source = readFileSync(join(import.meta.dir, "../input.ts"), "utf8");
       const retainIndex = source.indexOf(
-        "writeFileSync(retainedRecordingFilePath(), retainedWavData);",
+        "writeFileSync(retainedRecordingFilePath(), sttWavData);",
       );
       const lateCancelIndex = source.indexOf(
         '"[voicelayer] Recording cancelled during transcription — discarding transcript"',
@@ -373,6 +377,142 @@ describe("input module", () => {
       expect(result.allowed).toBe(false);
       expect(result.reason).toBe("too-quiet");
       expect(elapsedMs).toBeLessThan(100);
+    });
+  });
+
+  describe("trailing silence trim for STT", () => {
+    function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      for (let i = 0; i < samples; i++) {
+        view.setInt16(i * 2, sample, true);
+      }
+      return buffer;
+    }
+
+    function pcmWithVaryingSpeech(durationMs: number): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      for (let i = 0; i < samples; i++) {
+        view.setInt16(i * 2, 1200 + (i % 2000), true);
+      }
+      return buffer;
+    }
+
+    it("trims a long quiet PTT tail before STT while preserving a short pad", () => {
+      const speech = pcmWithConstantSample(2000, 2000);
+      const quietTail = pcmWithConstantSample(0, 9000);
+      const pcm = new Uint8Array(speech.byteLength + quietTail.byteLength);
+      pcm.set(speech);
+      pcm.set(quietTail, speech.byteLength);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(true);
+      expect(result.rawDurationMs).toBe(11000);
+      expect(result.transcribedDurationMs).toBe(3000);
+      expect(result.pcmData.byteLength).toBe(16000 * 2 * 3);
+    });
+
+    it("trims long low-level room tone after the last strong speech", () => {
+      const speech = pcmWithConstantSample(2000, 2000);
+      const roomTone = pcmWithConstantSample(250, 9000);
+      const pcm = new Uint8Array(speech.byteLength + roomTone.byteLength);
+      pcm.set(speech);
+      pcm.set(roomTone, speech.byteLength);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(true);
+      expect(result.transcribedDurationMs).toBe(3000);
+    });
+
+    it("does not trim ordinary short pauses before stop", () => {
+      const speech = pcmWithConstantSample(2000, 2000);
+      const shortPause = pcmWithConstantSample(0, 1500);
+      const pcm = new Uint8Array(speech.byteLength + shortPause.byteLength);
+      pcm.set(speech);
+      pcm.set(shortPause, speech.byteLength);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(false);
+      expect(result.pcmData.byteLength).toBe(pcm.byteLength);
+      expect(result.rawDurationMs).toBe(3500);
+      expect(result.transcribedDurationMs).toBe(3500);
+    });
+
+    it("does not trim VAD recordings", () => {
+      const speech = pcmWithConstantSample(2000, 2000);
+      const quietTail = pcmWithConstantSample(0, 9000);
+      const pcm = new Uint8Array(speech.byteLength + quietTail.byteLength);
+      pcm.set(speech);
+      pcm.set(quietTail, speech.byteLength);
+
+      const result = trimTrailingSilenceForSTT(pcm, false);
+
+      expect(result.trimmed).toBe(false);
+      expect(result.pcmData).toBe(pcm);
+      expect(result.rawDurationMs).toBe(11000);
+      expect(result.transcribedDurationMs).toBe(11000);
+    });
+
+    it("includes final partial windows when finding the last active audio", () => {
+      const speech = pcmWithConstantSample(2000, 2000);
+      const quietTail = pcmWithConstantSample(0, 9000);
+      const finalPartialSpeech = pcmWithConstantSample(2000, 125);
+      const trailingQuiet = pcmWithConstantSample(0, 6000);
+      const pcm = new Uint8Array(
+        speech.byteLength +
+          quietTail.byteLength +
+          finalPartialSpeech.byteLength +
+          trailingQuiet.byteLength,
+      );
+      pcm.set(speech);
+      pcm.set(quietTail, speech.byteLength);
+      pcm.set(finalPartialSpeech, speech.byteLength + quietTail.byteLength);
+      pcm.set(
+        trailingQuiet,
+        speech.byteLength + quietTail.byteLength + finalPartialSpeech.byteLength,
+      );
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(true);
+      expect(result.transcribedDurationMs).toBe(12250);
+    });
+
+    it("allows the no-speech gate to evaluate trimmed PTT audio instead of raw long tails", () => {
+      const speech = pcmWithConstantSample(1000, 2000);
+      const veryLongSilence = pcmWithConstantSample(0, 1000000);
+      const pcm = new Uint8Array(speech.byteLength + veryLongSilence.byteLength);
+      pcm.set(speech);
+      pcm.set(veryLongSilence, speech.byteLength);
+
+      const rawGate = evaluateNoSpeechGate(pcm);
+      const trim = trimTrailingSilenceForSTT(pcm, true);
+      const trimmedGate = evaluateNoSpeechGate(trim.pcmData);
+
+      expect(rawGate.allowed).toBe(false);
+      expect(rawGate.reason).toBe("too-quiet");
+      expect(trim.trimmed).toBe(true);
+      expect(trimmedGate.allowed).toBe(true);
+    });
+
+    it("can rebuild chunked STT segments from trimmed PTT audio", () => {
+      const session = new ChunkedRecordingSession(16000, "thoughtful");
+      const trimmedPcm = pcmWithVaryingSpeech(65000);
+
+      session.replaceWithPCM(trimmedPcm, true);
+      session.finalize();
+      const segments = session.consumeSegments();
+
+      expect(segments.length).toBeGreaterThan(1);
+      expect(segments.reduce((sum, segment) => sum + segment.byteLength, 0)).toBe(
+        trimmedPcm.byteLength + session.currentOverlapBytes() * (segments.length - 1),
+      );
     });
   });
 

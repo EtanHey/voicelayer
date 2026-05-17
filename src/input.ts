@@ -90,6 +90,10 @@ const MIN_TRANSCRIBE_DBFS = -55;
 const BROKEN_MIC_MIN_DURATION_MS = 1500;
 const BROKEN_MIC_MAX_RMS = 1;
 const BROKEN_MIC_MAX_DBFS = -90;
+const TRAILING_SILENCE_TRIM_WINDOW_MS = 250;
+const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 900;
+const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
+const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
 const PRE_ROLL_MS = 500;
 const PRE_ROLL_CHUNKS = Math.ceil(
   (PRE_ROLL_MS / 1000) * (SAMPLE_RATE / VAD_CHUNK_SAMPLES),
@@ -144,6 +148,7 @@ export interface VoiceBarRecordingArchiveInput {
   silenceMode: SilenceMode;
   pressToTalk: boolean;
   durationMs: number;
+  transcribedDurationMs?: number;
   backend: string;
 }
 
@@ -158,6 +163,7 @@ interface WaitForInputArchiveInput {
   silenceMode: SilenceMode;
   pressToTalk: boolean;
   durationMs: number;
+  transcribedDurationMs?: number;
   backend: string;
 }
 
@@ -168,6 +174,8 @@ interface VoiceBarRecordingMetadata {
   mode: "vad" | "ptt";
   silence_mode: SilenceMode;
   duration_ms: number;
+  raw_duration_ms: number;
+  transcribed_duration_ms: number;
   sample_rate: number;
   channels: number;
   backend: string;
@@ -250,6 +258,8 @@ export function archiveVoiceBarRecording(
     mode: input.pressToTalk ? "ptt" : "vad",
     silence_mode: input.silenceMode,
     duration_ms: input.durationMs,
+    raw_duration_ms: input.durationMs,
+    transcribed_duration_ms: input.transcribedDurationMs ?? input.durationMs,
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
     backend: input.backend,
@@ -299,6 +309,7 @@ export function archiveWaitForInputRecording(
     silenceMode: input.silenceMode,
     pressToTalk: input.pressToTalk,
     durationMs: input.durationMs,
+    transcribedDurationMs: input.transcribedDurationMs,
     backend: input.backend,
   });
 }
@@ -334,6 +345,84 @@ export function evaluateNoSpeechGate(
     return { allowed: false, durationMs, rms, dbfs, reason: "too-quiet" };
   }
   return { allowed: true, durationMs, rms, dbfs };
+}
+
+export interface STTTrimResult {
+  pcmData: Uint8Array;
+  trimmed: boolean;
+  rawDurationMs: number;
+  transcribedDurationMs: number;
+}
+
+function pcmDurationMs(pcmData: Uint8Array, sampleRate = SAMPLE_RATE): number {
+  const samples = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
+  return Math.round((samples / sampleRate) * 1000);
+}
+
+export function trimTrailingSilenceForSTT(
+  pcmData: Uint8Array,
+  pressToTalk: boolean,
+  sampleRate = SAMPLE_RATE,
+): STTTrimResult {
+  const rawDurationMs = pcmDurationMs(pcmData, sampleRate);
+  if (!pressToTalk || pcmData.byteLength === 0) {
+    return {
+      pcmData,
+      trimmed: false,
+      rawDurationMs,
+      transcribedDurationMs: rawDurationMs,
+    };
+  }
+
+  const windowBytes =
+    Math.floor(
+      (sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS * BYTES_PER_SAMPLE) / 1000,
+    );
+  const alignedWindowBytes = Math.max(
+    BYTES_PER_SAMPLE,
+    Math.floor(windowBytes / BYTES_PER_SAMPLE) * BYTES_PER_SAMPLE,
+  );
+
+  let lastActiveEnd = 0;
+  for (let offset = 0; offset < pcmData.byteLength; offset += alignedWindowBytes) {
+    const windowEnd = Math.min(offset + alignedWindowBytes, pcmData.byteLength);
+    const window = pcmData.slice(offset, windowEnd);
+    if (calculateRMS(window) >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) {
+      lastActiveEnd = windowEnd;
+    }
+  }
+
+  if (lastActiveEnd === 0) {
+    return {
+      pcmData,
+      trimmed: false,
+      rawDurationMs,
+      transcribedDurationMs: rawDurationMs,
+    };
+  }
+
+  const padBytes =
+    Math.floor(
+      (sampleRate * TRAILING_SILENCE_TRIM_PAD_MS * BYTES_PER_SAMPLE) / 1000,
+    );
+  const trimEnd = Math.min(pcmData.byteLength, lastActiveEnd + padBytes);
+  const quietTailMs = pcmDurationMs(pcmData.slice(trimEnd), sampleRate);
+  if (quietTailMs < TRAILING_SILENCE_TRIM_MIN_QUIET_MS) {
+    return {
+      pcmData,
+      trimmed: false,
+      rawDurationMs,
+      transcribedDurationMs: rawDurationMs,
+    };
+  }
+
+  const trimmedPcm = pcmData.slice(0, trimEnd);
+  return {
+    pcmData: trimmedPcm,
+    trimmed: true,
+    rawDurationMs,
+    transcribedDurationMs: pcmDurationMs(trimmedPcm, sampleRate),
+  };
 }
 
 export function classifyCaptureFailure(
@@ -423,6 +512,19 @@ export class ChunkedRecordingSession {
       this.activeBytes = this.overlapBuffer.byteLength;
       this.hasSpeech = this.overlapBuffer.byteLength > 0;
       this.silenceChunks = 0;
+    }
+  }
+
+  replaceWithPCM(pcmData: Uint8Array, speechDetected: boolean): void {
+    this.activeChunks = [];
+    this.activeBytes = 0;
+    this.completedSegments = [];
+    this.overlapBuffer = new Uint8Array(0);
+    this.hasSpeech = false;
+    this.silenceChunks = 0;
+
+    for (let offset = 0; offset < pcmData.byteLength; offset += VAD_CHUNK_BYTES) {
+      this.pushChunk(pcmData.slice(offset, offset + VAD_CHUNK_BYTES), speechDetected);
     }
   }
 
@@ -978,12 +1080,20 @@ export async function waitForInput(
     return null;
   }
 
-  const noSpeechGate = evaluateNoSpeechGate(pcmData);
+  const sttTrim = trimTrailingSilenceForSTT(pcmData, pressToTalk);
+  if (sttTrim.trimmed) {
+    console.error(
+      `[voicelayer] Trimmed trailing silence before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
+    );
+  }
+
+  const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
       `rms=${noSpeechGate.rms.toFixed(0)}, ` +
       `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"}, ` +
-      `allowed=${noSpeechGate.allowed}`,
+      `allowed=${noSpeechGate.allowed}` +
+      (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!noSpeechGate.allowed) {
     console.error(
@@ -1017,16 +1127,23 @@ export async function waitForInput(
   const wavPath = recordingFilePath(process.pid, Date.now());
   try {
     const retainedWavData = createWavBuffer(pcmData);
-    writeFileSync(wavPath, retainedWavData);
+    const sttWavData = sttTrim.trimmed
+      ? createWavBuffer(sttTrim.pcmData)
+      : retainedWavData;
+    if (chunkedSession && sttTrim.trimmed) {
+      chunkedSession.replaceWithPCM(sttTrim.pcmData, true);
+    }
+    const useChunkedTranscription = !!chunkedSession;
+    writeFileSync(wavPath, sttWavData);
 
     // Transcribe with selected backend
     const backend = await getBackend();
     console.error(
-      `[voicelayer] Transcribing with ${backend.name}${chunkedSession ? " (chunked)" : ""}...`,
+      `[voicelayer] Transcribing with ${backend.name}${useChunkedTranscription ? " (chunked)" : ""}...`,
     );
     let text = "";
 
-    if (chunkedSession) {
+    if (useChunkedTranscription) {
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
       text = await transcribeChunkSequence(segments, async (chunk, prompt) => {
@@ -1057,7 +1174,7 @@ export async function waitForInput(
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
-    writeFileSync(retainedRecordingFilePath(), retainedWavData);
+    writeFileSync(retainedRecordingFilePath(), sttWavData);
 
     if (consumeCancelSignalForRecording()) {
       console.error(
@@ -1076,7 +1193,8 @@ export async function waitForInput(
           transcript: text,
           silenceMode,
           pressToTalk,
-          durationMs: noSpeechGate.durationMs,
+          durationMs: sttTrim.rawDurationMs,
+          transcribedDurationMs: sttTrim.transcribedDurationMs,
           backend: backend.name,
         });
       } catch (err) {
