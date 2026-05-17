@@ -1,4 +1,25 @@
+import { existsSync, readFileSync, statSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
+
+export interface STTCleanupEnv {
+  [key: string]: string | undefined;
+  QA_VOICE_STT_VOCABULARY_PATH?: string;
+  QA_VOICE_STT_VOCABULARY_DISABLED?: string;
+}
+
+interface STTVocabularyAlias {
+  from: string;
+  to: string;
+}
+
+interface STTVocabularySnapshot {
+  prompt_terms?: unknown;
+  aliases?: unknown;
+}
+
+type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   "voice layer codex": "VoiceLayerCodex",
@@ -82,40 +103,210 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "claude dot md": "CLAUDE.md",
   "gpt 5.5": "GPT-5.5",
   "gpt 5 5": "GPT-5.5",
+  "still accept voicelayer to keep": "still expect VoiceLayer to keep",
+  "still accept voice layer to keep": "still expect VoiceLayer to keep",
+  "real tale of the sentence": "real tail of the sentence",
   bun: "bun",
 };
 
 const ORDERED_BUILTIN_STT_ALIASES = Object.fromEntries(
   Object.entries(BUILTIN_STT_ALIASES).sort((a, b) => b[0].length - a[0].length),
 );
-const CANONICAL_TERM_PATTERNS: [string, RegExp, string][] = [
-  ...new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES)),
-].map((term) => {
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return [
-    term.toLowerCase(),
-    new RegExp(
-      `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-      "giu",
-    ),
-    term,
-  ];
-});
+const CLEANUP_ONLY_ALIAS_VALUES = new Set([
+  "still expect VoiceLayer to keep",
+  "real tail of the sentence",
+]);
 
-export function getSTTVocabularyPrompt(): string {
-  const canonicalTerms = [...new Set(Object.values(ORDERED_BUILTIN_STT_ALIASES))];
+function buildCanonicalTermPatterns(
+  aliases: Record<string, string>,
+): CanonicalTermPattern[] {
+  return [...new Set(Object.values(aliases))].map((term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return [
+      term.toLowerCase(),
+      new RegExp(
+        `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+        "giu",
+      ),
+      term,
+    ] as [string, RegExp, string];
+  });
+}
+
+const BUILTIN_CANONICAL_TERM_PATTERNS = buildCanonicalTermPatterns(
+  ORDERED_BUILTIN_STT_ALIASES,
+);
+
+interface LoadedVocabularySnapshot {
+  path: string;
+  mtimeMs: number;
+  promptTerms: string[];
+  aliases: Record<string, string>;
+  mergedAliases: Record<string, string>;
+  canonicalTermPatterns: CanonicalTermPattern[];
+}
+
+interface MissingVocabularySnapshot {
+  path: string;
+  missing: true;
+  checkedAtMs: number;
+}
+
+let vocabularySnapshotCache:
+  | LoadedVocabularySnapshot
+  | MissingVocabularySnapshot
+  | null = null;
+
+const UNSAFE_DYNAMIC_ALIAS_SOURCES = new Set([
+  // Wispr-derived history can include broad aliases that are correct in a
+  // session-mining context but corrupt ordinary audio vocabulary.
+  "codecs",
+]);
+
+function getVocabularySnapshotPath(env: STTCleanupEnv): string | null {
+  if (
+    env.QA_VOICE_STT_VOCABULARY_PATH === "" ||
+    env.QA_VOICE_STT_VOCABULARY_DISABLED
+  ) {
+    return null;
+  }
+  return (
+    env.QA_VOICE_STT_VOCABULARY_PATH ??
+    join(homedir(), ".local", "state", "voicelayer", "stt-vocabulary.json")
+  );
+}
+
+function parseVocabularySnapshot(
+  snapshot: STTVocabularySnapshot,
+): Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases"> {
+  const promptTerms = Array.isArray(snapshot.prompt_terms)
+    ? snapshot.prompt_terms.filter(
+        (term): term is string => typeof term === "string" && term.trim() !== "",
+      )
+    : [];
+  const aliases: Record<string, string> = {};
+  if (Array.isArray(snapshot.aliases)) {
+    for (const alias of snapshot.aliases) {
+      if (
+        alias &&
+        typeof alias === "object" &&
+        "from" in alias &&
+        "to" in alias
+      ) {
+        const { from, to } = alias as Partial<STTVocabularyAlias>;
+        if (typeof from === "string" && typeof to === "string") {
+          const trimmedFrom = from.trim();
+          const trimmedTo = to.trim();
+          if (
+            trimmedFrom &&
+            trimmedTo &&
+            !UNSAFE_DYNAMIC_ALIAS_SOURCES.has(trimmedFrom.toLowerCase())
+          ) {
+            aliases[trimmedFrom] = trimmedTo;
+          }
+        }
+      }
+    }
+  }
+  return { promptTerms, aliases };
+}
+
+function buildLoadedVocabularySnapshot(
+  path: string,
+  mtimeMs: number,
+  snapshot: Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases">,
+): LoadedVocabularySnapshot {
+  const mergedAliases = Object.fromEntries(
+    Object.entries({
+      ...ORDERED_BUILTIN_STT_ALIASES,
+      ...snapshot.aliases,
+    }).sort((a, b) => b[0].length - a[0].length),
+  );
+  return {
+    path,
+    mtimeMs,
+    ...snapshot,
+    mergedAliases,
+    canonicalTermPatterns: buildCanonicalTermPatterns(mergedAliases),
+  };
+}
+
+function loadVocabularySnapshot(
+  env: STTCleanupEnv = process.env,
+): LoadedVocabularySnapshot | null {
+  const path = getVocabularySnapshotPath(env);
+  if (!path) return null;
+
+  if (
+    vocabularySnapshotCache &&
+    "missing" in vocabularySnapshotCache &&
+    vocabularySnapshotCache.path === path &&
+    Date.now() - vocabularySnapshotCache.checkedAtMs < 1000
+  ) {
+    return null;
+  }
+
+  if (!existsSync(path)) {
+    vocabularySnapshotCache = {
+      path,
+      missing: true,
+      checkedAtMs: Date.now(),
+    };
+    return null;
+  }
+
+  try {
+    const { mtimeMs } = statSync(path);
+    if (
+      vocabularySnapshotCache &&
+      !("missing" in vocabularySnapshotCache) &&
+      vocabularySnapshotCache.path === path &&
+      vocabularySnapshotCache.mtimeMs === mtimeMs
+    ) {
+      return vocabularySnapshotCache;
+    }
+
+    const parsed = JSON.parse(
+      readFileSync(path, "utf8"),
+    ) as STTVocabularySnapshot;
+    const snapshot = parseVocabularySnapshot(parsed);
+    vocabularySnapshotCache = buildLoadedVocabularySnapshot(path, mtimeMs, snapshot);
+    return vocabularySnapshotCache;
+  } catch {
+    return null;
+  }
+}
+
+export function getSTTVocabularyPrompt(env: STTCleanupEnv = process.env): string {
+  const snapshot = loadVocabularySnapshot(env);
+  const canonicalTerms = [
+    ...new Set([
+      ...(snapshot?.promptTerms ?? []),
+      ...Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
+        (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
+      ),
+    ]),
+  ];
   return canonicalTerms.join(", ");
 }
 
-export function cleanupTranscriptionText(text: string): string {
+export function cleanupTranscriptionText(
+  text: string,
+  env: STTCleanupEnv = process.env,
+): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
 
+  const snapshot = loadVocabularySnapshot(env);
+  const aliases = snapshot?.mergedAliases ?? ORDERED_BUILTIN_STT_ALIASES;
   const rulesConfig: RulesConfig = {
-    aliases: ORDERED_BUILTIN_STT_ALIASES,
+    aliases,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
-  const normalized = normalizeCanonicalTerms(cleaned);
+  const normalized = normalizeCanonicalTerms(
+    cleaned,
+    snapshot?.canonicalTermPatterns ?? BUILTIN_CANONICAL_TERM_PATTERNS,
+  );
   const sentenceCased = normalizeSentenceStarts(normalized);
   return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
 }
@@ -176,10 +367,13 @@ function isMeaningfulTranscription(text: string): boolean {
   return true;
 }
 
-function normalizeCanonicalTerms(text: string): string {
+function normalizeCanonicalTerms(
+  text: string,
+  patterns = BUILTIN_CANONICAL_TERM_PATTERNS,
+): string {
   let result = text;
   const lowerResult = result.toLowerCase();
-  for (const [termLower, pattern, term] of CANONICAL_TERM_PATTERNS) {
+  for (const [termLower, pattern, term] of patterns) {
     if (!lowerResult.includes(termLower)) continue;
     result = result.replace(pattern, term);
   }
@@ -199,6 +393,14 @@ function normalizeSentenceStarts(text: string): string {
     (_match, prefix: string, plural: string, verb: string) => {
       return `${prefix}Pending queue${plural.toLowerCase()} ${verb.toLowerCase()} working`;
     },
+  );
+  result = result.replace(
+    /(^|[.!?]\s+)still expect VoiceLayer to keep\b/giu,
+    "$1Still expect VoiceLayer to keep",
+  );
+  result = result.replace(
+    /(^|[.!?]\s+)real tail of the sentence\b/giu,
+    "$1Real tail of the sentence",
   );
   return result;
 }

@@ -141,6 +141,111 @@ describe("stt-cleanup", () => {
     expect(prompt).not.toContain("nanoclawed");
   });
 
+  it("loads prompt terms from the VoiceBar vocabulary snapshot", async () => {
+    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-prompt-test.json";
+    await Bun.write(
+      snapshotPath,
+      JSON.stringify({
+        prompt_terms: ["Domica", "SongScript"],
+        aliases: [],
+      }),
+    );
+
+    const prompt = getSTTVocabularyPrompt({
+      QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+    });
+
+    expect(prompt).toContain("Domica");
+    expect(prompt).toContain("SongScript");
+    expect(prompt).toContain("cmux");
+  });
+
+  it("keeps cleanup-only phrase aliases out of the STT vocabulary prompt", () => {
+    const prompt = getSTTVocabularyPrompt({
+      QA_VOICE_STT_VOCABULARY_PATH: "",
+    });
+
+    expect(prompt).not.toContain("still expect VoiceLayer to keep");
+    expect(prompt).not.toContain("real tail of the sentence");
+    expect(prompt).toContain("VoiceLayer");
+  });
+
+  it("allows callers to disable the VoiceBar vocabulary snapshot", async () => {
+    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-disabled-test.json";
+    await Bun.write(
+      snapshotPath,
+      JSON.stringify({
+        prompt_terms: ["Domica"],
+        aliases: [{ from: "domekin", to: "Domica" }],
+      }),
+    );
+
+    expect(
+      getSTTVocabularyPrompt({
+        QA_VOICE_STT_VOCABULARY_PATH: "",
+      }),
+    ).not.toContain("Domica");
+    expect(
+      cleanupTranscriptionText("use domekin", {
+        QA_VOICE_STT_VOCABULARY_PATH: "",
+      }),
+    ).toBe("Use domekin");
+    expect(
+      getSTTVocabularyPrompt({
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+      }),
+    ).toContain("Domica");
+  });
+
+  it("applies aliases from the VoiceBar vocabulary snapshot", async () => {
+    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-alias-test.json";
+    await Bun.write(
+      snapshotPath,
+      JSON.stringify({
+        prompt_terms: [],
+        aliases: [
+          { from: "domekin", to: "Domica" },
+          { from: "song strip", to: "SongScript" },
+        ],
+      }),
+    );
+
+    expect(
+      cleanupTranscriptionText("use domekin and song strip", {
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+      }),
+    ).toBe("Use Domica and SongScript");
+  });
+
+  it("cleans context-specific substitutions from long VoiceBar validation reads", () => {
+    expect(
+      cleanupTranscriptionText("and then still accept VoiceLayer to keep the beginning"),
+    ).toBe("And then still expect VoiceLayer to keep the beginning");
+    expect(cleanupTranscriptionText("keeps the real tale of the sentence")).toBe(
+      "Keeps the real tail of the sentence",
+    );
+    expect(cleanupTranscriptionText("real tale of the sentence")).toBe(
+      "Real tail of the sentence",
+    );
+  });
+
+  it("ignores unsafe broad aliases from the VoiceBar vocabulary snapshot", async () => {
+    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
+    await Bun.write(
+      snapshotPath,
+      JSON.stringify({
+        prompt_terms: [],
+        aliases: [{ from: "codecs", to: "Codex" }],
+      }),
+    );
+
+    expect(
+      cleanupTranscriptionText("audio codecs need testing", {
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+      }),
+    ).toBe("Audio codecs need testing");
+  });
+
   it("cleans spoken project and domain aliases to canonical spelling", () => {
     const cleaned = cleanupTranscriptionText(
       "c mux brain layer voice layer golems t three code kilos project nano clawed apple container docker telegram whats app",

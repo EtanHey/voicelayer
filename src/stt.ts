@@ -663,6 +663,7 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
       const headResult = await this.verifyLeadingPunctuation(
+        audioPath,
         wavData,
         text,
         options,
@@ -674,7 +675,9 @@ export class WhisperServerBackend implements STTBackend {
       );
       const cleanedText = trimEchoedTrailingPhrase(verifiedText);
       const backendParts = [this.name];
-      if (headResult.changed) backendParts.push("head");
+      if (headResult.changed) {
+        backendParts.push(headResult.backendSuffix ?? "head");
+      }
       if (verifiedText !== headResult.text) backendParts.push("tail");
       if (cleanedText !== verifiedText) backendParts.push("clean");
       return {
@@ -701,10 +704,11 @@ export class WhisperServerBackend implements STTBackend {
   }
 
   private async verifyLeadingPunctuation(
+    audioPath: string,
     wavData: Uint8Array,
     fullText: string,
     options?: STTTranscribeOptions,
-  ): Promise<{ text: string; changed: boolean }> {
+  ): Promise<{ text: string; changed: boolean; backendSuffix?: string }> {
     if (!LEADING_PUNCTUATION.test(fullText.trim())) {
       return { text: fullText, changed: false };
     }
@@ -724,7 +728,25 @@ export class WhisperServerBackend implements STTBackend {
       }
     } catch (err) {
       console.error(
-        `[voicelayer] whisper-server head verification failed; keeping full-window text: ${
+        `[voicelayer] whisper-server head verification failed; trying whisper-cli fallback: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    try {
+      const fallback = await this.fallbackBackend.transcribe(audioPath, options);
+      const fallbackText = fallback.text.trim();
+      if (
+        fallbackText &&
+        !LEADING_PUNCTUATION.test(fallbackText) &&
+        hasLeadingPunctuationRepairOverlap(fullText, fallbackText)
+      ) {
+        return { text: fallbackText, changed: true, backendSuffix: "head-cli" };
+      }
+    } catch (err) {
+      console.error(
+        `[voicelayer] whisper-cli head verification failed; keeping full-window text: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );

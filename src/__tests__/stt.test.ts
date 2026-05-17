@@ -418,12 +418,48 @@ describe("STT backends", () => {
             ? ", the cmux thing is another skill"
             : "unrelated retry hallucination";
         },
+        fallbackBackend: {
+          name: "whisper-cpp",
+          isAvailable: async () => true,
+          transcribe: async () => ({
+            text: "also unrelated fallback text",
+            backend: "whisper-cpp",
+            durationMs: 1,
+          }),
+        },
       });
 
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(", the cmux thing is another skill");
       expect(result.backend).toBe("whisper-server");
+    });
+
+    it("falls back to whisper-cli when resident head retry keeps leading punctuation", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-leading-punctuation-cli-fallback-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(8));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () =>
+          ", it's still a little ambiguous, but it is much",
+        fallbackBackend: {
+          name: "whisper-cpp",
+          isAvailable: async () => true,
+          transcribe: async () => ({
+            text: "I mean, it's still a little ambiguous, but it is much",
+            backend: "whisper-cpp",
+            durationMs: 1,
+          }),
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "I mean, it's still a little ambiguous, but it is much",
+      );
+      expect(result.backend).toBe("whisper-server+head-cli");
     });
 
     it("trims a short echoed phrase from the end of medium resident decodes", async () => {
