@@ -20,6 +20,9 @@ voicelayer bar-stop
 
 The Voice Bar appears as a floating pill at the top of your screen.
 
+For the current F5, Logitech side-button recording, Mouse 4 Enter, Karabiner,
+and rebuild procedure, see [VoiceBar Hotkeys and Mouse Buttons](voicebar-hotkeys.md).
+
 ## Features
 
 ### State Display

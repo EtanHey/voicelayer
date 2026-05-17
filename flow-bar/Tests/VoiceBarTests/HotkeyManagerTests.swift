@@ -26,6 +26,7 @@ final class HotkeyManagerTests: XCTestCase {
     func testDefaultHotkeyConfigurationIncludesInternalF18Relay() {
         XCTAssertEqual(HotkeyManager.defaultTargetKeycodes, [79, 96])
         XCTAssertEqual(HotkeyManager.defaultTargetMouseButtons, [4, 5])
+        XCTAssertEqual(HotkeyManager.defaultEnterMouseButtons, [3])
         XCTAssertFalse(HotkeyManager.defaultUsesModifierMode)
     }
 
@@ -66,10 +67,35 @@ final class HotkeyManagerTests: XCTestCase {
         XCTAssertEqual(
             mouseHotkeyAction(
                 type: .otherMouseDown,
-                buttonNumber: 3,
-                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons
+                buttonNumber: 2,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
             ),
             .ignore
+        )
+    }
+
+    func testMouseButtonFourSendsEnterOnPress() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseDown,
+                buttonNumber: 3,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
+            ),
+            .sendEnter
+        )
+    }
+
+    func testMouseButtonFourReleaseIsConsumed() {
+        XCTAssertEqual(
+            mouseHotkeyAction(
+                type: .otherMouseUp,
+                buttonNumber: 3,
+                targetMouseButtons: HotkeyManager.defaultTargetMouseButtons,
+                enterMouseButtons: HotkeyManager.defaultEnterMouseButtons
+            ),
+            .consume
         )
     }
 
