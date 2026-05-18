@@ -132,6 +132,7 @@ const PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bperiod\b/gi, "."],
   [/\bfull stop\b/gi, "."],
   [/\bcomma\b/gi, ","],
+  [/\bquestionmark\b/gi, "?"],
   [/\bquestion mark\b/gi, "?"],
   [/\bexclamation mark\b/gi, "!"],
   [/\bexclamation point\b/gi, "!"],
@@ -176,6 +177,40 @@ const PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bellipsis\b/gi, "..."],
 ];
 
+const TERMINAL_PERIOD_ABBREVIATIONS = new Set([
+  "dr",
+  "e.g",
+  "etc",
+  "i.e",
+  "jr",
+  "mr",
+  "mrs",
+  "ms",
+  "prof",
+  "sr",
+  "st",
+  "vs",
+]);
+
+function preservesPeriodBeforeTerminalPunctuation(token: string): boolean {
+  if (token.endsWith("..")) {
+    return true;
+  }
+
+  const normalized = token
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "")
+    .toLowerCase();
+
+  if (TERMINAL_PERIOD_ABBREVIATIONS.has(normalized)) {
+    return true;
+  }
+
+  return (
+    /^(?:[a-z]\.)+[a-z]$/i.test(normalized) ||
+    /\d+\.\d+/.test(normalized)
+  );
+}
+
 function applyPunctuation(text: string): string {
   let result = text;
   for (const [pattern, replacement] of PUNCTUATION_MAP) {
@@ -185,6 +220,14 @@ function applyPunctuation(text: string): string {
   result = result.replace(/\s+([.,;:?%)}\]`'"]|!(?!=))/g, "$1");
   // Whisper can auto-append the same terminal punctuation after spoken commands
   // such as "question mark?", which would otherwise become "??".
+  result = result.replace(/([!?])\.{1,2}(?=\s|$)/g, "$1");
+  result = result.replace(
+    /(\S+)\.([!?])(?=\s|$)/g,
+    (match, token, punctuation) =>
+      preservesPeriodBeforeTerminalPunctuation(token)
+        ? match
+        : `${token}${punctuation}`,
+  );
   result = result.replace(/([!?])\1+/g, "$1");
   result = result.replace(/,{2,}/g, ",");
   result = result.replace(/,\s*([!?])(?=\s*$)/g, "$1");

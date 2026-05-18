@@ -60,6 +60,7 @@ describe("rules-engine", () => {
 
     it("converts question mark and exclamation", () => {
       expect(applyRules("what question mark")).toBe("What?");
+      expect(applyRules("what questionmark")).toBe("What?");
       expect(applyRules("wow exclamation mark")).toBe("Wow!");
     });
 
@@ -67,6 +68,38 @@ describe("rules-engine", () => {
       expect(applyRules("what question mark?")).toBe("What?");
       expect(applyRules("what, question mark?")).toBe("What?");
       expect(applyRules("wow, exclamation mark!")).toBe("Wow!");
+    });
+
+    it("collapses mixed terminal punctuation around dictated question marks", () => {
+      expect(applyRules("much better BrainLayer?.")).toBe(
+        "Much better BrainLayer?",
+      );
+      expect(applyRules("much better BrainLayer.?.")).toBe(
+        "Much better BrainLayer?",
+      );
+    });
+
+    it("preserves dictated ellipses before terminal punctuation", () => {
+      expect(applyRules("wait ellipsis question mark")).toBe("Wait...?");
+      expect(applyRules("wait ellipsis exclamation mark")).toBe("Wait...!");
+    });
+
+    it("preserves dictated ellipses after terminal punctuation", () => {
+      expect(applyRules("what question mark ellipsis")).toBe("What?...");
+      expect(applyRules("wow exclamation mark ellipsis")).toBe("Wow!...");
+    });
+
+    it("preserves abbreviation periods before terminal punctuation", () => {
+      expect(applyRules("are you from the U.S.?")).toBe(
+        "Are you from the U.S.?",
+      );
+      expect(applyRules("are you from the U.S.?.")).toBe(
+        "Are you from the U.S.?",
+      );
+      expect(applyRules("etc.?")).toBe("Etc.?");
+      expect(applyRules("etc.?.")).toBe("Etc.?");
+      expect(applyRules("watch out etc.!")).toBe("Watch out etc.!");
+      expect(applyRules("watch out etc.!.")).toBe("Watch out etc.!");
     });
 
     it("collapses duplicated commas from STT plus dictated punctuation", () => {
