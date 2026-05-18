@@ -69,6 +69,21 @@ describe("rules-engine", () => {
       expect(applyRules("wow, exclamation mark!")).toBe("Wow!");
     });
 
+    it("collapses duplicated commas from STT plus dictated punctuation", () => {
+      expect(applyRules("words about,, for fuck's sake")).toBe(
+        "Words about, for fuck's sake",
+      );
+      expect(applyRules("but yeah,, I'm just saying")).toBe(
+        "But yeah, I'm just saying",
+      );
+    });
+
+    it("preserves single commas from ordinary STT punctuation", () => {
+      expect(applyRules("a very long, feedback")).toBe(
+        "A very long, feedback",
+      );
+    });
+
     it("preserves dictated comma before nonterminal punctuation", () => {
       expect(applyRules("foo comma question mark bar")).toBe("Foo,? Bar");
       expect(applyRules("foo comma exclamation mark bar")).toBe("Foo,! Bar");
