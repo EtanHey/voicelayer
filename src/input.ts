@@ -91,7 +91,10 @@ const BROKEN_MIC_MIN_DURATION_MS = 1500;
 const BROKEN_MIC_MAX_RMS = 1;
 const BROKEN_MIC_MAX_DBFS = -90;
 const TRAILING_SILENCE_TRIM_WINDOW_MS = 250;
-const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 900;
+const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
+const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS = 100;
+const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK = 350;
+const TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR = 0.12;
 const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
 const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
 const PRE_ROLL_MS = 500;
@@ -359,6 +362,48 @@ function pcmDurationMs(pcmData: Uint8Array, sampleRate = SAMPLE_RATE): number {
   return Math.round((samples / sampleRate) * 1000);
 }
 
+function isActiveTrimWindow(pcmData: Uint8Array): boolean {
+  const sampleCount = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
+  if (sampleCount === 0) return false;
+
+  const view = new DataView(
+    pcmData.buffer,
+    pcmData.byteOffset,
+    pcmData.byteLength,
+  );
+  let sumSquares = 0;
+  let peak = 0;
+  let zeroCrossings = 0;
+  let previousSign = 0;
+  let hasPreviousSign = false;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = view.getInt16(i * BYTES_PER_SAMPLE, true);
+    const absSample = Math.abs(sample);
+    sumSquares += sample * sample;
+    peak = Math.max(peak, absSample);
+
+    const sign = sample > 0 ? 1 : sample < 0 ? -1 : 0;
+    if (sign !== 0) {
+      if (hasPreviousSign && sign !== previousSign) {
+        zeroCrossings += 1;
+      }
+      previousSign = sign;
+      hasPreviousSign = true;
+    }
+  }
+
+  const rms = Math.sqrt(sumSquares / sampleCount);
+  if (rms >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) return true;
+
+  const zeroCrossingRate = zeroCrossings / sampleCount;
+  return (
+    rms >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS &&
+    peak >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK &&
+    zeroCrossingRate <= TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR
+  );
+}
+
 export function trimTrailingSilenceForSTT(
   pcmData: Uint8Array,
   pressToTalk: boolean,
@@ -387,7 +432,7 @@ export function trimTrailingSilenceForSTT(
   for (let offset = 0; offset < pcmData.byteLength; offset += alignedWindowBytes) {
     const windowEnd = Math.min(offset + alignedWindowBytes, pcmData.byteLength);
     const window = pcmData.slice(offset, windowEnd);
-    if (calculateRMS(window) >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) {
+    if (isActiveTrimWindow(window)) {
       lastActiveEnd = windowEnd;
     }
   }

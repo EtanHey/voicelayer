@@ -401,6 +401,20 @@ describe("input module", () => {
       return buffer;
     }
 
+    function pcmWithSineWave(peak: number, durationMs: number): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      const frequencyHz = 180;
+      for (let i = 0; i < samples; i++) {
+        const sample = Math.round(
+          peak * Math.sin((2 * Math.PI * frequencyHz * i) / 16000),
+        );
+        view.setInt16(i * 2, sample, true);
+      }
+      return buffer;
+    }
+
     it("trims a long quiet PTT tail before STT while preserving a short pad", () => {
       const speech = pcmWithConstantSample(2000, 2000);
       const quietTail = pcmWithConstantSample(0, 9000);
@@ -427,6 +441,60 @@ describe("input module", () => {
 
       expect(result.trimmed).toBe(true);
       expect(result.transcribedDurationMs).toBe(3000);
+    });
+
+    it("does not trim sustained quiet speech after an early loud phrase", () => {
+      const opening = pcmWithConstantSample(2000, 2000);
+      const shortPause = pcmWithConstantSample(0, 1500);
+      const quietSpeech = pcmWithConstantSample(350, 18000);
+      const finalPause = pcmWithConstantSample(0, 750);
+      const pcm = new Uint8Array(
+        opening.byteLength +
+          shortPause.byteLength +
+          quietSpeech.byteLength +
+          finalPause.byteLength,
+      );
+      pcm.set(opening);
+      pcm.set(shortPause, opening.byteLength);
+      pcm.set(quietSpeech, opening.byteLength + shortPause.byteLength);
+      pcm.set(
+        finalPause,
+        opening.byteLength + shortPause.byteLength + quietSpeech.byteLength,
+      );
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(false);
+      expect(result.rawDurationMs).toBe(22250);
+      expect(result.transcribedDurationMs).toBe(22250);
+    });
+
+    it("does not trim speech-like low-RMS audio that the no-speech gate accepts", () => {
+      const opening = pcmWithConstantSample(2000, 2000);
+      const shortPause = pcmWithConstantSample(0, 1500);
+      const quietSpeech = pcmWithSineWave(400, 18000);
+      const finalPause = pcmWithConstantSample(0, 750);
+      const pcm = new Uint8Array(
+        opening.byteLength +
+          shortPause.byteLength +
+          quietSpeech.byteLength +
+          finalPause.byteLength,
+      );
+      pcm.set(opening);
+      pcm.set(shortPause, opening.byteLength);
+      pcm.set(quietSpeech, opening.byteLength + shortPause.byteLength);
+      pcm.set(
+        finalPause,
+        opening.byteLength + shortPause.byteLength + quietSpeech.byteLength,
+      );
+
+      expect(evaluateNoSpeechGate(quietSpeech).allowed).toBe(true);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(false);
+      expect(result.rawDurationMs).toBe(22250);
+      expect(result.transcribedDurationMs).toBe(22250);
     });
 
     it("does not trim ordinary short pauses before stop", () => {

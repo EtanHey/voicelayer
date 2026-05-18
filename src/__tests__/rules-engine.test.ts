@@ -63,6 +63,17 @@ describe("rules-engine", () => {
       expect(applyRules("wow exclamation mark")).toBe("Wow!");
     });
 
+    it("does not duplicate punctuation when STT already appended it", () => {
+      expect(applyRules("what question mark?")).toBe("What?");
+      expect(applyRules("what, question mark?")).toBe("What?");
+      expect(applyRules("wow, exclamation mark!")).toBe("Wow!");
+    });
+
+    it("preserves dictated comma before nonterminal punctuation", () => {
+      expect(applyRules("foo comma question mark bar")).toBe("Foo,? Bar");
+      expect(applyRules("foo comma exclamation mark bar")).toBe("Foo,! Bar");
+    });
+
     it("converts open/close paren", () => {
       expect(applyRules("open paren value close paren")).toBe("(value)");
     });

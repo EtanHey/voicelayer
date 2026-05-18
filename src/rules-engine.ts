@@ -183,6 +183,10 @@ function applyPunctuation(text: string): string {
   }
   // Clean up space before punctuation that should attach left
   result = result.replace(/\s+([.,;:?%)}\]`'"]|!(?!=))/g, "$1");
+  // Whisper can auto-append the same terminal punctuation after spoken commands
+  // such as "question mark?", which would otherwise become "??".
+  result = result.replace(/([!?])\1+/g, "$1");
+  result = result.replace(/,\s*([!?])(?=\s*$)/g, "$1");
   // Clean up space after open brackets
   result = result.replace(/([({[\[`'"])\s+/g, "$1");
   return result;
