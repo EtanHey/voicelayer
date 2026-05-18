@@ -201,6 +201,51 @@ function hasLeadingPunctuationRepairOverlap(
   return false;
 }
 
+function repairLeadingPunctuationFromHead(
+  originalText: string,
+  headText: string,
+): string | null {
+  const trimmedOriginal = originalText.trim();
+  const trimmedHead = headText.trim();
+  if (
+    !LEADING_PUNCTUATION.test(trimmedOriginal) ||
+    LEADING_PUNCTUATION.test(trimmedHead)
+  ) {
+    return null;
+  }
+
+  const originalWords = normalizeChunkWords(trimmedOriginal).filter(
+    (word) => !PUNCTUATION_ONLY_TOKEN.test(word),
+  );
+  const headWords = normalizeChunkWords(trimmedHead);
+  const overlapWords = Math.min(
+    MIN_LEADING_PUNCTUATION_OVERLAP_WORDS,
+    originalWords.length,
+  );
+  if (overlapWords === 0) return null;
+
+  const originalPrefix = overlapKey(originalWords.slice(0, overlapWords));
+  for (
+    let insertedWords = 0;
+    insertedWords <= Math.min(MAX_LEADING_PUNCTUATION_INSERTED_WORDS, headWords.length);
+    insertedWords++
+  ) {
+    if (
+      overlapKey(
+        headWords.slice(insertedWords, insertedWords + overlapWords),
+      ) !== originalPrefix
+    ) {
+      continue;
+    }
+
+    const strippedOriginal = trimmedOriginal.replace(LEADING_PUNCTUATION, "");
+    const insertedPrefix = headWords.slice(0, insertedWords).join(" ");
+    return [insertedPrefix, strippedOriginal].filter(Boolean).join(" ").trim();
+  }
+
+  return null;
+}
+
 interface WavPcmInfo {
   durationSeconds: number;
   dataOffset: number;
@@ -211,6 +256,7 @@ interface WavPcmInfo {
 
 const WAV_TAIL_VERIFY_MIN_SECONDS = 20;
 const WAV_TAIL_VERIFY_SECONDS = 12;
+const WAV_HEAD_VERIFY_SECONDS = 12;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
@@ -632,14 +678,16 @@ export class WhisperServerBackend implements STTBackend {
     const wavData = new Uint8Array(await Bun.file(audioPath).arrayBuffer());
 
     try {
-      const chunkedText = await this.transcribeChunkedLongRecording(
+      const chunkedResult = await this.transcribeChunkedLongRecording(
         wavData,
         options,
       );
-      if (chunkedText) {
+      if (chunkedResult) {
+        const backendParts = [this.name, "chunks"];
+        if (chunkedResult.headChanged) backendParts.push("head");
         return {
-          text: chunkedText,
-          backend: `${this.name}+chunks`,
+          text: chunkedResult.text,
+          backend: backendParts.join("+"),
           durationMs: Date.now() - start,
         };
       }
@@ -793,7 +841,7 @@ export class WhisperServerBackend implements STTBackend {
   private async transcribeChunkedLongRecording(
     wavData: Uint8Array,
     options?: STTTranscribeOptions,
-  ): Promise<string | null> {
+  ): Promise<{ text: string; headChanged: boolean } | null> {
     const info = parseWavPcmInfo(wavData);
     if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
       return null;
@@ -830,7 +878,47 @@ export class WhisperServerBackend implements STTBackend {
       }
     }
 
-    return mergeChunkTranscripts(transcripts) || null;
+    const mergedText = mergeChunkTranscripts(transcripts);
+    if (!mergedText) return null;
+
+    const headResult = await this.verifyChunkedLeadingPunctuation(
+      wavData,
+      mergedText,
+      options,
+    );
+    return { text: headResult.text, headChanged: headResult.changed };
+  }
+
+  private async verifyChunkedLeadingPunctuation(
+    wavData: Uint8Array,
+    fullText: string,
+    options?: STTTranscribeOptions,
+  ): Promise<{ text: string; changed: boolean }> {
+    if (!LEADING_PUNCTUATION.test(fullText.trim())) {
+      return { text: fullText, changed: false };
+    }
+
+    const headWav = sliceWavSegment(wavData, 0, WAV_HEAD_VERIFY_SECONDS);
+    if (!headWav) return { text: fullText, changed: false };
+
+    try {
+      const headText = await this.transcribeResident(
+        headWav,
+        buildWhisperServerOptions(options),
+      );
+      const repaired = repairLeadingPunctuationFromHead(fullText, headText);
+      if (repaired) {
+        return { text: repaired, changed: true };
+      }
+    } catch (err) {
+      console.error(
+        `[voicelayer] whisper-server chunked head verification failed; keeping chunked text: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    return { text: fullText, changed: false };
   }
 }
 

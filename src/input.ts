@@ -95,6 +95,7 @@ const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS = 100;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK = 350;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR = 0.12;
+const PTT_STOP_CAPTURE_DRAIN_MS = 250;
 const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
 const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
 const PRE_ROLL_MS = 500;
@@ -706,6 +707,14 @@ export async function terminateRecorderProcess(
   await waitForExit();
 }
 
+export function isPttStopDrainComplete(
+  stopRequestedAtMs: number,
+  nowMs: number,
+  drainMs = PTT_STOP_CAPTURE_DRAIN_MS,
+): boolean {
+  return nowMs - stopRequestedAtMs >= drainMs;
+}
+
 /**
  * Record audio from mic to a PCM buffer.
  * Returns the raw PCM data as a Uint8Array.
@@ -797,6 +806,27 @@ export async function recordToBuffer(
     let resolved = false;
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
+    let pttStopRequestedAtMs: number | null = null;
+
+    const beginPttStopDrain = () => {
+      if (pttStopRequestedAtMs !== null) return;
+      pttStopRequestedAtMs = Date.now();
+      console.error(
+        `[voicelayer] Stop signal received — capturing ${PTT_STOP_CAPTURE_DRAIN_MS}ms PTT tail before ending recording`,
+      );
+    };
+
+    const finishIfPttStopDrainComplete = () => {
+      if (
+        pttStopRequestedAtMs !== null &&
+        isPttStopDrainComplete(pttStopRequestedAtMs, Date.now())
+      ) {
+        console.error("[voicelayer] PTT tail capture complete — ending recording");
+        finish();
+        return true;
+      }
+      return false;
+    };
 
     const finish = (error?: Error) => {
       if (resolved) return;
@@ -841,13 +871,14 @@ export async function recordToBuffer(
     // Timeout handler
     const timer = setTimeout(() => finish(), timeoutMs);
     stopSignalPoll = setInterval(() => {
+      if (pressToTalk && finishIfPttStopDrainComplete()) return;
       if (!hasStopSignal()) return;
       clearStopSignal();
-      console.error(
-        pressToTalk
-          ? "[voicelayer] Stop signal received — ending PTT recording"
-          : "[voicelayer] Stop signal received — ending recording",
-      );
+      if (pressToTalk) {
+        beginPttStopDrain();
+        return;
+      }
+      console.error("[voicelayer] Stop signal received — ending recording");
       finish();
     }, 50);
     stopSignalPoll.unref?.();
@@ -995,10 +1026,9 @@ export async function recordToBuffer(
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
               clearStopSignal();
-              console.error(
-                "[voicelayer] Stop signal received — ending PTT recording",
-              );
-              finish();
+              beginPttStopDrain();
+            }
+            if (finishIfPttStopDrainComplete()) {
               return;
             }
           } else {

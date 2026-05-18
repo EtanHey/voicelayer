@@ -19,6 +19,7 @@ import {
   clearInput,
   evaluateNoSpeechGate,
   isChunkedSTTEnabled,
+  isPttStopDrainComplete,
   selectChunksWithPreRoll,
   transcribeChunkSequence,
   finalizeTranscriptionText,
@@ -318,6 +319,13 @@ describe("input module", () => {
   describe("clearInput", () => {
     it("does not throw (no-op)", () => {
       expect(() => clearInput()).not.toThrow();
+    });
+  });
+
+  describe("PTT stop capture drain", () => {
+    it("keeps recording briefly after a PTT stop signal to preserve final words", () => {
+      expect(isPttStopDrainComplete(1000, 1249, 250)).toBe(false);
+      expect(isPttStopDrainComplete(1000, 1250, 250)).toBe(true);
     });
   });
 

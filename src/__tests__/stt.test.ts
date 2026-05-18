@@ -521,6 +521,31 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
+    it("repairs leading punctuation in chunked long recordings with a clean head decode", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-leading-punctuation-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return ", what? Slide six. I don't think she said";
+          if (calls === 2) return "she said anything was too long";
+          if (calls === 3) return "too long and we should fix the handoff";
+          if (calls === 4) return "the handoff before sending it";
+          return "uh what slide six i don't think she said";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "uh what? Slide six. I don't think she said anything was too long and we should fix the handoff before sending it",
+      );
+      expect(result.backend).toBe("whisper-server+chunks+head");
+    });
+
     it("falls back from chunked mode when a chunk decodes empty", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-chunk-empty-test.wav";
       await Bun.write(wavPath, makePcm16Wav(95));
