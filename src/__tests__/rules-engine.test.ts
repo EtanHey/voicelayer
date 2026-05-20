@@ -102,6 +102,22 @@ describe("rules-engine", () => {
       expect(applyRules("watch out etc.!.")).toBe("Watch out etc.!");
     });
 
+    it("preserves abbreviation periods before commas", () => {
+      expect(applyRules("Apple Inc., which is huge")).toBe(
+        "Apple Inc., which is huge",
+      );
+      expect(applyRules("Acme Co., yesterday")).toBe("Acme Co., yesterday");
+      expect(applyRules("Acme Corp., yesterday")).toBe(
+        "Acme Corp., yesterday",
+      );
+      expect(applyRules("we hired someone with a Ph.D., yeah")).toBe(
+        "We hired someone with a Ph.D., yeah",
+      );
+      expect(applyRules("are you from the U.S., or Canada")).toBe(
+        "Are you from the U.S., or Canada",
+      );
+    });
+
     it("collapses duplicated commas from STT plus dictated punctuation", () => {
       expect(applyRules("words about,, for fuck's sake")).toBe(
         "Words about, for fuck's sake",
@@ -109,6 +125,45 @@ describe("rules-engine", () => {
       expect(applyRules("but yeah,, I'm just saying")).toBe(
         "But yeah, I'm just saying",
       );
+    });
+
+    it("collapses period-comma artifacts left by filler removal", () => {
+      expect(applyRules("the language should be fixed a little bit. um, yeah")).toBe(
+        "The language should be fixed a little bit, yeah",
+      );
+      expect(applyRules("the language should be fixed a little bit., yeah")).toBe(
+        "The language should be fixed a little bit, yeah",
+      );
+      expect(applyRules("pi is 3.14. um, yes")).toBe("Pi is 3.14, yes");
+      expect(applyRules("version 3.14., yes")).toBe("Version 3.14, yes");
+    });
+
+    it("adds missing spaces around quoted prose", () => {
+      expect(
+        applyRules(
+          'the syllabus shouldn\'t be"What were we through today?"or it should be"What would we talk about today?"We\'re still missing it',
+        ),
+      ).toBe(
+        'The syllabus shouldn\'t be "What were we through today?" or it should be "What would we talk about today?" We\'re still missing it',
+      );
+      expect(applyRules('the sign says"hello?"then leave')).toBe(
+        'The sign says "hello?" then leave',
+      );
+    });
+
+    it("does not add prose spacing inside quoted code strings", () => {
+      expect(
+        applyRules(
+          "condition question mark double quote yes double quote colon double quote no double quote",
+        ),
+      ).toBe('Condition?"yes":"no"');
+      expect(applyRules('x="y?"z')).toBe('X="y?"z');
+      expect(applyRules('x+"y?"z')).toBe('X+"y?"z');
+      expect(applyRules('r"hello?"')).toBe('R"hello?"');
+      expect(applyRules('path=r"c:?"')).toBe('Path=r"c:?"');
+      expect(applyRules('br"hello?"')).toBe('Br"hello?"');
+      expect(applyRules('path=rb"c:?"')).toBe('Path=rb"c:?"');
+      expect(applyRules('for"What?"')).toBe('For "What?"');
     });
 
     it("preserves single commas from ordinary STT punctuation", () => {

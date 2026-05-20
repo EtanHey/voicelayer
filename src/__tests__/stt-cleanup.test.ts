@@ -309,6 +309,21 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("cleans punctuation artifacts from archived VoiceBar prose", () => {
+    expect(
+      cleanupTranscriptionText(
+        'the last slide about the syllabus shouldn\'t be"What were we through today?"or it should be"What would we talk about today?"We\'re still missing the next visual',
+      ),
+    ).toBe(
+      'The last slide about the syllabus shouldn\'t be "What were we through today?" or it should be "What would we talk about today?" We\'re still missing the next visual',
+    );
+    expect(
+      cleanupTranscriptionText(
+        "yeah, the language should be fixed a little bit. um, yeah.",
+      ),
+    ).toBe("Yeah, the language should be fixed a little bit, yeah.");
+  });
+
   it("ignores unsafe broad aliases from the VoiceBar vocabulary snapshot", async () => {
     const snapshotPath = "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
     await Bun.write(

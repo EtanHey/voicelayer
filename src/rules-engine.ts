@@ -178,12 +178,18 @@ const PUNCTUATION_MAP: [RegExp, string][] = [
 const TERMINAL_PERIOD_ABBREVIATIONS = new Set([
   "dr",
   "e.g",
+  "co",
+  "corp",
   "etc",
   "i.e",
+  "inc",
   "jr",
+  "ltd",
+  "m.d",
   "mr",
   "mrs",
   "ms",
+  "ph.d",
   "prof",
   "sr",
   "st",
@@ -195,9 +201,7 @@ function preservesPeriodBeforeTerminalPunctuation(token: string): boolean {
     return true;
   }
 
-  const normalized = token
-    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "")
-    .toLowerCase();
+  const normalized = normalizeTerminalPunctuationToken(token);
 
   if (TERMINAL_PERIOD_ABBREVIATIONS.has(normalized)) {
     return true;
@@ -207,6 +211,25 @@ function preservesPeriodBeforeTerminalPunctuation(token: string): boolean {
     /^(?:[a-z]\.)+[a-z]$/i.test(normalized) ||
     /\d+\.\d+/.test(normalized)
   );
+}
+
+function preservesPeriodBeforeComma(token: string): boolean {
+  if (token.endsWith("..")) {
+    return true;
+  }
+
+  const normalized = normalizeTerminalPunctuationToken(token);
+
+  return (
+    TERMINAL_PERIOD_ABBREVIATIONS.has(normalized) ||
+    /^(?:[a-z]\.)+[a-z]$/i.test(normalized)
+  );
+}
+
+function normalizeTerminalPunctuationToken(token: string): string {
+  return token
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "")
+    .toLowerCase();
 }
 
 function applyPunctuation(text: string): string {
@@ -226,12 +249,51 @@ function applyPunctuation(text: string): string {
         ? match
         : `${token}${punctuation}`,
   );
+  result = result.replace(/(\S+)\.,(?=\s|$)/g, (match, token) =>
+    preservesPeriodBeforeComma(token) ? match : `${token},`,
+  );
   result = result.replace(/([!?])\1+/g, "$1");
   result = result.replace(/,{2,}/g, ",");
   result = result.replace(/,\s*([!?])(?=\s*$)/g, "$1");
   // Clean up space after open brackets
   result = result.replace(/([({[\[`'"])\s+/g, "$1");
+  result = result.replace(
+    /([\p{L}\p{N}])"(?=\p{L}[^"]*[.!?]")/gu,
+    (match, prefix: string, offset: number) => {
+      const quoteIndex = offset + prefix.length;
+      return hasCodeStringPrefixBeforeQuote(result, quoteIndex)
+        ? match
+        : `${prefix} "`;
+    },
+  );
+  result = spaceAfterClosingProseQuotes(result);
   return result;
+}
+
+function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boolean {
+  const beforeQuote = text.slice(0, quoteIndex);
+  return /(?:^|[^\p{L}\p{N}_])(?:[rRuUbBfF]|[rR][fFbB]|[fFbB][rR])$/u.test(
+    beforeQuote,
+  );
+}
+
+function spaceAfterClosingProseQuotes(text: string): string {
+  return text.replace(/(?<=[.!?])"(?=\p{L})/gu, (match, offset) => {
+    const beforeClosingQuote = text.slice(0, offset);
+    const quoteCountBefore = beforeClosingQuote.match(/"/g)?.length ?? 0;
+    if (quoteCountBefore % 2 !== 1) {
+      return match;
+    }
+
+    const openingQuoteIndex = beforeClosingQuote.lastIndexOf('"');
+    const charBeforeOpeningQuote =
+      openingQuoteIndex > 0 ? text[openingQuoteIndex - 1] : "";
+    if (charBeforeOpeningQuote && !/\s/u.test(charBeforeOpeningQuote)) {
+      return match;
+    }
+
+    return `${match} `;
+  });
 }
 
 function normalizePercentPhrases(text: string): string {
