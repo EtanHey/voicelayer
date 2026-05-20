@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, it, expect } from "bun:test";
 import { createHash } from "crypto";
 import {
+  existsSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -22,6 +24,7 @@ import {
   isPttStopDrainComplete,
   selectChunksWithPreRoll,
   transcribeChunkSequence,
+  finalizeTranscriptionTextForSurface,
   finalizeTranscriptionText,
   trimTrailingSilenceForSTT,
   terminateRecorderProcess,
@@ -171,17 +174,22 @@ describe("input module", () => {
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
     });
 
-    it("retains the last wav before honoring a late cancel during transcription", () => {
+    it("retains the last wav before updating retranscription state or honoring a late cancel", () => {
       const source = readFileSync(join(import.meta.dir, "../input.ts"), "utf8");
       const retainIndex = source.indexOf(
         "writeFileSync(retainedRecordingFilePath(), sttWavData);",
+      );
+      const retainedSurfaceIndex = source.indexOf(
+        "retainedPolishSurface = polishSurfaceForWaitOptions(options);",
       );
       const lateCancelIndex = source.indexOf(
         '"[voicelayer] Recording cancelled during transcription — discarding transcript"',
       );
 
       expect(retainIndex).toBeGreaterThan(-1);
+      expect(retainedSurfaceIndex).toBeGreaterThan(-1);
       expect(lateCancelIndex).toBeGreaterThan(-1);
+      expect(retainIndex).toBeLessThan(retainedSurfaceIndex);
       expect(retainIndex).toBeLessThan(lateCancelIndex);
     });
   });
@@ -776,6 +784,60 @@ describe("input module", () => {
       expect(
         finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "rules" }),
       ).toBe("BrainLayer");
+    });
+
+    it("routes polish only for VoiceBar dictation surfaces", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "voicelayer-input-polish-"));
+      const socketPath = join(tempDir, "polish.sock");
+      const logPath = join(tempDir, "polish.jsonl");
+      const received: string[] = [];
+      const server = Bun.listen<{ buffer: string }>({
+        unix: socketPath,
+        socket: {
+          open(socket) {
+            socket.data = { buffer: "" };
+          },
+          data(socket, raw) {
+            socket.data.buffer += raw.toString("utf-8");
+            const lines = socket.data.buffer.split("\n");
+            socket.data.buffer = lines.pop() ?? "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              received.push(line);
+              socket.write(`${JSON.stringify({ text: "BrainLayer." })}\n`);
+            }
+          },
+          close() {},
+          error() {},
+          drain() {},
+        },
+      });
+
+      try {
+        const env = {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: socketPath,
+          QA_VOICE_STT_POLISH_LOG_PATH: logPath,
+        };
+
+        await expect(
+          finalizeTranscriptionTextForSurface("brain layer", null, env),
+        ).resolves.toBe("BrainLayer");
+        await expect(
+          finalizeTranscriptionTextForSurface("brain layer", "dictation", env),
+        ).resolves.toBe("BrainLayer.");
+        expect(received.length).toBe(1);
+        for (let i = 0; i < 50 && !existsSync(logPath); i++) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+        expect(existsSync(logPath)).toBe(true);
+      } finally {
+        server.stop(true);
+        try {
+          unlinkSync(socketPath);
+        } catch {}
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 

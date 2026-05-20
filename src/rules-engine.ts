@@ -104,8 +104,6 @@ const FILLER_PATTERNS: RegExp[] = [
   // English fillers
   /\b(?:um|uh|er|ah)\b/gi,
   /\b(?:basically|essentially|actually|literally)\b/gi,
-  /\byou know\b/gi,
-  /\bI mean\b/gi,
   /\bkind of\b/gi,
   /\bsort of\b/gi,
   /\blike\b(?=\s+(?:really|very|so|just|totally|super))/gi, // "like" before intensifiers

@@ -72,6 +72,11 @@ import {
   getSTTCorrectorMode,
   type STTCorrectorEnv,
 } from "./stt-corrector";
+import {
+  polishTranscriptionText,
+  type STTPolishEnv,
+  type STTPolishSurface,
+} from "./stt-polish";
 import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
@@ -113,6 +118,7 @@ const BROKEN_MIC_MESSAGE =
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
 let recordingState: "idle" | "recording" | "transcribing" = "idle";
+let retainedPolishSurface: STTPolishSurface | null = null;
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
 
@@ -128,6 +134,28 @@ export function finalizeTranscriptionText(
   const mode = getSTTCorrectorMode(env);
   if (mode === "off") return cleanupTranscriptionText(text);
   return correctTranscriptionText(text, { mode }).text;
+}
+
+export async function finalizeTranscriptionTextForSurface(
+  rawText: string,
+  surface: STTPolishSurface | null,
+  env: STTFinalizeEnv = process.env,
+): Promise<string> {
+  const cleanedText = finalizeTranscriptionText(rawText, env);
+  if (!surface) return cleanedText;
+  const polished = await polishTranscriptionText({
+    rawText,
+    cleanedText,
+    surface,
+    env,
+  });
+  return polished.text;
+}
+
+function polishSurfaceForWaitOptions(
+  options: WaitForInputOptions,
+): STTPolishSurface | null {
+  return options.archiveSource === "voicebar" ? "dictation" : null;
 }
 
 export interface NoSpeechGateResult {
@@ -159,6 +187,8 @@ export interface VoiceBarRecordingArchiveInput {
 export interface WaitForInputOptions {
   archiveSource?: "voicebar";
 }
+
+type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
 
 interface WaitForInputArchiveInput {
   options: WaitForInputOptions;
@@ -608,6 +638,14 @@ export async function transcribeChunkSequence(
   chunks: Uint8Array[],
   transcribeChunk: (chunk: Uint8Array, prompt: string) => Promise<string>,
 ): Promise<string> {
+  const rawText = await transcribeChunkSequenceRaw(chunks, transcribeChunk);
+  return finalizeTranscriptionText(rawText);
+}
+
+async function transcribeChunkSequenceRaw(
+  chunks: Uint8Array[],
+  transcribeChunk: (chunk: Uint8Array, prompt: string) => Promise<string>,
+): Promise<string> {
   const transcripts: string[] = [];
 
   for (const chunk of chunks) {
@@ -621,7 +659,7 @@ export async function transcribeChunkSequence(
     }
   }
 
-  return finalizeTranscriptionText(mergeChunkTranscripts(transcripts));
+  return mergeChunkTranscripts(transcripts);
 }
 
 /**
@@ -1221,7 +1259,7 @@ export async function waitForInput(
     if (useChunkedTranscription) {
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
-      text = await transcribeChunkSequence(segments, async (chunk, prompt) => {
+      const rawText = await transcribeChunkSequenceRaw(segments, async (chunk, prompt) => {
         const chunkPath = recordingFilePath(
           process.pid,
           Date.now() + Math.random(),
@@ -1238,9 +1276,16 @@ export async function waitForInput(
           } catch {}
         }
       });
+      text = await finalizeTranscriptionTextForSurface(
+        rawText,
+        polishSurfaceForWaitOptions(options),
+      );
     } else {
       const result = await backend.transcribe(wavPath);
-      text = finalizeTranscriptionText(result.text);
+      text = await finalizeTranscriptionTextForSurface(
+        result.text,
+        polishSurfaceForWaitOptions(options),
+      );
       if (result.text.trim() && !text) {
         console.error(
           `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
@@ -1250,6 +1295,7 @@ export async function waitForInput(
     console.error(`[voicelayer] Transcription: ${text}`);
 
     writeFileSync(retainedRecordingFilePath(), sttWavData);
+    retainedPolishSurface = polishSurfaceForWaitOptions(options);
 
     if (consumeCancelSignalForRecording()) {
       console.error(
@@ -1333,7 +1379,10 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     const backend = await getBackend();
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
-    const text = finalizeTranscriptionText(result.text);
+    const text = await finalizeTranscriptionTextForSurface(
+      result.text,
+      retainedPolishSurface,
+    );
     if (result.text.trim() && !text) {
       console.error(
         `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,

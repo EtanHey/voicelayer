@@ -54,3 +54,29 @@ The script launches temporary `whisper-server` processes on non-8178 ports and
 writes private reports under `docs.local/research/` by default. It does not
 touch the running VoiceBar resident server and does not upload audio or
 transcripts.
+
+## Local STT Polish Shadow Pass
+
+The LLM polish path is local-only and default-off. Use it in `shadow` mode first:
+VoiceBar keeps the deterministic transcript, while the local model candidate is
+logged for eval.
+
+Start the low-memory MLX server:
+
+```bash
+scripts/start-stt-polish-server.sh
+```
+
+Enable shadow mode for the VoiceBar process:
+
+```bash
+export QA_VOICE_STT_POLISH=shadow
+export QA_VOICE_STT_POLISH_ENDPOINT=http://127.0.0.1:8080/v1/chat/completions
+export QA_VOICE_STT_POLISH_MODEL=mlx-community/Qwen3-4B-Instruct-2507-4bit
+```
+
+Shadow logs are written to `~/.voicelayer/eval/polish-shadow.jsonl` unless
+`QA_VOICE_STT_POLISH_LOG_PATH` is set. Each line records raw Whisper text, the
+deterministic cleanup result, the model candidate, final text, latency, and
+failure status. Do not switch `QA_VOICE_STT_POLISH=on` until the held-out eval
+has zero no-op regressions and acceptable p95 latency on the target Mac.

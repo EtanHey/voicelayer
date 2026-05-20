@@ -33,9 +33,9 @@ describe("rules-engine", () => {
       expect(applyRules("uh hello world um")).toBe("Hello world");
     });
 
-    it("removes 'you know' and 'I mean'", () => {
+    it("preserves discourse phrases instead of deleting spoken content", () => {
       expect(applyRules("you know the function I mean works")).toBe(
-        "The function works",
+        "You know the function I mean works",
       );
     });
 

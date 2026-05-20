@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, rmSync, symlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   cleanupTranscriptionText,
   getSTTVocabularyPrompt,
@@ -217,6 +220,83 @@ describe("stt-cleanup", () => {
     ).toBe("Use Domica and SongScript");
   });
 
+  it("derives spoken slash-command aliases from vocabulary prompt terms", async () => {
+    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-slash-command-test.json";
+    await Bun.write(
+      snapshotPath,
+      JSON.stringify({
+        prompt_terms: ["/whats-new", "/large-plan"],
+        aliases: [],
+      }),
+    );
+
+    const env = {
+      QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+      QA_VOICE_STT_COMMANDS_DIR: "",
+    } as const;
+
+    expect(
+      cleanupTranscriptionText(
+        "also, do / what's new and output that as your summary",
+        env,
+      ),
+    ).toBe("Also, do /whats-new and output that as your summary");
+    expect(cleanupTranscriptionText("do slash large plan next", env)).toBe(
+      "Do /large-plan next",
+    );
+  });
+
+  it("loads slash-command aliases from installed Claude commands when the snapshot is stale", async () => {
+    const commandsDir = mkdtempSync(join(tmpdir(), "voicelayer-stt-commands-"));
+    const commandTargetDir = mkdtempSync(
+      join(tmpdir(), "voicelayer-stt-command-target-"),
+    );
+    await Bun.$`mkdir -p ${commandsDir}/frontend`;
+    await Bun.$`mkdir -p ${commandsDir}/.git/hooks`;
+    await Bun.$`mkdir -p ${commandsDir}/design/references`;
+    await Bun.$`mkdir -p ${commandsDir}/large-plan`;
+    await Bun.$`mkdir -p ${commandTargetDir}`;
+    await Bun.write(join(commandsDir, "whats-new.md"), "# /whats-new");
+    await Bun.write(join(commandsDir, "README.md"), "# support doc");
+    await Bun.write(join(commandsDir, "frontend", "component.md"), "# /component");
+    await Bun.write(join(commandsDir, "large-plan", "SKILL.md"), "# /large-plan");
+    await Bun.write(join(commandTargetDir, "SKILL.md"), "# /skill-creator");
+    await Bun.write(join(commandsDir, ".git", "hooks", "pre-commit.md"), "# internal");
+    await Bun.write(join(commandsDir, "design", "references", "icon-design.md"), "# support doc");
+    await Bun.write(join(commandsDir, "LICENSE"), "not a slash command");
+    symlinkSync(commandTargetDir, join(commandsDir, "skill-creator"));
+
+    try {
+      const env = {
+        QA_VOICE_STT_VOCABULARY_PATH: "",
+        QA_VOICE_STT_COMMANDS_DIR: commandsDir,
+      } as const;
+
+      expect(cleanupTranscriptionText("also, do / what's new", env)).toBe(
+        "Also, do /whats-new",
+      );
+      expect(cleanupTranscriptionText("run slash component", env)).toBe(
+        "Run /component",
+      );
+      expect(cleanupTranscriptionText("run slash large plan", env)).toBe(
+        "Run /large-plan",
+      );
+      expect(cleanupTranscriptionText("run slash skill creator", env)).toBe(
+        "Run /skill-creator",
+      );
+      expect(cleanupTranscriptionText("run slash frontend", env)).toBe(
+        "Run / frontend",
+      );
+      expect(getSTTVocabularyPrompt(env)).not.toContain("/pre-commit");
+      expect(getSTTVocabularyPrompt(env)).not.toContain("/LICENSE");
+      expect(getSTTVocabularyPrompt(env)).not.toContain("/README");
+      expect(getSTTVocabularyPrompt(env)).not.toContain("/icon-design");
+    } finally {
+      rmSync(commandsDir, { recursive: true, force: true });
+      rmSync(commandTargetDir, { recursive: true, force: true });
+    }
+  });
+
   it("cleans context-specific substitutions from long VoiceBar validation reads", () => {
     expect(
       cleanupTranscriptionText("and then still accept VoiceLayer to keep the beginning"),
@@ -370,6 +450,15 @@ describe("stt-cleanup", () => {
     );
     expect(cleanupTranscriptionText("we need a hundred percent uptime")).toBe(
       "We need a 100% uptime",
+    );
+  });
+
+  it("preserves spoken discourse phrases that may carry user intent", () => {
+    expect(cleanupTranscriptionText("you know this should stay")).toBe(
+      "You know this should stay",
+    );
+    expect(cleanupTranscriptionText("I mean this should stay too")).toBe(
+      "I mean this should stay too",
     );
   });
 });

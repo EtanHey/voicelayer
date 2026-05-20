@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
@@ -7,6 +7,7 @@ export interface STTCleanupEnv {
   [key: string]: string | undefined;
   QA_VOICE_STT_VOCABULARY_PATH?: string;
   QA_VOICE_STT_VOCABULARY_DISABLED?: string;
+  QA_VOICE_STT_COMMANDS_DIR?: string;
 }
 
 interface STTVocabularyAlias {
@@ -109,8 +110,16 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   bun: "bun",
 };
 
-const ORDERED_BUILTIN_STT_ALIASES = Object.fromEntries(
-  Object.entries(BUILTIN_STT_ALIASES).sort((a, b) => b[0].length - a[0].length),
+function sortAliasesBySourceLength(
+  aliases: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(aliases).sort((a, b) => b[0].length - a[0].length),
+  );
+}
+
+const ORDERED_BUILTIN_STT_ALIASES = sortAliasesBySourceLength(
+  BUILTIN_STT_ALIASES,
 );
 const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "still expect VoiceLayer to keep",
@@ -142,8 +151,6 @@ interface LoadedVocabularySnapshot {
   mtimeMs: number;
   promptTerms: string[];
   aliases: Record<string, string>;
-  mergedAliases: Record<string, string>;
-  canonicalTermPatterns: CanonicalTermPattern[];
 }
 
 interface MissingVocabularySnapshot {
@@ -216,19 +223,200 @@ function buildLoadedVocabularySnapshot(
   mtimeMs: number,
   snapshot: Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases">,
 ): LoadedVocabularySnapshot {
-  const mergedAliases = Object.fromEntries(
-    Object.entries({
-      ...ORDERED_BUILTIN_STT_ALIASES,
-      ...snapshot.aliases,
-    }).sort((a, b) => b[0].length - a[0].length),
-  );
   return {
     path,
     mtimeMs,
     ...snapshot,
-    mergedAliases,
-    canonicalTermPatterns: buildCanonicalTermPatterns(mergedAliases),
   };
+}
+
+function getSlashCommandRoots(env: STTCleanupEnv): string[] {
+  if (env.QA_VOICE_STT_COMMANDS_DIR !== undefined) {
+    return env.QA_VOICE_STT_COMMANDS_DIR.split(":")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [join(homedir(), ".claude", "commands")];
+}
+
+function commandNameFromMarkdownEntry(name: string): string | null {
+  if (!name || name.startsWith(".")) return null;
+  if (!name.endsWith(".md")) return null;
+  if (name.toLowerCase() === "readme.md") return null;
+  const commandName = name.endsWith(".md") ? name.slice(0, -3) : name;
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(commandName)) return null;
+  if (commandName.toLowerCase() === "skill") return null;
+  return commandName;
+}
+
+function commandNameFromDirectoryEntry(name: string): string | null {
+  if (!name || name.startsWith(".")) return null;
+  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return null;
+  if (name.toLowerCase() === "skill") return null;
+  return name;
+}
+
+type SlashCommandCacheEntry = {
+  key: string;
+  loadedAtMs: number;
+  commands: string[];
+};
+
+const SLASH_COMMAND_CACHE_TTL_MS = 1000;
+const SLASH_COMMAND_SUPPORT_DIRS = new Set(["assets", "references"]);
+let slashCommandCache: SlashCommandCacheEntry | null = null;
+
+function loadInstalledSlashCommands(env: STTCleanupEnv): string[] {
+  const roots = getSlashCommandRoots(env);
+  const key = roots.join("\0");
+  if (
+    slashCommandCache &&
+    slashCommandCache.key === key &&
+    Date.now() - slashCommandCache.loadedAtMs < SLASH_COMMAND_CACHE_TTL_MS
+  ) {
+    return slashCommandCache.commands;
+  }
+
+  const commands: string[] = [];
+  const seen = new Set<string>();
+
+  const visit = (dir: string) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const entryPath = join(dir, entry.name);
+      const isDirectory =
+        entry.isDirectory() ||
+        (entry.isSymbolicLink() &&
+          (() => {
+            try {
+              return statSync(entryPath).isDirectory();
+            } catch {
+              return false;
+            }
+          })());
+
+      if (isDirectory) {
+        if (entry.name.startsWith(".")) continue;
+        if (SLASH_COMMAND_SUPPORT_DIRS.has(entry.name.toLowerCase())) continue;
+        const commandName = existsSync(join(entryPath, "SKILL.md"))
+          ? commandNameFromDirectoryEntry(entry.name)
+          : null;
+        if (commandName) {
+          const command = `/${commandName}`;
+          if (!seen.has(command)) {
+            seen.add(command);
+            commands.push(command);
+          }
+          continue;
+        }
+        visit(entryPath);
+        continue;
+      }
+      if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+
+      const commandName = commandNameFromMarkdownEntry(entry.name);
+      if (!commandName) continue;
+
+      const command = `/${commandName}`;
+      if (!seen.has(command)) {
+        seen.add(command);
+        commands.push(command);
+      }
+    }
+  };
+
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    visit(root);
+  }
+
+  slashCommandCache = { key, loadedAtMs: Date.now(), commands };
+  return commands;
+}
+
+function spokenSlashCommandForms(command: string): string[] {
+  const commandName = command.replace(/^\/+/, "");
+  if (!commandName) return [];
+
+  const baseWords = commandName.replace(/[-_]+/g, " ").trim();
+  const variants = new Set<string>([baseWords]);
+  if (/\bwhats\b/i.test(baseWords)) {
+    variants.add(baseWords.replace(/\bwhats\b/gi, "what's"));
+    variants.add(baseWords.replace(/\bwhats\b/gi, "what s"));
+    variants.add(baseWords.replace(/\bwhats\b/gi, "what is"));
+  }
+
+  return [...variants].flatMap((variant) => [
+    `/ ${variant}`,
+    `slash ${variant}`,
+  ]);
+}
+
+function buildSlashCommandAliases(commands: string[]): Record<string, string> {
+  const aliases: Record<string, string> = {};
+  for (const command of commands) {
+    if (!/^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(command)) continue;
+    for (const spoken of spokenSlashCommandForms(command)) {
+      aliases[spoken] = command;
+    }
+  }
+  return sortAliasesBySourceLength(aliases);
+}
+
+function collectSlashCommands(
+  env: STTCleanupEnv,
+  promptTerms: string[] = [],
+): string[] {
+  const commands = new Set<string>();
+  for (const term of promptTerms) {
+    const trimmed = term.trim();
+    if (/^\/[A-Za-z0-9][A-Za-z0-9-]*$/.test(trimmed)) {
+      commands.add(trimmed);
+    }
+  }
+  for (const command of loadInstalledSlashCommands(env)) {
+    commands.add(command);
+  }
+  return [...commands].sort();
+}
+
+type RuntimeAliasesCacheEntry = {
+  key: string;
+  aliases: Record<string, string>;
+};
+
+let runtimeAliasesCache: RuntimeAliasesCacheEntry | null = null;
+
+function buildRuntimeAliases(
+  env: STTCleanupEnv,
+  snapshot: LoadedVocabularySnapshot | null,
+): Record<string, string> {
+  const slashCommands = collectSlashCommands(env, snapshot?.promptTerms);
+  const snapshotAliases = snapshot?.aliases ?? {};
+  const key = JSON.stringify({
+    slashCommands,
+    snapshotAliases: Object.entries(snapshotAliases).sort(([a], [b]) =>
+      a.localeCompare(b),
+    ),
+  });
+
+  if (runtimeAliasesCache?.key === key) {
+    return runtimeAliasesCache.aliases;
+  }
+
+  const aliases = sortAliasesBySourceLength({
+    ...ORDERED_BUILTIN_STT_ALIASES,
+    ...buildSlashCommandAliases(slashCommands),
+    ...snapshotAliases,
+  });
+  runtimeAliasesCache = { key, aliases };
+  return aliases;
 }
 
 function loadVocabularySnapshot(
@@ -279,9 +467,11 @@ function loadVocabularySnapshot(
 
 export function getSTTVocabularyPrompt(env: STTCleanupEnv = process.env): string {
   const snapshot = loadVocabularySnapshot(env);
+  const slashCommands = collectSlashCommands(env, snapshot?.promptTerms ?? []);
   const canonicalTerms = [
     ...new Set([
       ...(snapshot?.promptTerms ?? []),
+      ...slashCommands,
       ...Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
         (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
       ),
@@ -298,14 +488,14 @@ export function cleanupTranscriptionText(
   if (!trimmed) return "";
 
   const snapshot = loadVocabularySnapshot(env);
-  const aliases = snapshot?.mergedAliases ?? ORDERED_BUILTIN_STT_ALIASES;
+  const aliases = buildRuntimeAliases(env, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
   const normalized = normalizeCanonicalTerms(
     cleaned,
-    snapshot?.canonicalTermPatterns ?? BUILTIN_CANONICAL_TERM_PATTERNS,
+    buildCanonicalTermPatterns(aliases),
   );
   const sentenceCased = normalizeSentenceStarts(normalized);
   return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
