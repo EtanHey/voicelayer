@@ -324,6 +324,23 @@ describe("stt-cleanup", () => {
     ).toBe("Yeah, the language should be fixed a little bit, yeah.");
   });
 
+  it("cleans latest STT eval phrase artifacts for PR possessives and presentation terms", () => {
+    expect(
+      cleanupTranscriptionText(
+        "Should I mention PR222's cleanup fix, vision pro spacing, and the second - s possessive issue?",
+      ),
+    ).toBe(
+      "Should I mention PR 222's cleanup fix, Vision Pro spacing, and the second-S possessive issue?",
+    );
+    expect(
+      cleanupTranscriptionText(
+        "Should I mention PR222's cleanup fix, vision pro spacing, and the second dash s possessive issue?",
+      ),
+    ).toBe(
+      "Should I mention PR 222's cleanup fix, Vision Pro spacing, and the second-S possessive issue?",
+    );
+  });
+
   it("ignores unsafe broad aliases from the VoiceBar vocabulary snapshot", async () => {
     const snapshotPath = "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
     await Bun.write(

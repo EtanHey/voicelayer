@@ -255,6 +255,7 @@ function applyPunctuation(text: string): string {
   result = result.replace(/([!?])\1+/g, "$1");
   result = result.replace(/,{2,}/g, ",");
   result = result.replace(/,\s*([!?])(?=\s*$)/g, "$1");
+  result = result.replace(/\bsecond\s*-\s*s\b/gi, "second-S");
   // Clean up space after open brackets
   result = result.replace(/([({[\[`'"])\s+/g, "$1");
   result = result.replace(
@@ -448,6 +449,9 @@ function applyNumberFormatting(text: string): string {
 // --- Stage 5: Tech vocabulary ---
 
 const TECH_VOCAB: [RegExp, string][] = [
+  [/\bPR\s*(\d+)(['’]s)\b/gi, "PR $1$2"],
+  [/\bvision pro\b/gi, "Vision Pro"],
+  [/\bsecond\s+dash\s+s\b/gi, "second-S"],
   [/\btype script\b/gi, "TypeScript"],
   [/\bjava script\b/gi, "JavaScript"],
   [/\bnode js\b/gi, "Node.js"],

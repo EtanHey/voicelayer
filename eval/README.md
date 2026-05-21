@@ -80,3 +80,56 @@ Shadow logs are written to `~/.voicelayer/eval/polish-shadow.jsonl` unless
 deterministic cleanup result, the model candidate, final text, latency, and
 failure status. Do not switch `QA_VOICE_STT_POLISH=on` until the held-out eval
 has zero no-op regressions and acceptable p95 latency on the target Mac.
+
+## Weekly STT Quality Mining
+
+Use the local-only quality miner to turn the VoiceBar archive, optional fresh
+decode benchmark JSON, deterministic cleanup output, and local polish shadow logs
+into one weekly failure taxonomy report:
+
+```bash
+bun run scripts/mine-stt-quality.ts --days 7
+```
+
+Deterministic cleanup candidates are generated automatically from archived
+transcripts unless `--no-cleanup` is passed. Polish shadow rows are read from
+`~/.voicelayer/eval/polish-shadow.jsonl` when present, can be overridden with
+`--polish-log /path/to/polish-shadow.jsonl`, and can be disabled with
+`--no-polish-log`.
+
+To compare archived transcripts against fresh decode candidates, run the decode
+benchmark first and pass its JSON output:
+
+```bash
+bun run scripts/benchmark-stt-decode.ts --audio /path/to/audio.wav
+bun run scripts/mine-stt-quality.ts \
+  --days 7 \
+  --benchmark-json docs.local/research/stt-decode-benchmark-<stamp>.json
+```
+
+User-provided corrections are first-class evidence. Store observed/expected
+pairs locally as JSONL and pass them into the same report:
+
+```json
+{"id":"latest","observed_text":"...","expected_text":"...","note":"optional local note"}
+```
+
+```bash
+bun run scripts/mine-stt-quality.ts \
+  --days 7 \
+  --corrections-jsonl docs.local/research/stt-corrections.jsonl
+```
+
+The miner writes private JSON and Markdown reports under `docs.local/research/`
+by default. It intentionally avoids raw transcript blocks in Markdown and
+categorizes deterministic signatures for missing head/tail, duplicated phrases,
+possessive phrase errors, punctuation artifacts, product/code term spacing,
+entity-boundary errors, semantic substitution candidates, and
+filler/disfluency handling.
+
+This is not a Wispr Flow dictionary importer. The Wispr mining skill is still
+useful for Wispr's SQLite history and CSV dictionary updates, but VoiceLayer STT
+quality should start repo-local here until the report schema proves stable
+across recurring runs. If the workflow survives multiple weekly passes, extract
+it as a broader `$stt-quality-mining` skill rather than overfitting it to either
+Wispr's database schema or VoiceLayer's archive layout.
