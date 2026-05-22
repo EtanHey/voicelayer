@@ -162,6 +162,7 @@ final class VoiceState {
     private var transcribingStartedAt: Date?
     private var pendingRecordingIdleAfterFinal = false
     private var pendingIdleAfterAutoPasteCompletion = false
+    private var pendingRecoveredTranscriptionPaste = false
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
@@ -298,6 +299,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -326,6 +328,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -358,6 +361,8 @@ final class VoiceState {
     }
 
     func retranscribeLastCapture() {
+        guard !pendingRecoveredTranscriptionPaste else { return }
+        pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
             payload: ["cmd": "retranscribe_last"]
@@ -380,6 +385,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -442,6 +448,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         confirmationText = nil
         errorMessage = nil
@@ -527,6 +534,7 @@ final class VoiceState {
                 deferredFinalTranscriptionTask?.cancel()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
+                pendingRecoveredTranscriptionPaste = false
                 transcribingStartedAt = nil
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
@@ -538,6 +546,7 @@ final class VoiceState {
                 deferredFinalTranscriptionTask?.cancel()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
+                pendingRecoveredTranscriptionPaste = false
                 transcribingStartedAt = nil
                 mode = .recording
                 recordingMode = event["mode"] as? String
@@ -644,6 +653,7 @@ final class VoiceState {
         case "error":
             transcriptionTimeoutTask?.cancel()
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
+            pendingRecoveredTranscriptionPaste = false
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
             // the successful client is still recording. Show error UI only if
@@ -692,6 +702,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -927,18 +938,23 @@ final class VoiceState {
         ])
 
         let shouldAutoPaste = barInitiatedRecording
+        let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
-        pendingIdleAfterAutoPasteCompletion = shouldAutoPaste && mode == .transcribing
+        pendingRecoveredTranscriptionPaste = false
+        pendingIdleAfterAutoPasteCompletion =
+            (shouldAutoPaste || shouldPasteRecoveredTranscription) && mode == .transcribing
 
         if shouldAutoPaste {
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
             recordingIdleCleanupTask?.cancel()
             pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+        } else if shouldPasteRecoveredTranscription {
+            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
         }
 
-        if shouldApplyPendingRecordingIdle && !shouldAutoPaste {
+        if shouldApplyPendingRecordingIdle && !shouldAutoPaste && !shouldPasteRecoveredTranscription {
             enterIdleState(clearQueue: false)
         }
     }
@@ -964,6 +980,7 @@ final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
+        pendingRecoveredTranscriptionPaste = false
         transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -1146,6 +1163,7 @@ final class VoiceState {
 
         if pendingIdleAfterAutoPasteCompletion {
             pendingIdleAfterAutoPasteCompletion = false
+            pendingRecoveredTranscriptionPaste = false
             enterIdleState(clearQueue: false)
         }
     }
@@ -1197,6 +1215,12 @@ final class VoiceState {
         }
 
         pendingIntent = nil
+
+        if ack.command == .retranscribeLast, ack.outcome != .accept {
+            pendingRecoveredTranscriptionPaste = false
+            showConfirmation(ack.reason ?? "Nothing to transcribe")
+            return
+        }
 
         guard ack.command == .record, ack.outcome == .reject else { return }
 

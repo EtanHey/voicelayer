@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect } from "bun:test";
 import { createHash } from "crypto";
+import ts from "typescript";
 import {
   existsSync,
   mkdtempSync,
@@ -13,6 +14,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   archiveVoiceBarRecording,
+  archiveVoiceBarUntranscribedRecording,
   archiveWaitForInputRecording,
   calculateRMS,
   ChunkedRecordingSession,
@@ -22,6 +24,7 @@ import {
   evaluateNoSpeechGate,
   isChunkedSTTEnabled,
   isPttStopDrainComplete,
+  retainLastCaptureForRecovery,
   selectChunksWithPreRoll,
   transcribeChunkSequence,
   finalizeTranscriptionTextForSurface,
@@ -36,19 +39,25 @@ import {
   setCancelSignal,
 } from "../session-booking";
 import { STOP_FILE } from "../paths";
+import { retainedRecordingFilePath } from "../paths";
 
 describe("input module", () => {
   describe("VoiceBar recording archive", () => {
     let archiveRoot: string | undefined;
     let savedRecordingsDir: string | undefined;
     let savedLanguage: string | undefined;
+    let savedRetainedRecordingPath: string | undefined;
+    let retainedRecordingPath: string | undefined;
 
     beforeEach(() => {
       savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
       savedLanguage = process.env.QA_VOICE_WHISPER_LANG;
+      savedRetainedRecordingPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
       archiveRoot = mkdtempSync(join(tmpdir(), "voicelayer-recordings-test-"));
+      retainedRecordingPath = join(archiveRoot, "last-cancelled-recording.wav");
       process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
       process.env.QA_VOICE_WHISPER_LANG = "hebrew";
+      process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedRecordingPath;
       clearCancelSignal();
     });
 
@@ -64,6 +73,11 @@ describe("input module", () => {
         delete process.env.QA_VOICE_WHISPER_LANG;
       } else {
         process.env.QA_VOICE_WHISPER_LANG = savedLanguage;
+      }
+      if (savedRetainedRecordingPath === undefined) {
+        delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
+      } else {
+        process.env.QA_VOICE_RETAINED_RECORDING_PATH = savedRetainedRecordingPath;
       }
     });
 
@@ -112,6 +126,7 @@ describe("input module", () => {
         channels: 1,
         backend: "whisper.cpp",
         language_mode: "hebrew",
+        transcription_status: "transcribed",
         voicelayer_transcript_chars: transcript.length,
         app_version: null,
         schema_version: 1,
@@ -134,6 +149,43 @@ describe("input module", () => {
 
       expect(archivedPath).toBeNull();
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("creates a durable untranscribed archive entry for a cancelled VoiceBar capture", () => {
+      const audioBytes = createWavBuffer(new Uint8Array([1, 2, 3, 4]));
+
+      const archivedPath = archiveVoiceBarUntranscribedRecording({
+        audioBytes,
+        createdAt: new Date("2026-05-22T10:11:12.345Z"),
+        source: "voicebar",
+        silenceMode: "thoughtful",
+        pressToTalk: true,
+        durationMs: 1000,
+        backend: "not-transcribed",
+        reason: "cancelled",
+      });
+
+      expect(archivedPath).toBeTruthy();
+      expect(readFileSync(join(archivedPath!, "audio.wav"))).toEqual(
+        Buffer.from(audioBytes),
+      );
+      expect(existsSync(join(archivedPath!, "voicelayer-transcript.txt"))).toBe(
+        false,
+      );
+
+      const metadata = JSON.parse(
+        readFileSync(join(archivedPath!, "metadata.json"), "utf8"),
+      );
+      expect(metadata).toMatchObject({
+        created_at: "2026-05-22T10:11:12.345Z",
+        source: "voicebar",
+        mode: "ptt",
+        silence_mode: "thoughtful",
+        duration_ms: 1000,
+        backend: "not-transcribed",
+        transcription_status: "cancelled",
+        voicelayer_transcript_chars: 0,
+      });
     });
 
     it("skips archive creation when no speech produces an empty transcript", () => {
@@ -174,23 +226,65 @@ describe("input module", () => {
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
     });
 
-    it("retains the last wav before updating retranscription state or honoring a late cancel", () => {
+    it("retains the last wav before honoring a late cancel", () => {
       const source = readFileSync(join(import.meta.dir, "../input.ts"), "utf8");
-      const retainIndex = source.indexOf(
-        "writeFileSync(retainedRecordingFilePath(), sttWavData);",
+      const ast = ts.createSourceFile(
+        "input.ts",
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TS,
       );
-      const retainedSurfaceIndex = source.indexOf(
-        "retainedPolishSurface = polishSurfaceForWaitOptions(options);",
-      );
-      const lateCancelIndex = source.indexOf(
-        '"[voicelayer] Recording cancelled during transcription — discarding transcript"',
-      );
+      let waitForInput: ts.FunctionDeclaration | undefined;
+      ast.forEachChild((node) => {
+        if (ts.isFunctionDeclaration(node) && node.name?.text === "waitForInput") {
+          waitForInput = node;
+        }
+      });
 
-      expect(retainIndex).toBeGreaterThan(-1);
-      expect(retainedSurfaceIndex).toBeGreaterThan(-1);
-      expect(lateCancelIndex).toBeGreaterThan(-1);
-      expect(retainIndex).toBeLessThan(retainedSurfaceIndex);
-      expect(retainIndex).toBeLessThan(lateCancelIndex);
+      let retainBeforeLateCancel = false;
+      const visit = (node: ts.Node) => {
+        if (!ts.isBlock(node)) {
+          ts.forEachChild(node, visit);
+          return;
+        }
+
+        let sawRetention = false;
+        for (const statement of node.statements) {
+          if (
+            ts.isExpressionStatement(statement) &&
+            ts.isCallExpression(statement.expression) &&
+            ts.isIdentifier(statement.expression.expression) &&
+            statement.expression.expression.text === "retainLastCaptureForRecovery"
+          ) {
+            sawRetention = true;
+          }
+
+          if (
+            sawRetention &&
+            ts.isIfStatement(statement) &&
+            ts.isCallExpression(statement.expression) &&
+            ts.isIdentifier(statement.expression.expression) &&
+            statement.expression.expression.text === "consumeCancelSignalForRecording"
+          ) {
+            retainBeforeLateCancel = true;
+          }
+        }
+
+        ts.forEachChild(node, visit);
+      };
+      expect(waitForInput).toBeDefined();
+      visit(waitForInput!);
+      expect(retainBeforeLateCancel).toBe(true);
+    });
+
+    it("retains a cancelled capture before early cancel returns so it can be retranscribed", () => {
+      const wavData = createWavBuffer(new Uint8Array([1, 2, 3, 4]));
+
+      retainLastCaptureForRecovery(wavData, null);
+
+      expect(retainedRecordingFilePath()).toBe(retainedRecordingPath);
+      expect(readFileSync(retainedRecordingPath!)).toEqual(Buffer.from(wavData));
     });
   });
 

@@ -26,6 +26,7 @@ final class PillContextMenuController: NSObject {
     var onUnsnooze: () -> Void = {}
     var isSnoozedProvider: () -> Bool = { false }
     var onSelectDevice: (String) -> Void = { _ in }
+    var onTranscribeLatestRecording: () -> Void = {}
     var onPasteLastTranscript: () -> Void = {}
     var onCopyLastTranscript: () -> Void = {}
     var onPasteTranscript: (String) -> Void = { _ in }
@@ -63,6 +64,14 @@ final class PillContextMenuController: NSObject {
         let historyItem = NSMenuItem(title: "Recent Transcripts", action: nil, keyEquivalent: "")
         historyItem.submenu = makeRecentTranscriptsSubmenu()
         menu.addItem(historyItem)
+
+        let recoverItem = NSMenuItem(
+            title: "Transcribe latest recording",
+            action: #selector(handleTranscribeLatestRecording),
+            keyEquivalent: ""
+        )
+        recoverItem.target = self
+        menu.addItem(recoverItem)
 
         let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
         vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
@@ -274,6 +283,10 @@ final class PillContextMenuController: NSObject {
     @objc private func handleSelectDevice(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         onSelectDevice(id)
+    }
+
+    @objc private func handleTranscribeLatestRecording() {
+        onTranscribeLatestRecording()
     }
 }
 

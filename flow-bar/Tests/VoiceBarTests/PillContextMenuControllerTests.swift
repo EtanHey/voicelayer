@@ -30,6 +30,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Settings",
             "Hide for 1 hour",
             "Recent Transcripts",
+            "Transcribe latest recording",
             "Transcription Vocabulary",
             "Microphone",
             "Paste last transcript",
@@ -87,7 +88,7 @@ final class PillContextMenuControllerTests: XCTestCase {
         XCTAssertTrue(PillContextMenuController.isPasteEnabled(transcript: "latest note"))
     }
 
-    func testMenuIncludesSettingsHistoryAndCopyActions() {
+    func testMenuIncludesSettingsHistoryAndCopyActions() throws {
         let controller = PillContextMenuController()
         controller.transcriptProvider = { "latest note" }
         controller.recentTranscriptionsProvider = {
@@ -112,6 +113,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Settings",
             "Hide for 1 hour",
             "Recent Transcripts",
+            "Transcribe latest recording",
             "Transcription Vocabulary",
             "Microphone",
             "Paste last transcript",
@@ -120,29 +122,47 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Quit VoiceBar",
         ])
 
+        let recoverItem = try XCTUnwrap(menu.items.first { $0.title == "Transcribe latest recording" })
+        XCTAssertTrue(recoverItem.isEnabled)
+
         let submenuTitles = menu.items[2].submenu?.items.map(\.title)
         XCTAssertEqual(submenuTitles, [
             "Latest — latest note",
             "older note with new lines flattened",
         ])
 
-        let vocabularyTitles = menu.items[3].submenu?.items.map(\.title)
+        let vocabularyTitles = menu.items[4].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyTitles, [
             "Terms",
             "Corrections",
         ])
 
-        let vocabularyTerms = menu.items[3].submenu?.items[0].submenu?.items.map(\.title)
+        let vocabularyTerms = menu.items[4].submenu?.items[0].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyTerms, [
             "VoiceLayer",
             "orcClaude",
             "Wispr Flow",
         ])
 
-        let vocabularyCorrections = menu.items[3].submenu?.items[1].submenu?.items.map(\.title)
+        let vocabularyCorrections = menu.items[4].submenu?.items[1].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyCorrections, [
             "work claude → orcClaude",
             "whisper flow → Wispr Flow",
         ])
+    }
+
+    func testTranscribeLatestRecordingActionCallsHandler() throws {
+        let controller = PillContextMenuController()
+        var tapped = false
+        controller.onTranscribeLatestRecording = {
+            tapped = true
+        }
+
+        let menu = controller.makeMenu()
+        let recoverItem = try XCTUnwrap(menu.items.first { $0.title == "Transcribe latest recording" })
+
+        _ = recoverItem.target?.perform(recoverItem.action, with: recoverItem)
+
+        XCTAssertTrue(tapped)
     }
 }

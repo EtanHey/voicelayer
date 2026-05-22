@@ -37,6 +37,7 @@ enum VoiceBarMenu {
         isSnoozed: Bool = false,
         openSettings: @escaping () -> Void,
         snoozeToggle: @escaping () -> Void,
+        transcribeLatestRecording: @escaping () -> Void,
         pasteLastTranscript: @escaping () -> Void,
         quit: @escaping () -> Void
     ) -> [VoiceBarMenuAction] {
@@ -45,6 +46,10 @@ enum VoiceBarMenu {
             VoiceBarMenuAction(
                 title: isSnoozed ? "Show VoiceBar" : "Hide for 1 hour",
                 perform: snoozeToggle
+            ),
+            VoiceBarMenuAction(
+                title: "Transcribe latest recording",
+                perform: transcribeLatestRecording
             ),
             VoiceBarMenuAction(title: "Paste last transcript", perform: pasteLastTranscript),
             VoiceBarMenuAction(title: "Quit VoiceBar", perform: quit),

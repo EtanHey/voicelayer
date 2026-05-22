@@ -280,6 +280,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.audioLevelMonitor.restart()
             }
         }
+        pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
+            self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
+            self?.voiceState.retranscribeLastCapture()
+        }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
             self?.voiceState.repasteLastTranscript()
@@ -630,6 +634,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             snoozeToggle: { [weak self] in
                 guard let self else { return }
                 if isSnoozed { unsnoozeNow() } else { snoozeForOneHour() }
+            },
+            transcribeLatestRecording: { [weak self] in
+                self?.logDiagnostic(event: "menu_bar_transcribe_latest_recording_tapped")
+                self?.voiceState.retranscribeLastCapture()
             },
             pasteLastTranscript: { [weak self] in
                 self?.logDiagnostic(event: "menu_bar_paste_last_transcript_tapped")

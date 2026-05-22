@@ -6,6 +6,7 @@ final class VoiceBarMenuTests: XCTestCase {
         let actions = VoiceBarMenu.quickActions(
             openSettings: {},
             snoozeToggle: {},
+            transcribeLatestRecording: {},
             pasteLastTranscript: {},
             quit: {}
         )
@@ -13,6 +14,7 @@ final class VoiceBarMenuTests: XCTestCase {
         XCTAssertEqual(actions.map(\.title), [
             "Settings",
             "Hide for 1 hour",
+            "Transcribe latest recording",
             "Paste last transcript",
             "Quit VoiceBar",
         ])
@@ -23,13 +25,14 @@ final class VoiceBarMenuTests: XCTestCase {
         let actions = VoiceBarMenu.quickActions(
             openSettings: { invoked.append("settings") },
             snoozeToggle: { invoked.append("snooze") },
+            transcribeLatestRecording: { invoked.append("recover") },
             pasteLastTranscript: { invoked.append("paste") },
             quit: { invoked.append("quit") }
         )
 
         actions.forEach { $0.perform() }
 
-        XCTAssertEqual(invoked, ["settings", "snooze", "paste", "quit"])
+        XCTAssertEqual(invoked, ["settings", "snooze", "recover", "paste", "quit"])
     }
 
     func testSnoozeToggleShowsHideWhenNotSnoozed() {
@@ -37,6 +40,7 @@ final class VoiceBarMenuTests: XCTestCase {
             isSnoozed: false,
             openSettings: {},
             snoozeToggle: {},
+            transcribeLatestRecording: {},
             pasteLastTranscript: {},
             quit: {}
         )
@@ -49,6 +53,7 @@ final class VoiceBarMenuTests: XCTestCase {
             isSnoozed: true,
             openSettings: {},
             snoozeToggle: {},
+            transcribeLatestRecording: {},
             pasteLastTranscript: {},
             quit: {}
         )

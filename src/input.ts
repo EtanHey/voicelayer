@@ -122,6 +122,14 @@ let retainedPolishSurface: STTPolishSurface | null = null;
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
 
+export function retainLastCaptureForRecovery(
+  wavData: Uint8Array,
+  polishSurface: STTPolishSurface | null,
+): void {
+  writeFileSync(retainedRecordingFilePath(), wavData);
+  retainedPolishSurface = polishSurface;
+}
+
 export function isChunkedSTTEnabled(): boolean {
   const raw = process.env.QA_VOICE_CHUNKED_STT?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
@@ -184,6 +192,14 @@ export interface VoiceBarRecordingArchiveInput {
   backend: string;
 }
 
+export interface VoiceBarUntranscribedRecordingArchiveInput
+  extends Omit<
+    VoiceBarRecordingArchiveInput,
+    "transcript" | "transcribedDurationMs"
+  > {
+  reason: "cancelled";
+}
+
 export interface WaitForInputOptions {
   archiveSource?: "voicebar";
 }
@@ -215,6 +231,7 @@ interface VoiceBarRecordingMetadata {
   backend: string;
   language_mode: string;
   voicelayer_transcript_chars: number;
+  transcription_status: "transcribed" | "cancelled";
   audio_sha256: string;
   app_version: string | null;
   schema_version: number;
@@ -278,6 +295,28 @@ export function archiveVoiceBarRecording(
     return null;
   }
 
+  return writeVoiceBarRecordingArchive({
+    ...input,
+    transcript: input.transcript,
+    transcriptionStatus: "transcribed",
+  });
+}
+
+export function archiveVoiceBarUntranscribedRecording(
+  input: VoiceBarUntranscribedRecordingArchiveInput,
+): string {
+  return writeVoiceBarRecordingArchive({
+    ...input,
+    transcript: null,
+    transcriptionStatus: input.reason,
+  });
+}
+
+function writeVoiceBarRecordingArchive(
+  input: VoiceBarRecordingArchiveInput & {
+    transcriptionStatus: VoiceBarRecordingMetadata["transcription_status"];
+  },
+): string {
   const createdAt = input.createdAt ?? new Date();
   const createdAtIso = createdAt.toISOString();
   const id = archiveId(createdAt);
@@ -298,7 +337,8 @@ export function archiveVoiceBarRecording(
     channels: CHANNELS,
     backend: input.backend,
     language_mode: getLanguageModeFromEnv(),
-    voicelayer_transcript_chars: input.transcript.length,
+    voicelayer_transcript_chars: input.transcript?.length ?? 0,
+    transcription_status: input.transcriptionStatus,
     audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
     app_version: null,
     schema_version: 1,
@@ -309,10 +349,12 @@ export function archiveVoiceBarRecording(
     fsyncPath(archiveRoot);
     mkdirSync(stagingDir, { mode: 0o700 });
     atomicWriteFile(join(stagingDir, "audio.wav"), input.audioBytes);
-    atomicWriteFile(
-      join(stagingDir, "voicelayer-transcript.txt"),
-      input.transcript,
-    );
+    if (input.transcript) {
+      atomicWriteFile(
+        join(stagingDir, "voicelayer-transcript.txt"),
+        input.transcript,
+      );
+    }
     atomicWriteFile(
       join(stagingDir, "metadata.json"),
       `${JSON.stringify(metadata, null, 2)}\n`,
@@ -1186,9 +1228,33 @@ export async function waitForInput(
     return null;
   }
 
-  // Check if recording was cancelled (X button) — discard audio, don't transcribe
+  // Check if recording was cancelled (X button) — keep a recovery WAV but don't transcribe.
   if (consumeCancelSignalForRecording()) {
-    console.error("[voicelayer] Recording cancelled — discarding audio");
+    const cancelledWavData = createWavBuffer(pcmData);
+    retainLastCaptureForRecovery(
+      cancelledWavData,
+      polishSurfaceForWaitOptions(options),
+    );
+    if (options.archiveSource === "voicebar") {
+      try {
+        archiveVoiceBarUntranscribedRecording({
+          audioBytes: cancelledWavData,
+          source: options.archiveSource,
+          silenceMode,
+          pressToTalk,
+          durationMs: pcmDurationMs(pcmData),
+          backend: "not-transcribed",
+          reason: "cancelled",
+        });
+      } catch (err) {
+        console.error(
+          `[voicelayer] Failed to archive cancelled recording: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    console.error(
+      "[voicelayer] Recording cancelled — retained audio for recovery",
+    );
     broadcast({ type: "state", state: "idle" });
     return null;
   }
@@ -1294,8 +1360,10 @@ export async function waitForInput(
     }
     console.error(`[voicelayer] Transcription: ${text}`);
 
-    writeFileSync(retainedRecordingFilePath(), sttWavData);
-    retainedPolishSurface = polishSurfaceForWaitOptions(options);
+    retainLastCaptureForRecovery(
+      sttWavData,
+      polishSurfaceForWaitOptions(options),
+    );
 
     if (consumeCancelSignalForRecording()) {
       console.error(
