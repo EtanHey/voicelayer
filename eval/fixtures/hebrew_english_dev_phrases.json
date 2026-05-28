@@ -1,0 +1,50 @@
+{
+  "version": "1.0.0",
+  "purpose": "Stage-1 STT base-engine bakeoff fixture for English-heavy and mixed Hebrew-English developer dictation.",
+  "sets": [
+    {
+      "id": "english-heavy-dev",
+      "language": "en",
+      "description": "English-heavy developer phrases with VoiceLayer ecosystem terms.",
+      "samples": [
+        {
+          "id": "en-dev-001",
+          "text": "Run bun test and check the VoiceLayer pull request for regressions.",
+          "expected_terms": ["bun test", "VoiceLayer", "pull request", "regressions"]
+        },
+        {
+          "id": "en-dev-002",
+          "text": "Ask orcClaude to review the cmux handoff before we merge main.",
+          "expected_terms": ["orcClaude", "cmux", "handoff", "merge main"]
+        },
+        {
+          "id": "en-dev-003",
+          "text": "The repeated tail of the sentence should not repeat at the chunk boundary.",
+          "expected_terms": ["repeated tail", "sentence", "chunk boundary"]
+        }
+      ]
+    },
+    {
+      "id": "mixed-hebrew-english-dev",
+      "language": "he-en",
+      "description": "Hebrew-English code-switching phrases for local VoiceLayer dictation.",
+      "samples": [
+        {
+          "id": "he-en-dev-001",
+          "text": "תריץ bun test ואז תבדוק שה-VoiceLayer build עובר",
+          "expected_terms": ["bun test", "VoiceLayer", "build"]
+        },
+        {
+          "id": "he-en-dev-002",
+          "text": "תעשה push ל-branch ותפתח pull request ל-main",
+          "expected_terms": ["push", "branch", "pull request", "main"]
+        },
+        {
+          "id": "he-en-dev-003",
+          "text": "תגיד ל-BrainLayer לשמור milestone על ה-bakeoff harness",
+          "expected_terms": ["BrainLayer", "milestone", "bakeoff harness"]
+        }
+      ]
+    }
+  ]
+}
