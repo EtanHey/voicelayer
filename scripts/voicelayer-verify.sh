@@ -59,6 +59,8 @@ daemon_path_matches() {
     src/socket-client.ts) return 0 ;;
     src/socket-handlers.ts) return 0 ;;
     src/socket-protocol.ts) return 0 ;;
+    src/voicesdk/*) return 0 ;;
+    src/soundlayer/*) return 0 ;;
     src/cli/voicelayer.sh) return 0 ;;
     launchd/*) return 0 ;;
   esac
