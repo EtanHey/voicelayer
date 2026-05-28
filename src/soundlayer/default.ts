@@ -1,5 +1,6 @@
 import {
   consumeCancelSignalForRecording,
+  startMicChunkStream,
   SoxMicCapture,
 } from "../input";
 import { VoiceLayerSTTBackendSelector } from "../stt";
@@ -9,7 +10,11 @@ import {
   VoiceLayerTextToSpeechBackend,
 } from "../tts";
 import { SileroVoiceActivityDetector } from "../vad";
+import { createBargeInMonitor } from "./barge-in";
 import type {
+  BargeInController,
+  BargeInMonitor,
+  BargeInMonitorOptions,
   CancellationController,
   SoundLayer,
   TranscriptEvent,
@@ -33,8 +38,43 @@ class VoiceLayerTranscriptEventSink implements TranscriptEventSink {
   }
 }
 
+class VoiceLayerBargeInController implements BargeInController {
+  constructor(private readonly soundLayer: Pick<SoundLayer, "vad" | "clock">) {}
+
+  monitorDuringPlayback(options: BargeInMonitorOptions): BargeInMonitor {
+    const monitor = createBargeInMonitor(
+      this.soundLayer.vad,
+      options,
+      () => this.soundLayer.clock?.nowMs() ?? Date.now(),
+    );
+    try {
+      const stream = startMicChunkStream({
+        onChunk: async (chunk, capturedAtMs) => {
+          const decision = await monitor.pushAudioChunk(chunk, capturedAtMs);
+          return decision.speechStarted;
+        },
+      });
+      return {
+        ...monitor,
+        exited: stream.exited,
+        stop() {
+          monitor.stop();
+          stream.stop();
+        },
+      };
+    } catch (error) {
+      console.error(
+        `[voicelayer] Barge-in mic monitor unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+      return monitor;
+    }
+  }
+}
+
 export function createDefaultSoundLayer(): SoundLayer {
-  return {
+  const layer: SoundLayer = {
     micCapture: new SoxMicCapture(),
     playback: new QueuedPlaybackController(),
     vad: new SileroVoiceActivityDetector(),
@@ -42,7 +82,12 @@ export function createDefaultSoundLayer(): SoundLayer {
     transcriptEvents: new VoiceLayerTranscriptEventSink(),
     tts: new VoiceLayerTextToSpeechBackend(),
     stt: new VoiceLayerSTTBackendSelector(),
+    clock: {
+      nowMs: () => Date.now(),
+    },
   };
+  layer.bargeIn = new VoiceLayerBargeInController(layer);
+  return layer;
 }
 
 export const defaultSoundLayer: SoundLayer = createDefaultSoundLayer();

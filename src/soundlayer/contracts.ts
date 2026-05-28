@@ -30,6 +30,7 @@ export interface TextToSpeechOptions {
   mode?: string;
   voice?: string;
   waitForPlayback?: boolean;
+  onPlaybackStart?: (startedAtMs: number) => void;
 }
 
 export interface TextToSpeechResult {
@@ -52,6 +53,7 @@ export interface PlaybackMetadata {
     label: string;
     source?: "tts" | "command";
   };
+  onStarted?: (startedAtMs: number) => void;
 }
 
 export interface PlaybackHandle {
@@ -63,6 +65,52 @@ export interface PlaybackController {
   waitForIdle(): Promise<void>;
   stop(): boolean;
   getQueueDepth(): number;
+}
+
+export interface BargeInSpeechOnset {
+  onset_ms: number;
+  probability: number;
+  speech_chunks: number;
+  captured_at_ms: number;
+}
+
+export interface BargeInMonitorMetrics {
+  processed_chunks: number;
+  false_interrupts: number;
+  confirmed_interrupts: number;
+  false_interrupt_rate: number;
+}
+
+export interface BargeInDecision {
+  speechStarted: boolean;
+  onset_ms?: number;
+  probability?: number;
+  rejectedReason?: "not-speech" | "settle-window" | "confirmation-window";
+}
+
+export interface BargeInMonitorOptions {
+  playbackStartedAtMs: number;
+  settleMs?: number;
+  minSpeechChunks?: number;
+  onSpeechStart: (onset: BargeInSpeechOnset) => void | Promise<void>;
+}
+
+export interface BargeInMonitor {
+  exited: Promise<void>;
+  pushAudioChunk(
+    pcmChunk: Uint8Array,
+    capturedAtMs?: number,
+  ): Promise<BargeInDecision>;
+  stop(): void;
+  getMetrics(): BargeInMonitorMetrics;
+}
+
+export interface BargeInController {
+  monitorDuringPlayback(options: BargeInMonitorOptions): BargeInMonitor;
+}
+
+export interface SoundLayerClock {
+  nowMs(): number;
 }
 
 export interface MicCapture {
@@ -118,6 +166,8 @@ export interface VoiceActivityDetector {
 export interface SoundLayer {
   micCapture: MicCapture;
   playback: PlaybackController;
+  bargeIn?: BargeInController;
+  clock?: SoundLayerClock;
   vad: VoiceActivityDetector;
   cancellation: CancellationController;
   transcriptEvents: TranscriptEventSink;

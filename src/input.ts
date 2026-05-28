@@ -788,6 +788,147 @@ export async function terminateRecorderProcess(
   await waitForExit();
 }
 
+export interface MicChunkStreamHandle {
+  exited: Promise<void>;
+  stop(): void;
+}
+
+export function startMicChunkStream(options: {
+  onChunk: (chunk: Uint8Array, capturedAtMs: number) => Promise<boolean | void>;
+}): MicChunkStreamHandle {
+  const recPath = resolveBinary("rec", [
+    "/opt/homebrew/bin/rec",
+    "/usr/local/bin/rec",
+  ]);
+  if (!recPath) {
+    throw new Error("sox not installed. Install: brew install sox");
+  }
+
+  const nativeInputFormat = detectNativeInputFormat();
+  const nativeRate = nativeInputFormat.sampleRate;
+  const nativeChannels = nativeInputFormat.channels;
+  const needsResample = nativeRate !== SAMPLE_RATE;
+  const needsDownmix = nativeChannels !== CHANNELS;
+  const nativeChunkFrames = Math.ceil(
+    VAD_CHUNK_SAMPLES * (nativeRate / SAMPLE_RATE),
+  );
+  const nativeChunkBytes =
+    nativeChunkFrames * nativeChannels * BYTES_PER_SAMPLE;
+
+  const recorder = Bun.spawn(
+    [
+      recPath,
+      "-r",
+      String(nativeRate),
+      "-c",
+      String(nativeChannels),
+      "-b",
+      "16",
+      "-e",
+      "signed",
+      "-t",
+      "raw",
+      "-q",
+      "-",
+    ],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+
+  let stopped = false;
+  let readBuffer: Uint8Array[] = [];
+  let readBufferLen = 0;
+  const chunkQueue: Uint8Array[] = [];
+  let readerDone = false;
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    void terminateRecorderProcess(recorder);
+  };
+
+  const drainStderr = async () => {
+    if (!recorder.stderr) return;
+    const reader = (recorder.stderr as ReadableStream<Uint8Array>).getReader();
+    const chunks: Uint8Array[] = [];
+    try {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) chunks.push(new Uint8Array(value));
+      }
+    } catch {}
+    if (chunks.length === 0) return;
+    const text = Buffer.concat(chunks).toString("utf-8").trim();
+    if (text) console.error(`[voicelayer] barge-in rec stderr: ${text}`);
+  };
+
+  const pipeReader = async () => {
+    if (!recorder.stdout) {
+      throw new Error("rec: stdout not available");
+    }
+    const reader = (recorder.stdout as ReadableStream<Uint8Array>).getReader();
+    while (!stopped) {
+      const { value, done } = await reader.read();
+      if (done || stopped) break;
+      if (!value || value.length === 0) continue;
+
+      const safeCopy = new Uint8Array(value);
+      readBuffer.push(safeCopy);
+      readBufferLen += safeCopy.length;
+
+      while (readBufferLen >= nativeChunkBytes) {
+        const flat = new Uint8Array(readBufferLen);
+        let off = 0;
+        for (const buf of readBuffer) {
+          flat.set(buf, off);
+          off += buf.length;
+        }
+        const nativeChunk = flat.slice(0, nativeChunkBytes);
+        const remainder = flat.slice(nativeChunkBytes);
+        readBuffer = remainder.length > 0 ? [remainder] : [];
+        readBufferLen = remainder.length;
+
+        const monoChunk = needsDownmix
+          ? downmixPCM16ToMono(nativeChunk, nativeChannels)
+          : nativeChunk;
+        const chunk = needsResample
+          ? resamplePCM16(monoChunk, nativeRate, SAMPLE_RATE)
+          : monoChunk;
+        chunkQueue.push(chunk);
+      }
+    }
+    readerDone = true;
+  };
+
+  const chunkProcessor = async () => {
+    while (!stopped) {
+      if (chunkQueue.length === 0) {
+        if (readerDone) break;
+        await Bun.sleep(1);
+        continue;
+      }
+      const chunk = chunkQueue.shift()!;
+      const shouldStop = await options.onChunk(chunk, Date.now());
+      if (shouldStop) {
+        stop();
+        break;
+      }
+    }
+  };
+
+  const exited = Promise.all([
+    drainStderr(),
+    pipeReader(),
+    chunkProcessor(),
+    recorder.exited.then(
+      () => undefined,
+      () => undefined,
+    ),
+  ]).then(() => undefined);
+
+  return { exited, stop };
+}
+
 export function isPttStopDrainComplete(
   stopRequestedAtMs: number,
   nowMs: number,

@@ -1,7 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import type { SoundLayer } from "../soundlayer";
+import type { BargeInMonitor, SoundLayer } from "../soundlayer";
 import { defaultSoundLayer } from "../soundlayer";
 import {
   serializeVoiceSdkEvent,
@@ -144,6 +144,13 @@ export function createVoiceSdkSessionManager(
     const session = sessionFor(sessionId);
     const utteranceId = `utt-${session.sequence + 1}`;
     const voiceId = input.voice_id ?? "default";
+    let playbackStartedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
+    let reason: VoiceSdkSpeakStopReason = "completed";
+    let interrupted = false;
+    const bargeInMonitor: { current: BargeInMonitor | null } = {
+      current: null,
+    };
+
     emit({
       type: "speak.started",
       session_id: sessionId,
@@ -161,11 +168,59 @@ export function createVoiceSdkSessionManager(
       final: true,
       sequence: nextSequence(session),
     });
-    let reason: VoiceSdkSpeakStopReason = "completed";
+
+    const startBargeInMonitor = (startedAtMs: number) => {
+      if (!soundLayer.bargeIn || bargeInMonitor.current) return;
+      playbackStartedAtMs = startedAtMs;
+      bargeInMonitor.current = soundLayer.bargeIn.monitorDuringPlayback({
+        playbackStartedAtMs,
+        onSpeechStart: (onset) => {
+          if (interrupted) return;
+          interrupted = true;
+          const turnId = `turn-${session.sequence + 1}`;
+          emit({
+            type: "listen.started",
+            session_id: sessionId,
+            turn_id: turnId,
+            mode: "vad",
+            sequence: nextSequence(session),
+          });
+          emit({
+            type: "user.speech_started",
+            session_id: sessionId,
+            turn_id: turnId,
+            onset_ms: onset.onset_ms,
+            sequence: nextSequence(session),
+          });
+          soundLayer.cancellation.stopPlayback();
+          const stoppedAtMs = soundLayer.clock?.nowMs() ?? Date.now();
+          const onsetAbsoluteMs = playbackStartedAtMs + onset.onset_ms;
+          emit({
+            type: "user.interrupted",
+            session_id: sessionId,
+            turn_id: turnId,
+            stopped_utterance_id: utteranceId,
+            onset_to_stop_ms: Math.max(0, stoppedAtMs - onsetAbsoluteMs),
+            sequence: nextSequence(session),
+          });
+        },
+      });
+    };
+
     try {
-      await soundLayer.tts.speak(input.text, { voice: input.voice_id });
+      await soundLayer.tts.speak(input.text, {
+        voice: input.voice_id,
+        mode: "converse",
+        waitForPlayback: true,
+        onPlaybackStart: startBargeInMonitor,
+      });
     } catch {
       reason = "error";
+    } finally {
+      bargeInMonitor.current?.stop();
+    }
+    if (interrupted) {
+      reason = "interrupted";
     }
     emit({
       type: "speak.stopped",

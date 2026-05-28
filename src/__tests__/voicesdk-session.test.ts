@@ -79,6 +79,64 @@ function fakeSoundLayer(): SoundLayer {
   };
 }
 
+function fakeBargeInSoundLayer(options: {
+  onsetMs: number;
+  stopLatencyMs: number;
+  onStop: () => void;
+}): SoundLayer {
+  const layer = fakeSoundLayer();
+  let nowMs = 1_000;
+  return {
+    ...layer,
+    cancellation: {
+      stopPlayback() {
+        options.onStop();
+        nowMs = 1_000 + options.onsetMs + options.stopLatencyMs;
+        return true;
+      },
+      consumeRecordingCancel() {
+        return false;
+      },
+    },
+    tts: {
+      async speak(_text, speakOptions) {
+        speakOptions?.onPlaybackStart?.(1_000);
+        await Bun.sleep(20);
+        return {};
+      },
+    },
+    bargeIn: {
+      monitorDuringPlayback(monitorOptions) {
+        setTimeout(() => {
+          void monitorOptions.onSpeechStart({
+            onset_ms: options.onsetMs,
+            probability: 0.91,
+            speech_chunks: 2,
+            captured_at_ms: 1_000 + options.onsetMs,
+          });
+        }, 1);
+        return {
+          exited: Promise.resolve(),
+          stop() {},
+          getMetrics() {
+            return {
+              processed_chunks: 2,
+              false_interrupts: 0,
+              confirmed_interrupts: 1,
+              false_interrupt_rate: 0,
+            };
+          },
+        };
+      },
+    },
+    clock: {
+      nowMs() {
+        return nowMs;
+      },
+    },
+  };
+}
+
 describe("VoiceSDK session manager", () => {
   let tempDir: string | null = null;
 
@@ -175,5 +233,59 @@ describe("VoiceSDK session manager", () => {
     expect(
       readFileSync(join(tempDir, "session-no-subscriber.ndjson"), "utf-8"),
     ).toContain('"type":"session.started"');
+  });
+
+  it("cancels playback and emits ordered barge-in turn events", async () => {
+    tempDir = mkdtempSync(join(tmpdir(), "voicesdk-session-"));
+    const events: string[] = [];
+    let stopped = false;
+    const manager = createVoiceSdkSessionManager({
+      soundLayer: fakeBargeInSoundLayer({
+        onsetMs: 180,
+        stopLatencyMs: 44,
+        onStop: () => {
+          stopped = true;
+        },
+      }),
+      logDir: tempDir,
+      idFactory: () => "session-barge-in",
+      onEvent: (event) => events.push(event.type),
+    });
+
+    const session = await manager.startSession({ product: "VoiceReview" });
+    await manager.speak(session.session_id, {
+      text: "Please review this section.",
+      voice_id: "theo",
+    });
+
+    expect(stopped).toBe(true);
+    expect(events).toEqual([
+      "session.started",
+      "speak.started",
+      "speak.chunk",
+      "listen.started",
+      "user.speech_started",
+      "user.interrupted",
+      "speak.stopped",
+    ]);
+
+    const logLines = readFileSync(
+      join(tempDir, "session-barge-in.ndjson"),
+      "utf-8",
+    ).trim().split("\n").map((line) => JSON.parse(line));
+    expect(logLines[4]).toMatchObject({
+      type: "user.speech_started",
+      onset_ms: 180,
+    });
+    expect(logLines[5]).toMatchObject({
+      type: "user.interrupted",
+      stopped_utterance_id: "utt-2",
+      onset_to_stop_ms: 44,
+    });
+    expect(logLines[5].onset_to_stop_ms).toBeLessThan(250);
+    expect(logLines[6]).toMatchObject({
+      type: "speak.stopped",
+      reason: "interrupted",
+    });
   });
 });
