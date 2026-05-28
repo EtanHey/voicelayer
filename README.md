@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/MCP%20tools-11-38BDF8.svg)](#voice-tools)
+[![Tools](https://img.shields.io/badge/MCP%20tools-2%20core%20%2B%209%20aliases-38BDF8.svg)](#voice-tools)
 [![Tests](https://img.shields.io/badge/tests-585%20Bun%20%2B%20144%20Swift-brightgreen.svg)](#testing)
 
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
@@ -19,7 +19,7 @@
 
 **[Website](https://voicelayer.etanheyman.com)** | **[Docs](https://etanhey.github.io/voicelayer/docs/)** | **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
 
-VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. 11 MCP tools with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. 2 canonical MCP tools plus 9 backward-compatible aliases ship with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 
 ## Architecture
 
