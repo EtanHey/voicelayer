@@ -18,6 +18,7 @@
 import { existsSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
+import type { VoiceActivityDetector } from "./soundlayer";
 
 // AIDEV-NOTE: onnxruntime-node uses native C++ addon (N-API). Works with Bun 1.3+.
 // If Bun drops support, switch to onnxruntime-web (WASM, same API).
@@ -230,5 +231,23 @@ export async function resetVAD(): Promise<void> {
       [2, 1, 128],
     );
     cachedSession.context = new Float32Array(VAD_CONTEXT_SAMPLES);
+  }
+}
+
+export class SileroVoiceActivityDetector implements VoiceActivityDetector {
+  processChunk(pcmChunk: Uint8Array): Promise<number> {
+    return processVADChunk(pcmChunk);
+  }
+
+  isSpeech(probability: number): boolean {
+    return isSpeech(probability);
+  }
+
+  silenceChunksForMode(mode: SilenceMode): number {
+    return silenceChunksForMode(mode);
+  }
+
+  reset(): Promise<void> {
+    return resetVAD();
   }
 }

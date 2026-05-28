@@ -39,6 +39,14 @@ import type {
   QueueItemSnapshot,
   WordBoundary,
 } from "./socket-protocol";
+import type {
+  PlaybackController,
+  PlaybackHandle,
+  PlaybackMetadata as SoundLayerPlaybackMetadata,
+  TextToSpeechBackend,
+  TextToSpeechOptions,
+  TextToSpeechResult,
+} from "./soundlayer";
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
@@ -479,7 +487,7 @@ async function playClonedAudio(
  * 4. Low/background chatter collapses so bursts do not create an audio backlog.
  */
 /** Metadata for deferred broadcasting — fires when playback actually starts. */
-export interface PlaybackMetadata {
+export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   text: string;
   voice: string;
   wordBoundaries?: WordBoundary[];
@@ -846,9 +854,7 @@ const playbackQueueManager = new PlaybackQueueManager();
 export function playAudioNonBlocking(
   audioFile: string,
   metadata?: PlaybackMetadata,
-): {
-  exited: Promise<void>;
-} {
+): PlaybackHandle {
   return playbackQueueManager.enqueue(audioFile, metadata);
 }
 
@@ -874,6 +880,24 @@ export function stopPlayback(): boolean {
   return playbackQueueManager.stop();
 }
 
+export class QueuedPlaybackController implements PlaybackController {
+  play(audioFile: string, metadata?: PlaybackMetadata): PlaybackHandle {
+    return playAudioNonBlocking(audioFile, metadata);
+  }
+
+  waitForIdle(): Promise<void> {
+    return awaitCurrentPlayback();
+  }
+
+  stop(): boolean {
+    return stopPlayback();
+  }
+
+  getQueueDepth(): number {
+    return getPlaybackQueueDepth();
+  }
+}
+
 /**
  * Speak text aloud via three-tier TTS:
  *   1. Cloned voice → Qwen3-TTS daemon (localhost:8880)
@@ -891,13 +915,8 @@ export function stopPlayback(): boolean {
  */
 export async function speak(
   text: string,
-  options?: {
-    rate?: string;
-    mode?: string;
-    voice?: string;
-    waitForPlayback?: boolean;
-  },
-): Promise<{ warning?: string }> {
+  options?: TextToSpeechOptions,
+): Promise<TextToSpeechResult> {
   if (!text?.trim()) return {};
 
   // SSML injection defense — strip tags before any TTS engine
@@ -1126,4 +1145,10 @@ async function speakWithEdgeTTS(
   }
 
   return { warning };
+}
+
+export class VoiceLayerTextToSpeechBackend implements TextToSpeechBackend {
+  speak(text: string, options?: TextToSpeechOptions): Promise<TextToSpeechResult> {
+    return speak(text, options);
+  }
 }
