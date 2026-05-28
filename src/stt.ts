@@ -27,20 +27,26 @@ import {
   getLanguageModeFromEnv,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import type {
+  SpeechToTextBackend,
+  SpeechToTextBackendSelector,
+  TranscribeAudioOptions,
+  TranscriptionResult,
+} from "./soundlayer";
 
 // --- Types ---
 
-export interface STTResult {
+export interface STTResult extends TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
 }
 
-export interface STTTranscribeOptions {
+export interface STTTranscribeOptions extends TranscribeAudioOptions {
   promptOverride?: string;
 }
 
-export interface STTBackend {
+export interface STTBackend extends SpeechToTextBackend {
   name: string;
   isAvailable(): Promise<boolean>;
   transcribe(
@@ -1179,4 +1185,14 @@ export async function getBackend(): Promise<STTBackend> {
 export function resetBackendCache(): void {
   cachedBackend = null;
   cachedBrewPrefix = undefined;
+}
+
+export class VoiceLayerSTTBackendSelector implements SpeechToTextBackendSelector {
+  getBackend(): Promise<STTBackend> {
+    return getBackend();
+  }
+
+  resetBackendCache(): void {
+    resetBackendCache();
+  }
 }

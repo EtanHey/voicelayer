@@ -84,6 +84,7 @@ import {
   type STTBackend,
 } from "./stt";
 import { getLanguageModeFromEnv } from "./language-config";
+import type { MicCapture, MicCaptureOptions } from "./soundlayer";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -1428,6 +1429,38 @@ export function clearInput(): void {
 
 export function getRecordingState(): "idle" | "recording" | "transcribing" {
   return recordingState;
+}
+
+export class SoxMicCapture implements MicCapture {
+  recordToBuffer(
+    timeoutMs: number,
+    silenceMode: SilenceMode = "standard",
+    pressToTalk = false,
+  ): Promise<Uint8Array | null> {
+    return recordToBuffer(timeoutMs, silenceMode, pressToTalk);
+  }
+
+  waitForInput(
+    timeoutMs: number,
+    silenceMode: SilenceMode = "standard",
+    pressToTalk = false,
+    options: MicCaptureOptions = {},
+  ): Promise<string | null> {
+    return waitForInput(
+      timeoutMs,
+      silenceMode,
+      pressToTalk,
+      options.archiveRecording ? { archiveSource: "voicebar" } : {},
+    );
+  }
+
+  clear(): void {
+    clearInput();
+  }
+
+  getState(): "idle" | "recording" | "transcribing" {
+    return getRecordingState();
+  }
 }
 
 export function hasRetainedRecording(): boolean {
