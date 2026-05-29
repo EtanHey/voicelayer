@@ -458,7 +458,11 @@ async function playClonedAudio(
   voiceLabel: string,
   speakingText: string,
   resolvedVoice: string,
-  options?: { mode?: string; waitForPlayback?: boolean },
+  options?: {
+    mode?: string;
+    waitForPlayback?: boolean;
+    onPlaybackStart?: (startedAtMs: number) => void;
+  },
 ): Promise<void> {
   addToHistory(text, ttsFile, voiceLabel);
   const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
@@ -467,6 +471,7 @@ async function playClonedAudio(
     voice: resolvedVoice,
     priority: playbackPriorityForMode(options?.mode),
     durationMs,
+    onStarted: options?.onPlaybackStart,
   });
   proc.exited.then(() => {
     try {
@@ -684,6 +689,7 @@ class PlaybackQueueManager {
       }
 
       this.current = { job: next, proc, startedAt: Date.now() };
+      next.metadata?.onStarted?.(this.current.startedAt);
       this.startProgressTimer();
       this.emitQueueSnapshot();
 
@@ -1047,7 +1053,12 @@ export async function speak(
 async function speakWithEdgeTTS(
   text: string,
   voice: string,
-  options?: { rate?: string; mode?: string; waitForPlayback?: boolean },
+  options?: {
+    rate?: string;
+    mode?: string;
+    waitForPlayback?: boolean;
+    onPlaybackStart?: (startedAtMs: number) => void;
+  },
   warning?: string,
 ): Promise<{ warning?: string }> {
   // Determine rate: explicit > mode default > env default
@@ -1133,6 +1144,7 @@ async function speakWithEdgeTTS(
       wordBoundaries.length > 0
         ? inferBoundaryEndMs(wordBoundaries)
         : undefined,
+    onStarted: options?.onPlaybackStart,
   });
   proc.exited.then(() => {
     try {
