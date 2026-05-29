@@ -1,4 +1,5 @@
 import Foundation
+import VoiceBarUI
 
 /// Shared VoiceLayer temp paths for the Swift client.
 /// Must stay aligned with `src/paths.ts`.
@@ -31,4 +32,5 @@ enum VoiceLayerPaths {
     static let socketPath = tmpPath("voicelayer.sock")
     static let mcpSocketPath = tmpPath("voicelayer-mcp.sock")
     static let daemonPIDPath = tmpPath("voicelayer-mcp.pid")
+    static let retainedRecordingPath = tmpPath("voicelayer-last-recording.wav")
 }

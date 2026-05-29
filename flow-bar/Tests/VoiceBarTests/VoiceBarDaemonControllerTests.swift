@@ -1,4 +1,5 @@
 @testable import VoiceBar
+@testable import VoiceBarUI
 import XCTest
 
 private let testBunPath = "/opt/homebrew/bin/bun"

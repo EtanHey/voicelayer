@@ -1,6 +1,7 @@
 import Foundation
+import VoiceBarUI
 
-class VoiceBarCommandRouter {
+class VoiceBarCommandRouter: BarCommandRouting {
     private let voiceState: VoiceState
     private let resetHotkeyState: () -> Void
 

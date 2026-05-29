@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import VoiceBarUI
 
 enum VoiceBarDaemonActivationResult: Equatable {
     case alreadyRunning

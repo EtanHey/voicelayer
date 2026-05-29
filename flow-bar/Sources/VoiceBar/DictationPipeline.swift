@@ -1,4 +1,5 @@
 import Foundation
+import VoiceBarUI
 
 enum DictationError: Error, Equatable {
     case silenceTimeout

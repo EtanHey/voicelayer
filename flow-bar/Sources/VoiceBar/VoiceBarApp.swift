@@ -9,8 +9,11 @@
 // All discovery file logic removed (no more polling, no file watchers).
 
 import AppKit
+import ApplicationServices
+import CoreGraphics
 import Darwin
 import SwiftUI
+import VoiceBarUI
 
 private let legacySocketHotkeyDuplicateWindow: TimeInterval = 0.75
 
@@ -22,7 +25,14 @@ enum HotkeyInputSource {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let voiceState = VoiceState()
+    let voiceState = VoiceState(
+        transcriptionVocabularyLoader: {
+            STTVocabularySnapshotLoader.load().promptTerms
+        },
+        transcriptionVocabularyAliasLoader: {
+            STTVocabularySnapshotLoader.load().aliases
+        }
+    )
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
         resetHotkeyState: { [weak self] in
@@ -32,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
     }
+    private let commandModeAXHelper = CommandModeAXHelper()
 
     private let pillContextMenuController = PillContextMenuController()
     private let daemonController = VoiceBarDaemonController()
@@ -138,6 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
+        configureGatekeptVoiceStateDependencies()
         promptForAccessibilityIfNeeded()
 
         // Socket server — listens on VoiceLayerPaths.socketPath
@@ -339,7 +351,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func promptForAccessibilityIfNeeded() {
         // Request Accessibility permission (needed for CGEvent paste-on-record-end).
         // Shows the macOS permission dialog on first launch and after revocation.
-        let trusted = VoiceState.isAccessibilityTrusted(prompt: true)
+        let trusted = Self.isAccessibilityTrusted(prompt: true)
         NSLog("[VoiceBar] Accessibility trusted on launch: %@", trusted ? "YES" : "NO — paste will not work")
         guard !trusted else { return }
 
@@ -355,6 +367,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSWorkspace.shared.open(url)
             }
         }
+    }
+
+    private func configureGatekeptVoiceStateDependencies() {
+        voiceState.simulatedPasteHandler = {
+            Self.simulatePaste()
+        }
+        voiceState.accessibilityTrustChecker = { prompt in
+            Self.isAccessibilityTrusted(prompt: prompt)
+        }
+        voiceState.dictationInsertionHandlerProvider = {
+            CommandModeAXHelper.captureFocusedInsertionHandler()
+        }
+        voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in
+            commandModeAXHelper.applyReplacement(text)
+        }
+        RetainedRecordingPreview.urlProvider = {
+            URL(fileURLWithPath: VoiceLayerPaths.retainedRecordingPath)
+        }
+    }
+
+    /// Simulate Cmd+V via CGEvent. Requires Accessibility permission.
+    /// Returns true if paste was posted, false if blocked (S3 fix: caller checks this).
+    @discardableResult
+    private static func simulatePaste() -> Bool {
+        guard isAccessibilityTrusted(prompt: false) else {
+            NSLog("[VoiceBar] simulatePaste: Accessibility not granted")
+            return false
+        }
+        guard let source = CGEventSource(stateID: .hidSystemState) else {
+            NSLog("[VoiceBar] simulatePaste: failed to create CGEventSource")
+            return false
+        }
+        let vKey: CGKeyCode = 0x09 // V
+        let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
+        let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
+        guard let vDown, let vUp else {
+            NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
+            return false
+        }
+        vDown.flags = .maskCommand
+        vUp.flags = .maskCommand
+        vDown.post(tap: .cghidEventTap)
+        vUp.post(tap: .cghidEventTap)
+        return true
+    }
+
+    private static func isAccessibilityTrusted(prompt: Bool) -> Bool {
+        if prompt {
+            let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+            return AXIsProcessTrustedWithOptions(options)
+        }
+        return AXIsProcessTrusted()
     }
 
     // MARK: - Hotkey setup

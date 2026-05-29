@@ -1,5 +1,6 @@
 import Foundation
 @testable import VoiceBar
+@testable import VoiceBarUI
 
 final class VirtualAudioEngine: AudioStreamable {
     private let mockFile: String
