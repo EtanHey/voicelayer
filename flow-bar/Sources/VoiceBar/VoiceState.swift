@@ -58,7 +58,6 @@ struct PasteboardSnapshot: Equatable {
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
-    case unverifiedClipboardPaste
     case failed(String)
 }
 
@@ -88,6 +87,12 @@ final class VoiceState {
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     var confirmationText: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != confirmationText) }
+    }
+
+    /// Keeps the post-record paste flow in one fixed panel envelope so loading,
+    /// success, and failure substates crossfade instead of re-centering.
+    var keepsPasteFlowEnvelope: Bool = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != keepsPasteFlowEnvelope) }
     }
 
     /// Real-time audio level (0.0–1.0) from RMS events.
@@ -300,6 +305,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -329,6 +335,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -386,6 +393,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = true
         transcribingStartedAt = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -449,6 +457,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         confirmationText = nil
         errorMessage = nil
@@ -703,6 +712,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -981,6 +991,7 @@ final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -1109,16 +1120,13 @@ final class VoiceState {
     }
 
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
-    private static let unverifiedClipboardPasteMessage = "Sent paste — if nothing appeared, click input and press Shift+F5"
+    private static let pasteFailureRetryMessage = "Paste failed — click input and press Shift+F5"
 
     private static func pasteOutcome(
         pasted: Bool,
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(Self.genericPasteFailureMessage) }
-        if plan == .autoPaste {
-            return .unverifiedClipboardPaste
-        }
         return .pasted
     }
 
@@ -1155,10 +1163,8 @@ final class VoiceState {
             showConfirmation(text, duration: 5.0)
         case .pasted:
             showConfirmation(text, duration: 5.0)
-        case .unverifiedClipboardPaste:
-            showConfirmation(Self.unverifiedClipboardPasteMessage, duration: 5.0)
         case let .failed(message):
-            showConfirmation(message, duration: 4.0)
+            showConfirmation(Self.failureMessageWithRetryHint(message), duration: 4.0)
         }
 
         if pendingIdleAfterAutoPasteCompletion {
@@ -1173,8 +1179,16 @@ final class VoiceState {
         DispatchQueue.main.asyncAfter(deadline: .now() + duration) { [weak self] in
             if self?.confirmationText == message {
                 self?.confirmationText = nil
+                self?.keepsPasteFlowEnvelope = false
             }
         }
+    }
+
+    private static func failureMessageWithRetryHint(_ message: String) -> String {
+        if message == genericPasteFailureMessage {
+            return pasteFailureRetryMessage
+        }
+        return message
     }
 
     private func sendIntent(
@@ -1227,6 +1241,7 @@ final class VoiceState {
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
+        keepsPasteFlowEnvelope = false
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         mode = .error

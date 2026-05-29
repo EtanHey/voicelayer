@@ -11,6 +11,7 @@ struct VoiceBarPanelLayout: Equatable {
         statusText: String = "",
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
+        isPasteFlowActive: Bool = false,
         padding: CGFloat
     ) -> VoiceBarPanelLayout {
         let contentSize = contentSize(
@@ -22,18 +23,26 @@ struct VoiceBarPanelLayout: Equatable {
             queueItemCount: queueItemCount
         )
         let safePadding = max(0, padding)
+        let resolvedContentSize = if isPasteFlowActive, !isCollapsed {
+            CGSize(
+                width: Theme.panelWidth - (safePadding * 2),
+                height: contentSize.height
+            )
+        } else {
+            contentSize
+        }
         let panelSize = CGSize(
-            width: contentSize.width + (safePadding * 2),
-            height: contentSize.height + (safePadding * 2)
+            width: resolvedContentSize.width + (safePadding * 2),
+            height: resolvedContentSize.height + (safePadding * 2)
         )
         let hitInset: CGFloat = 2
-        let horizontalInset = min(hitInset, max(0, contentSize.width / 2))
-        let verticalInset = min(hitInset, max(0, contentSize.height / 2))
+        let horizontalInset = min(hitInset, max(0, resolvedContentSize.width / 2))
+        let verticalInset = min(hitInset, max(0, resolvedContentSize.height / 2))
         let activeHitRect = CGRect(
             x: safePadding + horizontalInset,
             y: safePadding + verticalInset,
-            width: max(1, contentSize.width - (horizontalInset * 2)),
-            height: max(1, contentSize.height - (verticalInset * 2))
+            width: max(1, resolvedContentSize.width - (horizontalInset * 2)),
+            height: max(1, resolvedContentSize.height - (verticalInset * 2))
         )
 
         return VoiceBarPanelLayout(panelSize: panelSize, activeHitRect: activeHitRect)

@@ -516,6 +516,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 canReplay: state?.canReplay ?? false
             ),
             queueItemCount: state?.queueItems.count ?? 0,
+            isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
             padding: Theme.panelPadding
         )
     }
