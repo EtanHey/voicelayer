@@ -605,13 +605,10 @@ final class VoiceStatePasteTests: XCTestCase {
             ),
         ])
         XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertEqual(
-            state.confirmationText,
-            "Sent paste — if nothing appeared, click input and press Shift+F5"
-        )
+        XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteShowsUnverifiedMessageWhenNoFocusedInputWasCaptured() {
+    func testAutoPasteShowsSuccessTranscriptWhenNoFocusedInputWasCaptured() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -627,10 +624,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this might not have an input",
         ])
 
-        XCTAssertEqual(
-            state.confirmationText,
-            "Sent paste — if nothing appeared, click input and press Shift+F5"
-        )
+        XCTAssertEqual(state.confirmationText, "this might not have an input")
     }
 
     func testAutoPasteSkipsClipboardRestoreIfClipboardChangedAgainAfterWrite() {
@@ -715,7 +709,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
-        XCTAssertEqual(state.confirmationText, "Paste failed — click back into the input and retry")
+        XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
         XCTAssertFalse(state.confirmationText?.contains("Accessibility") ?? true)
     }
 

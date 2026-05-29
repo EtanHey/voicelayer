@@ -148,6 +148,37 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
+    func testPasteFlowKeepsFixedPanelWidthAcrossRecordingLoadingAndSuccess() {
+        let recording = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "",
+            isPasteFlowActive: true,
+            padding: Theme.panelPadding
+        )
+        let loading = VoiceBarPanelLayout.make(
+            mode: .transcribing,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "",
+            isPasteFlowActive: true,
+            padding: Theme.panelPadding
+        )
+        let success = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: "this landed in the target input",
+            statusText: "this landed in the target input",
+            isPasteFlowActive: true,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(recording.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(loading.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(success.panelSize.width, Theme.panelWidth)
+    }
+
     func testSpeakingQueuePanelFitsQueueVisualizationChrome() {
         let layout = VoiceBarPanelLayout.make(
             mode: .speaking,

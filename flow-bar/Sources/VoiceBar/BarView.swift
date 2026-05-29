@@ -417,13 +417,14 @@ struct BarView: View {
         Group {
             if transcriptPreviewIsVisible {
                 Text(statusText)
-                    .frame(width: transcriptPreviewWidth, alignment: .leading)
+                    .frame(width: transcriptPreviewWidth, alignment: .center)
             } else {
                 Text(statusText)
             }
         }
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(.white.opacity(0.9))
+            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
             .lineLimit(statusLineLimit)
             .truncationMode(.tail)
             .contentTransition(.opacity)
@@ -468,6 +469,10 @@ struct BarView: View {
     }
 
     private var pillFixedWidth: CGFloat? {
+        if state.keepsPasteFlowEnvelope {
+            return Theme.panelWidth - (Theme.panelPadding * 2)
+        }
+
         if let transcriptPreviewText {
             return Theme.transcriptPreviewPillWidth(for: transcriptPreviewText)
         }
