@@ -1,4 +1,5 @@
 import Foundation
+import VoiceBarUI
 
 // VoiceBarDaemonLaunchConfiguration defined in VoiceBarDaemonController.swift
 

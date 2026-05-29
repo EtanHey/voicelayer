@@ -1,4 +1,5 @@
 @testable import VoiceBar
+@testable import VoiceBarUI
 import XCTest
 
 final class WakeRecoveryCoordinatorTests: XCTestCase {

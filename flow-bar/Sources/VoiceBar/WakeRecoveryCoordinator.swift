@@ -1,4 +1,5 @@
 import Foundation
+import VoiceBarUI
 
 final class WakeRecoveryCoordinator {
     typealias Scheduler = (_ delay: TimeInterval, _ block: @escaping () -> Void) -> Void

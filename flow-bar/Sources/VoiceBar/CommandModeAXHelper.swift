@@ -1,16 +1,11 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import VoiceBarUI
 
 struct CommandModeSelectionSnapshot: Equatable {
     var value: String
     var selectedRange: NSRange
-}
-
-enum CommandModeApplyResult: Equatable {
-    case axVerified(String)
-    case clipboardFallback(String)
-    case failed(String)
 }
 
 enum AXWriteDisposition: Equatable {

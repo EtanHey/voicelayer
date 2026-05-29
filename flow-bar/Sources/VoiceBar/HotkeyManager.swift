@@ -14,6 +14,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import VoiceBarUI
 
 private func describeEventType(_ type: CGEventType) -> String {
     switch type {
@@ -279,11 +280,6 @@ enum HotkeyAction: Equatable {
     case sendEnter
     case pasteLastTranscript
     case cancel
-}
-
-enum HotkeyPermission: Equatable {
-    case inputMonitoring
-    case accessibility
 }
 
 struct HotkeyPermissionStatus: Equatable {

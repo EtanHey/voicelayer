@@ -9,6 +9,7 @@
 // server. MCP servers connect as clients. This replaces SocketClient.swift.
 
 import Foundation
+import VoiceBarUI
 
 enum SocketWriteResult: Equatable {
     case wrote(Int)

@@ -9,13 +9,23 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "VoiceBar",
+            dependencies: ["VoiceBarUI"],
             path: "Sources/VoiceBar"
+        ),
+        .target(
+            name: "VoiceBarUI",
+            path: "Sources/VoiceBarUI"
         ),
         .testTarget(
             name: "VoiceBarTests",
-            dependencies: ["VoiceBar"],
+            dependencies: ["VoiceBar", "VoiceBarUI"],
             path: "Tests/VoiceBarTests",
             resources: [.process("Fixtures")]
+        ),
+        .testTarget(
+            name: "VoiceBarUITests",
+            dependencies: ["VoiceBarUI"],
+            path: "Tests/VoiceBarUITests"
         ),
     ]
 )
