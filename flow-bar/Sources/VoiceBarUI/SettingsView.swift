@@ -6,19 +6,25 @@ public struct SettingsView: View {
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
     public let onSelectDevice: (String) -> Void
+    public let anchorMode: () -> VoiceBarAnchorMode
+    public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
 
     public init(
         hotkeyEnabled: Bool,
         missingPermissions: [HotkeyPermission],
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
-        onSelectDevice: @escaping (String) -> Void
+        onSelectDevice: @escaping (String) -> Void,
+        anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
+        onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in }
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
         self.onSelectDevice = onSelectDevice
+        self.anchorMode = anchorMode
+        self.onSelectAnchorMode = onSelectAnchorMode
     }
 
     public var body: some View {
@@ -73,6 +79,17 @@ public struct SettingsView: View {
                 LabeledContent(VoiceBarHotkeyContract.repasteShortcutLabel) {
                     Text(VoiceBarHotkeyContract.repasteDescription)
                         .foregroundStyle(.secondary)
+                }
+            }
+
+            Section("Position") {
+                Picker("Anchor", selection: Binding(
+                    get: { anchorMode() },
+                    set: { onSelectAnchorMode($0) }
+                )) {
+                    ForEach(VoiceBarAnchorMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
                 }
             }
         }

@@ -125,10 +125,10 @@ public enum Theme {
 
     // MARK: - Animation
 
-    public static let connectionTransition: Animation = .spring(duration: 0.3, bounce: 0.15)
-    public static let pillTransition: Animation = .spring(duration: 0.38, bounce: 0.12)
+    public static let connectionTransition: Animation = .smooth(duration: 0.28)
+    public static let pillTransition: Animation = .smooth(duration: 0.34)
     /// Smooth crossfade for mode changes — avoids bouncy intermediate states.
-    public static let modeTransition: Animation = .easeInOut(duration: 0.25)
+    public static let modeTransition: Animation = .smooth(duration: 0.24)
     public static let queueProgressTransition: Animation = .easeOut(duration: 0.18)
 
     // MARK: - State-dependent color
