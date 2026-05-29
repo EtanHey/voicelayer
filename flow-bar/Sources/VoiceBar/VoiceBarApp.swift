@@ -704,8 +704,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             visibleFrame: visibleFrame,
             pillSize: panel.frame.size
         )
+        // Follow mode with no explicit screen: defer to positionOnScreen's
+        // mouse-containing-screen lookup so the pill appears on the screen under
+        // the cursor — preserving pre-anchor multi-monitor default behavior.
+        let placementScreen = (placement.followsMouse && screen == nil) ? nil : targetScreen
         panel.positionOnScreen(
-            targetScreen,
+            placementScreen,
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset
         )
