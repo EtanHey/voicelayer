@@ -309,6 +309,34 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("collapses immediate duplicated STT function words from dictation", () => {
+    expect(cleanupTranscriptionText("see the the bars")).toBe("See the bars");
+    expect(cleanupTranscriptionText("I I think this should paste")).toBe(
+      "I think this should paste",
+    );
+    expect(cleanupTranscriptionText("send to to the current input")).toBe(
+      "Send to the current input",
+    );
+  });
+
+  it("preserves valid repeated words, Hebrew, and identifiers", () => {
+    expect(cleanupTranscriptionText("what it is is still valid")).toBe(
+      "What it is is still valid",
+    );
+    expect(cleanupTranscriptionText("the fact that that worked matters")).toBe(
+      "The fact that that worked matters",
+    );
+    expect(cleanupTranscriptionText("he had had enough context")).toBe(
+      "He had had enough context",
+    );
+    expect(cleanupTranscriptionText("אני אני רוצה שזה יישאר")).toBe(
+      "אני אני רוצה שזה יישאר",
+    );
+    expect(cleanupTranscriptionText("useEffect useEffect stays visible")).toBe(
+      "useEffect useEffect stays visible",
+    );
+  });
+
   it("cleans punctuation artifacts from archived VoiceBar prose", () => {
     expect(
       cleanupTranscriptionText(
