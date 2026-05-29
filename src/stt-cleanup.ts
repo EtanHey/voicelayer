@@ -104,6 +104,17 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "claude dot md": "CLAUDE.md",
   "gpt 5.5": "GPT-5.5",
   "gpt 5 5": "GPT-5.5",
+  zigon: "zikaron",
+  zikaron: "zikaron",
+  "golems brain": "golems-brain",
+  "golems-brain": "golems-brain",
+  "~/.golems-brain/zikaron": "~/.golems-brain/zikaron",
+  "osek patur": "עוסק פטור",
+  osekpatur: "עוסק פטור",
+  "reshut hamisim": "רשות המסים",
+  reshutamisin: "רשות המסים",
+  bereshutamisin: "ברשות המסים",
+  rechovot: "רחובות",
   "still accept voicelayer to keep": "still expect VoiceLayer to keep",
   "still accept voice layer to keep": "still expect VoiceLayer to keep",
   "real tale of the sentence": "real tail of the sentence",
@@ -474,6 +485,12 @@ export function getSTTVocabularyPrompt(env: STTCleanupEnv = process.env): string
     ...new Set([
       ...(snapshot?.promptTerms ?? []),
       ...slashCommands,
+      "zikaron",
+      "golems-brain",
+      "~/.golems-brain/zikaron",
+      "עוסק פטור",
+      "רשות המסים",
+      "רחובות",
       ...Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
         (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
       ),
@@ -500,7 +517,8 @@ export function cleanupTranscriptionText(
     deduplicated,
     buildCanonicalTermPatterns(aliases),
   );
-  const sentenceCased = normalizeSentenceStarts(normalized);
+  const pathNormalized = normalizePathTokens(normalized);
+  const sentenceCased = normalizeSentenceStarts(pathNormalized);
   return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
 }
 
@@ -509,6 +527,33 @@ function collapseDuplicatedFunctionWords(text: string): string {
     DUPLICATED_FUNCTION_WORD_PATTERN,
     (_match, word: string) => word,
   );
+}
+
+function normalizePathTokens(text: string): string {
+  let result = text.replace(
+    /\b(in|at|under|inside)\s+-\s*,\s+is it\s+(?=~\s*\/)/giu,
+    (_match, preposition: string) => `${preposition} `,
+  );
+
+  result = result.replace(/~\s*\/[^,;!?]*/gu, (match) =>
+    match.replace(/\s*\/\s*/g, "/").replace(/\s*-\s*/g, "-").toLowerCase(),
+  );
+
+  result = result.replace(
+    /(?<!\S)(?=[A-Za-z0-9._~-]*\s*\/)[A-Za-z0-9._~-]+(?:\s*[/-]\s*[A-Za-z0-9._~-]+)+(?!\S)/gu,
+    (match) => {
+      if (/^\/[A-Za-z0-9-]+$/u.test(match.trim())) return match;
+      if (/^[A-Za-z]+\s+\/\s*[A-Za-z0-9-]+$/u.test(match.trim())) {
+        return match;
+      }
+      return match
+        .replace(/\s*\/\s*/g, "/")
+        .replace(/\s*-\s*/g, "-")
+        .toLowerCase();
+    },
+  );
+
+  return result;
 }
 
 function isMeaningfulTranscription(text: string): boolean {

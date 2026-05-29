@@ -90,6 +90,28 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("cleans path-token spacing and preserved path terms from live dictation", () => {
+    expect(
+      cleanupTranscriptionText(
+        "Wait, what? Obsidian Vault is in -, is it ~ /.Golems - brain / zigon, what?",
+      ),
+    ).toBe(
+      "Wait, what? Obsidian Vault is in ~/.golems-brain/zikaron, what?",
+    );
+    expect(cleanupTranscriptionText("keep the and/or wording")).toBe(
+      "Keep the and/or wording",
+    );
+  });
+
+  it("seeds Hebrew script preserved terms for tax and location dictation", () => {
+    expect(cleanupTranscriptionText("Osek Patur")).toBe("עוסק פטור");
+    expect(cleanupTranscriptionText("Reshut HaMisim")).toBe("רשות המסים");
+    expect(cleanupTranscriptionText("Rechovot")).toBe("רחובות");
+    expect(cleanupTranscriptionText("Osekpatur bereshutamisin")).toBe(
+      "עוסק פטור ברשות המסים",
+    );
+  });
+
   it("keeps Hebrew discourse markers while removing acoustic fillers", () => {
     expect(cleanupTranscriptionText("אני רוצה כאילו שזה יישאר בעברית")).toBe(
       "אני רוצה כאילו שזה יישאר בעברית",
@@ -139,6 +161,12 @@ describe("stt-cleanup", () => {
     expect(prompt).toContain("Docker");
     expect(prompt).toContain("Telegram");
     expect(prompt).toContain("WhatsApp");
+    expect(prompt).toContain("zikaron");
+    expect(prompt).toContain("golems-brain");
+    expect(prompt).toContain("~/.golems-brain/zikaron");
+    expect(prompt).toContain("עוסק פטור");
+    expect(prompt).toContain("רשות המסים");
+    expect(prompt).toContain("רחובות");
     expect(prompt).not.toContain("kilos");
     expect(prompt).not.toContain("nanoClawed");
     expect(prompt).not.toContain("nanoclawed");
