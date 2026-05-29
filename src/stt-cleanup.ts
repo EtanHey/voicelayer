@@ -125,6 +125,8 @@ const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "still expect VoiceLayer to keep",
   "real tail of the sentence",
 ]);
+const DUPLICATED_FUNCTION_WORD_PATTERN =
+  /\b(the|an|and|to|of|a|i)\b(?:\s+\1\b)+/giu;
 
 function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
@@ -493,12 +495,20 @@ export function cleanupTranscriptionText(
     aliases,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
+  const deduplicated = collapseDuplicatedFunctionWords(cleaned);
   const normalized = normalizeCanonicalTerms(
-    cleaned,
+    deduplicated,
     buildCanonicalTermPatterns(aliases),
   );
   const sentenceCased = normalizeSentenceStarts(normalized);
   return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
+}
+
+function collapseDuplicatedFunctionWords(text: string): string {
+  return text.replace(
+    DUPLICATED_FUNCTION_WORD_PATTERN,
+    (_match, word: string) => word,
+  );
 }
 
 function isMeaningfulTranscription(text: string): boolean {
