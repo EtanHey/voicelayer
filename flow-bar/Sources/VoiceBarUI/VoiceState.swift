@@ -1015,6 +1015,7 @@ public final class VoiceState {
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan
     ) {
+        let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
         let targetBundleID = targetApp?.bundleIdentifier ?? "nil"
         logDiagnostic("paste_begin", details: [
@@ -1051,25 +1052,48 @@ public final class VoiceState {
             let pasteDelay = plan == .autoPaste ? pasteConfirmationDelay : plan.pasteDelay
             pasteScheduler(plan.activationDelay) { [weak self] in
                 guard let self else { return }
+                let currentFront = frontmostAppProvider()
+                let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
+                let pasteTarget: NSRunningApplication?
+                if plan == .autoPaste {
+                    pasteTarget = (!currentIsSelf ? currentFront : nil) ?? targetApp
+                } else {
+                    pasteTarget = targetApp
+                }
+                let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
+                let capturedInsertionHandler =
+                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(pasteTarget, recordStartTargetApp)
+                    ? insertionHandler
+                    : nil
+
+                guard let pasteTarget else {
+                    logDiagnostic("paste_no_target", details: [
+                        "plan": String(describing: plan),
+                        "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                    ])
+                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                    return
+                }
+
                 logDiagnostic("paste_before_activate", details: [
                     "plan": String(describing: plan),
-                    "targetApp": targetBundleID,
-                    "hasCapturedInsertion": boolString(insertionHandler != nil),
+                    "targetApp": pasteTargetBundleID,
+                    "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                 ])
-                targetAppActivator(targetApp)
-                lastPasteTargetApp = targetApp
+                targetAppActivator(pasteTarget)
+                lastPasteTargetApp = pasteTarget
                 logDiagnostic("paste_after_activate", details: [
                     "plan": String(describing: plan),
-                    "targetApp": targetBundleID,
-                    "hasCapturedInsertion": boolString(insertionHandler != nil),
+                    "targetApp": pasteTargetBundleID,
+                    "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                 ])
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
-                    if let insertionHandler, insertionHandler(text) {
+                    if let capturedInsertionHandler, capturedInsertionHandler(text) {
                         logDiagnostic("paste_ax_insert_success", details: [
                             "plan": String(describing: plan),
-                            "targetApp": targetBundleID,
+                            "targetApp": pasteTargetBundleID,
                         ])
                         finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
                         return
@@ -1077,8 +1101,8 @@ public final class VoiceState {
 
                     logDiagnostic("paste_ax_insert_miss", details: [
                         "plan": String(describing: plan),
-                        "targetApp": targetBundleID,
-                        "hadCapturedInsertion": boolString(insertionHandler != nil),
+                        "targetApp": pasteTargetBundleID,
+                        "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
                     ])
                     let pasteboardSnapshot = pasteboardSnapshotter()
                     pasteboardWriter(text)
@@ -1090,7 +1114,7 @@ public final class VoiceState {
                     )
                     logDiagnostic("paste_cmdv_result", details: [
                         "plan": String(describing: plan),
-                        "targetApp": targetBundleID,
+                        "targetApp": pasteTargetBundleID,
                         "pasted": boolString(pasted),
                     ])
                     finishPasteConfirmation(
@@ -1117,6 +1141,11 @@ public final class VoiceState {
     ) -> VoicePasteOutcome {
         guard pasted else { return .failed(Self.genericPasteFailureMessage) }
         return .pasted
+    }
+
+    private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return lhs.processIdentifier == rhs.processIdentifier
     }
 
     private func scheduleClipboardRestoreIfNeeded(

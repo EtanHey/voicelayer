@@ -183,6 +183,22 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertNil(state.audioLevel)
     }
 
+    func testCancelDuringRecordingClearsIndicatorToIdleWhenConnected() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+
+        state.cancel()
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.audioLevel)
+        XCTAssertFalse(state.speechDetected)
+    }
+
     func testBarInitiatedTranscribingIgnoresStaleIdleUntilTranscriptionArrives() {
         let state = VoiceState()
 
@@ -524,7 +540,8 @@ final class VoiceStatePasteTests: XCTestCase {
     func testAutoPasteUsesRecordedInputInsertionBeforeClipboardFallback() {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.frontmostAppProvider = { NSRunningApplication.current }
+        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
+        state.frontmostAppProvider = { frontmostApp }
         state.pasteScheduler = { _, block in block() }
         state.targetAppActivator = { _ in }
 
@@ -542,6 +559,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
+        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "this is the full transcript ending with wow",
@@ -552,10 +570,45 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteFallsBackToClipboardWhenRecordedInputInsertionFails() {
+    func testAutoPasteDoesNotUseRecordStartInsertionWhenFocusIsAvailableAtPasteTime() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": "paste into the focus that is current on release",
+        ])
+
+        XCTAssertEqual(insertedTexts, [])
+        XCTAssertEqual(clipboardWrites, ["paste into the focus that is current on release"])
+        XCTAssertTrue(pasteShortcutPosted)
+        XCTAssertEqual(state.confirmationText, "paste into the focus that is current on release")
+    }
+
+    func testAutoPasteFallsBackToClipboardWhenRecordedInputInsertionFails() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
+        state.frontmostAppProvider = { frontmostApp }
         state.pasteScheduler = { _, block in block() }
         state.targetAppActivator = { _ in }
 
@@ -591,6 +644,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
+        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "this is the full transcript ending with wow",
@@ -630,7 +684,8 @@ final class VoiceStatePasteTests: XCTestCase {
     func testAutoPasteSkipsClipboardRestoreIfClipboardChangedAgainAfterWrite() {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        state.frontmostAppProvider = { NSRunningApplication.current }
+        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
+        state.frontmostAppProvider = { frontmostApp }
         state.targetAppActivator = { _ in }
 
         var insertedTexts: [String] = []
@@ -676,6 +731,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         state.record()
+        frontmostApp = nil
         state.handleEvent([
             "type": "transcription",
             "text": "clipboard safety check",

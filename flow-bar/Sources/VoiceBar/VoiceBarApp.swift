@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
     private var moveObserver: Any?
+    private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
@@ -58,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Saved offsets (0.0-1.0) for pill center positioning on screen.
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
+    private var anchorMode: VoiceBarAnchorMode = .follow
 
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
@@ -90,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
+    private static let anchorModeKey = "VoiceBar.anchorMode"
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -201,6 +204,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let saved = UserDefaults.standard.object(forKey: Self.verticalOffsetKey) as? Double {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
+        anchorMode = VoiceBarAnchorMode(
+            defaultsValue: UserDefaults.standard.string(forKey: Self.anchorModeKey)
+        )
 
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
@@ -209,10 +215,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
-        pill.positionOnScreen(
-            horizontalOffset: horizontalOffset,
-            verticalOffset: verticalOffset
-        )
+        positionPanel(pill, on: nil)
         pill.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
@@ -235,6 +238,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .mouseMoved) { [weak self] _ in
             self?.handleMouseMoved()
         }
+
+        displayObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.reapplyAnchoredPanelPosition()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -247,6 +258,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(monitor)
         }
         if let observer = moveObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = displayObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         for observer in workspaceNotificationObservers {
@@ -536,10 +550,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let targetScreen = panel.screen ?? NSScreen.main
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
         let layout = Self.panelLayout(for: voiceState)
+        let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = PillResizePlan.makeAnchored(
             visibleFrame: visibleFrame,
-            horizontalOffset: horizontalOffset,
-            verticalOffset: verticalOffset,
+            horizontalOffset: placement.horizontalOffset,
+            verticalOffset: placement.verticalOffset,
             topPadding: Theme.topPadding,
             pillSize: layout.panelSize,
             from: previousVoiceMode,
@@ -660,6 +675,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Reposition pill when mouse moves to a different screen.
     private func handleMouseMoved() {
+        guard anchorMode.placement(
+            visibleFrame: panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
+            pillSize: panel?.frame.size ?? .zero
+        ).followsMouse else { return }
+
         let mouseLocation = NSEvent.mouseLocation
         // Capture screens array once to avoid TOCTOU race if a display disconnects.
         let screens = NSScreen.screens
@@ -670,11 +690,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only reposition when the screen actually changes
         if targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
-            panel?.positionOnScreen(
-                screens[targetScreen],
-                horizontalOffset: horizontalOffset,
-                verticalOffset: verticalOffset
-            )
+            if let panel {
+                positionPanel(panel, on: screens[targetScreen])
+            }
+        }
+    }
+
+    private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
+        let targetScreen = screen ?? panel.screen ?? NSScreen.main
+        let visibleFrame = targetScreen?.visibleFrame ?? .zero
+        let placement = anchorPlacement(
+            for: panel,
+            visibleFrame: visibleFrame,
+            pillSize: panel.frame.size
+        )
+        // Follow mode with no explicit screen: defer to positionOnScreen's
+        // mouse-containing-screen lookup so the pill appears on the screen under
+        // the cursor — preserving pre-anchor multi-monitor default behavior.
+        let placementScreen = (placement.followsMouse && screen == nil) ? nil : targetScreen
+        panel.positionOnScreen(
+            placementScreen,
+            horizontalOffset: placement.horizontalOffset,
+            verticalOffset: placement.verticalOffset
+        )
+    }
+
+    private func anchorPlacement(
+        for panel: FloatingPillPanel,
+        visibleFrame: CGRect,
+        pillSize: CGSize
+    ) -> VoiceBarAnchorPlacement {
+        let placement = anchorMode.placement(visibleFrame: visibleFrame, pillSize: pillSize)
+        guard placement.followsMouse else { return placement }
+        return VoiceBarAnchorPlacement(
+            horizontalOffset: horizontalOffset,
+            verticalOffset: verticalOffset,
+            followsMouse: true
+        )
+    }
+
+    private func reapplyAnchoredPanelPosition() {
+        guard let panel else { return }
+        if anchorMode.placement(
+            visibleFrame: panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
+            pillSize: panel.frame.size
+        ).followsMouse {
+            handleMouseMoved()
+        } else {
+            positionPanel(panel, on: panel.screen ?? NSScreen.main)
         }
     }
 
@@ -682,6 +745,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
+        guard anchorMode == .follow else { return }
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
@@ -690,6 +754,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         verticalOffset = max(0.0, min(0.95, CGFloat(vOffset)))
         UserDefaults.standard.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
         UserDefaults.standard.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
+    }
+
+    func currentAnchorMode() -> VoiceBarAnchorMode {
+        anchorMode
+    }
+
+    func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
+        anchorMode = mode
+        UserDefaults.standard.set(mode.rawValue, forKey: Self.anchorModeKey)
+        if let panel {
+            positionPanel(panel, on: panel.screen ?? NSScreen.main)
+            applyPanelLayout(animated: true)
+        }
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
@@ -869,7 +946,9 @@ struct VoiceBarApp: App {
                 missingPermissions: appDelegate.missingHotkeyPermissions,
                 availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
                 selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-                onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) }
+                onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+                anchorMode: { appDelegate.currentAnchorMode() },
+                onSelectAnchorMode: { appDelegate.selectAnchorMode($0) }
             )
         }
     }
