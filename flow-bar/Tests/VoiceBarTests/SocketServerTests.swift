@@ -128,6 +128,31 @@ final class SocketServerTests: XCTestCase {
         try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
         XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
     }
+
+    func testNoCommandOwnerRejectsPendingRecordIntent() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        state.sendCommand = { command in
+            server.sendCommandToOwner(command: command)
+        }
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+
+        state.record(pressToTalk: true)
+
+        XCTAssertTrue(waitForMode(state, mode: .error, timeout: 1))
+        XCTAssertNil(state.pendingIntent)
+        XCTAssertEqual(state.hotkeyPhase, .idle)
+        XCTAssertEqual(state.errorMessage, "VoiceLayer is starting")
+    }
 }
 
 private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
@@ -206,6 +231,17 @@ private func waitForConnectionStatus(_ state: VoiceState, connected: Bool, timeo
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
     }
     return state.isConnected == connected
+}
+
+private func waitForMode(_ state: VoiceState, mode: VoiceMode, timeout: TimeInterval) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if state.mode == mode {
+            return true
+        }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+    return state.mode == mode
 }
 
 private func readLine(from fd: Int32, timeout: TimeInterval) throws -> String? {

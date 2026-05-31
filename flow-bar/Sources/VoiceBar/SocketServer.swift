@@ -305,6 +305,7 @@ final class SocketServer {
 
             guard let targetFD = commandFDs.first else {
                 NSLog("[VoiceBar] No command client registered; dropping command %@", jsonString.trimmingCharacters(in: .whitespacesAndNewlines))
+                notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is starting")
                 return
             }
 
@@ -315,6 +316,7 @@ final class SocketServer {
             var deadFDs: [Int32] = []
             var totalWritten = 0
             var transientRetryCount = 0
+            var deliveryFailed = false
             while totalWritten < bytes.count {
                 switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
                 case let .wrote(count):
@@ -325,15 +327,18 @@ final class SocketServer {
                     if transientRetryCount >= 3 {
                         NSLog("[VoiceBar] Socket write stalled (fd: %d) after %d retries", targetFD, transientRetryCount)
                         deadFDs.append(targetFD)
+                        deliveryFailed = true
                         totalWritten = bytes.count
                     }
                 case let .peerClosed(errnoCode):
                     NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
                     deadFDs.append(targetFD)
+                    deliveryFailed = true
                     totalWritten = bytes.count
                 case let .failed(errnoCode):
                     NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
                     deadFDs.append(targetFD)
+                    deliveryFailed = true
                     totalWritten = bytes.count
                 }
             }
@@ -341,6 +346,15 @@ final class SocketServer {
             for fd in deadFDs {
                 clients[fd]?.source.cancel()
             }
+            if deliveryFailed {
+                notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is reconnecting")
+            }
+        }
+    }
+
+    private func notifyCommandDeliveryFailed(command: [String: Any], reason: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.state.handleCommandDeliveryFailure(command, reason: reason)
         }
     }
 

@@ -580,6 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hotkeyPhase: state?.hotkeyPhase ?? .idle,
             hotkeyEnabled: state?.hotkeyEnabled ?? false,
             errorMessage: state?.errorMessage,
+            transcribingStatusText: state?.transcribingStatusText,
             commandModeState: state?.commandModeState,
             activeClipMarker: state?.activeClipMarker
         )

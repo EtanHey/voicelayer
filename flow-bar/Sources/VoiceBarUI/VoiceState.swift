@@ -79,6 +79,9 @@ public final class VoiceState {
     public var speechDetected: Bool = false
     public var isConnected: Bool = false
     public var errorMessage: String?
+    public var transcribingStatusText: String? {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != transcribingStatusText) }
+    }
 
     // Recording metadata
     public var recordingMode: String? // "vad" or "ptt"
@@ -164,10 +167,13 @@ public final class VoiceState {
     private var transcriptionTimeoutTask: Task<Void, Never>?
     private var recordingIdleCleanupTask: Task<Void, Never>?
     private var deferredFinalTranscriptionTask: Task<Void, Never>?
+    private var recordStartAckTimeoutTask: Task<Void, Never>?
+    private var recordStartLateRecoveryTask: Task<Void, Never>?
     private var transcribingStartedAt: Date?
     private var pendingRecordingIdleAfterFinal = false
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
+    private var canRecoverLateRecordStart = false
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
@@ -254,6 +260,8 @@ public final class VoiceState {
     public var transcriptionTimeout: Duration = .seconds(30)
     public var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
     public var barInitiatedSafetyTimeout: Duration = .seconds(3660)
+    public var recordStartAckTimeout: Duration = .seconds(2)
+    public var recordStartLateRecoveryWindow: Duration = .seconds(10)
     public var recordingIdleFinalTranscriptGrace: Duration = .seconds(2)
     public var minimumTranscribingDisplayDuration: TimeInterval = 0.65
 
@@ -294,8 +302,10 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -321,11 +331,14 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
         deferredFinalTranscriptionTask?.cancel()
+        recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -379,11 +392,14 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
         deferredFinalTranscriptionTask?.cancel()
+        recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = true
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
         speechDetected = false
@@ -446,8 +462,10 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        clearRecordStartLateRecovery(clearPasteTarget: true)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         confirmationText = nil
         errorMessage = nil
         let front = frontmostAppProvider()
@@ -533,6 +551,7 @@ public final class VoiceState {
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
+                clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
@@ -542,10 +561,19 @@ public final class VoiceState {
                 expandFromCollapse()
             case "recording":
                 deferredFinalTranscriptionTask?.cancel()
+                if pendingIntent?.command == .record {
+                    recordStartAckTimeoutTask?.cancel()
+                    pendingIntent = nil
+                } else if canRecoverLateRecordStart {
+                    barInitiatedRecording = true
+                }
+                clearRecordStartLateRecovery(clearPasteTarget: false)
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
                 transcribingStartedAt = nil
+                transcribingStatusText = nil
+                errorMessage = nil
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
@@ -563,6 +591,12 @@ public final class VoiceState {
 
         case "ack":
             handleAckEvent(event)
+
+        case "transcription_status":
+            guard mode == .transcribing else { return }
+            let message = (event["message"] as? String)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            transcribingStatusText = message?.isEmpty == false ? message : nil
 
         case "speech":
             if let detected = event["detected"] as? Bool {
@@ -649,9 +683,13 @@ public final class VoiceState {
             }
 
         case "error":
-            transcriptionTimeoutTask?.cancel()
             let showDuringBarRecording = event["show_during_bar_recording"] as? Bool ?? false
-            pendingRecoveredTranscriptionPaste = false
+            let shouldShowError = showDuringBarRecording || !barInitiatedRecording
+            if shouldShowError {
+                transcriptionTimeoutTask?.cancel()
+                recordStartAckTimeoutTask?.cancel()
+                pendingRecoveredTranscriptionPaste = false
+            }
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
             // the successful client is still recording. Show error UI only if
@@ -663,11 +701,13 @@ public final class VoiceState {
                 deferredFinalTranscriptionTask?.cancel()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
+                clearRecordStartLateRecovery(clearPasteTarget: false)
                 transcribingStartedAt = nil
+                transcribingStatusText = nil
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
             }
-            if showDuringBarRecording || !barInitiatedRecording {
+            if shouldShowError {
                 mode = .error
                 errorMessage = event["message"] as? String ?? "Unknown error"
                 expandFromCollapse()
@@ -698,11 +738,14 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
         deferredFinalTranscriptionTask?.cancel()
+        recordStartAckTimeoutTask?.cancel()
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -711,6 +754,7 @@ public final class VoiceState {
         recordingMode = nil
         silenceMode = nil
         errorMessage = nil
+        hotkeyPhase = .idle
         resetAudioLevels()
         mode = .disconnected
         onModeChange?(.disconnected)
@@ -870,6 +914,7 @@ public final class VoiceState {
         errorMessage = nil
         transcriptionTimeoutTask?.cancel()
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         resetAudioLevels()
         wordBoundaries = []
         if clearQueue {
@@ -886,6 +931,9 @@ public final class VoiceState {
         mode = .transcribing
         if modeChanged || transcribingStartedAt == nil {
             transcribingStartedAt = currentDateProvider()
+        }
+        if modeChanged {
+            transcribingStatusText = nil
         }
         statusText = ""
         localRecordingLevel = nil
@@ -926,6 +974,8 @@ public final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         deferredFinalTranscriptionTask = nil
         transcribingStartedAt = nil
+        transcribingStatusText = nil
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
         rememberRecentTranscription(text)
         refreshTranscriptionVocabulary()
@@ -977,11 +1027,14 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
         deferredFinalTranscriptionTask?.cancel()
+        recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        transcribingStatusText = nil
         barInitiatedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
@@ -1218,9 +1271,82 @@ public final class VoiceState {
         var payloadWithID = payload
         payloadWithID["id"] = id
         if trackPending {
+            // An early PTT release must not mask a failed record start.
+            if command == .stop, pendingIntent?.command == .record {
+                sendCommand?(payloadWithID)
+                return
+            }
+            recordStartAckTimeoutTask?.cancel()
             pendingIntent = PendingIntent(id: id, command: command)
+            if command == .record {
+                scheduleRecordStartAckTimeout(id: id)
+            }
         }
         sendCommand?(payloadWithID)
+    }
+
+    public func handleCommandDeliveryFailure(
+        _ command: [String: Any],
+        reason: String = "VoiceLayer is starting"
+    ) {
+        guard let commandName = command["cmd"] as? String,
+              let intentCommand = IntentCommand(rawValue: commandName),
+              let id = command["id"] as? String,
+              !id.isEmpty
+        else {
+            return
+        }
+
+        handleEvent([
+            "type": "ack",
+            "command": intentCommand.rawValue,
+            "outcome": "reject",
+            "id": id,
+            "reason": reason,
+        ])
+    }
+
+    private func scheduleRecordStartAckTimeout(id: String) {
+        let timeout = recordStartAckTimeout
+        recordStartAckTimeoutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard let self,
+                  !Task.isCancelled,
+                  pendingIntent?.id == id,
+                  pendingIntent?.command == .record
+            else {
+                return
+            }
+
+            handleEvent([
+                "type": "ack",
+                "command": IntentCommand.record.rawValue,
+                "outcome": IntentOutcome.reject.rawValue,
+                "id": id,
+                "reason": "VoiceLayer is starting",
+            ])
+        }
+    }
+
+    private func scheduleRecordStartLateRecovery() {
+        canRecoverLateRecordStart = true
+        recordStartLateRecoveryTask?.cancel()
+        let window = recordStartLateRecoveryWindow
+        recordStartLateRecoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: window)
+            guard let self, !Task.isCancelled, canRecoverLateRecordStart else { return }
+            clearRecordStartLateRecovery(clearPasteTarget: true)
+        }
+    }
+
+    private func clearRecordStartLateRecovery(clearPasteTarget: Bool) {
+        canRecoverLateRecordStart = false
+        recordStartLateRecoveryTask?.cancel()
+        recordStartLateRecoveryTask = nil
+        if clearPasteTarget {
+            frontmostAppOnRecordStart = nil
+            recordStartInsertionHandler = nil
+        }
     }
 
     private func logDiagnostic(_ event: String, details: [String: String] = [:]) {
@@ -1246,6 +1372,7 @@ public final class VoiceState {
             return
         }
 
+        recordStartAckTimeoutTask?.cancel()
         pendingIntent = nil
 
         if ack.command == .retranscribeLast, ack.outcome != .accept {
@@ -1256,12 +1383,19 @@ public final class VoiceState {
 
         guard ack.command == .record, ack.outcome == .reject else { return }
 
+        let canRecoverLateRecording = ack.reason == "VoiceLayer is starting"
         barInitiatedRecording = false
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
+        recordStartAckTimeoutTask?.cancel()
         keepsPasteFlowEnvelope = false
-        frontmostAppOnRecordStart = nil
-        recordStartInsertionHandler = nil
+        if canRecoverLateRecording {
+            scheduleRecordStartLateRecovery()
+        } else {
+            clearRecordStartLateRecovery(clearPasteTarget: true)
+        }
+        hotkeyPhase = .idle
+        resetAudioLevels()
         mode = .error
         errorMessage = ack.reason ?? "Unable to start recording"
         onModeChange?(.error)

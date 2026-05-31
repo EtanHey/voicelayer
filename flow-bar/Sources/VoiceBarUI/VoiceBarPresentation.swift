@@ -158,6 +158,7 @@ public enum VoiceBarPresentation {
         hotkeyPhase: HotkeyPhase,
         hotkeyEnabled: Bool,
         errorMessage: String?,
+        transcribingStatusText: String? = nil,
         commandModeState: CommandModeState?,
         activeClipMarker: ClipMarkerState?
     ) -> String {
@@ -200,7 +201,7 @@ public enum VoiceBarPresentation {
         case .recording:
             recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
-            ""
+            transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         case .error:
             errorMessage ?? "Error"
         }

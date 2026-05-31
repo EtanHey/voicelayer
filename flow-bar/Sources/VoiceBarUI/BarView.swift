@@ -312,8 +312,18 @@ public struct BarView: View {
                     }
                 }
             case .transcribing:
-                WaveformView(mode: .processing)
-                    .accessibilityLabel("Transcribing")
+                HStack(spacing: 8) {
+                    WaveformView(mode: .processing)
+                    if !statusText.isEmpty {
+                        Text(statusText)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(statusText.isEmpty ? "Transcribing" : statusText)
             default:
                 statusIcon
                 statusLabel
@@ -449,6 +459,7 @@ public struct BarView: View {
             hotkeyPhase: state.hotkeyPhase,
             hotkeyEnabled: state.hotkeyEnabled,
             errorMessage: state.errorMessage,
+            transcribingStatusText: state.transcribingStatusText,
             commandModeState: state.commandModeState,
             activeClipMarker: state.activeClipMarker
         )

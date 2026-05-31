@@ -75,6 +75,12 @@ public enum Theme {
 
     public static let hotkeyTransitionPillWidth: CGFloat = compactPillWidth(for: "Tap again to lock")
 
+    public static func transcribingPillWidth(for statusText: String) -> CGFloat {
+        let textWidth = compactStatusWidth(for: statusText)
+        guard textWidth > 0 else { return 102 }
+        return min(panelWidth - (panelPadding * 2), max(212, textWidth + 96))
+    }
+
     public static func pillContentWidth(
         for mode: VoiceMode,
         statusText: String,
@@ -85,7 +91,7 @@ public enum Theme {
         case .recording:
             return 154
         case .transcribing:
-            return 102
+            return transcribingPillWidth(for: statusText)
         case .speaking:
             return queueItemCount > 1 ? pillSpeakingQueueWidth : 340
         case .error:

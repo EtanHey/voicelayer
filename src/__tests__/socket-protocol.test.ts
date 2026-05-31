@@ -61,6 +61,19 @@ describe("socket-protocol", () => {
       expect(parsed.text).toBe("The user said this");
     });
 
+    it("serializes transcription status event", () => {
+      const event: SocketEvent = {
+        type: "transcription_status",
+        status: "warming",
+        message: "Loading speech model",
+      };
+      const result = serializeEvent(event);
+      const parsed = JSON.parse(result.trim());
+      expect(parsed.type).toBe("transcription_status");
+      expect(parsed.status).toBe("warming");
+      expect(parsed.message).toBe("Loading speech model");
+    });
+
     it("serializes partial transcription event", () => {
       const event: SocketEvent = {
         type: "transcription",

@@ -47,6 +47,12 @@ export interface TranscriptionEvent {
   partial?: boolean;
 }
 
+export interface TranscriptionStatusEvent {
+  type: "transcription_status";
+  status: "warming" | "transcribing";
+  message: string;
+}
+
 export interface AudioLevelEvent {
   type: "audio_level";
   /** RMS audio level 0.0–1.0. */
@@ -152,6 +158,7 @@ export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
+  | TranscriptionStatusEvent
   | AudioLevelEvent
   | ErrorEvent
   | SubtitleEvent

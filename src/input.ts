@@ -1443,6 +1443,11 @@ export async function waitForInput(
   // Broadcast transcribing state to Voice Bar
   recordingState = "transcribing";
   broadcast({ type: "state", state: "transcribing" });
+  broadcast({
+    type: "transcription_status",
+    status: "warming",
+    message: "Loading speech model",
+  });
 
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
@@ -1459,6 +1464,11 @@ export async function waitForInput(
 
     // Transcribe with selected backend
     const backend = await getBackend();
+    broadcast({
+      type: "transcription_status",
+      status: "transcribing",
+      message: "Transcribing",
+    });
     console.error(
       `[voicelayer] Transcribing with ${backend.name}${useChunkedTranscription ? " (chunked)" : ""}...`,
     );
@@ -1616,9 +1626,19 @@ export async function retranscribeLastCapture(): Promise<string | null> {
 
   recordingState = "transcribing";
   broadcast({ type: "state", state: "transcribing" });
+  broadcast({
+    type: "transcription_status",
+    status: "warming",
+    message: "Loading speech model",
+  });
 
   try {
     const backend = await getBackend();
+    broadcast({
+      type: "transcription_status",
+      status: "transcribing",
+      message: "Transcribing",
+    });
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
     const text = await finalizeTranscriptionTextForSurface(

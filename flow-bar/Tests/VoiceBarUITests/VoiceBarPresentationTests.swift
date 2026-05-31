@@ -145,10 +145,28 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true,
                 errorMessage: nil,
+                transcribingStatusText: nil,
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
             ""
+        )
+    }
+
+    func testLiveStatusTextCanSurfaceTranscribingWarmupLabel() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .transcribing,
+                transcript: "",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: nil,
+                transcribingStatusText: "Loading speech model",
+                commandModeState: nil,
+                activeClipMarker: nil
+            ),
+            "Loading speech model"
         )
     }
 
@@ -161,6 +179,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .awaitingSecondTap,
                 hotkeyEnabled: true,
                 errorMessage: nil,
+                transcribingStatusText: nil,
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
@@ -252,6 +271,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true,
                 errorMessage: nil,
+                transcribingStatusText: nil,
                 commandModeState: CommandModeState(
                     phase: .applying,
                     operation: "replace_selection",
@@ -270,6 +290,7 @@ final class VoiceBarPresentationTests: XCTestCase {
                 hotkeyPhase: .idle,
                 hotkeyEnabled: true,
                 errorMessage: nil,
+                transcribingStatusText: nil,
                 commandModeState: nil,
                 activeClipMarker: ClipMarkerState(
                     id: "clip-1",

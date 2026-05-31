@@ -36,6 +36,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
                     hotkeyPhase: state.hotkeyPhase,
                     hotkeyEnabled: state.hotkeyEnabled,
                     errorMessage: state.errorMessage,
+                    transcribingStatusText: state.transcribingStatusText,
                     commandModeState: state.commandModeState,
                     activeClipMarker: state.activeClipMarker
                 ),

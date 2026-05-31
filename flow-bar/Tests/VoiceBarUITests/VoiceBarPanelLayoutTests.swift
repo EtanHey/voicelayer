@@ -148,6 +148,20 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
+    func testTranscribingPanelExpandsForWarmupStatusText() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .transcribing,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "Loading speech model",
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 220)
+        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
+    }
+
     func testPasteFlowKeepsFixedPanelWidthAcrossRecordingLoadingAndSuccess() {
         let recording = VoiceBarPanelLayout.make(
             mode: .recording,

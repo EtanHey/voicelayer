@@ -163,6 +163,25 @@ describe("state emission", () => {
       });
     });
 
+    it("sends transcription status events for model warmup", async () => {
+      mockServer = createMockVoiceBarServer(TEST_SOCKET);
+      const { broadcast } = await connectAndWait();
+
+      broadcast({
+        type: "transcription_status",
+        status: "warming",
+        message: "Loading speech model",
+      });
+
+      await Bun.sleep(100);
+      expect(mockServer.received.length).toBe(1);
+      expect(mockServer.received[0]).toEqual({
+        type: "transcription_status",
+        status: "warming",
+        message: "Loading speech model",
+      });
+    });
+
     it("sends speech detection event", async () => {
       mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();

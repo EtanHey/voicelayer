@@ -337,6 +337,76 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pastedTexts, ["final text after recording idle"])
     }
 
+    func testLateRecordingStateAfterRecordStartTimeoutStillAutoPastes() async {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.recordStartAckTimeout = .milliseconds(20)
+        state.minimumTranscribingDisplayDuration = 0
+        state.sendCommand = { _ in }
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertNil(state.pendingIntent)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "late successful dictation",
+        ])
+
+        XCTAssertEqual(pastedTexts, ["late successful dictation"])
+    }
+
+    func testExpiredLateRecordStartRecoveryDoesNotAutoPasteUnrelatedRecording() async {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.recordStartAckTimeout = .milliseconds(20)
+        state.recordStartLateRecoveryWindow = .milliseconds(20)
+        state.minimumTranscribingDisplayDuration = 0
+        state.sendCommand = { _ in }
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "unrelated later dictation",
+        ])
+
+        XCTAssertEqual(pastedTexts, [])
+    }
+
     func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
