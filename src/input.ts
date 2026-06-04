@@ -28,7 +28,6 @@ import {
   closeSync,
   existsSync,
   fstatSync,
-  ftruncateSync,
   fsyncSync,
   mkdirSync,
   openSync,
@@ -405,16 +404,20 @@ function appendPcmChunkToRetainedWav(path: string, chunk: Uint8Array): void {
   let fd: number | undefined;
   try {
     fd = openSync(path, "r+");
-    const previousDataSize = readWavDataSizeFromFd(fd, path);
-    const logicalSize = 44 + previousDataSize;
     const fileSize = fstatSync(fd).size;
-    if (fileSize !== logicalSize) {
-      ftruncateSync(fd, logicalSize);
-      fsyncSync(fd);
+    let previousDataSize = readWavDataSizeFromFd(fd, path);
+    const logicalSize = 44 + previousDataSize;
+    if (fileSize < logicalSize) {
+      throw new Error(
+        `Retained recording is not a valid WAV: ${path} is truncated (${fileSize - 44} audio bytes on disk, header expects ${previousDataSize})`,
+      );
+    }
+    if (fileSize > logicalSize) {
+      previousDataSize = fileSize - 44;
     }
 
     const nextDataSize = previousDataSize + chunk.byteLength;
-    writeAllSync(fd, chunk, logicalSize);
+    writeAllSync(fd, chunk, 44 + previousDataSize);
     fsyncSync(fd);
     writeWavSizeHeader(fd, nextDataSize);
     fsyncSync(fd);

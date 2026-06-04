@@ -7,10 +7,13 @@ import {
   spyOn,
 } from "bun:test";
 import {
+  closeSync,
   existsSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   rmSync,
+  writeSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -76,7 +79,20 @@ function readAscii(buffer: Buffer, start: number, end: number): string {
   return buffer.subarray(start, end).toString("ascii");
 }
 
-function expectValidRetainedWav(path: string): void {
+function readWavDataSize(path: string): number {
+  const retained = readFileSync(path);
+  const view = new DataView(
+    retained.buffer,
+    retained.byteOffset,
+    retained.byteLength,
+  );
+  return view.getUint32(40, true);
+}
+
+function expectValidRetainedWav(
+  path: string,
+  expectedDataBytes?: number,
+): void {
   const retained = readFileSync(path);
   expect(retained.byteLength).toBeGreaterThan(44);
   expect(readAscii(retained, 0, 4)).toBe("RIFF");
@@ -93,6 +109,23 @@ function expectValidRetainedWav(path: string): void {
   expect(riffSize).toBe(retained.byteLength - 8);
   expect(dataSize).toBeGreaterThan(0);
   expect(dataSize).toBe(retained.byteLength - 44);
+  if (expectedDataBytes !== undefined) {
+    expect(dataSize).toBe(expectedDataBytes);
+  }
+}
+
+function rewriteWavHeaderDataSize(path: string, dataSize: number): void {
+  const fd = openSync(path, "r+");
+  try {
+    const riffSize = Buffer.alloc(4);
+    riffSize.writeUInt32LE(36 + dataSize, 0);
+    const dataSizeBytes = Buffer.alloc(4);
+    dataSizeBytes.writeUInt32LE(dataSize, 0);
+    writeSync(fd, riffSize, 0, riffSize.byteLength, 4);
+    writeSync(fd, dataSizeBytes, 0, dataSizeBytes.byteLength, 40);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 async function waitUntil(
@@ -278,6 +311,43 @@ describe("input recording durability", () => {
     );
     expect(existsSync(retainedPath)).toBe(true);
     expectValidRetainedWav(retainedPath);
+  });
+
+  it("preserves fsynced PCM beyond a stale retained WAV header when appending the next chunk", async () => {
+    let vadCalls = 0;
+    let sawThirdVadChunk!: () => void;
+    const thirdVadStarted = new Promise<void>((resolve) => {
+      sawThirdVadChunk = resolve;
+    });
+    onVadCall = () => {
+      vadCalls++;
+      if (vadCalls === 2) {
+        rewriteWavHeaderDataSize(retainedPath, VAD_CHUNK_BYTES);
+        expect(readWavDataSize(retainedPath)).toBe(VAD_CHUNK_BYTES);
+      }
+      if (vadCalls === 3) {
+        sawThirdVadChunk();
+      }
+    };
+    const recorder = installFakeRecorder(
+      [makePcmChunk(400), makePcmChunk(800), makePcmChunk(1200)],
+      true,
+    );
+    const { recordToBuffer } = await import("../input");
+    const recording = recordToBuffer(1000, "quick", false);
+
+    try {
+      await recorder.waitForSpawn();
+      await thirdVadStarted;
+
+      expectValidRetainedWav(retainedPath, VAD_CHUNK_BYTES * 3);
+
+      writeFileSync(STOP_FILE, "stop");
+      await expect(recording).resolves.toBeNull();
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
   });
 
   it("rejects a corrupt retained WAV clearly without deleting it or calling STT", async () => {
