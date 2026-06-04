@@ -63,6 +63,16 @@ if [ -f "$REPO_ROOT/package.json" ]; then
     cp "$REPO_ROOT/package.json" "$APP_DIR/Contents/Resources/package.json"
 fi
 
+# Bundle the Silero VAD model — recording fails at the first chunk without it
+# (vad.ts findModelPath resolves models/ relative to the bundled src). Omitting
+# this silently breaks recording on every rebuild.
+if [ -f "$REPO_ROOT/models/silero_vad.onnx" ]; then
+    cp -R "$REPO_ROOT/models" "$APP_DIR/Contents/Resources/"
+    echo "[build-app] VAD model bundled."
+else
+    echo "[build-app] WARNING: models/silero_vad.onnx not found — recording will fail until it is present." >&2
+fi
+
 # App icon
 if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     cp "$BUNDLE_DIR/VoiceBar.icns" "$APP_DIR/Contents/Resources/"
