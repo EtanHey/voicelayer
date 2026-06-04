@@ -27,12 +27,16 @@ import { createHash, randomBytes } from "crypto";
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   mkdirSync,
   openSync,
+  readFileSync,
+  readSync,
   renameSync,
   rmSync,
   unlinkSync,
+  writeSync,
   writeFileSync,
 } from "fs";
 import { homedir } from "os";
@@ -127,7 +131,7 @@ export function retainLastCaptureForRecovery(
   wavData: Uint8Array,
   polishSurface: STTPolishSurface | null,
 ): void {
-  writeFileSync(retainedRecordingFilePath(), wavData);
+  atomicWriteFile(retainedRecordingFilePath(), wavData);
   retainedPolishSurface = polishSurface;
 }
 
@@ -282,6 +286,165 @@ function atomicWriteFile(path: string, data: string | Uint8Array): void {
         if (existsSync(tmpPath)) unlinkSync(tmpPath);
       } catch {}
     }
+  }
+}
+
+function readAscii(data: Uint8Array, start: number, end: number): string {
+  return Buffer.from(data.subarray(start, end)).toString("ascii");
+}
+
+function wavHeaderValidationError(
+  path: string,
+  header: Uint8Array,
+  fileSize: number,
+): string | null {
+  if (fileSize < 44 || header.byteLength < 44) {
+    return `Retained recording is not a valid WAV: ${path} is ${fileSize} bytes, expected at least a 44-byte RIFF/WAVE header. The file was kept so you can inspect or replace it.`;
+  }
+  if (
+    readAscii(header, 0, 4) !== "RIFF" ||
+    readAscii(header, 8, 12) !== "WAVE"
+  ) {
+    return `Retained recording is not a valid WAV: ${path} is missing the RIFF/WAVE header. The file was kept so you can inspect or replace it.`;
+  }
+  if (readAscii(header, 36, 40) !== "data") {
+    return `Retained recording is not a valid WAV: ${path} is missing the PCM data chunk. The file was kept so you can inspect or replace it.`;
+  }
+
+  const view = new DataView(
+    header.buffer,
+    header.byteOffset,
+    header.byteLength,
+  );
+  const dataSize = view.getUint32(40, true);
+  if (dataSize === 0) {
+    return `Retained recording is not a valid WAV: ${path} contains no audio data. The file was kept so you can retry after making a new recording.`;
+  }
+  if (dataSize > fileSize - 44) {
+    return `Retained recording is not a valid WAV: ${path} is truncated (${fileSize - 44} audio bytes on disk, header expects ${dataSize}). The file was kept so you can inspect or replace it.`;
+  }
+
+  return null;
+}
+
+function repairRetainedWavHeader(path: string, data: Buffer, dataSize: number): void {
+  if (dataSize > 0xffffffff - 36) {
+    throw new Error(
+      `Retained recording is too large to repair as WAV: ${path} has ${dataSize} audio bytes on disk.`,
+    );
+  }
+  const repaired = Buffer.from(data);
+  repaired.writeUInt32LE(36 + dataSize, 4);
+  repaired.writeUInt32LE(dataSize, 40);
+  atomicWriteFile(path, repaired);
+}
+
+function requireValidRetainedWav(path: string): void {
+  let data: Buffer;
+  try {
+    data = readFileSync(path);
+  } catch (err) {
+    throw new Error(
+      `Retained recording is not a valid WAV: could not read ${path} (${err instanceof Error ? err.message : String(err)}).`,
+    );
+  }
+
+  const validationError = wavHeaderValidationError(path, data, data.byteLength);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const headerDataSize = data.readUInt32LE(40);
+  const audioBytesOnDisk = data.byteLength - 44;
+  if (audioBytesOnDisk > headerDataSize) {
+    repairRetainedWavHeader(path, data, audioBytesOnDisk);
+  }
+}
+
+function retainedRetranscriptionError(path: string, err: unknown): Error {
+  const detail = err instanceof Error ? err.message : String(err);
+  return new Error(
+    `Could not retranscribe the retained recording. The retained WAV was kept at ${path}; retry "transcribe last recording" after the speech backend is available. Backend error: ${detail}`,
+  );
+}
+
+function writeAllSync(
+  fd: number,
+  data: Uint8Array,
+  position: number,
+): void {
+  let writtenTotal = 0;
+  while (writtenTotal < data.byteLength) {
+    const written = writeSync(
+      fd,
+      data,
+      writtenTotal,
+      data.byteLength - writtenTotal,
+      position + writtenTotal,
+    );
+    if (written <= 0) {
+      throw new Error("Failed to write retained recording data");
+    }
+    writtenTotal += written;
+  }
+}
+
+function readWavDataSizeFromFd(fd: number, path: string): number {
+  const header = Buffer.alloc(44);
+  const bytesRead = readSync(fd, header, 0, header.byteLength, 0);
+  if (bytesRead < header.byteLength) {
+    throw new Error(
+      `Retained recording is not a valid WAV: ${path} is missing a complete header`,
+    );
+  }
+  const validationError = wavHeaderValidationError(
+    path,
+    header,
+    fstatSync(fd).size,
+  );
+  if (validationError) {
+    throw new Error(validationError);
+  }
+  return header.readUInt32LE(40);
+}
+
+function writeWavSizeHeader(fd: number, dataSize: number): void {
+  const riffSize = Buffer.alloc(4);
+  riffSize.writeUInt32LE(36 + dataSize, 0);
+  const dataSizeBytes = Buffer.alloc(4);
+  dataSizeBytes.writeUInt32LE(dataSize, 0);
+  writeAllSync(fd, riffSize, 4);
+  writeAllSync(fd, dataSizeBytes, 40);
+}
+
+function appendPcmChunkToRetainedWav(
+  path: string,
+  chunk: Uint8Array,
+  shouldFsync: boolean,
+): void {
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, "r+");
+    const fileSize = fstatSync(fd).size;
+    let previousDataSize = readWavDataSizeFromFd(fd, path);
+    const logicalSize = 44 + previousDataSize;
+    if (fileSize < logicalSize) {
+      throw new Error(
+        `Retained recording is not a valid WAV: ${path} is truncated (${fileSize - 44} audio bytes on disk, header expects ${previousDataSize})`,
+      );
+    }
+    if (fileSize > logicalSize) {
+      previousDataSize = fileSize - 44;
+    }
+
+    const nextDataSize = previousDataSize + chunk.byteLength;
+    writeAllSync(fd, chunk, 44 + previousDataSize);
+    writeWavSizeHeader(fd, nextDataSize);
+    if (shouldFsync) {
+      fsyncSync(fd);
+    }
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -571,6 +734,49 @@ function flattenChunks(chunks: Uint8Array[]): Uint8Array {
     offset += chunk.byteLength;
   }
   return flat;
+}
+
+class IncrementalRecoveryWavWriter {
+  private static readonly fsyncChunkInterval = 10;
+  private initialized = false;
+  private chunksSinceFsync = 0;
+
+  constructor(private readonly polishSurface: STTPolishSurface | null) {}
+
+  appendCapturedChunk(chunk: Uint8Array, allChunks: Uint8Array[]): void {
+    if (chunk.byteLength === 0) return;
+    if (!this.initialized || !existsSync(retainedRecordingFilePath())) {
+      this.flushSnapshot(allChunks);
+      this.initialized = true;
+      return;
+    }
+
+    try {
+      const shouldFsync =
+        this.chunksSinceFsync + 1 >=
+        IncrementalRecoveryWavWriter.fsyncChunkInterval;
+      appendPcmChunkToRetainedWav(
+        retainedRecordingFilePath(),
+        chunk,
+        shouldFsync,
+      );
+      this.chunksSinceFsync = shouldFsync ? 0 : this.chunksSinceFsync + 1;
+      retainedPolishSurface = this.polishSurface;
+    } catch {
+      this.flushSnapshot(allChunks);
+    }
+  }
+
+  flushSnapshot(chunks: Uint8Array[]): void {
+    const pcmData = flattenChunks(chunks);
+    if (pcmData.byteLength === 0) return;
+    retainLastCaptureForRecovery(
+      createWavBuffer(pcmData),
+      this.polishSurface,
+    );
+    this.initialized = true;
+    this.chunksSinceFsync = 0;
+  }
 }
 
 export function selectChunksWithPreRoll(
@@ -1029,6 +1235,7 @@ export async function recordToBuffer(
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
     let pttStopRequestedAtMs: number | null = null;
+    const recoveryWriter = new IncrementalRecoveryWavWriter(null);
 
     const beginPttStopDrain = () => {
       if (pttStopRequestedAtMs !== null) return;
@@ -1066,8 +1273,22 @@ export async function recordToBuffer(
         recorder = null;
       }
 
-      if (error) {
-        reject(error);
+      let finishError = error;
+      if (totalPcmBytes > 0) {
+        try {
+          recoveryWriter.flushSnapshot(pcmChunks);
+        } catch (err) {
+          console.error(
+            `[voicelayer] Failed to flush retained recovery WAV: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          if (!finishError) {
+            finishError = err instanceof Error ? err : new Error(String(err));
+          }
+        }
+      }
+
+      if (finishError) {
+        reject(finishError);
       } else if (totalPcmBytes === 0 || (!pressToTalk && !hasSpeech)) {
         resolve(null); // No speech detected (PTT mode always returns audio)
       } else {
@@ -1233,6 +1454,7 @@ export async function recordToBuffer(
           pcmChunks.push(chunk);
           totalPcmBytes += chunk.byteLength;
           totalChunksProcessed++;
+          recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
 
           // Broadcast audio level every ~100ms (3 chunks × 32ms)
           if (totalChunksProcessed % 3 === 0) {
@@ -1460,6 +1682,10 @@ export async function waitForInput(
       chunkedSession.replaceWithPCM(sttTrim.pcmData, true);
     }
     const useChunkedTranscription = !!chunkedSession;
+    retainLastCaptureForRecovery(
+      retainedWavData,
+      polishSurfaceForWaitOptions(options),
+    );
     writeFileSync(wavPath, sttWavData);
 
     // Transcribe with selected backend
@@ -1623,6 +1849,18 @@ export async function retranscribeLastCapture(): Promise<string | null> {
   if (!existsSync(wavPath)) {
     return null;
   }
+  try {
+    requireValidRetainedWav(wavPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    broadcast({
+      type: "error",
+      message,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw err;
+  }
 
   recordingState = "transcribing";
   broadcast({ type: "state", state: "transcribing" });
@@ -1660,12 +1898,13 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     return text || null;
   } catch (err) {
     recordingState = "idle";
+    const retryableError = retainedRetranscriptionError(wavPath, err);
     broadcast({
       type: "error",
-      message: `Retranscription failed: ${err instanceof Error ? err.message : String(err)}`,
+      message: retryableError.message,
       recoverable: true,
     });
     broadcast({ type: "state", state: "idle", source: "recording" });
-    throw err;
+    throw retryableError;
   }
 }
