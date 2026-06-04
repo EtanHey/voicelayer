@@ -327,20 +327,37 @@ function wavHeaderValidationError(
   return null;
 }
 
-function retainedWavValidationError(path: string): string | null {
+function repairRetainedWavHeader(path: string, data: Buffer, dataSize: number): void {
+  if (dataSize > 0xffffffff - 36) {
+    throw new Error(
+      `Retained recording is too large to repair as WAV: ${path} has ${dataSize} audio bytes on disk.`,
+    );
+  }
+  const repaired = Buffer.from(data);
+  repaired.writeUInt32LE(36 + dataSize, 4);
+  repaired.writeUInt32LE(dataSize, 40);
+  atomicWriteFile(path, repaired);
+}
+
+function requireValidRetainedWav(path: string): void {
   let data: Buffer;
   try {
     data = readFileSync(path);
   } catch (err) {
-    return `Retained recording is not a valid WAV: could not read ${path} (${err instanceof Error ? err.message : String(err)}).`;
+    throw new Error(
+      `Retained recording is not a valid WAV: could not read ${path} (${err instanceof Error ? err.message : String(err)}).`,
+    );
   }
-  return wavHeaderValidationError(path, data, data.byteLength);
-}
 
-function requireValidRetainedWav(path: string): void {
-  const validationError = retainedWavValidationError(path);
+  const validationError = wavHeaderValidationError(path, data, data.byteLength);
   if (validationError) {
     throw new Error(validationError);
+  }
+
+  const headerDataSize = data.readUInt32LE(40);
+  const audioBytesOnDisk = data.byteLength - 44;
+  if (audioBytesOnDisk > headerDataSize) {
+    repairRetainedWavHeader(path, data, audioBytesOnDisk);
   }
 }
 

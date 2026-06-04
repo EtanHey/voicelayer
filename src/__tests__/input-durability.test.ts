@@ -31,6 +31,8 @@ let vadMode: "silence" | "throw" = "silence";
 let onVadCall: (() => void) | null = null;
 let backendMode: "ok" | "throw-on-get" = "ok";
 let backendTranscribeCalls = 0;
+let backendTranscribedDataSize: number | undefined;
+let backendTranscribedFileBytes: number | undefined;
 let broadcasts: any[] = [];
 let vadProcessSpy: ReturnType<typeof spyOn> | undefined;
 let vadResetSpy: ReturnType<typeof spyOn> | undefined;
@@ -221,6 +223,8 @@ describe("input recording durability", () => {
     onVadCall = null;
     backendMode = "ok";
     backendTranscribeCalls = 0;
+    backendTranscribedDataSize = undefined;
+    backendTranscribedFileBytes = undefined;
     broadcasts = [];
     vadProcessSpy = spyOn(vad, "processVADChunk").mockImplementation(
       async () => {
@@ -239,10 +243,12 @@ describe("input recording durability", () => {
       return {
         name: "fake-stt",
         isAvailable: async () => true,
-        transcribe: async () => {
+        transcribe: async (path: string) => {
           backendTranscribeCalls++;
+          backendTranscribedDataSize = readWavDataSize(path);
+          backendTranscribedFileBytes = readFileSync(path).byteLength;
           return {
-            text: "backend should not run for invalid retained wav",
+            text: "retained transcript",
             backend: "fake-stt",
             durationMs: 1,
           };
@@ -367,6 +373,26 @@ describe("input recording durability", () => {
           /retained recording is not a valid WAV/i.test(message.message),
       ),
     ).toBe(true);
+  });
+
+  it("repairs a stale retained WAV header to include fsynced trailing PCM before retranscribing", async () => {
+    const retainedPcm = Buffer.concat([
+      Buffer.from(makePcmChunk(400)),
+      Buffer.from(makePcmChunk(800)),
+    ]);
+    writeFileSync(retainedPath, makeWav(retainedPcm));
+    rewriteWavHeaderDataSize(retainedPath, VAD_CHUNK_BYTES);
+    expect(readWavDataSize(retainedPath)).toBe(VAD_CHUNK_BYTES);
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript",
+    );
+    expect(backendTranscribeCalls).toBe(1);
+    expect(backendTranscribedDataSize).toBe(VAD_CHUNK_BYTES * 2);
+    expect(backendTranscribedFileBytes).toBe(44 + VAD_CHUNK_BYTES * 2);
+    expectValidRetainedWav(retainedPath, VAD_CHUNK_BYTES * 2);
   });
 
   it("keeps the retained WAV and surfaces backend startup failures with retry guidance", async () => {
