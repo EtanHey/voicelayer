@@ -16,6 +16,7 @@ import {
   writeSync,
   writeFileSync,
 } from "fs";
+import * as fsModule from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { clearCancelSignal, clearStopSignal } from "../session-booking";
@@ -278,6 +279,46 @@ describe("input recording durability", () => {
       delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     } else {
       process.env.QA_VOICE_RETAINED_RECORDING_PATH = savedRetainedPath;
+    }
+  });
+
+  it("keeps the retained WAV valid while batching recovery fsyncs during capture", async () => {
+    const fsyncSpy = spyOn(fsModule, "fsyncSync");
+    let sawAllVadChunks!: () => void;
+    const allVadChunksProcessed = new Promise<void>((resolve) => {
+      sawAllVadChunks = resolve;
+    });
+    const chunks = Array.from({ length: 12 }, (_, index) =>
+      makePcmChunk(400 + index * 10),
+    );
+    let vadCalls = 0;
+    onVadCall = () => {
+      vadCalls++;
+      expectValidRetainedWav(retainedPath, VAD_CHUNK_BYTES * vadCalls);
+      if (vadCalls === chunks.length) {
+        sawAllVadChunks();
+      }
+    };
+    const recorder = installFakeRecorder(chunks, true);
+    const { recordToBuffer } = await import("../input");
+    const recording = recordToBuffer(1000, "quick", false);
+
+    try {
+      await recorder.waitForSpawn();
+      await allVadChunksProcessed;
+
+      const fsyncCallsBeforeFinish = fsyncSpy.mock.calls.length;
+      expect(fsyncCallsBeforeFinish).toBeGreaterThan(0);
+      expect(fsyncCallsBeforeFinish).toBeLessThanOrEqual(5);
+
+      writeFileSync(STOP_FILE, "stop");
+      await expect(recording).resolves.toBeNull();
+      expectValidRetainedWav(retainedPath, VAD_CHUNK_BYTES * chunks.length);
+      expect(fsyncSpy.mock.calls.length).toBeLessThanOrEqual(8);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+      fsyncSpy.mockRestore();
     }
   });
 

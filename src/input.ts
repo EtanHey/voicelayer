@@ -417,7 +417,11 @@ function writeWavSizeHeader(fd: number, dataSize: number): void {
   writeAllSync(fd, dataSizeBytes, 40);
 }
 
-function appendPcmChunkToRetainedWav(path: string, chunk: Uint8Array): void {
+function appendPcmChunkToRetainedWav(
+  path: string,
+  chunk: Uint8Array,
+  shouldFsync: boolean,
+): void {
   let fd: number | undefined;
   try {
     fd = openSync(path, "r+");
@@ -435,9 +439,10 @@ function appendPcmChunkToRetainedWav(path: string, chunk: Uint8Array): void {
 
     const nextDataSize = previousDataSize + chunk.byteLength;
     writeAllSync(fd, chunk, 44 + previousDataSize);
-    fsyncSync(fd);
     writeWavSizeHeader(fd, nextDataSize);
-    fsyncSync(fd);
+    if (shouldFsync) {
+      fsyncSync(fd);
+    }
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
@@ -732,7 +737,9 @@ function flattenChunks(chunks: Uint8Array[]): Uint8Array {
 }
 
 class IncrementalRecoveryWavWriter {
+  private static readonly fsyncChunkInterval = 10;
   private initialized = false;
+  private chunksSinceFsync = 0;
 
   constructor(private readonly polishSurface: STTPolishSurface | null) {}
 
@@ -745,7 +752,15 @@ class IncrementalRecoveryWavWriter {
     }
 
     try {
-      appendPcmChunkToRetainedWav(retainedRecordingFilePath(), chunk);
+      const shouldFsync =
+        this.chunksSinceFsync + 1 >=
+        IncrementalRecoveryWavWriter.fsyncChunkInterval;
+      appendPcmChunkToRetainedWav(
+        retainedRecordingFilePath(),
+        chunk,
+        shouldFsync,
+      );
+      this.chunksSinceFsync = shouldFsync ? 0 : this.chunksSinceFsync + 1;
       retainedPolishSurface = this.polishSurface;
     } catch {
       this.flushSnapshot(allChunks);
@@ -760,6 +775,7 @@ class IncrementalRecoveryWavWriter {
       this.polishSurface,
     );
     this.initialized = true;
+    this.chunksSinceFsync = 0;
   }
 }
 
