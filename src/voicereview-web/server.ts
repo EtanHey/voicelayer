@@ -51,6 +51,8 @@ export interface VoiceReviewConfig {
   batchPath: string;
   decisionsPath: string;
   sttVocabularyPath: string;
+  ffmpegPath: string | null;
+  whisperCliPath: string | null;
   whisperModelPath: string;
   liteRtUrl: string;
   liteRtModel: string;
@@ -95,6 +97,15 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
   sttVocabularyPath:
     process.env.VOICE_REVIEW_STT_VOCAB ||
     join(HOME, ".local/state/voicelayer/stt-vocabulary.json"),
+  ffmpegPath:
+    process.env.VOICE_REVIEW_FFMPEG ||
+    resolveBinary("ffmpeg", ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]),
+  whisperCliPath:
+    process.env.VOICE_REVIEW_WHISPER_CLI ||
+    resolveBinary("whisper-cli", [
+      "/opt/homebrew/bin/whisper-cli",
+      "/usr/local/bin/whisper-cli",
+    ]),
   whisperModelPath:
     process.env.VOICE_REVIEW_WHISPER_MODEL ||
     join(HOME, ".cache/whisper/ggml-large-v3-turbo.bin"),
@@ -582,10 +593,7 @@ async function handleTranscribe(
   await Bun.write(inputPath, audio);
 
   try {
-    const ffmpeg = resolveBinary("ffmpeg", [
-      "/opt/homebrew/bin/ffmpeg",
-      "/usr/local/bin/ffmpeg",
-    ]);
+    const ffmpeg = config.ffmpegPath;
     if (!ffmpeg) throw new Error("ffmpeg not found");
 
     const convert = await runCommand({
@@ -610,10 +618,7 @@ async function handleTranscribe(
     });
     assertSuccess(convert, "ffmpeg");
 
-    const whisper = resolveBinary("whisper-cli", [
-      "/opt/homebrew/bin/whisper-cli",
-      "/usr/local/bin/whisper-cli",
-    ]);
+    const whisper = config.whisperCliPath;
     if (!whisper) throw new Error("whisper-cli not found");
 
     const prompt = await loadVocabularyPrompt(config.sttVocabularyPath);

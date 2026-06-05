@@ -370,6 +370,8 @@ describe("VoiceReview web server helpers", () => {
       config: {
         tempDir: root,
         sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
       },
       runCommand: async (call) => {
         calls.push(call);
@@ -394,6 +396,10 @@ describe("VoiceReview web server helpers", () => {
       expect(response.status).toBe(422);
       expect(await response.json()).toEqual({ error: "empty transcript" });
       expect(calls).toHaveLength(2);
+      expect(calls.map((call) => call.args[0])).toEqual([
+        "/test/bin/ffmpeg",
+        "/test/bin/whisper-cli",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
