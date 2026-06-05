@@ -1788,6 +1788,7 @@ function renderPage(defaultCategory: string): string {
         calibrationRmsTotal: 0,
         calibrationAcceptedFrames: 0,
         calibrationAcceptedRmsTotal: 0,
+        calibrationSpeechCandidateSeen: false,
         noiseFloor: 0,
         speechThreshold: 0,
         silenceThreshold: 0,
@@ -1811,6 +1812,8 @@ function renderPage(defaultCategory: string): string {
         if (sample < config.calibrationSpeechRms) {
           state.calibrationAcceptedFrames += 1;
           state.calibrationAcceptedRmsTotal += sample;
+        } else {
+          state.calibrationSpeechCandidateSeen = true;
         }
         state.phase = "calibrating";
         if (state.calibrationMsSeen >= config.calibrationMs) {
@@ -1832,7 +1835,12 @@ function renderPage(defaultCategory: string): string {
             ),
           );
           state.calibrated = true;
-          state.phase = "waiting_for_speech";
+          if (state.calibrationSpeechCandidateSeen) {
+            state.speechStarted = true;
+            state.phase = "speaking";
+          } else {
+            state.phase = "waiting_for_speech";
+          }
         }
         return state;
       }
@@ -2032,6 +2040,11 @@ function renderPage(defaultCategory: string): string {
     function transcriptTurnsAfterCombinedPauseContinuation(turns, heldTurnId, currentTurnId) {
       if (!heldTurnId || heldTurnId === currentTurnId) return turns;
       return turns.filter((turn) => turn.id !== heldTurnId);
+    }
+
+    function transcriptTurnsAfterEmptyPauseContinuation(turns, heldTurnId, currentTurnId) {
+      if (!heldTurnId || !currentTurnId || heldTurnId === currentTurnId) return turns;
+      return turns.filter((turn) => turn.id !== currentTurnId);
     }
 
     function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
@@ -2643,7 +2656,8 @@ function renderPage(defaultCategory: string): string {
           recordingContext.waitingContinuation &&
           (error.message === "empty transcript" || error.message === "empty audio")
         ) {
-          updateTranscriptTurn(recordingContext.transcriptTurnId, {
+          const waitingTurnId = collapseEmptyWaitingContinuationTurn(recordingContext);
+          updateTranscriptTurn(waitingTurnId, {
             label: "🎤 You (waiting…)",
             text: thinkingPauseHold.heldTranscript || "(waiting for continuation)",
             meta: "waiting… partial transcript held; no continuation captured yet",
@@ -2737,6 +2751,19 @@ function renderPage(defaultCategory: string): string {
       );
       thinkingPauseHold.heldTurnId = null;
       renderTranscriptLog();
+    }
+
+    function collapseEmptyWaitingContinuationTurn(recordingContext) {
+      if (!recordingContext.waitingContinuation || !thinkingPauseHold.heldTurnId) {
+        return recordingContext.transcriptTurnId;
+      }
+      transcriptTurns = transcriptTurnsAfterEmptyPauseContinuation(
+        transcriptTurns,
+        thinkingPauseHold.heldTurnId,
+        recordingContext.transcriptTurnId,
+      );
+      renderTranscriptLog();
+      return thinkingPauseHold.heldTurnId;
     }
 
     function showLiveUserTurn(recordingContext) {

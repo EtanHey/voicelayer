@@ -118,6 +118,11 @@ interface EndpointingHelpersForTest {
     heldTurnId: number | null | undefined,
     currentTurnId: number | null | undefined,
   ) => T[];
+  transcriptTurnsAfterEmptyPauseContinuation: <T extends { id: number }>(
+    turns: T[],
+    heldTurnId: number | null | undefined,
+    currentTurnId: number | null | undefined,
+  ) => T[];
 }
 
 function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest {
@@ -128,7 +133,7 @@ function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest
   }
   const source = html.slice(start, end);
   return (new Function(
-    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, transcriptTurnsAfterCombinedPauseContinuation };`,
+    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, transcriptTurnsAfterCombinedPauseContinuation, transcriptTurnsAfterEmptyPauseContinuation };`,
   ) as () => EndpointingHelpersForTest)();
 }
 
@@ -594,6 +599,31 @@ describe("VoiceReview web server helpers", () => {
     expect(state.phase).toBe("speaking");
   });
 
+  it("remembers speech that occurs entirely during endpointing calibration", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createEndpointingState, advanceEndpointing } =
+      loadEndpointingHelpersFromPage(html);
+
+    const state = createEndpointingState({
+      frameMs: 50,
+      calibrationMs: 300,
+      trailingSilenceMs: 1200,
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      advanceEndpointing(state, 0.04);
+    }
+    expect(state.calibrated).toBe(true);
+    expect(state.speechStarted).toBe(true);
+    expect(state.phase).toBe("speaking");
+
+    advanceEndpointing(state, 0.004);
+    expect(state.phase).toBe("trailing_silence");
+    expect(state.countdownProgress).toBeGreaterThan(0);
+  });
+
   it("classifies pause intent without treating wait as a magic word", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
@@ -831,6 +861,29 @@ describe("VoiceReview web server helpers", () => {
     ).toEqual(turns);
     expect(html).toContain("removeHeldWaitingTranscriptTurn(recordingContext);");
     expect(html).toContain("thinkingPauseHold.heldTurnId = recordingContext.transcriptTurnId;");
+  });
+
+  it("removes duplicate empty waiting continuation rows while preserving the held turn", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { transcriptTurnsAfterEmptyPauseContinuation } =
+      loadEndpointingHelpersFromPage(html);
+
+    const turns = [
+      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
+      { id: 12, label: "🎤 You (waiting…)", text: "wait" },
+    ];
+
+    expect(
+      transcriptTurnsAfterEmptyPauseContinuation(turns, 11, 12),
+    ).toEqual([
+      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
+    ]);
+    expect(
+      transcriptTurnsAfterEmptyPauseContinuation(turns, 12, 12),
+    ).toEqual(turns);
+    expect(html).toContain("collapseEmptyWaitingContinuationTurn(recordingContext);");
   });
 
   it("serves page logic that saves the decision before speaking confirmation", async () => {
