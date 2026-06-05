@@ -2126,6 +2126,8 @@ function renderPage(defaultCategory: string): string {
     let autoListenTimer = null;
     let activeRecordingContext = null;
     let bargeInRecordingPending = false;
+    let bargeInRecordingAttempt = null;
+    let resolveBargeInRecordingAttempt = null;
     let conversationHistory = [];
     let transcriptTurns = [];
     let nextTranscriptTurnId = 1;
@@ -2148,6 +2150,24 @@ function renderPage(defaultCategory: string): string {
     function setTtsPlaying(value) {
       ttsPlaying = value;
       syncControlState();
+    }
+    function beginBargeInRecordingAttempt() {
+      if (resolveBargeInRecordingAttempt) resolveBargeInRecordingAttempt();
+      bargeInRecordingPending = true;
+      bargeInRecordingAttempt = new Promise((resolve) => {
+        resolveBargeInRecordingAttempt = resolve;
+      });
+    }
+    function finishBargeInRecordingAttempt() {
+      bargeInRecordingPending = false;
+      const resolve = resolveBargeInRecordingAttempt;
+      resolveBargeInRecordingAttempt = null;
+      bargeInRecordingAttempt = null;
+      if (resolve) resolve();
+    }
+    async function waitForBargeInRecordingAttempt() {
+      const attempt = bargeInRecordingAttempt;
+      if (attempt) await attempt;
     }
     function ms(value) { return Math.round(value) + " ms"; }
     function compactText(value, max = 78) {
@@ -2603,6 +2623,9 @@ function renderPage(defaultCategory: string): string {
             const playbackResult = await playText(PAUSE_INTENT_SOFT_PROMPT, {
               label: "Agent prompt"
             });
+            if (playbackResult === "cancelled") {
+              await waitForBargeInRecordingAttempt();
+            }
             if (shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state, bargeInRecordingPending)) {
               setBusy(false);
               return;
@@ -2659,8 +2682,7 @@ function renderPage(defaultCategory: string): string {
 
           const playbackResult = await playText(answer);
           if (playbackResult === "cancelled") {
-            setBusy(false);
-            return;
+            await waitForBargeInRecordingAttempt();
           }
           setBusy(false);
           if (
@@ -2942,10 +2964,9 @@ function renderPage(defaultCategory: string): string {
       try {
         if (ttsPlaying) {
           const allowRecording = activePlayback?.allowBargeInRecording !== false;
-          if (allowRecording) bargeInRecordingPending = true;
+          if (allowRecording) beginBargeInRecordingAttempt();
           cancelTtsPlayback("barge-in");
           if (!allowRecording) {
-            bargeInRecordingPending = false;
             setStatus("Decision saved. Loading next cluster...");
             return;
           }
@@ -2958,7 +2979,7 @@ function renderPage(defaultCategory: string): string {
             }
             await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));
           } finally {
-            bargeInRecordingPending = false;
+            finishBargeInRecordingAttempt();
           }
           return;
         }

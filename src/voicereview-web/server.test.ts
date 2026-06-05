@@ -920,6 +920,26 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("bargeInRecordingPending = true;");
   });
 
+  it("waits for pending barge-in recording before cancelled answer TTS fallback", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const answerPlaybackIndex = html.indexOf("const playbackResult = await playText(answer");
+    const waitIndex = html.indexOf("await waitForBargeInRecordingAttempt();", answerPlaybackIndex);
+    const fallbackIndex = html.indexOf(
+      "await startRecordingForCluster(cluster, { autoListen: true });",
+      answerPlaybackIndex,
+    );
+
+    expect(answerPlaybackIndex).toBeGreaterThan(-1);
+    expect(waitIndex).toBeGreaterThan(answerPlaybackIndex);
+    expect(fallbackIndex).toBeGreaterThan(waitIndex);
+    expect(html).toContain("function beginBargeInRecordingAttempt()");
+    expect(html).toContain("function finishBargeInRecordingAttempt()");
+    expect(html).toContain("function waitForBargeInRecordingAttempt()");
+  });
+
   it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
