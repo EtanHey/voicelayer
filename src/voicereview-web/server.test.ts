@@ -344,7 +344,7 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("return value || \"I don't see evidence about that\";");
     expect(html).toContain("await playText(answer);");
     expect(html).not.toContain("await playText(converse.answer);");
-    expect(html).toContain("await startRecordingForCluster(cluster);");
+    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
     expect(html).toContain('!(recorder && recorder.state === "recording")');
     expect(html).toContain("evidence_ms");
   });
@@ -365,6 +365,25 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("stopTtsPlayback();");
     expect(html).toContain("setBusy(false);");
     expect(html).toContain("await startRecording();");
+  });
+
+  it("serves page logic that caps conversational auto-listen and keeps the mic state obvious", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("const AUTO_LISTEN_MS = 15000;");
+    expect(html).toContain(".mic.auto-listening");
+    expect(html).toContain("@keyframes autoListenPulse");
+    expect(html).toContain("Listening — ask more or say your decision.");
+    expect(html).toContain('mic.textContent = "Listening";');
+    expect(html).toContain("setTimeout(() => {");
+    expect(html).toContain("recordingContext.timedOut = true;");
+    expect(html).toContain("Didn't catch that — tap to talk.");
+    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
+    expect(html).toContain("Answering: \" + compactText(question)");
+    expect(html).toContain("say merge / keep / mixed / skip to decide");
+    expect(html).toContain("qa-evidence-label");
   });
 
   it("serves page logic that saves the decision before speaking confirmation", async () => {

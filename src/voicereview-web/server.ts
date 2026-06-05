@@ -1517,7 +1517,18 @@ function renderPage(defaultCategory: string): string {
       box-shadow: 0 16px 30px rgba(15, 118, 110, 0.24);
     }
     .mic.recording { background: #b91c1c; box-shadow: 0 16px 30px rgba(185, 28, 28, 0.22); }
+    .mic.auto-listening {
+      background: #f59e0b;
+      color: #172026;
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34);
+      animation: autoListenPulse 900ms ease-in-out infinite;
+    }
     .mic:disabled { opacity: 0.55; cursor: wait; }
+    @keyframes autoListenPulse {
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34); }
+      70% { box-shadow: 0 0 0 18px rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.28); }
+      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.34); }
+    }
     .status {
       min-height: 44px;
       color: var(--muted);
@@ -1579,6 +1590,18 @@ function renderPage(defaultCategory: string): string {
       padding-left: 18px;
     }
     .qa-evidence li { margin: 6px 0; overflow-wrap: anywhere; }
+    .qa-evidence-label {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .qa-evidence-snippets {
+      margin-top: 4px;
+    }
+    .qa-hint {
+      justify-self: start;
+      color: var(--muted);
+      font-size: 12px;
+    }
     footer {
       max-width: 1180px;
       margin: 0 auto;
@@ -1664,6 +1687,7 @@ function renderPage(defaultCategory: string): string {
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const AUTO_LISTEN_MS = 15000;
     const mic = $("mic");
     const category = $("category");
     const audio = $("audio");
@@ -1676,6 +1700,8 @@ function renderPage(defaultCategory: string): string {
     let recording = false;
     let ttsPlaying = false;
     let activePlayback = null;
+    let autoListenTimer = null;
+    let activeRecordingContext = null;
     let conversationHistory = [];
 
     function setStatus(text) { $("status").textContent = text; }
@@ -1696,6 +1722,10 @@ function renderPage(defaultCategory: string): string {
       syncControlState();
     }
     function ms(value) { return Math.round(value) + " ms"; }
+    function compactText(value, max = 78) {
+      const text = String(value || "").trim().replace(/\\s+/g, " ");
+      return text.length > max ? text.slice(0, max - 1) + "…" : text;
+    }
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -1871,33 +1901,64 @@ function renderPage(defaultCategory: string): string {
       await startRecordingForCluster(recordingCluster);
     }
 
-    async function startRecordingForCluster(recordingCluster) {
+    async function startRecordingForCluster(recordingCluster, options = {}) {
       if (!recordingCluster) return;
       chunks = [];
-      const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      clearAutoListenTimer();
+      const recordingContext = {
+        autoListen: Boolean(options.autoListen),
+        timedOut: false
+      };
+      activeRecordingContext = recordingContext;
+      const mediaOptions = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
         : {};
-      recorder = new MediaRecorder(stream, options);
+      recorder = new MediaRecorder(stream, mediaOptions);
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
-      recorder.onstop = () => processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster);
+      recorder.onstop = () => {
+        clearAutoListenTimer();
+        if (activeRecordingContext === recordingContext) activeRecordingContext = null;
+        processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster, recordingContext);
+      };
       recorder.start();
       setRecording(true);
       mic.classList.add("recording");
-      mic.textContent = "Stop";
-      setStatus("Recording in browser. Tap Stop when your answer is done.");
+      if (recordingContext.autoListen) {
+        mic.classList.add("auto-listening");
+        mic.textContent = "Listening";
+        setStatus("Listening — ask more or say your decision.");
+        autoListenTimer = setTimeout(() => {
+          if (recorder && recorder.state === "recording" && activeRecordingContext === recordingContext) {
+            recordingContext.timedOut = true;
+            setStatus("Listening window ended — transcribing anything captured.");
+            stopRecording();
+          }
+        }, AUTO_LISTEN_MS);
+      } else {
+        mic.classList.remove("auto-listening");
+        mic.textContent = "Stop";
+        setStatus("Recording in browser. Tap Stop when your answer is done.");
+      }
     }
 
     async function stopRecording() {
+      clearAutoListenTimer();
       if (recorder && recorder.state === "recording") recorder.stop();
     }
 
-    async function processRecording(blob, cluster) {
+    function clearAutoListenTimer() {
+      if (!autoListenTimer) return;
+      clearTimeout(autoListenTimer);
+      autoListenTimer = null;
+    }
+
+    async function processRecording(blob, cluster, recordingContext = {}) {
       const stoppedAt = performance.now();
       setRecording(false);
       setBusy(true);
-      mic.classList.remove("recording");
+      mic.classList.remove("recording", "auto-listening");
       mic.textContent = "Record";
       try {
         setStatus("Transcribing locally with whisper-cli...");
@@ -1921,7 +1982,7 @@ function renderPage(defaultCategory: string): string {
 
         if (interpreted.decision.action === "question") {
           const question = interpreted.decision.question || transcribe.text || "";
-          setStatus("Answering with BrainLayer evidence...");
+          setStatus("Answering: " + compactText(question));
           const converseResponse = await api("/api/converse", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -1950,7 +2011,7 @@ function renderPage(defaultCategory: string): string {
             current.cluster_id === cluster.cluster_id &&
             !(recorder && recorder.state === "recording")
           ) {
-            await startRecordingForCluster(cluster);
+            await startRecordingForCluster(cluster, { autoListen: true });
           }
           return;
         }
@@ -1972,6 +2033,12 @@ function renderPage(defaultCategory: string): string {
         setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
+        if (recordingContext.autoListen && (error.message === "empty transcript" || error.message === "empty audio")) {
+          $("transcript").textContent = "(no follow-up captured)";
+          setStatus("Didn't catch that — tap to talk.");
+          setBusy(false);
+          return;
+        }
         setStatus("Error: " + error.message);
         setBusy(false);
       }
@@ -1993,24 +2060,33 @@ function renderPage(defaultCategory: string): string {
       turn.innerHTML =
         "<div class='qa-bubble qa-question'>" + escapeHtml(question) + "</div>" +
         "<div class='qa-bubble qa-answer'>" + escapeHtml(answer) + "</div>" +
-        evidenceHtml(evidence);
+        evidenceHtml(evidence) +
+        decisionHintHtml();
       $("qa").appendChild(turn);
       $("qa").scrollTop = $("qa").scrollHeight;
     }
 
+    function decisionHintHtml() {
+      if (conversationHistory.length < 2) return "";
+      return "<div class='qa-hint'>say merge / keep / mixed / skip to decide</div>";
+    }
+
     function evidenceHtml(evidence) {
-      const items = [];
+      const groups = [];
       for (const member of evidence?.members || []) {
-        for (const snippet of member.snippets || []) {
-          items.push(
-            "<li><strong>" + escapeHtml(member.name) + " · " + escapeHtml(member.type) + "</strong> " +
-            "<code>" + escapeHtml(snippet.chunk_id) + "</code><br>" +
-            escapeHtml(snippet.text || "") + "</li>"
-          );
-        }
+        const snippets = member.snippets || [];
+        if (!snippets.length) continue;
+        const items = snippets.map((snippet) => (
+          "<li><code>" + escapeHtml(snippet.chunk_id) + "</code><br>" +
+          escapeHtml(snippet.text || "") + "</li>"
+        )).join("");
+        groups.push(
+          "<li><div class='qa-evidence-label'>" + escapeHtml(member.name) + " · " + escapeHtml(member.type) +
+          "</div><ul class='qa-evidence-snippets'>" + items + "</ul></li>"
+        );
       }
-      if (!items.length) return "";
-      return "<details class='qa-evidence'><summary>Evidence snippets</summary><ul>" + items.join("") + "</ul></details>";
+      if (!groups.length) return "";
+      return "<details class='qa-evidence'><summary>Evidence snippets</summary><ul>" + groups.join("") + "</ul></details>";
     }
 
     mic.addEventListener("click", async () => {
