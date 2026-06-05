@@ -1,10 +1,13 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import {
+  buildConverseMessages,
   buildConfirmation,
   buildDriverArgs,
+  buildEvidenceArgs,
   buildInterpretMessages,
   buildWhisperArgs,
   buildWhisperPrompt,
@@ -14,6 +17,7 @@ import {
   DEFAULT_CONFIG,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
+  type ConversationEvidence,
   type CommandCall,
   type CommandResult,
   type ReviewCluster,
@@ -331,6 +335,18 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("Tap Retry");
     expect(html).toContain("finally {\n        setBusy(false);");
     expect(html).toContain("addEventListener(\"ended\"");
+    expect(html).toContain("conversationHistory");
+    expect(html).toContain('interpreted.decision.action === "question"');
+    expect(html).toContain('await api("/api/converse"');
+    expect(html).toContain("const answer = normalizeConversationAnswer(converse.answer);");
+    expect(html).toContain("appendQuestionTurn");
+    expect(html).toContain("function normalizeConversationAnswer(answer)");
+    expect(html).toContain("return value || \"I don't see evidence about that\";");
+    expect(html).toContain("await playText(answer);");
+    expect(html).not.toContain("await playText(converse.answer);");
+    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
+    expect(html).toContain('!(recorder && recorder.state === "recording")');
+    expect(html).toContain("evidence_ms");
   });
 
   it("serves page logic that barge-in stops TTS before recording", async () => {
@@ -351,13 +367,62 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("await startRecording();");
   });
 
+  it("serves page logic that suppresses recording during confirmation TTS after a decision is saved", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("async function playText(text, options = {})");
+    expect(html).toContain("allowBargeInRecording: options.allowBargeInRecording !== false");
+    expect(html).toContain("const allowRecording = activePlayback?.allowBargeInRecording !== false;");
+    expect(html).toContain("if (!allowRecording) {");
+    expect(html).toContain("Decision saved. Loading next cluster...");
+    expect(html).toContain("await playText(interpreted.confirmation, { allowBargeInRecording: false });");
+
+    const decideIndex = html.indexOf('await api("/api/decide"');
+    const confirmationIndex = html.indexOf(
+      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
+    );
+    const loadNextIndex = html.indexOf("await loadNext(true);", confirmationIndex);
+    const guardIndex = html.indexOf("if (!allowRecording) {");
+    const staleStartIndex = html.indexOf("await startRecording();", guardIndex);
+    const suppressedReturnIndex = html.indexOf("return;", guardIndex);
+
+    expect(decideIndex).toBeGreaterThan(-1);
+    expect(confirmationIndex).toBeGreaterThan(decideIndex);
+    expect(loadNextIndex).toBeGreaterThan(confirmationIndex);
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(suppressedReturnIndex).toBeLessThan(staleStartIndex);
+  });
+
+  it("serves page logic that caps conversational auto-listen and keeps the mic state obvious", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("const AUTO_LISTEN_MS = 15000;");
+    expect(html).toContain(".mic.auto-listening");
+    expect(html).toContain("@keyframes autoListenPulse");
+    expect(html).toContain("Listening — ask more or say your decision.");
+    expect(html).toContain('mic.textContent = "Listening";');
+    expect(html).toContain("setTimeout(() => {");
+    expect(html).toContain("recordingContext.timedOut = true;");
+    expect(html).toContain("Didn't catch that — tap to talk.");
+    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
+    expect(html).toContain("Answering: \" + compactText(question)");
+    expect(html).toContain("say merge / keep / mixed / skip to decide");
+    expect(html).toContain("qa-evidence-label");
+  });
+
   it("serves page logic that saves the decision before speaking confirmation", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
     const saveIndex = html.indexOf("setStatus(\"Recording decision...\");");
-    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation);");
+    const confirmationIndex = html.indexOf(
+      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
+    );
     expect(saveIndex).toBeGreaterThan(-1);
     expect(confirmationIndex).toBeGreaterThan(-1);
     expect(saveIndex).toBeLessThan(confirmationIndex);
@@ -443,11 +508,40 @@ describe("VoiceReview web server helpers", () => {
     });
 
     expect(messages[0].role).toBe("system");
-    expect(messages[0].content).toContain("merge|keep|mixed|skip");
+    expect(messages[0].content).toContain("merge|keep|mixed|skip|question");
     expect(messages[0].content).toContain("exactly one JSON object");
     expect(messages[0].content).toContain("few-shot examples");
+    expect(messages[0].content).toContain('"action":"question"');
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
     expect(messages[1].content).toContain("16db6804-dc3e-5465-93d2-e3956c3f63f5");
+  });
+
+  it("parses English and Hebrew-English questions as non-decision turns", () => {
+    expect(
+      parseInterpretDecision(
+        '{"action":"question","question":"which chunks does the company one have?","note":"which chunks does the company one have?"}',
+        cantaloupeCluster,
+        "which chunks does the company one have?",
+      ),
+    ).toEqual({
+      action: "question",
+      question: "which chunks does the company one have?",
+      note: "which chunks does the company one have?",
+      source: "voice",
+    });
+
+    expect(
+      parseInterpretDecision(
+        '{"action":"question","question":"איזה chunks יש ל-company one?","note":"model paraphrase"}',
+        cantaloupeCluster,
+        "איזה chunks יש ל-company one?",
+      ),
+    ).toEqual({
+      action: "question",
+      question: "איזה chunks יש ל-company one?",
+      note: "איזה chunks יש ל-company one?",
+      source: "voice",
+    });
   });
 
   it("instructs LiteRT-LM to skip ambiguous answers with verbatim notes", () => {
@@ -562,6 +656,317 @@ describe("VoiceReview web server helpers", () => {
       },
       confirmation: "Merge all into Cantaloupe, company.",
     });
+  });
+
+  it("serves /api/interpret question actions without forcing a decision", async () => {
+    const app = createVoiceReviewApp({
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    action: "question",
+                    question: "what would happen if we merge them?",
+                    note: "what would happen if we merge them?",
+                  }),
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/interpret", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          transcript: "what would happen if we merge them?",
+          cluster: cantaloupeCluster,
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      decision: {
+        action: "question",
+        question: "what would happen if we merge them?",
+        source: "voice",
+      },
+      confirmation: null,
+    });
+  });
+
+  it("builds evidence helper args with the fixture DB path and member ids isolated as argv", () => {
+    const args = buildEvidenceArgs({
+      pythonScript: "/repo/src/voicereview-web/kg_evidence.py",
+      dbPath: "/tmp/fixture.db",
+      members: cantaloupeCluster.members,
+      perMember: 2,
+    });
+
+    expect(args).toEqual([
+      "python3",
+      "/repo/src/voicereview-web/kg_evidence.py",
+      "--db",
+      "/tmp/fixture.db",
+      "--members-json",
+      JSON.stringify(cantaloupeCluster.members),
+      "--per-member",
+      "2",
+    ]);
+  });
+
+  it("reads top snippets per member from a fixture KG DB through the python helper", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-evidence-test-"));
+    const dbPath = join(root, "brainlayer.db");
+    const db = new Database(dbPath);
+    try {
+      db.exec(`
+        CREATE TABLE kg_entity_chunks (
+          entity_id TEXT NOT NULL,
+          chunk_id TEXT NOT NULL,
+          relevance REAL DEFAULT 1.0,
+          context TEXT
+        );
+        CREATE TABLE chunks (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          summary TEXT,
+          project TEXT,
+          content_type TEXT,
+          source TEXT,
+          created_at TEXT,
+          importance REAL DEFAULT 0,
+          archived INTEGER DEFAULT 0,
+          status TEXT DEFAULT 'active'
+        );
+      `);
+      db.prepare(
+        "INSERT INTO chunks (id, content, summary, project, content_type, source, created_at, importance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "chunk-company",
+        "Cantaloupe company evidence says the hiring manager liked the candidate story.",
+        null,
+        "coach",
+        "assistant_text",
+        "realtime_watcher",
+        "2026-03-10T07:38:09.956Z",
+        0.9,
+      );
+      db.prepare(
+        "INSERT INTO chunks (id, content, summary, project, content_type, source, created_at, importance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "chunk-project",
+        "Cantaloupe project evidence is about a migration prompt and project list.",
+        "Cantaloupe project summary",
+        "orchestrator",
+        "user_message",
+        "realtime_watcher",
+        "2026-03-26T19:32:00.847Z",
+        0.8,
+      );
+      db.prepare(
+        "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
+      ).run(cantaloupeCluster.members[0].id, "chunk-company", 0.95, "company context");
+      db.prepare(
+        "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
+      ).run(cantaloupeCluster.members[1].id, "chunk-project", 0.9, "project context");
+    } finally {
+      db.close();
+    }
+
+    try {
+      const proc = Bun.spawn(
+        buildEvidenceArgs({
+          pythonScript: join(import.meta.dir, "kg_evidence.py"),
+          dbPath,
+          members: cantaloupeCluster.members,
+          perMember: 1,
+        }),
+        { stdout: "pipe", stderr: "pipe" },
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(JSON.parse(stdout)).toEqual({
+        members: [
+          {
+            id: cantaloupeCluster.members[0].id,
+            name: "Cantaloupe",
+            type: "company",
+            chunks: 13,
+            snippets: [
+              {
+                chunk_id: "chunk-company",
+                project: "coach",
+                content_type: "assistant_text",
+                source: "realtime_watcher",
+                created_at: "2026-03-10T07:38:09.956Z",
+                relevance: 0.95,
+                context: "company context",
+                text: "Cantaloupe company evidence says the hiring manager liked the candidate story.",
+              },
+            ],
+          },
+          {
+            id: cantaloupeCluster.members[1].id,
+            name: "Cantaloupe",
+            type: "project",
+            chunks: 4,
+            snippets: [
+              {
+                chunk_id: "chunk-project",
+                project: "orchestrator",
+                content_type: "user_message",
+                source: "realtime_watcher",
+                created_at: "2026-03-26T19:32:00.847Z",
+                relevance: 0.9,
+                context: "project context",
+                text: "Cantaloupe project summary",
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("builds grounded conversational LiteRT messages from cluster facts, evidence, and history", () => {
+    const evidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "chunk-company",
+              project: "coach",
+              content_type: "assistant_text",
+              source: "realtime_watcher",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "company context",
+              text: "Cantaloupe company evidence says the hiring manager liked the candidate story.",
+            },
+          ],
+        },
+      ],
+    };
+
+    const messages = buildConverseMessages({
+      question: "which chunks does the company one have?",
+      cluster: cantaloupeCluster,
+      history: [
+        {
+          question: "what is the difference?",
+          answer: "The company member has hiring evidence.",
+        },
+      ],
+      evidence,
+    });
+
+    expect(messages[0].content).toContain("answer ONLY from the provided evidence");
+    expect(messages[0].content).toContain("2-4 sentences");
+    expect(messages[0].content).toContain("I don't see evidence about that");
+    expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
+    expect(messages[1].content).toContain("Cantaloupe (company, 13 chunks)");
+    expect(messages[1].content).toContain("chunk-company");
+    expect(messages[1].content).toContain("company context");
+    expect(messages[1].content).toContain("what is the difference?");
+    expect(messages[1].content).toContain("which chunks does the company one have?");
+  });
+
+  it("serves first-turn /api/converse with evidence timings and a grounded LiteRT answer", async () => {
+    let requestedBody: any;
+    const calls: CommandCall[] = [];
+    const evidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "chunk-company",
+              project: "coach",
+              content_type: "assistant_text",
+              source: "realtime_watcher",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "company context",
+              text: "Cantaloupe company evidence says the hiring manager liked the candidate story.",
+            },
+          ],
+        },
+      ],
+    };
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        brainlayerDbPath: "/tmp/fixture.db",
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+        liteRtModel: "gemma4-e4b,gpu",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: JSON.stringify(evidence),
+          stderr: "",
+          durationMs: 7,
+        };
+      },
+      fetchImpl: async (_url, init) => {
+        requestedBody = JSON.parse(String(init?.body));
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: "which chunks does the company one have?",
+          cluster: cantaloupeCluster,
+        }),
+      }),
+    );
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(calls[0].args).toContain("--db");
+    expect(calls[0].args).toContain("/tmp/fixture.db");
+    expect(requestedBody.model).toBe("gemma4-e4b,gpu");
+    expect(requestedBody.messages[1].content).toContain("chunk-company");
+    expect(body).toMatchObject({
+      answer:
+        "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+      evidence,
+      timings: { evidence_ms: 7 },
+    });
+    expect(body.timings.llm_ms).toBeGreaterThanOrEqual(0);
   });
 
   it("normalizes legacy LiteRT action names to dashboard action names", () => {

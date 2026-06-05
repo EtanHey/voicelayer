@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 
-export type ReviewAction = "merge" | "keep" | "mixed" | "skip";
+export type ReviewAction = "merge" | "keep" | "mixed" | "skip" | "question";
 export type MemberDecision = "merge" | "keep" | "prune";
 
 export interface ReviewMember {
@@ -26,8 +26,33 @@ export interface VoiceDecision {
   action: ReviewAction;
   canonical_id?: string;
   members?: Record<string, MemberDecision>;
+  question?: string;
   note: string;
   source: "voice";
+}
+
+export interface ConversationTurn {
+  question: string;
+  answer: string;
+}
+
+export interface EvidenceSnippet {
+  chunk_id: string;
+  project: string | null;
+  content_type: string | null;
+  source: string | null;
+  created_at: string | null;
+  relevance: number | null;
+  context: string | null;
+  text: string;
+}
+
+export interface ConversationEvidenceMember extends ReviewMember {
+  snippets: EvidenceSnippet[];
+}
+
+export interface ConversationEvidence {
+  members: ConversationEvidenceMember[];
 }
 
 export interface CommandCall {
@@ -48,6 +73,7 @@ export interface VoiceReviewConfig {
   hostname: string;
   defaultCategory: string;
   brainlayerWorktree: string;
+  brainlayerDbPath: string;
   batchPath: string;
   decisionsPath: string;
   sttVocabularyPath: string;
@@ -82,6 +108,9 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
   defaultCategory: process.env.VOICE_REVIEW_CATEGORY || "diagnosis-flag",
   brainlayerWorktree:
     process.env.VOICE_REVIEW_BRAINLAYER_WT || "/tmp/voice-review-wt",
+  brainlayerDbPath:
+    process.env.BRAINLAYER_DB ||
+    join(HOME, ".local/share/brainlayer/brainlayer.db"),
   batchPath:
     process.env.VOICE_REVIEW_BATCH ||
     join(
@@ -165,6 +194,25 @@ export function buildDriverArgs(
   return args;
 }
 
+export function buildEvidenceArgs(options: {
+  pythonBinary?: string;
+  pythonScript: string;
+  dbPath: string;
+  members: ReviewMember[];
+  perMember?: number;
+}): string[] {
+  return [
+    options.pythonBinary || "python3",
+    options.pythonScript,
+    "--db",
+    options.dbPath,
+    "--members-json",
+    JSON.stringify(options.members),
+    "--per-member",
+    String(options.perMember || 3),
+  ];
+}
+
 export function buildWhisperPrompt(
   terms: unknown[],
   maxTokens = 224,
@@ -211,10 +259,12 @@ export function buildInterpretMessages(options: {
   const system = [
     "STRICT KG voice-review interpreter.",
     "Map one free-form spoken reviewer answer to exactly one JSON object.",
-    "Allowed action values: merge|keep|mixed|skip.",
+    "Allowed action values: merge|keep|mixed|skip|question.",
+    "Use question when the transcript asks for information, comparison, evidence, consequences, clarification, or ideation instead of deciding the cluster.",
     "For merge, canonical_id must be one id from cluster.members.",
     "For keep and skip, omit canonical_id and members.",
     "For mixed, members must map member id to merge|keep|prune.",
+    "For question, include question equal to the user's question in the same language, omit canonical_id and members.",
     "Every action must carry note equal to the verbatim transcript.",
     "If the transcript is ambiguous or non-deterministic, choose skip with the verbatim transcript as note. Never force a clean merge/keep/mixed disposition from unclear speech.",
     "Return exactly one JSON object. No markdown, no prose.",
@@ -226,6 +276,10 @@ export function buildInterpretMessages(options: {
     '{"action":"keep","note":"keep these separate"}',
     'Transcript: "mixed, merge the tool and project, prune the person"',
     '{"action":"mixed","members":{"<tool-id>":"merge","<project-id>":"merge","<person-id>":"prune"},"note":"mixed, merge the tool and project, prune the person"}',
+    'Transcript: "which chunks does the company one have?"',
+    '{"action":"question","question":"which chunks does the company one have?","note":"which chunks does the company one have?"}',
+    'Transcript: "מה ההבדל בין ה-company וה-project?"',
+    '{"action":"question","question":"מה ההבדל בין ה-company וה-project?","note":"מה ההבדל בין ה-company וה-project?"}',
     'Transcript: "I am not sure, maybe this is one thing but maybe not"',
     '{"action":"skip","note":"I am not sure, maybe this is one thing but maybe not"}',
   ].join("\n");
@@ -251,6 +305,85 @@ export function buildInterpretMessages(options: {
   ];
 }
 
+export function buildConverseMessages(options: {
+  question: string;
+  cluster: ReviewCluster;
+  history: ConversationTurn[];
+  evidence: ConversationEvidence;
+}): Array<{ role: "system" | "user"; content: string }> {
+  const system = [
+    "Grounded KG voice-review conversation assistant.",
+    "You help a reviewer reason about whether the current cluster's members should be merged, kept separate, mixed, or skipped.",
+    "You must answer ONLY from the provided evidence snippets and cluster facts.",
+    'If the provided evidence does not answer the question, say "I don\'t see evidence about that" rather than invent.',
+    "Use short spoken-style answers, 2-4 sentences, because the answer will be read aloud with TTS.",
+    "Mention member names and types when useful. Do not include markdown.",
+  ].join("\n");
+
+  const clusterFacts = [
+    `Cluster: ${options.cluster.cluster_id}`,
+    `Stem: ${options.cluster.stem}`,
+    `Category: ${options.cluster.category}`,
+    `Size: ${options.cluster.size}`,
+    "Members:",
+    ...options.cluster.members.map(
+      (member) =>
+        `- ${member.id}: ${member.name} (${member.type}, ${member.chunks} chunks)`,
+    ),
+  ].join("\n");
+
+  const history = options.history.length
+    ? options.history
+        .slice(-6)
+        .map(
+          (turn, index) =>
+            `Turn ${index + 1} Q: ${turn.question}\nTurn ${index + 1} A: ${turn.answer}`,
+        )
+        .join("\n")
+    : "No prior Q&A turns.";
+
+  const evidence = options.evidence.members
+    .map((member) => {
+      const snippets = member.snippets.length
+        ? member.snippets
+            .map(
+              (snippet, index) =>
+                [
+                  `  ${index + 1}. chunk ${snippet.chunk_id}`,
+                  `     meta: project=${snippet.project || "unknown"}, type=${snippet.content_type || "unknown"}, source=${snippet.source || "unknown"}, created_at=${snippet.created_at || "unknown"}, relevance=${snippet.relevance ?? "unknown"}`,
+                  snippet.context ? `     context: ${snippet.context}` : null,
+                  `     text: ${snippet.text}`,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+            )
+            .join("\n")
+        : "  No snippets found.";
+      return [
+        `${member.id}: ${member.name} (${member.type}, ${member.chunks} chunks)`,
+        snippets,
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  const user = [
+    clusterFacts,
+    "",
+    "Conversation history:",
+    history,
+    "",
+    "Evidence snippets:",
+    evidence || "No evidence snippets found.",
+    "",
+    `Current question: ${options.question}`,
+  ].join("\n");
+
+  return [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+}
+
 export function parseInterpretDecision(
   rawContent: string,
   cluster: ReviewCluster,
@@ -267,6 +400,14 @@ export function parseInterpretDecision(
     note: transcript.trim(),
     source: "voice",
   };
+
+  if (action === "question") {
+    decision.question =
+      typeof parsed.question === "string" && parsed.question.trim()
+        ? parsed.question.trim()
+        : transcript.trim();
+    return decision;
+  }
 
   if (action === "merge") {
     if (typeof parsed.canonical_id !== "string") {
@@ -302,7 +443,8 @@ export function parseInterpretDecision(
 export function buildConfirmation(
   decision: VoiceDecision,
   cluster: ReviewCluster,
-): string {
+): string | null {
+  if (decision.action === "question") return null;
   if (decision.action === "merge") {
     const canonical = cluster.members.find(
       (member) => member.id === decision.canonical_id,
@@ -431,6 +573,9 @@ export function createVoiceReviewApp(options?: {
         }
         if (request.method === "POST" && url.pathname === "/api/interpret") {
           return await handleInterpret(request, config, fetchImpl);
+        }
+        if (request.method === "POST" && url.pathname === "/api/converse") {
+          return await handleConverse(request, config, runCommand, fetchImpl);
         }
         if (request.method === "POST" && url.pathname === "/api/transcribe") {
           return await handleTranscribe(request, config, runCommand);
@@ -568,6 +713,82 @@ async function handleInterpret(
       decision,
       confirmation: buildConfirmation(decision, body.cluster),
       timings: { llm_ms: Math.round(performance.now() - started) },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function handleConverse(
+  request: Request,
+  config: VoiceReviewConfig,
+  runCommand: CommandRunner,
+  fetchImpl: FetchLike,
+): Promise<Response> {
+  const body = await request.json();
+  if (
+    !isRecord(body) ||
+    typeof body.question !== "string" ||
+    !body.question.trim() ||
+    !isReviewCluster(body.cluster)
+  ) {
+    return jsonResponse({ error: "question, cluster, and optional history are required" }, 400);
+  }
+
+  let history: ConversationTurn[] = [];
+  if (body.history !== undefined) {
+    if (!isConversationHistory(body.history)) {
+      return jsonResponse({ error: "question, cluster, and optional history are required" }, 400);
+    }
+    history = body.history;
+  }
+  const evidenceResult = await runCommand({
+    args: buildEvidenceArgs({
+      pythonScript: evidenceScript(),
+      dbPath: config.brainlayerDbPath,
+      members: body.cluster.members,
+      perMember: 3,
+    }),
+    cwd: process.cwd(),
+    env: processEnv(),
+  });
+  assertSuccess(evidenceResult, "kg_evidence.py");
+  const evidence = parseConversationEvidence(evidenceResult.stdout, body.cluster);
+
+  const llmStarted = performance.now();
+  const messages = buildConverseMessages({
+    question: body.question.trim(),
+    cluster: body.cluster,
+    history,
+    evidence,
+  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  try {
+    const response = await fetchImpl(config.liteRtUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: config.liteRtModel,
+        messages,
+        temperature: 0,
+        max_tokens: 220,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
+    }
+    const raw = await response.json();
+    const answer = extractChatContent(raw).replace(/\s+/g, " ").trim();
+    return jsonResponse({
+      answer,
+      evidence,
+      timings: {
+        evidence_ms: evidenceResult.durationMs,
+        llm_ms: Math.round(performance.now() - llmStarted),
+      },
     });
   } finally {
     clearTimeout(timeout);
@@ -906,7 +1127,7 @@ function normalizeLegacyAction(action: unknown): "merge" | "keep" | "skip" {
 function normalizeInterpretAction(action: unknown): ReviewAction {
   if (action === "merge" || action === "merge_all") return "merge";
   if (action === "keep" || action === "keep_all") return "keep";
-  if (action === "mixed" || action === "skip") return action;
+  if (action === "mixed" || action === "skip" || action === "question") return action;
   throw new Error(`invalid interpreted action: ${String(action)}`);
 }
 
@@ -1064,6 +1285,10 @@ function driverScript(config: VoiceReviewConfig): string {
   return join(config.brainlayerWorktree, "scripts/kg_review_session.py");
 }
 
+function evidenceScript(): string {
+  return join(import.meta.dir, "kg_evidence.py");
+}
+
 function driverEnv(config: VoiceReviewConfig): Record<string, string> {
   return { ...processEnv(), PYTHONPATH: join(config.brainlayerWorktree, "src") };
 }
@@ -1092,6 +1317,61 @@ function isReviewCluster(value: unknown): value is ReviewCluster {
     typeof value.stem === "string" &&
     Array.isArray(value.members) &&
     value.members.every(isReviewMember)
+  );
+}
+
+function isConversationHistory(value: unknown): value is ConversationTurn[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (turn) =>
+        isRecord(turn) &&
+        typeof turn.question === "string" &&
+        typeof turn.answer === "string",
+    )
+  );
+}
+
+function parseConversationEvidence(
+  stdout: string,
+  cluster: ReviewCluster,
+): ConversationEvidence {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (error) {
+    throw new Error(`evidence helper returned invalid JSON: ${errorMessage(error)}`);
+  }
+  if (!isRecord(parsed) || !Array.isArray(parsed.members)) {
+    throw new Error("evidence helper returned invalid evidence payload");
+  }
+
+  const membersById = new Map(cluster.members.map((member) => [member.id, member]));
+  const evidenceMembers: ConversationEvidenceMember[] = [];
+  for (const rawMember of parsed.members) {
+    if (!isRecord(rawMember) || typeof rawMember.id !== "string") continue;
+    const clusterMember = membersById.get(rawMember.id);
+    if (!clusterMember) continue;
+    const snippets = Array.isArray(rawMember.snippets)
+      ? rawMember.snippets.filter(isEvidenceSnippet)
+      : [];
+    evidenceMembers.push({ ...clusterMember, snippets });
+  }
+
+  return { members: evidenceMembers };
+}
+
+function isEvidenceSnippet(value: unknown): value is EvidenceSnippet {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.chunk_id === "string" &&
+    typeof value.text === "string" &&
+    (value.project === null || typeof value.project === "string") &&
+    (value.content_type === null || typeof value.content_type === "string") &&
+    (value.source === null || typeof value.source === "string") &&
+    (value.created_at === null || typeof value.created_at === "string") &&
+    (value.relevance === null || typeof value.relevance === "number") &&
+    (value.context === null || typeof value.context === "string")
   );
 }
 
@@ -1242,7 +1522,18 @@ function renderPage(defaultCategory: string): string {
       box-shadow: 0 16px 30px rgba(15, 118, 110, 0.24);
     }
     .mic.recording { background: #b91c1c; box-shadow: 0 16px 30px rgba(185, 28, 28, 0.22); }
+    .mic.auto-listening {
+      background: #f59e0b;
+      color: #172026;
+      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34);
+      animation: autoListenPulse 900ms ease-in-out infinite;
+    }
     .mic:disabled { opacity: 0.55; cursor: wait; }
+    @keyframes autoListenPulse {
+      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34); }
+      70% { box-shadow: 0 0 0 18px rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.28); }
+      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.34); }
+    }
     .status {
       min-height: 44px;
       color: var(--muted);
@@ -1258,6 +1549,63 @@ function renderPage(defaultCategory: string): string {
       font-size: 14px;
       line-height: 1.4;
       overflow-wrap: anywhere;
+    }
+    .qa-panel {
+      display: grid;
+      gap: 10px;
+      max-height: 280px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+    .qa-panel:empty { display: none; }
+    .qa-turn {
+      display: grid;
+      gap: 7px;
+    }
+    .qa-bubble {
+      max-width: 88%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      font-size: 14px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .qa-question {
+      justify-self: end;
+      background: #e6f3f1;
+      border-color: #b8dcd7;
+    }
+    .qa-answer {
+      justify-self: start;
+      background: #fbfcfd;
+    }
+    .qa-evidence {
+      justify-self: start;
+      max-width: 100%;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .qa-evidence summary {
+      cursor: pointer;
+      color: var(--ink);
+    }
+    .qa-evidence ul {
+      margin: 8px 0 0;
+      padding-left: 18px;
+    }
+    .qa-evidence li { margin: 6px 0; overflow-wrap: anywhere; }
+    .qa-evidence-label {
+      color: var(--ink);
+      font-weight: 700;
+    }
+    .qa-evidence-snippets {
+      margin-top: 4px;
+    }
+    .qa-hint {
+      justify-self: start;
+      color: var(--muted);
+      font-size: 12px;
     }
     footer {
       max-width: 1180px;
@@ -1327,6 +1675,7 @@ function renderPage(defaultCategory: string): string {
       <button id="mic" class="mic" type="button">Start</button>
       <div id="status" class="status">Tap Start once to allow the browser mic and load the next cluster.</div>
       <div id="transcript" class="transcript">Transcript appears here.</div>
+      <div id="qa" class="qa-panel" aria-live="polite"></div>
       <div id="decision" class="decision">Decision appears here.</div>
     </section>
   </main>
@@ -1343,6 +1692,7 @@ function renderPage(defaultCategory: string): string {
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const AUTO_LISTEN_MS = 15000;
     const mic = $("mic");
     const category = $("category");
     const audio = $("audio");
@@ -1355,6 +1705,9 @@ function renderPage(defaultCategory: string): string {
     let recording = false;
     let ttsPlaying = false;
     let activePlayback = null;
+    let autoListenTimer = null;
+    let activeRecordingContext = null;
+    let conversationHistory = [];
 
     function setStatus(text) { $("status").textContent = text; }
     function syncControlState() {
@@ -1374,6 +1727,10 @@ function renderPage(defaultCategory: string): string {
       syncControlState();
     }
     function ms(value) { return Math.round(value) + " ms"; }
+    function compactText(value, max = 78) {
+      const text = String(value || "").trim().replace(/\\s+/g, " ");
+      return text.length > max ? text.slice(0, max - 1) + "…" : text;
+    }
 
     async function api(path, options = {}) {
       const response = await fetch(path, options);
@@ -1425,6 +1782,8 @@ function renderPage(defaultCategory: string): string {
         const body = await response.json();
         current = body.cluster;
         currentSpeak = body.speak || "";
+        conversationHistory = [];
+        renderConversation();
         renderCluster(current);
         await loadStats();
         if (!current) {
@@ -1439,6 +1798,8 @@ function renderPage(defaultCategory: string): string {
       } catch (error) {
         current = null;
         currentSpeak = "";
+        conversationHistory = [];
+        renderConversation();
         renderLoadError(error);
         mic.textContent = "Retry";
         setStatus("Load failed: " + error.message + ". Tap Retry.");
@@ -1472,7 +1833,7 @@ function renderPage(defaultCategory: string): string {
         ". Tap Retry.</td></tr>";
     }
 
-    async function playText(text) {
+    async function playText(text, options = {}) {
       stopTtsPlayback();
       const started = performance.now();
       let url = null;
@@ -1491,6 +1852,7 @@ function renderPage(defaultCategory: string): string {
         await new Promise((resolve, reject) => {
           const playback = {
             resolve,
+            allowBargeInRecording: options.allowBargeInRecording !== false,
             cleanup: () => {}
           };
           const cleanup = () => {
@@ -1542,31 +1904,67 @@ function renderPage(defaultCategory: string): string {
     async function startRecording() {
       if (!current) return;
       const recordingCluster = current;
+      await startRecordingForCluster(recordingCluster);
+    }
+
+    async function startRecordingForCluster(recordingCluster, options = {}) {
+      if (!recordingCluster) return;
       chunks = [];
-      const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      clearAutoListenTimer();
+      const recordingContext = {
+        autoListen: Boolean(options.autoListen),
+        timedOut: false
+      };
+      activeRecordingContext = recordingContext;
+      const mediaOptions = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
         : {};
-      recorder = new MediaRecorder(stream, options);
+      recorder = new MediaRecorder(stream, mediaOptions);
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
-      recorder.onstop = () => processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster);
+      recorder.onstop = () => {
+        clearAutoListenTimer();
+        if (activeRecordingContext === recordingContext) activeRecordingContext = null;
+        processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster, recordingContext);
+      };
       recorder.start();
       setRecording(true);
       mic.classList.add("recording");
-      mic.textContent = "Stop";
-      setStatus("Recording in browser. Tap Stop when your answer is done.");
+      if (recordingContext.autoListen) {
+        mic.classList.add("auto-listening");
+        mic.textContent = "Listening";
+        setStatus("Listening — ask more or say your decision.");
+        autoListenTimer = setTimeout(() => {
+          if (recorder && recorder.state === "recording" && activeRecordingContext === recordingContext) {
+            recordingContext.timedOut = true;
+            setStatus("Listening window ended — transcribing anything captured.");
+            stopRecording();
+          }
+        }, AUTO_LISTEN_MS);
+      } else {
+        mic.classList.remove("auto-listening");
+        mic.textContent = "Stop";
+        setStatus("Recording in browser. Tap Stop when your answer is done.");
+      }
     }
 
     async function stopRecording() {
+      clearAutoListenTimer();
       if (recorder && recorder.state === "recording") recorder.stop();
     }
 
-    async function processRecording(blob, cluster) {
+    function clearAutoListenTimer() {
+      if (!autoListenTimer) return;
+      clearTimeout(autoListenTimer);
+      autoListenTimer = null;
+    }
+
+    async function processRecording(blob, cluster, recordingContext = {}) {
       const stoppedAt = performance.now();
       setRecording(false);
       setBusy(true);
-      mic.classList.remove("recording");
+      mic.classList.remove("recording", "auto-listening");
       mic.textContent = "Record";
       try {
         setStatus("Transcribing locally with whisper-cli...");
@@ -1587,6 +1985,43 @@ function renderPage(defaultCategory: string): string {
         });
         const interpretedAt = performance.now();
         const interpreted = await interpretResponse.json();
+
+        if (interpreted.decision.action === "question") {
+          const question = interpreted.decision.question || transcribe.text || "";
+          setStatus("Answering: " + compactText(question));
+          const converseResponse = await api("/api/converse", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              question,
+              cluster: cluster,
+              history: conversationHistory
+            })
+          });
+          const answeredAt = performance.now();
+          const converse = await converseResponse.json();
+          const answer = normalizeConversationAnswer(converse.answer);
+          appendQuestionTurn(question, answer, converse.evidence);
+          $("decision").textContent = "Question answered; awaiting decision.";
+          $("timings").textContent =
+            "Timings: record-stop to transcript " + ms(transcribedAt - stoppedAt) +
+            ", transcript to question " + ms(interpretedAt - transcribedAt) +
+            ", evidence_ms " + ms(converse.timings?.evidence_ms || 0) +
+            ", llm_ms " + ms(converse.timings?.llm_ms || 0) +
+            ", total " + ms(answeredAt - stoppedAt) + ".";
+
+          await playText(answer);
+          setBusy(false);
+          if (
+            current &&
+            current.cluster_id === cluster.cluster_id &&
+            !(recorder && recorder.state === "recording")
+          ) {
+            await startRecordingForCluster(cluster, { autoListen: true });
+          }
+          return;
+        }
+
         $("decision").textContent = JSON.stringify(interpreted.decision, null, 2);
         $("timings").textContent =
           "Timings: record-stop to transcript " + ms(transcribedAt - stoppedAt) +
@@ -1600,19 +2035,75 @@ function renderPage(defaultCategory: string): string {
           body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
         });
         setStatus("Decision recorded.");
-        await playText(interpreted.confirmation);
+        await playText(interpreted.confirmation, { allowBargeInRecording: false });
         setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
+        if (recordingContext.autoListen && (error.message === "empty transcript" || error.message === "empty audio")) {
+          $("transcript").textContent = "(no follow-up captured)";
+          setStatus("Didn't catch that — tap to talk.");
+          setBusy(false);
+          return;
+        }
         setStatus("Error: " + error.message);
         setBusy(false);
       }
     }
 
+    function renderConversation() {
+      $("qa").innerHTML = "";
+    }
+
+    function normalizeConversationAnswer(answer) {
+      const value = typeof answer === "string" ? answer.trim() : "";
+      return value || "I don't see evidence about that";
+    }
+
+    function appendQuestionTurn(question, answer, evidence) {
+      conversationHistory.push({ question, answer });
+      const turn = document.createElement("div");
+      turn.className = "qa-turn";
+      turn.innerHTML =
+        "<div class='qa-bubble qa-question'>" + escapeHtml(question) + "</div>" +
+        "<div class='qa-bubble qa-answer'>" + escapeHtml(answer) + "</div>" +
+        evidenceHtml(evidence) +
+        decisionHintHtml();
+      $("qa").appendChild(turn);
+      $("qa").scrollTop = $("qa").scrollHeight;
+    }
+
+    function decisionHintHtml() {
+      if (conversationHistory.length < 2) return "";
+      return "<div class='qa-hint'>say merge / keep / mixed / skip to decide</div>";
+    }
+
+    function evidenceHtml(evidence) {
+      const groups = [];
+      for (const member of evidence?.members || []) {
+        const snippets = member.snippets || [];
+        if (!snippets.length) continue;
+        const items = snippets.map((snippet) => (
+          "<li><code>" + escapeHtml(snippet.chunk_id) + "</code><br>" +
+          escapeHtml(snippet.text || "") + "</li>"
+        )).join("");
+        groups.push(
+          "<li><div class='qa-evidence-label'>" + escapeHtml(member.name) + " · " + escapeHtml(member.type) +
+          "</div><ul class='qa-evidence-snippets'>" + items + "</ul></li>"
+        );
+      }
+      if (!groups.length) return "";
+      return "<details class='qa-evidence'><summary>Evidence snippets</summary><ul>" + groups.join("") + "</ul></details>";
+    }
+
     mic.addEventListener("click", async () => {
       try {
         if (ttsPlaying) {
+          const allowRecording = activePlayback?.allowBargeInRecording !== false;
           stopTtsPlayback();
+          if (!allowRecording) {
+            setStatus("Decision saved. Loading next cluster...");
+            return;
+          }
           setBusy(false);
           if (!stream) await ensureMic();
           if (recorder && recorder.state === "recording") {
