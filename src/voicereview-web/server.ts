@@ -2026,14 +2026,7 @@ function renderPage(defaultCategory: string): string {
     }
 
     function shouldAutoListenTimeoutStop(recordingContext) {
-      if (
-        recordingContext &&
-        recordingContext.waitingContinuation &&
-        recordingContext.endpointing &&
-        recordingContext.endpointing.speechStarted
-      ) {
-        return false;
-      }
+      if (recordingContext && recordingContext.waitingContinuation) return false;
       return true;
     }
 
@@ -2045,8 +2038,15 @@ function renderPage(defaultCategory: string): string {
       );
     }
 
-    function shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorderState) {
-      return playbackResult === "cancelled" && recorderState === "recording";
+    function shouldSkipHeldContinuationRestartAfterPrompt(
+      playbackResult,
+      recorderState,
+      bargeInRecordingPending,
+    ) {
+      return (
+        playbackResult === "cancelled" &&
+        (recorderState === "recording" || Boolean(bargeInRecordingPending))
+      );
     }
 
     function transcriptTurnsAfterCombinedPauseContinuation(turns, heldTurnId, currentTurnId) {
@@ -2060,8 +2060,26 @@ function renderPage(defaultCategory: string): string {
     }
 
     function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
+      const heldTranscript = state.heldTranscript;
+      const incomingTranscript = String(transcript || "").trim();
       const combined = combineTranscriptParts(state.heldTranscript, transcript);
-      const pauseIntent = classifyPauseIntent(combined);
+      let pauseIntent = classifyPauseIntent(combined);
+      if (heldTranscript && incomingTranscript) {
+        const continuationIntent = classifyPauseIntent(incomingTranscript);
+        if (continuationIntent.intent === "content") {
+          state.heldTranscript = "";
+          return {
+            shouldHold: false,
+            shouldPrompt: false,
+            pauseIntent: Object.assign({}, continuationIntent, {
+              reason: "held_continuation_content"
+            }),
+            transcript: combined,
+            nextTrailingSilenceMs: baseTrailingSilenceMs
+          };
+        }
+        pauseIntent = continuationIntent;
+      }
       if (combined && (pauseIntent.intent === "pause" || pauseIntent.intent === "prompt")) {
         state.heldTranscript = combined;
         return {
@@ -2107,6 +2125,7 @@ function renderPage(defaultCategory: string): string {
     let activePlayback = null;
     let autoListenTimer = null;
     let activeRecordingContext = null;
+    let bargeInRecordingPending = false;
     let conversationHistory = [];
     let transcriptTurns = [];
     let nextTranscriptTurnId = 1;
@@ -2525,6 +2544,7 @@ function renderPage(defaultCategory: string): string {
       if (
         current &&
         current.cluster_id === cluster.cluster_id &&
+        !bargeInRecordingPending &&
         !(recorder && recorder.state === "recording")
       ) {
         await startRecordingForCluster(cluster, {
@@ -2583,7 +2603,7 @@ function renderPage(defaultCategory: string): string {
             const playbackResult = await playText(PAUSE_INTENT_SOFT_PROMPT, {
               label: "Agent prompt"
             });
-            if (shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state)) {
+            if (shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state, bargeInRecordingPending)) {
               setBusy(false);
               return;
             }
@@ -2922,18 +2942,24 @@ function renderPage(defaultCategory: string): string {
       try {
         if (ttsPlaying) {
           const allowRecording = activePlayback?.allowBargeInRecording !== false;
+          if (allowRecording) bargeInRecordingPending = true;
           cancelTtsPlayback("barge-in");
           if (!allowRecording) {
+            bargeInRecordingPending = false;
             setStatus("Decision saved. Loading next cluster...");
             return;
           }
           setBusy(false);
-          if (!stream) await ensureMic();
-          if (recorder && recorder.state === "recording") {
-            await stopRecording();
-            return;
+          try {
+            if (!stream) await ensureMic();
+            if (recorder && recorder.state === "recording") {
+              await stopRecording();
+              return;
+            }
+            await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));
+          } finally {
+            bargeInRecordingPending = false;
           }
-          await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));
           return;
         }
         if (busy) return;

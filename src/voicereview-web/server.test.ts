@@ -120,6 +120,7 @@ interface EndpointingHelpersForTest {
   shouldSkipHeldContinuationRestartAfterPrompt: (
     playbackResult: string,
     recorderState?: string | null,
+    bargeInRecordingPending?: boolean,
   ) => boolean;
   transcriptTurnsAfterCombinedPauseContinuation: <T extends { id: number }>(
     turns: T[],
@@ -714,15 +715,49 @@ describe("VoiceReview web server helpers", () => {
       shouldPrompt: false,
       pauseIntent: {
         intent: "content",
-        wordCount: 5,
-        phrase: "wait",
+        wordCount: 4,
+        phrase: null,
         trailing: false,
-        reason: "long_or_mid_content",
+        reason: "held_continuation_content",
       },
       transcript: "wait actually merge into company",
       nextTrailingSilenceMs: 1300,
     });
     expect(hold.heldTranscript).toBe("");
+
+    const terseContinuationHold = createThinkingPauseHoldState();
+    applyThinkingPauseHold(terseContinuationHold, "wait", 1300);
+    const terseContinuation = applyThinkingPauseHold(
+      terseContinuationHold,
+      "merge them",
+      1300,
+    );
+    expect(terseContinuation).toMatchObject({
+      shouldHold: false,
+      shouldPrompt: false,
+      transcript: "wait merge them",
+      nextTrailingSilenceMs: 1300,
+      pauseIntent: {
+        intent: "content",
+        reason: "held_continuation_content",
+      },
+    });
+    expect(terseContinuationHold.heldTranscript).toBe("");
+
+    const repeatedPauseHold = createThinkingPauseHoldState();
+    applyThinkingPauseHold(repeatedPauseHold, "wait", 1300);
+    const repeatedPause = applyThinkingPauseHold(repeatedPauseHold, "one sec", 1300);
+    expect(repeatedPause).toMatchObject({
+      shouldHold: true,
+      shouldPrompt: false,
+      transcript: "wait one sec",
+      nextTrailingSilenceMs: 10000,
+      pauseIntent: {
+        intent: "pause",
+        reason: "short_trailing_pause_phrase",
+      },
+    });
+    expect(repeatedPauseHold.heldTranscript).toBe("wait one sec");
 
     const content = applyThinkingPauseHold(
       createThinkingPauseHoldState(),
@@ -821,7 +856,7 @@ describe("VoiceReview web server helpers", () => {
     expect(shouldAutoListenTimeoutStop({
       waitingContinuation: true,
       endpointing: { speechStarted: false },
-    })).toBe(true);
+    })).toBe(false);
     expect(shouldAutoListenTimeoutStop({
       waitingContinuation: false,
       endpointing: { speechStarted: true },
@@ -871,14 +906,18 @@ describe("VoiceReview web server helpers", () => {
       shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "recording"),
     ).toBe(true);
     expect(
+      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "inactive", true),
+    ).toBe(true);
+    expect(
       shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "inactive"),
     ).toBe(false);
     expect(
       shouldSkipHeldContinuationRestartAfterPrompt("ended", "inactive"),
     ).toBe(false);
     expect(html).toContain(
-      "shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state)",
+      "shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state, bargeInRecordingPending)",
     );
+    expect(html).toContain("bargeInRecordingPending = true;");
   });
 
   it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {
