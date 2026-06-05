@@ -53,6 +53,68 @@ function commandResult(stdout: unknown): CommandResult {
   };
 }
 
+interface EndpointingStateForTest {
+  calibrated: boolean;
+  noiseFloor: number;
+  speechThreshold: number;
+  silenceThreshold: number;
+  speechStarted: boolean;
+  trailingSilenceMs: number;
+  countdownProgress: number;
+  shouldStop: boolean;
+  phase: string;
+}
+
+interface EndpointingHelpersForTest {
+  createEndpointingState: (
+    overrides?: Record<string, number>,
+  ) => EndpointingStateForTest;
+  advanceEndpointing: (
+    state: EndpointingStateForTest,
+    rms: number,
+  ) => EndpointingStateForTest;
+  createThinkingPauseHoldState: () => {
+    heldTranscript: string;
+    extendedTrailingSilenceMs: number;
+  };
+  classifyPauseIntent: (transcript: string) => {
+    intent: "pause" | "content" | "prompt";
+    wordCount: number;
+    phrase: string | null;
+    trailing: boolean;
+    reason: string;
+  };
+  applyThinkingPauseHold: (
+    state: { heldTranscript: string; extendedTrailingSilenceMs: number },
+    transcript: string,
+    baseTrailingSilenceMs: number,
+  ) => {
+    shouldHold: boolean;
+    shouldPrompt: boolean;
+    pauseIntent: {
+      intent: "pause" | "content" | "prompt";
+      wordCount: number;
+      phrase: string | null;
+      trailing: boolean;
+      reason: string;
+    };
+    transcript: string;
+    nextTrailingSilenceMs: number;
+  };
+}
+
+function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest {
+  const start = html.indexOf("    const ENDPOINTING_DEFAULTS = ");
+  const end = html.indexOf("    const $ = (id) => document.getElementById(id);");
+  if (start < 0 || end < 0 || end <= start) {
+    throw new Error("endpointing client helper script missing from page");
+  }
+  const source = html.slice(start, end);
+  return (new Function(
+    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold };`,
+  ) as () => EndpointingHelpersForTest)();
+}
+
 describe("VoiceReview web server helpers", () => {
   it("builds driver args as arrays with request data in its own argv slot", () => {
     const args = buildDriverArgs("next", {
@@ -377,12 +439,12 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("const allowRecording = activePlayback?.allowBargeInRecording !== false;");
     expect(html).toContain("if (!allowRecording) {");
     expect(html).toContain("Decision saved. Loading next cluster...");
-    expect(html).toContain("await playText(interpreted.confirmation, { allowBargeInRecording: false });");
+    expect(html).toContain("await playText(interpreted.confirmation, {");
+    expect(html).toContain("allowBargeInRecording: false");
+    expect(html).toContain('label: "Agent confirmation"');
 
     const decideIndex = html.indexOf('await api("/api/decide"');
-    const confirmationIndex = html.indexOf(
-      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
-    );
+    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation, {");
     const loadNextIndex = html.indexOf("await loadNext(true);", confirmationIndex);
     const guardIndex = html.indexOf("if (!allowRecording) {");
     const staleStartIndex = html.indexOf("await startRecording();", guardIndex);
@@ -414,15 +476,264 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("qa-evidence-label");
   });
 
+  it("serves pure client endpointing logic that calibrates, counts silence, and resets on speech", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createEndpointingState, advanceEndpointing } =
+      loadEndpointingHelpersFromPage(html);
+
+    const state = createEndpointingState({
+      frameMs: 50,
+      calibrationMs: 300,
+      trailingSilenceMs: 1200,
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      advanceEndpointing(state, 0.004);
+    }
+    expect(state.calibrated).toBe(true);
+    expect(state.noiseFloor).toBeCloseTo(0.004, 3);
+    expect(state.speechThreshold).toBeGreaterThan(state.noiseFloor);
+    expect(state.silenceThreshold).toBeGreaterThan(state.noiseFloor);
+
+    advanceEndpointing(state, 0.007);
+    expect(state.speechStarted).toBe(false);
+
+    advanceEndpointing(state, 0.04);
+    expect(state.speechStarted).toBe(true);
+    expect(state.trailingSilenceMs).toBe(0);
+    expect(state.countdownProgress).toBe(0);
+
+    for (let index = 0; index < 10; index += 1) {
+      advanceEndpointing(state, 0.006);
+    }
+    expect(state.shouldStop).toBe(false);
+    expect(state.countdownProgress).toBeGreaterThan(0);
+
+    advanceEndpointing(state, 0.04);
+    expect(state.trailingSilenceMs).toBe(0);
+    expect(state.countdownProgress).toBe(0);
+
+    for (let index = 0; index < 24; index += 1) {
+      advanceEndpointing(state, 0.006);
+    }
+    expect(state.shouldStop).toBe(true);
+    expect(state.phase).toBe("auto_stop");
+    expect(state.countdownProgress).toBe(1);
+  });
+
+  it("keeps endpointing countdown at zero while speech energy stays active", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createEndpointingState, advanceEndpointing } =
+      loadEndpointingHelpersFromPage(html);
+
+    const state = createEndpointingState({
+      frameMs: 50,
+      calibrationMs: 300,
+      trailingSilenceMs: 1200,
+    });
+    for (let index = 0; index < 6; index += 1) advanceEndpointing(state, 0.004);
+    advanceEndpointing(state, 0.04);
+
+    for (let index = 0; index < 12; index += 1) advanceEndpointing(state, 0.013);
+    expect(state.phase).toBe("speaking");
+    expect(state.trailingSilenceMs).toBe(0);
+    expect(state.countdownProgress).toBe(0);
+
+    for (let index = 0; index < 8; index += 1) advanceEndpointing(state, 0.006);
+    expect(state.phase).toBe("trailing_silence");
+    expect(state.countdownProgress).toBeGreaterThan(0);
+
+    advanceEndpointing(state, 0.013);
+    expect(state.phase).toBe("speaking");
+    expect(state.trailingSilenceMs).toBe(0);
+    expect(state.countdownProgress).toBe(0);
+  });
+
+  it("classifies pause intent without treating wait as a magic word", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { classifyPauseIntent } = loadEndpointingHelpersFromPage(html);
+
+    expect(classifyPauseIntent("wait")).toMatchObject({
+      intent: "pause",
+      wordCount: 1,
+      phrase: "wait",
+      trailing: true,
+    });
+    expect(classifyPauseIntent("hold on רגע")).toMatchObject({
+      intent: "pause",
+      wordCount: 3,
+      phrase: "רגע",
+      trailing: true,
+    });
+    expect(classifyPauseIntent("wait for the merge decision")).toMatchObject({
+      intent: "content",
+      wordCount: 5,
+      phrase: "wait",
+      trailing: false,
+    });
+    expect(classifyPauseIntent("we should keep them but wait")).toMatchObject({
+      intent: "content",
+      wordCount: 6,
+      phrase: "wait",
+      trailing: true,
+    });
+    expect(classifyPauseIntent("one sec")).toMatchObject({
+      intent: "pause",
+      wordCount: 2,
+      phrase: "one sec",
+      trailing: true,
+    });
+    expect(
+      classifyPauseIntent("I am thinking through the evidence and wait"),
+    ).toMatchObject({
+      intent: "content",
+      wordCount: 8,
+      phrase: "wait",
+      trailing: true,
+    });
+    expect(classifyPauseIntent("wait for merge")).toMatchObject({
+      intent: "prompt",
+      wordCount: 3,
+      phrase: "wait",
+      trailing: false,
+    });
+  });
+
+  it("holds pause-intent transcripts, soft-prompts ambiguous starts, and combines continuation", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createThinkingPauseHoldState, applyThinkingPauseHold } =
+      loadEndpointingHelpersFromPage(html);
+
+    const hold = createThinkingPauseHoldState();
+    const first = applyThinkingPauseHold(hold, "wait", 1300);
+    expect(first).toEqual({
+      shouldHold: true,
+      shouldPrompt: false,
+      pauseIntent: {
+        intent: "pause",
+        wordCount: 1,
+        phrase: "wait",
+        trailing: true,
+        reason: "short_trailing_pause_phrase",
+      },
+      transcript: "wait",
+      nextTrailingSilenceMs: 10000,
+    });
+    expect(hold.heldTranscript).toBe("wait");
+
+    const second = applyThinkingPauseHold(hold, "actually merge into company", 1300);
+    expect(second).toEqual({
+      shouldHold: false,
+      shouldPrompt: false,
+      pauseIntent: {
+        intent: "content",
+        wordCount: 5,
+        phrase: "wait",
+        trailing: false,
+        reason: "long_or_mid_content",
+      },
+      transcript: "wait actually merge into company",
+      nextTrailingSilenceMs: 1300,
+    });
+    expect(hold.heldTranscript).toBe("");
+
+    const content = applyThinkingPauseHold(
+      createThinkingPauseHoldState(),
+      "we should keep them but wait",
+      1300,
+    );
+    expect(content).toMatchObject({
+      shouldHold: false,
+      shouldPrompt: false,
+      transcript: "we should keep them but wait",
+      nextTrailingSilenceMs: 1300,
+      pauseIntent: {
+        intent: "content",
+        reason: "long_or_mid_content",
+      },
+    });
+
+    const promptHold = createThinkingPauseHoldState();
+    const ambiguous = applyThinkingPauseHold(promptHold, "wait for merge", 1300);
+    expect(ambiguous).toMatchObject({
+      shouldHold: true,
+      shouldPrompt: true,
+      transcript: "wait for merge",
+      nextTrailingSilenceMs: 10000,
+      pauseIntent: {
+        intent: "prompt",
+        reason: "short_non_trailing_pause_phrase",
+      },
+    });
+    expect(promptHold.heldTranscript).toBe("wait for merge");
+  });
+
+  it("serves page logic for auto-endpointing with a visible mic countdown ring", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("function startEndpointing(recordingContext)");
+    expect(html).toContain("function stopEndpointing(recordingContext)");
+    expect(html).toContain("function updateEndpointCountdown(recordingContext)");
+    expect(html).toContain("analyser.getFloatTimeDomainData(analyserData)");
+    expect(html).toContain("advanceEndpointing(recordingContext.endpointing");
+    expect(html).toContain("stopRecording(\"endpoint\")");
+    expect(html).toContain(".mic.countdown");
+    expect(html).toContain("--endpoint-progress");
+    expect(html).toContain("Silence ");
+    expect(html).toContain("Auto-stopping now");
+  });
+
+  it("serves page logic that treats barge-in as cancellation, not a resumable playback end", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("function cancelTtsPlayback(reason = \"barge-in\")");
+    expect(html).toContain("playback.cancelled = true;");
+    expect(html).toContain("playback.resolve(\"cancelled\");");
+    expect(html).toContain("audio.src = \"\";");
+    expect(html).toContain("const playbackResult = await playText(answer");
+    expect(html).toContain('if (playbackResult === "cancelled")');
+    expect(html).toContain("markCurrentAgentTurnCancelled();");
+    expect(html).toContain("await startRecording({ bargedIn: true });");
+    expect(html).toContain(".mic.barged");
+  });
+
+  it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("function showLiveUserTurn(recordingContext)");
+    expect(html).toContain("function updateLiveUserTurn(recordingContext");
+    expect(html).toContain("function completeLiveUserTurn(recordingContext, text)");
+    expect(html).toContain("function startAgentTurn(text, options = {})");
+    expect(html).toContain("🎤 You (now)");
+    expect(html).toContain("Agent (now)");
+    expect(html).toContain("Prior turn");
+    expect(html).toContain("waiting… partial transcript held");
+    expect(html).toContain(".turn.is-prior");
+    expect(html).toContain("showLiveUserTurn(recordingContext);");
+    expect(html).toContain("completeLiveUserTurn(recordingContext, transcriptForInterpret");
+  });
+
   it("serves page logic that saves the decision before speaking confirmation", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
     const saveIndex = html.indexOf("setStatus(\"Recording decision...\");");
-    const confirmationIndex = html.indexOf(
-      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
-    );
+    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation, {");
     expect(saveIndex).toBeGreaterThan(-1);
     expect(confirmationIndex).toBeGreaterThan(-1);
     expect(saveIndex).toBeLessThan(confirmationIndex);

@@ -1509,6 +1509,7 @@ function renderPage(defaultCategory: string): string {
       align-content: start;
     }
     .mic {
+      --endpoint-progress: 0;
       width: min(100%, 300px);
       aspect-ratio: 1 / 1;
       justify-self: center;
@@ -1520,8 +1521,24 @@ function renderPage(defaultCategory: string): string {
       font-weight: 800;
       cursor: pointer;
       box-shadow: 0 16px 30px rgba(15, 118, 110, 0.24);
+      transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
     }
     .mic.recording { background: #b91c1c; box-shadow: 0 16px 30px rgba(185, 28, 28, 0.22); }
+    .mic.countdown {
+      background:
+        radial-gradient(circle at center, #b91c1c 0 67%, transparent 68%),
+        conic-gradient(#facc15 calc(var(--endpoint-progress) * 1turn), rgba(185, 28, 28, 0.18) 0);
+      box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.16), 0 16px 30px rgba(185, 28, 28, 0.24);
+    }
+    .mic.barged {
+      background: #1d4ed8;
+      box-shadow: 0 0 0 5px rgba(29, 78, 216, 0.16), 0 16px 30px rgba(29, 78, 216, 0.26);
+    }
+    .mic.recording.barged.countdown {
+      background:
+        radial-gradient(circle at center, #1d4ed8 0 67%, transparent 68%),
+        conic-gradient(#facc15 calc(var(--endpoint-progress) * 1turn), rgba(29, 78, 216, 0.18) 0);
+    }
     .mic.auto-listening {
       background: #f59e0b;
       color: #172026;
@@ -1549,6 +1566,58 @@ function renderPage(defaultCategory: string): string {
       font-size: 14px;
       line-height: 1.4;
       overflow-wrap: anywhere;
+    }
+    .transcript-log {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+    .turn {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: #ffffff;
+      display: grid;
+      gap: 5px;
+    }
+    .turn.is-prior {
+      opacity: 0.58;
+      background: #f3f6f8;
+    }
+    .turn.is-current {
+      border-color: #7dd3fc;
+      box-shadow: inset 3px 0 0 #0284c7;
+    }
+    .turn-user.is-current {
+      border-color: #fca5a5;
+      box-shadow: inset 3px 0 0 #dc2626;
+    }
+    .turn-agent.is-current {
+      border-color: #99f6e4;
+      box-shadow: inset 3px 0 0 #0f766e;
+    }
+    .turn-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .turn-prior, .turn-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: none;
+    }
+    .turn-text {
+      color: var(--ink);
+      font-size: 14px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
     }
     .qa-panel {
       display: grid;
@@ -1674,7 +1743,7 @@ function renderPage(defaultCategory: string): string {
     <section class="controls">
       <button id="mic" class="mic" type="button">Start</button>
       <div id="status" class="status">Tap Start once to allow the browser mic and load the next cluster.</div>
-      <div id="transcript" class="transcript">Transcript appears here.</div>
+      <div id="transcript" class="transcript transcript-log">Transcript appears here.</div>
       <div id="qa" class="qa-panel" aria-live="polite"></div>
       <div id="decision" class="decision">Decision appears here.</div>
     </section>
@@ -1691,12 +1760,268 @@ function renderPage(defaultCategory: string): string {
   <audio id="audio" preload="auto"></audio>
 
   <script>
+    const ENDPOINTING_DEFAULTS = {
+      frameMs: 50,
+      calibrationMs: 300,
+      trailingSilenceMs: 1300,
+      minNoiseFloor: 0.003,
+      minSpeechRms: 0.018,
+      speechOffset: 0.012,
+      speechMultiplier: 2.4,
+      minSilenceRms: 0.012,
+      silenceOffset: 0.006,
+      silenceMultiplier: 1.45
+    };
+
+    function endpointingConfig(overrides = {}) {
+      return Object.assign({}, ENDPOINTING_DEFAULTS, overrides);
+    }
+
+    function createEndpointingState(overrides = {}) {
+      const config = endpointingConfig(overrides);
+      return {
+        config,
+        calibrated: false,
+        calibrationMsSeen: 0,
+        calibrationFrames: 0,
+        calibrationRmsTotal: 0,
+        noiseFloor: 0,
+        speechThreshold: 0,
+        silenceThreshold: 0,
+        speechStarted: false,
+        trailingSilenceMs: 0,
+        countdownProgress: 0,
+        shouldStop: false,
+        phase: "calibrating"
+      };
+    }
+
+    function advanceEndpointing(state, rms) {
+      const config = state.config || ENDPOINTING_DEFAULTS;
+      const frameMs = Number(config.frameMs || ENDPOINTING_DEFAULTS.frameMs);
+      const sample = Math.max(0, Number(rms) || 0);
+
+      if (!state.calibrated) {
+        state.calibrationMsSeen += frameMs;
+        state.calibrationFrames += 1;
+        state.calibrationRmsTotal += sample;
+        state.phase = "calibrating";
+        if (state.calibrationMsSeen >= config.calibrationMs) {
+          const ambient = state.calibrationRmsTotal / Math.max(1, state.calibrationFrames);
+          state.noiseFloor = Math.max(ambient, config.minNoiseFloor);
+          state.speechThreshold = Math.max(
+            config.minSpeechRms,
+            state.noiseFloor + config.speechOffset,
+            state.noiseFloor * config.speechMultiplier,
+          );
+          state.silenceThreshold = Math.min(
+            state.speechThreshold * 0.82,
+            Math.max(
+              config.minSilenceRms,
+              state.noiseFloor + config.silenceOffset,
+              state.noiseFloor * config.silenceMultiplier,
+            ),
+          );
+          state.calibrated = true;
+          state.phase = "waiting_for_speech";
+        }
+        return state;
+      }
+
+      if (state.shouldStop) return state;
+
+      const threshold = state.speechStarted
+        ? state.silenceThreshold
+        : state.speechThreshold;
+      if (sample >= threshold) {
+        state.speechStarted = true;
+        state.trailingSilenceMs = 0;
+        state.countdownProgress = 0;
+        state.phase = "speaking";
+        return state;
+      }
+
+      if (!state.speechStarted) {
+        state.trailingSilenceMs = 0;
+        state.countdownProgress = 0;
+        state.phase = "waiting_for_speech";
+        return state;
+      }
+
+      state.trailingSilenceMs += frameMs;
+      state.countdownProgress = Math.min(
+        1,
+        state.trailingSilenceMs / config.trailingSilenceMs,
+      );
+      if (state.trailingSilenceMs >= config.trailingSilenceMs) {
+        state.shouldStop = true;
+        state.countdownProgress = 1;
+        state.phase = "auto_stop";
+      } else {
+        state.phase = "trailing_silence";
+      }
+      return state;
+    }
+
+    const THINKING_PAUSE_PHRASES = [
+      "wait",
+      "hold on",
+      "let me think",
+      "hmm",
+      "one sec",
+      "רגע"
+    ];
+    const PAUSE_INTENT_SHORT_WORD_LIMIT = 4;
+    const PAUSE_INTENT_EXTENDED_SILENCE_MS = 10000;
+    const PAUSE_INTENT_SOFT_PROMPT = "take your time";
+
+    function createThinkingPauseHoldState() {
+      return {
+        heldTranscript: "",
+        extendedTrailingSilenceMs: PAUSE_INTENT_EXTENDED_SILENCE_MS
+      };
+    }
+
+    function normalizedThinkingPauseTranscript(transcript) {
+      return String(transcript || "")
+        .trim()
+        .replace(/[.,!?;:…"'()\\[\\]{}״׳]+/g, " ")
+        .replace(/\\s+/g, " ")
+        .toLowerCase();
+    }
+
+    function pauseIntentTokens(transcript) {
+      const normalized = normalizedThinkingPauseTranscript(transcript);
+      return normalized ? normalized.split(" ").filter(Boolean) : [];
+    }
+
+    function phraseTokens(phrase) {
+      return pauseIntentTokens(phrase);
+    }
+
+    function findThinkingPausePhraseMatches(transcript) {
+      const tokens = pauseIntentTokens(transcript);
+      const matches = [];
+      for (const phrase of THINKING_PAUSE_PHRASES) {
+        const phraseParts = phraseTokens(phrase);
+        if (!phraseParts.length || phraseParts.length > tokens.length) continue;
+        for (let index = 0; index <= tokens.length - phraseParts.length; index += 1) {
+          let same = true;
+          for (let offset = 0; offset < phraseParts.length; offset += 1) {
+            if (tokens[index + offset] !== phraseParts[offset]) {
+              same = false;
+              break;
+            }
+          }
+          if (same) {
+            matches.push({
+              phrase,
+              index,
+              length: phraseParts.length,
+              trailing: index + phraseParts.length === tokens.length
+            });
+          }
+        }
+      }
+      return { tokens, matches };
+    }
+
+    function classifyPauseIntent(transcript) {
+      const { tokens, matches } = findThinkingPausePhraseMatches(transcript);
+      const wordCount = tokens.length;
+      let trailingMatch = null;
+      for (const match of matches) {
+        if (match.trailing) trailingMatch = match;
+      }
+      const primaryMatch = trailingMatch || matches[0] || null;
+      if (!primaryMatch) {
+        return {
+          intent: "content",
+          wordCount,
+          phrase: null,
+          trailing: false,
+          reason: "no_pause_phrase"
+        };
+      }
+
+      const shortUtterance = wordCount <= PAUSE_INTENT_SHORT_WORD_LIMIT;
+      if (shortUtterance && trailingMatch) {
+        return {
+          intent: "pause",
+          wordCount,
+          phrase: trailingMatch.phrase,
+          trailing: true,
+          reason: "short_trailing_pause_phrase"
+        };
+      }
+      if (!shortUtterance) {
+        return {
+          intent: "content",
+          wordCount,
+          phrase: primaryMatch.phrase,
+          trailing: Boolean(primaryMatch.trailing),
+          reason: "long_or_mid_content"
+        };
+      }
+      return {
+        intent: "prompt",
+        wordCount,
+        phrase: primaryMatch.phrase,
+        trailing: Boolean(primaryMatch.trailing),
+        reason: "short_non_trailing_pause_phrase"
+      };
+    }
+
+    function transcriptEndsWithThinkingPause(transcript) {
+      const pauseIntent = classifyPauseIntent(transcript);
+      return Boolean(pauseIntent.phrase && pauseIntent.trailing);
+    }
+
+    function combineTranscriptParts(first, second) {
+      return [first, second]
+        .map((part) => String(part || "").trim())
+        .filter(Boolean)
+        .join(" ")
+        .replace(/\\s+/g, " ")
+        .trim();
+    }
+
+    function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
+      const combined = combineTranscriptParts(state.heldTranscript, transcript);
+      const pauseIntent = classifyPauseIntent(combined);
+      if (combined && (pauseIntent.intent === "pause" || pauseIntent.intent === "prompt")) {
+        state.heldTranscript = combined;
+        return {
+          shouldHold: true,
+          shouldPrompt: pauseIntent.intent === "prompt",
+          pauseIntent,
+          transcript: combined,
+          nextTrailingSilenceMs:
+            state.extendedTrailingSilenceMs || Math.round(baseTrailingSilenceMs * 2)
+        };
+      }
+
+      state.heldTranscript = "";
+      return {
+        shouldHold: false,
+        shouldPrompt: false,
+        pauseIntent,
+        transcript: combined,
+        nextTrailingSilenceMs: baseTrailingSilenceMs
+      };
+    }
+
     const $ = (id) => document.getElementById(id);
     const AUTO_LISTEN_MS = 15000;
     const mic = $("mic");
     const category = $("category");
     const audio = $("audio");
     let stream = null;
+    let audioContext = null;
+    let micSource = null;
+    let analyser = null;
+    let analyserData = null;
+    let endpointingTimer = null;
     let recorder = null;
     let chunks = [];
     let current = null;
@@ -1708,6 +2033,10 @@ function renderPage(defaultCategory: string): string {
     let autoListenTimer = null;
     let activeRecordingContext = null;
     let conversationHistory = [];
+    let transcriptTurns = [];
+    let nextTranscriptTurnId = 1;
+    let currentAgentTurnId = null;
+    let thinkingPauseHold = createThinkingPauseHoldState();
 
     function setStatus(text) { $("status").textContent = text; }
     function syncControlState() {
@@ -1747,11 +2076,46 @@ function renderPage(defaultCategory: string): string {
     }
 
     async function ensureMic() {
-      if (stream) return;
+      if (stream) {
+        setupMicAnalyser();
+        return;
+      }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Browser microphone API unavailable on this origin.");
       }
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setupMicAnalyser();
+    }
+
+    function setupMicAnalyser() {
+      if (analyser || !stream) return;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      audioContext = new AudioContextClass();
+      micSource = audioContext.createMediaStreamSource(stream);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.12;
+      micSource.connect(analyser);
+      analyserData = new Float32Array(analyser.fftSize);
+    }
+
+    async function resumeMicAnalyser() {
+      if (audioContext && audioContext.state === "suspended") {
+        try {
+          await audioContext.resume();
+        } catch (_error) {
+          // Recording still works; endpointing falls back to manual Stop.
+        }
+      }
+    }
+
+    function readMicRms() {
+      if (!analyser || !analyserData) return 0;
+      analyser.getFloatTimeDomainData(analyserData);
+      let sum = 0;
+      for (const sample of analyserData) sum += sample * sample;
+      return Math.sqrt(sum / Math.max(1, analyserData.length));
     }
 
     async function loadStats() {
@@ -1783,7 +2147,9 @@ function renderPage(defaultCategory: string): string {
         current = body.cluster;
         currentSpeak = body.speak || "";
         conversationHistory = [];
+        thinkingPauseHold = createThinkingPauseHoldState();
         renderConversation();
+        resetTranscriptLog();
         renderCluster(current);
         await loadStats();
         if (!current) {
@@ -1799,7 +2165,9 @@ function renderPage(defaultCategory: string): string {
         current = null;
         currentSpeak = "";
         conversationHistory = [];
+        thinkingPauseHold = createThinkingPauseHoldState();
         renderConversation();
+        resetTranscriptLog();
         renderLoadError(error);
         mic.textContent = "Retry";
         setStatus("Load failed: " + error.message + ". Tap Retry.");
@@ -1835,6 +2203,9 @@ function renderPage(defaultCategory: string): string {
 
     async function playText(text, options = {}) {
       stopTtsPlayback();
+      const agentTurnId = startAgentTurn(text, {
+        label: options.label || "Agent (now)"
+      });
       const started = performance.now();
       let url = null;
       try {
@@ -1849,9 +2220,11 @@ function renderPage(defaultCategory: string): string {
         const ttsMs = response.headers.get("x-tts-ms") || Math.round(performance.now() - started);
         setStatus("TTS ready in " + ttsMs + " ms. Playing...");
         setTtsPlaying(true);
-        await new Promise((resolve, reject) => {
+        const result = await new Promise((resolve, reject) => {
           const playback = {
             resolve,
+            cancelled: false,
+            transcriptTurnId: agentTurnId,
             allowBargeInRecording: options.allowBargeInRecording !== false,
             cleanup: () => {}
           };
@@ -1866,10 +2239,12 @@ function renderPage(defaultCategory: string): string {
           playback.cleanup = cleanup;
           const onEnded = () => {
             cleanup();
-            resolve();
+            finishAgentTurn(agentTurnId);
+            resolve("ended");
           };
           const onError = () => {
             cleanup();
+            failAgentTurn(agentTurnId);
             reject(new Error("browser audio playback failed"));
           };
           audio.addEventListener("ended", onEnded, { once: true });
@@ -1877,45 +2252,65 @@ function renderPage(defaultCategory: string): string {
           activePlayback = playback;
           audio.play().catch((error) => {
             cleanup();
+            failAgentTurn(agentTurnId);
             reject(error);
           });
         });
+        return result;
       } catch (error) {
         if (url) URL.revokeObjectURL(url);
         setTtsPlaying(false);
         setStatus("TTS failed: " + error.message);
+        failAgentTurn(agentTurnId);
+        return "failed";
       }
     }
 
     function stopTtsPlayback() {
+      return cancelTtsPlayback("superseded");
+    }
+
+    function cancelTtsPlayback(reason = "barge-in") {
       const playback = activePlayback;
       if (!playback && !ttsPlaying) return;
+      if (playback) playback.cancelled = true;
       audio.pause();
       audio.removeAttribute("src");
+      audio.src = "";
       audio.load();
       if (playback) {
         playback.cleanup();
-        playback.resolve();
+        if (reason === "barge-in") markCurrentAgentTurnCancelled();
+        playback.resolve("cancelled");
       } else {
         setTtsPlaying(false);
       }
+      return "cancelled";
     }
 
-    async function startRecording() {
+    async function startRecording(options = {}) {
       if (!current) return;
       const recordingCluster = current;
-      await startRecordingForCluster(recordingCluster);
+      await startRecordingForCluster(recordingCluster, options);
     }
 
     async function startRecordingForCluster(recordingCluster, options = {}) {
       if (!recordingCluster) return;
+      await resumeMicAnalyser();
       chunks = [];
       clearAutoListenTimer();
       const recordingContext = {
         autoListen: Boolean(options.autoListen),
-        timedOut: false
+        bargedIn: Boolean(options.bargedIn),
+        waitingContinuation: Boolean(options.waitingContinuation),
+        timedOut: false,
+        stopReason: null,
+        endpointing: null,
+        endpointingOptions: options.endpointing || {},
+        transcriptTurnId: null
       };
       activeRecordingContext = recordingContext;
+      showLiveUserTurn(recordingContext);
       const mediaOptions = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
         : {};
@@ -1925,12 +2320,15 @@ function renderPage(defaultCategory: string): string {
       };
       recorder.onstop = () => {
         clearAutoListenTimer();
+        stopEndpointing(recordingContext);
         if (activeRecordingContext === recordingContext) activeRecordingContext = null;
         processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster, recordingContext);
       };
       recorder.start();
       setRecording(true);
       mic.classList.add("recording");
+      mic.classList.toggle("barged", recordingContext.bargedIn);
+      startEndpointing(recordingContext);
       if (recordingContext.autoListen) {
         mic.classList.add("auto-listening");
         mic.textContent = "Listening";
@@ -1939,18 +2337,20 @@ function renderPage(defaultCategory: string): string {
           if (recorder && recorder.state === "recording" && activeRecordingContext === recordingContext) {
             recordingContext.timedOut = true;
             setStatus("Listening window ended — transcribing anything captured.");
-            stopRecording();
+            stopRecording("timeout");
           }
         }, AUTO_LISTEN_MS);
       } else {
         mic.classList.remove("auto-listening");
-        mic.textContent = "Stop";
-        setStatus("Recording in browser. Tap Stop when your answer is done.");
+        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
+        setStatus("Recording. Pause when finished; auto-stop will trigger. Tap to stop manually.");
       }
     }
 
-    async function stopRecording() {
+    async function stopRecording(reason = "manual") {
       clearAutoListenTimer();
+      if (activeRecordingContext) activeRecordingContext.stopReason = reason;
+      stopEndpointing(activeRecordingContext);
       if (recorder && recorder.state === "recording") recorder.stop();
     }
 
@@ -1960,11 +2360,96 @@ function renderPage(defaultCategory: string): string {
       autoListenTimer = null;
     }
 
+    function startEndpointing(recordingContext) {
+      stopEndpointing(recordingContext);
+      if (!analyser || !analyserData) {
+        updateLiveUserTurn(recordingContext, "Manual stop available; WebAudio endpointing unavailable");
+        return;
+      }
+      recordingContext.endpointing = createEndpointingState(recordingContext.endpointingOptions);
+      updateEndpointCountdown(recordingContext);
+      endpointingTimer = setInterval(() => {
+        if (
+          activeRecordingContext !== recordingContext ||
+          !recorder ||
+          recorder.state !== "recording"
+        ) {
+          stopEndpointing(recordingContext);
+          return;
+        }
+        const rms = readMicRms();
+        advanceEndpointing(recordingContext.endpointing, rms);
+        updateEndpointCountdown(recordingContext);
+        if (recordingContext.endpointing.shouldStop) {
+          setStatus("Auto-stopping now...");
+          updateLiveUserTurn(recordingContext, "Auto-stopping now", "(captured)");
+          stopRecording("endpoint");
+        }
+      }, ENDPOINTING_DEFAULTS.frameMs);
+    }
+
+    function stopEndpointing(recordingContext) {
+      if (endpointingTimer) {
+        clearInterval(endpointingTimer);
+        endpointingTimer = null;
+      }
+      if (!recordingContext || activeRecordingContext !== recordingContext) return;
+      mic.classList.remove("countdown");
+      mic.style.setProperty("--endpoint-progress", "0");
+    }
+
+    function updateEndpointCountdown(recordingContext) {
+      const state = recordingContext.endpointing;
+      if (!state) return;
+      const progress = state.countdownProgress || 0;
+      mic.style.setProperty("--endpoint-progress", String(progress));
+
+      if (state.phase === "trailing_silence") {
+        const remainingMs = Math.max(0, state.config.trailingSilenceMs - state.trailingSilenceMs);
+        const remaining = (remainingMs / 1000).toFixed(1);
+        const message = "Silence " + Math.round(progress * 100) + "% — auto-stop in " + remaining + "s";
+        mic.classList.add("countdown");
+        mic.textContent = remaining + "s";
+        setStatus(message);
+        updateLiveUserTurn(recordingContext, message, "(capturing silence)");
+        return;
+      }
+
+      mic.classList.remove("countdown");
+      if (state.phase === "calibrating") {
+        const message = "Calibrating room noise...";
+        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
+        updateLiveUserTurn(recordingContext, message);
+        return;
+      }
+      if (state.phase === "waiting_for_speech") {
+        const message = "Listening for speech. You do not need to tap Stop.";
+        mic.textContent = recordingContext.autoListen ? "Listening" : "Speak";
+        setStatus(message);
+        updateLiveUserTurn(recordingContext, message);
+        return;
+      }
+      if (state.phase === "speaking") {
+        const message = "Speech detected. Pause when finished; auto-stop will trigger.";
+        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
+        setStatus(message);
+        updateLiveUserTurn(recordingContext, message, "(speaking)");
+        return;
+      }
+      if (state.phase === "auto_stop") {
+        mic.classList.add("countdown");
+        mic.textContent = "Done";
+        setStatus("Auto-stopping now...");
+        updateLiveUserTurn(recordingContext, "Auto-stopping now", "(captured)");
+      }
+    }
+
     async function processRecording(blob, cluster, recordingContext = {}) {
       const stoppedAt = performance.now();
       setRecording(false);
       setBusy(true);
-      mic.classList.remove("recording", "auto-listening");
+      mic.classList.remove("recording", "auto-listening", "countdown", "barged");
+      mic.style.setProperty("--endpoint-progress", "0");
       mic.textContent = "Record";
       try {
         setStatus("Transcribing locally with whisper-cli...");
@@ -1975,19 +2460,69 @@ function renderPage(defaultCategory: string): string {
         });
         const transcribedAt = performance.now();
         const transcribe = await transcribeResponse.json();
-        $("transcript").textContent = transcribe.text || "(empty transcript)";
+        const transcribedText = transcribe.text || "";
+        const holdDecision = applyThinkingPauseHold(
+          thinkingPauseHold,
+          transcribedText,
+          ENDPOINTING_DEFAULTS.trailingSilenceMs,
+        );
+        const transcriptForInterpret = holdDecision.transcript || transcribedText;
+
+        if (holdDecision.shouldHold) {
+          completeLiveUserTurn(recordingContext, transcriptForInterpret);
+          updateTranscriptTurn(recordingContext.transcriptTurnId, {
+            label: "🎤 You (waiting…)",
+            text: transcriptForInterpret,
+            meta: "waiting… partial transcript held; continue when ready",
+            state: "current"
+          });
+          $("decision").textContent = "Waiting for continuation.";
+          setStatus("waiting… keep talking when ready.");
+          if (holdDecision.shouldPrompt) {
+            $("decision").textContent = "Waiting for continuation after a pause check.";
+            setStatus("asking for a little more time...");
+            const playbackResult = await playText(PAUSE_INTENT_SOFT_PROMPT, {
+              label: "Agent prompt"
+            });
+            if (playbackResult === "cancelled") {
+              setBusy(false);
+              return;
+            }
+          }
+          setBusy(false);
+          if (
+            current &&
+            current.cluster_id === cluster.cluster_id &&
+            !(recorder && recorder.state === "recording")
+          ) {
+            await startRecordingForCluster(cluster, {
+              autoListen: true,
+              waitingContinuation: true,
+              endpointing: {
+                trailingSilenceMs: holdDecision.nextTrailingSilenceMs
+              }
+            });
+          }
+          return;
+        }
+
+        completeLiveUserTurn(recordingContext, transcriptForInterpret || "(empty transcript)");
 
         setStatus("Interpreting decision with LiteRT-LM...");
         const interpretResponse = await api("/api/interpret", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ transcript: transcribe.text, cluster: cluster })
+          body: JSON.stringify({
+            transcript: transcriptForInterpret,
+            cluster: cluster,
+            pause_intent: holdDecision.pauseIntent.intent
+          })
         });
         const interpretedAt = performance.now();
         const interpreted = await interpretResponse.json();
 
         if (interpreted.decision.action === "question") {
-          const question = interpreted.decision.question || transcribe.text || "";
+          const question = interpreted.decision.question || transcriptForInterpret || "";
           setStatus("Answering: " + compactText(question));
           const converseResponse = await api("/api/converse", {
             method: "POST",
@@ -2010,7 +2545,11 @@ function renderPage(defaultCategory: string): string {
             ", llm_ms " + ms(converse.timings?.llm_ms || 0) +
             ", total " + ms(answeredAt - stoppedAt) + ".";
 
-          await playText(answer);
+          const playbackResult = await playText(answer);
+          if (playbackResult === "cancelled") {
+            setBusy(false);
+            return;
+          }
           setBusy(false);
           if (
             current &&
@@ -2035,12 +2574,44 @@ function renderPage(defaultCategory: string): string {
           body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
         });
         setStatus("Decision recorded.");
-        await playText(interpreted.confirmation, { allowBargeInRecording: false });
+        await playText(interpreted.confirmation, {
+          allowBargeInRecording: false,
+          label: "Agent confirmation"
+        });
         setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
+        if (
+          recordingContext.waitingContinuation &&
+          (error.message === "empty transcript" || error.message === "empty audio")
+        ) {
+          updateTranscriptTurn(recordingContext.transcriptTurnId, {
+            label: "🎤 You (waiting…)",
+            text: thinkingPauseHold.heldTranscript || "(waiting for continuation)",
+            meta: "waiting… partial transcript held; no continuation captured yet",
+            state: "current"
+          });
+          setStatus("waiting… keep talking when ready.");
+          setBusy(false);
+          if (
+            current &&
+            current.cluster_id === cluster.cluster_id &&
+            !(recorder && recorder.state === "recording")
+          ) {
+            await startRecordingForCluster(cluster, {
+              autoListen: true,
+              waitingContinuation: true,
+              endpointing: {
+                trailingSilenceMs:
+                  thinkingPauseHold.extendedTrailingSilenceMs ||
+                  ENDPOINTING_DEFAULTS.trailingSilenceMs * 2
+              }
+            });
+          }
+          return;
+        }
         if (recordingContext.autoListen && (error.message === "empty transcript" || error.message === "empty audio")) {
-          $("transcript").textContent = "(no follow-up captured)";
+          completeLiveUserTurn(recordingContext, "(no follow-up captured)");
           setStatus("Didn't catch that — tap to talk.");
           setBusy(false);
           return;
@@ -2052,6 +2623,146 @@ function renderPage(defaultCategory: string): string {
 
     function renderConversation() {
       $("qa").innerHTML = "";
+    }
+
+    function resetTranscriptLog() {
+      transcriptTurns = [];
+      currentAgentTurnId = null;
+      renderTranscriptLog();
+    }
+
+    function markTranscriptTurnsPrior() {
+      for (const turn of transcriptTurns) {
+        if (turn.state !== "prior") {
+          turn.state = "prior";
+          turn.meta =
+            turn.meta && !turn.meta.includes("Prior turn")
+              ? "Prior turn · " + turn.meta
+              : turn.meta || "Prior turn";
+        }
+      }
+    }
+
+    function addTranscriptTurn(input, options = {}) {
+      if (!options.preserveCurrent) markTranscriptTurnsPrior();
+      const turn = Object.assign(
+        {
+          id: nextTranscriptTurnId++,
+          speaker: "user",
+          label: "Turn",
+          text: "",
+          meta: "",
+          state: "current"
+        },
+        input,
+      );
+      transcriptTurns.push(turn);
+      renderTranscriptLog();
+      return turn.id;
+    }
+
+    function updateTranscriptTurn(id, patch) {
+      const turn = transcriptTurns.find((item) => item.id === id);
+      if (!turn) return;
+      Object.assign(turn, patch);
+      renderTranscriptLog();
+    }
+
+    function showLiveUserTurn(recordingContext) {
+      const id = addTranscriptTurn({
+        speaker: "user",
+        label: "🎤 You (now)",
+        text: recordingContext.waitingContinuation
+          ? "(waiting… continuation)"
+          : recordingContext.bargedIn ? "(barge-in recording)" : "(listening)",
+        meta: recordingContext.waitingContinuation
+          ? "waiting… partial transcript held"
+          : "Calibrating room noise",
+        state: "current"
+      }, {
+        preserveCurrent: recordingContext.waitingContinuation
+      });
+      recordingContext.transcriptTurnId = id;
+    }
+
+    function updateLiveUserTurn(recordingContext, meta, text) {
+      if (!recordingContext.transcriptTurnId) return;
+      updateTranscriptTurn(recordingContext.transcriptTurnId, {
+        label: "🎤 You (now)",
+        text: text || "(listening)",
+        meta: meta || "Listening",
+        state: "current"
+      });
+    }
+
+    function completeLiveUserTurn(recordingContext, text) {
+      if (!recordingContext.transcriptTurnId) return;
+      updateTranscriptTurn(recordingContext.transcriptTurnId, {
+        label: "🎤 You (current)",
+        text: text || "(empty transcript)",
+        meta: "Current turn",
+        state: "current"
+      });
+    }
+
+    function startAgentTurn(text, options = {}) {
+      const id = addTranscriptTurn({
+        speaker: "agent",
+        label: options.label || "Agent (now)",
+        text: text || "",
+        meta: "Current speech",
+        state: "current"
+      });
+      currentAgentTurnId = id;
+      return id;
+    }
+
+    function finishAgentTurn(id) {
+      updateTranscriptTurn(id, {
+        label: "Agent (current)",
+        meta: "Current speech finished",
+        state: "current"
+      });
+      if (currentAgentTurnId === id) currentAgentTurnId = null;
+    }
+
+    function failAgentTurn(id) {
+      updateTranscriptTurn(id, {
+        label: "Agent (failed)",
+        meta: "Speech failed",
+        state: "current"
+      });
+      if (currentAgentTurnId === id) currentAgentTurnId = null;
+    }
+
+    function markCurrentAgentTurnCancelled() {
+      if (!currentAgentTurnId) return;
+      updateTranscriptTurn(currentAgentTurnId, {
+        label: "Agent (cancelled)",
+        meta: "Cancelled by barge-in",
+        state: "current"
+      });
+      currentAgentTurnId = null;
+    }
+
+    function renderTranscriptLog() {
+      if (!transcriptTurns.length) {
+        $("transcript").innerHTML =
+          "<div class='turn is-current'><div class='turn-label'>Current turn</div>" +
+          "<div class='turn-text'>Transcript appears here.</div></div>";
+        return;
+      }
+      $("transcript").innerHTML = transcriptTurns.map((turn) => {
+        const prior = turn.state === "prior" ? "<span class='turn-prior'>Prior turn</span>" : "";
+        return (
+          "<div class='turn turn-" + escapeHtml(turn.speaker) + " is-" + escapeHtml(turn.state) + "'>" +
+          "<div class='turn-label'><span>" + escapeHtml(turn.label) + "</span>" + prior + "</div>" +
+          "<div class='turn-text'>" + escapeHtml(turn.text || "") + "</div>" +
+          (turn.meta ? "<div class='turn-meta'>" + escapeHtml(turn.meta) + "</div>" : "") +
+          "</div>"
+        );
+      }).join("");
+      $("transcript").scrollTop = $("transcript").scrollHeight;
     }
 
     function normalizeConversationAnswer(answer) {
@@ -2099,7 +2810,7 @@ function renderPage(defaultCategory: string): string {
       try {
         if (ttsPlaying) {
           const allowRecording = activePlayback?.allowBargeInRecording !== false;
-          stopTtsPlayback();
+          cancelTtsPlayback("barge-in");
           if (!allowRecording) {
             setStatus("Decision saved. Loading next cluster...");
             return;
@@ -2110,7 +2821,7 @@ function renderPage(defaultCategory: string): string {
             await stopRecording();
             return;
           }
-          await startRecording();
+          await startRecording({ bargedIn: true });
           return;
         }
         if (busy) return;
