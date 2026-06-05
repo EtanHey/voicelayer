@@ -1,3 +1,6 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "bun:test";
 import {
   buildConfirmation,
@@ -6,6 +9,9 @@ import {
   buildWhisperArgs,
   buildWhisperPrompt,
   createVoiceReviewApp,
+  decorateStatsWithSkippedCounts,
+  decisionLockPath,
+  DEFAULT_CONFIG,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
   type CommandCall,
@@ -181,6 +187,148 @@ describe("VoiceReview web server helpers", () => {
       },
     ]);
     expect(migrated?.keep).toEqual([]);
+  });
+
+  it("runs legacy decisions migration inside the driver sidecar lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-lock-test-"));
+    const batchPath = join(root, "batch.json");
+    const decisionsPath = join(root, "decisions.json");
+    await writeFile(
+      batchPath,
+      JSON.stringify({ "diagnosis-flag": [cantaloupeCluster] }),
+    );
+    await writeFile(
+      decisionsPath,
+      JSON.stringify({
+        version: 1,
+        decisions: {
+          "diagnosis-flag:cantaloupe": {
+            action: "merge_all",
+            canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
+          },
+        },
+      }),
+    );
+
+    let lockPathSeen: string | null = null;
+    let migratedBeforeUnlock = false;
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath,
+        decisionsPath,
+      },
+      lockDecisionFile: async (path, work) => {
+        lockPathSeen = decisionLockPath(path);
+        const result = await work();
+        const migrated = JSON.parse(await readFile(decisionsPath, "utf8"));
+        migratedBeforeUnlock = migrated.schema === "kg-flag-decisions-v1";
+        return result;
+      },
+      runCommand: async () => commandResult({ cluster: cantaloupeCluster }),
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/next?category=diagnosis-flag"),
+      );
+
+      expect(response.status).toBe(200);
+      expect(lockPathSeen as string | null).toBe(`${decisionsPath}.lock`);
+      expect(migratedBeforeUnlock).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses loopback as the default bind host unless explicitly overridden", () => {
+    expect(DEFAULT_CONFIG.hostname).toBe("127.0.0.1");
+  });
+
+  it("rejects cluster members without a numeric chunk count", async () => {
+    const app = createVoiceReviewApp({
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '{"action":"keep"}' } }],
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/interpret", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          transcript: "keep these separate",
+          cluster: {
+            ...cantaloupeCluster,
+            members: [
+              {
+                id: "bad",
+                name: "Bad",
+                type: "concept",
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it("decorates driver stats with skipped counts without changing undecided semantics", () => {
+    const decorated = decorateStatsWithSkippedCounts(
+      {
+        per_category: {
+          "diagnosis-flag": {
+            total: 8,
+            explicit: 2,
+            by_rule: 0,
+            undecided: 6,
+          },
+        },
+      },
+      {
+        skipped: [
+          { category: "diagnosis-flag", stem: "maybe" },
+          { category: "sep-variants", stem: "other" },
+        ],
+      },
+    );
+
+    expect(decorated).toEqual({
+      per_category: {
+        "diagnosis-flag": {
+          total: 8,
+          explicit: 2,
+          by_rule: 0,
+          undecided: 6,
+          skipped: 1,
+        },
+      },
+    });
+  });
+
+  it("serves page logic that freezes recording context and unlocks load failures", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("category.disabled = value || recording");
+    expect(html).toContain("const recordingCluster = current");
+    expect(html).toContain("processRecording(new Blob(chunks");
+    expect(html).toContain("recordingCluster");
+    expect(html).toContain("cluster: cluster");
+    expect(html).toContain("cluster_id: cluster.cluster_id");
+    expect(html).toContain("const decided = Math.max(0, total - undecided)");
+    expect(html).toContain("const skipped = Number(bucket.skipped || 0)");
+    expect(html).toContain("decided + \" decided · \" + skipped + \" skipped\"");
+    expect(html).toContain("Tap Retry");
+    expect(html).toContain("finally {\n        setBusy(false);");
+    expect(html).toContain("addEventListener(\"ended\"");
   });
 
   it("builds a bounded whisper prompt from vocabulary prompt terms", () => {

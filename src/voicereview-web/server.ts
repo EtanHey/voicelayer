@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dlopen, FFIType } from "bun:ffi";
+import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 
 export type ReviewAction = "merge" | "keep" | "mixed" | "skip";
@@ -66,12 +67,16 @@ type FetchLike = (
 ) => Promise<Response>;
 
 type CommandRunner = (call: CommandCall) => Promise<CommandResult>;
+type DecisionFileLocker = <T>(
+  decisionsPath: string,
+  work: () => Promise<T>,
+) => Promise<T>;
 
 const HOME = homedir();
 
 export const DEFAULT_CONFIG: VoiceReviewConfig = {
   port: Number(process.env.VOICE_REVIEW_WEB_PORT || "8849"),
-  hostname: process.env.VOICE_REVIEW_WEB_HOST || "0.0.0.0",
+  hostname: process.env.VOICE_REVIEW_WEB_HOST || "127.0.0.1",
   defaultCategory: process.env.VOICE_REVIEW_CATEGORY || "diagnosis-flag",
   brainlayerWorktree:
     process.env.VOICE_REVIEW_BRAINLAYER_WT || "/tmp/voice-review-wt",
@@ -390,10 +395,12 @@ export function createVoiceReviewApp(options?: {
   config?: Partial<VoiceReviewConfig>;
   runCommand?: CommandRunner;
   fetchImpl?: FetchLike;
+  lockDecisionFile?: DecisionFileLocker;
 }): { fetch: (request: Request) => Promise<Response> } {
   const config = mergeConfig(options?.config);
   const runCommand = options?.runCommand || runShellCommand;
   const fetchImpl = options?.fetchImpl || fetch;
+  const lockDecisionFile = options?.lockDecisionFile || withDecisionFileLock;
 
   return {
     fetch: async (request: Request): Promise<Response> => {
@@ -403,13 +410,13 @@ export function createVoiceReviewApp(options?: {
           return htmlResponse(renderPage(config.defaultCategory));
         }
         if (request.method === "GET" && url.pathname === "/api/next") {
-          return await handleNext(url, config, runCommand);
+          return await handleNext(url, config, runCommand, lockDecisionFile);
         }
         if (request.method === "GET" && url.pathname === "/api/stats") {
-          return await handleStats(config, runCommand);
+          return await handleStats(config, runCommand, lockDecisionFile);
         }
         if (request.method === "POST" && url.pathname === "/api/decide") {
-          return await handleDecide(request, config, runCommand);
+          return await handleDecide(request, config, runCommand, lockDecisionFile);
         }
         if (request.method === "POST" && url.pathname === "/api/interpret") {
           return await handleInterpret(request, config, fetchImpl);
@@ -432,8 +439,9 @@ async function handleNext(
   url: URL,
   config: VoiceReviewConfig,
   runCommand: CommandRunner,
+  lockDecisionFile: DecisionFileLocker,
 ): Promise<Response> {
-  await ensureDecisionFileCompatible(config);
+  await ensureDecisionFileCompatible(config, lockDecisionFile);
   const category = url.searchParams.get("category") || config.defaultCategory;
   const result = await runCommand({
     args: buildDriverArgs("next", {
@@ -452,8 +460,9 @@ async function handleNext(
 async function handleStats(
   config: VoiceReviewConfig,
   runCommand: CommandRunner,
+  lockDecisionFile: DecisionFileLocker,
 ): Promise<Response> {
-  await ensureDecisionFileCompatible(config);
+  await ensureDecisionFileCompatible(config, lockDecisionFile);
   const result = await runCommand({
     args: buildDriverArgs("stats", {
       pythonScript: driverScript(config),
@@ -463,8 +472,10 @@ async function handleStats(
     cwd: config.brainlayerWorktree,
     env: driverEnv(config),
   });
+  const stats = parseDriverJson(result);
+  const decisions = await loadDecisionsJson(config.decisionsPath);
   return jsonResponse({
-    stats: parseDriverJson(result),
+    stats: decorateStatsWithSkippedCounts(stats, decisions),
     timings: { driver_ms: result.durationMs },
   });
 }
@@ -473,6 +484,7 @@ async function handleDecide(
   request: Request,
   config: VoiceReviewConfig,
   runCommand: CommandRunner,
+  lockDecisionFile: DecisionFileLocker,
 ): Promise<Response> {
   const body = await request.json();
   if (!isRecord(body) || typeof body.cluster_id !== "string") {
@@ -482,7 +494,7 @@ async function handleDecide(
     return jsonResponse({ error: "decision object is required" }, 400);
   }
 
-  await ensureDecisionFileCompatible(config);
+  await ensureDecisionFileCompatible(config, lockDecisionFile);
   const decision = { ...body.decision, source: "voice" };
   const result = await runCommand({
     args: buildDriverArgs("record", {
@@ -701,31 +713,127 @@ async function runShellCommand(call: CommandCall): Promise<CommandResult> {
   };
 }
 
+const FLOCK_EX = 2;
+const FLOCK_UN = 8;
+let flockFn: ((fd: number, operation: number) => number) | null = null;
+
+export function decisionLockPath(decisionsPath: string): string {
+  return `${decisionsPath}.lock`;
+}
+
+async function withDecisionFileLock<T>(
+  decisionsPath: string,
+  work: () => Promise<T>,
+): Promise<T> {
+  const lockPath = decisionLockPath(decisionsPath);
+  await mkdir(dirname(lockPath), { recursive: true });
+  const handle = await open(lockPath, "w");
+  let locked = false;
+  try {
+    const flock = loadFlock();
+    if (flock(handle.fd, FLOCK_EX) !== 0) {
+      throw new Error(`failed to flock ${lockPath}`);
+    }
+    locked = true;
+    return await work();
+  } finally {
+    if (locked) loadFlock()(handle.fd, FLOCK_UN);
+    await handle.close();
+  }
+}
+
+function loadFlock(): (fd: number, operation: number) => number {
+  if (flockFn) return flockFn;
+  const library =
+    process.platform === "darwin"
+      ? "/usr/lib/libSystem.B.dylib"
+      : process.platform === "linux"
+        ? "libc.so.6"
+        : null;
+  if (!library) throw new Error(`flock is unsupported on ${process.platform}`);
+  const libc = dlopen(library, {
+    flock: {
+      args: [FFIType.i32, FFIType.i32],
+      returns: FFIType.i32,
+    },
+  });
+  flockFn = libc.symbols.flock;
+  return flockFn;
+}
+
 async function ensureDecisionFileCompatible(
   config: VoiceReviewConfig,
+  lockDecisionFile: DecisionFileLocker = withDecisionFileLock,
 ): Promise<void> {
-  let rawDecisions: string;
   try {
-    rawDecisions = await readFile(config.decisionsPath, "utf8");
+    const preflight = JSON.parse(await readFile(config.decisionsPath, "utf8"));
+    if (isRecord(preflight) && preflight.schema === KG_FLAG_DECISIONS_SCHEMA) return;
   } catch {
     return;
   }
 
-  const parsed = JSON.parse(rawDecisions);
-  if (isRecord(parsed) && parsed.schema === KG_FLAG_DECISIONS_SCHEMA) return;
+  await lockDecisionFile(config.decisionsPath, async () => {
+    let rawDecisions: string;
+    try {
+      rawDecisions = await readFile(config.decisionsPath, "utf8");
+    } catch {
+      return;
+    }
 
-  const rawBatch = await readFile(config.batchPath, "utf8");
-  const clusters = flattenFlagBatch(JSON.parse(rawBatch));
-  const migrated = legacyDecisionsToKgFlagV1(
-    parsed,
-    clusters,
-    sourceFromBatchPath(config.batchPath),
-  );
-  if (!migrated) return;
+    const parsed = JSON.parse(rawDecisions);
+    if (isRecord(parsed) && parsed.schema === KG_FLAG_DECISIONS_SCHEMA) return;
 
-  const tmpPath = `${config.decisionsPath}.web-migrate-${process.pid}.tmp`;
-  await writeFile(tmpPath, JSON.stringify(migrated, null, 2));
-  await rename(tmpPath, config.decisionsPath);
+    const rawBatch = await readFile(config.batchPath, "utf8");
+    const clusters = flattenFlagBatch(JSON.parse(rawBatch));
+    const migrated = legacyDecisionsToKgFlagV1(
+      parsed,
+      clusters,
+      sourceFromBatchPath(config.batchPath),
+    );
+    if (!migrated) return;
+
+    const tmpPath = `${config.decisionsPath}.web-migrate-${process.pid}.tmp`;
+    await writeFile(tmpPath, JSON.stringify(migrated, null, 2));
+    await rename(tmpPath, config.decisionsPath);
+  });
+}
+
+async function loadDecisionsJson(decisionsPath: string): Promise<unknown> {
+  try {
+    return JSON.parse(await readFile(decisionsPath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+export function decorateStatsWithSkippedCounts(
+  stats: unknown,
+  decisions: unknown,
+): unknown {
+  if (!isRecord(stats) || !isRecord(stats.per_category)) return stats;
+  const skippedByCategory = new Map<string, number>();
+  const skipped = isRecord(decisions) && Array.isArray(decisions.skipped)
+    ? decisions.skipped
+    : [];
+  for (const item of skipped) {
+    if (!isRecord(item) || typeof item.category !== "string") continue;
+    skippedByCategory.set(
+      item.category,
+      (skippedByCategory.get(item.category) || 0) + 1,
+    );
+  }
+  const perCategory: Record<string, unknown> = {};
+  for (const [category, bucket] of Object.entries(stats.per_category)) {
+    if (!isRecord(bucket)) {
+      perCategory[category] = bucket;
+      continue;
+    }
+    perCategory[category] = {
+      ...bucket,
+      skipped: skippedByCategory.get(category) || 0,
+    };
+  }
+  return { ...stats, per_category: perCategory };
 }
 
 async function loadVocabularyPrompt(path: string): Promise<string> {
@@ -768,7 +876,8 @@ function isReviewMember(value: unknown): value is ReviewMember {
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
-    typeof value.type === "string"
+    typeof value.type === "string" &&
+    typeof value.chunks === "number"
   );
 }
 
@@ -973,7 +1082,8 @@ function isReviewCluster(value: unknown): value is ReviewCluster {
     typeof value.cluster_id === "string" &&
     typeof value.category === "string" &&
     typeof value.stem === "string" &&
-    Array.isArray(value.members)
+    Array.isArray(value.members) &&
+    value.members.every(isReviewMember)
   );
 }
 
@@ -1234,9 +1344,18 @@ function renderPage(defaultCategory: string): string {
     let current = null;
     let currentSpeak = "";
     let busy = false;
+    let recording = false;
 
     function setStatus(text) { $("status").textContent = text; }
-    function setBusy(value) { busy = value; mic.disabled = value; }
+    function setBusy(value) {
+      busy = value;
+      mic.disabled = value;
+      category.disabled = value || recording;
+    }
+    function setRecording(value) {
+      recording = value;
+      category.disabled = value || busy;
+    }
     function ms(value) { return Math.round(value) + " ms"; }
 
     async function api(path, options = {}) {
@@ -1265,17 +1384,23 @@ function renderPage(defaultCategory: string): string {
       try {
         const response = await api("/api/stats");
         const body = await response.json();
-        const bucket = body.stats?.[category.value];
+        const bucket = body.stats?.per_category?.[category.value];
         if (!bucket) return;
-        const pct = bucket.total ? (bucket.decided / bucket.total) * 100 : 0;
+        const total = Number(bucket.total || 0);
+        const undecided = Number(bucket.undecided || 0);
+        const decided = Math.max(0, total - undecided);
+        const skipped = Number(bucket.skipped || 0);
+        const pct = total ? (decided / total) * 100 : 0;
         $("progressFill").style.width = pct + "%";
-        $("progressText").textContent = category.value + ": " + bucket.decided + " / " + bucket.total + " decided";
+        $("progressText").textContent =
+          category.value + ": " + decided + " decided · " + skipped + " skipped" + " · " + total + " total";
       } catch (error) {
         $("progressText").textContent = "Progress unavailable: " + error.message;
       }
     }
 
     async function loadNext(play = true) {
+      let done = false;
       setBusy(true);
       setStatus("Loading next cluster...");
       try {
@@ -1288,14 +1413,21 @@ function renderPage(defaultCategory: string): string {
         if (!current) {
           setStatus("No undecided clusters in this category.");
           mic.textContent = "Done";
-          mic.disabled = true;
+          done = true;
           return;
         }
         mic.textContent = "Record";
         setStatus("Review the cluster, then tap Record and speak your decision.");
         if (play && currentSpeak) await playText(currentSpeak);
+      } catch (error) {
+        current = null;
+        currentSpeak = "";
+        renderLoadError(error);
+        mic.textContent = "Retry";
+        setStatus("Load failed: " + error.message + ". Tap Retry.");
       } finally {
-        if (current) setBusy(false);
+        setBusy(false);
+        if (done) mic.disabled = true;
       }
     }
 
@@ -1315,8 +1447,17 @@ function renderPage(defaultCategory: string): string {
       )).join("");
     }
 
+    function renderLoadError(error) {
+      $("clusterId").textContent = "Load failed";
+      $("stem").textContent = "Retry";
+      $("members").innerHTML =
+        "<tr><td colspan='4'>Error loading the next cluster: " + escapeHtml(error.message) +
+        ". Tap Retry.</td></tr>";
+    }
+
     async function playText(text) {
       const started = performance.now();
+      let url = null;
       try {
         const response = await api("/api/tts", {
           method: "POST",
@@ -1324,19 +1465,41 @@ function renderPage(defaultCategory: string): string {
           body: JSON.stringify({ text })
         });
         const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
+        url = URL.createObjectURL(blob);
         audio.src = url;
-        await audio.play();
         const ttsMs = response.headers.get("x-tts-ms") || Math.round(performance.now() - started);
-        setStatus("TTS queued in " + ttsMs + " ms.");
-        audio.onended = () => URL.revokeObjectURL(url);
+        setStatus("TTS ready in " + ttsMs + " ms. Playing...");
+        await new Promise((resolve, reject) => {
+          const cleanup = () => {
+            audio.removeEventListener("ended", onEnded);
+            audio.removeEventListener("error", onError);
+            if (url) URL.revokeObjectURL(url);
+            url = null;
+          };
+          const onEnded = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = () => {
+            cleanup();
+            reject(new Error("browser audio playback failed"));
+          };
+          audio.addEventListener("ended", onEnded, { once: true });
+          audio.addEventListener("error", onError, { once: true });
+          audio.play().catch((error) => {
+            cleanup();
+            reject(error);
+          });
+        });
       } catch (error) {
+        if (url) URL.revokeObjectURL(url);
         setStatus("TTS failed: " + error.message);
       }
     }
 
     async function startRecording() {
       if (!current) return;
+      const recordingCluster = current;
       chunks = [];
       const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
@@ -1345,8 +1508,9 @@ function renderPage(defaultCategory: string): string {
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
       };
-      recorder.onstop = () => processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+      recorder.onstop = () => processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster);
       recorder.start();
+      setRecording(true);
       mic.classList.add("recording");
       mic.textContent = "Stop";
       setStatus("Recording in browser. Tap Stop when your answer is done.");
@@ -1356,8 +1520,9 @@ function renderPage(defaultCategory: string): string {
       if (recorder && recorder.state === "recording") recorder.stop();
     }
 
-    async function processRecording(blob) {
+    async function processRecording(blob, cluster) {
       const stoppedAt = performance.now();
+      setRecording(false);
       setBusy(true);
       mic.classList.remove("recording");
       mic.textContent = "Record";
@@ -1376,7 +1541,7 @@ function renderPage(defaultCategory: string): string {
         const interpretResponse = await api("/api/interpret", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ transcript: transcribe.text, cluster: current })
+          body: JSON.stringify({ transcript: transcribe.text, cluster: cluster })
         });
         const interpretedAt = performance.now();
         const interpreted = await interpretResponse.json();
@@ -1391,7 +1556,7 @@ function renderPage(defaultCategory: string): string {
         await api("/api/decide", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cluster_id: current.cluster_id, decision: interpreted.decision })
+          body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
         });
         setStatus("Decision recorded. Loading next cluster...");
         await loadNext(true);
@@ -1409,6 +1574,10 @@ function renderPage(defaultCategory: string): string {
           await loadNext(true);
           return;
         }
+        if (!current) {
+          await loadNext(true);
+          return;
+        }
         if (recorder && recorder.state === "recording") {
           await stopRecording();
           return;
@@ -1420,6 +1589,7 @@ function renderPage(defaultCategory: string): string {
     });
 
     category.addEventListener("change", async () => {
+      if (busy || recording) return;
       if (!stream) return;
       await loadNext(true);
     });
