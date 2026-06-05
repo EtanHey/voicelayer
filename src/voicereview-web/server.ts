@@ -719,15 +719,18 @@ async function handleConverse(
     !isRecord(body) ||
     typeof body.question !== "string" ||
     !body.question.trim() ||
-    !isReviewCluster(body.cluster) ||
-    (body.history !== undefined && !isConversationHistory(body.history))
+    !isReviewCluster(body.cluster)
   ) {
     return jsonResponse({ error: "question, cluster, and optional history are required" }, 400);
   }
 
-  const history: ConversationTurn[] = isConversationHistory(body.history)
-    ? body.history
-    : [];
+  let history: ConversationTurn[] = [];
+  if (body.history !== undefined) {
+    if (!isConversationHistory(body.history)) {
+      return jsonResponse({ error: "question, cluster, and optional history are required" }, 400);
+    }
+    history = body.history;
+  }
   const evidenceResult = await runCommand({
     args: buildEvidenceArgs({
       pythonScript: evidenceScript(),
@@ -1313,7 +1316,6 @@ function isReviewCluster(value: unknown): value is ReviewCluster {
 }
 
 function isConversationHistory(value: unknown): value is ConversationTurn[] {
-  if (value === undefined) return true;
   return (
     Array.isArray(value) &&
     value.every(

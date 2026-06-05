@@ -827,7 +827,7 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[1].content).toContain("which chunks does the company one have?");
   });
 
-  it("serves /api/converse with evidence timings and a grounded LiteRT answer", async () => {
+  it("serves first-turn /api/converse with evidence timings and a grounded LiteRT answer", async () => {
     let requestedBody: any;
     const calls: CommandCall[] = [];
     const evidence: ConversationEvidence = {
@@ -890,7 +890,6 @@ describe("VoiceReview web server helpers", () => {
         body: JSON.stringify({
           question: "which chunks does the company one have?",
           cluster: cantaloupeCluster,
-          history: [],
         }),
       }),
     );
