@@ -279,8 +279,8 @@ export function parseInterpretDecision(
       }
       members[id] = value;
     }
-    if (Object.keys(members).length === 0) {
-      throw new Error("mixed interpretation requires at least one member");
+    if (Object.keys(members).length !== memberIds.size) {
+      throw new Error("mixed interpretation requires every cluster member");
     }
     decision.members = members;
   }
@@ -629,8 +629,11 @@ async function handleTranscribe(
     });
     assertSuccess(whisperResult, "whisper-cli");
 
+    const text = cleanTranscript(whisperResult.stdout);
+    if (!text) return jsonResponse({ error: "empty transcript" }, 422);
+
     return jsonResponse({
-      text: cleanTranscript(whisperResult.stdout),
+      text,
       timings: {
         convert_ms: convert.durationMs,
         whisper_ms: whisperResult.durationMs,
@@ -1585,14 +1588,15 @@ function renderPage(defaultCategory: string): string {
           ", transcript to decision " + ms(interpretedAt - transcribedAt) +
           ", total " + ms(interpretedAt - stoppedAt) + ".";
 
-        await playText(interpreted.confirmation);
         setStatus("Recording decision...");
         await api("/api/decide", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
         });
-        setStatus("Decision recorded. Loading next cluster...");
+        setStatus("Decision recorded.");
+        await playText(interpreted.confirmation);
+        setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
         setStatus("Error: " + error.message);

@@ -351,6 +351,54 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("await startRecording();");
   });
 
+  it("serves page logic that saves the decision before speaking confirmation", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const saveIndex = html.indexOf("setStatus(\"Recording decision...\");");
+    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation);");
+    expect(saveIndex).toBeGreaterThan(-1);
+    expect(confirmationIndex).toBeGreaterThan(-1);
+    expect(saveIndex).toBeLessThan(confirmationIndex);
+  });
+
+  it("rejects empty whisper transcripts before interpretation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli") ? " \n" : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob(["not real audio"]),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "empty transcript" });
+      expect(calls).toHaveLength(2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("builds a bounded whisper prompt from vocabulary prompt terms", () => {
     const prompt = buildWhisperPrompt(
       ["BrainLayer", "Cantaloupe AI", "VoiceLayer", "one two three four five"],
@@ -443,6 +491,16 @@ describe("VoiceReview web server helpers", () => {
       note: "keep them separate, I mean literally separate",
       source: "voice",
     });
+  });
+
+  it("rejects mixed decisions that omit cluster members", () => {
+    expect(() =>
+      parseInterpretDecision(
+        '{"action":"mixed","members":{"16db6804-dc3e-5465-93d2-e3956c3f63f5":"merge"}}',
+        cantaloupeCluster,
+        "mixed, merge the company but I did not say the rest",
+      ),
+    ).toThrow("mixed interpretation requires every cluster member");
   });
 
   it("serves /api/interpret with a mocked LiteRT fetch response", async () => {
