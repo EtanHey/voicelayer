@@ -1828,7 +1828,7 @@ function renderPage(defaultCategory: string): string {
         ". Tap Retry.</td></tr>";
     }
 
-    async function playText(text) {
+    async function playText(text, options = {}) {
       stopTtsPlayback();
       const started = performance.now();
       let url = null;
@@ -1847,6 +1847,7 @@ function renderPage(defaultCategory: string): string {
         await new Promise((resolve, reject) => {
           const playback = {
             resolve,
+            allowBargeInRecording: options.allowBargeInRecording !== false,
             cleanup: () => {}
           };
           const cleanup = () => {
@@ -2029,7 +2030,7 @@ function renderPage(defaultCategory: string): string {
           body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
         });
         setStatus("Decision recorded.");
-        await playText(interpreted.confirmation);
+        await playText(interpreted.confirmation, { allowBargeInRecording: false });
         setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
@@ -2092,7 +2093,12 @@ function renderPage(defaultCategory: string): string {
     mic.addEventListener("click", async () => {
       try {
         if (ttsPlaying) {
+          const allowRecording = activePlayback?.allowBargeInRecording !== false;
           stopTtsPlayback();
+          if (!allowRecording) {
+            setStatus("Decision saved. Loading next cluster...");
+            return;
+          }
           setBusy(false);
           if (!stream) await ensureMic();
           if (recorder && recorder.state === "recording") {

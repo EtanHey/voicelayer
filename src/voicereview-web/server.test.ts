@@ -367,6 +367,34 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("await startRecording();");
   });
 
+  it("serves page logic that suppresses recording during confirmation TTS after a decision is saved", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("async function playText(text, options = {})");
+    expect(html).toContain("allowBargeInRecording: options.allowBargeInRecording !== false");
+    expect(html).toContain("const allowRecording = activePlayback?.allowBargeInRecording !== false;");
+    expect(html).toContain("if (!allowRecording) {");
+    expect(html).toContain("Decision saved. Loading next cluster...");
+    expect(html).toContain("await playText(interpreted.confirmation, { allowBargeInRecording: false });");
+
+    const decideIndex = html.indexOf('await api("/api/decide"');
+    const confirmationIndex = html.indexOf(
+      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
+    );
+    const loadNextIndex = html.indexOf("await loadNext(true);", confirmationIndex);
+    const guardIndex = html.indexOf("if (!allowRecording) {");
+    const staleStartIndex = html.indexOf("await startRecording();", guardIndex);
+    const suppressedReturnIndex = html.indexOf("return;", guardIndex);
+
+    expect(decideIndex).toBeGreaterThan(-1);
+    expect(confirmationIndex).toBeGreaterThan(decideIndex);
+    expect(loadNextIndex).toBeGreaterThan(confirmationIndex);
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(suppressedReturnIndex).toBeLessThan(staleStartIndex);
+  });
+
   it("serves page logic that caps conversational auto-listen and keeps the mic state obvious", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
@@ -392,7 +420,9 @@ describe("VoiceReview web server helpers", () => {
     const html = await response.text();
 
     const saveIndex = html.indexOf("setStatus(\"Recording decision...\");");
-    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation);");
+    const confirmationIndex = html.indexOf(
+      "await playText(interpreted.confirmation, { allowBargeInRecording: false });",
+    );
     expect(saveIndex).toBeGreaterThan(-1);
     expect(confirmationIndex).toBeGreaterThan(-1);
     expect(saveIndex).toBeLessThan(confirmationIndex);
