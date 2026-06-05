@@ -1933,7 +1933,8 @@ function renderPage(defaultCategory: string): string {
           });
           const answeredAt = performance.now();
           const converse = await converseResponse.json();
-          appendQuestionTurn(question, converse.answer, converse.evidence);
+          const answer = normalizeConversationAnswer(converse.answer);
+          appendQuestionTurn(question, answer, converse.evidence);
           $("decision").textContent = "Question answered; awaiting decision.";
           $("timings").textContent =
             "Timings: record-stop to transcript " + ms(transcribedAt - stoppedAt) +
@@ -1942,7 +1943,7 @@ function renderPage(defaultCategory: string): string {
             ", llm_ms " + ms(converse.timings?.llm_ms || 0) +
             ", total " + ms(answeredAt - stoppedAt) + ".";
 
-          await playText(converse.answer);
+          await playText(answer);
           setBusy(false);
           if (
             current &&
@@ -1980,13 +1981,18 @@ function renderPage(defaultCategory: string): string {
       $("qa").innerHTML = "";
     }
 
+    function normalizeConversationAnswer(answer) {
+      const value = typeof answer === "string" ? answer.trim() : "";
+      return value || "I don't see evidence about that";
+    }
+
     function appendQuestionTurn(question, answer, evidence) {
       conversationHistory.push({ question, answer });
       const turn = document.createElement("div");
       turn.className = "qa-turn";
       turn.innerHTML =
         "<div class='qa-bubble qa-question'>" + escapeHtml(question) + "</div>" +
-        "<div class='qa-bubble qa-answer'>" + escapeHtml(answer || "I don't see evidence about that") + "</div>" +
+        "<div class='qa-bubble qa-answer'>" + escapeHtml(answer) + "</div>" +
         evidenceHtml(evidence);
       $("qa").appendChild(turn);
       $("qa").scrollTop = $("qa").scrollHeight;

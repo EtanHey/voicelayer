@@ -338,7 +338,12 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("conversationHistory");
     expect(html).toContain('interpreted.decision.action === "question"');
     expect(html).toContain('await api("/api/converse"');
+    expect(html).toContain("const answer = normalizeConversationAnswer(converse.answer);");
     expect(html).toContain("appendQuestionTurn");
+    expect(html).toContain("function normalizeConversationAnswer(answer)");
+    expect(html).toContain("return value || \"I don't see evidence about that\";");
+    expect(html).toContain("await playText(answer);");
+    expect(html).not.toContain("await playText(converse.answer);");
     expect(html).toContain("await startRecordingForCluster(cluster);");
     expect(html).toContain('!(recorder && recorder.state === "recording")');
     expect(html).toContain("evidence_ms");
