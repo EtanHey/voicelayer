@@ -113,6 +113,14 @@ interface EndpointingHelpersForTest {
     waitingContinuation?: boolean;
     endpointing?: { speechStarted?: boolean } | null;
   }) => boolean;
+  shouldResumeWaitingContinuationAfterError: (
+    recordingContext: { waitingContinuation?: boolean },
+    transcriptAccepted: boolean,
+  ) => boolean;
+  shouldSkipHeldContinuationRestartAfterPrompt: (
+    playbackResult: string,
+    recorderState?: string | null,
+  ) => boolean;
   transcriptTurnsAfterCombinedPauseContinuation: <T extends { id: number }>(
     turns: T[],
     heldTurnId: number | null | undefined,
@@ -133,7 +141,7 @@ function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest
   }
   const source = html.slice(start, end);
   return (new Function(
-    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, transcriptTurnsAfterCombinedPauseContinuation, transcriptTurnsAfterEmptyPauseContinuation };`,
+    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, shouldResumeWaitingContinuationAfterError, shouldSkipHeldContinuationRestartAfterPrompt, transcriptTurnsAfterCombinedPauseContinuation, transcriptTurnsAfterEmptyPauseContinuation };`,
   ) as () => EndpointingHelpersForTest)();
 }
 
@@ -819,6 +827,58 @@ describe("VoiceReview web server helpers", () => {
       endpointing: { speechStarted: true },
     })).toBe(true);
     expect(html).toContain("if (!shouldAutoListenTimeoutStop(recordingContext)) return;");
+  });
+
+  it("resumes held continuation listening after capture errors before transcript acceptance", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { shouldResumeWaitingContinuationAfterError } =
+      loadEndpointingHelpersFromPage(html);
+
+    expect(
+      shouldResumeWaitingContinuationAfterError(
+        { waitingContinuation: true },
+        false,
+      ),
+    ).toBe(true);
+    expect(
+      shouldResumeWaitingContinuationAfterError(
+        { waitingContinuation: true },
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      shouldResumeWaitingContinuationAfterError(
+        { waitingContinuation: false },
+        false,
+      ),
+    ).toBe(false);
+    expect(html).toContain(
+      "shouldResumeWaitingContinuationAfterError(recordingContext, waitingContinuationTranscriptAccepted)",
+    );
+    expect(html).toContain("resumeThinkingPauseContinuation(cluster,");
+  });
+
+  it("restarts held continuation after a cancelled pause prompt unless barge-in already records", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { shouldSkipHeldContinuationRestartAfterPrompt } =
+      loadEndpointingHelpersFromPage(html);
+
+    expect(
+      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "recording"),
+    ).toBe(true);
+    expect(
+      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "inactive"),
+    ).toBe(false);
+    expect(
+      shouldSkipHeldContinuationRestartAfterPrompt("ended", "inactive"),
+    ).toBe(false);
+    expect(html).toContain(
+      "shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state)",
+    );
   });
 
   it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {

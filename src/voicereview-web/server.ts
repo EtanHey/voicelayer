@@ -2037,6 +2037,18 @@ function renderPage(defaultCategory: string): string {
       return true;
     }
 
+    function shouldResumeWaitingContinuationAfterError(recordingContext, transcriptAccepted) {
+      return Boolean(
+        recordingContext &&
+        recordingContext.waitingContinuation &&
+        !transcriptAccepted
+      );
+    }
+
+    function shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorderState) {
+      return playbackResult === "cancelled" && recorderState === "recording";
+    }
+
     function transcriptTurnsAfterCombinedPauseContinuation(turns, heldTurnId, currentTurnId) {
       if (!heldTurnId || heldTurnId === currentTurnId) return turns;
       return turns.filter((turn) => turn.id !== heldTurnId);
@@ -2508,8 +2520,26 @@ function renderPage(defaultCategory: string): string {
       }
     }
 
+    async function resumeThinkingPauseContinuation(cluster, trailingSilenceMs) {
+      setBusy(false);
+      if (
+        current &&
+        current.cluster_id === cluster.cluster_id &&
+        !(recorder && recorder.state === "recording")
+      ) {
+        await startRecordingForCluster(cluster, {
+          autoListen: true,
+          waitingContinuation: true,
+          endpointing: {
+            trailingSilenceMs
+          }
+        });
+      }
+    }
+
     async function processRecording(blob, cluster, recordingContext = {}) {
       const stoppedAt = performance.now();
+      let waitingContinuationTranscriptAccepted = false;
       setRecording(false);
       setBusy(true);
       mic.classList.remove("recording", "auto-listening", "countdown", "barged");
@@ -2525,6 +2555,7 @@ function renderPage(defaultCategory: string): string {
         const transcribedAt = performance.now();
         const transcribe = await transcribeResponse.json();
         const transcribedText = transcribe.text || "";
+        waitingContinuationTranscriptAccepted = Boolean(String(transcribedText).trim());
         const holdDecision = applyThinkingPauseHold(
           thinkingPauseHold,
           transcribedText,
@@ -2552,25 +2583,15 @@ function renderPage(defaultCategory: string): string {
             const playbackResult = await playText(PAUSE_INTENT_SOFT_PROMPT, {
               label: "Agent prompt"
             });
-            if (playbackResult === "cancelled") {
+            if (shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state)) {
               setBusy(false);
               return;
             }
           }
-          setBusy(false);
-          if (
-            current &&
-            current.cluster_id === cluster.cluster_id &&
-            !(recorder && recorder.state === "recording")
-          ) {
-            await startRecordingForCluster(cluster, {
-              autoListen: true,
-              waitingContinuation: true,
-              endpointing: {
-                trailingSilenceMs: holdDecision.nextTrailingSilenceMs
-              }
-            });
-          }
+          await resumeThinkingPauseContinuation(
+            cluster,
+            holdDecision.nextTrailingSilenceMs,
+          );
           return;
         }
 
@@ -2652,36 +2673,29 @@ function renderPage(defaultCategory: string): string {
         setStatus("Loading next cluster...");
         await loadNext(true);
       } catch (error) {
-        if (
-          recordingContext.waitingContinuation &&
-          (error.message === "empty transcript" || error.message === "empty audio")
-        ) {
+        if (shouldResumeWaitingContinuationAfterError(recordingContext, waitingContinuationTranscriptAccepted)) {
           const waitingTurnId = collapseEmptyWaitingContinuationTurn(recordingContext);
+          const emptyCapture =
+            error.message === "empty transcript" ||
+            error.message === "empty audio";
           updateTranscriptTurn(waitingTurnId, {
             label: "🎤 You (waiting…)",
             text: thinkingPauseHold.heldTranscript || "(waiting for continuation)",
-            meta: "waiting… partial transcript held; no continuation captured yet",
+            meta: emptyCapture
+              ? "waiting… partial transcript held; no continuation captured yet"
+              : "waiting… partial transcript held; audio capture retried",
             state: "current"
           });
-          setStatus("waiting… keep talking when ready.");
-          setBusy(false);
-          if (
-            current &&
-            current.cluster_id === cluster.cluster_id &&
-            !(recorder && recorder.state === "recording")
-          ) {
-            await startRecordingForCluster(cluster, {
-              autoListen: true,
-              waitingContinuation: true,
-              endpointing: {
-                trailingSilenceMs:
-                  continuationTrailingSilenceMs(
-                    thinkingPauseHold,
-                    ENDPOINTING_DEFAULTS.trailingSilenceMs,
-                  )
-              }
-            });
-          }
+          setStatus(emptyCapture
+            ? "waiting… keep talking when ready."
+            : "waiting… audio capture failed; listening again.");
+          await resumeThinkingPauseContinuation(
+            cluster,
+            continuationTrailingSilenceMs(
+              thinkingPauseHold,
+              ENDPOINTING_DEFAULTS.trailingSilenceMs,
+            ),
+          );
           return;
         }
         if (recordingContext.autoListen && (error.message === "empty transcript" || error.message === "empty audio")) {
