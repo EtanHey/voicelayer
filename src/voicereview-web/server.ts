@@ -3,6 +3,26 @@ import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
+import {
+  DEFAULT_JUDGE_REPORTS_PATH,
+  DEFAULT_JUDGE_VERDICTS_PATH,
+  appendSessionRule,
+  buildJudgeReflectBack,
+  extractSessionRule,
+  findJudgeVerdict,
+  loadJudgeReports,
+  loadJudgeVerdicts,
+  type JudgeVerdict,
+  type SessionRule,
+} from "./session-intelligence";
+
+export {
+  appendSessionRule,
+  buildJudgeReflectBack,
+  extractSessionRule,
+  loadJudgeVerdicts,
+};
+export type { JudgeVerdict, SessionRule };
 
 export type ReviewAction = "merge" | "keep" | "mixed" | "skip" | "question";
 export type MemberDecision = "merge" | "keep" | "prune";
@@ -68,6 +88,12 @@ export interface CommandResult {
   durationMs: number;
 }
 
+interface TranscribeInput {
+  audio: Blob;
+  contentType: string | null;
+  clusterMemberNames: string[];
+}
+
 export interface VoiceReviewConfig {
   port: number;
   hostname: string;
@@ -76,6 +102,9 @@ export interface VoiceReviewConfig {
   brainlayerDbPath: string;
   batchPath: string;
   decisionsPath: string;
+  judgeVerdictsPath: string;
+  judgeReportsPath: string;
+  rulesLogPath: string;
   sttVocabularyPath: string;
   ffmpegPath: string | null;
   whisperCliPath: string | null;
@@ -123,6 +152,12 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
       HOME,
       "Gits/brainlayer/eval_results/kg-phase1-decisions-2026-06-05.json",
     ),
+  judgeVerdictsPath:
+    process.env.VOICE_REVIEW_JUDGE_VERDICTS || DEFAULT_JUDGE_VERDICTS_PATH,
+  judgeReportsPath:
+    process.env.VOICE_REVIEW_JUDGE_REPORTS || DEFAULT_JUDGE_REPORTS_PATH,
+  rulesLogPath:
+    process.env.VOICE_REVIEW_RULES_LOG || defaultRulesLogPath(),
   sttVocabularyPath:
     process.env.VOICE_REVIEW_STT_VOCAB ||
     join(HOME, ".local/state/voicelayer/stt-vocabulary.json"),
@@ -151,6 +186,11 @@ export function mergeConfig(
   overrides?: Partial<VoiceReviewConfig>,
 ): VoiceReviewConfig {
   return { ...DEFAULT_CONFIG, ...overrides };
+}
+
+function defaultRulesLogPath(): string {
+  const date = new Date().toISOString().slice(0, 10);
+  return join(HOME, "Gits/brainlayer/eval_results", `kg-review-rules-${date}.jsonl`);
 }
 
 export function buildDriverArgs(
@@ -218,19 +258,34 @@ export function buildWhisperPrompt(
   maxTokens = 224,
 ): string {
   const selected: string[] = [];
+  const seen = new Set<string>();
   let tokens = 0;
   for (const term of terms) {
     if (typeof term !== "string") continue;
     const clean = term.replace(/\s+/g, " ").trim();
     if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
     const termTokens = clean.split(/\s+/).length;
     if (tokens + termTokens > maxTokens) continue;
     const candidate = [...selected, clean].join(" ");
     if (candidate.length > 900) break;
     selected.push(clean);
+    seen.add(key);
     tokens += termTokens;
   }
   return selected.join(" ");
+}
+
+export function buildClusterAwareWhisperPrompt(options: {
+  clusterMemberNames: unknown[];
+  vocabularyTerms: unknown[];
+  maxTokens?: number;
+}): string {
+  return buildWhisperPrompt(
+    [...options.clusterMemberNames, ...options.vocabularyTerms],
+    options.maxTokens || 224,
+  );
 }
 
 export function buildWhisperArgs(options: {
@@ -317,6 +372,9 @@ export function buildConverseMessages(options: {
     "You must answer ONLY from the provided evidence snippets and cluster facts.",
     'If the provided evidence does not answer the question, say "I don\'t see evidence about that" rather than invent.',
     "Use short spoken-style answers, 2-4 sentences, because the answer will be read aloud with TTS.",
+    "Entity-grill style: never re-ask cold what the reviewer already explained.",
+    "Reflect your updated understanding in one short sentence before or with the next question.",
+    "Ask 1-3 targeted questions max, only about genuine gaps, and invite the reviewer to confirm or correct your understanding.",
     "Mention member names and types when useful. Do not include markdown.",
   ].join("\n");
 
@@ -610,7 +668,25 @@ async function handleNext(
     env: driverEnv(config),
   });
   const payload = parseDriverRecord(result);
-  return jsonResponse({ ...payload, timings: { driver_ms: result.durationMs } });
+  const sessionContext = await loadSessionContext(config);
+  const cluster = isReviewCluster(payload.cluster) ? payload.cluster : null;
+  const judgeVerdict = cluster
+    ? findJudgeVerdict(sessionContext.judgeVerdicts, cluster)
+    : null;
+  const responsePayload: Record<string, unknown> = {
+    ...payload,
+    timings: { driver_ms: result.durationMs },
+    session_context: {
+      decisions_loaded: sessionContext.decisions !== null,
+      judge_verdicts: sessionContext.judgeVerdicts.length,
+      judge_reports: sessionContext.judgeReports.length,
+    },
+  };
+  if (judgeVerdict) {
+    responsePayload.speak = buildJudgeReflectBack(judgeVerdict);
+    responsePayload.judge_verdict = judgeVerdict;
+  }
+  return jsonResponse(responsePayload);
 }
 
 async function handleStats(
@@ -709,11 +785,19 @@ async function handleInterpret(
     const raw = await response.json();
     const content = extractChatContent(raw);
     const decision = parseInterpretDecision(content, body.cluster, body.transcript);
-    return jsonResponse({
+    const sessionRule = await recordSessionRuleFromText(
+      body.transcript,
+      body.cluster,
+      "interpret",
+      config,
+    );
+    const responsePayload: Record<string, unknown> = {
       decision,
       confirmation: buildConfirmation(decision, body.cluster),
       timings: { llm_ms: Math.round(performance.now() - started) },
-    });
+    };
+    if (sessionRule) responsePayload.session_rule = sessionRule;
+    return jsonResponse(responsePayload);
   } finally {
     clearTimeout(timeout);
   }
@@ -782,14 +866,22 @@ async function handleConverse(
     }
     const raw = await response.json();
     const answer = extractChatContent(raw).replace(/\s+/g, " ").trim();
-    return jsonResponse({
+    const sessionRule = await recordSessionRuleFromText(
+      body.question,
+      body.cluster,
+      "converse",
+      config,
+    );
+    const responsePayload: Record<string, unknown> = {
       answer,
       evidence,
       timings: {
         evidence_ms: evidenceResult.durationMs,
         llm_ms: Math.round(performance.now() - llmStarted),
       },
-    });
+    };
+    if (sessionRule) responsePayload.session_rule = sessionRule;
+    return jsonResponse(responsePayload);
   } finally {
     clearTimeout(timeout);
   }
@@ -801,13 +893,19 @@ async function handleTranscribe(
   runCommand: CommandRunner,
 ): Promise<Response> {
   const started = performance.now();
-  const audio = await request.blob();
+  let transcribeInput: TranscribeInput;
+  try {
+    transcribeInput = await readTranscribeInput(request);
+  } catch (error) {
+    return jsonResponse({ error: errorMessage(error) }, 400);
+  }
+  const audio = transcribeInput.audio;
   if (audio.size === 0) return jsonResponse({ error: "empty audio" }, 400);
 
   const id = crypto.randomUUID();
   const inputPath = join(
     config.tempDir,
-    `${id}.${extensionForContentType(request.headers.get("content-type"))}`,
+    `${id}.${extensionForContentType(transcribeInput.contentType)}`,
   );
   const wavPath = join(config.tempDir, `${id}.wav`);
   await mkdir(config.tempDir, { recursive: true });
@@ -842,7 +940,10 @@ async function handleTranscribe(
     const whisper = config.whisperCliPath;
     if (!whisper) throw new Error("whisper-cli not found");
 
-    const prompt = await loadVocabularyPrompt(config.sttVocabularyPath);
+    const prompt = await loadVocabularyPrompt(
+      config.sttVocabularyPath,
+      transcribeInput.clusterMemberNames,
+    );
     const whisperResult = await runCommand({
       args: buildWhisperArgs({
         binary: whisper,
@@ -919,6 +1020,22 @@ async function handleTts(
   } finally {
     await rm(mp3Path, { force: true });
   }
+}
+
+async function recordSessionRuleFromText(
+  text: string,
+  cluster: ReviewCluster,
+  endpoint: "interpret" | "converse",
+  config: VoiceReviewConfig,
+): Promise<SessionRule | null> {
+  const sessionRule = extractSessionRule(text, cluster);
+  if (!sessionRule) return null;
+  await appendSessionRule(sessionRule, config.rulesLogPath, {
+    endpoint,
+    cluster,
+    sourceText: text,
+  });
+  return sessionRule;
 }
 
 async function runShellCommand(call: CommandCall): Promise<CommandResult> {
@@ -1035,6 +1152,19 @@ async function loadDecisionsJson(decisionsPath: string): Promise<unknown> {
   }
 }
 
+async function loadSessionContext(config: VoiceReviewConfig): Promise<{
+  decisions: unknown;
+  judgeVerdicts: JudgeVerdict[];
+  judgeReports: Array<{ path: string; content: string }>;
+}> {
+  const [decisions, judgeVerdicts, judgeReports] = await Promise.all([
+    loadDecisionsJson(config.decisionsPath),
+    loadJudgeVerdicts(config.judgeVerdictsPath),
+    loadJudgeReports(config.judgeReportsPath),
+  ]);
+  return { decisions, judgeVerdicts, judgeReports };
+}
+
 export function decorateStatsWithSkippedCounts(
   stats: unknown,
   decisions: unknown,
@@ -1065,17 +1195,60 @@ export function decorateStatsWithSkippedCounts(
   return { ...stats, per_category: perCategory };
 }
 
-async function loadVocabularyPrompt(path: string): Promise<string> {
+async function readTranscribeInput(request: Request): Promise<TranscribeInput> {
+  const requestContentType = request.headers.get("content-type");
+  if (requestContentType?.includes("multipart/form-data")) {
+    const form = await request.formData();
+    const audio = form.get("audio");
+    if (!(audio instanceof Blob)) throw new Error("audio is required");
+    return {
+      audio,
+      contentType: audio.type || requestContentType,
+      clusterMemberNames: parseMemberNames(form.get("member_names")),
+    };
+  }
+
+  return {
+    audio: await request.blob(),
+    contentType: requestContentType,
+    clusterMemberNames: [],
+  };
+}
+
+async function loadVocabularyPrompt(
+  path: string,
+  clusterMemberNames: unknown[] = [],
+): Promise<string> {
   try {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw);
     const terms = isRecord(parsed) && Array.isArray(parsed.prompt_terms)
       ? parsed.prompt_terms
       : [];
-    return buildWhisperPrompt(terms, 224);
+    return buildClusterAwareWhisperPrompt({
+      clusterMemberNames,
+      vocabularyTerms: terms,
+      maxTokens: 224,
+    });
   } catch {
-    return buildWhisperPrompt(["VoiceLayer", "BrainLayer", "Cantaloupe AI"], 224);
+    return buildClusterAwareWhisperPrompt({
+      clusterMemberNames,
+      vocabularyTerms: ["VoiceLayer", "BrainLayer", "Cantaloupe AI"],
+      maxTokens: 224,
+    });
   }
+}
+
+function parseMemberNames(value: FormDataEntryValue | null): string[] {
+  if (typeof value !== "string") return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter((item): item is string => typeof item === "string");
 }
 
 function flattenFlagBatch(raw: unknown): ReviewCluster[] {
@@ -1968,10 +2141,16 @@ function renderPage(defaultCategory: string): string {
       mic.textContent = "Record";
       try {
         setStatus("Transcribing locally with whisper-cli...");
+        const transcribeForm = new FormData();
+        transcribeForm.append("audio", blob, "recording.webm");
+        transcribeForm.append("cluster_id", cluster.cluster_id);
+        transcribeForm.append(
+          "member_names",
+          JSON.stringify((cluster.members || []).map((member) => member.name).filter(Boolean))
+        );
         const transcribeResponse = await api("/api/transcribe", {
           method: "POST",
-          headers: { "content-type": blob.type || "audio/webm" },
-          body: blob
+          body: transcribeForm
         });
         const transcribedAt = performance.now();
         const transcribe = await transcribeResponse.json();

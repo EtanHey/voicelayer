@@ -4,22 +4,28 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import {
+  appendSessionRule,
+  buildClusterAwareWhisperPrompt,
   buildConverseMessages,
   buildConfirmation,
   buildDriverArgs,
   buildEvidenceArgs,
   buildInterpretMessages,
+  buildJudgeReflectBack,
   buildWhisperArgs,
   buildWhisperPrompt,
   createVoiceReviewApp,
   decorateStatsWithSkippedCounts,
   decisionLockPath,
   DEFAULT_CONFIG,
+  extractSessionRule,
+  loadJudgeVerdicts,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
   type ConversationEvidence,
   type CommandCall,
   type CommandResult,
+  type JudgeVerdict,
   type ReviewCluster,
 } from "./server";
 
@@ -42,6 +48,21 @@ const cantaloupeCluster: ReviewCluster = {
       chunks: 4,
     },
   ],
+};
+
+const cantaloupeVerdict: JudgeVerdict = {
+  stem: "cantaloupe",
+  proposed_type: "Project",
+  identity:
+    "Cantaloupe AI — employment/client project at defunct Cantaloupe Technologies Corp (AI hiring platform Etan worked on); not a person.",
+  merge_disposition: "merge",
+  canonical_suggestion: "Cantaloupe",
+  confidence: "high",
+  evidence_cited: [
+    "Etan correction: project by dead/renamed company, NOT a person",
+  ],
+  reasoning:
+    "Etan's explicit correction and worked_at edges anchor this to his employment deliverable.",
 };
 
 function commandResult(stdout: unknown): CommandResult {
@@ -82,6 +103,7 @@ describe("VoiceReview web server helpers", () => {
         brainlayerWorktree: "/tmp/voice-review-wt",
         batchPath: "/batch.json",
         decisionsPath: "/decisions.json",
+        judgeVerdictsPath: join(tmpdir(), "missing-worker*.json"),
       },
       runCommand: async (call) => {
         calls.push(call);
@@ -98,11 +120,90 @@ describe("VoiceReview web server helpers", () => {
       cluster: cantaloupeCluster,
       speak: "Cluster text",
       timings: { driver_ms: 12 },
+      session_context: {
+        decisions_loaded: false,
+        judge_verdicts: 0,
+        judge_reports: 0,
+      },
     });
     expect(calls).toHaveLength(1);
     expect(calls[0].args).toContain("--category");
     expect(calls[0].env.PYTHONPATH).toBe("/tmp/voice-review-wt/src");
     expect(calls[0].cwd).toBe("/tmp/voice-review-wt");
+  });
+
+  it("loads judge verdicts from configurable worker globs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-verdicts-test-"));
+    try {
+      await writeFile(join(root, "worker1.json"), JSON.stringify([cantaloupeVerdict]));
+      await writeFile(
+        join(root, "worker2.json"),
+        JSON.stringify([
+          {
+            stem: "Agent C",
+            proposed_type: "D2",
+            identity: "Ephemeral parallel-audit worker label.",
+            merge_disposition: "merge",
+            canonical_suggestion: "Agent C",
+            confidence: "high",
+            evidence_cited: [],
+            reasoning: "Session-scoped worker slot.",
+          },
+        ]),
+      );
+
+      const verdicts = await loadJudgeVerdicts(join(root, "worker*.json"));
+
+      expect(verdicts).toHaveLength(2);
+      expect(verdicts.map((verdict) => verdict.stem).sort()).toEqual([
+        "Agent C",
+        "cantaloupe",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("builds a judge reflect-back line from a verdict", () => {
+    expect(buildJudgeReflectBack(cantaloupeVerdict)).toBe(
+      "The judge concluded: Cantaloupe AI - employment/client project at defunct Cantaloupe Technologies Corp (AI hiring platform Etan worked on); not a person; disposition merge with high confidence - confirm, or correct me.",
+    );
+  });
+
+  it("serves /api/next with judge reflect-back speech when the cluster has a verdict", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-next-verdict-test-"));
+    try {
+      await writeFile(join(root, "worker1.json"), JSON.stringify([cantaloupeVerdict]));
+      const app = createVoiceReviewApp({
+        config: {
+          brainlayerWorktree: "/tmp/voice-review-wt",
+          batchPath: "/batch.json",
+          decisionsPath: join(root, "decisions.json"),
+          judgeVerdictsPath: join(root, "worker*.json"),
+        },
+        runCommand: async () =>
+          commandResult({ cluster: cantaloupeCluster, speak: "Cold cluster intro" }),
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/next?category=diagnosis-flag"),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body.speak).toBe(
+        "The judge concluded: Cantaloupe AI - employment/client project at defunct Cantaloupe Technologies Corp (AI hiring platform Etan worked on); not a person; disposition merge with high confidence - confirm, or correct me.",
+      );
+      expect(body.judge_verdict).toMatchObject({
+        stem: "cantaloupe",
+        merge_disposition: "merge",
+        confidence: "high",
+      });
+      expect(body.session_context.judge_verdicts).toBe(1);
+      expect(body.session_context.decisions_loaded).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("records /api/decide through the shared KG review driver with voice source", async () => {
@@ -327,6 +428,7 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("const recordingCluster = current");
     expect(html).toContain("processRecording(new Blob(chunks");
     expect(html).toContain("recordingCluster");
+    expect(html).toContain('"member_names",');
     expect(html).toContain("cluster: cluster");
     expect(html).toContain("cluster_id: cluster.cluster_id");
     expect(html).toContain("const decided = Math.max(0, total - undecided)");
@@ -478,6 +580,70 @@ describe("VoiceReview web server helpers", () => {
 
     expect(prompt).toBe("BrainLayer Cantaloupe AI VoiceLayer");
     expect(prompt.split(/\s+/)).toHaveLength(4);
+  });
+
+  it("builds a cluster-aware whisper prompt with member names ahead of generic terms under budget", () => {
+    const prompt = buildClusterAwareWhisperPrompt({
+      clusterMemberNames: ["Caneloop Candidate", "Cantaloupe AI"],
+      vocabularyTerms: ["BrainLayer", "VoiceLayer", "one two three"],
+      maxTokens: 5,
+    });
+
+    expect(prompt).toBe("Caneloop Candidate Cantaloupe AI BrainLayer");
+  });
+
+  it("passes current cluster member names to whisper before generic vocabulary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-prompt-test-"));
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli") ? "Cantaloupe AI\n" : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      await writeFile(
+        join(root, "vocab.json"),
+        JSON.stringify({ prompt_terms: ["BrainLayer", "VoiceLayer"] }),
+      );
+      const form = new FormData();
+      form.append("audio", new Blob(["not real audio"], { type: "audio/webm" }), "clip.webm");
+      form.append("cluster_id", cantaloupeCluster.cluster_id);
+      form.append(
+        "member_names",
+        JSON.stringify(["Caneloop Candidate", "Cantaloupe AI"]),
+      );
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          body: form,
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      const whisperCall = calls.find((call) => call.args[0].includes("whisper-cli"));
+      expect(whisperCall).toBeDefined();
+      const prompt =
+        whisperCall!.args[whisperCall!.args.indexOf("--prompt") + 1];
+      expect(prompt.startsWith("Caneloop Candidate Cantaloupe AI BrainLayer")).toBe(
+        true,
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("builds whisper-cli args with --prompt and no shell string", () => {
@@ -879,12 +1045,68 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[0].content).toContain("answer ONLY from the provided evidence");
     expect(messages[0].content).toContain("2-4 sentences");
     expect(messages[0].content).toContain("I don't see evidence about that");
+    expect(messages[0].content).toContain("Reflect your updated understanding in one short sentence");
+    expect(messages[0].content).toContain("Ask 1-3 targeted questions max");
+    expect(messages[0].content).toContain("confirm or correct");
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
     expect(messages[1].content).toContain("Cantaloupe (company, 13 chunks)");
     expect(messages[1].content).toContain("chunk-company");
     expect(messages[1].content).toContain("company context");
     expect(messages[1].content).toContain("what is the difference?");
     expect(messages[1].content).toContain("which chunks does the company one have?");
+  });
+
+  it("extracts general entity-review rules without treating plain decisions as rules", () => {
+    expect(
+      extractSessionRule(
+        "Anything ending in -Codex is an agent, so merge these.",
+        cantaloupeCluster,
+      ),
+    ).toEqual({
+      kind: "rule",
+      statement: "Anything ending in -Codex is an agent.",
+      examples: ["-Codex"],
+    });
+
+    expect(extractSessionRule("merge these into the company one", cantaloupeCluster)).toBe(
+      null,
+    );
+  });
+
+  it("extracts vocabulary correction rules and appends them to the session rules log", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-rules-test-"));
+    const logPath = join(root, "kg-review-rules-2026-06-05.jsonl");
+    try {
+      const rule = extractSessionRule("Not Caneloop, Cantaloupe.", cantaloupeCluster);
+      expect(rule).toEqual({
+        kind: "rule",
+        statement: "Vocabulary correction: Caneloop means Cantaloupe.",
+        examples: ["Caneloop", "Cantaloupe"],
+        vocabulary_correction: {
+          misheard: "Caneloop",
+          intended: "Cantaloupe",
+        },
+      });
+
+      await appendSessionRule(rule!, logPath, {
+        endpoint: "interpret",
+        cluster: cantaloupeCluster,
+        sourceText: "Not Caneloop, Cantaloupe.",
+      });
+
+      const lines = (await readFile(logPath, "utf8")).trim().split("\n");
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0])).toMatchObject({
+        kind: "rule",
+        statement: "Vocabulary correction: Caneloop means Cantaloupe.",
+        examples: ["Caneloop", "Cantaloupe"],
+        source_endpoint: "interpret",
+        cluster_id: cantaloupeCluster.cluster_id,
+        vocabulary_status: "d1_vocab_store_unavailable",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("serves first-turn /api/converse with evidence timings and a grounded LiteRT answer", async () => {
