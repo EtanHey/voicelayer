@@ -76,6 +76,7 @@ interface EndpointingHelpersForTest {
   createThinkingPauseHoldState: () => {
     heldTranscript: string;
     extendedTrailingSilenceMs: number;
+    heldTurnId: number | null;
   };
   classifyPauseIntent: (transcript: string) => {
     intent: "pause" | "content" | "prompt";
@@ -102,12 +103,21 @@ interface EndpointingHelpersForTest {
     nextTrailingSilenceMs: number;
   };
   recordingOptionsForBargeIn: (
-    state: { heldTranscript: string; extendedTrailingSilenceMs: number },
+    state: { heldTranscript: string; extendedTrailingSilenceMs: number; heldTurnId?: number | null },
   ) => {
     bargedIn: true;
     waitingContinuation?: true;
     endpointing?: { trailingSilenceMs: number };
   };
+  shouldAutoListenTimeoutStop: (recordingContext: {
+    waitingContinuation?: boolean;
+    endpointing?: { speechStarted?: boolean } | null;
+  }) => boolean;
+  transcriptTurnsAfterCombinedPauseContinuation: <T extends { id: number }>(
+    turns: T[],
+    heldTurnId: number | null | undefined,
+    currentTurnId: number | null | undefined,
+  ) => T[];
 }
 
 function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest {
@@ -118,7 +128,7 @@ function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest
   }
   const source = html.slice(start, end);
   return (new Function(
-    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn };`,
+    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, transcriptTurnsAfterCombinedPauseContinuation };`,
   ) as () => EndpointingHelpersForTest)();
 }
 
@@ -560,6 +570,30 @@ describe("VoiceReview web server helpers", () => {
     expect(state.countdownProgress).toBe(0);
   });
 
+  it("does not learn immediate speech as the ambient endpointing floor", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createEndpointingState, advanceEndpointing } =
+      loadEndpointingHelpersFromPage(html);
+
+    const state = createEndpointingState({
+      frameMs: 50,
+      calibrationMs: 300,
+      trailingSilenceMs: 1200,
+    });
+
+    for (let index = 0; index < 6; index += 1) {
+      advanceEndpointing(state, 0.04);
+    }
+    expect(state.calibrated).toBe(true);
+    expect(state.noiseFloor).toBeLessThan(0.018);
+
+    advanceEndpointing(state, 0.022);
+    expect(state.speechStarted).toBe(true);
+    expect(state.phase).toBe("speaking");
+  });
+
   it("classifies pause intent without treating wait as a magic word", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
@@ -736,6 +770,27 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain(".mic.barged");
   });
 
+  it("does not let the auto-listen watchdog stop a held continuation after speech resumes", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { shouldAutoListenTimeoutStop } = loadEndpointingHelpersFromPage(html);
+
+    expect(shouldAutoListenTimeoutStop({
+      waitingContinuation: true,
+      endpointing: { speechStarted: true },
+    })).toBe(false);
+    expect(shouldAutoListenTimeoutStop({
+      waitingContinuation: true,
+      endpointing: { speechStarted: false },
+    })).toBe(true);
+    expect(shouldAutoListenTimeoutStop({
+      waitingContinuation: false,
+      endpointing: { speechStarted: true },
+    })).toBe(true);
+    expect(html).toContain("if (!shouldAutoListenTimeoutStop(recordingContext)) return;");
+  });
+
   it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
@@ -752,6 +807,30 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain(".turn.is-prior");
     expect(html).toContain("showLiveUserTurn(recordingContext);");
     expect(html).toContain("completeLiveUserTurn(recordingContext, transcriptForInterpret");
+  });
+
+  it("removes the stale held waiting turn when a pause continuation is combined", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { transcriptTurnsAfterCombinedPauseContinuation } =
+      loadEndpointingHelpersFromPage(html);
+
+    const turns = [
+      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
+      { id: 12, label: "🎤 You (current)", text: "wait actually merge them" },
+    ];
+
+    expect(
+      transcriptTurnsAfterCombinedPauseContinuation(turns, 11, 12),
+    ).toEqual([
+      { id: 12, label: "🎤 You (current)", text: "wait actually merge them" },
+    ]);
+    expect(
+      transcriptTurnsAfterCombinedPauseContinuation(turns, 12, 12),
+    ).toEqual(turns);
+    expect(html).toContain("removeHeldWaitingTranscriptTurn(recordingContext);");
+    expect(html).toContain("thinkingPauseHold.heldTurnId = recordingContext.transcriptTurnId;");
   });
 
   it("serves page logic that saves the decision before speaking confirmation", async () => {

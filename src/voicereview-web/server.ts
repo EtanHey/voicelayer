@@ -1770,7 +1770,8 @@ function renderPage(defaultCategory: string): string {
       speechMultiplier: 2.4,
       minSilenceRms: 0.012,
       silenceOffset: 0.006,
-      silenceMultiplier: 1.45
+      silenceMultiplier: 1.45,
+      calibrationSpeechRms: 0.018
     };
 
     function endpointingConfig(overrides = {}) {
@@ -1785,6 +1786,8 @@ function renderPage(defaultCategory: string): string {
         calibrationMsSeen: 0,
         calibrationFrames: 0,
         calibrationRmsTotal: 0,
+        calibrationAcceptedFrames: 0,
+        calibrationAcceptedRmsTotal: 0,
         noiseFloor: 0,
         speechThreshold: 0,
         silenceThreshold: 0,
@@ -1805,9 +1808,15 @@ function renderPage(defaultCategory: string): string {
         state.calibrationMsSeen += frameMs;
         state.calibrationFrames += 1;
         state.calibrationRmsTotal += sample;
+        if (sample < config.calibrationSpeechRms) {
+          state.calibrationAcceptedFrames += 1;
+          state.calibrationAcceptedRmsTotal += sample;
+        }
         state.phase = "calibrating";
         if (state.calibrationMsSeen >= config.calibrationMs) {
-          const ambient = state.calibrationRmsTotal / Math.max(1, state.calibrationFrames);
+          const ambient = state.calibrationAcceptedFrames > 0
+            ? state.calibrationAcceptedRmsTotal / state.calibrationAcceptedFrames
+            : config.minNoiseFloor;
           state.noiseFloor = Math.max(ambient, config.minNoiseFloor);
           state.speechThreshold = Math.max(
             config.minSpeechRms,
@@ -1878,7 +1887,8 @@ function renderPage(defaultCategory: string): string {
     function createThinkingPauseHoldState() {
       return {
         heldTranscript: "",
-        extendedTrailingSilenceMs: PAUSE_INTENT_EXTENDED_SILENCE_MS
+        extendedTrailingSilenceMs: PAUSE_INTENT_EXTENDED_SILENCE_MS,
+        heldTurnId: null
       };
     }
 
@@ -2005,6 +2015,23 @@ function renderPage(defaultCategory: string): string {
         };
       }
       return options;
+    }
+
+    function shouldAutoListenTimeoutStop(recordingContext) {
+      if (
+        recordingContext &&
+        recordingContext.waitingContinuation &&
+        recordingContext.endpointing &&
+        recordingContext.endpointing.speechStarted
+      ) {
+        return false;
+      }
+      return true;
+    }
+
+    function transcriptTurnsAfterCombinedPauseContinuation(turns, heldTurnId, currentTurnId) {
+      if (!heldTurnId || heldTurnId === currentTurnId) return turns;
+      return turns.filter((turn) => turn.id !== heldTurnId);
     }
 
     function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
@@ -2358,6 +2385,7 @@ function renderPage(defaultCategory: string): string {
         setStatus("Listening — ask more or say your decision.");
         autoListenTimer = setTimeout(() => {
           if (recorder && recorder.state === "recording" && activeRecordingContext === recordingContext) {
+            if (!shouldAutoListenTimeoutStop(recordingContext)) return;
             recordingContext.timedOut = true;
             setStatus("Listening window ended — transcribing anything captured.");
             stopRecording("timeout");
@@ -2492,7 +2520,11 @@ function renderPage(defaultCategory: string): string {
         const transcriptForInterpret = holdDecision.transcript || transcribedText;
 
         if (holdDecision.shouldHold) {
+          if (recordingContext.waitingContinuation) {
+            removeHeldWaitingTranscriptTurn(recordingContext);
+          }
           completeLiveUserTurn(recordingContext, transcriptForInterpret);
+          thinkingPauseHold.heldTurnId = recordingContext.transcriptTurnId;
           updateTranscriptTurn(recordingContext.transcriptTurnId, {
             label: "🎤 You (waiting…)",
             text: transcriptForInterpret,
@@ -2529,6 +2561,9 @@ function renderPage(defaultCategory: string): string {
           return;
         }
 
+        if (recordingContext.waitingContinuation) {
+          removeHeldWaitingTranscriptTurn(recordingContext);
+        }
         completeLiveUserTurn(recordingContext, transcriptForInterpret || "(empty transcript)");
 
         setStatus("Interpreting decision with LiteRT-LM...");
@@ -2690,6 +2725,17 @@ function renderPage(defaultCategory: string): string {
       const turn = transcriptTurns.find((item) => item.id === id);
       if (!turn) return;
       Object.assign(turn, patch);
+      renderTranscriptLog();
+    }
+
+    function removeHeldWaitingTranscriptTurn(recordingContext) {
+      if (!recordingContext.waitingContinuation || !thinkingPauseHold.heldTurnId) return;
+      transcriptTurns = transcriptTurnsAfterCombinedPauseContinuation(
+        transcriptTurns,
+        thinkingPauseHold.heldTurnId,
+        recordingContext.transcriptTurnId,
+      );
+      thinkingPauseHold.heldTurnId = null;
       renderTranscriptLog();
     }
 
