@@ -107,7 +107,7 @@ describe("VoiceReview web server helpers", () => {
         calls.push(call);
         return commandResult({
           recorded: "diagnosis-flag:cantaloupe",
-          decision: { action: "merge_all", source: "voice" },
+          decision: { action: "merge", source: "voice" },
         });
       },
     });
@@ -119,7 +119,7 @@ describe("VoiceReview web server helpers", () => {
         body: JSON.stringify({
           cluster_id: "diagnosis-flag:cantaloupe",
           decision: {
-            action: "merge_all",
+            action: "merge",
             canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
             note: "merge them all",
           },
@@ -132,7 +132,7 @@ describe("VoiceReview web server helpers", () => {
     expect(calls[0].args).toContain("/batch.json");
     const decisionJson = calls[0].args[calls[0].args.indexOf("--decision-json") + 1];
     expect(JSON.parse(decisionJson)).toMatchObject({
-      action: "merge_all",
+      action: "merge",
       canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
       note: "merge them all",
       source: "voice",
@@ -221,7 +221,7 @@ describe("VoiceReview web server helpers", () => {
     });
 
     expect(messages[0].role).toBe("system");
-    expect(messages[0].content).toContain("merge_all|keep_all|mixed|skip");
+    expect(messages[0].content).toContain("merge|keep|mixed|skip");
     expect(messages[0].content).toContain("exactly one JSON object");
     expect(messages[0].content).toContain("few-shot examples");
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
@@ -247,13 +247,13 @@ describe("VoiceReview web server helpers", () => {
 
   it("parses fenced LiteRT JSON into a valid voice decision", () => {
     const decision = parseInterpretDecision(
-      "```json\n{\"action\":\"merge_all\",\"canonical_id\":\"16db6804-dc3e-5465-93d2-e3956c3f63f5\",\"note\":\"merge them all\"}\n```",
+      "```json\n{\"action\":\"merge\",\"canonical_id\":\"16db6804-dc3e-5465-93d2-e3956c3f63f5\",\"note\":\"merge them all\"}\n```",
       cantaloupeCluster,
       "merge them all",
     );
 
     expect(decision).toEqual({
-      action: "merge_all",
+      action: "merge",
       canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
       note: "merge them all",
       source: "voice",
@@ -265,13 +265,13 @@ describe("VoiceReview web server helpers", () => {
 
   it("overrides model note with the exact verbatim transcript", () => {
     const decision = parseInterpretDecision(
-      '{"action":"keep_all","note":"model paraphrase"}',
+      '{"action":"keep","note":"model paraphrase"}',
       cantaloupeCluster,
       "keep them separate, I mean literally separate",
     );
 
     expect(decision).toEqual({
-      action: "keep_all",
+      action: "keep",
       note: "keep them separate, I mean literally separate",
       source: "voice",
     });
@@ -295,7 +295,7 @@ describe("VoiceReview web server helpers", () => {
               {
                 message: {
                   content: JSON.stringify({
-                    action: "merge_all",
+                    action: "merge",
                     canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
                     note: "merge them all, the company one is the real one",
                   }),
@@ -324,11 +324,29 @@ describe("VoiceReview web server helpers", () => {
     expect(requestedBody.messages[0].content).toContain("STRICT");
     expect(await response.json()).toMatchObject({
       decision: {
-        action: "merge_all",
+        action: "merge",
         canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
         source: "voice",
       },
       confirmation: "Merge all into Cantaloupe, company.",
     });
+  });
+
+  it("normalizes legacy LiteRT action names to dashboard action names", () => {
+    expect(
+      parseInterpretDecision(
+        '{"action":"merge_all","canonical_id":"16db6804-dc3e-5465-93d2-e3956c3f63f5"}',
+        cantaloupeCluster,
+        "merge them all",
+      ),
+    ).toMatchObject({ action: "merge" });
+
+    expect(
+      parseInterpretDecision(
+        '{"action":"keep_all"}',
+        cantaloupeCluster,
+        "keep them separate",
+      ),
+    ).toMatchObject({ action: "keep" });
   });
 });

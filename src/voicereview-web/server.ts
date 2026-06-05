@@ -3,7 +3,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 
-export type ReviewAction = "merge_all" | "keep_all" | "mixed" | "skip";
+export type ReviewAction = "merge" | "keep" | "mixed" | "skip";
 export type MemberDecision = "merge" | "keep" | "prune";
 
 export interface ReviewMember {
@@ -195,9 +195,9 @@ export function buildInterpretMessages(options: {
   const system = [
     "STRICT KG voice-review interpreter.",
     "Map one free-form spoken reviewer answer to exactly one JSON object.",
-    "Allowed action values: merge_all|keep_all|mixed|skip.",
-    "For merge_all, canonical_id must be one id from cluster.members.",
-    "For keep_all and skip, omit canonical_id and members.",
+    "Allowed action values: merge|keep|mixed|skip.",
+    "For merge, canonical_id must be one id from cluster.members.",
+    "For keep and skip, omit canonical_id and members.",
     "For mixed, members must map member id to merge|keep|prune.",
     "Every action must carry note equal to the verbatim transcript.",
     "If the transcript is ambiguous or non-deterministic, choose skip with the verbatim transcript as note. Never force a clean merge/keep/mixed disposition from unclear speech.",
@@ -205,9 +205,9 @@ export function buildInterpretMessages(options: {
     "",
     "few-shot examples:",
     'Transcript: "merge them all, the company one is the real one"',
-    '{"action":"merge_all","canonical_id":"<company-member-id>","note":"merge them all, the company one is the real one"}',
+    '{"action":"merge","canonical_id":"<company-member-id>","note":"merge them all, the company one is the real one"}',
     'Transcript: "keep these separate"',
-    '{"action":"keep_all","note":"keep these separate"}',
+    '{"action":"keep","note":"keep these separate"}',
     'Transcript: "mixed, merge the tool and project, prune the person"',
     '{"action":"mixed","members":{"<tool-id>":"merge","<project-id>":"merge","<person-id>":"prune"},"note":"mixed, merge the tool and project, prune the person"}',
     'Transcript: "I am not sure, maybe this is one thing but maybe not"',
@@ -243,15 +243,7 @@ export function parseInterpretDecision(
   const parsed = parseJsonObject(rawContent);
   if (!isRecord(parsed)) throw new Error("LiteRT response was not an object");
 
-  const action = parsed.action;
-  if (
-    action !== "merge_all" &&
-    action !== "keep_all" &&
-    action !== "mixed" &&
-    action !== "skip"
-  ) {
-    throw new Error(`invalid interpreted action: ${String(action)}`);
-  }
+  const action = normalizeInterpretAction(parsed.action);
 
   const memberIds = new Set(cluster.members.map((member) => member.id));
   const decision: VoiceDecision = {
@@ -260,9 +252,9 @@ export function parseInterpretDecision(
     source: "voice",
   };
 
-  if (action === "merge_all") {
+  if (action === "merge") {
     if (typeof parsed.canonical_id !== "string") {
-      throw new Error("merge_all interpretation requires canonical_id");
+      throw new Error("merge interpretation requires canonical_id");
     }
     if (!memberIds.has(parsed.canonical_id)) {
       throw new Error("canonical_id is not a member of this cluster");
@@ -295,14 +287,14 @@ export function buildConfirmation(
   decision: VoiceDecision,
   cluster: ReviewCluster,
 ): string {
-  if (decision.action === "merge_all") {
+  if (decision.action === "merge") {
     const canonical = cluster.members.find(
       (member) => member.id === decision.canonical_id,
     );
     if (canonical) return `Merge all into ${canonical.name}, ${canonical.type}.`;
     return "Merge all into the selected canonical entity.";
   }
-  if (decision.action === "keep_all") return "Keep all entries separate.";
+  if (decision.action === "keep") return "Keep all entries separate.";
   if (decision.action === "mixed") return "Record the mixed member decision.";
   return "Skip this cluster.";
 }
@@ -792,6 +784,13 @@ function normalizeLegacyAction(action: unknown): "merge" | "keep" | "skip" {
   }
   if (action === "skip") return "skip";
   throw new Error(`invalid legacy action ${String(action)}`);
+}
+
+function normalizeInterpretAction(action: unknown): ReviewAction {
+  if (action === "merge" || action === "merge_all") return "merge";
+  if (action === "keep" || action === "keep_all") return "keep";
+  if (action === "mixed" || action === "skip") return action;
+  throw new Error(`invalid interpreted action: ${String(action)}`);
 }
 
 function normalizeLegacySource(source: unknown): "voice" | "explicit" | "rule" | "voice-rule" {
