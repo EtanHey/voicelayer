@@ -317,7 +317,9 @@ describe("VoiceReview web server helpers", () => {
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
-    expect(html).toContain("category.disabled = value || recording");
+    expect(html).toContain("function syncControlState()");
+    expect(html).toContain("mic.disabled = busy && !ttsPlaying");
+    expect(html).toContain("category.disabled = busy || recording");
     expect(html).toContain("const recordingCluster = current");
     expect(html).toContain("processRecording(new Blob(chunks");
     expect(html).toContain("recordingCluster");
@@ -329,6 +331,24 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("Tap Retry");
     expect(html).toContain("finally {\n        setBusy(false);");
     expect(html).toContain("addEventListener(\"ended\"");
+  });
+
+  it("serves page logic that barge-in stops TTS before recording", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("let ttsPlaying = false;");
+    expect(html).toContain("let activePlayback = null;");
+    expect(html).toContain("function stopTtsPlayback()");
+    expect(html).toContain("audio.pause();");
+    expect(html).toContain("audio.removeAttribute(\"src\");");
+    expect(html).toContain("audio.load();");
+    expect(html).toContain("setTtsPlaying(false);");
+    expect(html).toContain("if (ttsPlaying) {");
+    expect(html).toContain("stopTtsPlayback();");
+    expect(html).toContain("setBusy(false);");
+    expect(html).toContain("await startRecording();");
   });
 
   it("builds a bounded whisper prompt from vocabulary prompt terms", () => {

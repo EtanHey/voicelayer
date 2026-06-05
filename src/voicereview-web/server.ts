@@ -1345,16 +1345,25 @@ function renderPage(defaultCategory: string): string {
     let currentSpeak = "";
     let busy = false;
     let recording = false;
+    let ttsPlaying = false;
+    let activePlayback = null;
 
     function setStatus(text) { $("status").textContent = text; }
+    function syncControlState() {
+      mic.disabled = busy && !ttsPlaying;
+      category.disabled = busy || recording;
+    }
     function setBusy(value) {
       busy = value;
-      mic.disabled = value;
-      category.disabled = value || recording;
+      syncControlState();
     }
     function setRecording(value) {
       recording = value;
-      category.disabled = value || busy;
+      syncControlState();
+    }
+    function setTtsPlaying(value) {
+      ttsPlaying = value;
+      syncControlState();
     }
     function ms(value) { return Math.round(value) + " ms"; }
 
@@ -1456,6 +1465,7 @@ function renderPage(defaultCategory: string): string {
     }
 
     async function playText(text) {
+      stopTtsPlayback();
       const started = performance.now();
       let url = null;
       try {
@@ -1469,13 +1479,21 @@ function renderPage(defaultCategory: string): string {
         audio.src = url;
         const ttsMs = response.headers.get("x-tts-ms") || Math.round(performance.now() - started);
         setStatus("TTS ready in " + ttsMs + " ms. Playing...");
+        setTtsPlaying(true);
         await new Promise((resolve, reject) => {
+          const playback = {
+            resolve,
+            cleanup: () => {}
+          };
           const cleanup = () => {
             audio.removeEventListener("ended", onEnded);
             audio.removeEventListener("error", onError);
             if (url) URL.revokeObjectURL(url);
             url = null;
+            if (activePlayback === playback) activePlayback = null;
+            setTtsPlaying(false);
           };
+          playback.cleanup = cleanup;
           const onEnded = () => {
             cleanup();
             resolve();
@@ -1486,6 +1504,7 @@ function renderPage(defaultCategory: string): string {
           };
           audio.addEventListener("ended", onEnded, { once: true });
           audio.addEventListener("error", onError, { once: true });
+          activePlayback = playback;
           audio.play().catch((error) => {
             cleanup();
             reject(error);
@@ -1493,7 +1512,22 @@ function renderPage(defaultCategory: string): string {
         });
       } catch (error) {
         if (url) URL.revokeObjectURL(url);
+        setTtsPlaying(false);
         setStatus("TTS failed: " + error.message);
+      }
+    }
+
+    function stopTtsPlayback() {
+      const playback = activePlayback;
+      if (!playback && !ttsPlaying) return;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      if (playback) {
+        playback.cleanup();
+        playback.resolve();
+      } else {
+        setTtsPlaying(false);
       }
     }
 
@@ -1567,8 +1601,19 @@ function renderPage(defaultCategory: string): string {
     }
 
     mic.addEventListener("click", async () => {
-      if (busy) return;
       try {
+        if (ttsPlaying) {
+          stopTtsPlayback();
+          setBusy(false);
+          if (!stream) await ensureMic();
+          if (recorder && recorder.state === "recording") {
+            await stopRecording();
+            return;
+          }
+          await startRecording();
+          return;
+        }
+        if (busy) return;
         if (!stream) {
           await ensureMic();
           await loadNext(true);
