@@ -60,6 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
+    private var isPositionLocked = false
+    private var dictionarySheetWindow: NSWindow?
 
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
@@ -93,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
     private static let anchorModeKey = "VoiceBar.anchorMode"
+    private static let positionLockedKey = "VoiceBar.positionLocked"
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -207,6 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         anchorMode = VoiceBarAnchorMode(
             defaultsValue: UserDefaults.standard.string(forKey: Self.anchorModeKey)
         )
+        isPositionLocked = UserDefaults.standard.bool(forKey: Self.positionLockedKey)
 
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
@@ -215,8 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
+        pill.isPillDragEnabled = !isPositionLocked
         positionPanel(pill, on: nil)
-        pill.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        pill.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
@@ -250,6 +255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         snoozeTask?.cancel()
+        dictionarySheetWindow?.close()
         hotkeyManager?.stop()
         audioLevelMonitor.stop()
         daemonController.stop()
@@ -309,6 +315,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.onTranscribeLatestRecording = { [weak self] in
             self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
             self?.voiceState.retranscribeLastCapture()
+        }
+        pillContextMenuController.onAddSelectionToDictionary = { [weak self] in
+            self?.presentAddToDictionarySheetFromSelection()
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
@@ -532,7 +541,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        panel?.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: mode)
+        panel?.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: mode)
+        panel?.isPillDragEnabled = !isPositionLocked
         applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -676,9 +686,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Reposition pill when mouse moves to a different screen.
     private func handleMouseMoved() {
-        guard anchorMode.placement(
-            visibleFrame: panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
-            pillSize: panel?.frame.size ?? .zero
+        guard let panel else { return }
+        guard anchorPlacement(
+            for: panel,
+            visibleFrame: panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
+            pillSize: panel.frame.size
         ).followsMouse else { return }
 
         let mouseLocation = NSEvent.mouseLocation
@@ -691,9 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only reposition when the screen actually changes
         if targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
-            if let panel {
-                positionPanel(panel, on: screens[targetScreen])
-            }
+            positionPanel(panel, on: screens[targetScreen])
         }
     }
 
@@ -721,18 +731,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         visibleFrame: CGRect,
         pillSize: CGSize
     ) -> VoiceBarAnchorPlacement {
-        let placement = anchorMode.placement(visibleFrame: visibleFrame, pillSize: pillSize)
-        guard placement.followsMouse else { return placement }
-        return VoiceBarAnchorPlacement(
-            horizontalOffset: horizontalOffset,
-            verticalOffset: verticalOffset,
-            followsMouse: true
+        VoiceBarPositionLockPolicy.effectivePlacement(
+            anchorMode: anchorMode,
+            isLocked: isPositionLocked,
+            savedHorizontalOffset: horizontalOffset,
+            savedVerticalOffset: verticalOffset,
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
         )
     }
 
     private func reapplyAnchoredPanelPosition() {
         guard let panel else { return }
-        if anchorMode.placement(
+        if anchorPlacement(
+            for: panel,
             visibleFrame: panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
             pillSize: panel.frame.size
         ).followsMouse {
@@ -746,6 +758,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
+        guard !isPositionLocked else { return }
         guard anchorMode == .follow else { return }
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
@@ -768,6 +781,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             positionPanel(panel, on: panel.screen ?? NSScreen.main)
             applyPanelLayout(animated: true)
         }
+    }
+
+    func currentPositionLocked() -> Bool {
+        isPositionLocked
+    }
+
+    func setPositionLocked(_ locked: Bool) {
+        isPositionLocked = locked
+        UserDefaults.standard.set(locked, forKey: Self.positionLockedKey)
+        panel?.isPillDragEnabled = !locked
+        panel?.isMovableByWindowBackground = locked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        if let panel {
+            positionPanel(panel, on: panel.screen ?? NSScreen.main)
+            applyPanelLayout(animated: true)
+        }
+    }
+
+    func currentVocabularyPreview() -> STTVocabularyPreview {
+        STTVocabularyPreview(
+            updatedAt: nil,
+            promptTerms: voiceState.transcriptionVocabularyTerms,
+            aliases: voiceState.transcriptionVocabularyAliases
+        )
+    }
+
+    private func presentAddToDictionarySheetFromSelection() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let selection = FrontmostSelectionReader.readCurrentSelection()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                logDiagnostic(event: "context_menu_add_to_dictionary_tapped", details: [
+                    "selectionSource": selection?.source.rawValue ?? "none",
+                    "selectionLength": String(selection?.text.count ?? 0),
+                ])
+                presentDictionarySheet(
+                    draft: STTVocabularyDraft(
+                        correct: selection?.text ?? "",
+                        wrong: "",
+                        alsoPromptTerm: true
+                    )
+                )
+            }
+        }
+    }
+
+    private func presentDictionarySheet(draft: STTVocabularyDraft) {
+        NSApp.activate(ignoringOtherApps: true)
+        let rootView = DictionaryAddSheetView(
+            draft: draft,
+            onSave: { [weak self] draft in
+                self?.voiceState.addVocabularyAlias(
+                    correct: draft.trimmedCorrect,
+                    wrong: draft.trimmedWrong,
+                    alsoPromptTerm: draft.alsoPromptTerm
+                )
+                self?.closeDictionarySheet()
+            },
+            onCancel: { [weak self] in
+                self?.closeDictionarySheet()
+            }
+        )
+        let hosting = NSHostingController(rootView: rootView)
+        let sheet = NSWindow(contentViewController: hosting)
+        sheet.title = "Add to Dictionary"
+        sheet.styleMask = [.titled]
+        sheet.isReleasedWhenClosed = false
+        sheet.setContentSize(NSSize(width: 380, height: 210))
+        dictionarySheetWindow = sheet
+
+        if let panel {
+            panel.beginSheet(sheet)
+        } else {
+            sheet.center()
+            sheet.orderFront(nil)
+        }
+    }
+
+    private func closeDictionarySheet() {
+        guard let sheet = dictionarySheetWindow else { return }
+        if let parent = sheet.sheetParent {
+            parent.endSheet(sheet)
+        }
+        sheet.close()
+        dictionarySheetWindow = nil
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
@@ -949,7 +1046,23 @@ struct VoiceBarApp: App {
                 selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
                 onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
                 anchorMode: { appDelegate.currentAnchorMode() },
-                onSelectAnchorMode: { appDelegate.selectAnchorMode($0) }
+                onSelectAnchorMode: { appDelegate.selectAnchorMode($0) },
+                isPositionLocked: { appDelegate.currentPositionLocked() },
+                onSetPositionLocked: { appDelegate.setPositionLocked($0) },
+                vocabularyPreview: { appDelegate.currentVocabularyPreview() },
+                onAddVocabularyAlias: { correct, wrong, alsoPromptTerm in
+                    appDelegate.voiceState.addVocabularyAlias(
+                        correct: correct,
+                        wrong: wrong,
+                        alsoPromptTerm: alsoPromptTerm
+                    )
+                },
+                onRemoveVocabularyAlias: { alias in
+                    appDelegate.voiceState.removeVocabularyAlias(alias)
+                },
+                onAddPromptTerm: { term in
+                    appDelegate.voiceState.addVocabularyPromptTerm(term)
+                }
             )
         }
     }

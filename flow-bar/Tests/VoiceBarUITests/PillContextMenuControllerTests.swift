@@ -31,6 +31,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Hide for 1 hour",
             "Recent Transcripts",
             "Transcribe latest recording",
+            "Add to Dictionary…",
             "Transcription Vocabulary",
             "Microphone",
             "Paste last transcript",
@@ -114,6 +115,7 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Hide for 1 hour",
             "Recent Transcripts",
             "Transcribe latest recording",
+            "Add to Dictionary…",
             "Transcription Vocabulary",
             "Microphone",
             "Paste last transcript",
@@ -131,20 +133,20 @@ final class PillContextMenuControllerTests: XCTestCase {
             "older note with new lines flattened",
         ])
 
-        let vocabularyTitles = menu.items[4].submenu?.items.map(\.title)
+        let vocabularyTitles = menu.items[5].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyTitles, [
             "Terms",
             "Corrections",
         ])
 
-        let vocabularyTerms = menu.items[4].submenu?.items[0].submenu?.items.map(\.title)
+        let vocabularyTerms = menu.items[5].submenu?.items[0].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyTerms, [
             "VoiceLayer",
             "orcClaude",
             "Wispr Flow",
         ])
 
-        let vocabularyCorrections = menu.items[4].submenu?.items[1].submenu?.items.map(\.title)
+        let vocabularyCorrections = menu.items[5].submenu?.items[1].submenu?.items.map(\.title)
         XCTAssertEqual(vocabularyCorrections, [
             "work claude → orcClaude",
             "whisper flow → Wispr Flow",
@@ -162,6 +164,21 @@ final class PillContextMenuControllerTests: XCTestCase {
         let recoverItem = try XCTUnwrap(menu.items.first { $0.title == "Transcribe latest recording" })
 
         _ = recoverItem.target?.perform(recoverItem.action, with: recoverItem)
+
+        XCTAssertTrue(tapped)
+    }
+
+    func testAddToDictionaryActionCallsHandler() throws {
+        let controller = PillContextMenuController()
+        var tapped = false
+        controller.onAddSelectionToDictionary = {
+            tapped = true
+        }
+
+        let menu = controller.makeMenu()
+        let addItem = try XCTUnwrap(menu.items.first { $0.title == "Add to Dictionary…" })
+
+        _ = addItem.target?.perform(addItem.action, with: addItem)
 
         XCTAssertTrue(tapped)
     }

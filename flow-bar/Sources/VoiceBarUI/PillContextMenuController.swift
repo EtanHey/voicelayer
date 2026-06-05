@@ -27,6 +27,7 @@ public final class PillContextMenuController: NSObject {
     public var isSnoozedProvider: () -> Bool = { false }
     public var onSelectDevice: (String) -> Void = { _ in }
     public var onTranscribeLatestRecording: () -> Void = {}
+    public var onAddSelectionToDictionary: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
@@ -72,6 +73,14 @@ public final class PillContextMenuController: NSObject {
         )
         recoverItem.target = self
         menu.addItem(recoverItem)
+
+        let addDictionaryItem = NSMenuItem(
+            title: "Add to Dictionary…",
+            action: #selector(handleAddSelectionToDictionary),
+            keyEquivalent: ""
+        )
+        addDictionaryItem.target = self
+        menu.addItem(addDictionaryItem)
 
         let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
         vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
@@ -287,6 +296,10 @@ public final class PillContextMenuController: NSObject {
 
     @objc private func handleTranscribeLatestRecording() {
         onTranscribeLatestRecording()
+    }
+
+    @objc private func handleAddSelectionToDictionary() {
+        onAddSelectionToDictionary()
     }
 }
 
