@@ -1986,6 +1986,27 @@ function renderPage(defaultCategory: string): string {
         .trim();
     }
 
+    function continuationTrailingSilenceMs(state, baseTrailingSilenceMs) {
+      return (
+        state.extendedTrailingSilenceMs ||
+        Math.round(baseTrailingSilenceMs * 2)
+      );
+    }
+
+    function recordingOptionsForBargeIn(state) {
+      const options = { bargedIn: true };
+      if (state && state.heldTranscript) {
+        options.waitingContinuation = true;
+        options.endpointing = {
+          trailingSilenceMs: continuationTrailingSilenceMs(
+            state,
+            ENDPOINTING_DEFAULTS.trailingSilenceMs,
+          )
+        };
+      }
+      return options;
+    }
+
     function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
       const combined = combineTranscriptParts(state.heldTranscript, transcript);
       const pauseIntent = classifyPauseIntent(combined);
@@ -1996,8 +2017,10 @@ function renderPage(defaultCategory: string): string {
           shouldPrompt: pauseIntent.intent === "prompt",
           pauseIntent,
           transcript: combined,
-          nextTrailingSilenceMs:
-            state.extendedTrailingSilenceMs || Math.round(baseTrailingSilenceMs * 2)
+          nextTrailingSilenceMs: continuationTrailingSilenceMs(
+            state,
+            baseTrailingSilenceMs,
+          )
         };
       }
 
@@ -2603,8 +2626,10 @@ function renderPage(defaultCategory: string): string {
               waitingContinuation: true,
               endpointing: {
                 trailingSilenceMs:
-                  thinkingPauseHold.extendedTrailingSilenceMs ||
-                  ENDPOINTING_DEFAULTS.trailingSilenceMs * 2
+                  continuationTrailingSilenceMs(
+                    thinkingPauseHold,
+                    ENDPOINTING_DEFAULTS.trailingSilenceMs,
+                  )
               }
             });
           }
@@ -2821,7 +2846,7 @@ function renderPage(defaultCategory: string): string {
             await stopRecording();
             return;
           }
-          await startRecording({ bargedIn: true });
+          await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));
           return;
         }
         if (busy) return;

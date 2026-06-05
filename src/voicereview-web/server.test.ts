@@ -101,6 +101,13 @@ interface EndpointingHelpersForTest {
     transcript: string;
     nextTrailingSilenceMs: number;
   };
+  recordingOptionsForBargeIn: (
+    state: { heldTranscript: string; extendedTrailingSilenceMs: number },
+  ) => {
+    bargedIn: true;
+    waitingContinuation?: true;
+    endpointing?: { trailingSilenceMs: number };
+  };
 }
 
 function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest {
@@ -111,7 +118,7 @@ function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest
   }
   const source = html.slice(start, end);
   return (new Function(
-    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold };`,
+    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn };`,
   ) as () => EndpointingHelpersForTest)();
 }
 
@@ -676,6 +683,26 @@ describe("VoiceReview web server helpers", () => {
     expect(promptHold.heldTranscript).toBe("wait for merge");
   });
 
+  it("preserves held continuation flags when barge-in cancels a pause prompt", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+    const { createThinkingPauseHoldState, recordingOptionsForBargeIn } =
+      loadEndpointingHelpersFromPage(html);
+
+    const normal = recordingOptionsForBargeIn(createThinkingPauseHoldState());
+    expect(normal).toEqual({ bargedIn: true });
+
+    const held = createThinkingPauseHoldState();
+    held.heldTranscript = "wait for merge";
+    expect(recordingOptionsForBargeIn(held)).toEqual({
+      bargedIn: true,
+      waitingContinuation: true,
+      endpointing: { trailingSilenceMs: 10000 },
+    });
+    expect(html).toContain("startRecording(recordingOptionsForBargeIn(thinkingPauseHold))");
+  });
+
   it("serves page logic for auto-endpointing with a visible mic countdown ring", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
@@ -705,7 +732,7 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("const playbackResult = await playText(answer");
     expect(html).toContain('if (playbackResult === "cancelled")');
     expect(html).toContain("markCurrentAgentTurnCancelled();");
-    expect(html).toContain("await startRecording({ bargedIn: true });");
+    expect(html).toContain("await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));");
     expect(html).toContain(".mic.barged");
   });
 
