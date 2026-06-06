@@ -36,9 +36,8 @@ final class DictionaryVisualArtifactTests: XCTestCase {
                 isPositionLocked: { true },
                 onSetPositionLocked: { _ in },
                 vocabularyPreview: { preview },
-                onAddVocabularyAlias: { _, _, _ in },
+                onAddVocabularyAlias: { _, _ in },
                 onRemoveVocabularyAlias: { _ in },
-                onAddPromptTerm: { _ in },
                 initialTab: .dictionary
             )
             .environment(\.colorScheme, .light)
@@ -52,8 +51,7 @@ final class DictionaryVisualArtifactTests: XCTestCase {
             DictionaryAddSheetView(
                 draft: STTVocabularyDraft(
                     correct: "VoiceLayer",
-                    wrong: "voice lair",
-                    alsoPromptTerm: true
+                    wrong: "voice lair"
                 ),
                 onSave: { _ in },
                 onCancel: {}

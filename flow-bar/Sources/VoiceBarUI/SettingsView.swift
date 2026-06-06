@@ -17,17 +17,14 @@ public struct SettingsView: View {
     public let isPositionLocked: () -> Bool
     public let onSetPositionLocked: (Bool) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
-    public let onAddVocabularyAlias: (String, String, Bool) -> Void
+    public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
-    public let onAddPromptTerm: (String) -> Void
 
     @State private var selectedTab: SettingsTab
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
     @State private var correctText = ""
     @State private var wrongText = ""
-    @State private var alsoPromptTerm = true
-    @State private var promptTermText = ""
 
     public init(
         hotkeyEnabled: Bool,
@@ -42,9 +39,8 @@ public struct SettingsView: View {
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
-        onAddVocabularyAlias: @escaping (String, String, Bool) -> Void = { _, _, _ in },
+        onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
-        onAddPromptTerm: @escaping (String) -> Void = { _ in },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -59,7 +55,6 @@ public struct SettingsView: View {
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
-        self.onAddPromptTerm = onAddPromptTerm
         _selectedTab = State(initialValue: initialTab)
     }
 
@@ -210,8 +205,6 @@ public struct SettingsView: View {
                         .help("Swap correct and transcribed text")
                     }
                 }
-                Toggle("Also add as prompt term", isOn: $alsoPromptTerm)
-
                 HStack {
                     if let selectedAlias {
                         Button("Delete") {
@@ -228,14 +221,6 @@ public struct SettingsView: View {
             }
 
             Section("Prompt Terms") {
-                HStack {
-                    TextField("Term", text: $promptTermText)
-                    Button("Add") {
-                        addPromptTerm()
-                    }
-                    .disabled(promptTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
                 let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
                 if terms.isEmpty {
                     Text("No prompt terms")
@@ -275,8 +260,7 @@ public struct SettingsView: View {
     private var currentDraft: STTVocabularyDraft {
         STTVocabularyDraft(
             correct: correctText,
-            wrong: wrongText,
-            alsoPromptTerm: alsoPromptTerm
+            wrong: wrongText
         )
     }
 
@@ -305,21 +289,18 @@ public struct SettingsView: View {
         selectedAlias = alias
         correctText = alias.to
         wrongText = alias.from
-        alsoPromptTerm = false
     }
 
     private func beginAddingVariant(for correct: String) {
         selectedAlias = nil
         correctText = correct
         wrongText = ""
-        alsoPromptTerm = false
     }
 
     private func clearCorrectionEditor() {
         selectedAlias = nil
         correctText = ""
         wrongText = ""
-        alsoPromptTerm = true
     }
 
     private func saveCorrection() {
@@ -330,16 +311,8 @@ public struct SettingsView: View {
         }
         onAddVocabularyAlias(
             draft.trimmedCorrect,
-            draft.trimmedWrong,
-            draft.alsoPromptTerm
+            draft.trimmedWrong
         )
         clearCorrectionEditor()
-    }
-
-    private func addPromptTerm() {
-        let term = promptTermText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !term.isEmpty else { return }
-        onAddPromptTerm(term)
-        promptTermText = ""
     }
 }

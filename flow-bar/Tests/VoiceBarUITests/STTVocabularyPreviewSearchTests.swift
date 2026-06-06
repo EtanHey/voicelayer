@@ -25,19 +25,18 @@ final class STTVocabularyPreviewSearchTests: XCTestCase {
     func testDictionaryDraftTrimsFieldsBeforeBuildingCommand() throws {
         let draft = STTVocabularyDraft(
             correct: "  VoiceLayer ",
-            wrong: " voice lair ",
-            alsoPromptTerm: true
+            wrong: " voice lair "
         )
 
         let payload = try XCTUnwrap(draft.addAliasPayload())
 
         XCTAssertEqual(payload["from"] as? String, "voice lair")
         XCTAssertEqual(payload["to"] as? String, "VoiceLayer")
-        XCTAssertEqual(payload["also_prompt_term"] as? Bool, true)
+        XCTAssertNil(payload["also_prompt_term"])
     }
 
     func testDictionaryDraftRefusesEmptyMisheardVariant() {
-        let draft = STTVocabularyDraft(correct: "VoiceLayer", wrong: " ", alsoPromptTerm: false)
+        let draft = STTVocabularyDraft(correct: "VoiceLayer", wrong: " ")
 
         XCTAssertNil(draft.addAliasPayload())
     }

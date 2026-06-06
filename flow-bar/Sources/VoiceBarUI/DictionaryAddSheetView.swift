@@ -3,7 +3,6 @@ import SwiftUI
 public struct DictionaryAddSheetView: View {
     @State private var correct: String
     @State private var wrong: String
-    @State private var alsoPromptTerm: Bool
 
     private let onSave: (STTVocabularyDraft) -> Void
     private let onCancel: () -> Void
@@ -15,7 +14,6 @@ public struct DictionaryAddSheetView: View {
     ) {
         _correct = State(initialValue: draft.correct)
         _wrong = State(initialValue: draft.wrong)
-        _alsoPromptTerm = State(initialValue: draft.alsoPromptTerm)
         self.onSave = onSave
         self.onCancel = onCancel
     }
@@ -40,7 +38,6 @@ public struct DictionaryAddSheetView: View {
                         .help("Swap correct and transcribed text")
                     }
                 }
-                Toggle("Also add as prompt term", isOn: $alsoPromptTerm)
             }
 
             HStack {
@@ -62,8 +59,7 @@ public struct DictionaryAddSheetView: View {
     private var currentDraft: STTVocabularyDraft {
         STTVocabularyDraft(
             correct: correct,
-            wrong: wrong,
-            alsoPromptTerm: alsoPromptTerm
+            wrong: wrong
         )
     }
 }

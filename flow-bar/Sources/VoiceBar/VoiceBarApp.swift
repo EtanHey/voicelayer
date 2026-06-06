@@ -818,8 +818,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 presentDictionarySheet(
                     draft: STTVocabularyDraft(
                         correct: selection?.text ?? "",
-                        wrong: "",
-                        alsoPromptTerm: true
+                        wrong: ""
                     )
                 )
             }
@@ -827,14 +826,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentDictionarySheet(draft: STTVocabularyDraft) {
+        closeDictionarySheet()
         NSApp.activate(ignoringOtherApps: true)
         let rootView = DictionaryAddSheetView(
             draft: draft,
             onSave: { [weak self] draft in
                 self?.voiceState.addVocabularyAlias(
                     correct: draft.trimmedCorrect,
-                    wrong: draft.trimmedWrong,
-                    alsoPromptTerm: draft.alsoPromptTerm
+                    wrong: draft.trimmedWrong
                 )
                 self?.closeDictionarySheet()
             },
@@ -1050,18 +1049,14 @@ struct VoiceBarApp: App {
                 isPositionLocked: { appDelegate.currentPositionLocked() },
                 onSetPositionLocked: { appDelegate.setPositionLocked($0) },
                 vocabularyPreview: { appDelegate.currentVocabularyPreview() },
-                onAddVocabularyAlias: { correct, wrong, alsoPromptTerm in
+                onAddVocabularyAlias: { correct, wrong in
                     appDelegate.voiceState.addVocabularyAlias(
                         correct: correct,
-                        wrong: wrong,
-                        alsoPromptTerm: alsoPromptTerm
+                        wrong: wrong
                     )
                 },
                 onRemoveVocabularyAlias: { alias in
                     appDelegate.voiceState.removeVocabularyAlias(alias)
-                },
-                onAddPromptTerm: { term in
-                    appDelegate.voiceState.addVocabularyPromptTerm(term)
                 }
             )
         }

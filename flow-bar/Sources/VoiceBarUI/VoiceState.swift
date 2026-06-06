@@ -456,23 +456,14 @@ public final class VoiceState {
 
     public func addVocabularyAlias(
         correct: String,
-        wrong: String,
-        alsoPromptTerm: Bool
+        wrong: String
     ) {
         let draft = STTVocabularyDraft(
             correct: correct,
-            wrong: wrong,
-            alsoPromptTerm: alsoPromptTerm
+            wrong: wrong
         )
         guard let payload = draft.addAliasPayload() else { return }
         sendCommand?(payload)
-        sendCommand?(STTVocabularyCommandPayload.list())
-    }
-
-    public func addVocabularyPromptTerm(_ term: String) {
-        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        sendCommand?(STTVocabularyCommandPayload.addPromptTerm(trimmed))
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 

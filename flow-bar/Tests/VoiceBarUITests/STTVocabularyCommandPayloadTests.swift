@@ -2,39 +2,33 @@
 import XCTest
 
 final class STTVocabularyCommandPayloadTests: XCTestCase {
-    func testVocabAddUsesWrongAsFromAndCorrectAsTo() {
+    private let pr245VocabAddFixture = #"{"cmd":"vocab_add","id":"vocab-1","from":"domekin","to":"Domica"}"#
+    private let pr245VocabListFixture = #"{"cmd":"vocab_list","id":"vocab-list"}"#
+    private let pr245VocabRemoveFixture = #"{"cmd":"vocab_remove","id":"vocab-remove","from":"domekin"}"#
+
+    func testVocabAddPayloadMatchesPR245ParserFixture() throws {
         let payload = STTVocabularyCommandPayload.addAlias(
-            correct: "VoiceLayer",
-            wrong: "voice lair",
-            alsoPromptTerm: true
+            correct: "Domica",
+            wrong: "domekin",
+            id: "vocab-1"
         )
 
-        XCTAssertEqual(payload["cmd"] as? String, "vocab_add")
-        XCTAssertEqual(payload["from"] as? String, "voice lair")
-        XCTAssertEqual(payload["to"] as? String, "VoiceLayer")
-        XCTAssertEqual(payload["also_prompt_term"] as? Bool, true)
+        try XCTAssertPayload(payload, matchesFixture: pr245VocabAddFixture)
     }
 
-    func testVocabRemoveUsesSamePairShapeAsAdd() {
+    func testVocabRemovePayloadMatchesPR245ParserFixture() throws {
         let payload = STTVocabularyCommandPayload.removeAlias(
-            STTVocabularyAliasPreview(from: "work claude", to: "orcClaude")
+            STTVocabularyAliasPreview(from: "domekin", to: "Domica"),
+            id: "vocab-remove"
         )
 
-        XCTAssertEqual(payload["cmd"] as? String, "vocab_remove")
-        XCTAssertEqual(payload["from"] as? String, "work claude")
-        XCTAssertEqual(payload["to"] as? String, "orcClaude")
+        try XCTAssertPayload(payload, matchesFixture: pr245VocabRemoveFixture)
     }
 
-    func testPromptTermAdditionUsesPromptTermCommandKind() {
-        let payload = STTVocabularyCommandPayload.addPromptTerm("SongScript")
+    func testListPayloadMatchesPR245ParserFixture() throws {
+        let payload = STTVocabularyCommandPayload.list(id: "vocab-list")
 
-        XCTAssertEqual(payload["cmd"] as? String, "vocab_add")
-        XCTAssertEqual(payload["term"] as? String, "SongScript")
-        XCTAssertEqual(payload["kind"] as? String, "prompt_term")
-    }
-
-    func testListPayloadRequestsFreshVocabularySnapshot() {
-        XCTAssertEqual(STTVocabularyCommandPayload.list()["cmd"] as? String, "vocab_list")
+        try XCTAssertPayload(payload, matchesFixture: pr245VocabListFixture)
     }
 
     func testVoiceStateSendsVocabularyAddThenRefreshList() {
@@ -46,14 +40,38 @@ final class STTVocabularyCommandPayloadTests: XCTestCase {
 
         state.addVocabularyAlias(
             correct: "VoiceLayer",
-            wrong: "voice lair",
-            alsoPromptTerm: true
+            wrong: "voice lair"
         )
 
         XCTAssertEqual(commands.count, 2)
         XCTAssertEqual(commands[0]["cmd"] as? String, "vocab_add")
         XCTAssertEqual(commands[0]["from"] as? String, "voice lair")
         XCTAssertEqual(commands[0]["to"] as? String, "VoiceLayer")
+        XCTAssertNil(commands[0]["also_prompt_term"])
         XCTAssertEqual(commands[1]["cmd"] as? String, "vocab_list")
+    }
+
+    private func XCTAssertPayload(
+        _ payload: [String: Any],
+        matchesFixture fixture: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let fixtureObject = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(fixture.utf8)) as? [String: Any],
+            file: file,
+            line: line
+        )
+        XCTAssertEqual(
+            try canonicalJSONString(payload),
+            try canonicalJSONString(fixtureObject),
+            file: file,
+            line: line
+        )
+    }
+
+    private func canonicalJSONString(_ object: [String: Any]) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        return try XCTUnwrap(String(data: data, encoding: .utf8))
     }
 }

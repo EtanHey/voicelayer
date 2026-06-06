@@ -31,12 +31,10 @@ public struct STTVocabularyPreview: Codable, Equatable {
 public struct STTVocabularyDraft: Equatable {
     public var correct: String
     public var wrong: String
-    public var alsoPromptTerm: Bool
 
-    public init(correct: String, wrong: String, alsoPromptTerm: Bool) {
+    public init(correct: String, wrong: String) {
         self.correct = correct
         self.wrong = wrong
-        self.alsoPromptTerm = alsoPromptTerm
     }
 
     public var trimmedCorrect: String {
@@ -55,8 +53,7 @@ public struct STTVocabularyDraft: Equatable {
         guard canSaveAlias else { return nil }
         return STTVocabularyCommandPayload.addAlias(
             correct: trimmedCorrect,
-            wrong: trimmedWrong,
-            alsoPromptTerm: alsoPromptTerm
+            wrong: trimmedWrong
         )
     }
 }
@@ -65,34 +62,40 @@ public enum STTVocabularyCommandPayload {
     public static func addAlias(
         correct: String,
         wrong: String,
-        alsoPromptTerm: Bool
+        id: String? = nil
     ) -> [String: Any] {
-        [
+        var payload: [String: Any] = [
             "cmd": "vocab_add",
             "from": wrong.trimmingCharacters(in: .whitespacesAndNewlines),
             "to": correct.trimmingCharacters(in: .whitespacesAndNewlines),
-            "also_prompt_term": alsoPromptTerm,
         ]
+        addID(id, to: &payload)
+        return payload
     }
 
-    public static func addPromptTerm(_ term: String) -> [String: Any] {
-        [
-            "cmd": "vocab_add",
-            "kind": "prompt_term",
-            "term": term.trimmingCharacters(in: .whitespacesAndNewlines),
-        ]
-    }
-
-    public static func removeAlias(_ alias: STTVocabularyAliasPreview) -> [String: Any] {
-        [
+    public static func removeAlias(
+        _ alias: STTVocabularyAliasPreview,
+        id: String? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
             "cmd": "vocab_remove",
             "from": alias.from.trimmingCharacters(in: .whitespacesAndNewlines),
-            "to": alias.to.trimmingCharacters(in: .whitespacesAndNewlines),
         ]
+        addID(id, to: &payload)
+        return payload
     }
 
-    public static func list() -> [String: Any] {
-        ["cmd": "vocab_list"]
+    public static func list(id: String? = nil) -> [String: Any] {
+        var payload: [String: Any] = ["cmd": "vocab_list"]
+        addID(id, to: &payload)
+        return payload
+    }
+
+    private static func addID(_ id: String?, to payload: inout [String: Any]) {
+        guard let trimmed = id?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty
+        else { return }
+        payload["id"] = trimmed
     }
 }
 
