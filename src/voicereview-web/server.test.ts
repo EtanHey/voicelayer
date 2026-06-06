@@ -90,6 +90,27 @@ describe("VoiceReview web server helpers", () => {
     expect(requestedInit?.signal).toBeUndefined();
   });
 
+  it("bounds LiteRT health without aborting the models probe", async () => {
+    let requestedInit: RequestInit | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+        requestTimeoutMs: 1,
+      },
+      fetchImpl: async (_url, init) => {
+        requestedInit = init;
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.legs.litert.error).toContain("timed out");
+    expect(requestedInit?.signal).toBeUndefined();
+  });
+
   it("builds driver args as arrays with request data in its own argv slot", () => {
     const args = buildDriverArgs("next", {
       pythonScript: "/tmp/voice-review-wt/scripts/kg_review_session.py",
@@ -1595,6 +1616,49 @@ describe("VoiceReview web server helpers", () => {
 
       expect(response.status).toBe(499);
       expect(commandSignal?.aborted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not return TTS subprocess success after the client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-race-"));
+    const clientAbort = new AbortController();
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async (call) => {
+        const mediaPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-media="))
+            ?.slice("--write-media=".length) || "";
+        const metadataPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-metadata="))
+            ?.slice("--write-metadata=".length) || "";
+        await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+        await writeFile(metadataPath, "");
+        clientAbort.abort();
+        return commandResult("");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

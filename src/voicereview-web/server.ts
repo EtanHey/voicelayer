@@ -1297,11 +1297,34 @@ async function handleHealth(
   const legs: Record<string, { ok: boolean; error?: string }> = {
     litert: { ok: false },
   };
+  const timeoutMs = Math.max(1, Math.min(config.requestTimeoutMs, 4000));
+  const timeout = Symbol("litert-health-timeout");
   try {
-    const response = await fetchImpl(liteRtModelsUrl(config.liteRtUrl), {
+    const probe = fetchImpl(liteRtModelsUrl(config.liteRtUrl), {
       method: "GET",
       headers: { accept: "application/json" },
-    });
+    }).catch((error: unknown) => error);
+    const result = await Promise.race([
+      probe,
+      new Promise<typeof timeout>((resolve) =>
+        setTimeout(() => resolve(timeout), timeoutMs),
+      ),
+    ]);
+    if (result === timeout) {
+      legs.litert = {
+        ok: false,
+        error: `LiteRT-LM health timed out after ${timeoutMs}ms`,
+      };
+      return jsonResponse(
+        { ok: false, message: "brain offline — retrying", legs },
+        503,
+      );
+    }
+    if (result instanceof Error) throw result;
+    if (!(result instanceof Response)) {
+      throw new Error("LiteRT-LM health returned non-response");
+    }
+    const response = result;
     if (!response.ok) {
       legs.litert = {
         ok: false,
@@ -1393,6 +1416,7 @@ async function handleDecide(
     env: driverEnv(config),
     signal: request.signal,
   });
+  throwIfAborted(request.signal);
   return jsonResponse({
     ...parseDriverRecord(result),
     timings: { driver_ms: result.durationMs },
@@ -1484,6 +1508,7 @@ async function handleConverse(
     env: processEnv(),
     signal: request.signal,
   });
+  throwIfAborted(request.signal);
   assertSuccess(evidenceResult, "kg_evidence.py");
   const evidence = parseConversationEvidence(evidenceResult.stdout, body.cluster);
 
@@ -1529,6 +1554,7 @@ async function handleConverse(
     env: processEnv(),
     signal: request.signal,
   });
+  throwIfAborted(request.signal);
   assertSuccess(deepEvidenceResult, "kg_evidence.py");
   const deepEvidence = parseConversationEvidence(
     deepEvidenceResult.stdout,
@@ -1666,6 +1692,7 @@ async function handleTranscribe(
       env: processEnv(),
       signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(convert, "ffmpeg");
 
     const whisper = config.whisperCliPath;
@@ -1683,6 +1710,7 @@ async function handleTranscribe(
       env: processEnv(),
       signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(whisperResult, "whisper-cli");
 
     const text = cleanTranscript(whisperResult.stdout);
@@ -1794,6 +1822,7 @@ async function handleTts(
       env: processEnv(),
       signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(result, "edge-tts");
     const bytes = await readFile(mp3Path);
     const wordBoundaries = parseWordBoundaryMetadata(
@@ -1852,6 +1881,7 @@ async function runShellCommand(call: CommandCall): Promise<CommandResult> {
     const [stdout, stderr, exitCode] = aborted
       ? await Promise.race([completed, aborted])
       : await completed;
+    throwIfAborted(call.signal);
     return {
       exitCode,
       stdout,
@@ -2444,6 +2474,10 @@ function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") return true;
   if (error instanceof Error && error.name === "AbortError") return true;
   return false;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
 }
 
 function abortError(): DOMException {
