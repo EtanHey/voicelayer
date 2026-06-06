@@ -66,7 +66,7 @@ type StubNode = {
 };
 
 function createStubNode(id: string): StubNode {
-  const node = {
+  const node: StubNode = {
     className: "",
     disabled: false,
     hidden: false,
@@ -474,6 +474,32 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(speakSystem).toContain("systemSpeechActive = true;");
     expect(speakSystem).toContain("systemSpeechActive = false;");
     expect(speakSystem).toContain('turnState.phase = "SPEAKING";');
+  });
+
+  it("records each speech turn with a fresh MediaRecorder so every webm has its own EBML header", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const startSession = html.slice(
+      html.indexOf("async function startSession()"),
+      html.indexOf("async function endSession()"),
+    );
+    const beginTurn = html.slice(
+      html.indexOf("async function beginTurnCapture()"),
+      html.indexOf("async function finishAndProcessTurn()"),
+    );
+    const finishTurn = html.slice(
+      html.indexOf("async function finishAndProcessTurn()"),
+      html.indexOf("async function processTurnBlob(blob)"),
+    );
+
+    expect(startSession).not.toContain("startSessionRecorder();");
+    expect(html).toContain("function createTurnRecorder()");
+    expect(beginTurn).toContain("await startTurnRecorder();");
+    expect(beginTurn).not.toContain("requestData");
+    expect(finishTurn).toContain("await stopTurnRecorderAndBuildBlob();");
+    expect(finishTurn).not.toContain("new Blob(turnChunks");
   });
 
   it("serves a simple chat column with collapsed evidence and no prior/current turn label soup", async () => {
