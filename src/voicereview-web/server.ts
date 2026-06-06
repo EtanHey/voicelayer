@@ -592,9 +592,9 @@ export function humanizeSpokenText(input: string): string {
   const tableNarration = humanizeMembersTable(input);
   if (tableNarration) return tableNarration;
 
-  return dedupeSpokenLines(
+  const normalized = dedupeSpokenLines(
     String(input || "")
-      .replace(/^\s*as\s+[a-z0-9_-]+\s+with\s+\d+\s+chunks?\.?\s*$/gim, " ")
+      .replace(/\bas\s+[a-z0-9_-]+\s+with\s+\d+\s+chunks?\.?\s*/gi, " ")
       .replace(
         /\s*\((?:context|evidence|metadata|snippet|chunk)[^)]*\d+\s+chunks?\)/gi,
         "",
@@ -617,6 +617,7 @@ export function humanizeSpokenText(input: string): string {
     .replace(/([!?])\s*\./g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+  return dedupeSpokenSegments(normalized);
 }
 
 function dedupeSpokenLines(input: string): string {
@@ -631,6 +632,33 @@ function dedupeSpokenLines(input: string): string {
     output.push(clean);
   }
   return output.join("\n");
+}
+
+function dedupeSpokenSegments(input: string): string {
+  const seen = new Set<string>();
+  const segments = input.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+  const output: string[] = [];
+  for (const segment of segments) {
+    const clean = segment.replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    const key = normalizeSpokenSegmentKey(clean);
+    if (key.length >= 48) {
+      if (seen.has(key)) continue;
+      seen.add(key);
+    }
+    output.push(clean);
+  }
+  return output.join(" ").trim();
+}
+
+function normalizeSpokenSegmentKey(input: string): string {
+  return input
+    .toLowerCase()
+    .replace(/[.!?]+$/g, "")
+    .replace(/^all named\s+/i, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function humanizeMembersTable(input: string): string | null {

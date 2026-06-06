@@ -79,7 +79,7 @@ function createStubNode(id: string): StubNode {
     currentTime: 0,
     paused: true,
     readyState: 0,
-    children: [],
+    children: [] as StubNode[],
     classList: {
       add(name: string) {
         const classes = new Set(node.className.split(/\s+/).filter(Boolean));
@@ -101,7 +101,7 @@ function createStubNode(id: string): StubNode {
       setProperty(name: string, value: string) {
         node.style[name] = value;
       },
-    },
+    } as StubNode["style"],
     addEventListener() {},
     removeEventListener() {},
     removeAttribute(name: string) {
