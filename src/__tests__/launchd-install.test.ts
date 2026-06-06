@@ -46,8 +46,13 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(plistTemplate).not.toContain("<key>SuccessfulExit</key>");
   });
 
-  test("VoiceBar rebuild reinstalls the MCP daemon LaunchAgent", () => {
+  test("VoiceBar rebuild installs the LaunchAgent only when the app is not running", () => {
     expect(buildScript).toContain("launchd/install.sh");
     expect(buildScript).toContain("VOICEBAR_SKIP_LAUNCHD_INSTALL");
+    expect(buildScript).toContain("VOICEBAR_FORCE_LAUNCHD_INSTALL");
+    expect(buildScript).toContain("pgrep -x VoiceBar");
+    expect(buildScript).toContain(
+      "Skipping MCP daemon LaunchAgent install while VoiceBar is running",
+    );
   });
 });

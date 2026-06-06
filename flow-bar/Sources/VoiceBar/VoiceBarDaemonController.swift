@@ -217,12 +217,11 @@ enum VoiceBarDaemonLivenessProbe {
 
 // MARK: - Daemon Controller (Ollama pattern: spawn → monitor → restart)
 
-/// Fallback manager for the MCP daemon as a child process of VoiceBar.
+/// Manages the MCP daemon as a CHILD process of VoiceBar.
 ///
-/// The normal daily-driver lifecycle is the `com.voicelayer.mcp-daemon`
-/// LaunchAgent. This controller only launches an owned child when no external
-/// daemon is already live, which prevents app and launchd processes from
-/// fighting over /tmp/voicelayer-mcp.sock.
+/// CRITICAL: The daemon MUST remain a child of VoiceBar (not orphaned to launchd)
+/// so it inherits VoiceBar's TCC microphone permission. If PPID becomes 1 (launchd),
+/// macOS silently denies mic access and sox records silence (rms=0).
 ///
 /// Pattern from Ollama: menu bar app spawns server, monitors via terminationHandler,
 /// restarts on crash with exponential backoff.
@@ -299,10 +298,12 @@ final class VoiceBarDaemonController {
             return .alreadyRunning
         }
 
+        // External MCP processes can serve MCP clients while VoiceBar is not
+        // running, but they do not inherit VoiceBar's TCC microphone grant.
+        // Keep an owned child for VoiceBar recording; mcp-server-daemon.ts
+        // serializes socket ownership and reclaims stale/default listeners.
         if livenessProbe() {
-            ownsLaunchedProcess = false
-            NSLog("[VoiceBar] External daemon already running — using LaunchAgent-owned daemon")
-            return .alreadyRunning
+            NSLog("[VoiceBar] External daemon already running — launching owned child for TCC inheritance")
         }
 
         return launch()
