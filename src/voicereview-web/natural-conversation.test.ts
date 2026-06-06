@@ -38,6 +38,7 @@ type StubNode = {
   className: string;
   disabled: boolean;
   hidden: boolean;
+  open: boolean;
   innerHTML: string;
   scrollHeight: number;
   scrollTop: number;
@@ -48,6 +49,7 @@ type StubNode = {
   paused: boolean;
   readyState: number;
   children: StubNode[];
+  attributes: Record<string, string>;
   classList: {
     add: (name: string) => void;
     remove: (name: string) => void;
@@ -58,8 +60,11 @@ type StubNode = {
   };
   addEventListener: () => void;
   removeEventListener: () => void;
+  setAttribute: (name: string, value: string) => void;
+  getAttribute: (name: string) => string | null;
   removeAttribute: (name: string) => void;
   appendChild: (child: StubNode) => void;
+  focus: () => void;
   load: () => void;
   pause: () => void;
   play: () => Promise<void>;
@@ -70,6 +75,7 @@ function createStubNode(id: string): StubNode {
     className: "",
     disabled: false,
     hidden: false,
+    open: false,
     innerHTML: "",
     scrollHeight: 0,
     scrollTop: 0,
@@ -80,6 +86,7 @@ function createStubNode(id: string): StubNode {
     paused: true,
     readyState: 0,
     children: [] as StubNode[],
+    attributes: {},
     classList: {
       add(name: string) {
         const classes = new Set(node.className.split(/\s+/).filter(Boolean));
@@ -104,9 +111,17 @@ function createStubNode(id: string): StubNode {
     } as StubNode["style"],
     addEventListener() {},
     removeEventListener() {},
+    setAttribute(name: string, value: string) {
+      node.attributes[name] = String(value);
+    },
+    getAttribute(name: string) {
+      return name in node.attributes ? node.attributes[name] : null;
+    },
     removeAttribute(name: string) {
+      delete node.attributes[name];
       if (name === "src") node.src = "";
     },
+    focus() {},
     appendChild(child: StubNode) {
       node.children.push(child);
       node.innerHTML += child.innerHTML || child.textContent;
@@ -196,13 +211,7 @@ async function createPageHarness(options: {
     "SpeechSynthesisUtterance",
     "URL",
     `${executableScript}\nreturn { loadNext, showLegFailure, endSession };`,
-  )(
-    document,
-    fetchImpl,
-    window,
-    SpeechSynthesisUtteranceStub,
-    urlStub,
-  ) as {
+  )(document, fetchImpl, window, SpeechSynthesisUtteranceStub, urlStub) as {
     loadNext: (play: boolean) => Promise<void>;
     showLegFailure: (message: string) => void;
     endSession: () => Promise<void>;
@@ -214,7 +223,8 @@ async function createPageHarness(options: {
 describe("VoiceReview natural conversation redesign", () => {
   it("builds an update-first interpret prompt with per-member deltas", () => {
     const messages = buildInterpretMessages({
-      transcript: "the person is not relevant, I still need company versus project",
+      transcript:
+        "the person is not relevant, I still need company versus project",
       cluster: naturalCluster,
       understanding: {
         member_updates: {
@@ -315,8 +325,7 @@ describe("VoiceReview natural conversation redesign", () => {
         project: "keep",
         person: "prune",
       },
-      note:
-        "person is irrelevant and company is the real entity\nkeep the project separate",
+      note: "person is irrelevant and company is the real entity\nkeep the project separate",
       source: "voice",
     });
   });
@@ -401,12 +410,22 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(prepared.nextContext).toEqual(chunk.slice(448));
   });
 
-  it("serves one-button always-listening UI with Silero VAD, fallback labeling, and visible offline states", async () => {
+  it("serves the stage-owned always-listening UI with Silero VAD, fallback labeling, and visible offline states", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
-    expect((html.match(/<button\b/g) || [])).toHaveLength(1);
+    // One focal element owns all state: the stage ships idle and only
+    // renderState() may rewrite data-state.
+    expect(html).toContain('id="stage" class="stage" data-state="idle"');
+    expect(html.match(/setAttribute\("data-state"/g) || []).toHaveLength(1);
+    expect(html).toContain("function renderState()");
+    expect(html).not.toContain("renderPhase");
+    expect(html).toContain('id="beginButton"');
+    expect(html).toContain("Begin review");
+    // The four-chip phase row is gone — state is the orb, not labels.
+    expect(html).not.toContain("phase-row");
+    expect(html).not.toContain('id="phaseListening"');
     expect(html).toContain("Start session");
     expect(html).toContain("End session");
     expect(html).toContain("echoCancellation: true");
@@ -420,6 +439,37 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain("SPEAKING");
     expect(html).not.toContain("Tap Record");
     expect(html).not.toContain("tap Record");
+  });
+
+  it("ships first-class light and dark modes with a persisted manual override", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("color-scheme: light dark");
+    expect(html).toContain("@media (prefers-color-scheme: dark)");
+    expect(html).toContain('[data-theme="dark"]');
+    expect(html).toContain(':root:not([data-theme="light"])');
+    expect(html).toContain('localStorage.getItem("vr-theme")');
+    expect(html).toContain('id="themeSystem"');
+    expect(html).toContain('id="themeLight"');
+    expect(html).toContain('id="themeDark"');
+  });
+
+  it("binds level and settle progress to real signals only", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    // --level: mic RMS / Silero probability while listening, word boundaries
+    // while speaking. No synthetic animation of level.
+    expect(html).toContain("updateMicLevel(result.probability)");
+    expect(html).toContain("startCaptionSync(playback)");
+    expect(html).toContain("x-word-boundaries");
+    expect(html).not.toContain("Math.random");
+    expect(html).toContain(
+      '$("settleRing").style.setProperty("--settle-progress", String(turnState.settleProgress || 0));',
+    );
   });
 
   it("does not suppress VAD barge-in while the previous turn is still processing", async () => {
@@ -531,10 +581,12 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(handleVad.indexOf("if (flushingTurn) return;")).toBeLessThan(
       handleVad.indexOf("if (processingTurn && !turnState.pausePlayback)"),
     );
-    expect(stopTurn).toContain("if (mediaRecorder === recorder) mediaRecorder = null;");
-    expect(finishTurn.indexOf("const blob = await stopTurnRecorderAndBuildBlob();")).toBeLessThan(
-      finishTurn.indexOf("flushingTurn = false;"),
+    expect(stopTurn).toContain(
+      "if (mediaRecorder === recorder) mediaRecorder = null;",
     );
+    expect(
+      finishTurn.indexOf("const blob = await stopTurnRecorderAndBuildBlob();"),
+    ).toBeLessThan(finishTurn.indexOf("flushingTurn = false;"));
     expect(finishTurn.indexOf("flushingTurn = false;")).toBeLessThan(
       finishTurn.indexOf("await processTurnBlob(blob);"),
     );
@@ -566,9 +618,7 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(spoken).not.toContain("type=user_message");
     expect(spoken).not.toContain("###");
     expect(spoken).not.toContain("<strong>");
-    expect(spoken).toBe(
-      "Evidence. Merge into kg entity chunks. Shown: raw",
-    );
+    expect(spoken).toBe("Evidence. Merge into kg entity chunks. Shown: raw");
 
     const narrated = (server as any).humanizeSpokenText(
       "Members:\n- FooBar (project, 2 chunks)\n- Foo Bar (project, 1 chunks)\n- FooBar CLI (tool, 1 chunks)",
@@ -609,7 +659,9 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain('value="theo-c3"');
     expect(html).toContain('localStorage.setItem("voicereview.ttsVoice"');
     expect(html).toContain("restoreStoredTtsVoice()");
-    expect(html).toContain("wordBoundaries: Array.isArray(wordBoundaries) ? wordBoundaries : []");
+    expect(html).toContain(
+      "wordBoundaries: Array.isArray(wordBoundaries) ? wordBoundaries : []",
+    );
   });
 
   it("falls back once from Theo to the configured edge voice when cloned TTS fails", async () => {
@@ -627,7 +679,9 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain("let ttsFallbackAnnounced = false;");
     expect(html).toContain("isClonedTtsVoice(selectedVoice)");
     expect(html).toContain("requestTtsAudio(spokenText, EDGE_FALLBACK_VOICE)");
-    expect(html).toContain("Theo voice is unavailable; switching to the fallback voice.");
+    expect(html).toContain(
+      "Theo voice is unavailable; switching to the fallback voice.",
+    );
   });
 
   it("serves the Silero model file to the browser", async () => {
@@ -652,7 +706,9 @@ describe("VoiceReview natural conversation redesign", () => {
       },
     });
 
-    const response = await app.fetch(new Request("http://localhost/api/health"));
+    const response = await app.fetch(
+      new Request("http://localhost/api/health"),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(503);
@@ -682,18 +738,19 @@ describe("VoiceReview natural conversation redesign", () => {
     await complete.api.loadNext(false);
 
     expect(complete.fetchCalls).toEqual(["/api/next?category=diagnosis-flag"]);
-    expect(complete.node("clusterId").textContent).toBe("Queue complete");
-    expect(complete.node("stem").textContent).toBe("diagnosis-flag");
-    expect(complete.node("members").innerHTML).toContain("7 decided");
-    expect(complete.node("openQuestion").textContent).toBe(
-      "All items in this queue are complete 🎉 7 decided.",
+    // Complete is a stage moment owned by renderState(): check-orb frame,
+    // human status, stats row, and a next action — not a dead record.
+    expect(complete.node("stage").attributes["data-state"]).toBe("complete");
+    expect(complete.node("status").textContent).toBe("All caught up");
+    expect(complete.node("caption").textContent).toBe(
+      "Every cluster in diagnosis-flag is resolved.",
     );
-    expect(complete.node("decision").textContent).toBe(
-      "All items in this queue are complete 🎉 7 decided.",
+    expect(complete.node("stageStats").textContent).toBe("7 decided");
+    expect(complete.node("stageStats").hidden).toBe(false);
+    expect(complete.node("stageAction").textContent).toBe(
+      "Review another category",
     );
-    expect(complete.node("status").textContent).toBe(
-      "All items in this queue are complete 🎉 7 decided.",
-    );
+    expect(complete.node("workbench").hidden).toBe(true);
 
     const empty = await createPageHarness({
       category: "sep-variants",
@@ -709,15 +766,13 @@ describe("VoiceReview natural conversation redesign", () => {
     });
     await empty.api.loadNext(false);
 
-    expect(empty.node("clusterId").textContent).toBe("No items found");
-    expect(empty.node("stem").textContent).toBe("sep-variants");
-    expect(empty.node("members").innerHTML).toContain("No queued items");
-    expect(empty.node("openQuestion").textContent).toBe(
-      "No items found for category sep-variants.",
+    // Empty is distinct from complete — "never started" ≠ "finished".
+    expect(empty.node("stage").attributes["data-state"]).toBe("empty");
+    expect(empty.node("caption").textContent).toBe(
+      "Nothing left to review in sep-variants.",
     );
-    expect(empty.node("status").textContent).toBe(
-      "No items found for category sep-variants.",
-    );
+    expect(empty.node("stageAction").textContent).toBe("Switch category");
+    expect(empty.node("stageStats").hidden).toBe(true);
 
     const statsError = await createPageHarness({
       nextResponse: {
@@ -726,20 +781,21 @@ describe("VoiceReview natural conversation redesign", () => {
           kind: "error",
           category: "diagnosis-flag",
           decided: 0,
-          message: "Stats unavailable: stale decisions reference missing clusters.",
+          message:
+            "Stats unavailable: stale decisions reference missing clusters.",
         },
       },
     });
     await statsError.api.loadNext(false);
 
-    expect(statsError.node("clusterId").textContent).toBe("Stats unavailable");
+    // One failure, one voice: the stage banner — no status box, no log echo.
+    expect(statsError.node("stage").attributes["data-state"]).toBe("error");
     expect(statsError.node("healthMode").textContent).toBe("stats error");
-    expect(statsError.node("understandingNote").textContent).toBe(
+    expect(statsError.node("stageBanner").hidden).toBe(false);
+    expect(statsError.node("stageBannerText").textContent).toBe(
       "Stats unavailable: stale decisions reference missing clusters.",
     );
-    expect(statsError.node("status").textContent).toBe(
-      "Stats unavailable: stale decisions reference missing clusters.",
-    );
+    expect(statsError.node("status").textContent).toBe("");
 
     const failure = await createPageHarness({
       nextError: new Error("network down"),
@@ -747,9 +803,11 @@ describe("VoiceReview natural conversation redesign", () => {
     await failure.api.loadNext(false).catch((error) => {
       failure.api.showLegFailure(error.message);
     });
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(failure.node("status").textContent).toBe("network down");
-    expect(failure.node("turnLog").innerHTML).toContain("network down");
+    expect(failure.node("stage").attributes["data-state"]).toBe("error");
+    expect(failure.node("stageBannerText").textContent).toBe("network down");
+    expect(failure.node("turnLog").innerHTML).not.toContain("network down");
   });
 
   it("renders stop and error state machine teardown hooks for fetches, VAD, recorder, and audio", async () => {
@@ -787,20 +845,24 @@ describe("VoiceReview natural conversation redesign", () => {
     );
     expect(teardown).toContain("processingTurn = false;");
     expect(teardown).toContain("mediaRecorder.stop();");
-    expect(teardown).toContain("sessionButton.textContent = \"Start session\";");
-    expect(legFailure).toContain("void teardownSessionRuntime");
+    expect(teardown).toContain('sessionButton.textContent = "Start session";');
+    expect(legFailure).toContain("teardownPromise = teardownSessionRuntime");
     expect(legFailure).not.toContain("speakSystemText(text)");
     expect(unloadTeardown).toContain("teardownSessionRuntime");
     expect(unloadTeardown).toContain("unload: true");
-    expect(unloadTeardown).toContain("function resetAfterBfcacheRestore(event)");
+    expect(unloadTeardown).toContain(
+      "function resetAfterBfcacheRestore(event)",
+    );
     expect(unloadTeardown).toContain("if (!event.persisted) return;");
-    expect(unloadTeardown).toContain("renderPhase();");
+    expect(unloadTeardown).toContain("renderState();");
     expect(eventBindings).toContain('window.addEventListener("pagehide"');
     expect(eventBindings).toContain("teardownAbandonedSession");
     expect(eventBindings).toContain('window.addEventListener("beforeunload"');
     expect(eventBindings).toContain('window.addEventListener("pageshow"');
     expect(eventBindings).toContain("resetAfterBfcacheRestore");
-    expect(eventBindings).not.toContain('window.addEventListener("visibilitychange"');
+    expect(eventBindings).not.toContain(
+      'window.addEventListener("visibilitychange"',
+    );
   });
 
   it("gates repeated brain-offline announcements by failures, backoff, and tab visibility", async () => {
@@ -831,23 +893,33 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(healthCheck).toContain("healthFailureStreak += 1;");
     expect(healthCheck).toContain("if (liteRtWorkInFlight > 0)");
     expect(healthCheck).toContain("scheduleHealthRetry({ backoff: false });");
-    expect(healthCheck).toContain(
-      "if (!silent && canAnnounceHealthFailure())",
-    );
+    expect(healthCheck).toContain("if (!silent && canAnnounceHealthFailure())");
     expect(healthCheck).not.toContain(
-      "if (!silent) showLegFailure(\"brain offline — retrying\");",
+      'if (!silent) showLegFailure("brain offline — retrying");',
     );
     expect(announce).toContain(
       "healthFailureStreak < HEALTH_FAILURE_ANNOUNCE_THRESHOLD",
     );
     expect(announce).toContain('document.visibilityState !== "visible"');
-    expect(announce).toContain("nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;");
-    expect(announce).toContain("Math.min(60000, healthAnnouncementBackoffMs * 2)");
-    expect(html).toContain("healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);");
+    expect(announce).toContain(
+      "nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;",
+    );
+    expect(announce).toContain(
+      "Math.min(60000, healthAnnouncementBackoffMs * 2)",
+    );
+    expect(html).toContain(
+      "healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);",
+    );
     expect(html).toContain("if (options.backoff !== false)");
-    expect(html).toContain("setTimeout(() => healthCheck(true), healthRetryBackoffMs)");
-    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/interpret\"");
-    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/converse\"");
-    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/tts\"");
+    expect(html).toContain(
+      "setTimeout(() => healthCheck(true), healthRetryBackoffMs)",
+    );
+    expect(html).toContain(
+      'await withLiteRtWork(async () => api("/api/interpret"',
+    );
+    expect(html).toContain(
+      'await withLiteRtWork(async () => api("/api/converse"',
+    );
+    expect(html).toContain('await withLiteRtWork(async () => api("/api/tts"');
   });
 });

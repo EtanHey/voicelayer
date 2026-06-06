@@ -63,7 +63,6 @@ function commandResult(stdout: unknown): CommandResult {
   };
 }
 
-
 describe("VoiceReview web server helpers", () => {
   it("checks LiteRT health with the no-generation models endpoint", async () => {
     let requestedUrl = "";
@@ -82,7 +81,9 @@ describe("VoiceReview web server helpers", () => {
       },
     });
 
-    const response = await app.fetch(new Request("http://localhost/api/health"));
+    const response = await app.fetch(
+      new Request("http://localhost/api/health"),
+    );
 
     expect(response.status).toBe(200);
     expect(requestedUrl).toBe("http://127.0.0.1:9379/v1/models");
@@ -104,7 +105,9 @@ describe("VoiceReview web server helpers", () => {
       },
     });
 
-    const response = await app.fetch(new Request("http://localhost/api/health"));
+    const response = await app.fetch(
+      new Request("http://localhost/api/health"),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(503);
@@ -140,7 +143,10 @@ describe("VoiceReview web server helpers", () => {
       },
       runCommand: async (call) => {
         calls.push(call);
-        return commandResult({ cluster: cantaloupeCluster, speak: "Cluster text" });
+        return commandResult({
+          cluster: cantaloupeCluster,
+          speak: "Cluster text",
+        });
       },
     });
 
@@ -279,7 +285,8 @@ describe("VoiceReview web server helpers", () => {
           return {
             exitCode: 1,
             stdout: "",
-            stderr: "ValueError: decision references cluster not in loaded batch",
+            stderr:
+              "ValueError: decision references cluster not in loaded batch",
             durationMs: 9,
           };
         }
@@ -516,12 +523,17 @@ describe("VoiceReview web server helpers", () => {
     });
   });
 
-  it("serves the natural conversation page with one session button and no tap-to-talk copy", async () => {
+  it("serves the natural conversation page with stage controls and no tap-to-talk copy", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
-    expect((html.match(/<button\b/g) || [])).toHaveLength(1);
+    // Session control contract: Begin lives on the stage, End in the header,
+    // settings behind the gear popover. No always-on developer chrome.
+    expect(html).toContain('id="beginButton"');
+    expect(html).toContain('id="sessionButton"');
+    expect(html).toContain('id="gearPopover"');
+    expect(html.match(/id="sessionButton"/g) || []).toHaveLength(1);
     expect(html).toContain("Start session");
     expect(html).toContain("End session");
     expect(html).toContain("LISTENING");
@@ -562,7 +574,9 @@ describe("VoiceReview web server helpers", () => {
       expect(select).toContain(
         '<option value="etan-queue" selected>etan-queue</option>',
       );
-      expect(select).toContain('<option value="other-live">other-live</option>');
+      expect(select).toContain(
+        '<option value="other-live">other-live</option>',
+      );
       expect(select).toContain(
         '<option value="diagnosis-flag">diagnosis-flag</option>',
       );
@@ -614,7 +628,9 @@ describe("VoiceReview web server helpers", () => {
   });
 
   it("preserves failed decode blobs under a capped failed directory", async () => {
-    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-failed-"));
+    const root = await mkdtemp(
+      join(tmpdir(), "voicereview-transcribe-failed-"),
+    );
     const failedDir = join(root, "failed");
     await mkdir(failedDir, { recursive: true });
     const validWebmThatFailsDecode = new Blob([
@@ -623,7 +639,10 @@ describe("VoiceReview web server helpers", () => {
     ]);
     const oldTime = new Date("2026-01-01T00:00:00.000Z");
     for (let index = 0; index < 22; index += 1) {
-      const path = join(failedDir, `old-${String(index).padStart(2, "0")}.webm`);
+      const path = join(
+        failedDir,
+        `old-${String(index).padStart(2, "0")}.webm`,
+      );
       await writeFile(path, `old-${index}`);
       await utimes(path, oldTime, oldTime);
     }
@@ -662,9 +681,9 @@ describe("VoiceReview web server helpers", () => {
       expect(response.status).toBe(500);
       expect(body.error).toContain("Invalid EBML header");
       expect(failedFiles).toHaveLength(20);
-      expect(preservedContents.some((content) => content.includes("broken webm"))).toBe(
-        true,
-      );
+      expect(
+        preservedContents.some((content) => content.includes("broken webm")),
+      ).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -687,7 +706,9 @@ describe("VoiceReview web server helpers", () => {
         calls.push(call);
         return {
           exitCode: 0,
-          stdout: call.args[0].includes("whisper-cli") ? "turn two correction\n" : "",
+          stdout: call.args[0].includes("whisper-cli")
+            ? "turn two correction\n"
+            : "",
           stderr: "",
           durationMs: 12,
         };
@@ -775,7 +796,9 @@ describe("VoiceReview web server helpers", () => {
         calls.push(call);
         return {
           exitCode: 0,
-          stdout: call.args[0].includes("whisper-cli") ? "should not run\n" : "",
+          stdout: call.args[0].includes("whisper-cli")
+            ? "should not run\n"
+            : "",
           stderr: "",
           durationMs: 12,
         };
@@ -855,7 +878,9 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[0].content).toContain("few-shot examples");
     expect(messages[0].content).toContain('"action":"question"');
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
-    expect(messages[1].content).toContain("16db6804-dc3e-5465-93d2-e3956c3f63f5");
+    expect(messages[1].content).toContain(
+      "16db6804-dc3e-5465-93d2-e3956c3f63f5",
+    );
   });
 
   it("parses English and Hebrew-English questions as non-decision turns", () => {
@@ -905,7 +930,7 @@ describe("VoiceReview web server helpers", () => {
 
   it("parses fenced LiteRT JSON into a valid voice decision", () => {
     const decision = parseInterpretDecision(
-      "```json\n{\"action\":\"merge\",\"canonical_id\":\"16db6804-dc3e-5465-93d2-e3956c3f63f5\",\"note\":\"merge them all\"}\n```",
+      '```json\n{"action":"merge","canonical_id":"16db6804-dc3e-5465-93d2-e3956c3f63f5","note":"merge them all"}\n```',
       cantaloupeCluster,
       "merge them all",
     );
@@ -1151,10 +1176,20 @@ describe("VoiceReview web server helpers", () => {
       );
       db.prepare(
         "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
-      ).run(cantaloupeCluster.members[0].id, "chunk-company", 0.95, "company context");
+      ).run(
+        cantaloupeCluster.members[0].id,
+        "chunk-company",
+        0.95,
+        "company context",
+      );
       db.prepare(
         "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
-      ).run(cantaloupeCluster.members[1].id, "chunk-project", 0.9, "project context");
+      ).run(
+        cantaloupeCluster.members[1].id,
+        "chunk-project",
+        0.9,
+        "project context",
+      );
     } finally {
       db.close();
     }
@@ -1255,7 +1290,9 @@ describe("VoiceReview web server helpers", () => {
       evidence,
     });
 
-    expect(messages[0].content).toContain("answer ONLY from the provided evidence");
+    expect(messages[0].content).toContain(
+      "answer ONLY from the provided evidence",
+    );
     expect(messages[0].content).toContain("2-4 sentences");
     expect(messages[0].content).toContain("I don't see evidence about that");
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
@@ -1263,7 +1300,9 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[1].content).toContain("chunk-company");
     expect(messages[1].content).toContain("company context");
     expect(messages[1].content).toContain("what is the difference?");
-    expect(messages[1].content).toContain("which chunks does the company one have?");
+    expect(messages[1].content).toContain(
+      "which chunks does the company one have?",
+    );
   });
 
   it("serves first-turn /api/converse with evidence timings and a grounded LiteRT answer", async () => {
@@ -1459,7 +1498,9 @@ describe("VoiceReview web server helpers", () => {
       },
       runCommand: async (call) => {
         calls.push(call);
-        return commandResult(calls.length === 1 ? shallowEvidence : deepEvidence);
+        return commandResult(
+          calls.length === 1 ? shallowEvidence : deepEvidence,
+        );
       },
       fetchImpl: async (_url, init) => {
         const requestBody = JSON.parse(String(init?.body));
@@ -1561,12 +1602,12 @@ describe("VoiceReview web server helpers", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py"))).toBe(
-        true,
-      );
-      expect(calls[0].args.some((arg) => arg.startsWith("--write-metadata="))).toBe(
-        true,
-      );
+      expect(
+        calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py")),
+      ).toBe(true);
+      expect(
+        calls[0].args.some((arg) => arg.startsWith("--write-metadata=")),
+      ).toBe(true);
       expect(calls[0].args).toContain("--voice=en-US-GuyNeural");
       expect(calls[0].args).toContain("--rate=-12%");
       expect(calls[0].args).not.toContain("--rate");
@@ -1880,7 +1921,9 @@ describe("VoiceReview web server helpers", () => {
       const body = await response.json();
 
       expect(response.status).toBe(500);
-      expect(body.error).toBe("edge-tts aborted internally before writing audio");
+      expect(body.error).toBe(
+        "edge-tts aborted internally before writing audio",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -1913,8 +1956,7 @@ describe("VoiceReview web server helpers", () => {
   });
 
   it("strips live inline speak metadata and repeated prompt sentences from spoken TTS text", () => {
-    const liveSpeak =
-      `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip.. DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. as question with 0 chunks. Merge, keep separate, mixed, or skip?`;
+    const liveSpeak = `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip.. DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. as question with 0 chunks. Merge, keep separate, mixed, or skip?`;
 
     const spoken = humanizeSpokenText(liveSpeak);
 
