@@ -75,17 +75,26 @@ final class SettingsViewTests: XCTestCase {
     func testShortcutChainLabelReflectsRemapDetection() {
         XCTAssertEqual(
             VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: true),
-            "F5 / 🎤  →  F18  →  VoiceBar"
+            "F5  ·  🎤 → F18"
         )
         XCTAssertEqual(
             VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: false),
-            "F5  →  VoiceBar"
+            "F5"
         )
     }
 
-    func testRemapExplanationNamesTheLaunchAgent() {
+    // Bugbot PR #261: the apply script remaps ONLY the dictation key; physical
+    // F5 reaches the event tap directly (keycode 96). The copy must not claim
+    // F5 itself is remapped.
+    func testRemapExplanationDoesNotClaimF5IsRemapped() {
         XCTAssertTrue(
             VoiceBarHotkeyContract.remapExplanation.contains("com.voicelayer.f5-to-f18-hidutil")
+        )
+        XCTAssertTrue(
+            VoiceBarHotkeyContract.remapExplanation.contains("listens for F5 directly")
+        )
+        XCTAssertFalse(
+            VoiceBarHotkeyContract.remapExplanation.contains("F5 and the dictation key")
         )
     }
 

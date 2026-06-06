@@ -14,16 +14,20 @@ public enum VoiceBarHotkeyContract {
 
     // MARK: - System remap chain (hidutil LaunchAgent)
 
-    /// LaunchAgent that remaps physical F5 and the dictation key (🎤) to F18
-    /// so macOS Dictation never intercepts them.
+    /// LaunchAgent that remaps the dictation key (🎤) to F18 so macOS
+    /// Dictation never intercepts it. Physical F5 is NOT remapped — the
+    /// event tap listens for keycode 96 directly, and a HID-level F5 rewrite
+    /// would hide F5 from system chords like Cmd+F5 (VoiceOver). See
+    /// scripts/apply-voicebar-f5-hidutil.sh.
     public static let remapAgentLabel = "com.voicelayer.f5-to-f18-hidutil"
 
     public static let remapExplanation =
-        "F5 and the dictation key (🎤) are remapped to F18 by the "
-        + "com.voicelayer.f5-to-f18-hidutil launch agent so macOS Dictation "
-        + "never intercepts them. VoiceBar listens for both."
+        "VoiceBar listens for F5 directly. The dictation key (🎤) is "
+        + "remapped to F18 by the com.voicelayer.f5-to-f18-hidutil launch "
+        + "agent so macOS Dictation never intercepts it; VoiceBar listens "
+        + "for F18 too."
 
     public static func shortcutChainLabel(remapDetected: Bool) -> String {
-        remapDetected ? "F5 / 🎤  →  F18  →  VoiceBar" : "F5  →  VoiceBar"
+        remapDetected ? "F5  ·  🎤 → F18" : "F5"
     }
 }
