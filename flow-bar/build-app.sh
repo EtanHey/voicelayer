@@ -73,6 +73,17 @@ else
     echo "[build-app] WARNING: models/silero_vad.onnx not found — recording will fail until it is present." >&2
 fi
 
+# Bundle the edge-tts synth script — ALL daemon TTS fails (edge-tts exit code 2)
+# without it (tts.ts resolves ../scripts/edge-tts-words.py relative to the
+# bundled src). Same silent-loss bug class as the VAD model above (#241).
+if [ -f "$REPO_ROOT/scripts/edge-tts-words.py" ]; then
+    mkdir -p "$APP_DIR/Contents/Resources/scripts"
+    cp "$REPO_ROOT/scripts/edge-tts-words.py" "$APP_DIR/Contents/Resources/scripts/"
+    echo "[build-app] edge-tts synth script bundled."
+else
+    echo "[build-app] WARNING: scripts/edge-tts-words.py not found — daemon TTS will fail until it is present." >&2
+fi
+
 # App icon
 if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     cp "$BUNDLE_DIR/VoiceBar.icns" "$APP_DIR/Contents/Resources/"
