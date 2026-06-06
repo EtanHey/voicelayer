@@ -953,6 +953,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onRemoveVocabularyAlias: { [weak self] alias in
                 self?.voiceState.removeVocabularyAlias(alias)
+            },
+            onAddPromptTerm: { [weak self] term in
+                self?.voiceState.addVocabularyPromptTerm(term)
+            },
+            onRemovePromptTerm: { [weak self] term in
+                self?.voiceState.removeVocabularyPromptTerm(term)
+            },
+            isHotkeyRemapActive: {
+                FileManager.default.fileExists(
+                    atPath: NSHomeDirectory()
+                        + "/Library/LaunchAgents/"
+                        + VoiceBarHotkeyContract.remapAgentLabel
+                        + ".plist"
+                )
             }
         )
     }

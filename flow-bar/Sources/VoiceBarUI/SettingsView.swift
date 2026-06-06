@@ -19,6 +19,9 @@ public struct SettingsView: View {
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    public let onAddPromptTerm: (String) -> Void
+    public let onRemovePromptTerm: (String) -> Void
+    public let isHotkeyRemapActive: () -> Bool
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -28,6 +31,7 @@ public struct SettingsView: View {
     @State private var selectedAlias: STTVocabularyAliasPreview?
     @State private var correctText = ""
     @State private var wrongText = ""
+    @State private var newTermText = ""
 
     public init(
         hotkeyEnabled: Bool,
@@ -44,6 +48,9 @@ public struct SettingsView: View {
         },
         onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
         onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
+        onAddPromptTerm: @escaping (String) -> Void = { _ in },
+        onRemovePromptTerm: @escaping (String) -> Void = { _ in },
+        isHotkeyRemapActive: @escaping () -> Bool = { false },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -58,6 +65,9 @@ public struct SettingsView: View {
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
+        self.onAddPromptTerm = onAddPromptTerm
+        self.onRemovePromptTerm = onRemovePromptTerm
+        self.isHotkeyRemapActive = isHotkeyRemapActive
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: anchorMode())
         _positionLocked = State(initialValue: isPositionLocked())
@@ -85,7 +95,16 @@ public struct SettingsView: View {
         Form {
             Section("Hotkey") {
                 LabeledContent("Shortcut") {
-                    Text(VoiceBarHotkeyContract.primaryShortcutLabel)
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard")
+                            .foregroundStyle(.secondary)
+                        Text(VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: isHotkeyRemapActive()))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if isHotkeyRemapActive() {
+                    Text(VoiceBarHotkeyContract.remapExplanation)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Status") {
@@ -189,8 +208,14 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         Form {
-            Section("Find") {
-                TextField("Search dictionary", text: $dictionarySearch)
+            Section {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search corrections and terms", text: $dictionarySearch)
+                        .textFieldStyle(.plain)
+                }
+                .dictionaryTextField()
             }
 
             Section {
@@ -201,36 +226,83 @@ public struct SettingsView: View {
                     Divider()
                         .padding(.vertical, 6)
 
-                    let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
-                    if aliases.isEmpty {
-                        Text("No corrections")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(aliases, id: \.self) { alias in
-                            correctionRow(alias)
-                        }
-                    }
+                    correctionsList
                 } label: {
                     Text("Corrections")
                 }
             }
 
             Section("Prompt Terms") {
+                promptTermAddRow
+
                 let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
                 if terms.isEmpty {
-                    Text("No prompt terms")
+                    Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
                         .foregroundStyle(.secondary)
                 } else {
                     ForEach(terms, id: \.self) { term in
-                        Button(term) {
-                            beginAddingVariant(for: term)
-                        }
-                        .buttonStyle(.plain)
+                        promptTermRow(term)
                     }
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private var correctionsList: some View {
+        let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
+        if aliases.isEmpty {
+            Text("No corrections yet — add one above.")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(aliases, id: \.self) { alias in
+                correctionRow(alias)
+            }
+        }
+    }
+
+    private var promptTermAddRow: some View {
+        HStack(spacing: 8) {
+            TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
+                .textFieldStyle(.plain)
+                .onSubmit(commitNewPromptTerm)
+                .dictionaryTextField()
+            Button(action: commitNewPromptTerm) {
+                Image(systemName: "plus.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Add term")
+            .accessibilityLabel("Add prompt term")
+        }
+    }
+
+    private func promptTermRow(_ term: String) -> some View {
+        HStack {
+            Text(term)
+            Spacer()
+            deletePromptTermButton(term)
+        }
+    }
+
+    private func deletePromptTermButton(_ term: String) -> some View {
+        Button {
+            onRemovePromptTerm(term)
+        } label: {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete term")
+        .accessibilityLabel("Delete term \(term)")
+    }
+
+    private func commitNewPromptTerm() {
+        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onAddPromptTerm(trimmed)
+        newTermText = ""
     }
 
     // MARK: - Helpers
@@ -259,19 +331,31 @@ public struct SettingsView: View {
         )
     }
 
+    /// Leading label column width shared by the two editor rows.
+    private static let editorLabelWidth: CGFloat = 92
+
     private var correctionEditor: some View {
         VStack(alignment: .leading, spacing: 10) {
-            LabeledContent("Correct") {
+            // Explicit leading labels instead of LabeledContent: the grouped
+            // Form right-aligns LabeledContent values, which reads wrong once
+            // the fields have visible borders.
+            HStack(spacing: 8) {
+                Text("Correct")
+                    .frame(width: Self.editorLabelWidth, alignment: .leading)
                 TextField("Intended text", text: $correctText)
+                    .textFieldStyle(.plain)
+                    .dictionaryTextField()
             }
-            LabeledContent("Transcribed") {
-                HStack(spacing: 8) {
-                    TextField("Misheard text", text: $wrongText)
-                    Button("⇄") {
-                        swap(&correctText, &wrongText)
-                    }
-                    .help("Swap correct and transcribed text")
+            HStack(spacing: 8) {
+                Text("Transcribed")
+                    .frame(width: Self.editorLabelWidth, alignment: .leading)
+                TextField("Misheard text", text: $wrongText)
+                    .textFieldStyle(.plain)
+                    .dictionaryTextField()
+                Button("⇄") {
+                    swap(&correctText, &wrongText)
                 }
+                .help("Swap correct and transcribed text")
             }
             HStack {
                 if let selectedAlias {
@@ -295,14 +379,17 @@ public struct SettingsView: View {
                 .foregroundStyle(.secondary)
             Image(systemName: "arrow.right")
                 .foregroundStyle(.secondary)
-            Button(alias.to) {
-                beginAddingVariant(for: alias.to)
-            }
-            .buttonStyle(.plain)
+            Text(alias.to)
             Spacer()
-            Button("Edit") {
+            Button {
                 beginEditing(alias)
+            } label: {
+                Image(systemName: "pencil")
             }
+            .buttonStyle(.borderless)
+            .help("Edit correction")
+            .accessibilityLabel("Edit correction \(alias.from)")
+            deleteCorrectionButton(alias)
         }
         .contentShape(Rectangle())
         .onTapGesture {
@@ -310,18 +397,26 @@ public struct SettingsView: View {
         }
     }
 
+    private func deleteCorrectionButton(_ alias: STTVocabularyAliasPreview) -> some View {
+        Button {
+            onRemoveVocabularyAlias(alias)
+            if selectedAlias == alias {
+                clearCorrectionEditor()
+            }
+        } label: {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete correction")
+        .accessibilityLabel("Delete correction \(alias.from)")
+    }
+
     private func beginEditing(_ alias: STTVocabularyAliasPreview) {
         correctionsExpanded = true
         selectedAlias = alias
         correctText = alias.to
         wrongText = alias.from
-    }
-
-    private func beginAddingVariant(for correct: String) {
-        correctionsExpanded = true
-        selectedAlias = nil
-        correctText = correct
-        wrongText = ""
     }
 
     private func clearCorrectionEditor() {
@@ -341,5 +436,23 @@ public struct SettingsView: View {
             draft.trimmedWrong
         )
         clearCorrectionEditor()
+    }
+}
+
+extension View {
+    /// Visible-at-rest input treatment: every dictionary field shows a border
+    /// and background before hover or focus. Kills the invisible-until-hover
+    /// class (Etan settings QA 2026-06-06).
+    func dictionaryTextField() -> some View {
+        padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(Color(nsColor: .separatorColor))
+            )
     }
 }

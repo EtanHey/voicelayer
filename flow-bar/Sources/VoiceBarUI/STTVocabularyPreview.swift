@@ -85,6 +85,30 @@ public enum STTVocabularyCommandPayload {
         return payload
     }
 
+    public static func addTerm(
+        _ term: String,
+        id: String? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "cmd": "vocab_add_term",
+            "term": term.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        addID(id, to: &payload)
+        return payload
+    }
+
+    public static func removeTerm(
+        _ term: String,
+        id: String? = nil
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "cmd": "vocab_remove_term",
+            "term": term.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        addID(id, to: &payload)
+        return payload
+    }
+
     public static func list(id: String? = nil) -> [String: Any] {
         var payload: [String: Any] = ["cmd": "vocab_list"]
         addID(id, to: &payload)

@@ -31,6 +31,63 @@ final class STTVocabularyCommandPayloadTests: XCTestCase {
         try XCTAssertPayload(payload, matchesFixture: pr245VocabListFixture)
     }
 
+    private let termAddFixture = #"{"cmd":"vocab_add_term","id":"term-1","term":"VoiceLayer"}"#
+    private let termRemoveFixture = #"{"cmd":"vocab_remove_term","id":"term-2","term":"VoiceLayer"}"#
+
+    func testVocabAddTermPayloadMatchesParserFixture() throws {
+        let payload = STTVocabularyCommandPayload.addTerm("VoiceLayer", id: "term-1")
+
+        try XCTAssertPayload(payload, matchesFixture: termAddFixture)
+    }
+
+    func testVocabRemoveTermPayloadMatchesParserFixture() throws {
+        let payload = STTVocabularyCommandPayload.removeTerm(" VoiceLayer ", id: "term-2")
+
+        try XCTAssertPayload(payload, matchesFixture: termRemoveFixture)
+    }
+
+    func testVoiceStateSendsTermAddThenRefreshList() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { command in
+            commands.append(command)
+        }
+
+        state.addVocabularyPromptTerm("SongScript")
+
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(commands[0]["cmd"] as? String, "vocab_add_term")
+        XCTAssertEqual(commands[0]["term"] as? String, "SongScript")
+        XCTAssertEqual(commands[1]["cmd"] as? String, "vocab_list")
+    }
+
+    func testVoiceStateIgnoresEmptyTermAdd() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { command in
+            commands.append(command)
+        }
+
+        state.addVocabularyPromptTerm("   ")
+
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testVoiceStateSendsTermRemoveThenRefreshList() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { command in
+            commands.append(command)
+        }
+
+        state.removeVocabularyPromptTerm("SongScript")
+
+        XCTAssertEqual(commands.count, 2)
+        XCTAssertEqual(commands[0]["cmd"] as? String, "vocab_remove_term")
+        XCTAssertEqual(commands[0]["term"] as? String, "SongScript")
+        XCTAssertEqual(commands[1]["cmd"] as? String, "vocab_list")
+    }
+
     func testVoiceStateSendsVocabularyAddThenRefreshList() {
         let state = VoiceState()
         var commands: [[String: Any]] = []
