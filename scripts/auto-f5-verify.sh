@@ -15,7 +15,8 @@ IDLE_THRESHOLD_SECONDS="${VOICELAYER_AUTO_F5_IDLE_THRESHOLD_SECONDS:-120}"
 TARGET_OUTPUT_VOLUME="${VOICELAYER_AUTO_F5_OUTPUT_VOLUME:-70}"
 RECORD_SECONDS="${VOICELAYER_AUTO_F5_RECORD_SECONDS:-6}"
 PASTE_TIMEOUT_SECONDS="${VOICELAYER_AUTO_F5_PASTE_TIMEOUT_SECONDS:-120}"
-F5_SENDER="${VOICELAYER_AUTO_F5_SENDER:-osascript}"
+F5_SENDER="${VOICELAYER_AUTO_F5_SENDER:-swift}"
+VERIFY_TESTER="${VOICELAYER_VERIFY_TESTER:-auto-F5-etan-consented-live}"
 VOICEBAR_SOCKET_PATH="${QA_VOICE_SOCKET_PATH:-/tmp/voicelayer.sock}"
 
 AUDIO_FILE="$WORK_DIR/verification-test-with-leading-silence.wav"
@@ -290,6 +291,7 @@ send_f5_osascript() {
 }
 
 send_f5_swift() {
+  require_command swift
   local swift_file
   swift_file="$(mktemp "$WORK_DIR/send-f5.XXXXXX.swift")"
   cat >"$swift_file" <<'SWIFT'
@@ -450,7 +452,7 @@ start_verify_process() {
   VERIFY_STDIN_OPEN=1
 
   (
-    VOICELAYER_VERIFY_TESTER="auto-F5" \
+    VOICELAYER_VERIFY_TESTER="$VERIFY_TESTER" \
       VOICELAYER_VERIFY_REPO_ROOT="$REPO_ROOT" \
       bash "$VERIFY_SCRIPT" --force <"$VERIFY_FIFO"
   ) > >(tee -a "$LOG_FILE") 2>&1 &
