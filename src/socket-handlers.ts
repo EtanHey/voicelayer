@@ -86,12 +86,13 @@ export function handleSocketCommand(
         if (isSpeaking) {
           stopPlayback();
         }
-        // Idle forces VoiceBar remount for same-text replay
-        broadcast({ type: "state", state: "idle" });
         try {
           playAudioNonBlocking(entry.file, {
             text: entry.text.slice(0, 2000),
             voice: entry.voice,
+            // Idle forces VoiceBar remount for same-text replay, but the queue
+            // must emit it only after the speaker gate accepts playback.
+            preStartIdle: true,
           });
         } catch (err) {
           return buildAck(

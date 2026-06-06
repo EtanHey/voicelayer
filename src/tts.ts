@@ -528,6 +528,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   priority?: PlaybackPriority;
   durationMs?: number;
   collapseKey?: string;
+  preStartIdle?: boolean;
   clipMarker?: {
     id: string;
     label: string;
@@ -695,6 +696,9 @@ class PlaybackQueueManager {
         continue;
       }
 
+      if (next.metadata?.preStartIdle) {
+        broadcast({ type: "state", state: "idle" });
+      }
       if (next.metadata?.wordBoundaries?.length) {
         broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
       }
