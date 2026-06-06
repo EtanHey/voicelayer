@@ -5,7 +5,13 @@ import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
 
 export type ReviewAction = "merge" | "keep" | "mixed" | "skip" | "question";
+export type InterpretAction = ReviewAction | "update";
 export type MemberDecision = "merge" | "keep" | "prune";
+export type MemberUnderstanding =
+  | "irrelevant"
+  | "merge"
+  | "keep"
+  | "undecided";
 
 export interface ReviewMember {
   id: string;
@@ -31,9 +37,42 @@ export interface VoiceDecision {
   source: "voice";
 }
 
+export interface UnderstandingDelta {
+  action: InterpretAction;
+  canonical_id?: string;
+  members?: Record<string, MemberDecision>;
+  member_updates?: Record<string, MemberUnderstanding>;
+  remaining_question?: string;
+  question?: string;
+  note: string;
+  source: "voice";
+}
+
+export type VoiceInterpretation = VoiceDecision | UnderstandingDelta;
+
+export interface UnderstandingState {
+  cluster_id: string;
+  member_updates: Record<string, MemberUnderstanding>;
+  notes: string[];
+  remaining_question?: string;
+  canonical_id?: string;
+}
+
 export interface ConversationTurn {
   question: string;
   answer: string;
+}
+
+export interface InterruptionContext {
+  agent_speech_spoken_so_far: string;
+  agent_speech_unspoken_remainder: string;
+  interrupted_at_ms: number;
+}
+
+export interface WordBoundary {
+  offset_ms: number;
+  duration_ms: number;
+  text: string;
 }
 
 export interface EvidenceSnippet {
@@ -82,8 +121,10 @@ export interface VoiceReviewConfig {
   whisperModelPath: string;
   liteRtUrl: string;
   liteRtModel: string;
+  deepLiteRtModel: string;
   tempDir: string;
   ttsVoice: string;
+  ttsRate: string;
   requestTimeoutMs: number;
 }
 
@@ -142,8 +183,13 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
     process.env.VOICE_REVIEW_LITERT_URL ||
     "http://127.0.0.1:9379/v1/chat/completions",
   liteRtModel: process.env.VOICE_REVIEW_LITERT_MODEL || "gemma4-e4b,gpu",
+  deepLiteRtModel:
+    process.env.VOICE_REVIEW_DEEP_LITERT_MODEL ||
+    process.env.VOICE_REVIEW_LITERT_MODEL ||
+    "gemma4-e4b,gpu",
   tempDir: process.env.VOICE_REVIEW_TEMP_DIR || join(tmpdir(), "voicereview-web"),
-  ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-AriaNeural",
+  ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-GuyNeural",
+  ttsRate: process.env.VOICE_REVIEW_TTS_RATE || "-8%",
   requestTimeoutMs: Number(process.env.VOICE_REVIEW_TIMEOUT_MS || "60000"),
 };
 
@@ -200,8 +246,11 @@ export function buildEvidenceArgs(options: {
   dbPath: string;
   members: ReviewMember[];
   perMember?: number;
+  snippetChars?: number;
+  question?: string;
+  deep?: boolean;
 }): string[] {
-  return [
+  const args = [
     options.pythonBinary || "python3",
     options.pythonScript,
     "--db",
@@ -211,6 +260,14 @@ export function buildEvidenceArgs(options: {
     "--per-member",
     String(options.perMember || 3),
   ];
+  if (options.snippetChars) {
+    args.push("--snippet-chars", String(options.snippetChars));
+  }
+  if (options.question?.trim()) {
+    args.push("--question", options.question.trim());
+  }
+  if (options.deep) args.push("--deep");
+  return args;
 }
 
 export function buildWhisperPrompt(
@@ -252,24 +309,412 @@ export function buildWhisperArgs(options: {
   return args;
 }
 
+export const BROWSER_VAD_CHUNK_SAMPLES = 512;
+export const BROWSER_VAD_CONTEXT_SAMPLES = 64;
+export const BROWSER_VAD_INPUT_SAMPLES =
+  BROWSER_VAD_CHUNK_SAMPLES + BROWSER_VAD_CONTEXT_SAMPLES;
+
+export function createSileroVadInput(
+  chunk: Float32Array,
+  context: Float32Array,
+): { input: Float32Array; dims: [1, 576]; nextContext: Float32Array } {
+  if (chunk.length !== BROWSER_VAD_CHUNK_SAMPLES) {
+    throw new Error("Silero VAD chunk must contain 512 samples");
+  }
+  if (context.length !== BROWSER_VAD_CONTEXT_SAMPLES) {
+    throw new Error("Silero VAD context must contain 64 samples");
+  }
+  const input = new Float32Array(BROWSER_VAD_INPUT_SAMPLES);
+  input.set(context, 0);
+  input.set(chunk, BROWSER_VAD_CONTEXT_SAMPLES);
+  return {
+    input,
+    dims: [1, 576],
+    nextContext: input.slice(
+      BROWSER_VAD_INPUT_SAMPLES - BROWSER_VAD_CONTEXT_SAMPLES,
+    ),
+  };
+}
+
+export interface TurnTakingConfig {
+  settleMs: number;
+  frameMs: number;
+  playbackBargeInFrames: number;
+}
+
+export interface TurnTakingState {
+  phase: "LISTENING" | "SETTLING" | "THINKING" | "SPEAKING";
+  config: TurnTakingConfig;
+  hasSpeechInTurn: boolean;
+  settleElapsedMs: number;
+  settleProgress: number;
+  showSettlingRing: boolean;
+  playbackSpeechFrames: number;
+  pausePlayback: boolean;
+  turnTaken: boolean;
+}
+
+export function createTurnTakingState(
+  overrides: Partial<TurnTakingConfig> = {},
+): TurnTakingState {
+  return {
+    phase: "LISTENING",
+    config: {
+      settleMs: overrides.settleMs ?? 1300,
+      frameMs: overrides.frameMs ?? 32,
+      playbackBargeInFrames: overrides.playbackBargeInFrames ?? 3,
+    },
+    hasSpeechInTurn: false,
+    settleElapsedMs: 0,
+    settleProgress: 0,
+    showSettlingRing: false,
+    playbackSpeechFrames: 0,
+    pausePlayback: false,
+    turnTaken: false,
+  };
+}
+
+export function advanceTurnTakingFrame(
+  current: TurnTakingState,
+  frame: { speech: boolean },
+): TurnTakingState {
+  const state: TurnTakingState = {
+    ...current,
+    config: { ...current.config },
+    pausePlayback: false,
+    turnTaken: false,
+  };
+  const frameMs = state.config.frameMs;
+
+  if (state.phase === "SPEAKING") {
+    if (frame.speech) {
+      state.playbackSpeechFrames += 1;
+      if (state.playbackSpeechFrames >= state.config.playbackBargeInFrames) {
+        state.phase = "LISTENING";
+        state.hasSpeechInTurn = true;
+        state.settleElapsedMs = 0;
+        state.settleProgress = 0;
+        state.showSettlingRing = false;
+        state.playbackSpeechFrames = 0;
+        state.pausePlayback = true;
+      }
+    } else {
+      state.playbackSpeechFrames = 0;
+    }
+    return state;
+  }
+
+  if (state.phase === "THINKING") {
+    if (frame.speech) {
+      state.phase = "LISTENING";
+      state.hasSpeechInTurn = true;
+    }
+    return state;
+  }
+
+  if (frame.speech) {
+    state.phase = "LISTENING";
+    state.hasSpeechInTurn = true;
+    state.settleElapsedMs = 0;
+    state.settleProgress = 0;
+    state.showSettlingRing = false;
+    return state;
+  }
+
+  if (!state.hasSpeechInTurn) {
+    state.phase = "LISTENING";
+    return state;
+  }
+
+  state.phase = "SETTLING";
+  state.settleElapsedMs += frameMs;
+  state.settleProgress = Math.min(1, state.settleElapsedMs / state.config.settleMs);
+  state.showSettlingRing = state.settleProgress >= 0.6;
+  if (state.settleElapsedMs >= state.config.settleMs) {
+    state.phase = "THINKING";
+    state.turnTaken = true;
+    state.hasSpeechInTurn = false;
+    state.settleElapsedMs = 0;
+    state.settleProgress = 1;
+    state.showSettlingRing = false;
+  }
+  return state;
+}
+
+export function createUnderstandingState(
+  cluster: ReviewCluster,
+  seed?: Partial<UnderstandingState>,
+): UnderstandingState {
+  const memberUpdates: Record<string, MemberUnderstanding> = {};
+  for (const member of cluster.members) {
+    memberUpdates[member.id] =
+      seed?.member_updates?.[member.id] || "undecided";
+  }
+  return {
+    cluster_id: cluster.cluster_id,
+    member_updates: memberUpdates,
+    notes: Array.isArray(seed?.notes) ? [...seed.notes] : [],
+    remaining_question: seed?.remaining_question,
+    canonical_id: seed?.canonical_id,
+  };
+}
+
+export function applyUnderstandingDelta(
+  current: UnderstandingState,
+  delta: UnderstandingDelta,
+  cluster: ReviewCluster,
+): { state: UnderstandingState; terminalDecision: VoiceDecision | null } {
+  const state = createUnderstandingState(cluster, current);
+  if (delta.canonical_id) state.canonical_id = delta.canonical_id;
+  if (delta.remaining_question) {
+    state.remaining_question = delta.remaining_question;
+  }
+  if (delta.note.trim()) state.notes.push(delta.note.trim());
+
+  if (delta.member_updates) {
+    const memberIds = new Set(cluster.members.map((member) => member.id));
+    for (const [id, value] of Object.entries(delta.member_updates)) {
+      if (!memberIds.has(id)) throw new Error(`unknown member id: ${id}`);
+      if (!isMemberUnderstanding(value)) {
+        throw new Error(`invalid member understanding for ${id}`);
+      }
+      if (value !== "undecided") state.member_updates[id] = value;
+    }
+  }
+
+  if (
+    delta.action !== "update" &&
+    delta.action !== "question" &&
+    isVoiceDecision(delta)
+  ) {
+    return { state, terminalDecision: delta };
+  }
+
+  return {
+    state,
+    terminalDecision: composeFinalDecisionFromUnderstanding(state, cluster),
+  };
+}
+
+export function composeFinalDecisionFromUnderstanding(
+  state: UnderstandingState,
+  cluster: ReviewCluster,
+): VoiceDecision | null {
+  const statuses = cluster.members.map((member) => state.member_updates[member.id]);
+  if (statuses.some((status) => status === "undecided" || status === undefined)) {
+    return null;
+  }
+
+  const note = state.notes.join("\n").trim() || "Resolved by voice conversation";
+  if (statuses.every((status) => status === "keep")) {
+    return { action: "keep", note, source: "voice" };
+  }
+  if (statuses.every((status) => status === "irrelevant")) {
+    return { action: "skip", note, source: "voice" };
+  }
+  if (statuses.every((status) => status === "merge")) {
+    return {
+      action: "merge",
+      canonical_id: selectCanonicalForUnderstanding(state, cluster),
+      note,
+      source: "voice",
+    };
+  }
+
+  const members: Record<string, MemberDecision> = {};
+  for (const member of cluster.members) {
+    const status = state.member_updates[member.id];
+    members[member.id] =
+      status === "irrelevant" ? "prune" : status === "keep" ? "keep" : "merge";
+  }
+  return { action: "mixed", members, note, source: "voice" };
+}
+
+export function splitInterruptedSpeech(
+  text: string,
+  wordBoundaries: WordBoundary[],
+  interruptedAtMs: number,
+): InterruptionContext {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const safeInterruptedAtMs = Math.max(0, Math.round(interruptedAtMs || 0));
+  let spokenWordCount = 0;
+
+  if (wordBoundaries.length) {
+    spokenWordCount = wordBoundaries.filter(
+      (word) => word.offset_ms <= safeInterruptedAtMs,
+    ).length;
+  } else {
+    const approximateChars = Math.floor(safeInterruptedAtMs * 0.013);
+    let chars = 0;
+    for (const word of words) {
+      const next = chars + word.length + 1;
+      if (next > approximateChars) break;
+      spokenWordCount += 1;
+      chars = next;
+    }
+  }
+
+  spokenWordCount = Math.max(0, Math.min(words.length, spokenWordCount));
+  return {
+    agent_speech_spoken_so_far: words.slice(0, spokenWordCount).join(" "),
+    agent_speech_unspoken_remainder: words.slice(spokenWordCount).join(" "),
+    interrupted_at_ms: safeInterruptedAtMs,
+  };
+}
+
+export function humanizeSpokenText(input: string): string {
+  const tableNarration = humanizeMembersTable(input);
+  if (tableNarration) return tableNarration;
+
+  return String(input || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/\brt-[a-z0-9-]{6,}\b/gi, "")
+    .replace(/\bchunk\s+\d+\b/gi, "")
+    .replace(/\btype=[a-z0-9_-]+:?\s*/gi, "")
+    .replace(/_/g, " ")
+    .replace(/[ \t]*\n+[ \t]*/g, ". ")
+    .replace(/\s+([.,:;!?])/g, "$1")
+    .replace(/:\s*\./g, ".")
+    .replace(/\.\s*\./g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function humanizeMembersTable(input: string): string | null {
+  const memberRows = String(input || "")
+    .split(/\n+/)
+    .map((line) =>
+      line.match(/^\s*[-*]\s*(.+?)\s+\(([^,()]+),\s*\d+\s+chunks?\)\s*$/i),
+    )
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({
+      name: match[1].trim(),
+      type: match[2].trim().toLowerCase(),
+    }));
+
+  if (memberRows.length < 2) return null;
+
+  const byType = new Map<string, string[]>();
+  for (const row of memberRows) {
+    byType.set(row.type, [...(byType.get(row.type) || []), row.name]);
+  }
+
+  const parts = [...byType.entries()].map(([type, names]) => {
+    const count = names.length;
+    const entryLabel = count === 1 ? "entry" : "entries";
+    const similar =
+      count > 1 &&
+      new Set(names.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")))
+        .size <= 1;
+    return [
+      numberWord(count),
+      type,
+      entryLabel,
+      similar ? "with similar names" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  });
+
+  return `${capitalize(numberWord(memberRows.length))} entries: ${joinNaturalList(
+    parts,
+  )}.`;
+}
+
+function joinNaturalList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] || "";
+  if (parts.length === 2) return `${parts[0]}, and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+}
+
+function numberWord(value: number): string {
+  const words = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+  ];
+  return words[value] || String(value);
+}
+
+function capitalize(value: string): string {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
+function selectCanonicalForUnderstanding(
+  state: UnderstandingState,
+  cluster: ReviewCluster,
+): string {
+  if (
+    state.canonical_id &&
+    cluster.members.some((member) => member.id === state.canonical_id)
+  ) {
+    return state.canonical_id;
+  }
+  const firstMerge = cluster.members.find(
+    (member) => state.member_updates[member.id] === "merge",
+  );
+  return firstMerge?.id || cluster.members[0]?.id || "";
+}
+
+function isVoiceDecision(value: UnderstandingDelta): value is VoiceDecision {
+  return (
+    value.action === "merge" ||
+    value.action === "keep" ||
+    value.action === "mixed" ||
+    value.action === "skip" ||
+    value.action === "question"
+  );
+}
+
+function isMemberUnderstanding(value: unknown): value is MemberUnderstanding {
+  return (
+    value === "irrelevant" ||
+    value === "merge" ||
+    value === "keep" ||
+    value === "undecided"
+  );
+}
+
 export function buildInterpretMessages(options: {
   transcript: string;
   cluster: ReviewCluster;
+  understanding?: Partial<UnderstandingState>;
+  interruption?: InterruptionContext | null;
 }): Array<{ role: "system" | "user"; content: string }> {
   const system = [
     "STRICT KG voice-review interpreter.",
-    "Map one free-form spoken reviewer answer to exactly one JSON object.",
-    "Allowed action values: merge|keep|mixed|skip|question.",
+    "Map one free-form spoken reviewer turn to exactly one JSON object.",
+    "Allowed action values: update|merge|keep|mixed|skip|question.",
+    'Use update when the user resolved only part of the cluster; include member_updates, remaining_question, and note.',
+    'member_updates maps member ids to exactly one of: "irrelevant", "merge", "keep", "undecided".',
+    "Only emit merge, keep, mixed, or skip when every member is resolved.",
+    "For update, ask the next narrow remaining_question about ONLY unresolved members.",
     "Use question when the transcript asks for information, comparison, evidence, consequences, clarification, or ideation instead of deciding the cluster.",
     "For merge, canonical_id must be one id from cluster.members.",
+    "For update where a merge canonical is already clear, include canonical_id additively.",
     "For keep and skip, omit canonical_id and members.",
     "For mixed, members must map member id to merge|keep|prune.",
     "For question, include question equal to the user's question in the same language, omit canonical_id and members.",
+    "If interruption context is present, interpret the transcript as a barge-in response to what the agent had already said. The unspoken remainder may be moot.",
     "Every action must carry note equal to the verbatim transcript.",
     "If the transcript is ambiguous or non-deterministic, choose skip with the verbatim transcript as note. Never force a clean merge/keep/mixed disposition from unclear speech.",
     "Return exactly one JSON object. No markdown, no prose.",
     "",
     "few-shot examples:",
+    'Transcript: "the person is not relevant, I am deciding between company and project"',
+    '{"action":"update","member_updates":{"<person-member-id>":"irrelevant","<company-member-id>":"undecided","<project-member-id>":"undecided"},"remaining_question":"Should the company and project merge, or stay separate?","note":"the person is not relevant, I am deciding between company and project"}',
     'Transcript: "merge them all, the company one is the real one"',
     '{"action":"merge","canonical_id":"<company-member-id>","note":"merge them all, the company one is the real one"}',
     'Transcript: "keep these separate"',
@@ -290,12 +735,36 @@ export function buildInterpretMessages(options: {
         `- ${member.id}: ${member.name} (${member.type}, ${member.chunks} chunks)`,
     )
     .join("\n");
+  const understanding =
+    options.understanding || createUnderstandingState(options.cluster);
+  const currentUnderstanding = options.cluster.members
+    .map((member) => {
+      const status = understanding.member_updates?.[member.id] || "undecided";
+      return `- ${member.id}: ${status}`;
+    })
+    .join("\n");
+  const notes = Array.isArray(understanding.notes) && understanding.notes.length
+    ? understanding.notes.slice(-6).join("\n")
+    : "No prior understanding notes.";
+  const interruption = options.interruption
+    ? [
+        "Interruption context:",
+        `agent_speech_spoken_so_far: ${JSON.stringify(options.interruption.agent_speech_spoken_so_far)}`,
+        `agent_speech_unspoken_remainder: ${JSON.stringify(options.interruption.agent_speech_unspoken_remainder)}`,
+        `interrupted_at_ms: ${options.interruption.interrupted_at_ms}`,
+      ].join("\n")
+    : "Interruption context: none.";
   const user = [
     `Cluster: ${options.cluster.cluster_id}`,
     `Stem: ${options.cluster.stem}`,
     `Category: ${options.cluster.category}`,
     "Members:",
     memberLines,
+    "Current understanding:",
+    currentUnderstanding,
+    "Prior notes:",
+    notes,
+    interruption,
     `Transcript: ${JSON.stringify(options.transcript)}`,
   ].join("\n");
 
@@ -310,12 +779,17 @@ export function buildConverseMessages(options: {
   cluster: ReviewCluster;
   history: ConversationTurn[];
   evidence: ConversationEvidence;
+  evidenceDepth?: "shallow" | "deep";
+  interruption?: InterruptionContext | null;
 }): Array<{ role: "system" | "user"; content: string }> {
   const system = [
     "Grounded KG voice-review conversation assistant.",
     "You help a reviewer reason about whether the current cluster's members should be merged, kept separate, mixed, or skipped.",
     "You must answer ONLY from the provided evidence snippets and cluster facts.",
-    'If the provided evidence does not answer the question, say "I don\'t see evidence about that" rather than invent.',
+    options.evidenceDepth === "deep"
+      ? 'If the deeper evidence still does not answer the question, say "I looked deeper, but I still do not see evidence about that" rather than invent.'
+      : 'If the provided evidence does not answer the question, do not say "I don\'t see evidence about that"; say exactly NEED_DEEPER_EVIDENCE.',
+    "If interruption context is present, answer the interruption directly and decide whether the paused remainder is still useful.",
     "Use short spoken-style answers, 2-4 sentences, because the answer will be read aloud with TTS.",
     "Mention member names and types when useful. Do not include markdown.",
   ].join("\n");
@@ -341,6 +815,14 @@ export function buildConverseMessages(options: {
         )
         .join("\n")
     : "No prior Q&A turns.";
+  const interruption = options.interruption
+    ? [
+        "Interruption context:",
+        `agent_speech_spoken_so_far: ${JSON.stringify(options.interruption.agent_speech_spoken_so_far)}`,
+        `agent_speech_unspoken_remainder: ${JSON.stringify(options.interruption.agent_speech_unspoken_remainder)}`,
+        `interrupted_at_ms: ${options.interruption.interrupted_at_ms}`,
+      ].join("\n")
+    : "Interruption context: none.";
 
   const evidence = options.evidence.members
     .map((member) => {
@@ -372,6 +854,8 @@ export function buildConverseMessages(options: {
     "Conversation history:",
     history,
     "",
+    interruption,
+    "",
     "Evidence snippets:",
     evidence || "No evidence snippets found.",
     "",
@@ -388,18 +872,48 @@ export function parseInterpretDecision(
   rawContent: string,
   cluster: ReviewCluster,
   transcript: string,
-): VoiceDecision {
+): VoiceInterpretation {
   const parsed = parseJsonObject(rawContent);
   if (!isRecord(parsed)) throw new Error("LiteRT response was not an object");
 
   const action = normalizeInterpretAction(parsed.action);
 
   const memberIds = new Set(cluster.members.map((member) => member.id));
-  const decision: VoiceDecision = {
+  const decision: UnderstandingDelta = {
     action,
     note: transcript.trim(),
     source: "voice",
   };
+
+  if (typeof parsed.canonical_id === "string") {
+    if (!memberIds.has(parsed.canonical_id)) {
+      throw new Error("canonical_id is not a member of this cluster");
+    }
+    decision.canonical_id = parsed.canonical_id;
+  }
+
+  if (isRecord(parsed.member_updates)) {
+    const updates: Record<string, MemberUnderstanding> = {};
+    for (const [id, value] of Object.entries(parsed.member_updates)) {
+      if (!memberIds.has(id)) throw new Error(`unknown member id: ${id}`);
+      if (!isMemberUnderstanding(value)) {
+        throw new Error(`invalid member understanding for ${id}`);
+      }
+      updates[id] = value;
+    }
+    decision.member_updates = updates;
+  }
+
+  if (typeof parsed.remaining_question === "string") {
+    decision.remaining_question = parsed.remaining_question.trim();
+  }
+
+  if (action === "update") {
+    if (!decision.member_updates) {
+      throw new Error("update interpretation requires member_updates");
+    }
+    return decision;
+  }
 
   if (action === "question") {
     decision.question =
@@ -410,13 +924,9 @@ export function parseInterpretDecision(
   }
 
   if (action === "merge") {
-    if (typeof parsed.canonical_id !== "string") {
+    if (typeof decision.canonical_id !== "string") {
       throw new Error("merge interpretation requires canonical_id");
     }
-    if (!memberIds.has(parsed.canonical_id)) {
-      throw new Error("canonical_id is not a member of this cluster");
-    }
-    decision.canonical_id = parsed.canonical_id;
   }
 
   if (action === "mixed") {
@@ -441,9 +951,10 @@ export function parseInterpretDecision(
 }
 
 export function buildConfirmation(
-  decision: VoiceDecision,
+  decision: VoiceInterpretation,
   cluster: ReviewCluster,
 ): string | null {
+  if (decision.action === "update") return decision.remaining_question || null;
   if (decision.action === "question") return null;
   if (decision.action === "merge") {
     const canonical = cluster.members.find(
@@ -560,13 +1071,25 @@ export function createVoiceReviewApp(options?: {
       try {
         const url = new URL(request.url);
         if (request.method === "GET" && url.pathname === "/") {
-          return htmlResponse(renderPage(config.defaultCategory));
+          return htmlResponse(renderNaturalConversationPage(config));
+        }
+        if (request.method === "GET" && url.pathname === "/models/silero_vad.onnx") {
+          return await handleSileroModel();
+        }
+        if (
+          request.method === "GET" &&
+          url.pathname.startsWith("/vendor/onnxruntime-web/")
+        ) {
+          return await handleOnnxRuntimeAsset(url);
         }
         if (request.method === "GET" && url.pathname === "/api/next") {
           return await handleNext(url, config, runCommand, lockDecisionFile);
         }
         if (request.method === "GET" && url.pathname === "/api/stats") {
           return await handleStats(config, runCommand, lockDecisionFile);
+        }
+        if (request.method === "GET" && url.pathname === "/api/health") {
+          return await handleHealth(config, fetchImpl);
         }
         if (request.method === "POST" && url.pathname === "/api/decide") {
           return await handleDecide(request, config, runCommand, lockDecisionFile);
@@ -611,6 +1134,96 @@ async function handleNext(
   });
   const payload = parseDriverRecord(result);
   return jsonResponse({ ...payload, timings: { driver_ms: result.durationMs } });
+}
+
+async function handleSileroModel(): Promise<Response> {
+  const modelPath = join(import.meta.dir, "..", "..", "models", "silero_vad.onnx");
+  const file = Bun.file(modelPath);
+  if (!(await file.exists())) {
+    return jsonResponse({ error: "silero_vad.onnx not found" }, 404);
+  }
+  return new Response(file, {
+    status: 200,
+    headers: {
+      "content-type": "application/octet-stream",
+      "content-length": String(file.size),
+      "cache-control": "public, max-age=3600",
+    },
+  });
+}
+
+async function handleOnnxRuntimeAsset(url: URL): Promise<Response> {
+  const name = url.pathname.split("/").pop() || "";
+  if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
+    return jsonResponse({ error: "invalid asset path" }, 400);
+  }
+  const assetPath = join(
+    import.meta.dir,
+    "..",
+    "..",
+    "node_modules",
+    "onnxruntime-web",
+    "dist",
+    name,
+  );
+  const file = Bun.file(assetPath);
+  if (!(await file.exists())) return jsonResponse({ error: "not found" }, 404);
+  return new Response(file, {
+    status: 200,
+    headers: {
+      "content-type": contentTypeForAsset(name),
+      "content-length": String(file.size),
+      "cache-control": "public, max-age=3600",
+    },
+  });
+}
+
+async function handleHealth(
+  config: VoiceReviewConfig,
+  fetchImpl: FetchLike,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    Math.min(config.requestTimeoutMs, 4000),
+  );
+  const legs: Record<string, { ok: boolean; error?: string }> = {
+    litert: { ok: false },
+  };
+  try {
+    const response = await fetchImpl(config.liteRtUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: config.liteRtModel,
+        messages: [{ role: "user", content: "health" }],
+        temperature: 0,
+        max_tokens: 1,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      legs.litert = {
+        ok: false,
+        error: `LiteRT-LM failed: ${response.status} ${response.statusText}`,
+      };
+      return jsonResponse(
+        { ok: false, message: "brain offline — retrying", legs },
+        503,
+      );
+    }
+    legs.litert = { ok: true };
+    return jsonResponse({ ok: true, message: "ready", legs });
+  } catch (error) {
+    legs.litert = { ok: false, error: errorMessage(error) };
+    return jsonResponse(
+      { ok: false, message: "brain offline — retrying", legs },
+      503,
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function handleStats(
@@ -684,9 +1297,14 @@ async function handleInterpret(
   }
 
   const started = performance.now();
+  const interruption = normalizeInterruptionContext(body.interruption);
   const messages = buildInterpretMessages({
     transcript: body.transcript,
     cluster: body.cluster,
+    understanding: isRecord(body.understanding)
+      ? normalizeUnderstandingState(body.understanding, body.cluster)
+      : undefined,
+    interruption,
   });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
@@ -698,7 +1316,7 @@ async function handleInterpret(
         model: config.liteRtModel,
         messages,
         temperature: 0,
-        max_tokens: 256,
+        max_tokens: 420,
         stream: false,
       }),
       signal: controller.signal,
@@ -742,6 +1360,8 @@ async function handleConverse(
     }
     history = body.history;
   }
+  const question = body.question.trim();
+  const interruption = normalizeInterruptionContext(body.interruption);
   const evidenceResult = await runCommand({
     args: buildEvidenceArgs({
       pythonScript: evidenceScript(),
@@ -756,21 +1376,95 @@ async function handleConverse(
   const evidence = parseConversationEvidence(evidenceResult.stdout, body.cluster);
 
   const llmStarted = performance.now();
-  const messages = buildConverseMessages({
-    question: body.question.trim(),
-    cluster: body.cluster,
-    history,
-    evidence,
+  const shallow = await fetchConverseAnswer({
+    config,
+    fetchImpl,
+    model: config.liteRtModel,
+    messages: buildConverseMessages({
+      question,
+      cluster: body.cluster,
+      history,
+      evidence,
+      evidenceDepth: "shallow",
+      interruption,
+    }),
   });
+
+  if (!isInsufficientEvidenceAnswer(shallow)) {
+    return jsonResponse({
+      answer: shallow,
+      evidence,
+      evidence_depth: "shallow",
+      timings: {
+        evidence_ms: evidenceResult.durationMs,
+        llm_ms: Math.round(performance.now() - llmStarted),
+      },
+    });
+  }
+
+  const deepEvidenceResult = await runCommand({
+    args: buildEvidenceArgs({
+      pythonScript: evidenceScript(),
+      dbPath: config.brainlayerDbPath,
+      members: body.cluster.members,
+      perMember: 8,
+      snippetChars: 1800,
+      question,
+      deep: true,
+    }),
+    cwd: process.cwd(),
+    env: processEnv(),
+  });
+  assertSuccess(deepEvidenceResult, "kg_evidence.py");
+  const deepEvidence = parseConversationEvidence(
+    deepEvidenceResult.stdout,
+    body.cluster,
+  );
+  const deep = await fetchConverseAnswer({
+    config,
+    fetchImpl,
+    model: config.deepLiteRtModel,
+    messages: buildConverseMessages({
+      question,
+      cluster: body.cluster,
+      history,
+      evidence: deepEvidence,
+      evidenceDepth: "deep",
+      interruption,
+    }),
+  });
+
+  return jsonResponse({
+    answer: isInsufficientEvidenceAnswer(deep)
+      ? "I looked deeper, but I still do not see evidence about that."
+      : deep,
+    preface: "Let me look deeper.",
+    evidence: deepEvidence,
+    evidence_depth: "deep",
+    deep_model: config.deepLiteRtModel,
+    timings: {
+      evidence_ms: evidenceResult.durationMs,
+      deep_evidence_ms: deepEvidenceResult.durationMs,
+      llm_ms: Math.round(performance.now() - llmStarted),
+    },
+  });
+}
+
+async function fetchConverseAnswer(options: {
+  config: VoiceReviewConfig;
+  fetchImpl: FetchLike;
+  model: string;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+}): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), options.config.requestTimeoutMs);
   try {
-    const response = await fetchImpl(config.liteRtUrl, {
+    const response = await options.fetchImpl(options.config.liteRtUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: config.liteRtModel,
-        messages,
+        model: options.model,
+        messages: options.messages,
         temperature: 0,
         max_tokens: 220,
         stream: false,
@@ -781,18 +1475,22 @@ async function handleConverse(
       throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
     }
     const raw = await response.json();
-    const answer = extractChatContent(raw).replace(/\s+/g, " ").trim();
-    return jsonResponse({
-      answer,
-      evidence,
-      timings: {
-        evidence_ms: evidenceResult.durationMs,
-        llm_ms: Math.round(performance.now() - llmStarted),
-      },
-    });
+    return extractChatContent(raw).replace(/\s+/g, " ").trim();
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isInsufficientEvidenceAnswer(answer: string): boolean {
+  const normalized = answer.trim().toLowerCase();
+  return (
+    normalized === "need_deeper_evidence" ||
+    normalized.includes("need_deeper_evidence") ||
+    normalized.includes("i don't see evidence") ||
+    normalized.includes("i don’t see evidence") ||
+    normalized.includes("provided snippets") ||
+    normalized.includes("not enough evidence")
+  );
 }
 
 async function handleTranscribe(
@@ -883,6 +1581,16 @@ async function handleTts(
   const started = performance.now();
   const id = crypto.randomUUID();
   const mp3Path = join(config.tempDir, `${id}.mp3`);
+  const metadataPath = join(config.tempDir, `${id}.meta.ndjson`);
+  const text = humanizeSpokenText(body.text).slice(0, 4000);
+  const voice =
+    typeof body.voice === "string" && isSafeEdgeTtsVoice(body.voice)
+      ? body.voice
+      : config.ttsVoice;
+  const rate =
+    typeof body.rate === "string" && isSafeEdgeTtsRate(body.rate)
+      ? body.rate
+      : config.ttsRate;
   await mkdir(config.tempDir, { recursive: true });
   try {
     const python = resolveBinary("python3", [
@@ -894,31 +1602,49 @@ async function handleTts(
     const result = await runCommand({
       args: [
         python,
-        "-m",
-        "edge_tts",
-        "--voice",
-        config.ttsVoice,
+        edgeTtsWordsScript(),
         "--text",
-        body.text.slice(0, 4000),
+        text,
+        "--voice",
+        voice,
+        "--rate",
+        rate,
         "--write-media",
         mp3Path,
+        "--write-metadata",
+        metadataPath,
       ],
       cwd: process.cwd(),
       env: processEnv(),
     });
     assertSuccess(result, "edge-tts");
     const bytes = await readFile(mp3Path);
+    const wordBoundaries = parseWordBoundaryMetadata(
+      await readFile(metadataPath, "utf8").catch(() => ""),
+    );
     return new Response(bytes, {
       status: 200,
       headers: {
         "content-type": "audio/mpeg",
         "cache-control": "no-store",
         "x-tts-ms": String(Math.round(performance.now() - started)),
+        "x-word-boundaries": JSON.stringify(wordBoundaries),
       },
     });
   } finally {
-    await rm(mp3Path, { force: true });
+    await Promise.allSettled([
+      rm(mp3Path, { force: true }),
+      rm(metadataPath, { force: true }),
+    ]);
   }
+}
+
+function isSafeEdgeTtsVoice(value: string): boolean {
+  return /^[a-z]{2,3}-[A-Z]{2,3}-[A-Za-z0-9]+Neural$/.test(value);
+}
+
+function isSafeEdgeTtsRate(value: string): boolean {
+  return /^[+-](?:[0-9]|[1-9][0-9]|100)%$/.test(value);
 }
 
 async function runShellCommand(call: CommandCall): Promise<CommandResult> {
@@ -1124,7 +1850,8 @@ function normalizeLegacyAction(action: unknown): "merge" | "keep" | "skip" {
   throw new Error(`invalid legacy action ${String(action)}`);
 }
 
-function normalizeInterpretAction(action: unknown): ReviewAction {
+function normalizeInterpretAction(action: unknown): InterpretAction {
+  if (action === "update") return "update";
   if (action === "merge" || action === "merge_all") return "merge";
   if (action === "keep" || action === "keep_all") return "keep";
   if (action === "mixed" || action === "skip" || action === "question") return action;
@@ -1260,6 +1987,49 @@ function extractChatContent(raw: unknown): string {
   throw new Error("LiteRT response missing message content");
 }
 
+export function parseWordBoundaryMetadata(raw: string): WordBoundary[] {
+  return raw
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parsed = JSON.parse(line);
+      if (!isRecord(parsed) || parsed.type !== "WordBoundary") return null;
+      const offset = Number(parsed.offset);
+      const duration = Number(parsed.duration);
+      const text = typeof parsed.text === "string" ? parsed.text : "";
+      if (!Number.isFinite(offset) || !Number.isFinite(duration) || !text) {
+        return null;
+      }
+      return {
+        offset_ms: Math.round(offset / 10_000),
+        duration_ms: Math.round(duration / 10_000),
+        text,
+      };
+    })
+    .filter((item): item is WordBoundary => Boolean(item));
+}
+
+function normalizeInterruptionContext(value: unknown): InterruptionContext | null {
+  if (!isRecord(value)) return null;
+  const spoken =
+    typeof value.agent_speech_spoken_so_far === "string"
+      ? value.agent_speech_spoken_so_far.trim()
+      : "";
+  const remainder =
+    typeof value.agent_speech_unspoken_remainder === "string"
+      ? value.agent_speech_unspoken_remainder.trim()
+      : "";
+  const interruptedAtMs = Number(value.interrupted_at_ms);
+  if (!spoken && !remainder) return null;
+  if (!Number.isFinite(interruptedAtMs) || interruptedAtMs < 0) return null;
+  return {
+    agent_speech_spoken_so_far: spoken,
+    agent_speech_unspoken_remainder: remainder,
+    interrupted_at_ms: Math.round(interruptedAtMs),
+  };
+}
+
 function parseJsonObject(raw: string): unknown {
   const trimmed = raw.trim();
   const unfenced = trimmed
@@ -1289,6 +2059,10 @@ function evidenceScript(): string {
   return join(import.meta.dir, "kg_evidence.py");
 }
 
+function edgeTtsWordsScript(): string {
+  return join(import.meta.dir, "../../scripts/edge-tts-words.py");
+}
+
 function driverEnv(config: VoiceReviewConfig): Record<string, string> {
   return { ...processEnv(), PYTHONPATH: join(config.brainlayerWorktree, "src") };
 }
@@ -1307,6 +2081,15 @@ function extensionForContentType(contentType: string | null): string {
   if (value.includes("mp4")) return "m4a";
   if (value.includes("ogg")) return "ogg";
   return "webm";
+}
+
+function contentTypeForAsset(name: string): string {
+  if (name.endsWith(".wasm")) return "application/wasm";
+  if (name.endsWith(".mjs") || name.endsWith(".js")) {
+    return "text/javascript; charset=utf-8";
+  }
+  if (name.endsWith(".map")) return "application/json; charset=utf-8";
+  return "application/octet-stream";
 }
 
 function isReviewCluster(value: unknown): value is ReviewCluster {
@@ -1330,6 +2113,32 @@ function isConversationHistory(value: unknown): value is ConversationTurn[] {
         typeof turn.answer === "string",
     )
   );
+}
+
+function normalizeUnderstandingState(
+  value: Record<string, unknown>,
+  cluster: ReviewCluster,
+): UnderstandingState {
+  const memberUpdates: Record<string, MemberUnderstanding> = {};
+  if (isRecord(value.member_updates)) {
+    for (const [id, update] of Object.entries(value.member_updates)) {
+      if (isMemberUnderstanding(update)) memberUpdates[id] = update;
+    }
+  }
+  const notes = Array.isArray(value.notes)
+    ? value.notes.filter((note): note is string => typeof note === "string")
+    : [];
+  return createUnderstandingState(cluster, {
+    cluster_id: cluster.cluster_id,
+    member_updates: memberUpdates,
+    notes,
+    remaining_question:
+      typeof value.remaining_question === "string"
+        ? value.remaining_question
+        : undefined,
+    canonical_id:
+      typeof value.canonical_id === "string" ? value.canonical_id : undefined,
+  });
 }
 
 function parseConversationEvidence(
@@ -1403,7 +2212,24 @@ function htmlResponse(html: string): Response {
   });
 }
 
-function renderPage(defaultCategory: string): string {
+function renderNaturalConversationPage(config: VoiceReviewConfig): string {
+  const defaultCategory = config.defaultCategory;
+  const ttsVoices = [
+    "en-US-GuyNeural",
+    "en-US-JennyNeural",
+    "en-US-AndrewNeural",
+    "en-US-BrianMultilingualNeural",
+    "en-US-AvaNeural",
+    "en-US-AriaNeural",
+  ];
+  const selectedVoice = ttsVoices.includes(config.ttsVoice)
+    ? config.ttsVoice
+    : DEFAULT_CONFIG.ttsVoice;
+  const parsedRate = Number.parseInt(config.ttsRate.replace("%", ""), 10);
+  const selectedRate = Number.isFinite(parsedRate)
+    ? Math.max(-30, Math.min(10, parsedRate))
+    : -8;
+  const selectedRateLabel = `${selectedRate >= 0 ? "+" : ""}${selectedRate}%`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1413,15 +2239,20 @@ function renderPage(defaultCategory: string): string {
   <style>
     :root {
       color-scheme: light;
-      --bg: #f7f8fa;
-      --panel: #ffffff;
+      --bg: #f4f6f7;
+      --surface: #ffffff;
       --ink: #172026;
-      --muted: #5a6872;
-      --line: #d9e0e5;
+      --muted: #60707b;
+      --line: #d7dee3;
       --accent: #0f766e;
-      --accent-ink: #ffffff;
-      --warn: #9a3412;
-      --ok: #166534;
+      --blue: #2563eb;
+      --amber: #b45309;
+      --red: #b91c1c;
+      --green: #166534;
+      --soft-teal: #e6f3f1;
+      --soft-blue: #eff6ff;
+      --soft-amber: #fff7ed;
+      --soft-red: #fef2f2;
     }
     * { box-sizing: border-box; }
     body {
@@ -1433,257 +2264,245 @@ function renderPage(defaultCategory: string): string {
     }
     header {
       display: grid;
-      grid-template-columns: 1fr auto;
-      gap: 16px;
-      align-items: end;
-      padding: 24px clamp(16px, 3vw, 36px) 18px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      padding: 18px clamp(16px, 3vw, 34px);
       border-bottom: 1px solid var(--line);
-      background: #ffffff;
+      background: var(--surface);
     }
-    h1, h2, p { margin: 0; }
-    h1 { font-size: clamp(24px, 3vw, 34px); font-weight: 700; }
-    .sub { margin-top: 6px; color: var(--muted); font-size: 14px; }
-    .top-controls { display: flex; gap: 10px; align-items: center; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 24px; line-height: 1.1; }
+    .sub { margin-top: 5px; color: var(--muted); font-size: 13px; }
+    .top-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     select, button {
       font: inherit;
       border: 1px solid var(--line);
-      background: #ffffff;
+      background: var(--surface);
       color: var(--ink);
       border-radius: 8px;
     }
     select { padding: 10px 12px; min-width: 190px; }
-    main {
+    .voice-control {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-      gap: 18px;
-      padding: 18px clamp(16px, 3vw, 36px);
-      max-width: 1180px;
-      margin: 0 auto;
-    }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-    }
-    .cluster { padding: 18px; min-width: 0; }
-    .cluster-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      align-items: start;
-      margin-bottom: 16px;
-    }
-    .cluster-id {
+      gap: 3px;
       color: var(--muted);
-      font-size: 13px;
-      overflow-wrap: anywhere;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
     }
-    h2 { font-size: clamp(24px, 4vw, 42px); line-height: 1.05; margin-top: 3px; }
-    .badge {
-      flex: none;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: #e6f3f1;
-      color: #0f5f59;
-      font-size: 12px;
-      font-weight: 700;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-      font-size: 14px;
-    }
-    th, td {
-      border-bottom: 1px solid var(--line);
-      padding: 10px 8px;
-      text-align: left;
-      vertical-align: top;
-      overflow-wrap: anywhere;
-    }
-    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-    .controls {
-      padding: 18px;
-      display: grid;
-      gap: 16px;
-      align-content: start;
-    }
-    .mic {
-      --endpoint-progress: 0;
-      width: min(100%, 300px);
-      aspect-ratio: 1 / 1;
-      justify-self: center;
-      border-radius: 50%;
-      border: 0;
+    .voice-control select { min-width: 180px; padding: 8px 10px; }
+    .voice-control input[type="range"] { width: 150px; accent-color: var(--accent); }
+    .rate-row { display: flex; gap: 7px; align-items: center; }
+    output { min-width: 34px; color: var(--ink); text-transform: none; }
+    button.session {
+      min-width: 132px;
+      padding: 10px 14px;
+      border-color: var(--accent);
       background: var(--accent);
-      color: var(--accent-ink);
-      font-size: clamp(24px, 4vw, 34px);
+      color: #ffffff;
       font-weight: 800;
       cursor: pointer;
-      box-shadow: 0 16px 30px rgba(15, 118, 110, 0.24);
-      transition: background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
     }
-    .mic.recording { background: #b91c1c; box-shadow: 0 16px 30px rgba(185, 28, 28, 0.22); }
-    .mic.countdown {
-      background:
-        radial-gradient(circle at center, #b91c1c 0 67%, transparent 68%),
-        conic-gradient(#facc15 calc(var(--endpoint-progress) * 1turn), rgba(185, 28, 28, 0.18) 0);
-      box-shadow: 0 0 0 5px rgba(250, 204, 21, 0.16), 0 16px 30px rgba(185, 28, 28, 0.24);
+    button.session.is-active {
+      border-color: var(--red);
+      background: var(--red);
     }
-    .mic.barged {
-      background: #1d4ed8;
-      box-shadow: 0 0 0 5px rgba(29, 78, 216, 0.16), 0 16px 30px rgba(29, 78, 216, 0.26);
+    button.session:disabled { opacity: 0.62; cursor: wait; }
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(310px, 390px);
+      gap: 16px;
+      padding: 16px clamp(16px, 3vw, 34px) 22px;
+      max-width: 1240px;
+      margin: 0 auto;
     }
-    .mic.recording.barged.countdown {
-      background:
-        radial-gradient(circle at center, #1d4ed8 0 67%, transparent 68%),
-        conic-gradient(#facc15 calc(var(--endpoint-progress) * 1turn), rgba(29, 78, 216, 0.18) 0);
+    .work, .side {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+      min-width: 0;
     }
-    .mic.auto-listening {
-      background: #f59e0b;
-      color: #172026;
-      box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34);
-      animation: autoListenPulse 900ms ease-in-out infinite;
-    }
-    .mic:disabled { opacity: 0.55; cursor: wait; }
-    @keyframes autoListenPulse {
-      0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.55), 0 18px 34px rgba(245, 158, 11, 0.34); }
-      70% { box-shadow: 0 0 0 18px rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.28); }
-      100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0), 0 18px 34px rgba(245, 158, 11, 0.34); }
-    }
-    .status {
-      min-height: 44px;
-      color: var(--muted);
-      font-size: 15px;
-      line-height: 1.4;
-    }
-    .transcript, .decision {
+    .band {
+      background: var(--surface);
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 12px;
-      min-height: 62px;
-      background: #fbfcfd;
-      font-size: 14px;
-      line-height: 1.4;
-      overflow-wrap: anywhere;
+      padding: 16px;
+      min-width: 0;
     }
-    .transcript-log {
+    .cluster-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 13px;
+    }
+    .cluster-id, .small { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    h2 { margin-top: 3px; font-size: clamp(27px, 4vw, 44px); line-height: 1.02; }
+    h3 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+    .badge {
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: var(--soft-teal);
+      color: #0f5f59;
+      font-size: 12px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .members {
       display: grid;
       gap: 8px;
-      max-height: 260px;
+    }
+    .member {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: #fbfcfd;
+      transition: opacity 140ms ease, border-color 140ms ease, background 140ms ease;
+    }
+    .member.is-open {
+      border-color: #93c5fd;
+      background: var(--soft-blue);
+    }
+    .member.is-resolved {
+      opacity: 0.56;
+      background: #f7f8f9;
+    }
+    .member-name { font-weight: 800; overflow-wrap: anywhere; }
+    .member-meta { margin-top: 2px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .member-tag {
+      justify-self: end;
+      padding: 5px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 800;
+      background: #eef2f4;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .member-tag.keep { background: #ecfdf5; color: var(--green); }
+    .member-tag.merge { background: var(--soft-blue); color: var(--blue); }
+    .member-tag.irrelevant { background: var(--soft-red); color: var(--red); }
+    .question {
+      border-left: 4px solid var(--blue);
+      padding: 10px 12px;
+      background: var(--soft-blue);
+      border-radius: 8px;
+      min-height: 46px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .state-panel {
+      display: grid;
+      gap: 12px;
+    }
+    .phase-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+    }
+    .phase {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 7px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 900;
+      color: var(--muted);
+      background: #fbfcfd;
+    }
+    .phase.is-active {
+      color: #ffffff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+    .settle-wrap {
+      display: grid;
+      grid-template-columns: 58px minmax(0, 1fr);
+      gap: 10px;
+      align-items: center;
+    }
+    .settle-ring {
+      --settle-progress: 0;
+      width: 54px;
+      aspect-ratio: 1 / 1;
+      border-radius: 999px;
+      background: conic-gradient(var(--amber) calc(var(--settle-progress) * 1turn), #edf1f3 0);
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+    .settle-ring::after {
+      content: "";
+      display: block;
+      width: 38px;
+      aspect-ratio: 1 / 1;
+      margin: 8px;
+      border-radius: 999px;
+      background: var(--surface);
+    }
+    .settle-ring.is-visible { opacity: 1; }
+    .status {
+      min-height: 38px;
+      color: var(--muted);
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .status.urgent {
+      color: var(--red);
+      background: var(--soft-red);
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .mode-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #eef2f4;
+      color: var(--muted);
+      font-weight: 800;
+    }
+    .pill.basic { background: var(--soft-amber); color: var(--amber); }
+    .log {
+      display: grid;
+      gap: 8px;
+      max-height: 290px;
       overflow: auto;
     }
     .turn {
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 9px 10px;
-      background: #ffffff;
-      display: grid;
-      gap: 5px;
+      background: #fbfcfd;
+      line-height: 1.38;
+      overflow-wrap: anywhere;
     }
-    .turn.is-prior {
+    .turn.agent { border-left: 4px solid var(--accent); }
+    .turn.user { border-left: 4px solid var(--blue); }
+    .turn.system { border-left: 4px solid var(--amber); }
+    .turn.is-paused {
       opacity: 0.58;
-      background: #f3f6f8;
-    }
-    .turn.is-current {
-      border-color: #7dd3fc;
-      box-shadow: inset 3px 0 0 #0284c7;
-    }
-    .turn-user.is-current {
-      border-color: #fca5a5;
-      box-shadow: inset 3px 0 0 #dc2626;
-    }
-    .turn-agent.is-current {
-      border-color: #99f6e4;
-      box-shadow: inset 3px 0 0 #0f766e;
+      background: #f7f8f9;
     }
     .turn-label {
-      display: flex;
-      justify-content: space-between;
-      gap: 8px;
-      color: var(--ink);
-      font-size: 12px;
-      font-weight: 800;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 900;
       text-transform: uppercase;
-    }
-    .turn-prior, .turn-meta {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: none;
-    }
-    .turn-text {
-      color: var(--ink);
-      font-size: 14px;
-      line-height: 1.4;
-      overflow-wrap: anywhere;
-      white-space: pre-wrap;
-    }
-    .qa-panel {
-      display: grid;
-      gap: 10px;
-      max-height: 280px;
-      overflow: auto;
-      padding-right: 2px;
-    }
-    .qa-panel:empty { display: none; }
-    .qa-turn {
-      display: grid;
-      gap: 7px;
-    }
-    .qa-bubble {
-      max-width: 88%;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      padding: 10px 11px;
-      font-size: 14px;
-      line-height: 1.4;
-      overflow-wrap: anywhere;
-    }
-    .qa-question {
-      justify-self: end;
-      background: #e6f3f1;
-      border-color: #b8dcd7;
-    }
-    .qa-answer {
-      justify-self: start;
-      background: #fbfcfd;
-    }
-    .qa-evidence {
-      justify-self: start;
-      max-width: 100%;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .qa-evidence summary {
-      cursor: pointer;
-      color: var(--ink);
-    }
-    .qa-evidence ul {
-      margin: 8px 0 0;
-      padding-left: 18px;
-    }
-    .qa-evidence li { margin: 6px 0; overflow-wrap: anywhere; }
-    .qa-evidence-label {
-      color: var(--ink);
-      font-weight: 700;
-    }
-    .qa-evidence-snippets {
-      margin-top: 4px;
-    }
-    .qa-hint {
-      justify-self: start;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    footer {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 0 clamp(16px, 3vw, 36px) 24px;
-      display: grid;
-      gap: 10px;
-      color: var(--muted);
-      font-size: 13px;
+      margin-bottom: 4px;
     }
     .progress {
       height: 12px;
@@ -1692,18 +2511,45 @@ function renderPage(defaultCategory: string): string {
       border-radius: 999px;
       overflow: hidden;
     }
-    .progress > div { height: 100%; width: 0%; background: var(--ok); transition: width 160ms ease; }
-    .honesty {
-      color: var(--warn);
-      line-height: 1.35;
+    .progress > div { height: 100%; width: 0%; background: var(--green); transition: width 160ms ease; }
+    details.evidence {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: #fbfcfd;
+    }
+    details.evidence summary {
+      cursor: pointer;
+      font-weight: 900;
+      color: var(--muted);
+      list-style-position: inside;
+    }
+    .evidence-body {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .evidence-item {
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+      overflow-wrap: anywhere;
+    }
+    .resume-link {
+      color: var(--blue);
+      font-weight: 900;
+      text-decoration: none;
+      cursor: pointer;
     }
     audio { display: none; }
-    @media (max-width: 820px) {
+    @media (max-width: 860px) {
       header { grid-template-columns: 1fr; align-items: start; }
-      .top-controls { flex-wrap: wrap; }
+      .top-controls { width: 100%; justify-content: space-between; }
+      select { min-width: 0; flex: 1; }
+      .voice-control { flex: 1 1 160px; }
       main { grid-template-columns: 1fr; }
-      .mic { width: min(76vw, 260px); }
-      table { font-size: 13px; }
+      .phase-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
   </style>
 </head>
@@ -1711,7 +2557,7 @@ function renderPage(defaultCategory: string): string {
   <header>
     <div>
       <h1>KG Voice Review</h1>
-      <p class="sub">Mac/Helium localhost voice loop. Browser mic and browser speaker only; VoiceBar, F5, and CLI audio stay out of this path.</p>
+      <p class="sub">Natural review session for the current KG flag cluster.</p>
     </div>
     <div class="top-controls">
       <select id="category" aria-label="Category">
@@ -1722,457 +2568,369 @@ function renderPage(defaultCategory: string): string {
           )
           .join("")}
       </select>
+      <label class="voice-control">Voice
+        <select id="ttsVoice" aria-label="TTS voice">
+          ${ttsVoices
+            .map(
+              (voice) =>
+                `<option value="${voice}"${voice === selectedVoice ? " selected" : ""}>${voice}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="voice-control">Rate
+        <span class="rate-row">
+          <input id="ttsRate" type="range" min="-30" max="10" step="1" value="${selectedRate}" aria-label="TTS rate">
+          <output id="ttsRateValue">${selectedRateLabel}</output>
+        </span>
+      </label>
+      <button id="sessionButton" class="session" type="button">Start session</button>
     </div>
   </header>
 
   <main>
-    <section class="cluster" aria-live="polite">
-      <div class="cluster-head">
-        <div>
-          <div id="clusterId" class="cluster-id">No cluster loaded</div>
-          <h2 id="stem">Ready</h2>
+    <div class="work">
+      <section class="band" aria-live="polite">
+        <div class="cluster-head">
+          <div>
+            <div id="clusterId" class="cluster-id">No cluster loaded</div>
+            <h2 id="stem">Ready</h2>
+          </div>
+          <div id="categoryBadge" class="badge">${defaultCategory}</div>
         </div>
-        <div id="categoryBadge" class="badge">${defaultCategory}</div>
-      </div>
-      <table>
-        <thead><tr><th>Name</th><th>Type</th><th>Chunks</th><th>ID</th></tr></thead>
-        <tbody id="members"><tr><td colspan="4">Tap Start.</td></tr></tbody>
-      </table>
-    </section>
+        <div id="members" class="members">
+          <div class="member"><div><div class="member-name">Session idle</div><div class="member-meta">Start when ready.</div></div><div class="member-tag">undecided</div></div>
+        </div>
+      </section>
 
-    <section class="controls">
-      <button id="mic" class="mic" type="button">Start</button>
-      <div id="status" class="status">Tap Start once to allow the browser mic and load the next cluster.</div>
-      <div id="transcript" class="transcript transcript-log">Transcript appears here.</div>
-      <div id="qa" class="qa-panel" aria-live="polite"></div>
-      <div id="decision" class="decision">Decision appears here.</div>
-    </section>
+      <section class="band">
+        <h3>Open Question</h3>
+        <div id="openQuestion" class="question">No active cluster.</div>
+      </section>
+
+      <section class="band">
+        <h3>Understanding</h3>
+        <div class="progress"><div id="clusterProgress"></div></div>
+        <p id="understandingNote" class="small" style="margin-top:8px;">Progress pending.</p>
+      </section>
+    </div>
+
+    <aside class="side">
+      <section class="band state-panel">
+        <div class="phase-row" aria-label="Turn state">
+          <div id="phaseListening" class="phase">LISTENING</div>
+          <div id="phaseSettling" class="phase">SETTLING</div>
+          <div id="phaseThinking" class="phase">THINKING</div>
+          <div id="phaseSpeaking" class="phase">SPEAKING</div>
+        </div>
+        <div class="settle-wrap">
+          <div id="settleRing" class="settle-ring" aria-hidden="true"></div>
+          <div>
+            <div id="status" class="status">Start a session when ready.</div>
+            <div class="mode-line">
+              <span id="vadMode" class="pill">VAD pending</span>
+              <span id="healthMode" class="pill">health pending</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="band">
+        <h3>Conversation</h3>
+        <div id="pausedUtterance" class="turn agent is-paused" aria-label="paused utterance" hidden>
+          <div class="turn-label">paused utterance · <a id="resumePlayback" class="resume-link" href="#">resume</a></div>
+          <div id="pausedText"></div>
+        </div>
+        <div id="turnLog" class="log" aria-live="polite"></div>
+      </section>
+
+      <section class="band">
+        <details id="evidencePanel" class="evidence">
+          <summary>Evidence</summary>
+          <div id="evidenceStatus" class="small">No evidence fetched.</div>
+          <div id="evidenceBody" class="evidence-body"></div>
+        </details>
+      </section>
+
+      <section class="band">
+        <h3>Decision</h3>
+        <pre id="decision" class="small" style="white-space:pre-wrap; margin:0;">Waiting for a resolved cluster.</pre>
+      </section>
+    </aside>
   </main>
-
-  <footer>
-    <div class="progress"><div id="progressFill"></div></div>
-    <div id="progressText">Progress pending.</div>
-    <div id="timings">Timings: record-stop to transcript -, transcript to decision -, total -.</div>
-    <div class="honesty">Phone/tailnet is display-only tonight; Mac/Helium localhost is the supported voice surface.</div>
-    <div class="honesty">TTS v0 uses /api/tts with edge-tts for audio element playback; cluster text leaves the Mac for that leg. STT and interpretation stay local.</div>
-  </footer>
 
   <audio id="audio" preload="auto"></audio>
 
-  <script>
-    const ENDPOINTING_DEFAULTS = {
-      frameMs: 50,
-      calibrationMs: 300,
-      trailingSilenceMs: 1300,
-      minNoiseFloor: 0.003,
-      minSpeechRms: 0.018,
-      speechOffset: 0.012,
-      speechMultiplier: 2.4,
-      minSilenceRms: 0.012,
-      silenceOffset: 0.006,
-      silenceMultiplier: 1.45,
-      calibrationSpeechRms: 0.018
+  <script type="module">
+    import * as ort from "/vendor/onnxruntime-web/ort.wasm.min.mjs";
+
+    const TURN_STATE_DEFAULTS = {
+      settleMs: 1300,
+      frameMs: 32,
+      playbackBargeInFrames: 3
     };
+    const BROWSER_VAD_CHUNK_SAMPLES = 512;
+    const BROWSER_VAD_CONTEXT_SAMPLES = 64;
+    const BROWSER_VAD_INPUT_SAMPLES = 576;
+    const SILERO_SPEECH_THRESHOLD = 0.5;
+    const BASIC_RMS_THRESHOLD = 0.018;
+    const PAUSE_INTENT_EXTENDED_SILENCE_MS = 10000;
+    const THINKING_PAUSE_PHRASES = ["wait", "hold on", "let me think", "hmm", "one sec", "רגע"];
 
-    function endpointingConfig(overrides = {}) {
-      return Object.assign({}, ENDPOINTING_DEFAULTS, overrides);
-    }
-
-    function createEndpointingState(overrides = {}) {
-      const config = endpointingConfig(overrides);
+    function createTurnTakingState(overrides = {}) {
       return {
-        config,
-        calibrated: false,
-        calibrationMsSeen: 0,
-        calibrationFrames: 0,
-        calibrationRmsTotal: 0,
-        calibrationAcceptedFrames: 0,
-        calibrationAcceptedRmsTotal: 0,
-        calibrationSpeechCandidateSeen: false,
-        noiseFloor: 0,
-        speechThreshold: 0,
-        silenceThreshold: 0,
-        speechStarted: false,
-        trailingSilenceMs: 0,
-        countdownProgress: 0,
-        shouldStop: false,
-        phase: "calibrating"
+        phase: "LISTENING",
+        config: Object.assign({}, TURN_STATE_DEFAULTS, overrides),
+        hasSpeechInTurn: false,
+        settleElapsedMs: 0,
+        settleProgress: 0,
+        showSettlingRing: false,
+        playbackSpeechFrames: 0,
+        pausePlayback: false,
+        turnTaken: false
       };
     }
 
-    function advanceEndpointing(state, rms) {
-      const config = state.config || ENDPOINTING_DEFAULTS;
-      const frameMs = Number(config.frameMs || ENDPOINTING_DEFAULTS.frameMs);
-      const sample = Math.max(0, Number(rms) || 0);
-
-      if (!state.calibrated) {
-        state.calibrationMsSeen += frameMs;
-        state.calibrationFrames += 1;
-        state.calibrationRmsTotal += sample;
-        if (sample < config.calibrationSpeechRms) {
-          state.calibrationAcceptedFrames += 1;
-          state.calibrationAcceptedRmsTotal += sample;
-        } else {
-          state.calibrationSpeechCandidateSeen = true;
-        }
-        state.phase = "calibrating";
-        if (state.calibrationMsSeen >= config.calibrationMs) {
-          const ambient = state.calibrationAcceptedFrames > 0
-            ? state.calibrationAcceptedRmsTotal / state.calibrationAcceptedFrames
-            : config.minNoiseFloor;
-          state.noiseFloor = Math.max(ambient, config.minNoiseFloor);
-          state.speechThreshold = Math.max(
-            config.minSpeechRms,
-            state.noiseFloor + config.speechOffset,
-            state.noiseFloor * config.speechMultiplier,
-          );
-          state.silenceThreshold = Math.min(
-            state.speechThreshold * 0.82,
-            Math.max(
-              config.minSilenceRms,
-              state.noiseFloor + config.silenceOffset,
-              state.noiseFloor * config.silenceMultiplier,
-            ),
-          );
-          state.calibrated = true;
-          if (state.calibrationSpeechCandidateSeen) {
-            state.speechStarted = true;
-            state.phase = "speaking";
-          } else {
-            state.phase = "waiting_for_speech";
+    function advanceTurnTakingFrame(current, frame) {
+      const state = Object.assign({}, current, {
+        config: Object.assign({}, current.config),
+        pausePlayback: false,
+        turnTaken: false
+      });
+      const speech = Boolean(frame.speech);
+      if (state.phase === "SPEAKING") {
+        if (speech) {
+          state.playbackSpeechFrames += 1;
+          if (state.playbackSpeechFrames >= state.config.playbackBargeInFrames) {
+            state.phase = "LISTENING";
+            state.hasSpeechInTurn = true;
+            state.settleElapsedMs = 0;
+            state.settleProgress = 0;
+            state.showSettlingRing = false;
+            state.playbackSpeechFrames = 0;
+            state.pausePlayback = true;
           }
+        } else {
+          state.playbackSpeechFrames = 0;
         }
         return state;
       }
-
-      if (state.shouldStop) return state;
-
-      const threshold = state.speechStarted
-        ? state.silenceThreshold
-        : state.speechThreshold;
-      if (sample >= threshold) {
-        state.speechStarted = true;
-        state.trailingSilenceMs = 0;
-        state.countdownProgress = 0;
-        state.phase = "speaking";
+      if (state.phase === "THINKING") {
+        if (speech) {
+          state.phase = "LISTENING";
+          state.hasSpeechInTurn = true;
+        }
         return state;
       }
-
-      if (!state.speechStarted) {
-        state.trailingSilenceMs = 0;
-        state.countdownProgress = 0;
-        state.phase = "waiting_for_speech";
+      if (speech) {
+        state.phase = "LISTENING";
+        state.hasSpeechInTurn = true;
+        state.settleElapsedMs = 0;
+        state.settleProgress = 0;
+        state.showSettlingRing = false;
         return state;
       }
-
-      state.trailingSilenceMs += frameMs;
-      state.countdownProgress = Math.min(
-        1,
-        state.trailingSilenceMs / config.trailingSilenceMs,
-      );
-      if (state.trailingSilenceMs >= config.trailingSilenceMs) {
-        state.shouldStop = true;
-        state.countdownProgress = 1;
-        state.phase = "auto_stop";
-      } else {
-        state.phase = "trailing_silence";
+      if (!state.hasSpeechInTurn) {
+        state.phase = "LISTENING";
+        return state;
+      }
+      state.phase = "SETTLING";
+      state.settleElapsedMs += state.config.frameMs;
+      state.settleProgress = Math.min(1, state.settleElapsedMs / state.config.settleMs);
+      state.showSettlingRing = state.settleProgress >= 0.6;
+      if (state.settleElapsedMs >= state.config.settleMs) {
+        state.phase = "THINKING";
+        state.turnTaken = true;
+        state.hasSpeechInTurn = false;
+        state.settleElapsedMs = 0;
+        state.settleProgress = 1;
+        state.showSettlingRing = false;
       }
       return state;
     }
 
-    const THINKING_PAUSE_PHRASES = [
-      "wait",
-      "hold on",
-      "let me think",
-      "hmm",
-      "one sec",
-      "רגע"
-    ];
-    const PAUSE_INTENT_SHORT_WORD_LIMIT = 4;
-    const PAUSE_INTENT_EXTENDED_SILENCE_MS = 10000;
-    const PAUSE_INTENT_SOFT_PROMPT = "take your time";
-
-    function createThinkingPauseHoldState() {
+    function createSileroVadInput(chunk, context) {
+      if (chunk.length !== BROWSER_VAD_CHUNK_SAMPLES) {
+        throw new Error("Silero VAD chunk must contain 512 samples");
+      }
+      if (context.length !== BROWSER_VAD_CONTEXT_SAMPLES) {
+        throw new Error("Silero VAD context must contain 64 samples");
+      }
+      const input = new Float32Array(BROWSER_VAD_INPUT_SAMPLES);
+      input.set(context, 0);
+      input.set(chunk, BROWSER_VAD_CONTEXT_SAMPLES);
       return {
-        heldTranscript: "",
-        extendedTrailingSilenceMs: PAUSE_INTENT_EXTENDED_SILENCE_MS,
-        heldTurnId: null
+        input,
+        dims: [1, BROWSER_VAD_INPUT_SAMPLES],
+        nextContext: input.slice(BROWSER_VAD_INPUT_SAMPLES - BROWSER_VAD_CONTEXT_SAMPLES)
       };
     }
 
-    function normalizedThinkingPauseTranscript(transcript) {
-      return String(transcript || "")
-        .trim()
-        .replace(/[.,!?;:…"'()\\[\\]{}״׳]+/g, " ")
-        .replace(/\\s+/g, " ")
-        .toLowerCase();
+    function createUnderstandingState(cluster, seed = {}) {
+      const member_updates = {};
+      for (const member of cluster?.members || []) {
+        member_updates[member.id] = seed.member_updates?.[member.id] || "undecided";
+      }
+      return {
+        cluster_id: cluster?.cluster_id || "",
+        member_updates,
+        notes: Array.isArray(seed.notes) ? seed.notes.slice() : [],
+        remaining_question: seed.remaining_question || "",
+        canonical_id: seed.canonical_id || ""
+      };
     }
 
-    function pauseIntentTokens(transcript) {
-      const normalized = normalizedThinkingPauseTranscript(transcript);
-      return normalized ? normalized.split(" ").filter(Boolean) : [];
-    }
-
-    function phraseTokens(phrase) {
-      return pauseIntentTokens(phrase);
-    }
-
-    function findThinkingPausePhraseMatches(transcript) {
-      const tokens = pauseIntentTokens(transcript);
-      const matches = [];
-      for (const phrase of THINKING_PAUSE_PHRASES) {
-        const phraseParts = phraseTokens(phrase);
-        if (!phraseParts.length || phraseParts.length > tokens.length) continue;
-        for (let index = 0; index <= tokens.length - phraseParts.length; index += 1) {
-          let same = true;
-          for (let offset = 0; offset < phraseParts.length; offset += 1) {
-            if (tokens[index + offset] !== phraseParts[offset]) {
-              same = false;
-              break;
-            }
-          }
-          if (same) {
-            matches.push({
-              phrase,
-              index,
-              length: phraseParts.length,
-              trailing: index + phraseParts.length === tokens.length
-            });
-          }
+    function applyUnderstandingDelta(currentState, delta, cluster) {
+      const state = createUnderstandingState(cluster, currentState);
+      if (delta.canonical_id) state.canonical_id = delta.canonical_id;
+      if (delta.remaining_question) state.remaining_question = delta.remaining_question;
+      if (delta.note && String(delta.note).trim()) state.notes.push(String(delta.note).trim());
+      for (const [id, value] of Object.entries(delta.member_updates || {})) {
+        if (state.member_updates[id] && value !== "undecided") {
+          state.member_updates[id] = value;
         }
       }
-      return { tokens, matches };
+      if (delta.action !== "update" && delta.action !== "question") {
+        return { state, terminalDecision: delta };
+      }
+      return { state, terminalDecision: composeFinalDecisionFromUnderstanding(state, cluster) };
     }
 
-    function classifyPauseIntent(transcript) {
-      const { tokens, matches } = findThinkingPausePhraseMatches(transcript);
-      const wordCount = tokens.length;
-      let trailingMatch = null;
-      for (const match of matches) {
-        if (match.trailing) trailingMatch = match;
-      }
-      const primaryMatch = trailingMatch || matches[0] || null;
-      if (!primaryMatch) {
+    function composeFinalDecisionFromUnderstanding(state, cluster) {
+      const statuses = (cluster?.members || []).map((member) => state.member_updates[member.id]);
+      if (!statuses.length || statuses.some((status) => !status || status === "undecided")) return null;
+      const note = state.notes.join("\\n").trim() || "Resolved by voice conversation";
+      if (statuses.every((status) => status === "keep")) return { action: "keep", note, source: "voice" };
+      if (statuses.every((status) => status === "irrelevant")) return { action: "skip", note, source: "voice" };
+      if (statuses.every((status) => status === "merge")) {
         return {
-          intent: "content",
-          wordCount,
-          phrase: null,
-          trailing: false,
-          reason: "no_pause_phrase"
+          action: "merge",
+          canonical_id: state.canonical_id || cluster.members[0].id,
+          note,
+          source: "voice"
         };
       }
-
-      const shortUtterance = wordCount <= PAUSE_INTENT_SHORT_WORD_LIMIT;
-      if (shortUtterance && trailingMatch) {
-        return {
-          intent: "pause",
-          wordCount,
-          phrase: trailingMatch.phrase,
-          trailing: true,
-          reason: "short_trailing_pause_phrase"
-        };
+      const members = {};
+      for (const member of cluster.members) {
+        const status = state.member_updates[member.id];
+        members[member.id] = status === "irrelevant" ? "prune" : status === "keep" ? "keep" : "merge";
       }
-      if (!shortUtterance) {
-        return {
-          intent: "content",
-          wordCount,
-          phrase: primaryMatch.phrase,
-          trailing: Boolean(primaryMatch.trailing),
-          reason: "long_or_mid_content"
-        };
-      }
-      return {
-        intent: "prompt",
-        wordCount,
-        phrase: primaryMatch.phrase,
-        trailing: Boolean(primaryMatch.trailing),
-        reason: "short_non_trailing_pause_phrase"
-      };
-    }
-
-    function transcriptEndsWithThinkingPause(transcript) {
-      const pauseIntent = classifyPauseIntent(transcript);
-      return Boolean(pauseIntent.phrase && pauseIntent.trailing);
-    }
-
-    function combineTranscriptParts(first, second) {
-      return [first, second]
-        .map((part) => String(part || "").trim())
-        .filter(Boolean)
-        .join(" ")
-        .replace(/\\s+/g, " ")
-        .trim();
-    }
-
-    function continuationTrailingSilenceMs(state, baseTrailingSilenceMs) {
-      return (
-        state.extendedTrailingSilenceMs ||
-        Math.round(baseTrailingSilenceMs * 2)
-      );
-    }
-
-    function recordingOptionsForBargeIn(state) {
-      const options = { bargedIn: true };
-      if (state && state.heldTranscript) {
-        options.waitingContinuation = true;
-        options.endpointing = {
-          trailingSilenceMs: continuationTrailingSilenceMs(
-            state,
-            ENDPOINTING_DEFAULTS.trailingSilenceMs,
-          )
-        };
-      }
-      return options;
-    }
-
-    function shouldAutoListenTimeoutStop(recordingContext) {
-      if (recordingContext && recordingContext.waitingContinuation) return false;
-      return true;
-    }
-
-    function shouldResumeWaitingContinuationAfterError(recordingContext, transcriptAccepted) {
-      return Boolean(
-        recordingContext &&
-        recordingContext.waitingContinuation &&
-        !transcriptAccepted
-      );
-    }
-
-    function shouldSkipHeldContinuationRestartAfterPrompt(
-      playbackResult,
-      recorderState,
-      bargeInRecordingPending,
-    ) {
-      return (
-        playbackResult === "cancelled" &&
-        (recorderState === "recording" || Boolean(bargeInRecordingPending))
-      );
-    }
-
-    function transcriptTurnsAfterCombinedPauseContinuation(turns, heldTurnId, currentTurnId) {
-      if (!heldTurnId || heldTurnId === currentTurnId) return turns;
-      return turns.filter((turn) => turn.id !== heldTurnId);
-    }
-
-    function transcriptTurnsAfterEmptyPauseContinuation(turns, heldTurnId, currentTurnId) {
-      if (!heldTurnId || !currentTurnId || heldTurnId === currentTurnId) return turns;
-      return turns.filter((turn) => turn.id !== currentTurnId);
-    }
-
-    function applyThinkingPauseHold(state, transcript, baseTrailingSilenceMs) {
-      const heldTranscript = state.heldTranscript;
-      const incomingTranscript = String(transcript || "").trim();
-      const combined = combineTranscriptParts(state.heldTranscript, transcript);
-      let pauseIntent = classifyPauseIntent(combined);
-      if (heldTranscript && incomingTranscript) {
-        const continuationIntent = classifyPauseIntent(incomingTranscript);
-        if (continuationIntent.intent === "content") {
-          state.heldTranscript = "";
-          return {
-            shouldHold: false,
-            shouldPrompt: false,
-            pauseIntent: Object.assign({}, continuationIntent, {
-              reason: "held_continuation_content"
-            }),
-            transcript: combined,
-            nextTrailingSilenceMs: baseTrailingSilenceMs
-          };
-        }
-        pauseIntent = continuationIntent;
-      }
-      if (combined && (pauseIntent.intent === "pause" || pauseIntent.intent === "prompt")) {
-        state.heldTranscript = combined;
-        return {
-          shouldHold: true,
-          shouldPrompt: pauseIntent.intent === "prompt",
-          pauseIntent,
-          transcript: combined,
-          nextTrailingSilenceMs: continuationTrailingSilenceMs(
-            state,
-            baseTrailingSilenceMs,
-          )
-        };
-      }
-
-      state.heldTranscript = "";
-      return {
-        shouldHold: false,
-        shouldPrompt: false,
-        pauseIntent,
-        transcript: combined,
-        nextTrailingSilenceMs: baseTrailingSilenceMs
-      };
+      return { action: "mixed", members, note, source: "voice" };
     }
 
     const $ = (id) => document.getElementById(id);
-    const AUTO_LISTEN_MS = 15000;
-    const mic = $("mic");
+    const sessionButton = $("sessionButton");
     const category = $("category");
+    const ttsVoice = $("ttsVoice");
+    const ttsRate = $("ttsRate");
+    const ttsRateValue = $("ttsRateValue");
     const audio = $("audio");
-    let stream = null;
-    let audioContext = null;
-    let micSource = null;
-    let analyser = null;
-    let analyserData = null;
-    let endpointingTimer = null;
-    let recorder = null;
-    let chunks = [];
+    let sessionActive = false;
     let current = null;
     let currentSpeak = "";
-    let busy = false;
-    let recording = false;
-    let ttsPlaying = false;
+    let understanding = null;
+    let stream = null;
+    let audioContext = null;
+    let processor = null;
+    let micSource = null;
+    let mediaRecorder = null;
+    let collectingTurn = false;
+    let flushingTurn = false;
+    let turnChunks = [];
+    let processingTurn = false;
+    let vadState = {
+      mode: "pending",
+      session: null,
+      state: null,
+      sr: null,
+      context: new Float32Array(BROWSER_VAD_CONTEXT_SAMPLES),
+      pendingSamples: new Float32Array(0),
+      queue: [],
+      busy: false
+    };
+    let turnState = createTurnTakingState();
     let activePlayback = null;
-    let autoListenTimer = null;
-    let activeRecordingContext = null;
-    let bargeInRecordingPending = false;
-    let bargeInRecordingAttempt = null;
-    let resolveBargeInRecordingAttempt = null;
+    let pausedUtterance = null;
+    let pendingInterruption = null;
+    let systemSpeechActive = false;
+    let systemSpeechToken = 0;
+    let heldTranscript = "";
     let conversationHistory = [];
-    let transcriptTurns = [];
-    let nextTranscriptTurnId = 1;
-    let currentAgentTurnId = null;
-    let thinkingPauseHold = createThinkingPauseHoldState();
+    let healthRetryTimer = null;
 
-    function setStatus(text) { $("status").textContent = text; }
-    function syncControlState() {
-      mic.disabled = busy && !ttsPlaying;
-      category.disabled = busy || recording;
+    function setStatus(text, urgent = false) {
+      $("status").textContent = text;
+      $("status").classList.toggle("urgent", urgent);
     }
-    function setBusy(value) {
-      busy = value;
-      syncControlState();
+
+    function renderPhase() {
+      $("phaseListening").classList.toggle("is-active", turnState.phase === "LISTENING");
+      $("phaseSettling").classList.toggle("is-active", turnState.phase === "SETTLING");
+      $("phaseThinking").classList.toggle("is-active", turnState.phase === "THINKING");
+      $("phaseSpeaking").classList.toggle("is-active", turnState.phase === "SPEAKING");
+      $("settleRing").style.setProperty("--settle-progress", String(turnState.settleProgress || 0));
+      $("settleRing").classList.toggle("is-visible", Boolean(turnState.showSettlingRing));
     }
-    function setRecording(value) {
-      recording = value;
-      syncControlState();
+
+    function setVadMode(mode, detail) {
+      const node = $("vadMode");
+      node.textContent = mode === "basic" ? "basic mode" : mode === "silero" ? "Silero VAD" : detail || "VAD pending";
+      node.classList.toggle("basic", mode === "basic");
     }
-    function setTtsPlaying(value) {
-      ttsPlaying = value;
-      syncControlState();
+
+    function selectedTtsVoice() {
+      return ttsVoice?.value || "en-US-GuyNeural";
     }
-    function beginBargeInRecordingAttempt() {
-      if (resolveBargeInRecordingAttempt) resolveBargeInRecordingAttempt();
-      bargeInRecordingPending = true;
-      bargeInRecordingAttempt = new Promise((resolve) => {
-        resolveBargeInRecordingAttempt = resolve;
-      });
+
+    function selectedTtsRate() {
+      const value = Number(ttsRate?.value || -8);
+      const prefix = value >= 0 ? "+" : "";
+      return prefix + String(value) + "%";
     }
-    function finishBargeInRecordingAttempt() {
-      bargeInRecordingPending = false;
-      const resolve = resolveBargeInRecordingAttempt;
-      resolveBargeInRecordingAttempt = null;
-      bargeInRecordingAttempt = null;
-      if (resolve) resolve();
+
+    function updateTtsRateLabel() {
+      if (ttsRateValue) ttsRateValue.textContent = selectedTtsRate();
     }
-    async function waitForBargeInRecordingAttempt() {
-      const attempt = bargeInRecordingAttempt;
-      if (attempt) await attempt;
+
+    function splitInterruptedSpeech(text, wordBoundaries, interruptedAtMs) {
+      const words = String(text || "").trim().split(/\\s+/).filter(Boolean);
+      const safeInterruptedAtMs = Math.max(0, Math.round(interruptedAtMs || 0));
+      let spokenWordCount = 0;
+      if (Array.isArray(wordBoundaries) && wordBoundaries.length) {
+        spokenWordCount = wordBoundaries.filter((word) => Number(word.offset_ms || 0) <= safeInterruptedAtMs).length;
+      } else {
+        const approximateChars = Math.floor(safeInterruptedAtMs * 0.013);
+        let chars = 0;
+        for (const word of words) {
+          const next = chars + word.length + 1;
+          if (next > approximateChars) break;
+          spokenWordCount += 1;
+          chars = next;
+        }
+      }
+      spokenWordCount = Math.max(0, Math.min(words.length, spokenWordCount));
+      return {
+        agent_speech_spoken_so_far: words.slice(0, spokenWordCount).join(" "),
+        agent_speech_unspoken_remainder: words.slice(spokenWordCount).join(" "),
+        interrupted_at_ms: safeInterruptedAtMs
+      };
     }
-    function ms(value) { return Math.round(value) + " ms"; }
-    function compactText(value, max = 78) {
-      const text = String(value || "").trim().replace(/\\s+/g, " ");
-      return text.length > max ? text.slice(0, max - 1) + "…" : text;
+
+    function humanizeSpokenText(input) {
+      return String(input || "")
+        .replace(/<\\/?[^>]+>/g, "")
+        .replace(/^#{1,6}\\s*/gm, "")
+        .replace(/^\\s*[-*]\\s+/gm, "")
+        .replace(/\\brt-[a-z0-9-]{6,}\\b/gi, "")
+        .replace(/\\bchunk\\s+\\d+\\b/gi, "")
+        .replace(/\\btype=[a-z0-9_-]+:?\\s*/gi, "")
+        .replace(/_/g, " ")
+        .replace(/[ \\t]*\\n+[ \\t]*/g, ". ")
+        .replace(/\\s+([.,:;!?])/g, "$1")
+        .replace(/:\\s*\\./g, ".")
+        .replace(/\\.\\s*\\./g, ".")
+        .replace(/\\s+/g, " ")
+        .trim();
     }
 
     async function api(path, options = {}) {
@@ -2182,832 +2940,701 @@ function renderPage(defaultCategory: string): string {
         let message = response.statusText;
         if (type.includes("application/json")) {
           const body = await response.json();
-          message = body.error || message;
+          message = body.error || body.message || message;
         }
         throw new Error(message);
       }
       return response;
     }
 
-    async function ensureMic() {
-      if (stream) {
-        setupMicAnalyser();
-        return;
-      }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Browser microphone API unavailable on this origin.");
-      }
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      setupMicAnalyser();
-    }
-
-    function setupMicAnalyser() {
-      if (analyser || !stream) return;
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      if (!AudioContextClass) return;
-      audioContext = new AudioContextClass();
-      micSource = audioContext.createMediaStreamSource(stream);
-      analyser = audioContext.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.12;
-      micSource.connect(analyser);
-      analyserData = new Float32Array(analyser.fftSize);
-    }
-
-    async function resumeMicAnalyser() {
-      if (audioContext && audioContext.state === "suspended") {
-        try {
-          await audioContext.resume();
-        } catch (_error) {
-          // Recording still works; endpointing falls back to manual Stop.
-        }
-      }
-    }
-
-    function readMicRms() {
-      if (!analyser || !analyserData) return 0;
-      analyser.getFloatTimeDomainData(analyserData);
-      let sum = 0;
-      for (const sample of analyserData) sum += sample * sample;
-      return Math.sqrt(sum / Math.max(1, analyserData.length));
-    }
-
-    async function loadStats() {
+    async function startSession() {
+      sessionButton.disabled = true;
       try {
-        const response = await api("/api/stats");
-        const body = await response.json();
-        const bucket = body.stats?.per_category?.[category.value];
-        if (!bucket) return;
-        const total = Number(bucket.total || 0);
-        const undecided = Number(bucket.undecided || 0);
-        const decided = Math.max(0, total - undecided);
-        const skipped = Number(bucket.skipped || 0);
-        const pct = total ? (decided / total) * 100 : 0;
-        $("progressFill").style.width = pct + "%";
-        $("progressText").textContent =
-          category.value + ": " + decided + " decided · " + skipped + " skipped" + " · " + total + " total";
+        await healthCheck(false);
+        await ensureMicOpen();
+        await initVad();
+        startSessionRecorder();
+        sessionActive = true;
+        sessionButton.textContent = "End session";
+        sessionButton.classList.add("is-active");
+        category.disabled = true;
+        turnState = createTurnTakingState();
+        renderPhase();
+        await loadNext(true);
       } catch (error) {
-        $("progressText").textContent = "Progress unavailable: " + error.message;
-      }
-    }
-
-    async function loadNext(play = true) {
-      let done = false;
-      setBusy(true);
-      setStatus("Loading next cluster...");
-      try {
-        const response = await api("/api/next?category=" + encodeURIComponent(category.value));
-        const body = await response.json();
-        current = body.cluster;
-        currentSpeak = body.speak || "";
-        conversationHistory = [];
-        thinkingPauseHold = createThinkingPauseHoldState();
-        renderConversation();
-        resetTranscriptLog();
-        renderCluster(current);
-        await loadStats();
-        if (!current) {
-          setStatus("No undecided clusters in this category.");
-          mic.textContent = "Done";
-          done = true;
-          return;
-        }
-        mic.textContent = "Record";
-        setStatus("Review the cluster, then tap Record and speak your decision.");
-        if (play && currentSpeak) await playText(currentSpeak);
-      } catch (error) {
-        current = null;
-        currentSpeak = "";
-        conversationHistory = [];
-        thinkingPauseHold = createThinkingPauseHoldState();
-        renderConversation();
-        resetTranscriptLog();
-        renderLoadError(error);
-        mic.textContent = "Retry";
-        setStatus("Load failed: " + error.message + ". Tap Retry.");
+        showLegFailure("Session failed: " + error.message);
       } finally {
-        setBusy(false);
-        if (done) mic.disabled = true;
+        sessionButton.disabled = false;
       }
     }
 
-    function renderCluster(cluster) {
-      if (!cluster) {
-        $("clusterId").textContent = "Complete";
-        $("stem").textContent = "No cluster";
-        $("members").innerHTML = "<tr><td colspan='4'>No undecided clusters.</td></tr>";
-        return;
-      }
-      $("clusterId").textContent = cluster.cluster_id;
-      $("stem").textContent = cluster.stem;
-      $("categoryBadge").textContent = cluster.category;
-      $("members").innerHTML = cluster.members.map((member) => (
-        "<tr><td>" + escapeHtml(member.name) + "</td><td>" + escapeHtml(member.type) +
-        "</td><td>" + String(member.chunks ?? 0) + "</td><td>" + escapeHtml(member.id) + "</td></tr>"
-      )).join("");
+    async function endSession() {
+      sessionActive = false;
+      clearTimeout(healthRetryTimer);
+      stopActivePlayback();
+      clearPausedUtterance();
+      if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
+      mediaRecorder = null;
+      if (processor) processor.disconnect();
+      if (micSource) micSource.disconnect();
+      if (audioContext) await audioContext.close().catch(() => undefined);
+      for (const track of stream?.getTracks() || []) track.stop();
+      stream = null;
+      audioContext = null;
+      processor = null;
+      micSource = null;
+      collectingTurn = false;
+      flushingTurn = false;
+      turnChunks = [];
+      turnState = createTurnTakingState();
+      renderPhase();
+      sessionButton.textContent = "Start session";
+      sessionButton.classList.remove("is-active");
+      category.disabled = false;
+      setStatus("Session ended.");
     }
 
-    function renderLoadError(error) {
-      $("clusterId").textContent = "Load failed";
-      $("stem").textContent = "Retry";
-      $("members").innerHTML =
-        "<tr><td colspan='4'>Error loading the next cluster: " + escapeHtml(error.message) +
-        ". Tap Retry.</td></tr>";
-    }
-
-    async function playText(text, options = {}) {
-      stopTtsPlayback();
-      const agentTurnId = startAgentTurn(text, {
-        label: options.label || "Agent (now)"
-      });
-      const started = performance.now();
-      let url = null;
+    async function healthCheck(silent) {
       try {
-        const response = await api("/api/tts", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text })
-        });
-        const blob = await response.blob();
-        url = URL.createObjectURL(blob);
-        audio.src = url;
-        const ttsMs = response.headers.get("x-tts-ms") || Math.round(performance.now() - started);
-        setStatus("TTS ready in " + ttsMs + " ms. Playing...");
-        setTtsPlaying(true);
-        const result = await new Promise((resolve, reject) => {
-          const playback = {
-            resolve,
-            cancelled: false,
-            transcriptTurnId: agentTurnId,
-            allowBargeInRecording: options.allowBargeInRecording !== false,
-            cleanup: () => {}
-          };
-          const cleanup = () => {
-            audio.removeEventListener("ended", onEnded);
-            audio.removeEventListener("error", onError);
-            if (url) URL.revokeObjectURL(url);
-            url = null;
-            if (activePlayback === playback) activePlayback = null;
-            setTtsPlaying(false);
-          };
-          playback.cleanup = cleanup;
-          const onEnded = () => {
-            cleanup();
-            finishAgentTurn(agentTurnId);
-            resolve("ended");
-          };
-          const onError = () => {
-            cleanup();
-            failAgentTurn(agentTurnId);
-            reject(new Error("browser audio playback failed"));
-          };
-          audio.addEventListener("ended", onEnded, { once: true });
-          audio.addEventListener("error", onError, { once: true });
-          activePlayback = playback;
-          audio.play().catch((error) => {
-            cleanup();
-            failAgentTurn(agentTurnId);
-            reject(error);
-          });
-        });
-        return result;
+        const response = await api("/api/health");
+        const body = await response.json();
+        $("healthMode").textContent = body.ok ? "brain online" : "brain offline";
+        return true;
       } catch (error) {
-        if (url) URL.revokeObjectURL(url);
-        setTtsPlaying(false);
-        setStatus("TTS failed: " + error.message);
-        failAgentTurn(agentTurnId);
-        return "failed";
+        $("healthMode").textContent = "brain offline";
+        if (!silent) showLegFailure("brain offline — retrying");
+        scheduleHealthRetry();
+        return false;
       }
     }
 
-    function stopTtsPlayback() {
-      return cancelTtsPlayback("superseded");
+    function scheduleHealthRetry() {
+      clearTimeout(healthRetryTimer);
+      if (!sessionActive) return;
+      healthRetryTimer = setTimeout(() => healthCheck(true), 3000);
     }
 
-    function cancelTtsPlayback(reason = "barge-in") {
-      const playback = activePlayback;
-      if (!playback && !ttsPlaying) return;
-      if (playback) playback.cancelled = true;
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.src = "";
-      audio.load();
-      if (playback) {
-        playback.cleanup();
-        if (reason === "barge-in") markCurrentAgentTurnCancelled();
-        playback.resolve("cancelled");
-      } else {
-        setTtsPlaying(false);
-      }
-      return "cancelled";
+    function showLegFailure(message) {
+      const text = message.includes("brain offline") ? "brain offline — retrying" : message;
+      setStatus(text, true);
+      addTurn("system", "system", text);
+      speakSystemText(text);
     }
 
-    async function startRecording(options = {}) {
-      if (!current) return;
-      const recordingCluster = current;
-      await startRecordingForCluster(recordingCluster, options);
-    }
-
-    async function startRecordingForCluster(recordingCluster, options = {}) {
-      if (!recordingCluster) return;
-      await resumeMicAnalyser();
-      chunks = [];
-      clearAutoListenTimer();
-      const recordingContext = {
-        autoListen: Boolean(options.autoListen),
-        bargedIn: Boolean(options.bargedIn),
-        waitingContinuation: Boolean(options.waitingContinuation),
-        timedOut: false,
-        stopReason: null,
-        endpointing: null,
-        endpointingOptions: options.endpointing || {},
-        transcriptTurnId: null
+    function speakSystemText(text) {
+      const previousPhase = turnState.phase;
+      const token = systemSpeechToken + 1;
+      const finish = () => {
+        if (systemSpeechToken !== token) return;
+        systemSpeechActive = false;
+        if (turnState.phase === "SPEAKING") {
+          turnState.phase = previousPhase;
+          renderPhase();
+        }
       };
-      activeRecordingContext = recordingContext;
-      showLiveUserTurn(recordingContext);
-      const mediaOptions = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      try {
+        if (!window.speechSynthesis) return;
+        window.speechSynthesis.cancel();
+        systemSpeechToken = token;
+        systemSpeechActive = true;
+        turnState.phase = "SPEAKING";
+        turnState.playbackSpeechFrames = 0;
+        renderPhase();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 1;
+        utterance.onend = finish;
+        utterance.onerror = finish;
+        window.speechSynthesis.speak(utterance);
+      } catch (_error) {
+        finish();
+        // Visible error state remains the source of truth.
+      }
+    }
+
+    async function ensureMicOpen() {
+      if (stream) return;
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: false,
+          channelCount: 1
+        }
+      });
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") await audioContext.resume();
+      micSource = audioContext.createMediaStreamSource(stream);
+      processor = audioContext.createScriptProcessor(2048, 1, 1);
+      const silentGain = audioContext.createGain();
+      silentGain.gain.value = 0;
+      processor.onaudioprocess = (event) => {
+        if (!sessionActive) return;
+        const input = event.inputBuffer.getChannelData(0);
+        enqueueAudioForVad(input, audioContext.sampleRate);
+      };
+      micSource.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioContext.destination);
+    }
+
+    async function initVad() {
+      try {
+        ort.env.wasm.wasmPaths = "/vendor/onnxruntime-web/";
+        vadState.session = await ort.InferenceSession.create("/models/silero_vad.onnx", {
+          executionProviders: ["wasm"]
+        });
+        vadState.state = new ort.Tensor("float32", new Float32Array(2 * 1 * 128), [2, 1, 128]);
+        vadState.sr = new ort.Tensor("int64", BigInt64Array.from([BigInt(16000)]), []);
+        vadState.context = new Float32Array(BROWSER_VAD_CONTEXT_SAMPLES);
+        vadState.mode = "silero";
+        setVadMode("silero");
+      } catch (error) {
+        vadState.mode = "basic";
+        setVadMode("basic");
+        addTurn("system", "system", "basic mode: Silero VAD unavailable, using RMS endpointing");
+      }
+    }
+
+    function startSessionRecorder() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") return;
+      const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
         : {};
-      recorder = new MediaRecorder(stream, mediaOptions);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunks.push(event.data);
-      };
-      recorder.onstop = () => {
-        clearAutoListenTimer();
-        stopEndpointing(recordingContext);
-        if (activeRecordingContext === recordingContext) activeRecordingContext = null;
-        processRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }), recordingCluster, recordingContext);
-      };
-      recorder.start();
-      setRecording(true);
-      mic.classList.add("recording");
-      mic.classList.toggle("barged", recordingContext.bargedIn);
-      startEndpointing(recordingContext);
-      if (recordingContext.autoListen) {
-        mic.classList.add("auto-listening");
-        mic.textContent = "Listening";
-        setStatus("Listening — ask more or say your decision.");
-        autoListenTimer = setTimeout(() => {
-          if (recorder && recorder.state === "recording" && activeRecordingContext === recordingContext) {
-            if (!shouldAutoListenTimeoutStop(recordingContext)) return;
-            recordingContext.timedOut = true;
-            setStatus("Listening window ended — transcribing anything captured.");
-            stopRecording("timeout");
-          }
-        }, AUTO_LISTEN_MS);
-      } else {
-        mic.classList.remove("auto-listening");
-        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
-        setStatus("Recording. Pause when finished; auto-stop will trigger. Tap to stop manually.");
-      }
-    }
-
-    async function stopRecording(reason = "manual") {
-      clearAutoListenTimer();
-      if (activeRecordingContext) activeRecordingContext.stopReason = reason;
-      stopEndpointing(activeRecordingContext);
-      if (recorder && recorder.state === "recording") recorder.stop();
-    }
-
-    function clearAutoListenTimer() {
-      if (!autoListenTimer) return;
-      clearTimeout(autoListenTimer);
-      autoListenTimer = null;
-    }
-
-    function startEndpointing(recordingContext) {
-      stopEndpointing(recordingContext);
-      if (!analyser || !analyserData) {
-        updateLiveUserTurn(recordingContext, "Manual stop available; WebAudio endpointing unavailable");
-        return;
-      }
-      recordingContext.endpointing = createEndpointingState(recordingContext.endpointingOptions);
-      updateEndpointCountdown(recordingContext);
-      endpointingTimer = setInterval(() => {
-        if (
-          activeRecordingContext !== recordingContext ||
-          !recorder ||
-          recorder.state !== "recording"
-        ) {
-          stopEndpointing(recordingContext);
-          return;
+      mediaRecorder = new MediaRecorder(stream, options);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0 && (collectingTurn || flushingTurn)) {
+          turnChunks.push(event.data);
         }
-        const rms = readMicRms();
-        advanceEndpointing(recordingContext.endpointing, rms);
-        updateEndpointCountdown(recordingContext);
-        if (recordingContext.endpointing.shouldStop) {
-          setStatus("Auto-stopping now...");
-          updateLiveUserTurn(recordingContext, "Auto-stopping now", "(captured)");
-          stopRecording("endpoint");
-        }
-      }, ENDPOINTING_DEFAULTS.frameMs);
+      };
+      mediaRecorder.start(250);
     }
 
-    function stopEndpointing(recordingContext) {
-      if (endpointingTimer) {
-        clearInterval(endpointingTimer);
-        endpointingTimer = null;
+    function enqueueAudioForVad(input, sampleRate) {
+      const downsampled = downsampleTo16k(input, sampleRate);
+      const combined = new Float32Array(vadState.pendingSamples.length + downsampled.length);
+      combined.set(vadState.pendingSamples, 0);
+      combined.set(downsampled, vadState.pendingSamples.length);
+      let offset = 0;
+      while (combined.length - offset >= BROWSER_VAD_CHUNK_SAMPLES) {
+        vadState.queue.push(combined.slice(offset, offset + BROWSER_VAD_CHUNK_SAMPLES));
+        offset += BROWSER_VAD_CHUNK_SAMPLES;
       }
-      if (!recordingContext || activeRecordingContext !== recordingContext) return;
-      mic.classList.remove("countdown");
-      mic.style.setProperty("--endpoint-progress", "0");
+      vadState.pendingSamples = combined.slice(offset);
+      void processVadQueue();
     }
 
-    function updateEndpointCountdown(recordingContext) {
-      const state = recordingContext.endpointing;
-      if (!state) return;
-      const progress = state.countdownProgress || 0;
-      mic.style.setProperty("--endpoint-progress", String(progress));
-
-      if (state.phase === "trailing_silence") {
-        const remainingMs = Math.max(0, state.config.trailingSilenceMs - state.trailingSilenceMs);
-        const remaining = (remainingMs / 1000).toFixed(1);
-        const message = "Silence " + Math.round(progress * 100) + "% — auto-stop in " + remaining + "s";
-        mic.classList.add("countdown");
-        mic.textContent = remaining + "s";
-        setStatus(message);
-        updateLiveUserTurn(recordingContext, message, "(capturing silence)");
-        return;
+    function downsampleTo16k(input, sampleRate) {
+      if (Math.round(sampleRate) === 16000) return new Float32Array(input);
+      const ratio = sampleRate / 16000;
+      const length = Math.max(1, Math.floor(input.length / ratio));
+      const output = new Float32Array(length);
+      for (let index = 0; index < length; index += 1) {
+        output[index] = input[Math.min(input.length - 1, Math.floor(index * ratio))] || 0;
       }
-
-      mic.classList.remove("countdown");
-      if (state.phase === "calibrating") {
-        const message = "Calibrating room noise...";
-        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
-        updateLiveUserTurn(recordingContext, message);
-        return;
-      }
-      if (state.phase === "waiting_for_speech") {
-        const message = "Listening for speech. You do not need to tap Stop.";
-        mic.textContent = recordingContext.autoListen ? "Listening" : "Speak";
-        setStatus(message);
-        updateLiveUserTurn(recordingContext, message);
-        return;
-      }
-      if (state.phase === "speaking") {
-        const message = "Speech detected. Pause when finished; auto-stop will trigger.";
-        mic.textContent = recordingContext.bargedIn ? "Barged" : "Recording";
-        setStatus(message);
-        updateLiveUserTurn(recordingContext, message, "(speaking)");
-        return;
-      }
-      if (state.phase === "auto_stop") {
-        mic.classList.add("countdown");
-        mic.textContent = "Done";
-        setStatus("Auto-stopping now...");
-        updateLiveUserTurn(recordingContext, "Auto-stopping now", "(captured)");
-      }
+      return output;
     }
 
-    async function resumeThinkingPauseContinuation(cluster, trailingSilenceMs) {
-      setBusy(false);
-      if (
-        current &&
-        current.cluster_id === cluster.cluster_id &&
-        !bargeInRecordingPending &&
-        !(recorder && recorder.state === "recording")
-      ) {
-        await startRecordingForCluster(cluster, {
-          autoListen: true,
-          waitingContinuation: true,
-          endpointing: {
-            trailingSilenceMs
-          }
-        });
-      }
-    }
-
-    async function processRecording(blob, cluster, recordingContext = {}) {
-      const stoppedAt = performance.now();
-      let waitingContinuationTranscriptAccepted = false;
-      setRecording(false);
-      setBusy(true);
-      mic.classList.remove("recording", "auto-listening", "countdown", "barged");
-      mic.style.setProperty("--endpoint-progress", "0");
-      mic.textContent = "Record";
+    async function processVadQueue() {
+      if (vadState.busy) return;
+      vadState.busy = true;
       try {
-        setStatus("Transcribing locally with whisper-cli...");
+        while (sessionActive && vadState.queue.length) {
+          const chunk = vadState.queue.shift();
+          const result = await detectSpeech(chunk);
+          handleVadFrame(result.speech, result.probability);
+        }
+      } finally {
+        vadState.busy = false;
+      }
+    }
+
+    async function detectSpeech(chunk) {
+      if (vadState.mode === "silero" && vadState.session) {
+        const prepared = createSileroVadInput(chunk, vadState.context);
+        const result = await vadState.session.run({
+          input: new ort.Tensor("float32", prepared.input, prepared.dims),
+          state: vadState.state,
+          sr: vadState.sr
+        });
+        vadState.state = result.stateN;
+        vadState.context = prepared.nextContext;
+        const probability = Number(result.output.data[0] || 0);
+        return { speech: probability >= SILERO_SPEECH_THRESHOLD, probability };
+      }
+      let sum = 0;
+      for (const sample of chunk) sum += sample * sample;
+      const rms = Math.sqrt(sum / chunk.length);
+      return { speech: rms >= BASIC_RMS_THRESHOLD, probability: rms };
+    }
+
+    function handleVadFrame(speech) {
+      if (!sessionActive) return;
+      if (systemSpeechActive) return;
+      const previousPhase = turnState.phase;
+      turnState = advanceTurnTakingFrame(turnState, { speech });
+      renderPhase();
+
+      if (turnState.pausePlayback) {
+        pendingInterruption = pausePlaybackForInterruption();
+        beginTurnCapture();
+        setStatus("LISTENING");
+        return;
+      }
+      if (processingTurn && !turnState.pausePlayback) {
+        if (speech && !collectingTurn) {
+          beginTurnCapture();
+          setStatus("LISTENING");
+        }
+        return;
+      }
+      if (speech && (turnState.phase === "LISTENING" || previousPhase === "THINKING")) {
+        beginTurnCapture();
+        setStatus("LISTENING");
+      }
+      if (turnState.phase === "SETTLING") {
+        setStatus(turnState.showSettlingRing ? "SETTLING" : "LISTENING");
+      }
+      if (turnState.turnTaken) {
+        void finishAndProcessTurn();
+      }
+    }
+
+    function beginTurnCapture() {
+      if (collectingTurn) return;
+      turnChunks = [];
+      collectingTurn = true;
+      try { mediaRecorder?.requestData(); } catch (_error) {}
+    }
+
+    async function finishAndProcessTurn() {
+      if (processingTurn || !collectingTurn) return;
+      processingTurn = true;
+      collectingTurn = false;
+      flushingTurn = true;
+      try { mediaRecorder?.requestData(); } catch (_error) {}
+      await sleep(140);
+      flushingTurn = false;
+      const blob = new Blob(turnChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
+      turnChunks = [];
+      await processTurnBlob(blob);
+      turnState = createTurnTakingState();
+      renderPhase();
+    }
+
+    async function processTurnBlob(blob) {
+      if (!current || !sessionActive) {
+        processingTurn = false;
+        return;
+      }
+      turnState.phase = "THINKING";
+      renderPhase();
+      setStatus("THINKING");
+      try {
         const transcribeResponse = await api("/api/transcribe", {
           method: "POST",
           headers: { "content-type": blob.type || "audio/webm" },
           body: blob
         });
-        const transcribedAt = performance.now();
         const transcribe = await transcribeResponse.json();
-        const transcribedText = transcribe.text || "";
-        waitingContinuationTranscriptAccepted = Boolean(String(transcribedText).trim());
-        const holdDecision = applyThinkingPauseHold(
-          thinkingPauseHold,
-          transcribedText,
-          ENDPOINTING_DEFAULTS.trailingSilenceMs,
-        );
-        const transcriptForInterpret = holdDecision.transcript || transcribedText;
+        const transcript = String(transcribe.text || "").trim();
+        if (!transcript) throw new Error("empty transcript");
+        addTurn("user", "you", transcript);
 
-        if (holdDecision.shouldHold) {
-          if (recordingContext.waitingContinuation) {
-            removeHeldWaitingTranscriptTurn(recordingContext);
-          }
-          completeLiveUserTurn(recordingContext, transcriptForInterpret);
-          thinkingPauseHold.heldTurnId = recordingContext.transcriptTurnId;
-          updateTranscriptTurn(recordingContext.transcriptTurnId, {
-            label: "🎤 You (waiting…)",
-            text: transcriptForInterpret,
-            meta: "waiting… partial transcript held; continue when ready",
-            state: "current"
-          });
-          $("decision").textContent = "Waiting for continuation.";
-          setStatus("waiting… keep talking when ready.");
-          if (holdDecision.shouldPrompt) {
-            $("decision").textContent = "Waiting for continuation after a pause check.";
-            setStatus("asking for a little more time...");
-            const playbackResult = await playText(PAUSE_INTENT_SOFT_PROMPT, {
-              label: "Agent prompt"
-            });
-            if (playbackResult === "cancelled") {
-              await waitForBargeInRecordingAttempt();
-            }
-            if (shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state, bargeInRecordingPending)) {
-              setBusy(false);
-              return;
-            }
-          }
-          await resumeThinkingPauseContinuation(
-            cluster,
-            holdDecision.nextTrailingSilenceMs,
-          );
+        const pause = applyThinkingPauseHold(transcript);
+        if (pause.shouldHold) {
+          heldTranscript = pause.transcript;
+          setStatus("LISTENING");
+          $("openQuestion").textContent = "Take your time.";
+          processingTurn = false;
           return;
         }
 
-        if (recordingContext.waitingContinuation) {
-          removeHeldWaitingTranscriptTurn(recordingContext);
-        }
-        completeLiveUserTurn(recordingContext, transcriptForInterpret || "(empty transcript)");
-
-        setStatus("Interpreting decision with LiteRT-LM...");
+        const transcriptForInterpret = pause.transcript;
+        const interruptionForTurn = pendingInterruption;
         const interpretResponse = await api("/api/interpret", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             transcript: transcriptForInterpret,
-            cluster: cluster,
-            pause_intent: holdDecision.pauseIntent.intent
+            cluster: current,
+            understanding,
+            interruption: interruptionForTurn
           })
         });
-        const interpretedAt = performance.now();
         const interpreted = await interpretResponse.json();
-
-        if (interpreted.decision.action === "question") {
-          const question = interpreted.decision.question || transcriptForInterpret || "";
-          setStatus("Answering: " + compactText(question));
-          const converseResponse = await api("/api/converse", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              question,
-              cluster: cluster,
-              history: conversationHistory
-            })
-          });
-          const answeredAt = performance.now();
-          const converse = await converseResponse.json();
-          const answer = normalizeConversationAnswer(converse.answer);
-          appendQuestionTurn(question, answer, converse.evidence);
-          $("decision").textContent = "Question answered; awaiting decision.";
-          $("timings").textContent =
-            "Timings: record-stop to transcript " + ms(transcribedAt - stoppedAt) +
-            ", transcript to question " + ms(interpretedAt - transcribedAt) +
-            ", evidence_ms " + ms(converse.timings?.evidence_ms || 0) +
-            ", llm_ms " + ms(converse.timings?.llm_ms || 0) +
-            ", total " + ms(answeredAt - stoppedAt) + ".";
-
-          const playbackResult = await playText(answer);
-          if (playbackResult === "cancelled") {
-            await waitForBargeInRecordingAttempt();
-          }
-          setBusy(false);
-          if (
-            current &&
-            current.cluster_id === cluster.cluster_id &&
-            !(recorder && recorder.state === "recording")
-          ) {
-            await startRecordingForCluster(cluster, { autoListen: true });
-          }
-          return;
-        }
-
-        $("decision").textContent = JSON.stringify(interpreted.decision, null, 2);
-        $("timings").textContent =
-          "Timings: record-stop to transcript " + ms(transcribedAt - stoppedAt) +
-          ", transcript to decision " + ms(interpretedAt - transcribedAt) +
-          ", total " + ms(interpretedAt - stoppedAt) + ".";
-
-        setStatus("Recording decision...");
-        await api("/api/decide", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cluster_id: cluster.cluster_id, decision: interpreted.decision })
-        });
-        setStatus("Decision recorded.");
-        await playText(interpreted.confirmation, {
-          allowBargeInRecording: false,
-          label: "Agent confirmation"
-        });
-        setStatus("Loading next cluster...");
-        await loadNext(true);
+        await handleInterpretation(interpreted.decision, transcriptForInterpret, interruptionForTurn);
+        if (pendingInterruption === interruptionForTurn) pendingInterruption = null;
       } catch (error) {
-        if (shouldResumeWaitingContinuationAfterError(recordingContext, waitingContinuationTranscriptAccepted)) {
-          const waitingTurnId = collapseEmptyWaitingContinuationTurn(recordingContext);
-          const emptyCapture =
-            error.message === "empty transcript" ||
-            error.message === "empty audio";
-          updateTranscriptTurn(waitingTurnId, {
-            label: "🎤 You (waiting…)",
-            text: thinkingPauseHold.heldTranscript || "(waiting for continuation)",
-            meta: emptyCapture
-              ? "waiting… partial transcript held; no continuation captured yet"
-              : "waiting… partial transcript held; audio capture retried",
-            state: "current"
-          });
-          setStatus(emptyCapture
-            ? "waiting… keep talking when ready."
-            : "waiting… audio capture failed; listening again.");
-          await resumeThinkingPauseContinuation(
-            cluster,
-            continuationTrailingSilenceMs(
-              thinkingPauseHold,
-              ENDPOINTING_DEFAULTS.trailingSilenceMs,
-            ),
-          );
-          return;
-        }
-        if (recordingContext.autoListen && (error.message === "empty transcript" || error.message === "empty audio")) {
-          completeLiveUserTurn(recordingContext, "(no follow-up captured)");
-          setStatus("Didn't catch that — tap to talk.");
-          setBusy(false);
-          return;
-        }
-        setStatus("Error: " + error.message);
-        setBusy(false);
+        showLegFailure(error.message.includes("LiteRT") ? "brain offline — retrying" : "Turn failed: " + error.message);
+      } finally {
+        processingTurn = false;
       }
     }
 
-    function renderConversation() {
-      $("qa").innerHTML = "";
-    }
-
-    function resetTranscriptLog() {
-      transcriptTurns = [];
-      currentAgentTurnId = null;
-      renderTranscriptLog();
-    }
-
-    function markTranscriptTurnsPrior() {
-      for (const turn of transcriptTurns) {
-        if (turn.state !== "prior") {
-          turn.state = "prior";
-          turn.meta =
-            turn.meta && !turn.meta.includes("Prior turn")
-              ? "Prior turn · " + turn.meta
-              : turn.meta || "Prior turn";
-        }
-      }
-    }
-
-    function addTranscriptTurn(input, options = {}) {
-      if (!options.preserveCurrent) markTranscriptTurnsPrior();
-      const turn = Object.assign(
-        {
-          id: nextTranscriptTurnId++,
-          speaker: "user",
-          label: "Turn",
-          text: "",
-          meta: "",
-          state: "current"
-        },
-        input,
-      );
-      transcriptTurns.push(turn);
-      renderTranscriptLog();
-      return turn.id;
-    }
-
-    function updateTranscriptTurn(id, patch) {
-      const turn = transcriptTurns.find((item) => item.id === id);
-      if (!turn) return;
-      Object.assign(turn, patch);
-      renderTranscriptLog();
-    }
-
-    function removeHeldWaitingTranscriptTurn(recordingContext) {
-      if (!recordingContext.waitingContinuation || !thinkingPauseHold.heldTurnId) return;
-      transcriptTurns = transcriptTurnsAfterCombinedPauseContinuation(
-        transcriptTurns,
-        thinkingPauseHold.heldTurnId,
-        recordingContext.transcriptTurnId,
-      );
-      thinkingPauseHold.heldTurnId = null;
-      renderTranscriptLog();
-    }
-
-    function collapseEmptyWaitingContinuationTurn(recordingContext) {
-      if (!recordingContext.waitingContinuation || !thinkingPauseHold.heldTurnId) {
-        return recordingContext.transcriptTurnId;
-      }
-      transcriptTurns = transcriptTurnsAfterEmptyPauseContinuation(
-        transcriptTurns,
-        thinkingPauseHold.heldTurnId,
-        recordingContext.transcriptTurnId,
-      );
-      renderTranscriptLog();
-      return thinkingPauseHold.heldTurnId;
-    }
-
-    function showLiveUserTurn(recordingContext) {
-      const id = addTranscriptTurn({
-        speaker: "user",
-        label: "🎤 You (now)",
-        text: recordingContext.waitingContinuation
-          ? "(waiting… continuation)"
-          : recordingContext.bargedIn ? "(barge-in recording)" : "(listening)",
-        meta: recordingContext.waitingContinuation
-          ? "waiting… partial transcript held"
-          : "Calibrating room noise",
-        state: "current"
-      }, {
-        preserveCurrent: recordingContext.waitingContinuation
-      });
-      recordingContext.transcriptTurnId = id;
-    }
-
-    function updateLiveUserTurn(recordingContext, meta, text) {
-      if (!recordingContext.transcriptTurnId) return;
-      updateTranscriptTurn(recordingContext.transcriptTurnId, {
-        label: "🎤 You (now)",
-        text: text || "(listening)",
-        meta: meta || "Listening",
-        state: "current"
-      });
-    }
-
-    function completeLiveUserTurn(recordingContext, text) {
-      if (!recordingContext.transcriptTurnId) return;
-      updateTranscriptTurn(recordingContext.transcriptTurnId, {
-        label: "🎤 You (current)",
-        text: text || "(empty transcript)",
-        meta: "Current turn",
-        state: "current"
-      });
-    }
-
-    function startAgentTurn(text, options = {}) {
-      const id = addTranscriptTurn({
-        speaker: "agent",
-        label: options.label || "Agent (now)",
-        text: text || "",
-        meta: "Current speech",
-        state: "current"
-      });
-      currentAgentTurnId = id;
-      return id;
-    }
-
-    function finishAgentTurn(id) {
-      updateTranscriptTurn(id, {
-        label: "Agent (current)",
-        meta: "Current speech finished",
-        state: "current"
-      });
-      if (currentAgentTurnId === id) currentAgentTurnId = null;
-    }
-
-    function failAgentTurn(id) {
-      updateTranscriptTurn(id, {
-        label: "Agent (failed)",
-        meta: "Speech failed",
-        state: "current"
-      });
-      if (currentAgentTurnId === id) currentAgentTurnId = null;
-    }
-
-    function markCurrentAgentTurnCancelled() {
-      if (!currentAgentTurnId) return;
-      updateTranscriptTurn(currentAgentTurnId, {
-        label: "Agent (cancelled)",
-        meta: "Cancelled by barge-in",
-        state: "current"
-      });
-      currentAgentTurnId = null;
-    }
-
-    function renderTranscriptLog() {
-      if (!transcriptTurns.length) {
-        $("transcript").innerHTML =
-          "<div class='turn is-current'><div class='turn-label'>Current turn</div>" +
-          "<div class='turn-text'>Transcript appears here.</div></div>";
+    async function handleInterpretation(decision, transcript, interruption) {
+      if (decision.action === "question") {
+        await answerQuestion(decision.question || transcript, interruption);
         return;
       }
-      $("transcript").innerHTML = transcriptTurns.map((turn) => {
-        const prior = turn.state === "prior" ? "<span class='turn-prior'>Prior turn</span>" : "";
-        return (
-          "<div class='turn turn-" + escapeHtml(turn.speaker) + " is-" + escapeHtml(turn.state) + "'>" +
-          "<div class='turn-label'><span>" + escapeHtml(turn.label) + "</span>" + prior + "</div>" +
-          "<div class='turn-text'>" + escapeHtml(turn.text || "") + "</div>" +
-          (turn.meta ? "<div class='turn-meta'>" + escapeHtml(turn.meta) + "</div>" : "") +
-          "</div>"
-        );
-      }).join("");
-      $("transcript").scrollTop = $("transcript").scrollHeight;
+
+      const applied = applyUnderstandingDelta(understanding, decision, current);
+      understanding = applied.state;
+      renderUnderstanding();
+
+      if (decision.action === "update" && !applied.terminalDecision) {
+        $("decision").textContent = JSON.stringify(decision, null, 2);
+        const question = decision.remaining_question || "What remains unresolved?";
+        $("openQuestion").textContent = question;
+        await speakAgent(question);
+        return;
+      }
+
+      const terminal = applied.terminalDecision || decision;
+      await recordDecision(terminal);
     }
 
-    function normalizeConversationAnswer(answer) {
-      const value = typeof answer === "string" ? answer.trim() : "";
-      return value || "I don't see evidence about that";
-    }
-
-    function appendQuestionTurn(question, answer, evidence) {
+    async function answerQuestion(question, interruption = null) {
+      setEvidenceStatus("checking evidence");
+      const response = await api("/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question,
+          cluster: current,
+          history: conversationHistory,
+          interruption
+        })
+      });
+      const body = await response.json();
+      const answer = String(body.answer || "I don't see evidence about that").trim();
+      if (body.preface) {
+        setEvidenceStatus("fetching deeper evidence");
+        addTurn("system", "system", String(body.preface));
+        await speakAgent(String(body.preface), { log: false });
+      }
+      renderEvidence(body.evidence, body.evidence_depth || "shallow");
       conversationHistory.push({ question, answer });
-      const turn = document.createElement("div");
-      turn.className = "qa-turn";
-      turn.innerHTML =
-        "<div class='qa-bubble qa-question'>" + escapeHtml(question) + "</div>" +
-        "<div class='qa-bubble qa-answer'>" + escapeHtml(answer) + "</div>" +
-        evidenceHtml(evidence) +
-        decisionHintHtml();
-      $("qa").appendChild(turn);
-      $("qa").scrollTop = $("qa").scrollHeight;
+      addTurn("agent", "agent", answer);
+      await speakAgent(answer, { log: false });
     }
 
-    function decisionHintHtml() {
-      if (conversationHistory.length < 2) return "";
-      return "<div class='qa-hint'>say merge / keep / mixed / skip to decide</div>";
-    }
-
-    function evidenceHtml(evidence) {
-      const groups = [];
-      for (const member of evidence?.members || []) {
-        const snippets = member.snippets || [];
-        if (!snippets.length) continue;
-        const items = snippets.map((snippet) => (
-          "<li><code>" + escapeHtml(snippet.chunk_id) + "</code><br>" +
-          escapeHtml(snippet.text || "") + "</li>"
-        )).join("");
-        groups.push(
-          "<li><div class='qa-evidence-label'>" + escapeHtml(member.name) + " · " + escapeHtml(member.type) +
-          "</div><ul class='qa-evidence-snippets'>" + items + "</ul></li>"
-        );
-      }
-      if (!groups.length) return "";
-      return "<details class='qa-evidence'><summary>Evidence snippets</summary><ul>" + groups.join("") + "</ul></details>";
-    }
-
-    mic.addEventListener("click", async () => {
-      try {
-        if (ttsPlaying) {
-          const allowRecording = activePlayback?.allowBargeInRecording !== false;
-          if (allowRecording) beginBargeInRecordingAttempt();
-          cancelTtsPlayback("barge-in");
-          if (!allowRecording) {
-            setStatus("Decision saved. Loading next cluster...");
-            return;
-          }
-          setBusy(false);
-          try {
-            if (!stream) await ensureMic();
-            if (recorder && recorder.state === "recording") {
-              await stopRecording();
-              return;
-            }
-            await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));
-          } finally {
-            finishBargeInRecordingAttempt();
-          }
-          return;
-        }
-        if (busy) return;
-        if (!stream) {
-          await ensureMic();
-          await loadNext(true);
-          return;
-        }
-        if (!current) {
-          await loadNext(true);
-          return;
-        }
-        if (recorder && recorder.state === "recording") {
-          await stopRecording();
-          return;
-        }
-        await startRecording();
-      } catch (error) {
-        setStatus("Error: " + error.message);
-      }
-    });
-
-    category.addEventListener("change", async () => {
-      if (busy || recording) return;
-      if (!stream) return;
+    async function recordDecision(decision) {
+      $("decision").textContent = JSON.stringify(decision, null, 2);
+      setStatus("THINKING");
+      await api("/api/decide", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cluster_id: current.cluster_id, decision })
+      });
+      const confirmation = confirmationText(decision);
+      await speakAgent(confirmation);
       await loadNext(true);
-    });
+    }
+
+    function confirmationText(decision) {
+      if (decision.action === "merge") return "Decision recorded: merge.";
+      if (decision.action === "keep") return "Decision recorded: keep separate.";
+      if (decision.action === "mixed") return "Decision recorded: mixed.";
+      if (decision.action === "skip") return "Decision recorded: skip.";
+      return "Decision recorded.";
+    }
+
+    async function speakAgent(text, options = {}) {
+      if (!sessionActive || !text) return "skipped";
+      stopActivePlayback();
+      turnState.phase = "SPEAKING";
+      turnState.playbackSpeechFrames = 0;
+      renderPhase();
+      const displayText = String(text);
+      const spokenText = humanizeSpokenText(displayText);
+      if (options.log !== false) addTurn("agent", "agent", displayText);
+      try {
+        const response = await api("/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: spokenText,
+            voice: selectedTtsVoice(),
+            rate: selectedTtsRate()
+          })
+        });
+        const wordBoundaries = JSON.parse(response.headers.get("x-word-boundaries") || "[]");
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        return await playAudioUrl({
+          url,
+          displayText,
+          spokenText,
+          wordBoundaries,
+          startTime: 0
+        });
+      } catch (error) {
+        showLegFailure("TTS failed: " + error.message);
+        turnState = createTurnTakingState();
+        renderPhase();
+        return "failed";
+      }
+    }
+
+    function playAudioUrl(playbackInput) {
+      const { url, displayText, spokenText, wordBoundaries, startTime } = playbackInput;
+      audio.src = url;
+      setStatus("SPEAKING");
+      turnState.phase = "SPEAKING";
+      turnState.playbackSpeechFrames = 0;
+      renderPhase();
+      return new Promise((resolve) => {
+        const playback = {
+          url,
+          resolve,
+          displayText,
+          spokenText,
+          wordBoundaries: Array.isArray(wordBoundaries) ? wordBoundaries : [],
+          cleanup: null
+        };
+        const cleanup = (result, keepUrl = false) => {
+          audio.removeEventListener("ended", ended);
+          audio.removeEventListener("error", failed);
+          if (!keepUrl) URL.revokeObjectURL(url);
+          if (activePlayback === playback) activePlayback = null;
+          if (turnState.phase === "SPEAKING") {
+            turnState = createTurnTakingState();
+            renderPhase();
+            setStatus("LISTENING");
+          }
+          resolve(result);
+        };
+        playback.cleanup = cleanup;
+        activePlayback = playback;
+        const ended = () => cleanup("ended");
+        const failed = () => cleanup("failed");
+        const start = () => {
+          try {
+            if (startTime) audio.currentTime = startTime;
+          } catch (_error) {}
+          audio.play().catch(() => cleanup("failed"));
+        };
+        audio.addEventListener("ended", ended, { once: true });
+        audio.addEventListener("error", failed, { once: true });
+        if (audio.readyState >= 1) start();
+        else audio.addEventListener("loadedmetadata", start, { once: true });
+      });
+    }
+
+    function stopActivePlayback() {
+      if (!activePlayback && audio.paused) return "none";
+      const playback = activePlayback;
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.src = "";
+      audio.load();
+      if (playback) {
+        playback.cleanup("stopped");
+      }
+      turnState.phase = "LISTENING";
+      turnState.playbackSpeechFrames = 0;
+      renderPhase();
+      return "stopped";
+    }
+
+    function pausePlaybackForInterruption() {
+      if (!activePlayback) return null;
+      const playback = activePlayback;
+      const interruptedAtMs = Math.max(0, Math.round((audio.currentTime || 0) * 1000));
+      audio.pause();
+      const interruption = splitInterruptedSpeech(
+        playback.spokenText,
+        playback.wordBoundaries,
+        interruptedAtMs
+      );
+      pausedUtterance = {
+        url: playback.url,
+        currentTime: audio.currentTime || 0,
+        displayText: playback.displayText,
+        spokenText: playback.spokenText,
+        wordBoundaries: playback.wordBoundaries,
+        interruption
+      };
+      playback.cleanup("paused", true);
+      renderPausedUtterance();
+      return interruption;
+    }
+
+    function renderPausedUtterance() {
+      if (!pausedUtterance) {
+        $("pausedUtterance").hidden = true;
+        $("pausedText").textContent = "";
+        return;
+      }
+      $("pausedUtterance").hidden = false;
+      $("pausedText").textContent = pausedUtterance.displayText;
+    }
+
+    function clearPausedUtterance() {
+      pendingInterruption = null;
+      if (pausedUtterance?.url) URL.revokeObjectURL(pausedUtterance.url);
+      pausedUtterance = null;
+      renderPausedUtterance();
+    }
+
+    async function resumePausedUtterance() {
+      if (!sessionActive || !pausedUtterance) return;
+      stopActivePlayback();
+      const paused = pausedUtterance;
+      pendingInterruption = null;
+      pausedUtterance = null;
+      renderPausedUtterance();
+      await playAudioUrl({
+        url: paused.url,
+        displayText: paused.displayText,
+        spokenText: paused.spokenText,
+        wordBoundaries: paused.wordBoundaries,
+        startTime: paused.currentTime
+      });
+    }
+
+    async function loadNext(play) {
+      setStatus("THINKING");
+      const response = await api("/api/next?category=" + encodeURIComponent(category.value));
+      const body = await response.json();
+      current = body.cluster || null;
+      currentSpeak = body.speak || "";
+      conversationHistory = [];
+      heldTranscript = "";
+      pendingInterruption = null;
+      clearPausedUtterance();
+      setEvidenceStatus("No evidence fetched.");
+      $("evidenceBody").innerHTML = "";
+      if (!current) {
+        $("clusterId").textContent = "Complete";
+        $("stem").textContent = "No cluster";
+        $("members").innerHTML = "";
+        $("openQuestion").textContent = "No undecided clusters.";
+        $("decision").textContent = "Complete.";
+        setStatus("No undecided clusters.");
+        return;
+      }
+      understanding = createUnderstandingState(current);
+      renderCluster();
+      renderUnderstanding();
+      setStatus("LISTENING");
+      if (play && currentSpeak) await speakAgent(currentSpeak);
+    }
+
+    function renderCluster() {
+      $("clusterId").textContent = current.cluster_id;
+      $("stem").textContent = current.stem;
+      $("categoryBadge").textContent = current.category;
+      renderUnderstanding();
+    }
+
+    function renderUnderstanding() {
+      if (!current || !understanding) return;
+      const unresolved = [];
+      let resolved = 0;
+      $("members").innerHTML = current.members.map((member) => {
+        const status = understanding.member_updates[member.id] || "undecided";
+        const isResolved = status !== "undecided";
+        if (isResolved) resolved += 1;
+        else unresolved.push(member);
+        const tagText =
+          status === "irrelevant" ? "agent: irrelevant" :
+          status === "merge" ? "agent: merge" :
+          status === "keep" ? "agent: keep" :
+          "undecided";
+        return "<div class='member " + (isResolved ? "is-resolved" : "is-open") + "'>" +
+          "<div><div class='member-name'>" + escapeHtml(member.name) + "</div>" +
+          "<div class='member-meta'>" + escapeHtml(member.type) + " · " + String(member.chunks || 0) + " chunks · " + escapeHtml(member.id) + "</div></div>" +
+          "<div class='member-tag " + escapeHtml(status) + "'>" + escapeHtml(tagText) + "</div>" +
+          "</div>";
+      }).join("");
+      const total = current.members.length || 1;
+      $("clusterProgress").style.width = String((resolved / total) * 100) + "%";
+      $("understandingNote").textContent = String(resolved) + " of " + String(total) + " members resolved.";
+      $("openQuestion").textContent =
+        understanding.remaining_question ||
+        (unresolved.length
+          ? "Resolve " + unresolved.map((member) => member.name + " (" + member.type + ")").join(" vs ") + "."
+          : "All members resolved.");
+    }
+
+    function setEvidenceStatus(text) {
+      $("evidenceStatus").textContent = text;
+    }
+
+    function renderEvidence(evidence, depth) {
+      const members = Array.isArray(evidence?.members) ? evidence.members : [];
+      $("evidenceStatus").textContent = depth === "deep" ? "deeper evidence fetched" : "evidence fetched";
+      $("evidenceBody").innerHTML = members.map((member) => {
+        const snippets = Array.isArray(member.snippets) ? member.snippets : [];
+        const rows = snippets.map((snippet) =>
+          "<div class='evidence-item'>" +
+          "<strong>" + escapeHtml(member.name || member.id) + "</strong> " +
+          "<span>" + escapeHtml(member.type || "") + "</span><br>" +
+          "<span>" + escapeHtml(snippet.chunk_id || "") + "</span> · " +
+          "<span>" + escapeHtml(snippet.project || "unknown") + "</span> · " +
+          "<span>" + escapeHtml(snippet.content_type || "unknown") + "</span><br>" +
+          "<span>" + escapeHtml(snippet.text || "") + "</span>" +
+          "</div>"
+        ).join("");
+        return rows || "<div class='evidence-item'>" + escapeHtml(member.name || member.id) + ": no snippets</div>";
+      }).join("");
+    }
+
+    function addTurn(kind, label, text) {
+      const row = document.createElement("div");
+      row.className = "turn " + kind;
+      row.innerHTML =
+        "<div class='turn-label'>" + escapeHtml(label) + "</div>" +
+        "<div>" + escapeHtml(text) + "</div>";
+      $("turnLog").appendChild(row);
+      $("turnLog").scrollTop = $("turnLog").scrollHeight;
+    }
+
+    function applyThinkingPauseHold(transcript) {
+      const incoming = String(transcript || "").trim();
+      const combined = [heldTranscript, incoming].filter(Boolean).join(" ").replace(/\\s+/g, " ").trim();
+      const intent = classifyPauseIntent(heldTranscript ? incoming : combined);
+      if (heldTranscript && intent.intent === "content") {
+        heldTranscript = "";
+        return { shouldHold: false, transcript: combined };
+      }
+      if (intent.intent === "pause" || intent.intent === "prompt") {
+        return {
+          shouldHold: true,
+          transcript: combined,
+          nextTrailingSilenceMs: PAUSE_INTENT_EXTENDED_SILENCE_MS
+        };
+      }
+      heldTranscript = "";
+      return { shouldHold: false, transcript: combined || incoming };
+    }
+
+    function classifyPauseIntent(transcript) {
+      const normalized = String(transcript || "")
+        .trim()
+        .replace(/[.,!?;:…"'()\\[\\]{}״׳]+/g, " ")
+        .replace(/\\s+/g, " ")
+        .toLowerCase();
+      const tokens = normalized ? normalized.split(" ").filter(Boolean) : [];
+      for (const phrase of THINKING_PAUSE_PHRASES) {
+        const parts = phrase.split(" ");
+        for (let index = 0; index <= tokens.length - parts.length; index += 1) {
+          const same = parts.every((part, offset) => tokens[index + offset] === part);
+          if (!same) continue;
+          const trailing = index + parts.length === tokens.length;
+          if (tokens.length <= 4 && trailing) return { intent: "pause" };
+          if (tokens.length <= 4) return { intent: "prompt" };
+          return { intent: "content" };
+        }
+      }
+      return { intent: "content" };
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
 
     function escapeHtml(value) {
       return String(value)
@@ -3018,7 +3645,24 @@ function renderPage(defaultCategory: string): string {
         .replaceAll("'", "&#039;");
     }
 
-    loadStats();
+    sessionButton.addEventListener("click", async () => {
+      if (sessionActive) await endSession();
+      else await startSession();
+    });
+
+    category.addEventListener("change", async () => {
+      if (!sessionActive) return;
+      await loadNext(false).catch((error) => showLegFailure(error.message));
+    });
+
+    ttsRate?.addEventListener("input", updateTtsRateLabel);
+    $("resumePlayback").addEventListener("click", async (event) => {
+      event.preventDefault();
+      await resumePausedUtterance();
+    });
+
+    updateTtsRateLabel();
+    renderPhase();
   </script>
 </body>
 </html>`;

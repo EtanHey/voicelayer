@@ -53,98 +53,6 @@ function commandResult(stdout: unknown): CommandResult {
   };
 }
 
-interface EndpointingStateForTest {
-  calibrated: boolean;
-  noiseFloor: number;
-  speechThreshold: number;
-  silenceThreshold: number;
-  speechStarted: boolean;
-  trailingSilenceMs: number;
-  countdownProgress: number;
-  shouldStop: boolean;
-  phase: string;
-}
-
-interface EndpointingHelpersForTest {
-  createEndpointingState: (
-    overrides?: Record<string, number>,
-  ) => EndpointingStateForTest;
-  advanceEndpointing: (
-    state: EndpointingStateForTest,
-    rms: number,
-  ) => EndpointingStateForTest;
-  createThinkingPauseHoldState: () => {
-    heldTranscript: string;
-    extendedTrailingSilenceMs: number;
-    heldTurnId: number | null;
-  };
-  classifyPauseIntent: (transcript: string) => {
-    intent: "pause" | "content" | "prompt";
-    wordCount: number;
-    phrase: string | null;
-    trailing: boolean;
-    reason: string;
-  };
-  applyThinkingPauseHold: (
-    state: { heldTranscript: string; extendedTrailingSilenceMs: number },
-    transcript: string,
-    baseTrailingSilenceMs: number,
-  ) => {
-    shouldHold: boolean;
-    shouldPrompt: boolean;
-    pauseIntent: {
-      intent: "pause" | "content" | "prompt";
-      wordCount: number;
-      phrase: string | null;
-      trailing: boolean;
-      reason: string;
-    };
-    transcript: string;
-    nextTrailingSilenceMs: number;
-  };
-  recordingOptionsForBargeIn: (
-    state: { heldTranscript: string; extendedTrailingSilenceMs: number; heldTurnId?: number | null },
-  ) => {
-    bargedIn: true;
-    waitingContinuation?: true;
-    endpointing?: { trailingSilenceMs: number };
-  };
-  shouldAutoListenTimeoutStop: (recordingContext: {
-    waitingContinuation?: boolean;
-    endpointing?: { speechStarted?: boolean } | null;
-  }) => boolean;
-  shouldResumeWaitingContinuationAfterError: (
-    recordingContext: { waitingContinuation?: boolean },
-    transcriptAccepted: boolean,
-  ) => boolean;
-  shouldSkipHeldContinuationRestartAfterPrompt: (
-    playbackResult: string,
-    recorderState?: string | null,
-    bargeInRecordingPending?: boolean,
-  ) => boolean;
-  transcriptTurnsAfterCombinedPauseContinuation: <T extends { id: number }>(
-    turns: T[],
-    heldTurnId: number | null | undefined,
-    currentTurnId: number | null | undefined,
-  ) => T[];
-  transcriptTurnsAfterEmptyPauseContinuation: <T extends { id: number }>(
-    turns: T[],
-    heldTurnId: number | null | undefined,
-    currentTurnId: number | null | undefined,
-  ) => T[];
-}
-
-function loadEndpointingHelpersFromPage(html: string): EndpointingHelpersForTest {
-  const start = html.indexOf("    const ENDPOINTING_DEFAULTS = ");
-  const end = html.indexOf("    const $ = (id) => document.getElementById(id);");
-  if (start < 0 || end < 0 || end <= start) {
-    throw new Error("endpointing client helper script missing from page");
-  }
-  const source = html.slice(start, end);
-  return (new Function(
-    `${source}; return { createEndpointingState, advanceEndpointing, createThinkingPauseHoldState, classifyPauseIntent, applyThinkingPauseHold, recordingOptionsForBargeIn, shouldAutoListenTimeoutStop, shouldResumeWaitingContinuationAfterError, shouldSkipHeldContinuationRestartAfterPrompt, transcriptTurnsAfterCombinedPauseContinuation, transcriptTurnsAfterEmptyPauseContinuation };`,
-  ) as () => EndpointingHelpersForTest)();
-}
 
 describe("VoiceReview web server helpers", () => {
   it("builds driver args as arrays with request data in its own argv slot", () => {
@@ -409,612 +317,22 @@ describe("VoiceReview web server helpers", () => {
     });
   });
 
-  it("serves page logic that freezes recording context and unlocks load failures", async () => {
+  it("serves the natural conversation page with one session button and no tap-to-talk copy", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
-    expect(html).toContain("function syncControlState()");
-    expect(html).toContain("mic.disabled = busy && !ttsPlaying");
-    expect(html).toContain("category.disabled = busy || recording");
-    expect(html).toContain("const recordingCluster = current");
-    expect(html).toContain("processRecording(new Blob(chunks");
-    expect(html).toContain("recordingCluster");
-    expect(html).toContain("cluster: cluster");
-    expect(html).toContain("cluster_id: cluster.cluster_id");
-    expect(html).toContain("const decided = Math.max(0, total - undecided)");
-    expect(html).toContain("const skipped = Number(bucket.skipped || 0)");
-    expect(html).toContain("decided + \" decided · \" + skipped + \" skipped\"");
-    expect(html).toContain("Tap Retry");
-    expect(html).toContain("finally {\n        setBusy(false);");
-    expect(html).toContain("addEventListener(\"ended\"");
-    expect(html).toContain("conversationHistory");
-    expect(html).toContain('interpreted.decision.action === "question"');
-    expect(html).toContain('await api("/api/converse"');
-    expect(html).toContain("const answer = normalizeConversationAnswer(converse.answer);");
-    expect(html).toContain("appendQuestionTurn");
-    expect(html).toContain("function normalizeConversationAnswer(answer)");
-    expect(html).toContain("return value || \"I don't see evidence about that\";");
-    expect(html).toContain("await playText(answer);");
-    expect(html).not.toContain("await playText(converse.answer);");
-    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
-    expect(html).toContain('!(recorder && recorder.state === "recording")');
-    expect(html).toContain("evidence_ms");
-  });
-
-  it("serves page logic that barge-in stops TTS before recording", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("let ttsPlaying = false;");
-    expect(html).toContain("let activePlayback = null;");
-    expect(html).toContain("function stopTtsPlayback()");
-    expect(html).toContain("audio.pause();");
-    expect(html).toContain("audio.removeAttribute(\"src\");");
-    expect(html).toContain("audio.load();");
-    expect(html).toContain("setTtsPlaying(false);");
-    expect(html).toContain("if (ttsPlaying) {");
-    expect(html).toContain("stopTtsPlayback();");
-    expect(html).toContain("setBusy(false);");
-    expect(html).toContain("await startRecording();");
-  });
-
-  it("serves page logic that suppresses recording during confirmation TTS after a decision is saved", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("async function playText(text, options = {})");
-    expect(html).toContain("allowBargeInRecording: options.allowBargeInRecording !== false");
-    expect(html).toContain("const allowRecording = activePlayback?.allowBargeInRecording !== false;");
-    expect(html).toContain("if (!allowRecording) {");
-    expect(html).toContain("Decision saved. Loading next cluster...");
-    expect(html).toContain("await playText(interpreted.confirmation, {");
-    expect(html).toContain("allowBargeInRecording: false");
-    expect(html).toContain('label: "Agent confirmation"');
-
-    const decideIndex = html.indexOf('await api("/api/decide"');
-    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation, {");
-    const loadNextIndex = html.indexOf("await loadNext(true);", confirmationIndex);
-    const guardIndex = html.indexOf("if (!allowRecording) {");
-    const staleStartIndex = html.indexOf("await startRecording();", guardIndex);
-    const suppressedReturnIndex = html.indexOf("return;", guardIndex);
-
-    expect(decideIndex).toBeGreaterThan(-1);
-    expect(confirmationIndex).toBeGreaterThan(decideIndex);
-    expect(loadNextIndex).toBeGreaterThan(confirmationIndex);
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(suppressedReturnIndex).toBeLessThan(staleStartIndex);
-  });
-
-  it("serves page logic that caps conversational auto-listen and keeps the mic state obvious", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("const AUTO_LISTEN_MS = 15000;");
-    expect(html).toContain(".mic.auto-listening");
-    expect(html).toContain("@keyframes autoListenPulse");
-    expect(html).toContain("Listening — ask more or say your decision.");
-    expect(html).toContain('mic.textContent = "Listening";');
-    expect(html).toContain("setTimeout(() => {");
-    expect(html).toContain("recordingContext.timedOut = true;");
-    expect(html).toContain("Didn't catch that — tap to talk.");
-    expect(html).toContain("await startRecordingForCluster(cluster, { autoListen: true });");
-    expect(html).toContain("Answering: \" + compactText(question)");
-    expect(html).toContain("say merge / keep / mixed / skip to decide");
-    expect(html).toContain("qa-evidence-label");
-  });
-
-  it("serves pure client endpointing logic that calibrates, counts silence, and resets on speech", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createEndpointingState, advanceEndpointing } =
-      loadEndpointingHelpersFromPage(html);
-
-    const state = createEndpointingState({
-      frameMs: 50,
-      calibrationMs: 300,
-      trailingSilenceMs: 1200,
-    });
-
-    for (let index = 0; index < 6; index += 1) {
-      advanceEndpointing(state, 0.004);
-    }
-    expect(state.calibrated).toBe(true);
-    expect(state.noiseFloor).toBeCloseTo(0.004, 3);
-    expect(state.speechThreshold).toBeGreaterThan(state.noiseFloor);
-    expect(state.silenceThreshold).toBeGreaterThan(state.noiseFloor);
-
-    advanceEndpointing(state, 0.007);
-    expect(state.speechStarted).toBe(false);
-
-    advanceEndpointing(state, 0.04);
-    expect(state.speechStarted).toBe(true);
-    expect(state.trailingSilenceMs).toBe(0);
-    expect(state.countdownProgress).toBe(0);
-
-    for (let index = 0; index < 10; index += 1) {
-      advanceEndpointing(state, 0.006);
-    }
-    expect(state.shouldStop).toBe(false);
-    expect(state.countdownProgress).toBeGreaterThan(0);
-
-    advanceEndpointing(state, 0.04);
-    expect(state.trailingSilenceMs).toBe(0);
-    expect(state.countdownProgress).toBe(0);
-
-    for (let index = 0; index < 24; index += 1) {
-      advanceEndpointing(state, 0.006);
-    }
-    expect(state.shouldStop).toBe(true);
-    expect(state.phase).toBe("auto_stop");
-    expect(state.countdownProgress).toBe(1);
-  });
-
-  it("keeps endpointing countdown at zero while speech energy stays active", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createEndpointingState, advanceEndpointing } =
-      loadEndpointingHelpersFromPage(html);
-
-    const state = createEndpointingState({
-      frameMs: 50,
-      calibrationMs: 300,
-      trailingSilenceMs: 1200,
-    });
-    for (let index = 0; index < 6; index += 1) advanceEndpointing(state, 0.004);
-    advanceEndpointing(state, 0.04);
-
-    for (let index = 0; index < 12; index += 1) advanceEndpointing(state, 0.013);
-    expect(state.phase).toBe("speaking");
-    expect(state.trailingSilenceMs).toBe(0);
-    expect(state.countdownProgress).toBe(0);
-
-    for (let index = 0; index < 8; index += 1) advanceEndpointing(state, 0.006);
-    expect(state.phase).toBe("trailing_silence");
-    expect(state.countdownProgress).toBeGreaterThan(0);
-
-    advanceEndpointing(state, 0.013);
-    expect(state.phase).toBe("speaking");
-    expect(state.trailingSilenceMs).toBe(0);
-    expect(state.countdownProgress).toBe(0);
-  });
-
-  it("does not learn immediate speech as the ambient endpointing floor", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createEndpointingState, advanceEndpointing } =
-      loadEndpointingHelpersFromPage(html);
-
-    const state = createEndpointingState({
-      frameMs: 50,
-      calibrationMs: 300,
-      trailingSilenceMs: 1200,
-    });
-
-    for (let index = 0; index < 6; index += 1) {
-      advanceEndpointing(state, 0.04);
-    }
-    expect(state.calibrated).toBe(true);
-    expect(state.noiseFloor).toBeLessThan(0.018);
-
-    advanceEndpointing(state, 0.022);
-    expect(state.speechStarted).toBe(true);
-    expect(state.phase).toBe("speaking");
-  });
-
-  it("remembers speech that occurs entirely during endpointing calibration", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createEndpointingState, advanceEndpointing } =
-      loadEndpointingHelpersFromPage(html);
-
-    const state = createEndpointingState({
-      frameMs: 50,
-      calibrationMs: 300,
-      trailingSilenceMs: 1200,
-    });
-
-    for (let index = 0; index < 6; index += 1) {
-      advanceEndpointing(state, 0.04);
-    }
-    expect(state.calibrated).toBe(true);
-    expect(state.speechStarted).toBe(true);
-    expect(state.phase).toBe("speaking");
-
-    advanceEndpointing(state, 0.004);
-    expect(state.phase).toBe("trailing_silence");
-    expect(state.countdownProgress).toBeGreaterThan(0);
-  });
-
-  it("classifies pause intent without treating wait as a magic word", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { classifyPauseIntent } = loadEndpointingHelpersFromPage(html);
-
-    expect(classifyPauseIntent("wait")).toMatchObject({
-      intent: "pause",
-      wordCount: 1,
-      phrase: "wait",
-      trailing: true,
-    });
-    expect(classifyPauseIntent("hold on רגע")).toMatchObject({
-      intent: "pause",
-      wordCount: 3,
-      phrase: "רגע",
-      trailing: true,
-    });
-    expect(classifyPauseIntent("wait for the merge decision")).toMatchObject({
-      intent: "content",
-      wordCount: 5,
-      phrase: "wait",
-      trailing: false,
-    });
-    expect(classifyPauseIntent("we should keep them but wait")).toMatchObject({
-      intent: "content",
-      wordCount: 6,
-      phrase: "wait",
-      trailing: true,
-    });
-    expect(classifyPauseIntent("one sec")).toMatchObject({
-      intent: "pause",
-      wordCount: 2,
-      phrase: "one sec",
-      trailing: true,
-    });
-    expect(
-      classifyPauseIntent("I am thinking through the evidence and wait"),
-    ).toMatchObject({
-      intent: "content",
-      wordCount: 8,
-      phrase: "wait",
-      trailing: true,
-    });
-    expect(classifyPauseIntent("wait for merge")).toMatchObject({
-      intent: "prompt",
-      wordCount: 3,
-      phrase: "wait",
-      trailing: false,
-    });
-  });
-
-  it("holds pause-intent transcripts, soft-prompts ambiguous starts, and combines continuation", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createThinkingPauseHoldState, applyThinkingPauseHold } =
-      loadEndpointingHelpersFromPage(html);
-
-    const hold = createThinkingPauseHoldState();
-    const first = applyThinkingPauseHold(hold, "wait", 1300);
-    expect(first).toEqual({
-      shouldHold: true,
-      shouldPrompt: false,
-      pauseIntent: {
-        intent: "pause",
-        wordCount: 1,
-        phrase: "wait",
-        trailing: true,
-        reason: "short_trailing_pause_phrase",
-      },
-      transcript: "wait",
-      nextTrailingSilenceMs: 10000,
-    });
-    expect(hold.heldTranscript).toBe("wait");
-
-    const second = applyThinkingPauseHold(hold, "actually merge into company", 1300);
-    expect(second).toEqual({
-      shouldHold: false,
-      shouldPrompt: false,
-      pauseIntent: {
-        intent: "content",
-        wordCount: 4,
-        phrase: null,
-        trailing: false,
-        reason: "held_continuation_content",
-      },
-      transcript: "wait actually merge into company",
-      nextTrailingSilenceMs: 1300,
-    });
-    expect(hold.heldTranscript).toBe("");
-
-    const terseContinuationHold = createThinkingPauseHoldState();
-    applyThinkingPauseHold(terseContinuationHold, "wait", 1300);
-    const terseContinuation = applyThinkingPauseHold(
-      terseContinuationHold,
-      "merge them",
-      1300,
-    );
-    expect(terseContinuation).toMatchObject({
-      shouldHold: false,
-      shouldPrompt: false,
-      transcript: "wait merge them",
-      nextTrailingSilenceMs: 1300,
-      pauseIntent: {
-        intent: "content",
-        reason: "held_continuation_content",
-      },
-    });
-    expect(terseContinuationHold.heldTranscript).toBe("");
-
-    const repeatedPauseHold = createThinkingPauseHoldState();
-    applyThinkingPauseHold(repeatedPauseHold, "wait", 1300);
-    const repeatedPause = applyThinkingPauseHold(repeatedPauseHold, "one sec", 1300);
-    expect(repeatedPause).toMatchObject({
-      shouldHold: true,
-      shouldPrompt: false,
-      transcript: "wait one sec",
-      nextTrailingSilenceMs: 10000,
-      pauseIntent: {
-        intent: "pause",
-        reason: "short_trailing_pause_phrase",
-      },
-    });
-    expect(repeatedPauseHold.heldTranscript).toBe("wait one sec");
-
-    const content = applyThinkingPauseHold(
-      createThinkingPauseHoldState(),
-      "we should keep them but wait",
-      1300,
-    );
-    expect(content).toMatchObject({
-      shouldHold: false,
-      shouldPrompt: false,
-      transcript: "we should keep them but wait",
-      nextTrailingSilenceMs: 1300,
-      pauseIntent: {
-        intent: "content",
-        reason: "long_or_mid_content",
-      },
-    });
-
-    const promptHold = createThinkingPauseHoldState();
-    const ambiguous = applyThinkingPauseHold(promptHold, "wait for merge", 1300);
-    expect(ambiguous).toMatchObject({
-      shouldHold: true,
-      shouldPrompt: true,
-      transcript: "wait for merge",
-      nextTrailingSilenceMs: 10000,
-      pauseIntent: {
-        intent: "prompt",
-        reason: "short_non_trailing_pause_phrase",
-      },
-    });
-    expect(promptHold.heldTranscript).toBe("wait for merge");
-  });
-
-  it("preserves held continuation flags when barge-in cancels a pause prompt", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { createThinkingPauseHoldState, recordingOptionsForBargeIn } =
-      loadEndpointingHelpersFromPage(html);
-
-    const normal = recordingOptionsForBargeIn(createThinkingPauseHoldState());
-    expect(normal).toEqual({ bargedIn: true });
-
-    const held = createThinkingPauseHoldState();
-    held.heldTranscript = "wait for merge";
-    expect(recordingOptionsForBargeIn(held)).toEqual({
-      bargedIn: true,
-      waitingContinuation: true,
-      endpointing: { trailingSilenceMs: 10000 },
-    });
-    expect(html).toContain("startRecording(recordingOptionsForBargeIn(thinkingPauseHold))");
-  });
-
-  it("serves page logic for auto-endpointing with a visible mic countdown ring", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("function startEndpointing(recordingContext)");
-    expect(html).toContain("function stopEndpointing(recordingContext)");
-    expect(html).toContain("function updateEndpointCountdown(recordingContext)");
-    expect(html).toContain("analyser.getFloatTimeDomainData(analyserData)");
-    expect(html).toContain("advanceEndpointing(recordingContext.endpointing");
-    expect(html).toContain("stopRecording(\"endpoint\")");
-    expect(html).toContain(".mic.countdown");
-    expect(html).toContain("--endpoint-progress");
-    expect(html).toContain("Silence ");
-    expect(html).toContain("Auto-stopping now");
-  });
-
-  it("serves page logic that treats barge-in as cancellation, not a resumable playback end", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("function cancelTtsPlayback(reason = \"barge-in\")");
-    expect(html).toContain("playback.cancelled = true;");
-    expect(html).toContain("playback.resolve(\"cancelled\");");
-    expect(html).toContain("audio.src = \"\";");
-    expect(html).toContain("const playbackResult = await playText(answer");
-    expect(html).toContain('if (playbackResult === "cancelled")');
-    expect(html).toContain("markCurrentAgentTurnCancelled();");
-    expect(html).toContain("await startRecording(recordingOptionsForBargeIn(thinkingPauseHold));");
-    expect(html).toContain(".mic.barged");
-  });
-
-  it("does not let the auto-listen watchdog stop a held continuation after speech resumes", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { shouldAutoListenTimeoutStop } = loadEndpointingHelpersFromPage(html);
-
-    expect(shouldAutoListenTimeoutStop({
-      waitingContinuation: true,
-      endpointing: { speechStarted: true },
-    })).toBe(false);
-    expect(shouldAutoListenTimeoutStop({
-      waitingContinuation: true,
-      endpointing: { speechStarted: false },
-    })).toBe(false);
-    expect(shouldAutoListenTimeoutStop({
-      waitingContinuation: false,
-      endpointing: { speechStarted: true },
-    })).toBe(true);
-    expect(html).toContain("if (!shouldAutoListenTimeoutStop(recordingContext)) return;");
-  });
-
-  it("resumes held continuation listening after capture errors before transcript acceptance", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { shouldResumeWaitingContinuationAfterError } =
-      loadEndpointingHelpersFromPage(html);
-
-    expect(
-      shouldResumeWaitingContinuationAfterError(
-        { waitingContinuation: true },
-        false,
-      ),
-    ).toBe(true);
-    expect(
-      shouldResumeWaitingContinuationAfterError(
-        { waitingContinuation: true },
-        true,
-      ),
-    ).toBe(false);
-    expect(
-      shouldResumeWaitingContinuationAfterError(
-        { waitingContinuation: false },
-        false,
-      ),
-    ).toBe(false);
-    expect(html).toContain(
-      "shouldResumeWaitingContinuationAfterError(recordingContext, waitingContinuationTranscriptAccepted)",
-    );
-    expect(html).toContain("resumeThinkingPauseContinuation(cluster,");
-  });
-
-  it("restarts held continuation after a cancelled pause prompt unless barge-in already records", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { shouldSkipHeldContinuationRestartAfterPrompt } =
-      loadEndpointingHelpersFromPage(html);
-
-    expect(
-      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "recording"),
-    ).toBe(true);
-    expect(
-      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "inactive", true),
-    ).toBe(true);
-    expect(
-      shouldSkipHeldContinuationRestartAfterPrompt("cancelled", "inactive"),
-    ).toBe(false);
-    expect(
-      shouldSkipHeldContinuationRestartAfterPrompt("ended", "inactive"),
-    ).toBe(false);
-    expect(html).toContain(
-      "shouldSkipHeldContinuationRestartAfterPrompt(playbackResult, recorder?.state, bargeInRecordingPending)",
-    );
-    expect(html).toContain("bargeInRecordingPending = true;");
-  });
-
-  it("waits for pending barge-in recording before cancelled answer TTS fallback", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    const answerPlaybackIndex = html.indexOf("const playbackResult = await playText(answer");
-    const waitIndex = html.indexOf("await waitForBargeInRecordingAttempt();", answerPlaybackIndex);
-    const fallbackIndex = html.indexOf(
-      "await startRecordingForCluster(cluster, { autoListen: true });",
-      answerPlaybackIndex,
-    );
-
-    expect(answerPlaybackIndex).toBeGreaterThan(-1);
-    expect(waitIndex).toBeGreaterThan(answerPlaybackIndex);
-    expect(fallbackIndex).toBeGreaterThan(waitIndex);
-    expect(html).toContain("function beginBargeInRecordingAttempt()");
-    expect(html).toContain("function finishBargeInRecordingAttempt()");
-    expect(html).toContain("function waitForBargeInRecordingAttempt()");
-  });
-
-  it("serves page logic that renders the current turn live instead of only the previous transcript", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    expect(html).toContain("function showLiveUserTurn(recordingContext)");
-    expect(html).toContain("function updateLiveUserTurn(recordingContext");
-    expect(html).toContain("function completeLiveUserTurn(recordingContext, text)");
-    expect(html).toContain("function startAgentTurn(text, options = {})");
-    expect(html).toContain("🎤 You (now)");
-    expect(html).toContain("Agent (now)");
-    expect(html).toContain("Prior turn");
-    expect(html).toContain("waiting… partial transcript held");
-    expect(html).toContain(".turn.is-prior");
-    expect(html).toContain("showLiveUserTurn(recordingContext);");
-    expect(html).toContain("completeLiveUserTurn(recordingContext, transcriptForInterpret");
-  });
-
-  it("removes the stale held waiting turn when a pause continuation is combined", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { transcriptTurnsAfterCombinedPauseContinuation } =
-      loadEndpointingHelpersFromPage(html);
-
-    const turns = [
-      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
-      { id: 12, label: "🎤 You (current)", text: "wait actually merge them" },
-    ];
-
-    expect(
-      transcriptTurnsAfterCombinedPauseContinuation(turns, 11, 12),
-    ).toEqual([
-      { id: 12, label: "🎤 You (current)", text: "wait actually merge them" },
-    ]);
-    expect(
-      transcriptTurnsAfterCombinedPauseContinuation(turns, 12, 12),
-    ).toEqual(turns);
-    expect(html).toContain("removeHeldWaitingTranscriptTurn(recordingContext);");
-    expect(html).toContain("thinkingPauseHold.heldTurnId = recordingContext.transcriptTurnId;");
-  });
-
-  it("removes duplicate empty waiting continuation rows while preserving the held turn", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-    const { transcriptTurnsAfterEmptyPauseContinuation } =
-      loadEndpointingHelpersFromPage(html);
-
-    const turns = [
-      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
-      { id: 12, label: "🎤 You (waiting…)", text: "wait" },
-    ];
-
-    expect(
-      transcriptTurnsAfterEmptyPauseContinuation(turns, 11, 12),
-    ).toEqual([
-      { id: 11, label: "🎤 You (waiting…)", text: "wait" },
-    ]);
-    expect(
-      transcriptTurnsAfterEmptyPauseContinuation(turns, 12, 12),
-    ).toEqual(turns);
-    expect(html).toContain("collapseEmptyWaitingContinuationTurn(recordingContext);");
-  });
-
-  it("serves page logic that saves the decision before speaking confirmation", async () => {
-    const app = createVoiceReviewApp();
-    const response = await app.fetch(new Request("http://localhost/"));
-    const html = await response.text();
-
-    const saveIndex = html.indexOf("setStatus(\"Recording decision...\");");
-    const confirmationIndex = html.indexOf("await playText(interpreted.confirmation, {");
-    expect(saveIndex).toBeGreaterThan(-1);
-    expect(confirmationIndex).toBeGreaterThan(-1);
-    expect(saveIndex).toBeLessThan(confirmationIndex);
+    expect((html.match(/<button\b/g) || [])).toHaveLength(1);
+    expect(html).toContain("Start session");
+    expect(html).toContain("End session");
+    expect(html).toContain("LISTENING");
+    expect(html).toContain("SETTLING");
+    expect(html).toContain("THINKING");
+    expect(html).toContain("SPEAKING");
+    expect(html).toContain("THINKING_PAUSE_PHRASES");
+    expect(html).toContain("רגע");
+    expect(html).not.toContain("Tap Record");
+    expect(html).not.toContain("tap Record");
   });
 
   it("rejects empty whisper transcripts before interpretation", async () => {
@@ -1296,6 +614,8 @@ describe("VoiceReview web server helpers", () => {
       dbPath: "/tmp/fixture.db",
       members: cantaloupeCluster.members,
       perMember: 2,
+      question: "what context exists around the hiring manager",
+      deep: true,
     });
 
     expect(args).toEqual([
@@ -1307,6 +627,9 @@ describe("VoiceReview web server helpers", () => {
       JSON.stringify(cantaloupeCluster.members),
       "--per-member",
       "2",
+      "--question",
+      "what context exists around the hiring manager",
+      "--deep",
     ]);
   });
 
@@ -1522,7 +845,7 @@ describe("VoiceReview web server helpers", () => {
               {
                 message: {
                   content:
-                    "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+                    "The company member has one shown snippet about the hiring manager liking the candidate story.",
                 },
               },
             ],
@@ -1551,11 +874,176 @@ describe("VoiceReview web server helpers", () => {
     expect(requestedBody.messages[1].content).toContain("chunk-company");
     expect(body).toMatchObject({
       answer:
-        "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+        "The company member has one shown snippet about the hiring manager liking the candidate story.",
       evidence,
+      evidence_depth: "shallow",
       timings: { evidence_ms: 7 },
     });
     expect(body.timings.llm_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("runs deeper BrainLayer evidence search instead of dead-ending on thin snippets", async () => {
+    const shallowEvidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "thin-company",
+              project: "coach",
+              content_type: "summary",
+              source: "brainlayer",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "thin context",
+              text: "Cantaloupe company summary.",
+            },
+          ],
+        },
+      ],
+    };
+    const deepEvidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "deep-company",
+              project: "coach",
+              content_type: "user_message",
+              source: "brainlayer",
+              created_at: "2026-03-11T07:38:09.956Z",
+              relevance: 0.72,
+              context: "full chunk context",
+              text: "The full BrainLayer chunk says the Cantaloupe hiring manager liked the candidate story and wanted follow-up.",
+            },
+          ],
+        },
+      ],
+    };
+    const calls: CommandCall[] = [];
+    const fetchBodies: any[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        brainlayerDbPath: "/tmp/fixture.db",
+        deepLiteRtModel: "gemma4-12b,gpu",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return commandResult(calls.length === 1 ? shallowEvidence : deepEvidence);
+      },
+      fetchImpl: async (_url, init) => {
+        const requestBody = JSON.parse(String(init?.body));
+        fetchBodies.push(requestBody);
+        const content =
+          fetchBodies.length === 1
+            ? "I don't see evidence about that in the provided snippets."
+            : "The deeper BrainLayer context says the hiring manager liked the candidate story and wanted follow-up.";
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: "what was the actual context around the hiring manager?",
+          cluster: cantaloupeCluster,
+        }),
+      }),
+    );
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].args).toContain("--deep");
+    expect(calls[1].args).toContain("--question");
+    expect(calls[1].args).toContain(
+      "what was the actual context around the hiring manager?",
+    );
+    expect(fetchBodies).toHaveLength(2);
+    expect(fetchBodies[0].model).toBe(DEFAULT_CONFIG.liteRtModel);
+    expect(fetchBodies[1].model).toBe("gemma4-12b,gpu");
+    expect(fetchBodies[1].messages[1].content).toContain("deep-company");
+    expect(body.answer).toBe(
+      "The deeper BrainLayer context says the hiring manager liked the candidate story and wanted follow-up.",
+    );
+    expect(body.preface).toBe("Let me look deeper.");
+    expect(body.evidence_depth).toBe("deep");
+    expect(body.deep_model).toBe("gemma4-12b,gpu");
+    expect(body.evidence).toEqual(deepEvidence);
+    expect(body.timings.evidence_ms).toBe(12);
+    expect(body.timings.deep_evidence_ms).toBe(12);
+  });
+
+  it("serves TTS audio with edge-tts word-boundary metadata and configurable cadence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-test-"));
+    const calls: CommandCall[] = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          const mediaPath = call.args[call.args.indexOf("--write-media") + 1];
+          const metadataPath =
+            call.args[call.args.indexOf("--write-metadata") + 1];
+          await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+          await writeFile(
+            metadataPath,
+            [
+              JSON.stringify({
+                type: "WordBoundary",
+                offset: 0,
+                duration: 1000000,
+                text: "Hello",
+              }),
+              JSON.stringify({
+                type: "WordBoundary",
+                offset: 1500000,
+                duration: 1000000,
+                text: "world",
+              }),
+            ].join("\n"),
+          );
+          return commandResult("");
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-12%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py"))).toBe(
+        true,
+      );
+      expect(calls[0].args).toContain("--write-metadata");
+      expect(calls[0].args).toContain("en-US-GuyNeural");
+      expect(calls[0].args).toContain("-12%");
+      expect(
+        JSON.parse(response.headers.get("x-word-boundaries") || "[]"),
+      ).toEqual([
+        { offset_ms: 0, duration_ms: 100, text: "Hello" },
+        { offset_ms: 150, duration_ms: 100, text: "world" },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes legacy LiteRT action names to dashboard action names", () => {
