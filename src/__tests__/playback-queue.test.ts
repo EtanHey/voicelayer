@@ -13,6 +13,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as socketClient from "../socket-client";
 
 // --- Mock helpers ---
@@ -20,6 +21,28 @@ import * as socketClient from "../socket-client";
 interface MockPlayer {
   cmd: string[];
   resolveExit: () => void;
+}
+
+const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-playback-queue-state-${process.pid}.json`;
+const SPEAKER_REFUSED = "user is recording — speaker output refused";
+
+function writeRecordingState(state: "idle" | "recording" | "transcribing") {
+  writeFileSync(
+    TEST_RECORDING_STATE_FILE,
+    JSON.stringify({
+      state,
+      pid: process.pid,
+      updated_at: new Date().toISOString(),
+    }),
+  );
+}
+
+function cleanupRecordingState() {
+  try {
+    if (existsSync(TEST_RECORDING_STATE_FILE)) {
+      unlinkSync(TEST_RECORDING_STATE_FILE);
+    }
+  } catch {}
 }
 
 describe("playback queue — P0-1 sequential playback", () => {
@@ -205,6 +228,42 @@ describe("playback queue — P0-1 sequential playback", () => {
       (b: any) => b.type === "state" && b.state === "idle",
     );
     expect(idles.length).toBe(1);
+  });
+
+  it("does not broadcast idle when queued playback is refused during active recording", async () => {
+    const originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    const { playAudioNonBlocking } = await import("../tts");
+
+    try {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = TEST_RECORDING_STATE_FILE;
+      writeRecordingState("idle");
+
+      playAudioNonBlocking("/tmp/pq-recording-skip-1.mp3");
+      playAudioNonBlocking("/tmp/pq-recording-skip-2.mp3");
+
+      await Bun.sleep(50);
+      writeRecordingState("recording");
+      playerMocks[0].resolveExit();
+      await Bun.sleep(50);
+
+      const errors = broadcasts.filter(
+        (b: any) => b.type === "error" && b.message === SPEAKER_REFUSED,
+      );
+      const idles = broadcasts.filter(
+        (b: any) => b.type === "state" && b.state === "idle",
+      );
+      expect(errors).toHaveLength(1);
+      expect(idles).toHaveLength(0);
+      expect(playerMocks).toHaveLength(1);
+    } finally {
+      writeRecordingState("idle");
+      if (originalRecordingStatePath === undefined) {
+        delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+      } else {
+        process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
+      }
+      cleanupRecordingState();
+    }
   });
 });
 

@@ -102,6 +102,7 @@ describe("speaker output recording gate", () => {
 
   it("refuses voice_ask before calling TTS when recording is active", async () => {
     writeRecordingState("recording");
+    const broadcasts: unknown[] = [];
     const speakSpy = spyOn(tts, "speak").mockResolvedValue({});
     const waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue(
       "answer",
@@ -114,6 +115,11 @@ describe("speaker output recording gate", () => {
     );
     const isConnectedSpy = spyOn(socketClient, "isConnected").mockReturnValue(
       true,
+    );
+    const broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
+      (event: unknown) => {
+        broadcasts.push(JSON.parse(JSON.stringify(event)));
+      },
     );
     const bookingSpy = spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({
       booked: true,
@@ -142,12 +148,18 @@ describe("speaker output recording gate", () => {
       expect(speakSpy).not.toHaveBeenCalled();
       expect(awaitPlaybackSpy).not.toHaveBeenCalled();
       expect(waitForInputSpy).not.toHaveBeenCalled();
+      expect(
+        broadcasts.filter(
+          (event: any) => event.type === "state" && event.state === "idle",
+        ),
+      ).toHaveLength(0);
     } finally {
       speakSpy.mockRestore();
       waitForInputSpy.mockRestore();
       awaitPlaybackSpy.mockRestore();
       ensureBarSpy.mockRestore();
       isConnectedSpy.mockRestore();
+      broadcastSpy.mockRestore();
       bookingSpy.mockRestore();
       clearInputSpy.mockRestore();
       clearStopSpy.mockRestore();
@@ -173,6 +185,44 @@ describe("speaker output recording gate", () => {
       expect(spawnCalls).toHaveLength(0);
     } finally {
       historySpy.mockRestore();
+    }
+  });
+
+  it("deletes synthesized TTS when recording starts after synthesis but before playback", async () => {
+    writeRecordingState("idle");
+    let synthesizedFile: string | null = null;
+
+    // @ts-ignore — flip recording state after synthesis writes the file.
+    Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      spawnCalls.push([...(Array.isArray(cmd) ? cmd : [String(cmd)])]);
+      const mediaIdx = cmd.indexOf("--write-media");
+      if (mediaIdx >= 0 && cmd[mediaIdx + 1]) {
+        synthesizedFile = cmd[mediaIdx + 1];
+        writeFileSync(synthesizedFile, "fake mp3");
+        writeRecordingState("recording");
+      }
+      const metadataIdx = cmd.indexOf("--write-metadata");
+      if (metadataIdx >= 0 && cmd[metadataIdx + 1]) {
+        writeFileSync(cmd[metadataIdx + 1], "");
+      }
+      return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
+    };
+
+    try {
+      await expect(tts.speak("recording starts after synthesis")).rejects.toThrow(
+        SPEAKER_REFUSED,
+      );
+
+      expect(synthesizedFile).not.toBeNull();
+      expect(existsSync(synthesizedFile!)).toBe(false);
+      expect(spawnCalls).toHaveLength(1);
+      expect(spawnCalls[0][0]).toContain("python3");
+    } finally {
+      if (synthesizedFile) {
+        try {
+          unlinkSync(synthesizedFile);
+        } catch {}
+      }
     }
   });
 

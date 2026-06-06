@@ -8,6 +8,7 @@
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
 import {
   assertSpeakerClear,
+  isSpeakerOutputRefusedError,
   speak,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -330,14 +331,17 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     }, outerTimeoutMs);
   });
 
-  // P0-2: catch errors from speak()/waitForInput() — return clean error, broadcast idle
+  // P0-2: catch pipeline errors cleanly; keep active recording UI intact
+  // when v1 refuses voice_ask before question TTS.
   try {
     const result = await Promise.race([converseFlow(), timeoutPromise]);
     clearTimeout(timer!);
     return result;
   } catch (err) {
     clearTimeout(timer!);
-    broadcast({ type: "state", state: "idle" });
+    if (!isSpeakerOutputRefusedError(err)) {
+      broadcast({ type: "state", state: "idle" });
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
     return textResult(`[converse] Error: ${message}`, true);

@@ -52,22 +52,43 @@ function readPersistedRecordingState(): PersistedRecordingState | null {
   }
 }
 
-function persistRecordingState(state: RecordingState): void {
+function persistRecordingState(state: RecordingState): boolean {
+  const filePath = recordingStateFilePath();
   try {
     safeWriteFileSync(
-      recordingStateFilePath(),
+      filePath,
       JSON.stringify({
         state,
         pid: process.pid,
         updated_at: new Date().toISOString(),
       }),
     );
-  } catch {}
+    const persisted = readPersistedRecordingState();
+    return persisted?.state === state && persisted.pid === process.pid;
+  } catch {
+    return false;
+  }
+}
+
+function recordingStatePublishError(state: RecordingState): Error {
+  return new Error(
+    `Unable to publish recording state (${state}) to ${recordingStateFilePath()}`,
+  );
 }
 
 export function setRecordingState(state: RecordingState): void {
+  if (state === "idle") {
+    recordingState = "idle";
+    if (!persistRecordingState(state)) {
+      console.error(recordingStatePublishError(state).message);
+    }
+    return;
+  }
+
+  if (!persistRecordingState(state)) {
+    throw recordingStatePublishError(state);
+  }
   recordingState = state;
-  persistRecordingState(state);
 }
 
 export function getRecordingState(): RecordingState {

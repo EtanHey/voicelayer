@@ -63,6 +63,18 @@ export function assertSpeakerClear(): void {
   throw new Error(SPEAKER_OUTPUT_REFUSED_MESSAGE);
 }
 
+export function isSpeakerOutputRefusedError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === SPEAKER_OUTPUT_REFUSED_MESSAGE
+  );
+}
+
+function broadcastPlaybackIdleIfSpeakerClear(): void {
+  if (getEffectiveRecordingState() !== "idle") return;
+  broadcast({ type: "state", state: "idle", source: "playback" });
+}
+
 // --- Voice Profiles ---
 
 interface VoiceProfile {
@@ -472,11 +484,11 @@ async function playClonedAudio(
     onPlaybackStart?: (startedAtMs: number) => void;
   },
 ): Promise<void> {
-  assertSpeakerClear();
-  addToHistory(text, ttsFile, voiceLabel);
-  const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
   let proc: PlaybackHandle;
   try {
+    assertSpeakerClear();
+    addToHistory(text, ttsFile, voiceLabel);
+    const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
     proc = playAudioNonBlocking(ttsFile, {
       text: speakingText,
       voice: resolvedVoice,
@@ -649,7 +661,7 @@ class PlaybackQueueManager {
 
     if (hadActivity) {
       this.stopProgressTimer();
-      broadcast({ type: "state", state: "idle", source: "playback" });
+      broadcastPlaybackIdleIfSpeakerClear();
       this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
@@ -676,7 +688,7 @@ class PlaybackQueueManager {
           recoverable: true,
         });
         if (this.depth() === 0) {
-          broadcast({ type: "state", state: "idle", source: "playback" });
+          broadcastPlaybackIdleIfSpeakerClear();
         }
         this.emitQueueSnapshot();
         completeJob(next);
@@ -712,7 +724,7 @@ class PlaybackQueueManager {
         });
       } catch {
         if (this.depth() === 0) {
-          broadcast({ type: "state", state: "idle", source: "playback" });
+          broadcastPlaybackIdleIfSpeakerClear();
         }
         this.emitQueueSnapshot();
         completeJob(next);
@@ -747,7 +759,7 @@ class PlaybackQueueManager {
       this.stopProgressTimer();
       this.current = null;
       if (this.depth() === 0) {
-        broadcast({ type: "state", state: "idle", source: "playback" });
+        broadcastPlaybackIdleIfSpeakerClear();
       }
       this.emitQueueSnapshot();
       this.resolveIfIdle();
@@ -1146,7 +1158,7 @@ async function speakWithEdgeTTS(
       message: "TTS synthesis failed (edge-tts)",
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle", source: "playback" });
+    broadcastPlaybackIdleIfSpeakerClear();
     for (const file of tempChunkFiles) {
       try {
         unlinkSync(file);
@@ -1167,12 +1179,11 @@ async function speakWithEdgeTTS(
     } catch {}
   }
 
-  assertSpeakerClear();
-  addToHistory(text, ttsFile, voice);
-
   // Pass metadata to queue — broadcasting happens when audio actually starts
   let proc: PlaybackHandle;
   try {
+    assertSpeakerClear();
+    addToHistory(text, ttsFile, voice);
     proc = playAudioNonBlocking(ttsFile, {
       text: text.slice(0, 2000),
       voice,
