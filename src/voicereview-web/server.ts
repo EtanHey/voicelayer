@@ -147,6 +147,7 @@ export interface VoiceReviewConfig {
 
 export const KG_FLAG_DECISIONS_SCHEMA = "kg-flag-decisions-v1";
 const FAILED_TRANSCRIBE_CAP = 20;
+const SUBPROCESS_ABORT_GRACE_MS = 1000;
 
 type FetchLike = (
   input: string | URL | Request,
@@ -1853,7 +1854,7 @@ function isSafeEdgeTtsRate(value: string): boolean {
   return /^[+-](?:[0-9]|[1-9][0-9]|100)%$/.test(value);
 }
 
-async function runShellCommand(call: CommandCall): Promise<CommandResult> {
+export async function runShellCommand(call: CommandCall): Promise<CommandResult> {
   const started = performance.now();
   if (call.signal?.aborted) throw abortError();
   const proc = Bun.spawn(call.args, {
@@ -1871,8 +1872,10 @@ async function runShellCommand(call: CommandCall): Promise<CommandResult> {
   const aborted = call.signal
     ? new Promise<never>((_resolve, reject) => {
         abortHandler = () => {
-          proc.kill("SIGTERM");
-          reject(abortError());
+          void terminateProcessForAbort(proc).then(
+            () => reject(abortError()),
+            reject,
+          );
         };
         call.signal?.addEventListener("abort", abortHandler, { once: true });
       })
@@ -1890,6 +1893,26 @@ async function runShellCommand(call: CommandCall): Promise<CommandResult> {
     };
   } finally {
     if (abortHandler) call.signal?.removeEventListener("abort", abortHandler);
+  }
+}
+
+async function terminateProcessForAbort(
+  proc: ReturnType<typeof Bun.spawn>,
+): Promise<void> {
+  proc.kill("SIGTERM");
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const exited = proc.exited.then(
+    () => "exited" as const,
+    () => "exited" as const,
+  );
+  const elapsed = new Promise<"timeout">((resolve) => {
+    timeout = setTimeout(() => resolve("timeout"), SUBPROCESS_ABORT_GRACE_MS);
+  });
+  const result = await Promise.race([exited, elapsed]);
+  if (timeout) clearTimeout(timeout);
+  if (result === "timeout") {
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => undefined);
   }
 }
 

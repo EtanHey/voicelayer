@@ -26,6 +26,7 @@ import {
   humanizeSpokenText,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
+  runShellCommand,
   type ConversationEvidence,
   type CommandCall,
   type CommandResult,
@@ -1659,6 +1660,55 @@ describe("VoiceReview web server helpers", () => {
       );
 
       expect(response.status).toBe(499);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a subprocess to exit before completing an abort", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-command-abort-"));
+    const markerPath = join(root, "terminated.txt");
+    const readyPath = join(root, "ready.txt");
+    const childPath = join(root, "child.js");
+    await writeFile(
+      childPath,
+      [
+        'const { writeFileSync } = await import("node:fs");',
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+        'process.on("SIGTERM", () => {',
+        "  setTimeout(() => {",
+        `    writeFileSync(${JSON.stringify(markerPath)}, "done");`,
+        "    process.exit(0);",
+        "  }, 25);",
+        "});",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    const abort = new AbortController();
+
+    try {
+      const command = runShellCommand({
+        args: [process.execPath, childPath],
+        cwd: root,
+        env: { PATH: process.env.PATH || "" },
+        signal: abort.signal,
+      });
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await readFile(readyPath, "utf8").catch(() => "")) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(await readFile(readyPath, "utf8")).toBe("ready");
+      abort.abort();
+
+      try {
+        await command;
+        throw new Error("expected command abort");
+      } catch (error) {
+        expect(error).toBeInstanceOf(DOMException);
+        expect((error as DOMException).name).toBe("AbortError");
+      }
+
+      expect(await readFile(markerPath, "utf8")).toBe("done");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
