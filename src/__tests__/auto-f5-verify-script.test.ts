@@ -79,6 +79,41 @@ describe("auto-f5-verify.sh pure helpers", () => {
     }
   });
 
+  test("sends the Swift double-F5 lock gesture from one process", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const binDir = join(workDir, "bin");
+      const fakeSwift = join(binDir, "swift");
+      const invocations = join(workDir, "swift-invocations.txt");
+      await Bun.$`mkdir -p ${binDir}`;
+      writeFileSync(
+        fakeSwift,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf 'argc=%s\\n' \"$#\" >> \"$SWIFT_INVOCATIONS\"",
+          "printf 'args=%s\\n' \"$*\" >> \"$SWIFT_INVOCATIONS\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = runFunction("send_f5_start_locked", {
+        PATH: `${binDir}:${process.env.PATH}`,
+        SWIFT_INVOCATIONS: invocations,
+        VOICELAYER_AUTO_F5_SENDER: "swift",
+        VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = await Bun.file(invocations).text();
+      expect(output.match(/^argc=/gm)).toHaveLength(1);
+      expect(output).toContain(" 2 120000");
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   test("matches expected whisper variants of verification test", () => {
     const result = runFunction('sink_contains_verification "$SINK_TEXT"', {
       SINK_TEXT: "Verification test.\n",

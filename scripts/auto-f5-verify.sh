@@ -291,6 +291,8 @@ send_f5_osascript() {
 }
 
 send_f5_swift() {
+  local tap_count="${1:-1}"
+  local inter_tap_delay_us="${2:-0}"
   require_command swift
   local swift_file
   swift_file="$(mktemp "$WORK_DIR/send-f5.XXXXXX.swift")"
@@ -299,14 +301,22 @@ import CoreGraphics
 import Foundation
 
 let keyCode: CGKeyCode = 96
+let tapCount = max(1, Int(CommandLine.arguments.dropFirst().first ?? "1") ?? 1)
+let interTapDelayUs = useconds_t(max(0, Int(CommandLine.arguments.dropFirst(2).first ?? "0") ?? 0))
 let source = CGEventSource(stateID: .hidSystemState)
-let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)!
-let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)!
-down.post(tap: .cghidEventTap)
-usleep(50_000)
-up.post(tap: .cghidEventTap)
+
+for index in 0..<tapCount {
+  let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true)!
+  let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)!
+  down.post(tap: .cghidEventTap)
+  usleep(50_000)
+  up.post(tap: .cghidEventTap)
+  if index + 1 < tapCount {
+    usleep(interTapDelayUs)
+  }
+}
 SWIFT
-  swift "$swift_file" >/dev/null
+  swift "$swift_file" "$tap_count" "$inter_tap_delay_us" >/dev/null
   rm -f "$swift_file"
 }
 
@@ -320,6 +330,10 @@ send_f5_once() {
 
 send_f5_start_locked() {
   log "sending double-F5 to start locked VoiceBar recording"
+  if [ "$F5_SENDER" = "swift" ]; then
+    send_f5_swift 2 120000
+    return
+  fi
   send_f5_once
   sleep 0.12
   send_f5_once
