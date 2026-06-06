@@ -1,5 +1,14 @@
 import { dlopen, FFIType } from "bun:ffi";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  open,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
@@ -94,6 +103,13 @@ export interface ConversationEvidence {
   members: ConversationEvidenceMember[];
 }
 
+export interface QueueState {
+  kind: "complete" | "empty" | "error";
+  category: string;
+  decided: number;
+  message: string;
+}
+
 export interface CommandCall {
   args: string[];
   cwd: string;
@@ -129,6 +145,7 @@ export interface VoiceReviewConfig {
 }
 
 export const KG_FLAG_DECISIONS_SCHEMA = "kg-flag-decisions-v1";
+const FAILED_TRANSCRIBE_CAP = 20;
 
 type FetchLike = (
   input: string | URL | Request,
@@ -214,13 +231,13 @@ export function buildDriverArgs(
   const args = [options.pythonBinary || "python3", options.pythonScript, command];
 
   if (command === "next") {
-    args.push("--batch", options.batchPath, "--decisions", options.decisionsPath);
-    if (options.category) args.push("--category", options.category);
+    args.push(`--batch=${options.batchPath}`, `--decisions=${options.decisionsPath}`);
+    if (options.category) args.push(`--category=${options.category}`);
     return args;
   }
 
   if (command === "stats") {
-    args.push("--batch", options.batchPath, "--decisions", options.decisionsPath);
+    args.push(`--batch=${options.batchPath}`, `--decisions=${options.decisionsPath}`);
     return args;
   }
 
@@ -228,14 +245,10 @@ export function buildDriverArgs(
     throw new Error("record requires clusterId and decisionJson");
   }
   args.push(
-    "--batch",
-    options.batchPath,
-    "--decisions",
-    options.decisionsPath,
-    "--cluster-id",
-    options.clusterId,
-    "--decision-json",
-    options.decisionJson,
+    `--batch=${options.batchPath}`,
+    `--decisions=${options.decisionsPath}`,
+    `--cluster-id=${options.clusterId}`,
+    `--decision-json=${options.decisionJson}`,
   );
   return args;
 }
@@ -253,18 +266,15 @@ export function buildEvidenceArgs(options: {
   const args = [
     options.pythonBinary || "python3",
     options.pythonScript,
-    "--db",
-    options.dbPath,
-    "--members-json",
-    JSON.stringify(options.members),
-    "--per-member",
-    String(options.perMember || 3),
+    `--db=${options.dbPath}`,
+    `--members-json=${JSON.stringify(options.members)}`,
+    `--per-member=${String(options.perMember || 3)}`,
   ];
   if (options.snippetChars) {
-    args.push("--snippet-chars", String(options.snippetChars));
+    args.push(`--snippet-chars=${String(options.snippetChars)}`);
   }
   if (options.question?.trim()) {
-    args.push("--question", options.question.trim());
+    args.push(`--question=${options.question.trim()}`);
   }
   if (options.deep) args.push("--deep");
   return args;
@@ -566,7 +576,15 @@ export function humanizeSpokenText(input: string): string {
   const tableNarration = humanizeMembersTable(input);
   if (tableNarration) return tableNarration;
 
-  return String(input || "")
+  return dedupeSpokenLines(
+    String(input || "")
+      .replace(/^\s*as\s+[a-z0-9_-]+\s+with\s+\d+\s+chunks?\.?\s*$/gim, " ")
+      .replace(
+        /\s*\((?:context|evidence|metadata|snippet|chunk)[^)]*\d+\s+chunks?\)/gi,
+        "",
+      )
+      .replace(/\s*\([^()\n,]{1,80},\s*\d+\s+chunks?\)/gi, ""),
+  )
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/<\/?[^>]+>/g, "")
@@ -580,8 +598,23 @@ export function humanizeSpokenText(input: string): string {
     .replace(/\s+([.,:;!?])/g, "$1")
     .replace(/:\s*\./g, ".")
     .replace(/\.\s*\./g, ".")
+    .replace(/([!?])\s*\./g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function dedupeSpokenLines(input: string): string {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const line of input.split(/\n+/)) {
+    const clean = line.replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(clean);
+  }
+  return output.join("\n");
 }
 
 function humanizeMembersTable(input: string): string | null {
@@ -1138,7 +1171,33 @@ async function handleNext(
     env: driverEnv(config),
   });
   const payload = parseDriverRecord(result);
-  return jsonResponse({ ...payload, timings: { driver_ms: result.durationMs } });
+  const timings: Record<string, number> = { driver_ms: result.durationMs };
+  if (!payload.cluster) {
+    const statsResult = await runCommand({
+      args: buildDriverArgs("stats", {
+        pythonScript: driverScript(config),
+        batchPath: config.batchPath,
+        decisionsPath: config.decisionsPath,
+      }),
+      cwd: config.brainlayerWorktree,
+      env: driverEnv(config),
+    });
+    timings.stats_ms = statsResult.durationMs;
+    if (statsResult.exitCode !== 0) {
+      payload.queue_state = describeQueueStatsError(
+        category,
+        commandFailureMessage(statsResult, "kg_review_session.py"),
+      );
+    } else {
+      const stats = parseDriverJson(statsResult);
+      const decisions = await loadDecisionsJson(config.decisionsPath);
+      payload.queue_state = describeQueueState(
+        decorateStatsWithSkippedCounts(stats, decisions),
+        category,
+      );
+    }
+  }
+  return jsonResponse({ ...payload, timings });
 }
 
 async function handleSileroModel(): Promise<Response> {
@@ -1246,6 +1305,14 @@ async function handleStats(
     cwd: config.brainlayerWorktree,
     env: driverEnv(config),
   });
+  if (result.exitCode !== 0) {
+    return jsonResponse({
+      stats: null,
+      degraded: true,
+      error: `stats unavailable: ${commandFailureMessage(result, "kg_review_session.py")}`,
+      timings: { driver_ms: result.durationMs },
+    });
+  }
   const stats = parseDriverJson(result);
   const decisions = await loadDecisionsJson(config.decisionsPath);
   return jsonResponse({
@@ -1516,6 +1583,7 @@ async function handleTranscribe(
   await mkdir(config.tempDir, { recursive: true });
   await Bun.write(inputPath, audio);
 
+  let preservedFailedInput = false;
   try {
     const ffmpeg = config.ffmpegPath;
     if (!ffmpeg) throw new Error("ffmpeg not found");
@@ -1569,9 +1637,57 @@ async function handleTranscribe(
         total_ms: Math.round(performance.now() - started),
       },
     });
+  } catch (error) {
+    preservedFailedInput = await preserveFailedTranscribeInput(
+      inputPath,
+      config.tempDir,
+    ).catch(() => false);
+    throw error;
   } finally {
-    await Promise.allSettled([rm(inputPath, { force: true }), rm(wavPath, { force: true })]);
+    await Promise.allSettled([
+      preservedFailedInput
+        ? Promise.resolve()
+        : rm(inputPath, { force: true }),
+      rm(wavPath, { force: true }),
+    ]);
   }
+}
+
+async function preserveFailedTranscribeInput(
+  inputPath: string,
+  tempDir: string,
+): Promise<boolean> {
+  const extension = inputPath.split(".").pop() || "blob";
+  const failedDir = join(tempDir, "failed");
+  await mkdir(failedDir, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const failedPath = join(
+    failedDir,
+    `${stamp}-${crypto.randomUUID()}.${extension}`,
+  );
+  await rename(inputPath, failedPath);
+  await pruneFailedTranscribeInputs(failedDir, FAILED_TRANSCRIBE_CAP);
+  return true;
+}
+
+async function pruneFailedTranscribeInputs(
+  failedDir: string,
+  cap: number,
+): Promise<void> {
+  const entries = await Promise.all(
+    (await readdir(failedDir)).map(async (name) => {
+      const path = join(failedDir, name);
+      const info = await stat(path).catch(() => null);
+      return info?.isFile() ? { path, mtimeMs: info.mtimeMs } : null;
+    }),
+  );
+  const files = entries
+    .filter((entry): entry is { path: string; mtimeMs: number } => Boolean(entry))
+    .sort((a, b) => a.mtimeMs - b.mtimeMs);
+  const excess = Math.max(0, files.length - cap);
+  await Promise.allSettled(
+    files.slice(0, excess).map((entry) => rm(entry.path, { force: true })),
+  );
 }
 
 async function handleTts(
@@ -1608,16 +1724,11 @@ async function handleTts(
       args: [
         python,
         edgeTtsWordsScript(),
-        "--text",
-        text,
-        "--voice",
-        voice,
-        "--rate",
-        rate,
-        "--write-media",
-        mp3Path,
-        "--write-metadata",
-        metadataPath,
+        `--text=${text}`,
+        `--voice=${voice}`,
+        `--rate=${rate}`,
+        `--write-media=${mp3Path}`,
+        `--write-metadata=${metadataPath}`,
       ],
       cwd: process.cwd(),
       env: processEnv(),
@@ -1796,6 +1907,57 @@ export function decorateStatsWithSkippedCounts(
   return { ...stats, per_category: perCategory };
 }
 
+export function describeQueueState(stats: unknown, category: string): QueueState {
+  const bucket = isRecord(stats) && isRecord(stats.per_category)
+    ? stats.per_category[category]
+    : null;
+  if (!isRecord(bucket) || numericStat(bucket.total) <= 0) {
+    return {
+      kind: "empty",
+      category,
+      decided: 0,
+      message: `No items found for category ${category}.`,
+    };
+  }
+
+  const total = numericStat(bucket.total);
+  const undecided = numericStat(bucket.undecided);
+  const countedDecisions =
+    numericStat(bucket.explicit) +
+    numericStat(bucket.by_rule) +
+    numericStat(bucket.skipped);
+  const decided = Math.max(total - undecided, countedDecisions, 0);
+  if (undecided <= 0) {
+    return {
+      kind: "complete",
+      category,
+      decided,
+      message: `All items in this queue are complete 🎉 ${decided} decided.`,
+    };
+  }
+
+  return {
+    kind: "empty",
+    category,
+    decided,
+    message: `No items found for category ${category}.`,
+  };
+}
+
+function describeQueueStatsError(category: string, error: string): QueueState {
+  return {
+    kind: "error",
+    category,
+    decided: 0,
+    message: `Stats unavailable: ${error}`,
+  };
+}
+
+function numericStat(value: unknown): number {
+  const numeric = typeof value === "number" ? value : Number(value || 0);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
 async function loadVocabularyPrompt(path: string): Promise<string> {
   try {
     const raw = await readFile(path, "utf8");
@@ -1970,10 +2132,12 @@ function parseDriverRecord(result: CommandResult): Record<string, unknown> {
 
 function assertSuccess(result: CommandResult, label: string): void {
   if (result.exitCode !== 0) {
-    throw new Error(
-      `${label} failed with exit ${result.exitCode}: ${result.stderr.slice(0, 800)}`,
-    );
+    throw new Error(commandFailureMessage(result, label));
   }
+}
+
+function commandFailureMessage(result: CommandResult, label: string): string {
+  return `${label} failed with exit ${result.exitCode}: ${result.stderr.slice(0, 800)}`;
 }
 
 function extractChatContent(raw: unknown): string {
@@ -2717,6 +2881,7 @@ function renderNaturalConversationPage(
     const SILERO_SPEECH_THRESHOLD = 0.5;
     const BASIC_RMS_THRESHOLD = 0.018;
     const PAUSE_INTENT_EXTENDED_SILENCE_MS = 10000;
+    const HEALTH_FAILURE_ANNOUNCE_THRESHOLD = 3;
     const THINKING_PAUSE_PHRASES = ["wait", "hold on", "let me think", "hmm", "one sec", "רגע"];
 
     function createTurnTakingState(overrides = {}) {
@@ -2899,6 +3064,10 @@ function renderNaturalConversationPage(
     let heldTranscript = "";
     let conversationHistory = [];
     let healthRetryTimer = null;
+    let healthFailureStreak = 0;
+    let nextHealthAnnouncementAt = 0;
+    let healthAnnouncementBackoffMs = 3000;
+    let sessionAbortController = null;
 
     function setStatus(text, urgent = false) {
       $("status").textContent = text;
@@ -2976,7 +3145,11 @@ function renderNaturalConversationPage(
     }
 
     async function api(path, options = {}) {
-      const response = await fetch(path, options);
+      const requestOptions = Object.assign({}, options);
+      if (!requestOptions.signal && sessionAbortController) {
+        requestOptions.signal = sessionAbortController.signal;
+      }
+      const response = await fetch(path, requestOptions);
       const type = response.headers.get("content-type") || "";
       if (!response.ok) {
         let message = response.statusText;
@@ -2991,6 +3164,8 @@ function renderNaturalConversationPage(
 
     async function startSession() {
       sessionButton.disabled = true;
+      if (sessionAbortController) sessionAbortController.abort();
+      sessionAbortController = new AbortController();
       try {
         await healthCheck(false);
         await ensureMicOpen();
@@ -3004,15 +3179,26 @@ function renderNaturalConversationPage(
         renderPhase();
         await loadNext(true);
       } catch (error) {
-        showLegFailure("Session failed: " + error.message);
+        if (!isAbortError(error)) showLegFailure("Session failed: " + error.message);
       } finally {
         sessionButton.disabled = false;
       }
     }
 
     async function endSession() {
+      await teardownSessionRuntime("Session ended.");
+    }
+
+    async function teardownSessionRuntime(message, options = {}) {
       sessionActive = false;
       clearTimeout(healthRetryTimer);
+      if (sessionAbortController) {
+        sessionAbortController.abort();
+        sessionAbortController = null;
+      }
+      systemSpeechToken += 1;
+      systemSpeechActive = false;
+      try { window.speechSynthesis?.cancel(); } catch (_error) {}
       stopActivePlayback();
       clearPausedUtterance();
       if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
@@ -3027,13 +3213,22 @@ function renderNaturalConversationPage(
       micSource = null;
       collectingTurn = false;
       flushingTurn = false;
+      processingTurn = false;
       turnChunks = [];
+      vadState.queue = [];
+      vadState.pendingSamples = new Float32Array(0);
+      vadState.busy = false;
+      vadState.state = null;
+      vadState.sr = null;
+      vadState.context = new Float32Array(BROWSER_VAD_CONTEXT_SAMPLES);
+      vadState.mode = "pending";
       turnState = createTurnTakingState();
       renderPhase();
       sessionButton.textContent = "Start session";
       sessionButton.classList.remove("is-active");
       category.disabled = false;
-      setStatus("Session ended.");
+      if (message) setStatus(message, Boolean(options.urgent));
+      if (options.log && message) addTurn("system", "system", message);
     }
 
     async function healthCheck(silent) {
@@ -3041,13 +3236,27 @@ function renderNaturalConversationPage(
         const response = await api("/api/health");
         const body = await response.json();
         $("healthMode").textContent = body.ok ? "brain online" : "brain offline";
+        healthFailureStreak = 0;
+        nextHealthAnnouncementAt = 0;
+        healthAnnouncementBackoffMs = 3000;
         return true;
       } catch (error) {
+        healthFailureStreak += 1;
         $("healthMode").textContent = "brain offline";
-        if (!silent) showLegFailure("brain offline — retrying");
+        if (!silent && canAnnounceHealthFailure()) showLegFailure("brain offline — retrying");
         scheduleHealthRetry();
         return false;
       }
+    }
+
+    function canAnnounceHealthFailure() {
+      if (document.visibilityState !== "visible") return false;
+      if (healthFailureStreak < HEALTH_FAILURE_ANNOUNCE_THRESHOLD) return false;
+      const now = Date.now();
+      if (now < nextHealthAnnouncementAt) return false;
+      nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;
+      healthAnnouncementBackoffMs = Math.min(60000, healthAnnouncementBackoffMs * 2);
+      return true;
     }
 
     function scheduleHealthRetry() {
@@ -3058,9 +3267,11 @@ function renderNaturalConversationPage(
 
     function showLegFailure(message) {
       const text = message.includes("brain offline") ? "brain offline — retrying" : message;
-      setStatus(text, true);
-      addTurn("system", "system", text);
-      speakSystemText(text);
+      void teardownSessionRuntime(text, { urgent: true, log: true });
+    }
+
+    function isAbortError(error) {
+      return error?.name === "AbortError" || String(error?.message || error).toLowerCase().includes("aborted");
     }
 
     function speakSystemText(text) {
@@ -3076,6 +3287,7 @@ function renderNaturalConversationPage(
       };
       try {
         if (!window.speechSynthesis) return;
+        if (document.visibilityState !== "visible") return;
         window.speechSynthesis.cancel();
         systemSpeechToken = token;
         systemSpeechActive = true;
@@ -3308,6 +3520,7 @@ function renderNaturalConversationPage(
         await handleInterpretation(interpreted.decision, transcriptForInterpret, interruptionForTurn);
         if (pendingInterruption === interruptionForTurn) pendingInterruption = null;
       } catch (error) {
+        if (!sessionActive || isAbortError(error)) return;
         showLegFailure(error.message.includes("LiteRT") ? "brain offline — retrying" : "Turn failed: " + error.message);
       } finally {
         processingTurn = false;
@@ -3412,6 +3625,7 @@ function renderNaturalConversationPage(
           startTime: 0
         });
       } catch (error) {
+        if (!sessionActive || isAbortError(error)) return "stopped";
         showLegFailure("TTS failed: " + error.message);
         turnState = createTurnTakingState();
         renderPhase();
@@ -3537,7 +3751,7 @@ function renderNaturalConversationPage(
     }
 
     async function loadNext(play) {
-      setStatus("THINKING");
+      setStatus("Loading next " + category.value + " item...");
       const response = await api("/api/next?category=" + encodeURIComponent(category.value));
       const body = await response.json();
       current = body.cluster || null;
@@ -3549,12 +3763,7 @@ function renderNaturalConversationPage(
       setEvidenceStatus("No evidence fetched.");
       $("evidenceBody").innerHTML = "";
       if (!current) {
-        $("clusterId").textContent = "Complete";
-        $("stem").textContent = "No cluster";
-        $("members").innerHTML = "";
-        $("openQuestion").textContent = "No undecided clusters.";
-        $("decision").textContent = "Complete.";
-        setStatus("No undecided clusters.");
+        renderQueueState(body.queue_state);
         return;
       }
       understanding = createUnderstandingState(current);
@@ -3562,6 +3771,43 @@ function renderNaturalConversationPage(
       renderUnderstanding();
       setStatus("LISTENING");
       if (play && currentSpeak) await speakAgent(currentSpeak);
+    }
+
+    function renderQueueState(queueState) {
+      const state = queueState || {};
+      const stateCategory = state.category || category.value;
+      const decided = Number.isFinite(Number(state.decided)) ? Number(state.decided) : 0;
+      const isComplete = state.kind === "complete";
+      const isError = state.kind === "error";
+      const message = state.message || (
+        isComplete
+          ? "All items in this queue are complete 🎉 " + String(decided) + " decided."
+          : "No items found for category " + stateCategory + "."
+      );
+      understanding = null;
+      $("clusterId").textContent = isError ? "Stats unavailable" : isComplete ? "Queue complete" : "No items found";
+      $("stem").textContent = stateCategory;
+      $("categoryBadge").textContent = stateCategory;
+      if (isError) {
+        $("healthMode").textContent = "stats error";
+        $("healthMode").classList.add("basic");
+      }
+      $("members").innerHTML =
+        "<div class='member is-resolved'><div><div class='member-name'>" +
+        (isError ? "Stats unavailable" : isComplete ? "All queued items decided" : "No queued items") +
+        "</div><div class='member-meta'>" + escapeHtml(message) + "</div></div><div class='member-tag " +
+        (isError ? "irrelevant" : isComplete ? "merge" : "undecided") + "'>" +
+        (isError ? "error" : isComplete ? String(decided) + " decided" : "empty") +
+        "</div></div>";
+      $("clusterProgress").style.width = isComplete ? "100%" : "0%";
+      $("understandingNote").textContent = isError
+        ? message
+        : isComplete
+          ? String(decided) + " decided."
+          : "No queued items in " + stateCategory + ".";
+      $("openQuestion").textContent = message;
+      $("decision").textContent = message;
+      setStatus(message, isError);
     }
 
     function renderCluster() {

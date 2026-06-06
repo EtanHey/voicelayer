@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -15,6 +23,7 @@ import {
   decorateStatsWithSkippedCounts,
   decisionLockPath,
   DEFAULT_CONFIG,
+  humanizeSpokenText,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
   type ConversationEvidence,
@@ -67,12 +76,9 @@ describe("VoiceReview web server helpers", () => {
       "python3",
       "/tmp/voice-review-wt/scripts/kg_review_session.py",
       "next",
-      "--batch",
-      "/batch.json",
-      "--decisions",
-      "/decisions.json",
-      "--category",
-      "diagnosis-flag; rm -rf /",
+      "--batch=/batch.json",
+      "--decisions=/decisions.json",
+      "--category=diagnosis-flag; rm -rf /",
     ]);
   });
 
@@ -101,9 +107,151 @@ describe("VoiceReview web server helpers", () => {
       timings: { driver_ms: 12 },
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toContain("--category");
+    expect(calls[0].args).toContain("--category=diagnosis-flag");
     expect(calls[0].env.PYTHONPATH).toBe("/tmp/voice-review-wt/src");
     expect(calls[0].cwd).toBe("/tmp/voice-review-wt");
+  });
+
+  it("serves explicit complete queue state with decided stats when /api/next has no cluster", async () => {
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        if (call.args.includes("stats")) {
+          return commandResult({
+            per_category: {
+              "diagnosis-flag": {
+                total: 7,
+                explicit: 5,
+                by_rule: 2,
+                undecided: 0,
+              },
+            },
+          });
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=diagnosis-flag"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(calls.map((call) => call.args[2])).toEqual(["next", "stats"]);
+    expect(body.queue_state).toEqual({
+      kind: "complete",
+      category: "diagnosis-flag",
+      decided: 7,
+      message: "All items in this queue are complete 🎉 7 decided.",
+    });
+  });
+
+  it("serves explicit empty queue state when stats have no items for the category", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        if (call.args.includes("stats")) {
+          return commandResult({
+            per_category: {
+              "diagnosis-flag": {
+                total: 7,
+                explicit: 5,
+                by_rule: 2,
+                undecided: 0,
+              },
+            },
+          });
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=sep-variants"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.queue_state).toEqual({
+      kind: "empty",
+      category: "sep-variants",
+      decided: 0,
+      message: "No items found for category sep-variants.",
+    });
+  });
+
+  it("serves degraded stats JSON instead of hard-failing when rollups reject stale decisions", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "ValueError: decision references cluster not in loaded batch",
+        durationMs: 9,
+      }),
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/stats"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      stats: null,
+      degraded: true,
+      error:
+        "stats unavailable: kg_review_session.py failed with exit 1: ValueError: decision references cluster not in loaded batch",
+      timings: { driver_ms: 9 },
+    });
+  });
+
+  it("serves an explicit stats-error queue state when /api/next empties but stats fail", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        if (call.args.includes("stats")) {
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr: "ValueError: decision references cluster not in loaded batch",
+            durationMs: 9,
+          };
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=diagnosis-flag"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.queue_state).toEqual({
+      kind: "error",
+      category: "diagnosis-flag",
+      decided: 0,
+      message:
+        "Stats unavailable: kg_review_session.py failed with exit 1: ValueError: decision references cluster not in loaded batch",
+    });
   });
 
   it("records /api/decide through the shared KG review driver with voice source", async () => {
@@ -139,9 +287,12 @@ describe("VoiceReview web server helpers", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(calls[0].args).toContain("--batch");
-    expect(calls[0].args).toContain("/batch.json");
-    const decisionJson = calls[0].args[calls[0].args.indexOf("--decision-json") + 1];
+    expect(calls[0].args).toContain("--batch=/batch.json");
+    const decisionArg = calls[0].args.find((arg) =>
+      arg.startsWith("--decision-json="),
+    );
+    expect(decisionArg).toBeString();
+    const decisionJson = decisionArg?.slice("--decision-json=".length) || "{}";
     expect(JSON.parse(decisionJson)).toMatchObject({
       action: "merge",
       canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
@@ -414,6 +565,57 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("preserves failed decode blobs under a capped failed directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-failed-"));
+    const failedDir = join(root, "failed");
+    await mkdir(failedDir, { recursive: true });
+    const oldTime = new Date("2026-01-01T00:00:00.000Z");
+    for (let index = 0; index < 22; index += 1) {
+      const path = join(failedDir, `old-${String(index).padStart(2, "0")}.webm`);
+      await writeFile(path, `old-${index}`);
+      await utimes(path, oldTime, oldTime);
+    }
+
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Invalid EBML header",
+        durationMs: 5,
+      }),
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm;codecs=opus" },
+          body: new Blob(["broken webm"]),
+        }),
+      );
+      const body = await response.json();
+      const failedFiles = await readdir(failedDir);
+      const preservedContents = await Promise.all(
+        failedFiles
+          .filter((name) => name.endsWith(".webm"))
+          .map((name) => readFile(join(failedDir, name), "utf8")),
+      );
+
+      expect(response.status).toBe(500);
+      expect(body.error).toContain("Invalid EBML header");
+      expect(failedFiles).toHaveLength(20);
+      expect(preservedContents).toContain("broken webm");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("builds a bounded whisper prompt from vocabulary prompt terms", () => {
     const prompt = buildWhisperPrompt(
       ["BrainLayer", "Cantaloupe AI", "VoiceLayer", "one two three four five"],
@@ -658,14 +860,10 @@ describe("VoiceReview web server helpers", () => {
     expect(args).toEqual([
       "python3",
       "/repo/src/voicereview-web/kg_evidence.py",
-      "--db",
-      "/tmp/fixture.db",
-      "--members-json",
-      JSON.stringify(cantaloupeCluster.members),
-      "--per-member",
-      "2",
-      "--question",
-      "what context exists around the hiring manager",
+      "--db=/tmp/fixture.db",
+      `--members-json=${JSON.stringify(cantaloupeCluster.members)}`,
+      "--per-member=2",
+      "--question=what context exists around the hiring manager",
       "--deep",
     ]);
   });
@@ -905,8 +1103,7 @@ describe("VoiceReview web server helpers", () => {
 
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(calls[0].args).toContain("--db");
-    expect(calls[0].args).toContain("/tmp/fixture.db");
+    expect(calls[0].args).toContain("--db=/tmp/fixture.db");
     expect(requestedBody.model).toBe("gemma4-e4b,gpu");
     expect(requestedBody.messages[1].content).toContain("chunk-company");
     expect(body).toMatchObject({
@@ -999,9 +1196,8 @@ describe("VoiceReview web server helpers", () => {
     expect(response.status).toBe(200);
     expect(calls).toHaveLength(2);
     expect(calls[1].args).toContain("--deep");
-    expect(calls[1].args).toContain("--question");
     expect(calls[1].args).toContain(
-      "what was the actual context around the hiring manager?",
+      "--question=what was the actual context around the hiring manager?",
     );
     expect(fetchBodies).toHaveLength(2);
     expect(fetchBodies[0].model).toBe(DEFAULT_CONFIG.liteRtModel);
@@ -1028,9 +1224,14 @@ describe("VoiceReview web server helpers", () => {
         },
         runCommand: async (call) => {
           calls.push(call);
-          const mediaPath = call.args[call.args.indexOf("--write-media") + 1];
+          const mediaPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-media="))
+              ?.slice("--write-media=".length) || "";
           const metadataPath =
-            call.args[call.args.indexOf("--write-metadata") + 1];
+            call.args
+              .find((arg) => arg.startsWith("--write-metadata="))
+              ?.slice("--write-metadata=".length) || "";
           await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
           await writeFile(
             metadataPath,
@@ -1069,9 +1270,13 @@ describe("VoiceReview web server helpers", () => {
       expect(calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py"))).toBe(
         true,
       );
-      expect(calls[0].args).toContain("--write-metadata");
-      expect(calls[0].args).toContain("en-US-GuyNeural");
-      expect(calls[0].args).toContain("-12%");
+      expect(calls[0].args.some((arg) => arg.startsWith("--write-metadata="))).toBe(
+        true,
+      );
+      expect(calls[0].args).toContain("--voice=en-US-GuyNeural");
+      expect(calls[0].args).toContain("--rate=-12%");
+      expect(calls[0].args).not.toContain("--rate");
+      expect(calls[0].args).not.toContain("-12%");
       expect(
         JSON.parse(response.headers.get("x-word-boundaries") || "[]"),
       ).toEqual([
@@ -1081,6 +1286,32 @@ describe("VoiceReview web server helpers", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("strips structural metadata and repeated prompt segments from spoken TTS text", async () => {
+    const spoken = humanizeSpokenText(
+      [
+        "Review this cluster.",
+        "Acme Corp (company, 42 chunks)",
+        "as context with 0 chunks",
+        "as evidence with 1 chunks",
+        "Should these merge?",
+        "",
+        "Review this cluster.",
+        "Acme Corp (company, 42 chunks)",
+        "as context with 0 chunks",
+        "as evidence with 1 chunks",
+        "Should these merge?",
+      ].join("\n"),
+    );
+
+    expect(spoken).toBe("Review this cluster. Acme Corp. Should these merge?");
+    expect(spoken).not.toContain("company");
+    expect(spoken).not.toContain("42 chunks");
+    expect(spoken).not.toContain("0 chunks");
+    expect(spoken).not.toContain("1 chunks");
+    expect(spoken).not.toContain("as context");
+    expect(spoken).not.toContain("as evidence");
   });
 
   it("normalizes legacy LiteRT action names to dashboard action names", () => {
