@@ -39,6 +39,13 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(plistTemplate).not.toContain("/tmp/voicelayer-mcp-daemon.stdout.log");
   });
 
+  test("daemon is kept alive unless explicitly disabled", () => {
+    expect(plistTemplate).toContain("<key>KeepAlive</key>");
+    expect(plistTemplate).toContain("<key>PathState</key>");
+    expect(plistTemplate).toContain("/tmp/.voicelayer-daemon-disabled");
+    expect(plistTemplate).not.toContain("<key>SuccessfulExit</key>");
+  });
+
   test("VoiceBar rebuild reinstalls the MCP daemon LaunchAgent", () => {
     expect(buildScript).toContain("launchd/install.sh");
     expect(buildScript).toContain("VOICEBAR_SKIP_LAUNCHD_INSTALL");

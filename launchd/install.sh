@@ -58,7 +58,7 @@ printf '  voicelayer: %s\n' "$VOICELAYER_DIR"
 printf '  plist:      %s\n' "$PLIST_DST"
 printf '  logs:       %s\n' "$LOG_DIR"
 if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
-    printf '  DISABLE_VOICELAYER=1 (daemon exits cleanly and launchd stays idle)\n'
+    printf '  DISABLE_VOICELAYER=1 (disable flag prevents launchd keep-alive)\n'
 fi
 
 # Stop existing if running
@@ -77,8 +77,6 @@ sed \
 plutil -lint "$PLIST_DST" >/dev/null
 
 if [[ "${DISABLE_VOICELAYER:-}" == "1" ]]; then
-    /usr/libexec/PlistBuddy -c "Delete :EnvironmentVariables:DISABLE_VOICELAYER" "$PLIST_DST" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Add :EnvironmentVariables:DISABLE_VOICELAYER string 1" "$PLIST_DST"
     printf "disabled\n" > "$DAEMON_DISABLE_FLAG"
 else
     rm -f "$DAEMON_DISABLE_FLAG"

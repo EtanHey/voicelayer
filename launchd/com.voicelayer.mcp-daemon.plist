@@ -16,8 +16,12 @@
     <true/>
     <key>KeepAlive</key>
     <dict>
-        <key>SuccessfulExit</key>
-        <false/>
+        <key>PathState</key>
+        <dict>
+            <!-- Keep the daemon alive unless the explicit disable flag exists. -->
+            <key>/tmp/.voicelayer-daemon-disabled</key>
+            <false/>
+        </dict>
     </dict>
     <!-- Restart if the MCP socket disappears (e.g., manual rm, crash cleanup).
          This path must match MCP_SOCKET_PATH in src/paths.ts. -->
@@ -35,10 +39,6 @@
         <string>__HOME__/.bun/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>HOME</key>
         <string>__HOME__</string>
-        <!-- To prevent the daemon from starting on login, uncomment:
-        <key>DISABLE_VOICELAYER</key>
-        <string>1</string>
-        -->
     </dict>
     <key>ProcessType</key>
     <string>Interactive</string>
