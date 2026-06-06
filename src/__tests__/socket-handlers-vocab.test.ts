@@ -123,4 +123,68 @@ describe("socket vocabulary commands", () => {
       reason: "not found",
     });
   });
+
+  it("adds a prompt term through the socket handler", () => {
+    const response = handleSocketCommand({
+      cmd: "vocab_add_term",
+      id: "term-add-1",
+      term: "VoiceLayer",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "vocab_add_term",
+      outcome: "accept",
+      id: "term-add-1",
+    });
+    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([
+      "VoiceLayer",
+    ]);
+  });
+
+  it("rejects invalid prompt terms with a reject ack instead of throwing", () => {
+    const response = handleSocketCommand({
+      cmd: "vocab_add_term",
+      id: "term-add-bad",
+      term: "   ",
+    });
+
+    expect(response).toMatchObject({
+      type: "ack",
+      command: "vocab_add_term",
+      outcome: "reject",
+      id: "term-add-bad",
+    });
+  });
+
+  it("removes a prompt term and returns noop when it is already absent", () => {
+    addPromptTerm("VoiceLayer", { path: vocabPath });
+
+    expect(
+      handleSocketCommand({
+        cmd: "vocab_remove_term",
+        id: "term-remove-1",
+        term: "voicelayer",
+      }),
+    ).toEqual({
+      type: "ack",
+      command: "vocab_remove_term",
+      outcome: "accept",
+      id: "term-remove-1",
+    });
+    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([]);
+    expect(
+      handleSocketCommand({
+        cmd: "vocab_remove_term",
+        id: "term-remove-2",
+        term: "voicelayer",
+      }),
+    ).toEqual({
+      type: "ack",
+      command: "vocab_remove_term",
+      outcome: "noop",
+      id: "term-remove-2",
+      reason: "not found",
+    });
+  });
 });

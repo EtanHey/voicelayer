@@ -146,7 +146,9 @@ export type AckCommand =
   | "command"
   | "mark_clip"
   | "vocab_add"
-  | "vocab_remove";
+  | "vocab_remove"
+  | "vocab_add_term"
+  | "vocab_remove_term";
 
 export interface AckEvent {
   type: "ack";
@@ -239,6 +241,16 @@ export interface VocabRemoveCommand extends SocketCommandBase {
   from: string;
 }
 
+export interface VocabAddTermCommand extends SocketCommandBase {
+  cmd: "vocab_add_term";
+  term: string;
+}
+
+export interface VocabRemoveTermCommand extends SocketCommandBase {
+  cmd: "vocab_remove_term";
+  term: string;
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
@@ -251,7 +263,9 @@ export type SocketCommand =
   | MarkClipCommand
   | VocabAddCommand
   | VocabListCommand
-  | VocabRemoveCommand;
+  | VocabRemoveCommand
+  | VocabAddTermCommand
+  | VocabRemoveTermCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -304,59 +318,110 @@ export function parseCommand(line: string): SocketCommand | null {
       case "health":
         return withCommandId<HealthCommand>({ cmd: "health" }, id);
       case "command": {
-        if (typeof parsed.text !== "string" || parsed.text.trim().length === 0) {
+        if (
+          typeof parsed.text !== "string" ||
+          parsed.text.trim().length === 0
+        ) {
           return null;
         }
         const operation =
-          parsed.operation === "insert_below" ? "insert_below" : "replace_selection";
-        return withCommandId<CommandModeCommand>({
-          cmd: "command",
-          operation,
-          text: parsed.text,
-          prompt: typeof parsed.prompt === "string" ? parsed.prompt : undefined,
-        }, id);
+          parsed.operation === "insert_below"
+            ? "insert_below"
+            : "replace_selection";
+        return withCommandId<CommandModeCommand>(
+          {
+            cmd: "command",
+            operation,
+            text: parsed.text,
+            prompt:
+              typeof parsed.prompt === "string" ? parsed.prompt : undefined,
+          },
+          id,
+        );
       }
       case "mark_clip": {
-        if (typeof parsed.label !== "string" || parsed.label.trim().length === 0) {
+        if (
+          typeof parsed.label !== "string" ||
+          parsed.label.trim().length === 0
+        ) {
           return null;
         }
-        return withCommandId<MarkClipCommand>({
-          cmd: "mark_clip",
-          label: parsed.label,
-          source: parsed.source === "tts" ? "tts" : "command",
-        }, id);
+        return withCommandId<MarkClipCommand>(
+          {
+            cmd: "mark_clip",
+            label: parsed.label,
+            source: parsed.source === "tts" ? "tts" : "command",
+          },
+          id,
+        );
       }
       case "vocab_add": {
         const from = parseRequiredString(parsed.from);
         const to = parseRequiredString(parsed.to);
         if (!from || !to) return null;
-        return withCommandId<VocabAddCommand>({
-          cmd: "vocab_add",
-          from,
-          to,
-        }, id);
+        return withCommandId<VocabAddCommand>(
+          {
+            cmd: "vocab_add",
+            from,
+            to,
+          },
+          id,
+        );
       }
       case "vocab_list":
         return withCommandId<VocabListCommand>({ cmd: "vocab_list" }, id);
       case "vocab_remove": {
         const from = parseRequiredString(parsed.from);
         if (!from) return null;
-        return withCommandId<VocabRemoveCommand>({
-          cmd: "vocab_remove",
-          from,
-        }, id);
+        return withCommandId<VocabRemoveCommand>(
+          {
+            cmd: "vocab_remove",
+            from,
+          },
+          id,
+        );
+      }
+      case "vocab_add_term": {
+        const term = parseRequiredString(parsed.term);
+        if (!term) return null;
+        return withCommandId<VocabAddTermCommand>(
+          {
+            cmd: "vocab_add_term",
+            term,
+          },
+          id,
+        );
+      }
+      case "vocab_remove_term": {
+        const term = parseRequiredString(parsed.term);
+        if (!term) return null;
+        return withCommandId<VocabRemoveTermCommand>(
+          {
+            cmd: "vocab_remove_term",
+            term,
+          },
+          id,
+        );
       }
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;
         if (scope !== "all" && scope !== "tts" && scope !== "mic") {
           return withCommandId(
-            { cmd: "toggle", scope: "all", enabled: parsed.enabled } satisfies ToggleCommand,
+            {
+              cmd: "toggle",
+              scope: "all",
+              enabled: parsed.enabled,
+            } satisfies ToggleCommand,
             id,
           );
         }
         return withCommandId(
-          { cmd: "toggle", scope, enabled: parsed.enabled } satisfies ToggleCommand,
+          {
+            cmd: "toggle",
+            scope,
+            enabled: parsed.enabled,
+          } satisfies ToggleCommand,
           id,
         );
       }
@@ -368,7 +433,10 @@ export function parseCommand(line: string): SocketCommand | null {
           id,
         );
         if (typeof parsed.timeout_seconds === "number") {
-          command.timeout_seconds = Math.max(5, Math.min(3600, parsed.timeout_seconds));
+          command.timeout_seconds = Math.max(
+            5,
+            Math.min(3600, parsed.timeout_seconds),
+          );
         }
         if (
           parsed.silence_mode === "quick" ||
@@ -402,7 +470,10 @@ function parseCommandId(parsed: Record<string, unknown>): string | undefined {
   return id.length > 0 ? id : undefined;
 }
 
-function withCommandId<T extends object>(command: T, id?: string): T & { id?: string } {
+function withCommandId<T extends object>(
+  command: T,
+  id?: string,
+): T & { id?: string } {
   if (!id) return command;
   return {
     ...command,

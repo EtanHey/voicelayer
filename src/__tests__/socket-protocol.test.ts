@@ -345,5 +345,32 @@ describe("socket-protocol", () => {
       ).toBeNull();
       expect(parseCommand('{"cmd":"vocab_remove","from":""}')).toBeNull();
     });
+
+    it("parses prompt term add and remove commands", () => {
+      expect(
+        parseCommand(
+          '{"cmd":"vocab_add_term","id":"term-1","term":"VoiceLayer"}',
+        ),
+      ).toEqual({
+        cmd: "vocab_add_term",
+        id: "term-1",
+        term: "VoiceLayer",
+      });
+      expect(
+        parseCommand(
+          '{"cmd":"vocab_remove_term","id":"term-2","term":"VoiceLayer"}',
+        ),
+      ).toEqual({
+        cmd: "vocab_remove_term",
+        id: "term-2",
+        term: "VoiceLayer",
+      });
+    });
+
+    it("rejects prompt term commands without a term", () => {
+      expect(parseCommand('{"cmd":"vocab_add_term"}')).toBeNull();
+      expect(parseCommand('{"cmd":"vocab_add_term","term":""}')).toBeNull();
+      expect(parseCommand('{"cmd":"vocab_remove_term","term":" "}')).toBeNull();
+    });
   });
 });
