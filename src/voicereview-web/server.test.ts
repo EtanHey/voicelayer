@@ -26,6 +26,7 @@ import {
   humanizeSpokenText,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
+  runShellCommand,
   type ConversationEvidence,
   type CommandCall,
   type CommandResult,
@@ -64,6 +65,53 @@ function commandResult(stdout: unknown): CommandResult {
 
 
 describe("VoiceReview web server helpers", () => {
+  it("checks LiteRT health with the no-generation models endpoint", async () => {
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      fetchImpl: async (url, init) => {
+        requestedUrl = String(url);
+        requestedInit = init;
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/health"));
+
+    expect(response.status).toBe(200);
+    expect(requestedUrl).toBe("http://127.0.0.1:9379/v1/models");
+    expect(requestedInit?.method).toBe("GET");
+    expect(requestedInit?.body).toBeUndefined();
+    expect(requestedInit?.signal).toBeUndefined();
+  });
+
+  it("bounds LiteRT health without aborting the models probe", async () => {
+    let requestedInit: RequestInit | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+        requestTimeoutMs: 1,
+      },
+      fetchImpl: async (_url, init) => {
+        requestedInit = init;
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/health"));
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.legs.litert.error).toContain("timed out");
+    expect(requestedInit?.signal).toBeUndefined();
+  });
+
   it("builds driver args as arrays with request data in its own argv slot", () => {
     const args = buildDriverArgs("next", {
       pythonScript: "/tmp/voice-review-wt/scripts/kg_review_session.py",
@@ -668,6 +716,45 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("propagates client aborts into /api/transcribe subprocesses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-abort-"));
+    const clientAbort = new AbortController();
+    let commandSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        commandSignal = call.signal;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!commandSignal?.aborted) {
+          throw new Error("client abort did not reach transcribe subprocess");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: new Blob(["not real audio"]),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+      expect(commandSignal?.aborted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects headerless mid-stream webm slices before ffmpeg", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
     const calls: CommandCall[] = [];
@@ -911,6 +998,42 @@ describe("VoiceReview web server helpers", () => {
       },
       confirmation: "Merge all into Cantaloupe, company.",
     });
+  });
+
+  it("propagates client aborts into /api/interpret LiteRT fetches", async () => {
+    const clientAbort = new AbortController();
+    let upstreamSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        requestTimeoutMs: 60000,
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      fetchImpl: async (_url, init) => {
+        upstreamSignal = init?.signal as AbortSignal | undefined;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!upstreamSignal?.aborted) {
+          throw new Error("client abort did not reach upstream LiteRT fetch");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/interpret", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          transcript: "merge them all",
+          cluster: cantaloupeCluster,
+        }),
+        signal: clientAbort.signal,
+      }),
+    );
+
+    expect(response.status).toBe(499);
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(await response.json()).toEqual({ error: "request aborted" });
   });
 
   it("serves /api/interpret question actions without forcing a decision", async () => {
@@ -1225,6 +1348,68 @@ describe("VoiceReview web server helpers", () => {
     expect(body.timings.llm_ms).toBeGreaterThanOrEqual(0);
   });
 
+  it("propagates client aborts into /api/converse evidence and LiteRT work", async () => {
+    const clientAbort = new AbortController();
+    let evidenceSignal: AbortSignal | undefined;
+    let upstreamSignal: AbortSignal | undefined;
+    const evidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "chunk-company",
+              project: "coach",
+              content_type: "summary",
+              source: "brainlayer",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "company context",
+              text: "Cantaloupe company evidence.",
+            },
+          ],
+        },
+      ],
+    };
+    const app = createVoiceReviewApp({
+      config: {
+        requestTimeoutMs: 60000,
+        brainlayerDbPath: "/tmp/fixture.db",
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      runCommand: async (call) => {
+        evidenceSignal = call.signal;
+        return commandResult(evidence);
+      },
+      fetchImpl: async (_url, init) => {
+        upstreamSignal = init?.signal as AbortSignal | undefined;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!upstreamSignal?.aborted) {
+          throw new Error("client abort did not reach upstream LiteRT fetch");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: "which chunks does the company one have?",
+          cluster: cantaloupeCluster,
+        }),
+        signal: clientAbort.signal,
+      }),
+    );
+
+    expect(response.status).toBe(499);
+    expect(evidenceSignal).toBeDefined();
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(evidenceSignal?.aborted).toBe(true);
+  });
+
   it("runs deeper BrainLayer evidence search instead of dead-ending on thin snippets", async () => {
     const shallowEvidence: ConversationEvidence = {
       members: [
@@ -1392,6 +1577,170 @@ describe("VoiceReview web server helpers", () => {
         { offset_ms: 0, duration_ms: 100, text: "Hello" },
         { offset_ms: 150, duration_ms: 100, text: "world" },
       ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates client aborts into /api/tts subprocesses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-"));
+    const clientAbort = new AbortController();
+    let commandSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async (call) => {
+        commandSignal = call.signal;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!commandSignal?.aborted) {
+          throw new Error("client abort did not reach TTS subprocess");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+      expect(commandSignal?.aborted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not return TTS subprocess success after the client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-race-"));
+    const clientAbort = new AbortController();
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async (call) => {
+        const mediaPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-media="))
+            ?.slice("--write-media=".length) || "";
+        const metadataPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-metadata="))
+            ?.slice("--write-metadata=".length) || "";
+        await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+        await writeFile(metadataPath, "");
+        clientAbort.abort();
+        return commandResult("");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a subprocess to exit before completing an abort", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-command-abort-"));
+    const markerPath = join(root, "terminated.txt");
+    const readyPath = join(root, "ready.txt");
+    const childPath = join(root, "child.js");
+    await writeFile(
+      childPath,
+      [
+        'const { writeFileSync } = await import("node:fs");',
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+        'process.on("SIGTERM", () => {',
+        "  setTimeout(() => {",
+        `    writeFileSync(${JSON.stringify(markerPath)}, "done");`,
+        "    process.exit(0);",
+        "  }, 25);",
+        "});",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    const abort = new AbortController();
+
+    try {
+      const command = runShellCommand({
+        args: [process.execPath, childPath],
+        cwd: root,
+        env: { PATH: process.env.PATH || "" },
+        signal: abort.signal,
+      });
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await readFile(readyPath, "utf8").catch(() => "")) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(await readFile(readyPath, "utf8")).toBe("ready");
+      abort.abort();
+
+      try {
+        await command;
+        throw new Error("expected command abort");
+      } catch (error) {
+        expect(error).toBeInstanceOf(DOMException);
+        expect((error as DOMException).name).toBe("AbortError");
+      }
+
+      expect(await readFile(markerPath, "utf8")).toBe("done");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not classify non-AbortError failures containing aborted as client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-nonabort-"));
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async () => {
+        throw new Error("edge-tts aborted internally before writing audio");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(body.error).toBe("edge-tts aborted internally before writing audio");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

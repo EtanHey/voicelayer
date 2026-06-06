@@ -114,6 +114,7 @@ export interface CommandCall {
   args: string[];
   cwd: string;
   env: Record<string, string>;
+  signal?: AbortSignal;
 }
 
 export interface CommandResult {
@@ -146,6 +147,7 @@ export interface VoiceReviewConfig {
 
 export const KG_FLAG_DECISIONS_SCHEMA = "kg-flag-decisions-v1";
 const FAILED_TRANSCRIBE_CAP = 20;
+const SUBPROCESS_ABORT_GRACE_MS = 1000;
 
 type FetchLike = (
   input: string | URL | Request,
@@ -1190,6 +1192,9 @@ export function createVoiceReviewApp(options?: {
         }
         return jsonResponse({ error: "not found" }, 404);
       } catch (error) {
+        if (isAbortError(error)) {
+          return jsonResponse({ error: "request aborted" }, 499);
+        }
         return jsonResponse({ error: errorMessage(error) }, 500);
       }
     },
@@ -1290,27 +1295,37 @@ async function handleHealth(
   config: VoiceReviewConfig,
   fetchImpl: FetchLike,
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(
-    () => controller.abort(),
-    Math.min(config.requestTimeoutMs, 4000),
-  );
   const legs: Record<string, { ok: boolean; error?: string }> = {
     litert: { ok: false },
   };
+  const timeoutMs = Math.max(1, Math.min(config.requestTimeoutMs, 4000));
+  const timeout = Symbol("litert-health-timeout");
   try {
-    const response = await fetchImpl(config.liteRtUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: config.liteRtModel,
-        messages: [{ role: "user", content: "health" }],
-        temperature: 0,
-        max_tokens: 1,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
+    const probe = fetchImpl(liteRtModelsUrl(config.liteRtUrl), {
+      method: "GET",
+      headers: { accept: "application/json" },
+    }).catch((error: unknown) => error);
+    const result = await Promise.race([
+      probe,
+      new Promise<typeof timeout>((resolve) =>
+        setTimeout(() => resolve(timeout), timeoutMs),
+      ),
+    ]);
+    if (result === timeout) {
+      legs.litert = {
+        ok: false,
+        error: `LiteRT-LM health timed out after ${timeoutMs}ms`,
+      };
+      return jsonResponse(
+        { ok: false, message: "brain offline — retrying", legs },
+        503,
+      );
+    }
+    if (result instanceof Error) throw result;
+    if (!(result instanceof Response)) {
+      throw new Error("LiteRT-LM health returned non-response");
+    }
+    const response = result;
     if (!response.ok) {
       legs.litert = {
         ok: false,
@@ -1329,9 +1344,18 @@ async function handleHealth(
       { ok: false, message: "brain offline — retrying", legs },
       503,
     );
-  } finally {
-    clearTimeout(timeout);
   }
+}
+
+function liteRtModelsUrl(chatCompletionsUrl: string): string {
+  const url = new URL(chatCompletionsUrl);
+  url.search = "";
+  url.hash = "";
+  url.pathname = url.pathname.replace(/\/chat\/completions\/?$/, "/models");
+  if (!url.pathname.endsWith("/models")) {
+    url.pathname = url.pathname.replace(/\/$/, "") + "/models";
+  }
+  return url.toString();
 }
 
 async function handleStats(
@@ -1391,7 +1415,9 @@ async function handleDecide(
     }),
     cwd: config.brainlayerWorktree,
     env: driverEnv(config),
+    signal: request.signal,
   });
+  throwIfAborted(request.signal);
   return jsonResponse({
     ...parseDriverRecord(result),
     timings: { driver_ms: result.durationMs },
@@ -1422,35 +1448,29 @@ async function handleInterpret(
       : undefined,
     interruption,
   });
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
-  try {
-    const response = await fetchImpl(config.liteRtUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: config.liteRtModel,
-        messages,
-        temperature: 0,
-        max_tokens: 420,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
-    }
-    const raw = await response.json();
-    const content = extractChatContent(raw);
-    const decision = parseInterpretDecision(content, body.cluster, body.transcript);
-    return jsonResponse({
-      decision,
-      confirmation: buildConfirmation(decision, body.cluster),
-      timings: { llm_ms: Math.round(performance.now() - started) },
-    });
-  } finally {
-    clearTimeout(timeout);
+  const response = await fetchImpl(config.liteRtUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: config.liteRtModel,
+      messages,
+      temperature: 0,
+      max_tokens: 420,
+      stream: false,
+    }),
+    signal: request.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
   }
+  const raw = await response.json();
+  const content = extractChatContent(raw);
+  const decision = parseInterpretDecision(content, body.cluster, body.transcript);
+  return jsonResponse({
+    decision,
+    confirmation: buildConfirmation(decision, body.cluster),
+    timings: { llm_ms: Math.round(performance.now() - started) },
+  });
 }
 
 async function handleConverse(
@@ -1487,7 +1507,9 @@ async function handleConverse(
     }),
     cwd: process.cwd(),
     env: processEnv(),
+    signal: request.signal,
   });
+  throwIfAborted(request.signal);
   assertSuccess(evidenceResult, "kg_evidence.py");
   const evidence = parseConversationEvidence(evidenceResult.stdout, body.cluster);
 
@@ -1496,6 +1518,7 @@ async function handleConverse(
     config,
     fetchImpl,
     model: config.liteRtModel,
+    signal: request.signal,
     messages: buildConverseMessages({
       question,
       cluster: body.cluster,
@@ -1530,7 +1553,9 @@ async function handleConverse(
     }),
     cwd: process.cwd(),
     env: processEnv(),
+    signal: request.signal,
   });
+  throwIfAborted(request.signal);
   assertSuccess(deepEvidenceResult, "kg_evidence.py");
   const deepEvidence = parseConversationEvidence(
     deepEvidenceResult.stdout,
@@ -1540,6 +1565,7 @@ async function handleConverse(
     config,
     fetchImpl,
     model: config.deepLiteRtModel,
+    signal: request.signal,
     messages: buildConverseMessages({
       question,
       cluster: body.cluster,
@@ -1570,31 +1596,26 @@ async function fetchConverseAnswer(options: {
   config: VoiceReviewConfig;
   fetchImpl: FetchLike;
   model: string;
+  signal?: AbortSignal;
   messages: Array<{ role: "system" | "user"; content: string }>;
 }): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.config.requestTimeoutMs);
-  try {
-    const response = await options.fetchImpl(options.config.liteRtUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        model: options.model,
-        messages: options.messages,
-        temperature: 0,
-        max_tokens: 220,
-        stream: false,
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
-    }
-    const raw = await response.json();
-    return extractChatContent(raw).replace(/\s+/g, " ").trim();
-  } finally {
-    clearTimeout(timeout);
+  const response = await options.fetchImpl(options.config.liteRtUrl, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: options.model,
+      messages: options.messages,
+      temperature: 0,
+      max_tokens: 220,
+      stream: false,
+    }),
+    signal: options.signal,
+  });
+  if (!response.ok) {
+    throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
   }
+  const raw = await response.json();
+  return extractChatContent(raw).replace(/\s+/g, " ").trim();
 }
 
 function isInsufficientEvidenceAnswer(answer: string): boolean {
@@ -1670,7 +1691,9 @@ async function handleTranscribe(
       ],
       cwd: process.cwd(),
       env: processEnv(),
+      signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(convert, "ffmpeg");
 
     const whisper = config.whisperCliPath;
@@ -1686,7 +1709,9 @@ async function handleTranscribe(
       }),
       cwd: process.cwd(),
       env: processEnv(),
+      signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(whisperResult, "whisper-cli");
 
     const text = cleanTranscript(whisperResult.stdout);
@@ -1701,6 +1726,7 @@ async function handleTranscribe(
       },
     });
   } catch (error) {
+    if (isAbortError(error)) throw error;
     preservedFailedInput = await preserveFailedTranscribeInput(
       inputPath,
       config.tempDir,
@@ -1795,7 +1821,9 @@ async function handleTts(
       ],
       cwd: process.cwd(),
       env: processEnv(),
+      signal: request.signal,
     });
+    throwIfAborted(request.signal);
     assertSuccess(result, "edge-tts");
     const bytes = await readFile(mp3Path);
     const wordBoundaries = parseWordBoundaryMetadata(
@@ -1826,25 +1854,66 @@ function isSafeEdgeTtsRate(value: string): boolean {
   return /^[+-](?:[0-9]|[1-9][0-9]|100)%$/.test(value);
 }
 
-async function runShellCommand(call: CommandCall): Promise<CommandResult> {
+export async function runShellCommand(call: CommandCall): Promise<CommandResult> {
   const started = performance.now();
+  if (call.signal?.aborted) throw abortError();
   const proc = Bun.spawn(call.args, {
     cwd: call.cwd,
     env: call.env,
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
+  let abortHandler: (() => void) | null = null;
+  const completed = Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),
     proc.exited,
   ]);
-  return {
-    exitCode,
-    stdout,
-    stderr,
-    durationMs: Math.round(performance.now() - started),
-  };
+  const aborted = call.signal
+    ? new Promise<never>((_resolve, reject) => {
+        abortHandler = () => {
+          void terminateProcessForAbort(proc).then(
+            () => reject(abortError()),
+            reject,
+          );
+        };
+        call.signal?.addEventListener("abort", abortHandler, { once: true });
+      })
+    : null;
+  try {
+    const [stdout, stderr, exitCode] = aborted
+      ? await Promise.race([completed, aborted])
+      : await completed;
+    throwIfAborted(call.signal);
+    return {
+      exitCode,
+      stdout,
+      stderr,
+      durationMs: Math.round(performance.now() - started),
+    };
+  } finally {
+    if (abortHandler) call.signal?.removeEventListener("abort", abortHandler);
+  }
+}
+
+async function terminateProcessForAbort(
+  proc: ReturnType<typeof Bun.spawn>,
+): Promise<void> {
+  proc.kill("SIGTERM");
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const exited = proc.exited.then(
+    () => "exited" as const,
+    () => "exited" as const,
+  );
+  const elapsed = new Promise<"timeout">((resolve) => {
+    timeout = setTimeout(() => resolve("timeout"), SUBPROCESS_ABORT_GRACE_MS);
+  });
+  const result = await Promise.race([exited, elapsed]);
+  if (timeout) clearTimeout(timeout);
+  if (result === "timeout") {
+    proc.kill("SIGKILL");
+    await proc.exited.catch(() => undefined);
+  }
 }
 
 const FLOCK_EX = 2;
@@ -2422,6 +2491,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isAbortError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return true;
+  if (error instanceof Error && error.name === "AbortError") return true;
+  return false;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError();
+}
+
+function abortError(): DOMException {
+  return new DOMException("request aborted", "AbortError");
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -3130,6 +3213,8 @@ function renderNaturalConversationPage(
     let healthFailureStreak = 0;
     let nextHealthAnnouncementAt = 0;
     let healthAnnouncementBackoffMs = 3000;
+    let healthRetryBackoffMs = 3000;
+    let liteRtWorkInFlight = 0;
     let sessionAbortController = null;
 
     function setStatus(text, urgent = false) {
@@ -3225,6 +3310,15 @@ function renderNaturalConversationPage(
       return response;
     }
 
+    async function withLiteRtWork(work) {
+      liteRtWorkInFlight += 1;
+      try {
+        return await work();
+      } finally {
+        liteRtWorkInFlight = Math.max(0, liteRtWorkInFlight - 1);
+      }
+    }
+
     async function startSession() {
       sessionButton.disabled = true;
       if (sessionAbortController) sessionAbortController.abort();
@@ -3254,6 +3348,8 @@ function renderNaturalConversationPage(
     async function teardownSessionRuntime(message, options = {}) {
       sessionActive = false;
       clearTimeout(healthRetryTimer);
+      healthRetryBackoffMs = 3000;
+      liteRtWorkInFlight = 0;
       if (sessionAbortController) {
         sessionAbortController.abort();
         sessionAbortController = null;
@@ -3267,7 +3363,7 @@ function renderNaturalConversationPage(
       mediaRecorder = null;
       if (processor) processor.disconnect();
       if (micSource) micSource.disconnect();
-      if (audioContext) await audioContext.close().catch(() => undefined);
+      const contextToClose = audioContext;
       for (const track of stream?.getTracks() || []) track.stop();
       stream = null;
       audioContext = null;
@@ -3284,6 +3380,8 @@ function renderNaturalConversationPage(
       vadState.sr = null;
       vadState.context = new Float32Array(BROWSER_VAD_CONTEXT_SAMPLES);
       vadState.mode = "pending";
+      if (contextToClose) await contextToClose.close().catch(() => undefined);
+      if (options.unload) return;
       turnState = createTurnTakingState();
       renderPhase();
       sessionButton.textContent = "Start session";
@@ -3294,6 +3392,11 @@ function renderNaturalConversationPage(
     }
 
     async function healthCheck(silent) {
+      if (liteRtWorkInFlight > 0) {
+        $("healthMode").textContent = "brain busy";
+        scheduleHealthRetry({ backoff: false });
+        return true;
+      }
       try {
         const response = await api("/api/health");
         const body = await response.json();
@@ -3301,6 +3404,7 @@ function renderNaturalConversationPage(
         healthFailureStreak = 0;
         nextHealthAnnouncementAt = 0;
         healthAnnouncementBackoffMs = 3000;
+        healthRetryBackoffMs = 3000;
         return true;
       } catch (error) {
         healthFailureStreak += 1;
@@ -3321,10 +3425,13 @@ function renderNaturalConversationPage(
       return true;
     }
 
-    function scheduleHealthRetry() {
+    function scheduleHealthRetry(options = {}) {
       clearTimeout(healthRetryTimer);
       if (!sessionActive) return;
-      healthRetryTimer = setTimeout(() => healthCheck(true), 3000);
+      healthRetryTimer = setTimeout(() => healthCheck(true), healthRetryBackoffMs);
+      if (options.backoff !== false) {
+        healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);
+      }
     }
 
     function showLegFailure(message) {
@@ -3582,11 +3689,11 @@ function renderNaturalConversationPage(
       renderPhase();
       setStatus("THINKING");
       try {
-        const transcribeResponse = await api("/api/transcribe", {
+        const transcribeResponse = await withLiteRtWork(async () => api("/api/transcribe", {
           method: "POST",
           headers: { "content-type": blob.type || "audio/webm" },
           body: blob
-        });
+        }));
         const transcribe = await transcribeResponse.json();
         const transcript = String(transcribe.text || "").trim();
         if (!transcript) throw new Error("empty transcript");
@@ -3603,7 +3710,7 @@ function renderNaturalConversationPage(
 
         const transcriptForInterpret = pause.transcript;
         const interruptionForTurn = pendingInterruption;
-        const interpretResponse = await api("/api/interpret", {
+        const interpretResponse = await withLiteRtWork(async () => api("/api/interpret", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -3612,7 +3719,7 @@ function renderNaturalConversationPage(
             understanding,
             interruption: interruptionForTurn
           })
-        });
+        }));
         const interpreted = await interpretResponse.json();
         await handleInterpretation(interpreted.decision, transcriptForInterpret, interruptionForTurn);
         if (pendingInterruption === interruptionForTurn) pendingInterruption = null;
@@ -3648,7 +3755,7 @@ function renderNaturalConversationPage(
 
     async function answerQuestion(question, interruption = null) {
       setEvidenceStatus("checking evidence");
-      const response = await api("/api/converse", {
+      const response = await withLiteRtWork(async () => api("/api/converse", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -3657,7 +3764,7 @@ function renderNaturalConversationPage(
           history: conversationHistory,
           interruption
         })
-      });
+      }));
       const body = await response.json();
       const answer = String(body.answer || "I don't see evidence about that").trim();
       if (body.preface) {
@@ -3702,7 +3809,7 @@ function renderNaturalConversationPage(
       const spokenText = humanizeSpokenText(displayText);
       if (options.log !== false) addTurn("agent", "agent", displayText);
       try {
-        const response = await api("/api/tts", {
+        const response = await withLiteRtWork(async () => api("/api/tts", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -3710,7 +3817,7 @@ function renderNaturalConversationPage(
             voice: selectedTtsVoice(),
             rate: selectedTtsRate()
           })
-        });
+        }));
         const wordBoundaries = JSON.parse(response.headers.get("x-word-boundaries") || "[]");
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
@@ -4017,6 +4124,21 @@ function renderNaturalConversationPage(
       return { intent: "content" };
     }
 
+    function teardownAbandonedSession() {
+      void teardownSessionRuntime("", { unload: true });
+    }
+
+    function resetAfterBfcacheRestore(event) {
+      if (!event.persisted) return;
+      turnState = createTurnTakingState();
+      renderPhase();
+      sessionButton.disabled = false;
+      sessionButton.textContent = "Start session";
+      sessionButton.classList.remove("is-active");
+      category.disabled = false;
+      if (!sessionActive) setStatus("Session ended.");
+    }
+
     function sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -4039,6 +4161,10 @@ function renderNaturalConversationPage(
       if (!sessionActive) return;
       await loadNext(false).catch((error) => showLegFailure(error.message));
     });
+
+    window.addEventListener("pagehide", teardownAbandonedSession);
+    window.addEventListener("beforeunload", teardownAbandonedSession);
+    window.addEventListener("pageshow", resetAfterBfcacheRestore);
 
     ttsRate?.addEventListener("input", updateTtsRateLabel);
     $("resumePlayback").addEventListener("click", async (event) => {
