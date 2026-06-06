@@ -7,6 +7,7 @@ import {
   addPromptTerm,
   listVocabulary,
   removeAlias,
+  removePromptTerm,
 } from "../stt-vocabulary-store";
 
 describe("stt-vocabulary-store", () => {
@@ -37,9 +38,7 @@ describe("stt-vocabulary-store", () => {
       { path: vocabPath },
     );
 
-    expect(updated.aliases).toEqual([
-      { from: "domekin", to: "Domica Labs" },
-    ]);
+    expect(updated.aliases).toEqual([{ from: "domekin", to: "Domica Labs" }]);
     expect(updated.prompt_terms).toEqual([]);
     expect(typeof updated.updated_at).toBe("string");
     expect(Number.isNaN(Date.parse(updated.updated_at!))).toBe(false);
@@ -84,5 +83,32 @@ describe("stt-vocabulary-store", () => {
 
   it("rejects empty prompt terms", () => {
     expect(() => addPromptTerm(" ", { path: vocabPath })).toThrow(/term/i);
+  });
+
+  it("removes prompt terms case-insensitively and reports removal", () => {
+    addPromptTerm("Domica", { path: vocabPath });
+    addPromptTerm("SongScript", { path: vocabPath });
+
+    const updated = removePromptTerm("DOMICA", { path: vocabPath });
+
+    expect(updated.removed).toBe(true);
+    expect(updated.prompt_terms).toEqual(["SongScript"]);
+    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([
+      "SongScript",
+    ]);
+  });
+
+  it("reports removed: false when the prompt term is absent", () => {
+    addPromptTerm("Domica", { path: vocabPath });
+
+    const updated = removePromptTerm("missing", { path: vocabPath });
+
+    expect(updated.removed).toBe(false);
+    expect(updated.changed).toBe(false);
+    expect(updated.prompt_terms).toEqual(["Domica"]);
+  });
+
+  it("rejects empty prompt term removal", () => {
+    expect(() => removePromptTerm(" ", { path: vocabPath })).toThrow(/term/i);
   });
 });

@@ -472,6 +472,20 @@ public final class VoiceState {
         sendCommand?(STTVocabularyCommandPayload.list())
     }
 
+    public func addVocabularyPromptTerm(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendCommand?(STTVocabularyCommandPayload.addTerm(trimmed))
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
+    public func removeVocabularyPromptTerm(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendCommand?(STTVocabularyCommandPayload.removeTerm(trimmed))
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }

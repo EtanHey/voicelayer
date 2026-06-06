@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
     }
+
     private let commandModeAXHelper = CommandModeAXHelper()
 
     private let defaults = VoiceBarDefaults.make()
@@ -62,7 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
-    private var isPositionLocked = false
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
 
@@ -134,7 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Singleton guard — if another VoiceBar is already running, quit immediately.
         let myPID = ProcessInfo.processInfo.processIdentifier
         if VoiceBarDefaults.shouldEnforceSingleton() {
-            let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            let running = NSRunningApplication
+                .runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
             if !others.isEmpty {
                 NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
@@ -216,7 +217,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
         anchorMode = anchorPreferences.loadAnchorMode()
-        isPositionLocked = anchorPreferences.loadPositionLocked()
 
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
@@ -225,9 +225,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
-        pill.isPillDragEnabled = !isPositionLocked
+        pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
-        pill.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
+            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
@@ -304,9 +305,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.anchorModeProvider = { [weak self] in
             self?.currentAnchorMode() ?? .follow
         }
-        pillContextMenuController.isPositionLockedProvider = { [weak self] in
-            self?.currentPositionLocked() ?? false
-        }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
         }
@@ -346,9 +344,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
-        }
-        pillContextMenuController.onSetPositionLocked = { [weak self] locked in
-            self?.setPositionLocked(locked)
         }
         pillContextMenuController.onQuit = {
             NSApplication.shared.terminate(nil)
@@ -561,8 +556,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        panel?.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: mode)
-        panel?.isPillDragEnabled = !isPositionLocked
+        panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
+            VoiceBarPresentation.isPanelDraggable(mode: mode)
+        panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
         applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -758,7 +754,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     ) -> VoiceBarAnchorPlacement {
         VoiceBarPositionLockPolicy.effectivePlacement(
             anchorMode: anchorMode,
-            isLocked: isPositionLocked,
             savedHorizontalOffset: horizontalOffset,
             savedVerticalOffset: verticalOffset,
             visibleFrame: visibleFrame,
@@ -775,8 +770,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
-        guard !isPositionLocked else { return }
-        guard anchorMode == .follow else { return }
+        guard anchorMode.allowsFreeDrag else { return }
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
@@ -794,21 +788,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         anchorMode = mode
         anchorPreferences.saveAnchorMode(mode)
+        panel?.isPillDragEnabled = mode.allowsFreeDrag
+        panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
+            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         if let panel {
             positionPanel(panel, on: nil)
             applyPanelLayout(animated: true)
         }
+        refreshSettingsWindowAnchorState()
     }
 
-    func currentPositionLocked() -> Bool {
-        isPositionLocked
-    }
-
-    func setPositionLocked(_ locked: Bool) {
-        isPositionLocked = locked
-        anchorPreferences.savePositionLocked(locked)
-        panel?.isPillDragEnabled = !locked
-        panel?.isMovableByWindowBackground = locked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+    private func refreshSettingsWindowAnchorState() {
+        guard let settingsWindow else { return }
+        DispatchQueue.main.async { [weak self, weak settingsWindow] in
+            guard let self,
+                  let hosting = settingsWindow?.contentViewController as? NSHostingController<SettingsView>
+            else { return }
+            hosting.rootView = makeSettingsView()
+        }
     }
 
     func currentVocabularyPreview() -> STTVocabularyPreview {
@@ -936,8 +933,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
             anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
             onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
-            isPositionLocked: { [weak self] in self?.currentPositionLocked() ?? false },
-            onSetPositionLocked: { [weak self] in self?.setPositionLocked($0) },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,
@@ -953,6 +948,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onRemoveVocabularyAlias: { [weak self] alias in
                 self?.voiceState.removeVocabularyAlias(alias)
+            },
+            onAddPromptTerm: { [weak self] term in
+                self?.voiceState.addVocabularyPromptTerm(term)
+            },
+            onRemovePromptTerm: { [weak self] term in
+                self?.voiceState.removeVocabularyPromptTerm(term)
+            },
+            isHotkeyRemapActive: {
+                FileManager.default.fileExists(
+                    atPath: NSHomeDirectory()
+                        + "/Library/LaunchAgents/"
+                        + VoiceBarHotkeyContract.remapAgentLabel
+                        + ".plist"
+                )
             }
         )
     }

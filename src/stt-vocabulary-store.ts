@@ -117,6 +117,29 @@ export function addPromptTerm(
   });
 }
 
+export function removePromptTerm(
+  term: string,
+  options: STTVocabularyStoreOptions = {},
+): STTVocabularyMutationResult {
+  const normalized = validateText(term, "term");
+  const path = getSTTVocabularyPath(options);
+  return withVocabularyLock(path, options, () => {
+    const snapshot = readSnapshot(path);
+    const promptTerms = snapshot.prompt_terms.filter(
+      (entry) => entry.toLowerCase() !== normalized.toLowerCase(),
+    );
+    const removed = promptTerms.length !== snapshot.prompt_terms.length;
+    if (!removed) {
+      return { ...snapshot, changed: false, removed: false };
+    }
+    snapshot.prompt_terms = promptTerms;
+    return {
+      ...writeSnapshot(path, stampSnapshot(snapshot, options), true),
+      removed,
+    };
+  });
+}
+
 export function removeAlias(
   from: string,
   options: STTVocabularyStoreOptions = {},
@@ -170,7 +193,9 @@ function readSnapshot(path: string): STTVocabularySnapshot {
     return { updated_at: null, prompt_terms: [], aliases: [] };
   }
 
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as RawVocabularySnapshot;
+  const parsed = JSON.parse(
+    readFileSync(path, "utf8"),
+  ) as RawVocabularySnapshot;
   return normalizeSnapshot(parsed);
 }
 

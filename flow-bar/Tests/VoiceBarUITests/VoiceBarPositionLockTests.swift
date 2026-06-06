@@ -1,12 +1,11 @@
-@testable import VoiceBarUI
 import AppKit
+@testable import VoiceBarUI
 import XCTest
 
 final class VoiceBarPositionLockTests: XCTestCase {
-    func testLockedFollowModeKeepsSavedOffsetsAndScreenFollowing() {
+    func testFollowModeKeepsSavedOffsetsAndScreenFollowing() {
         let placement = VoiceBarPositionLockPolicy.effectivePlacement(
             anchorMode: .follow,
-            isLocked: true,
             savedHorizontalOffset: 0.2,
             savedVerticalOffset: 0.3,
             visibleFrame: CGRect(x: 0, y: 0, width: 1200, height: 800),
@@ -18,19 +17,34 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertTrue(placement.followsMouse)
     }
 
-    func testUnlockedFollowModeKeepsSavedOffsetsAndMouseFollowing() {
-        let placement = VoiceBarPositionLockPolicy.effectivePlacement(
-            anchorMode: .follow,
-            isLocked: false,
+    func testTopAndBottomCenterIgnoreSavedDragOffsets() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let pillSize = CGSize(width: 190, height: 50)
+        let topPlacement = VoiceBarPositionLockPolicy.effectivePlacement(
+            anchorMode: .topCenter,
             savedHorizontalOffset: 0.2,
             savedVerticalOffset: 0.3,
-            visibleFrame: CGRect(x: 0, y: 0, width: 1200, height: 800),
-            pillSize: CGSize(width: 190, height: 50)
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
+        )
+        let placement = VoiceBarPositionLockPolicy.effectivePlacement(
+            anchorMode: .bottomCenter,
+            savedHorizontalOffset: 0.2,
+            savedVerticalOffset: 0.3,
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
         )
 
-        XCTAssertEqual(placement.horizontalOffset, 0.2, accuracy: 0.001)
-        XCTAssertEqual(placement.verticalOffset ?? -1, 0.3, accuracy: 0.001)
-        XCTAssertTrue(placement.followsMouse)
+        XCTAssertEqual(topPlacement.horizontalOffset, 0.5, accuracy: 0.001)
+        XCTAssertNil(topPlacement.verticalOffset)
+        XCTAssertFalse(topPlacement.followsMouse)
+        XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
+        XCTAssertEqual(
+            placement.verticalOffset ?? -1,
+            (24 + (pillSize.height / 2)) / visibleFrame.height,
+            accuracy: 0.001
+        )
+        XCTAssertFalse(placement.followsMouse)
     }
 
     func testPanelDragDecisionRespectsLock() {
@@ -42,12 +56,6 @@ final class VoiceBarPositionLockTests: XCTestCase {
         panel.isPillDragEnabled = true
         XCTAssertTrue(panel.shouldHandlePillDrag(startedInVisiblePill: true))
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
-    }
-
-    func testLockFootnoteDoesNotOverrideAnchorState() {
-        XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .follow, isLocked: true))
-        XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .bottomCenter, isLocked: true))
-        XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .follow, isLocked: false))
     }
 
     func testScreenFollowPolicySelectsMouseScreenForAnchoredModes() {

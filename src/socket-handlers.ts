@@ -33,8 +33,10 @@ import { getPlaybackQueueDepth } from "./tts";
 import { getRecordingState } from "./input";
 import {
   addAlias,
+  addPromptTerm,
   listVocabulary,
   removeAlias,
+  removePromptTerm,
 } from "./stt-vocabulary-store";
 
 export function handleSocketCommand(
@@ -95,7 +97,11 @@ export function handleSocketCommand(
       return buildAck(command, "noop", "nothing to replay");
     }
     case "retranscribe_last": {
-      if (recordingState === "recording" || recordingState === "transcribing" || isSpeaking) {
+      if (
+        recordingState === "recording" ||
+        recordingState === "transcribing" ||
+        isSpeaking
+      ) {
         return buildAck(command, "reject", "busy");
       }
       if (!hasRetainedRecording()) {
@@ -198,7 +204,10 @@ export function handleSocketCommand(
     case "mark_clip":
       broadcast({
         type: "clip_marker",
-        marker_id: `command-${command.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`,
+        marker_id: `command-${command.label
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")}`,
         label: command.label,
         source: command.source ?? "command",
         status: "marked",
@@ -222,6 +231,25 @@ export function handleSocketCommand(
     case "vocab_remove": {
       try {
         const result = removeAlias(command.from);
+        return buildAck(
+          command,
+          result.removed ? "accept" : "noop",
+          result.removed ? undefined : "not found",
+        );
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    }
+    case "vocab_add_term":
+      try {
+        addPromptTerm(command.term);
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    case "vocab_remove_term": {
+      try {
+        const result = removePromptTerm(command.term);
         return buildAck(
           command,
           result.removed ? "accept" : "noop",

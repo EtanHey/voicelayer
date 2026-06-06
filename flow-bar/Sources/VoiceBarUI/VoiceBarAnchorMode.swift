@@ -5,7 +5,20 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
     case bottomCenter
     case topCenter
 
-    public var id: String { rawValue }
+    public var id: String {
+        rawValue
+    }
+
+    public static let anchorMenuModes: [VoiceBarAnchorMode] = [
+        .follow,
+        .topCenter,
+        .bottomCenter,
+    ]
+
+    public static let anchoredPositionModes: [VoiceBarAnchorMode] = [
+        .topCenter,
+        .bottomCenter,
+    ]
 
     public init(defaultsValue: String?) {
         self = defaultsValue.flatMap(Self.init(rawValue:)) ?? .follow
@@ -17,6 +30,18 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
         case .bottomCenter: "Bottom Center"
         case .topCenter: "Top Center"
         }
+    }
+
+    public var anchorMenuTitle: String {
+        switch self {
+        case .follow: "Off"
+        case .bottomCenter: "Bottom Center"
+        case .topCenter: "Top Center"
+        }
+    }
+
+    public var allowsFreeDrag: Bool {
+        self == .follow
     }
 
     public func placement(
