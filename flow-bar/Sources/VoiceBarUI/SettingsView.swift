@@ -21,6 +21,9 @@ public struct SettingsView: View {
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
 
     @State private var selectedTab: SettingsTab
+    @State private var selectedAnchorMode: VoiceBarAnchorMode
+    @State private var positionLocked: Bool
+    @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
     @State private var correctText = ""
@@ -56,6 +59,8 @@ public struct SettingsView: View {
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         _selectedTab = State(initialValue: initialTab)
+        _selectedAnchorMode = State(initialValue: anchorMode())
+        _positionLocked = State(initialValue: isPositionLocked())
     }
 
     public var body: some View {
@@ -121,8 +126,11 @@ public struct SettingsView: View {
 
             Section("Position") {
                 Picker("Anchor", selection: Binding(
-                    get: { anchorMode() },
-                    set: { onSelectAnchorMode($0) }
+                    get: { selectedAnchorMode },
+                    set: { mode in
+                        selectedAnchorMode = mode
+                        onSelectAnchorMode(mode)
+                    }
                 )) {
                     ForEach(VoiceBarAnchorMode.allCases) { mode in
                         Text(mode.displayName).tag(mode)
@@ -130,13 +138,16 @@ public struct SettingsView: View {
                 }
 
                 Toggle("Lock position", isOn: Binding(
-                    get: { isPositionLocked() },
-                    set: { onSetPositionLocked($0) }
+                    get: { positionLocked },
+                    set: { locked in
+                        positionLocked = locked
+                        onSetPositionLocked(locked)
+                    }
                 ))
 
                 if let footnote = VoiceBarPositionLockPolicy.lockFootnote(
-                    anchorMode: anchorMode(),
-                    isLocked: isPositionLocked()
+                    anchorMode: selectedAnchorMode,
+                    isLocked: positionLocked
                 ) {
                     Text(footnote)
                         .font(.caption)
@@ -178,45 +189,29 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         Form {
-            Section("Corrections") {
-                TextField("Search", text: $dictionarySearch)
-
-                let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
-                if aliases.isEmpty {
-                    Text("No corrections")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(aliases, id: \.self) { alias in
-                        correctionRow(alias)
-                    }
-                }
+            Section("Find") {
+                TextField("Search dictionary", text: $dictionarySearch)
             }
 
-            Section(selectedAlias == nil ? "Add Correction" : "Edit Correction") {
-                LabeledContent("Correct") {
-                    TextField("Intended text", text: $correctText)
-                }
-                LabeledContent("Transcribed") {
-                    HStack(spacing: 8) {
-                        TextField("Misheard text", text: $wrongText)
-                        Button("⇄") {
-                            swap(&correctText, &wrongText)
-                        }
-                        .help("Swap correct and transcribed text")
-                    }
-                }
-                HStack {
-                    if let selectedAlias {
-                        Button("Delete") {
-                            onRemoveVocabularyAlias(selectedAlias)
-                            clearCorrectionEditor()
+            Section {
+                DisclosureGroup(isExpanded: $correctionsExpanded) {
+                    correctionEditor
+                        .padding(.top, 6)
+
+                    Divider()
+                        .padding(.vertical, 6)
+
+                    let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
+                    if aliases.isEmpty {
+                        Text("No corrections")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(aliases, id: \.self) { alias in
+                            correctionRow(alias)
                         }
                     }
-                    Spacer()
-                    Button(selectedAlias == nil ? "Add" : "Save") {
-                        saveCorrection()
-                    }
-                    .disabled(!currentDraft.canSaveAlias)
+                } label: {
+                    Text("Corrections")
                 }
             }
 
@@ -264,6 +259,36 @@ public struct SettingsView: View {
         )
     }
 
+    private var correctionEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            LabeledContent("Correct") {
+                TextField("Intended text", text: $correctText)
+            }
+            LabeledContent("Transcribed") {
+                HStack(spacing: 8) {
+                    TextField("Misheard text", text: $wrongText)
+                    Button("⇄") {
+                        swap(&correctText, &wrongText)
+                    }
+                    .help("Swap correct and transcribed text")
+                }
+            }
+            HStack {
+                if let selectedAlias {
+                    Button("Delete") {
+                        onRemoveVocabularyAlias(selectedAlias)
+                        clearCorrectionEditor()
+                    }
+                }
+                Spacer()
+                Button(selectedAlias == nil ? "Add" : "Save") {
+                    saveCorrection()
+                }
+                .disabled(!currentDraft.canSaveAlias)
+            }
+        }
+    }
+
     private func correctionRow(_ alias: STTVocabularyAliasPreview) -> some View {
         HStack(spacing: 8) {
             Text(alias.from)
@@ -286,12 +311,14 @@ public struct SettingsView: View {
     }
 
     private func beginEditing(_ alias: STTVocabularyAliasPreview) {
+        correctionsExpanded = true
         selectedAlias = alias
         correctText = alias.to
         wrongText = alias.from
     }
 
     private func beginAddingVariant(for correct: String) {
+        correctionsExpanded = true
         selectedAlias = nil
         correctText = correct
         wrongText = ""

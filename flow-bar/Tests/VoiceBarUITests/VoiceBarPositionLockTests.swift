@@ -3,7 +3,7 @@ import AppKit
 import XCTest
 
 final class VoiceBarPositionLockTests: XCTestCase {
-    func testLockedFollowModeUsesPinnedTopCenterPlacement() {
+    func testLockedFollowModeKeepsSavedOffsetsAndScreenFollowing() {
         let placement = VoiceBarPositionLockPolicy.effectivePlacement(
             anchorMode: .follow,
             isLocked: true,
@@ -13,9 +13,9 @@ final class VoiceBarPositionLockTests: XCTestCase {
             pillSize: CGSize(width: 190, height: 50)
         )
 
-        XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
-        XCTAssertNil(placement.verticalOffset)
-        XCTAssertFalse(placement.followsMouse)
+        XCTAssertEqual(placement.horizontalOffset, 0.2, accuracy: 0.001)
+        XCTAssertEqual(placement.verticalOffset ?? -1, 0.3, accuracy: 0.001)
+        XCTAssertTrue(placement.followsMouse)
     }
 
     func testUnlockedFollowModeKeepsSavedOffsetsAndMouseFollowing() {
@@ -44,12 +44,30 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
     }
 
-    func testLockedFollowModeFootnoteOnlyAppearsForFollow() {
-        XCTAssertEqual(
-            VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .follow, isLocked: true),
-            "Follow Mouse is disabled while position is locked."
-        )
+    func testLockFootnoteDoesNotOverrideAnchorState() {
+        XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .follow, isLocked: true))
         XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .bottomCenter, isLocked: true))
         XCTAssertNil(VoiceBarPositionLockPolicy.lockFootnote(anchorMode: .follow, isLocked: false))
+    }
+
+    func testScreenFollowPolicySelectsMouseScreenForAnchoredModes() {
+        let screens = [
+            CGRect(x: 0, y: 0, width: 1200, height: 800),
+            CGRect(x: 1200, y: 0, width: 1000, height: 700),
+        ]
+
+        XCTAssertEqual(
+            VoiceBarScreenFollowPolicy.targetScreenIndex(
+                mouseLocation: CGPoint(x: 1300, y: 400),
+                screenFrames: screens
+            ),
+            1
+        )
+        XCTAssertNil(
+            VoiceBarScreenFollowPolicy.targetScreenIndex(
+                mouseLocation: CGPoint(x: -20, y: 400),
+                screenFrames: screens
+            )
+        )
     }
 }

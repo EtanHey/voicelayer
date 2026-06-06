@@ -135,6 +135,33 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNotNil(process.capturedEnvironment?["PATH"])
     }
 
+    func testDaemonLaunchPreservesOnlyPathOverridesForIsolatedQAMode() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICEBAR_QA_PRESERVE_OVERRIDES": "1",
+                "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
+                "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
+                "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
+                "QA_VOICE_DISABLE_FLAG_PATH": "/tmp/qa-disable.flag",
+                "QA_VOICE_ALLOW_SOCKET_RECLAIM": "1",
+                "QA_VOICE_CHUNKED_STT": "1",
+                "CODEX_CI": "1",
+                "VOICELAYER_ALLOW_SOCKET_RECLAIM": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
+        XCTAssertEqual(environment["QA_VOICE_DISABLE_FLAG_PATH"], "/tmp/qa-disable.flag")
+        XCTAssertNil(environment["QA_VOICE_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertNil(environment["CODEX_CI"])
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
+    }
+
     func testUnexpectedCleanExitSchedulesRelaunch() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 0
@@ -398,6 +425,33 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             VoiceBarDaemonLivenessProbe.freshSessionCheckCommand,
             "python3 -c \"import json, os, signal, sys; p='/tmp/voicelayer-mcp.pid'; data=json.load(open(p)); os.kill(int(data['pid']), 0)\""
         )
+    }
+
+    func testVoiceLayerPathsRespectQAOverrides() {
+        let previousValues: [String: String?] = [
+            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
+            VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable],
+        ]
+        setenv(VoiceLayerPaths.socketOverrideEnvironmentVariable, "/tmp/qa-voicebar.sock", 1)
+        setenv(VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable, "/tmp/qa-mcp.sock", 1)
+        setenv(VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable, "/tmp/qa-mcp.pid", 1)
+        setenv(VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable, "/tmp/qa-last.wav", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(VoiceLayerPaths.mcpSocketPath, "/tmp/qa-mcp.sock")
+        XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/qa-mcp.pid")
+        XCTAssertEqual(VoiceLayerPaths.retainedRecordingPath, "/tmp/qa-last.wav")
     }
 
     func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {

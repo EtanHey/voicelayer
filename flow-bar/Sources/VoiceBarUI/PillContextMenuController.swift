@@ -20,6 +20,8 @@ public final class PillContextMenuController: NSObject {
     public var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
+    public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
+    public var isPositionLockedProvider: () -> Bool = { false }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
@@ -31,6 +33,8 @@ public final class PillContextMenuController: NSObject {
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
+    public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
+    public var onSetPositionLocked: (Bool) -> Void = { _ in }
     public var onQuit: () -> Void = {}
 
     public func makeMenu() -> NSMenu {
@@ -86,6 +90,10 @@ public final class PillContextMenuController: NSObject {
         vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
         menu.addItem(vocabularyItem)
 
+        let anchorItem = NSMenuItem(title: "Anchor", action: nil, keyEquivalent: "")
+        anchorItem.submenu = makeAnchorSubmenu()
+        menu.addItem(anchorItem)
+
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
         menu.addItem(microphoneItem)
@@ -118,6 +126,34 @@ public final class PillContextMenuController: NSObject {
         quitItem.target = self
         menu.addItem(quitItem)
 
+        return menu
+    }
+
+    public func makeAnchorSubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let selectedMode = anchorModeProvider()
+        for mode in VoiceBarAnchorMode.allCases {
+            let item = NSMenuItem(
+                title: mode.displayName,
+                action: #selector(handleSelectAnchorMode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == selectedMode ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.addItem(.separator())
+
+        let lockItem = NSMenuItem(
+            title: "Lock Position",
+            action: #selector(handleTogglePositionLocked(_:)),
+            keyEquivalent: ""
+        )
+        lockItem.target = self
+        lockItem.state = isPositionLockedProvider() ? .on : .off
+        menu.addItem(lockItem)
         return menu
     }
 
@@ -296,6 +332,17 @@ public final class PillContextMenuController: NSObject {
 
     @objc private func handleTranscribeLatestRecording() {
         onTranscribeLatestRecording()
+    }
+
+    @objc private func handleSelectAnchorMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = VoiceBarAnchorMode(rawValue: rawValue)
+        else { return }
+        onSelectAnchorMode(mode)
+    }
+
+    @objc private func handleTogglePositionLocked(_ sender: NSMenuItem) {
+        onSetPositionLocked(!isPositionLockedProvider())
     }
 
     @objc private func handleAddSelectionToDictionary() {

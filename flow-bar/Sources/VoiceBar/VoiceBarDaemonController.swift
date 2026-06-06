@@ -93,6 +93,17 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 }
 
 enum VoiceBarDaemonEnvironment {
+    private static let preserveQAOverridesEnvironmentVariable = "VOICEBAR_QA_PRESERVE_OVERRIDES"
+    private static let legacyPreserveQAOverridesEnvironmentVariable = "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"
+
+    private static let preservedQAOverrideAllowlist: Set<String> = [
+        "QA_VOICE_DISABLE_FLAG_PATH",
+        "QA_VOICE_MCP_PID_PATH",
+        "QA_VOICE_MCP_SOCKET_PATH",
+        "QA_VOICE_RETAINED_RECORDING_PATH",
+        "QA_VOICE_SOCKET_PATH",
+    ]
+
     private static let inheritedEnvironmentDenylist: Set<String> = [
         "CODEX_CI",
         "DISABLE_VOICELAYER",
@@ -112,14 +123,28 @@ enum VoiceBarDaemonEnvironment {
         path: String
     ) -> [String: String] {
         var env = inherited
+        let preservesQAOverrides = shouldPreserveQAOverrides(inherited)
         for key in inheritedEnvironmentDenylist {
+            if preservesQAOverrides, preservedQAOverrideAllowlist.contains(key) {
+                continue
+            }
             env.removeValue(forKey: key)
         }
         env["PATH"] = path
-        // VoiceBar owns the daily-driver daemon lifecycle; allow its child to
-        // reclaim a stale default MCP socket left by a prior app instance.
-        env["VOICELAYER_ALLOW_SOCKET_RECLAIM"] = "1"
+        if preservesQAOverrides {
+            env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
+            env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
+        } else {
+            // VoiceBar owns the daily-driver daemon lifecycle; allow its child to
+            // reclaim a stale default MCP socket left by a prior app instance.
+            env["VOICELAYER_ALLOW_SOCKET_RECLAIM"] = "1"
+        }
         return env
+    }
+
+    private static func shouldPreserveQAOverrides(_ environment: [String: String]) -> Bool {
+        environment[preserveQAOverridesEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
+            environment[legacyPreserveQAOverridesEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
     }
 }
 

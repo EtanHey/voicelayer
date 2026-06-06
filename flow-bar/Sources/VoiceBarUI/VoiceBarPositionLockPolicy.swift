@@ -4,7 +4,7 @@ import Foundation
 public enum VoiceBarPositionLockPolicy {
     public static func effectivePlacement(
         anchorMode: VoiceBarAnchorMode,
-        isLocked: Bool,
+        isLocked _: Bool,
         savedHorizontalOffset: CGFloat,
         savedVerticalOffset: CGFloat?,
         visibleFrame: CGRect,
@@ -14,13 +14,6 @@ public enum VoiceBarPositionLockPolicy {
             visibleFrame: visibleFrame,
             pillSize: pillSize
         )
-
-        if isLocked, anchorPlacement.followsMouse {
-            return VoiceBarAnchorMode.topCenter.placement(
-                visibleFrame: visibleFrame,
-                pillSize: pillSize
-            )
-        }
 
         guard anchorPlacement.followsMouse else {
             return anchorPlacement
@@ -34,10 +27,9 @@ public enum VoiceBarPositionLockPolicy {
     }
 
     public static func lockFootnote(
-        anchorMode: VoiceBarAnchorMode,
-        isLocked: Bool
+        anchorMode _: VoiceBarAnchorMode,
+        isLocked _: Bool
     ) -> String? {
-        guard isLocked, anchorMode == .follow else { return nil }
-        return "Follow Mouse is disabled while position is locked."
+        nil
     }
 }
