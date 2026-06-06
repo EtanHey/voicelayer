@@ -12,6 +12,11 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { initEnrichedPATH, resolveBinary } from "../resolve-binary";
+import {
+  hasClonedProfile,
+  listClonedVoiceProfiles,
+  synthesizeCloned,
+} from "../tts/qwen3";
 
 export type ReviewAction = "merge" | "keep" | "mixed" | "skip" | "question";
 export type InterpretAction = ReviewAction | "update";
@@ -155,6 +160,17 @@ type FetchLike = (
 ) => Promise<Response>;
 
 type CommandRunner = (call: CommandCall) => Promise<CommandResult>;
+export interface VoiceReviewTtsEngines {
+  hasClonedProfile: (voice: string) => boolean;
+  synthesizeCloned: (text: string, voice: string) => Promise<Buffer | null>;
+  listClonedProfiles: () => string[];
+}
+
+const DEFAULT_TTS_ENGINES: VoiceReviewTtsEngines = {
+  hasClonedProfile,
+  synthesizeCloned,
+  listClonedProfiles: listClonedVoiceProfiles,
+};
 type DecisionFileLocker = <T>(
   decisionsPath: string,
   work: () => Promise<T>,
@@ -1139,11 +1155,13 @@ export function createVoiceReviewApp(options?: {
   runCommand?: CommandRunner;
   fetchImpl?: FetchLike;
   lockDecisionFile?: DecisionFileLocker;
+  ttsEngines?: VoiceReviewTtsEngines;
 }): { fetch: (request: Request) => Promise<Response> } {
   const config = mergeConfig(options?.config);
   const runCommand = options?.runCommand || runShellCommand;
   const fetchImpl = options?.fetchImpl || fetch;
   const lockDecisionFile = options?.lockDecisionFile || withDecisionFileLock;
+  const ttsEngines = options?.ttsEngines || DEFAULT_TTS_ENGINES;
 
   return {
     fetch: async (request: Request): Promise<Response> => {
@@ -1154,6 +1172,7 @@ export function createVoiceReviewApp(options?: {
             renderNaturalConversationPage(
               config,
               await loadAvailableCategories(config),
+              ttsEngines,
             ),
           );
         }
@@ -1188,7 +1207,7 @@ export function createVoiceReviewApp(options?: {
           return await handleTranscribe(request, config, runCommand);
         }
         if (request.method === "POST" && url.pathname === "/api/tts") {
-          return await handleTts(request, config, runCommand);
+          return await handleTts(request, config, runCommand, ttsEngines);
         }
         return jsonResponse({ error: "not found" }, 404);
       } catch (error) {
@@ -1783,6 +1802,7 @@ async function handleTts(
   request: Request,
   config: VoiceReviewConfig,
   runCommand: CommandRunner,
+  ttsEngines: VoiceReviewTtsEngines,
 ): Promise<Response> {
   const body = await request.json();
   if (!isRecord(body) || typeof body.text !== "string" || !body.text.trim()) {
@@ -1793,8 +1813,13 @@ async function handleTts(
   const mp3Path = join(config.tempDir, `${id}.mp3`);
   const metadataPath = join(config.tempDir, `${id}.meta.ndjson`);
   const text = humanizeSpokenText(body.text).slice(0, 4000);
-  const voice =
-    typeof body.voice === "string" && isSafeEdgeTtsVoice(body.voice)
+  const requestedVoice = typeof body.voice === "string" ? body.voice : "";
+  const isClonedVoice =
+    isSafeClonedVoiceName(requestedVoice) &&
+    ttsEngines.hasClonedProfile(requestedVoice);
+  const voice = isClonedVoice
+    ? requestedVoice
+    : typeof body.voice === "string" && isSafeEdgeTtsVoice(body.voice)
       ? body.voice
       : config.ttsVoice;
   const rate =
@@ -1803,6 +1828,30 @@ async function handleTts(
       : config.ttsRate;
   await mkdir(config.tempDir, { recursive: true });
   try {
+    if (isClonedVoice) {
+      const audio = await ttsEngines.synthesizeCloned(text, voice);
+      throwIfAborted(request.signal);
+      if (!audio) {
+        return jsonResponse(
+          {
+            error: "theo engine offline",
+            fallback_voice: config.ttsVoice,
+          },
+          503,
+        );
+      }
+      return new Response(new Uint8Array(audio), {
+        status: 200,
+        headers: {
+          "content-type": "audio/mpeg",
+          "cache-control": "no-store",
+          "x-tts-ms": String(Math.round(performance.now() - started)),
+          "x-tts-engine": "qwen3",
+          "x-word-boundaries": "[]",
+        },
+      });
+    }
+
     const python = resolveBinary("python3", [
       "/opt/homebrew/bin/python3",
       "/usr/local/bin/python3",
@@ -1835,6 +1884,7 @@ async function handleTts(
         "content-type": "audio/mpeg",
         "cache-control": "no-store",
         "x-tts-ms": String(Math.round(performance.now() - started)),
+        "x-tts-engine": "edge-tts",
         "x-word-boundaries": JSON.stringify(wordBoundaries),
       },
     });
@@ -1848,6 +1898,10 @@ async function handleTts(
 
 function isSafeEdgeTtsVoice(value: string): boolean {
   return /^[a-z]{2,3}-[A-Z]{2,3}-[A-Za-z0-9]+Neural$/.test(value);
+}
+
+function isSafeClonedVoiceName(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(value);
 }
 
 function isSafeEdgeTtsRate(value: string): boolean {
@@ -2564,6 +2618,7 @@ function escapeHtmlAttribute(value: string): string {
 function renderNaturalConversationPage(
   config: VoiceReviewConfig,
   availableCategories: string[],
+  ttsEngines: VoiceReviewTtsEngines = DEFAULT_TTS_ENGINES,
 ): string {
   const defaultCategory = config.defaultCategory;
   const ttsVoices = [
@@ -2574,9 +2629,15 @@ function renderNaturalConversationPage(
     "en-US-AvaNeural",
     "en-US-AriaNeural",
   ];
-  const selectedVoice = ttsVoices.includes(config.ttsVoice)
+  const clonedVoices = ttsEngines.listClonedProfiles();
+  const clonedVoiceSetJson = JSON.stringify(clonedVoices);
+  const edgeFallbackVoice = ttsVoices.includes(config.ttsVoice)
     ? config.ttsVoice
     : DEFAULT_CONFIG.ttsVoice;
+  const selectedVoice =
+    ttsVoices.includes(config.ttsVoice) || clonedVoices.includes(config.ttsVoice)
+      ? config.ttsVoice
+      : DEFAULT_CONFIG.ttsVoice;
   const parsedRate = Number.parseInt(config.ttsRate.replace("%", ""), 10);
   const selectedRate = Number.isFinite(parsedRate)
     ? Math.max(-30, Math.min(10, parsedRate))
@@ -2921,13 +2982,25 @@ function renderNaturalConversationPage(
           .join("")}
       </select>
       <label class="voice-control">Voice
-        <select id="ttsVoice" aria-label="TTS voice">
-          ${ttsVoices
-            .map(
-              (voice) =>
-                `<option value="${voice}"${voice === selectedVoice ? " selected" : ""}>${voice}</option>`,
-            )
-            .join("")}
+        <select id="ttsVoice" class="tts-voice-picker" aria-label="TTS voice">
+          <optgroup label="Edge voices" class="tts-voice-group tts-voice-group-edge">
+            ${ttsVoices
+              .map(
+                (voice) =>
+                  `<option class="tts-voice-option tts-voice-option-edge" value="${voice}"${voice === selectedVoice ? " selected" : ""}>${voice}</option>`,
+              )
+              .join("")}
+          </optgroup>
+          ${
+            clonedVoices.length
+              ? `<optgroup label="Theo (cloned)" class="tts-voice-group tts-voice-group-cloned">${clonedVoices
+                  .map(
+                    (voice) =>
+                      `<option class="tts-voice-option tts-voice-option-cloned" value="${escapeHtmlAttribute(voice)}"${voice === selectedVoice ? " selected" : ""}>${escapeHtmlAttribute(voice)}</option>`,
+                  )
+                  .join("")}</optgroup>`
+              : ""
+          }
         </select>
       </label>
       <label class="voice-control">Rate
@@ -3029,6 +3102,8 @@ function renderNaturalConversationPage(
     const PAUSE_INTENT_EXTENDED_SILENCE_MS = 10000;
     const HEALTH_FAILURE_ANNOUNCE_THRESHOLD = 3;
     const THINKING_PAUSE_PHRASES = ["wait", "hold on", "let me think", "hmm", "one sec", "רגע"];
+    const CLONED_TTS_VOICES = new Set(${clonedVoiceSetJson});
+    const EDGE_FALLBACK_VOICE = "${escapeHtmlAttribute(edgeFallbackVoice)}";
 
     function createTurnTakingState(overrides = {}) {
       return {
@@ -3216,6 +3291,7 @@ function renderNaturalConversationPage(
     let healthRetryBackoffMs = 3000;
     let liteRtWorkInFlight = 0;
     let sessionAbortController = null;
+    let ttsFallbackAnnounced = false;
 
     function setStatus(text, urgent = false) {
       $("status").textContent = text;
@@ -3239,6 +3315,28 @@ function renderNaturalConversationPage(
 
     function selectedTtsVoice() {
       return ttsVoice?.value || "en-US-GuyNeural";
+    }
+
+    function isClonedTtsVoice(voice) {
+      return CLONED_TTS_VOICES.has(String(voice || ""));
+    }
+
+    function restoreStoredTtsVoice() {
+      try {
+        const stored = localStorage.getItem("voicereview.ttsVoice");
+        const hasOption = Array.from(ttsVoice?.options || []).some(
+          (option) => option.value === stored
+        );
+        if (stored && hasOption) {
+          ttsVoice.value = stored;
+        }
+      } catch (_error) {}
+    }
+
+    function persistSelectedTtsVoice() {
+      try {
+        localStorage.setItem("voicereview.ttsVoice", selectedTtsVoice());
+      } catch (_error) {}
     }
 
     function selectedTtsRate() {
@@ -3811,15 +3909,27 @@ function renderNaturalConversationPage(
       const spokenText = humanizeSpokenText(displayText);
       if (options.log !== false) addTurn("agent", "agent", displayText);
       try {
-        const response = await withLiteRtWork(async () => api("/api/tts", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            text: spokenText,
-            voice: selectedTtsVoice(),
-            rate: selectedTtsRate()
-          })
-        }));
+        const selectedVoice = selectedTtsVoice();
+        let response;
+        try {
+          response = await requestTtsAudio(spokenText, selectedVoice);
+        } catch (error) {
+          if (
+            sessionActive &&
+            !isAbortError(error) &&
+            isClonedTtsVoice(selectedVoice) &&
+            !ttsFallbackAnnounced &&
+            String(error?.message || "").includes("theo engine offline")
+          ) {
+            ttsFallbackAnnounced = true;
+            const fallbackMessage = "Theo voice is unavailable; switching to the fallback voice.";
+            setStatus(fallbackMessage, true);
+            addTurn("system", "system", fallbackMessage);
+            response = await requestTtsAudio(spokenText, EDGE_FALLBACK_VOICE);
+          } else {
+            throw error;
+          }
+        }
         const wordBoundaries = JSON.parse(response.headers.get("x-word-boundaries") || "[]");
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
@@ -3837,6 +3947,18 @@ function renderNaturalConversationPage(
         renderPhase();
         return "failed";
       }
+    }
+
+    async function requestTtsAudio(text, voice) {
+      return await withLiteRtWork(async () => api("/api/tts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          text,
+          voice,
+          rate: selectedTtsRate()
+        })
+      }));
     }
 
     function playAudioUrl(playbackInput) {
@@ -4168,12 +4290,14 @@ function renderNaturalConversationPage(
     window.addEventListener("beforeunload", teardownAbandonedSession);
     window.addEventListener("pageshow", resetAfterBfcacheRestore);
 
+    ttsVoice?.addEventListener("change", persistSelectedTtsVoice);
     ttsRate?.addEventListener("input", updateTtsRateLabel);
     $("resumePlayback").addEventListener("click", async (event) => {
       event.preventDefault();
       await resumePausedUtterance();
     });
 
+    restoreStoredTtsVoice();
     updateTtsRateLabel();
     renderPhase();
   </script>

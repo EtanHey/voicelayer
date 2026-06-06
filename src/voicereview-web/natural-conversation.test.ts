@@ -589,7 +589,45 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain('id="ttsRate"');
     expect(html).toContain('type="range"');
     expect(html).toContain("rate: selectedTtsRate()");
-    expect(html).toContain("voice: selectedTtsVoice()");
+    expect(html).toContain("const selectedVoice = selectedTtsVoice()");
+    expect(html).toContain("voice,");
+  });
+
+  it("groups available Theo cloned voices and keeps captions graceful without word timestamps", async () => {
+    const app = createVoiceReviewApp({
+      ttsEngines: {
+        hasClonedProfile: () => false,
+        synthesizeCloned: async () => null,
+        listClonedProfiles: () => ["theo-v2", "theo-c3"],
+      },
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain('label="Theo (cloned)"');
+    expect(html).toContain('value="theo-v2"');
+    expect(html).toContain('value="theo-c3"');
+    expect(html).toContain('localStorage.setItem("voicereview.ttsVoice"');
+    expect(html).toContain("restoreStoredTtsVoice()");
+    expect(html).toContain("wordBoundaries: Array.isArray(wordBoundaries) ? wordBoundaries : []");
+  });
+
+  it("falls back once from Theo to the configured edge voice when cloned TTS fails", async () => {
+    const app = createVoiceReviewApp({
+      ttsEngines: {
+        hasClonedProfile: () => false,
+        synthesizeCloned: async () => null,
+        listClonedProfiles: () => ["theo-c3"],
+      },
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain('const EDGE_FALLBACK_VOICE = "en-US-GuyNeural";');
+    expect(html).toContain("let ttsFallbackAnnounced = false;");
+    expect(html).toContain("isClonedTtsVoice(selectedVoice)");
+    expect(html).toContain("requestTtsAudio(spokenText, EDGE_FALLBACK_VOICE)");
+    expect(html).toContain("Theo voice is unavailable; switching to the fallback voice.");
   });
 
   it("serves the Silero model file to the browser", async () => {

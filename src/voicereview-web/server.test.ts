@@ -1582,6 +1582,146 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("routes validated cloned voice profiles to Qwen3 without edge word metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-tts-test-"));
+    const calls: CommandCall[] = [];
+    const clonedCalls: Array<{ text: string; voice: string }> = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          return commandResult("");
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => voice === "theo-c3",
+          synthesizeCloned: async (text, voice) => {
+            clonedCalls.push({ text, voice });
+            return Buffer.from([4, 5, 6]);
+          },
+          listClonedProfiles: () => ["theo-c3"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Theo should read this.",
+            voice: "theo-c3",
+            rate: "-12%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([4, 5, 6]);
+      expect(calls).toHaveLength(0);
+      expect(clonedCalls).toEqual([
+        { text: "Theo should read this.", voice: "theo-c3" },
+      ]);
+      expect(response.headers.get("x-tts-engine")).toBe("qwen3");
+      expect(JSON.parse(response.headers.get("x-word-boundaries") || "[]")).toEqual(
+        [],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cloned voice path injection instead of routing to Qwen3", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-injection-test-"));
+    const calls: CommandCall[] = [];
+    const clonedCalls: string[] = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+          ttsVoice: "en-US-GuyNeural",
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          const mediaPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-media="))
+              ?.slice("--write-media=".length) || "";
+          const metadataPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-metadata="))
+              ?.slice("--write-metadata=".length) || "";
+          await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+          await writeFile(metadataPath, "");
+          return commandResult("");
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => {
+            clonedCalls.push(voice);
+            return voice === "../theo";
+          },
+          synthesizeCloned: async () => Buffer.from([4, 5, 6]),
+          listClonedProfiles: () => ["theo-c3"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "../theo",
+            rate: "-8%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(calls[0].args).toContain("--voice=en-US-GuyNeural");
+      expect(clonedCalls).toEqual([]);
+      expect(response.headers.get("x-tts-engine")).toBe("edge-tts");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a clear 503 when the Theo engine is offline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-offline-test-"));
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => voice === "theo-v2",
+          synthesizeCloned: async () => null,
+          listClonedProfiles: () => ["theo-v2"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello from Theo.",
+            voice: "theo-v2",
+            rate: "-8%",
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("theo engine offline");
+      expect(body.fallback_voice).toBe("en-US-GuyNeural");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("propagates client aborts into /api/tts subprocesses", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-"));
     const clientAbort = new AbortController();
