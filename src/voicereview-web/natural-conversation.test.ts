@@ -259,6 +259,48 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain("resume");
   });
 
+  it("clears paused interruption context before resumed audio can make the next turn stale", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const clearPaused = html.slice(
+      html.indexOf("function clearPausedUtterance()"),
+      html.indexOf("async function resumePausedUtterance()"),
+    );
+    const resumePaused = html.slice(
+      html.indexOf("async function resumePausedUtterance()"),
+      html.indexOf("async function loadNext(play)"),
+    );
+
+    expect(clearPaused).toContain("pendingInterruption = null;");
+    expect(resumePaused).toContain("pendingInterruption = null;");
+    expect(resumePaused.indexOf("pendingInterruption = null;")).toBeLessThan(
+      resumePaused.indexOf("await playAudioUrl"),
+    );
+  });
+
+  it("hard-suppresses VAD while browser system speech is active", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const handleVad = html.slice(
+      html.indexOf("function handleVadFrame(speech)"),
+      html.indexOf("function beginTurnCapture()"),
+    );
+    const speakSystem = html.slice(
+      html.indexOf("function speakSystemText(text)"),
+      html.indexOf("async function ensureMicOpen()"),
+    );
+
+    expect(html).toContain("let systemSpeechActive = false;");
+    expect(handleVad).toContain("if (systemSpeechActive) return;");
+    expect(speakSystem).toContain("systemSpeechActive = true;");
+    expect(speakSystem).toContain("systemSpeechActive = false;");
+    expect(speakSystem).toContain('turnState.phase = "SPEAKING";');
+  });
+
   it("serves a simple chat column with collapsed evidence and no prior/current turn label soup", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));

@@ -2852,6 +2852,8 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
     let activePlayback = null;
     let pausedUtterance = null;
     let pendingInterruption = null;
+    let systemSpeechActive = false;
+    let systemSpeechToken = 0;
     let heldTranscript = "";
     let conversationHistory = [];
     let healthRetryTimer = null;
@@ -3020,13 +3022,31 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
     }
 
     function speakSystemText(text) {
+      const previousPhase = turnState.phase;
+      const token = systemSpeechToken + 1;
+      const finish = () => {
+        if (systemSpeechToken !== token) return;
+        systemSpeechActive = false;
+        if (turnState.phase === "SPEAKING") {
+          turnState.phase = previousPhase;
+          renderPhase();
+        }
+      };
       try {
         if (!window.speechSynthesis) return;
         window.speechSynthesis.cancel();
+        systemSpeechToken = token;
+        systemSpeechActive = true;
+        turnState.phase = "SPEAKING";
+        turnState.playbackSpeechFrames = 0;
+        renderPhase();
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.rate = 1;
+        utterance.onend = finish;
+        utterance.onerror = finish;
         window.speechSynthesis.speak(utterance);
       } catch (_error) {
+        finish();
         // Visible error state remains the source of truth.
       }
     }
@@ -3150,6 +3170,7 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
 
     function handleVadFrame(speech) {
       if (!sessionActive) return;
+      if (systemSpeechActive) return;
       const previousPhase = turnState.phase;
       turnState = advanceTurnTakingFrame(turnState, { speech });
       renderPhase();
@@ -3451,6 +3472,7 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
     }
 
     function clearPausedUtterance() {
+      pendingInterruption = null;
       if (pausedUtterance?.url) URL.revokeObjectURL(pausedUtterance.url);
       pausedUtterance = null;
       renderPausedUtterance();
@@ -3460,6 +3482,7 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
       if (!sessionActive || !pausedUtterance) return;
       stopActivePlayback();
       const paused = pausedUtterance;
+      pendingInterruption = null;
       pausedUtterance = null;
       renderPausedUtterance();
       await playAudioUrl({
