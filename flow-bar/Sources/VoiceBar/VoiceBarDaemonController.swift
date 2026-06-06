@@ -100,6 +100,7 @@ enum VoiceBarDaemonEnvironment {
         "QA_VOICE_DISABLE_FLAG_PATH",
         "QA_VOICE_MCP_PID_PATH",
         "QA_VOICE_MCP_SOCKET_PATH",
+        "QA_VOICE_RECORDING_STATE_PATH",
         "QA_VOICE_RETAINED_RECORDING_PATH",
         "QA_VOICE_SOCKET_PATH",
     ]
@@ -113,6 +114,7 @@ enum VoiceBarDaemonEnvironment {
         "QA_VOICE_MCP_PID_PATH",
         "QA_VOICE_MCP_SOCKET_PATH",
         "QA_VOICE_RECORDINGS_DIR",
+        "QA_VOICE_RECORDING_STATE_PATH",
         "QA_VOICE_RETAINED_RECORDING_PATH",
         "QA_VOICE_SOCKET_PATH",
         "QA_VOICE_WISPR_DB_PATH",
@@ -130,6 +132,8 @@ enum VoiceBarDaemonEnvironment {
             }
             env.removeValue(forKey: key)
         }
+        env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
+        env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
         env["PATH"] = path
         if preservesQAOverrides {
             env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")

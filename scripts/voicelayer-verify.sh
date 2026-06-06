@@ -129,6 +129,75 @@ wait_for_voicebar_stop() {
   return 1
 }
 
+wait_for_launchd_voicebar_relaunch() {
+  local old_pids="$1"
+  for _ in $(seq 1 100); do
+    local new_pids=""
+    local pid
+    for pid in $(pgrep -x VoiceBar 2>/dev/null || true); do
+      local is_old=""
+      local old_pid
+      for old_pid in $old_pids; do
+        if [ "$pid" = "$old_pid" ]; then
+          is_old=1
+          break
+        fi
+      done
+      if [ -z "$is_old" ]; then
+        new_pids="${new_pids}${pid} "
+      fi
+    done
+    if [ -n "$new_pids" ]; then
+      printf '%s\n' "$new_pids"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+find_daemon_pids() {
+  {
+    lsof -nP -U 2>/dev/null | awk -v socket="$MCP_SOCKET_PATH" '$NF == socket { print $2 }'
+    pgrep -f 'mcp-server-daemon\\.ts' 2>/dev/null || true
+  } | sort -n | uniq | tr '\n' ' '
+}
+
+stop_daemon_pids() {
+  local daemon_pids="$1"
+  if [ -z "$daemon_pids" ]; then
+    return 0
+  fi
+
+  printf '[voicelayer-verify] stopping old daemon process(es): %s\n' "$daemon_pids"
+  # shellcheck disable=SC2086
+  kill -TERM $daemon_pids 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    local still_running=""
+    local pid
+    for pid in $daemon_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=1
+        break
+      fi
+    done
+    [ -z "$still_running" ] && break
+    sleep 0.1
+  done
+  local still_running_pids=""
+  local pid
+  for pid in $daemon_pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      still_running_pids="${still_running_pids}${pid} "
+    fi
+  done
+  if [ -n "$still_running_pids" ]; then
+    printf '[voicelayer-verify] daemon did not stop after SIGTERM; sending SIGKILL to: %s\n' "$still_running_pids"
+    # shellcheck disable=SC2086
+    kill -KILL $still_running_pids 2>/dev/null || true
+  fi
+}
+
 needs_verification=0
 daemon_files=""
 while IFS= read -r file; do
@@ -191,48 +260,32 @@ else
 fi
 
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
+  launchd_managed=0
+  if is_voicebar_launchd_managed; then
+    launchd_managed=1
+  fi
+  daemon_pids="$(find_daemon_pids)"
+
   printf '[voicelayer-verify] stopping old VoiceBar process(es)...\n'
   pkill -x VoiceBar 2>/dev/null || true
   if ! wait_for_voicebar_stop "$running_pids"; then
     printf '[voicelayer-verify] VoiceBar did not stop cleanly; no artifact written.\n' >&2
     exit 1
   fi
-  daemon_pids="$(
-    {
-      lsof -nP -U 2>/dev/null | awk -v socket="$MCP_SOCKET_PATH" '$NF == socket { print $2 }'
-      pgrep -f 'mcp-server-daemon\\.ts' 2>/dev/null || true
-    } | sort -n | uniq | tr '\n' ' '
-  )"
-  if [ -n "$daemon_pids" ]; then
-    printf '[voicelayer-verify] stopping old daemon process(es): %s\n' "$daemon_pids"
-    # shellcheck disable=SC2086
-    kill -TERM $daemon_pids 2>/dev/null || true
-    for _ in $(seq 1 100); do
-      still_running=""
-      for pid in $daemon_pids; do
-        if kill -0 "$pid" 2>/dev/null; then
-          still_running=1
-          break
-        fi
-      done
-      [ -z "$still_running" ] && break
-      sleep 0.1
-    done
-    still_running_pids=""
-    for pid in $daemon_pids; do
-      if kill -0 "$pid" 2>/dev/null; then
-        still_running_pids="${still_running_pids}${pid} "
-      fi
-    done
-    if [ -n "$still_running_pids" ]; then
-      printf '[voicelayer-verify] daemon did not stop after SIGTERM; sending SIGKILL to: %s\n' "$still_running_pids"
-      # shellcheck disable=SC2086
-      kill -KILL $still_running_pids 2>/dev/null || true
+
+  stop_daemon_pids "$daemon_pids"
+
+  if [ "$launchd_managed" -eq 1 ]; then
+    if ! new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
+      printf '[voicelayer-verify] launchd did not relaunch VoiceBar; no artifact written.\n' >&2
+      exit 1
     fi
+    printf '[voicelayer-verify] launchd relaunched VoiceBar with PID(s): %s\n' "$new_pids"
+  else
+    printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
+    open -a VoiceBar
+    sleep 1
   fi
-  printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
-  open -a VoiceBar
-  sleep 1
 fi
 
 printf "Press F5 in VoiceBar, speak 'verification test', release, confirm paste fired (Y/n) "

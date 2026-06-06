@@ -149,6 +149,7 @@ describe("voicelayer-verify.sh", () => {
   test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
     const changed = join(tempRoot, "changed.txt");
     const stateFile = join(tempRoot, "pgrep-state");
+    const openCalls = join(tempRoot, "open-calls");
     const oldPid = "424242";
     const bashEnv = join(tempRoot, "fake-bash-env");
     writeFileSync(changed, "src/socket-handlers.ts\n");
@@ -200,7 +201,14 @@ fi
 exit 1
 `,
     );
-    writeFakeExecutable("open", "#!/usr/bin/env bash\nexit 0\n");
+    writeFakeExecutable(
+      "open",
+      `#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "${openCalls}"
+exit 0
+`,
+    );
     writeFakeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
 
     const result = run(["bash", scriptPath], {
@@ -216,7 +224,8 @@ exit 1
     });
 
     expect(result.exitCode).toBe(0);
-    expect(text(result.stdout)).toContain("relaunching VoiceBar.app");
+    expect(text(result.stdout)).toContain("launchd relaunched VoiceBar");
+    expect(existsSync(openCalls)).toBe(false);
     const artifacts = readdirSync(join(tempRoot, ".verified"));
     expect(artifacts).toHaveLength(1);
     const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();

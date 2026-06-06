@@ -131,9 +131,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[VoiceBar] Apple Event handler registered for voicebar:// scheme")
         }
 
-        // Singleton guard — if another VoiceBar is already running, quit immediately.
         let myPID = ProcessInfo.processInfo.processIdentifier
-        if VoiceBarDefaults.shouldEnforceSingleton() {
+        // Singleton guard: daily-driver launches keep one VoiceBar instance, while
+        // isolated QA socket paths can run beside the installed app.
+        if VoiceBarDefaults.shouldEnforceSingleton(), VoiceLayerPaths.enforcesSingletonInstance {
             let running = NSRunningApplication
                 .runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
             let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
@@ -145,19 +146,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return
             }
+        } else if !VoiceLayerPaths.enforcesSingletonInstance {
+            NSLog("[VoiceBar] Singleton guard skipped for isolated socket path %@", VoiceLayerPaths.socketPath)
+        } else {
+            NSLog("[VoiceBar] Singleton guard skipped by defaults")
         }
 
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)
 
         // Register with Launch Services so voicebar:// URL scheme works
-        // after rebuilds (Launch Services caches bundle→scheme mappings).
+        // after rebuilds (Launch Services caches bundle->scheme mappings).
         if VoiceBarDefaults.shouldRegisterLaunchServices(),
+           VoiceLayerPaths.enforcesSingletonInstance,
            let bundleURL = Bundle.main.bundleURL as CFURL? {
             let status = LSRegisterURL(bundleURL, true)
             if status != 0 {
                 NSLog("[VoiceBar] LSRegisterURL returned %d", status)
             }
+        } else if !VoiceLayerPaths.enforcesSingletonInstance {
+            NSLog(
+                "[VoiceBar] Launch Services registration skipped for isolated socket path %@",
+                VoiceLayerPaths.socketPath
+            )
         }
 
         configureGatekeptVoiceStateDependencies()
