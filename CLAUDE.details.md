@@ -7,6 +7,14 @@
 - Socket protocol uses NDJSON events: state, speech, transcription, error; commands: stop, replay, toggle.
 - No discovery file — fixed socket path. Voice Bar survives MCP reconnects.
 
+## MCP Daemon LaunchAgent
+- Daily-driver MCP daemon lifecycle is `com.voicelayer.mcp-daemon` in `~/Library/LaunchAgents`.
+- Install or refresh it with `bash launchd/install.sh`; `bash flow-bar/build-app.sh` re-runs that installer after updating `/Applications/VoiceBar.app`.
+- The installer prefers `/Applications/VoiceBar.app/Contents/Resources` as the daemon root and falls back to the repo checkout only when the installed bundle is missing.
+- The plist must carry its own `PATH`, including `~/.bun/bin`, `/Library/Frameworks/Python.framework/Versions/3.13/bin`, and Homebrew paths; launchd's default PATH is not enough.
+- Daemon logs live under `~/Library/Logs/VoiceLayer/`.
+- VoiceBar may launch a child daemon only as a fallback when no external daemon is live; it must not compete with the LaunchAgent-owned daemon.
+
 ## TTS Backends
 - Qwen3-TTS daemon runs on port 8880 and reads `~/.voicelayer/voices/{name}/profile.yaml`.
 - Profile fields: `engine`, `reference_clip(s)`, `fallback`.

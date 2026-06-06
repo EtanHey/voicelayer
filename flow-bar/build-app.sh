@@ -102,5 +102,11 @@ if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTIT
 fi
 
 echo "[build-app] Done: $APP_DIR"
+if [ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" != "1" ] && [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+    echo "[build-app] Installing MCP daemon LaunchAgent..."
+    bash "$REPO_ROOT/launchd/install.sh"
+else
+    echo "[build-app] Skipping MCP daemon LaunchAgent install."
+fi
 echo "[build-app] To add to Login Items: System Settings > General > Login Items > +"
 echo "[build-app] Or run: osascript -e 'tell application \"System Events\" to make login item at end with properties {path:\"$APP_DIR\", hidden:true}'"

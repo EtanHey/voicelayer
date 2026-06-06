@@ -88,6 +88,11 @@ cd voicelayer && bun install
 bun run src/mcp-server-daemon.ts
 ```
 
+`launchd/install.sh` prefers the installed VoiceBar bundle at
+`/Applications/VoiceBar.app/Contents/Resources` and falls back to the checkout
+when the bundle is not present. LaunchAgent logs are written to
+`~/Library/Logs/VoiceLayer/`.
+
 ### Disabling VoiceLayer
 `DISABLE_VOICELAYER=1` is a hard kill-switch for the MCP daemon.
 
