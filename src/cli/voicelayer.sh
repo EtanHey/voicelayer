@@ -53,6 +53,10 @@ case "${1:-}" in
         shift
         exec bun "$SCRIPT_DIR/../daemon.ts" "$@"
         ;;
+    vocab)
+        shift
+        exec bun "$SCRIPT_DIR/vocab.ts" "$@"
+        ;;
     bar)
         shift
         FLOW_BAR_DIR="$(cd "$PACKAGE_ROOT/flow-bar" && pwd)"
@@ -94,6 +98,7 @@ case "${1:-}" in
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
         echo "  bar        Build and launch Voice Bar (floating pill widget)"
+        echo "  vocab      Add, list, or remove STT vocabulary aliases"
         echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
         echo "  bar-stop   Stop the Voice Bar if running"
         echo ""
@@ -102,6 +107,7 @@ case "${1:-}" in
         echo "  voicelayer clone --name theo"
         echo "  voicelayer daemon --port 8880"
         echo "  voicelayer bar"
+        echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"
         echo "  voicelayer hotkey install"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."

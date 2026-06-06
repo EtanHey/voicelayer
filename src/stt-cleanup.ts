@@ -2,6 +2,10 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
+import {
+  getSTTVocabularyPath,
+  isUnsafeDynamicAliasSource,
+} from "./stt-vocabulary-store";
 
 export interface STTCleanupEnv {
   [key: string]: string | undefined;
@@ -166,23 +170,6 @@ interface LoadedVocabularySnapshot {
   aliases: Record<string, string>;
 }
 
-interface MissingVocabularySnapshot {
-  path: string;
-  missing: true;
-  checkedAtMs: number;
-}
-
-let vocabularySnapshotCache:
-  | LoadedVocabularySnapshot
-  | MissingVocabularySnapshot
-  | null = null;
-
-const UNSAFE_DYNAMIC_ALIAS_SOURCES = new Set([
-  // Wispr-derived history can include broad aliases that are correct in a
-  // session-mining context but corrupt ordinary audio vocabulary.
-  "codecs",
-]);
-
 function getVocabularySnapshotPath(env: STTCleanupEnv): string | null {
   if (
     env.QA_VOICE_STT_VOCABULARY_PATH === "" ||
@@ -190,10 +177,7 @@ function getVocabularySnapshotPath(env: STTCleanupEnv): string | null {
   ) {
     return null;
   }
-  return (
-    env.QA_VOICE_STT_VOCABULARY_PATH ??
-    join(homedir(), ".local", "state", "voicelayer", "stt-vocabulary.json")
-  );
+  return getSTTVocabularyPath({ env });
 }
 
 function parseVocabularySnapshot(
@@ -220,7 +204,7 @@ function parseVocabularySnapshot(
           if (
             trimmedFrom &&
             trimmedTo &&
-            !UNSAFE_DYNAMIC_ALIAS_SOURCES.has(trimmedFrom.toLowerCase())
+            !isUnsafeDynamicAliasSource(trimmedFrom)
           ) {
             aliases[trimmedFrom] = trimmedTo;
           }
@@ -438,41 +422,17 @@ function loadVocabularySnapshot(
   const path = getVocabularySnapshotPath(env);
   if (!path) return null;
 
-  if (
-    vocabularySnapshotCache &&
-    "missing" in vocabularySnapshotCache &&
-    vocabularySnapshotCache.path === path &&
-    Date.now() - vocabularySnapshotCache.checkedAtMs < 1000
-  ) {
-    return null;
-  }
-
   if (!existsSync(path)) {
-    vocabularySnapshotCache = {
-      path,
-      missing: true,
-      checkedAtMs: Date.now(),
-    };
     return null;
   }
 
   try {
     const { mtimeMs } = statSync(path);
-    if (
-      vocabularySnapshotCache &&
-      !("missing" in vocabularySnapshotCache) &&
-      vocabularySnapshotCache.path === path &&
-      vocabularySnapshotCache.mtimeMs === mtimeMs
-    ) {
-      return vocabularySnapshotCache;
-    }
-
     const parsed = JSON.parse(
       readFileSync(path, "utf8"),
     ) as STTVocabularySnapshot;
     const snapshot = parseVocabularySnapshot(parsed);
-    vocabularySnapshotCache = buildLoadedVocabularySnapshot(path, mtimeMs, snapshot);
-    return vocabularySnapshotCache;
+    return buildLoadedVocabularySnapshot(path, mtimeMs, snapshot);
   } catch {
     return null;
   }

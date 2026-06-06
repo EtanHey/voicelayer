@@ -6,6 +6,7 @@ import {
   cleanupTranscriptionText,
   getSTTVocabularyPrompt,
 } from "../stt-cleanup";
+import { addAlias } from "../stt-vocabulary-store";
 
 describe("stt-cleanup", () => {
   it("suppresses no-input STT hallucinations and non-speech labels", () => {
@@ -246,6 +247,27 @@ describe("stt-cleanup", () => {
         QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
       }),
     ).toBe("Use Domica and SongScript");
+  });
+
+  it("loads an alias added after a missing snapshot on the next transcription", () => {
+    const tempDir = mkdtempSync(
+      join(tmpdir(), "voicelayer-stt-vocabulary-live-"),
+    );
+    const snapshotPath = join(tempDir, "stt-vocabulary.json");
+    const env = {
+      QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+      QA_VOICE_STT_COMMANDS_DIR: "",
+    } as const;
+
+    try {
+      expect(cleanupTranscriptionText("use domekin", env)).toBe("Use domekin");
+
+      addAlias({ from: "domekin", to: "Domica" }, { path: snapshotPath });
+
+      expect(cleanupTranscriptionText("use domekin", env)).toBe("Use Domica");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   it("derives spoken slash-command aliases from vocabulary prompt terms", async () => {

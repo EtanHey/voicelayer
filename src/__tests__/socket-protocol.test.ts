@@ -311,5 +311,39 @@ describe("socket-protocol", () => {
         source: "command",
       });
     });
+
+    it("parses vocabulary add, list, and remove commands", () => {
+      expect(
+        parseCommand(
+          '{"cmd":"vocab_add","id":"vocab-1","from":"domekin","to":"Domica"}',
+        ),
+      ).toEqual({
+        cmd: "vocab_add",
+        id: "vocab-1",
+        from: "domekin",
+        to: "Domica",
+      });
+      expect(parseCommand('{"cmd":"vocab_list","id":"vocab-list"}')).toEqual({
+        cmd: "vocab_list",
+        id: "vocab-list",
+      });
+      expect(
+        parseCommand(
+          '{"cmd":"vocab_remove","id":"vocab-remove","from":"domekin"}',
+        ),
+      ).toEqual({
+        cmd: "vocab_remove",
+        id: "vocab-remove",
+        from: "domekin",
+      });
+    });
+
+    it("rejects incomplete vocabulary commands", () => {
+      expect(parseCommand('{"cmd":"vocab_add","from":"domekin"}')).toBeNull();
+      expect(
+        parseCommand('{"cmd":"vocab_add","from":"","to":"Domica"}'),
+      ).toBeNull();
+      expect(parseCommand('{"cmd":"vocab_remove","from":""}')).toBeNull();
+    });
   });
 });

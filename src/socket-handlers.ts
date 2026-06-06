@@ -31,6 +31,11 @@ import type {
 import { buildHealthResponse } from "./daemon-health";
 import { getPlaybackQueueDepth } from "./tts";
 import { getRecordingState } from "./input";
+import {
+  addAlias,
+  listVocabulary,
+  removeAlias,
+} from "./stt-vocabulary-store";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -199,7 +204,38 @@ export function handleSocketCommand(
         status: "marked",
       });
       return buildAck(command, "accept");
+    case "vocab_add":
+      try {
+        addAlias({ from: command.from, to: command.to });
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    case "vocab_list": {
+      const snapshot = listVocabulary();
+      return {
+        type: "vocab_list",
+        ...(command.id ? { id: command.id } : {}),
+        ...snapshot,
+      };
+    }
+    case "vocab_remove": {
+      try {
+        const result = removeAlias(command.from);
+        return buildAck(
+          command,
+          result.removed ? "accept" : "noop",
+          result.removed ? undefined : "not found",
+        );
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    }
   }
+}
+
+function vocabularyErrorReason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function buildAck(

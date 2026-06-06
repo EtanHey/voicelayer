@@ -144,7 +144,9 @@ export type AckCommand =
   | "toggle"
   | "record"
   | "command"
-  | "mark_clip";
+  | "mark_clip"
+  | "vocab_add"
+  | "vocab_remove";
 
 export interface AckEvent {
   type: "ack";
@@ -222,6 +224,21 @@ export interface MarkClipCommand extends SocketCommandBase {
   source?: "tts" | "command";
 }
 
+export interface VocabAddCommand extends SocketCommandBase {
+  cmd: "vocab_add";
+  from: string;
+  to: string;
+}
+
+export interface VocabListCommand extends SocketCommandBase {
+  cmd: "vocab_list";
+}
+
+export interface VocabRemoveCommand extends SocketCommandBase {
+  cmd: "vocab_remove";
+  from: string;
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
@@ -231,7 +248,10 @@ export type SocketCommand =
   | RecordCommand
   | HealthCommand
   | CommandModeCommand
-  | MarkClipCommand;
+  | MarkClipCommand
+  | VocabAddCommand
+  | VocabListCommand
+  | VocabRemoveCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -240,7 +260,15 @@ export interface HealthResponse {
   recording_state: "idle" | "recording" | "transcribing";
 }
 
-export type SocketResponse = HealthResponse | AckEvent;
+export interface VocabListResponse {
+  type: "vocab_list";
+  id?: string;
+  updated_at: string | null;
+  prompt_terms: string[];
+  aliases: Array<{ from: string; to: string }>;
+}
+
+export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
 
 // --- Serialization ---
 
@@ -298,6 +326,26 @@ export function parseCommand(line: string): SocketCommand | null {
           source: parsed.source === "tts" ? "tts" : "command",
         }, id);
       }
+      case "vocab_add": {
+        const from = parseRequiredString(parsed.from);
+        const to = parseRequiredString(parsed.to);
+        if (!from || !to) return null;
+        return withCommandId<VocabAddCommand>({
+          cmd: "vocab_add",
+          from,
+          to,
+        }, id);
+      }
+      case "vocab_list":
+        return withCommandId<VocabListCommand>({ cmd: "vocab_list" }, id);
+      case "vocab_remove": {
+        const from = parseRequiredString(parsed.from);
+        if (!from) return null;
+        return withCommandId<VocabRemoveCommand>({
+          cmd: "vocab_remove",
+          from,
+        }, id);
+      }
       case "toggle": {
         if (typeof parsed.enabled !== "boolean") return null;
         const scope = parsed.scope;
@@ -340,6 +388,12 @@ export function parseCommand(line: string): SocketCommand | null {
   } catch {
     return null;
   }
+}
+
+function parseRequiredString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function parseCommandId(parsed: Record<string, unknown>): string | undefined {

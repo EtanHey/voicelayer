@@ -201,6 +201,13 @@ describe("CLI integration", () => {
     expect(cliSrc).toContain("voicelayer hotkey install");
   });
 
+  it("voicelayer.sh exposes the STT vocabulary command group", async () => {
+    const cliSrc = await Bun.file("src/cli/voicelayer.sh").text();
+    expect(cliSrc).toContain("vocab)");
+    expect(cliSrc).toContain("vocab.ts");
+    expect(cliSrc).toContain("voicelayer vocab add --wrong");
+  });
+
   it("package includes VoiceBar and hidutil assets for global install", async () => {
     const packageJson = await Bun.file("package.json").json();
     expect(packageJson.files).toContain("src/**/*.py");
