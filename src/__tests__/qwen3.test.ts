@@ -248,6 +248,49 @@ describe("resolveVoice with cloned voices", () => {
     expect(result.voice).toContain("Jenny");
   });
 
+  it("uses a cloned profile when QA_VOICE_TTS_VOICE names one", () => {
+    const homeDir = join("/tmp", `voicelayer-default-voice-${process.pid}`);
+    const voiceDir = join(homeDir, ".voicelayer", "voices", "envclone");
+    mkdirSync(voiceDir, { recursive: true });
+    writeFileSync(
+      join(voiceDir, "profile.yaml"),
+      `name: envclone
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/envclone/ref.wav
+reference_text: hello
+fallback: en-US-AndrewNeural
+created: 2026-06-06
+`,
+    );
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          "import { resolveVoice } from './src/tts.ts'; console.log(JSON.stringify(resolveVoice()));",
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+          QA_VOICE_TTS_VOICE: "envclone",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout.toString())).toEqual({
+        voice: "envclone",
+        engine: "cloned",
+        fallbackVoice: "en-US-AndrewNeural",
+      });
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns edge-tts engine for raw edge-tts voice name", async () => {
     const { resolveVoice } = await import("../tts");
     const result = resolveVoice("en-US-BrianNeural");
