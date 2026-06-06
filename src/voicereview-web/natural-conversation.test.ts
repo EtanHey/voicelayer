@@ -144,7 +144,7 @@ describe("VoiceReview natural conversation redesign", () => {
     });
   });
 
-  it("advances always-listening turn states with subtle settling and playback barge-in", () => {
+  it("advances always-listening turn states with subtle settling and paused barge-in", () => {
     expect(typeof (server as any).createTurnTakingState).toBe("function");
     expect(typeof (server as any).advanceTurnTakingFrame).toBe("function");
 
@@ -178,10 +178,33 @@ describe("VoiceReview natural conversation redesign", () => {
     state.phase = "SPEAKING";
     state = (server as any).advanceTurnTakingFrame(state, { speech: true });
     state = (server as any).advanceTurnTakingFrame(state, { speech: true });
-    expect(state.cancelPlayback).toBe(false);
+    expect(state.pausePlayback).toBe(false);
     state = (server as any).advanceTurnTakingFrame(state, { speech: true });
     expect(state.phase).toBe("LISTENING");
-    expect(state.cancelPlayback).toBe(true);
+    expect(state.pausePlayback).toBe(true);
+  });
+
+  it("splits interrupted agent speech into spoken and unspoken context", () => {
+    expect(typeof (server as any).splitInterruptedSpeech).toBe("function");
+
+    const split = (server as any).splitInterruptedSpeech(
+      "First sentence gives context. Second sentence triggers the interruption.",
+      [
+        { offset_ms: 0, duration_ms: 200, text: "First" },
+        { offset_ms: 250, duration_ms: 200, text: "sentence" },
+        { offset_ms: 500, duration_ms: 200, text: "gives" },
+        { offset_ms: 750, duration_ms: 200, text: "context." },
+        { offset_ms: 1100, duration_ms: 200, text: "Second" },
+      ],
+      900,
+    );
+
+    expect(split).toEqual({
+      agent_speech_spoken_so_far: "First sentence gives context.",
+      agent_speech_unspoken_remainder:
+        "Second sentence triggers the interruption.",
+      interrupted_at_ms: 900,
+    });
   });
 
   it("prepares browser Silero VAD tensors with 64 samples of context plus 512 audio samples", () => {
@@ -220,6 +243,72 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain("SPEAKING");
     expect(html).not.toContain("Tap Record");
     expect(html).not.toContain("tap Record");
+  });
+
+  it("does not suppress VAD barge-in while the previous turn is still processing", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).not.toContain("if (!sessionActive || processingTurn) return;");
+    expect(html).toContain("if (processingTurn && !turnState.pausePlayback)");
+    expect(html).toContain("agent_speech_spoken_so_far");
+    expect(html).toContain("agent_speech_unspoken_remainder");
+    expect(html).toContain("interrupted_at_ms");
+    expect(html).toContain("paused utterance");
+    expect(html).toContain("resume");
+  });
+
+  it("serves a simple chat column with collapsed evidence and no prior/current turn label soup", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain('id="turnLog"');
+    expect(html).toContain('id="evidencePanel"');
+    expect(html).toContain("<summary>Evidence</summary>");
+    expect(html).not.toContain('id="evidencePanel" open');
+    expect(html).not.toContain("Prior turn");
+    expect(html).not.toContain("Current turn");
+    expect(html).toContain("speakAgent(answer, { log: false })");
+  });
+
+  it("sanitizes spoken text separately from displayed structured data", () => {
+    expect(typeof (server as any).humanizeSpokenText).toBe("function");
+
+    const spoken = (server as any).humanizeSpokenText(
+      "### Evidence\n- rt-a93575c2-1234 chunk 17 type=user_message: Merge into `kg_entity_chunks`.\nShown: <strong>raw</strong>",
+    );
+
+    expect(spoken).not.toContain("rt-a93575c2");
+    expect(spoken).not.toContain("chunk 17");
+    expect(spoken).not.toContain("type=user_message");
+    expect(spoken).not.toContain("###");
+    expect(spoken).not.toContain("<strong>");
+    expect(spoken).toBe(
+      "Evidence. Merge into kg entity chunks. Shown: raw",
+    );
+
+    const narrated = (server as any).humanizeSpokenText(
+      "Members:\n- FooBar (project, 2 chunks)\n- Foo Bar (project, 1 chunks)\n- FooBar CLI (tool, 1 chunks)",
+    );
+
+    expect(narrated).toBe(
+      "Three entries: two project entries with similar names, and one tool entry.",
+    );
+  });
+
+  it("lets the reviewer configure edge-tts voice and cadence from the page", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain('id="ttsVoice"');
+    expect(html).toContain("en-US-GuyNeural");
+    expect(html).toContain('id="ttsRate"');
+    expect(html).toContain('type="range"');
+    expect(html).toContain("rate: selectedTtsRate()");
+    expect(html).toContain("voice: selectedTtsVoice()");
   });
 
   it("serves the Silero model file to the browser", async () => {

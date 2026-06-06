@@ -63,6 +63,18 @@ export interface ConversationTurn {
   answer: string;
 }
 
+export interface InterruptionContext {
+  agent_speech_spoken_so_far: string;
+  agent_speech_unspoken_remainder: string;
+  interrupted_at_ms: number;
+}
+
+export interface WordBoundary {
+  offset_ms: number;
+  duration_ms: number;
+  text: string;
+}
+
 export interface EvidenceSnippet {
   chunk_id: string;
   project: string | null;
@@ -109,8 +121,10 @@ export interface VoiceReviewConfig {
   whisperModelPath: string;
   liteRtUrl: string;
   liteRtModel: string;
+  deepLiteRtModel: string;
   tempDir: string;
   ttsVoice: string;
+  ttsRate: string;
   requestTimeoutMs: number;
 }
 
@@ -169,8 +183,13 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
     process.env.VOICE_REVIEW_LITERT_URL ||
     "http://127.0.0.1:9379/v1/chat/completions",
   liteRtModel: process.env.VOICE_REVIEW_LITERT_MODEL || "gemma4-e4b,gpu",
+  deepLiteRtModel:
+    process.env.VOICE_REVIEW_DEEP_LITERT_MODEL ||
+    process.env.VOICE_REVIEW_LITERT_MODEL ||
+    "gemma4-e4b,gpu",
   tempDir: process.env.VOICE_REVIEW_TEMP_DIR || join(tmpdir(), "voicereview-web"),
-  ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-AriaNeural",
+  ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-GuyNeural",
+  ttsRate: process.env.VOICE_REVIEW_TTS_RATE || "-8%",
   requestTimeoutMs: Number(process.env.VOICE_REVIEW_TIMEOUT_MS || "60000"),
 };
 
@@ -227,8 +246,11 @@ export function buildEvidenceArgs(options: {
   dbPath: string;
   members: ReviewMember[];
   perMember?: number;
+  snippetChars?: number;
+  question?: string;
+  deep?: boolean;
 }): string[] {
-  return [
+  const args = [
     options.pythonBinary || "python3",
     options.pythonScript,
     "--db",
@@ -238,6 +260,14 @@ export function buildEvidenceArgs(options: {
     "--per-member",
     String(options.perMember || 3),
   ];
+  if (options.snippetChars) {
+    args.push("--snippet-chars", String(options.snippetChars));
+  }
+  if (options.question?.trim()) {
+    args.push("--question", options.question.trim());
+  }
+  if (options.deep) args.push("--deep");
+  return args;
 }
 
 export function buildWhisperPrompt(
@@ -320,7 +350,7 @@ export interface TurnTakingState {
   settleProgress: number;
   showSettlingRing: boolean;
   playbackSpeechFrames: number;
-  cancelPlayback: boolean;
+  pausePlayback: boolean;
   turnTaken: boolean;
 }
 
@@ -339,7 +369,7 @@ export function createTurnTakingState(
     settleProgress: 0,
     showSettlingRing: false,
     playbackSpeechFrames: 0,
-    cancelPlayback: false,
+    pausePlayback: false,
     turnTaken: false,
   };
 }
@@ -351,7 +381,7 @@ export function advanceTurnTakingFrame(
   const state: TurnTakingState = {
     ...current,
     config: { ...current.config },
-    cancelPlayback: false,
+    pausePlayback: false,
     turnTaken: false,
   };
   const frameMs = state.config.frameMs;
@@ -366,7 +396,7 @@ export function advanceTurnTakingFrame(
         state.settleProgress = 0;
         state.showSettlingRing = false;
         state.playbackSpeechFrames = 0;
-        state.cancelPlayback = true;
+        state.pausePlayback = true;
       }
     } else {
       state.playbackSpeechFrames = 0;
@@ -500,6 +530,128 @@ export function composeFinalDecisionFromUnderstanding(
   return { action: "mixed", members, note, source: "voice" };
 }
 
+export function splitInterruptedSpeech(
+  text: string,
+  wordBoundaries: WordBoundary[],
+  interruptedAtMs: number,
+): InterruptionContext {
+  const words = String(text || "").trim().split(/\s+/).filter(Boolean);
+  const safeInterruptedAtMs = Math.max(0, Math.round(interruptedAtMs || 0));
+  let spokenWordCount = 0;
+
+  if (wordBoundaries.length) {
+    spokenWordCount = wordBoundaries.filter(
+      (word) => word.offset_ms <= safeInterruptedAtMs,
+    ).length;
+  } else {
+    const approximateChars = Math.floor(safeInterruptedAtMs * 0.013);
+    let chars = 0;
+    for (const word of words) {
+      const next = chars + word.length + 1;
+      if (next > approximateChars) break;
+      spokenWordCount += 1;
+      chars = next;
+    }
+  }
+
+  spokenWordCount = Math.max(0, Math.min(words.length, spokenWordCount));
+  return {
+    agent_speech_spoken_so_far: words.slice(0, spokenWordCount).join(" "),
+    agent_speech_unspoken_remainder: words.slice(spokenWordCount).join(" "),
+    interrupted_at_ms: safeInterruptedAtMs,
+  };
+}
+
+export function humanizeSpokenText(input: string): string {
+  const tableNarration = humanizeMembersTable(input);
+  if (tableNarration) return tableNarration;
+
+  return String(input || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/<\/?[^>]+>/g, "")
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .replace(/\brt-[a-z0-9-]{6,}\b/gi, "")
+    .replace(/\bchunk\s+\d+\b/gi, "")
+    .replace(/\btype=[a-z0-9_-]+:?\s*/gi, "")
+    .replace(/_/g, " ")
+    .replace(/[ \t]*\n+[ \t]*/g, ". ")
+    .replace(/\s+([.,:;!?])/g, "$1")
+    .replace(/:\s*\./g, ".")
+    .replace(/\.\s*\./g, ".")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function humanizeMembersTable(input: string): string | null {
+  const memberRows = String(input || "")
+    .split(/\n+/)
+    .map((line) =>
+      line.match(/^\s*[-*]\s*(.+?)\s+\(([^,()]+),\s*\d+\s+chunks?\)\s*$/i),
+    )
+    .filter((match): match is RegExpMatchArray => Boolean(match))
+    .map((match) => ({
+      name: match[1].trim(),
+      type: match[2].trim().toLowerCase(),
+    }));
+
+  if (memberRows.length < 2) return null;
+
+  const byType = new Map<string, string[]>();
+  for (const row of memberRows) {
+    byType.set(row.type, [...(byType.get(row.type) || []), row.name]);
+  }
+
+  const parts = [...byType.entries()].map(([type, names]) => {
+    const count = names.length;
+    const entryLabel = count === 1 ? "entry" : "entries";
+    const similar =
+      count > 1 &&
+      new Set(names.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")))
+        .size <= 1;
+    return [
+      numberWord(count),
+      type,
+      entryLabel,
+      similar ? "with similar names" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+  });
+
+  return `${capitalize(numberWord(memberRows.length))} entries: ${joinNaturalList(
+    parts,
+  )}.`;
+}
+
+function joinNaturalList(parts: string[]): string {
+  if (parts.length <= 1) return parts[0] || "";
+  if (parts.length === 2) return `${parts[0]}, and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+}
+
+function numberWord(value: number): string {
+  const words = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+  ];
+  return words[value] || String(value);
+}
+
+function capitalize(value: string): string {
+  return value ? value[0].toUpperCase() + value.slice(1) : value;
+}
+
 function selectCanonicalForUnderstanding(
   state: UnderstandingState,
   cluster: ReviewCluster,
@@ -539,6 +691,7 @@ export function buildInterpretMessages(options: {
   transcript: string;
   cluster: ReviewCluster;
   understanding?: Partial<UnderstandingState>;
+  interruption?: InterruptionContext | null;
 }): Array<{ role: "system" | "user"; content: string }> {
   const system = [
     "STRICT KG voice-review interpreter.",
@@ -554,6 +707,7 @@ export function buildInterpretMessages(options: {
     "For keep and skip, omit canonical_id and members.",
     "For mixed, members must map member id to merge|keep|prune.",
     "For question, include question equal to the user's question in the same language, omit canonical_id and members.",
+    "If interruption context is present, interpret the transcript as a barge-in response to what the agent had already said. The unspoken remainder may be moot.",
     "Every action must carry note equal to the verbatim transcript.",
     "If the transcript is ambiguous or non-deterministic, choose skip with the verbatim transcript as note. Never force a clean merge/keep/mixed disposition from unclear speech.",
     "Return exactly one JSON object. No markdown, no prose.",
@@ -592,6 +746,14 @@ export function buildInterpretMessages(options: {
   const notes = Array.isArray(understanding.notes) && understanding.notes.length
     ? understanding.notes.slice(-6).join("\n")
     : "No prior understanding notes.";
+  const interruption = options.interruption
+    ? [
+        "Interruption context:",
+        `agent_speech_spoken_so_far: ${JSON.stringify(options.interruption.agent_speech_spoken_so_far)}`,
+        `agent_speech_unspoken_remainder: ${JSON.stringify(options.interruption.agent_speech_unspoken_remainder)}`,
+        `interrupted_at_ms: ${options.interruption.interrupted_at_ms}`,
+      ].join("\n")
+    : "Interruption context: none.";
   const user = [
     `Cluster: ${options.cluster.cluster_id}`,
     `Stem: ${options.cluster.stem}`,
@@ -602,6 +764,7 @@ export function buildInterpretMessages(options: {
     currentUnderstanding,
     "Prior notes:",
     notes,
+    interruption,
     `Transcript: ${JSON.stringify(options.transcript)}`,
   ].join("\n");
 
@@ -616,12 +779,17 @@ export function buildConverseMessages(options: {
   cluster: ReviewCluster;
   history: ConversationTurn[];
   evidence: ConversationEvidence;
+  evidenceDepth?: "shallow" | "deep";
+  interruption?: InterruptionContext | null;
 }): Array<{ role: "system" | "user"; content: string }> {
   const system = [
     "Grounded KG voice-review conversation assistant.",
     "You help a reviewer reason about whether the current cluster's members should be merged, kept separate, mixed, or skipped.",
     "You must answer ONLY from the provided evidence snippets and cluster facts.",
-    'If the provided evidence does not answer the question, say "I don\'t see evidence about that" rather than invent.',
+    options.evidenceDepth === "deep"
+      ? 'If the deeper evidence still does not answer the question, say "I looked deeper, but I still do not see evidence about that" rather than invent.'
+      : 'If the provided evidence does not answer the question, do not say "I don\'t see evidence about that"; say exactly NEED_DEEPER_EVIDENCE.',
+    "If interruption context is present, answer the interruption directly and decide whether the paused remainder is still useful.",
     "Use short spoken-style answers, 2-4 sentences, because the answer will be read aloud with TTS.",
     "Mention member names and types when useful. Do not include markdown.",
   ].join("\n");
@@ -647,6 +815,14 @@ export function buildConverseMessages(options: {
         )
         .join("\n")
     : "No prior Q&A turns.";
+  const interruption = options.interruption
+    ? [
+        "Interruption context:",
+        `agent_speech_spoken_so_far: ${JSON.stringify(options.interruption.agent_speech_spoken_so_far)}`,
+        `agent_speech_unspoken_remainder: ${JSON.stringify(options.interruption.agent_speech_unspoken_remainder)}`,
+        `interrupted_at_ms: ${options.interruption.interrupted_at_ms}`,
+      ].join("\n")
+    : "Interruption context: none.";
 
   const evidence = options.evidence.members
     .map((member) => {
@@ -677,6 +853,8 @@ export function buildConverseMessages(options: {
     "",
     "Conversation history:",
     history,
+    "",
+    interruption,
     "",
     "Evidence snippets:",
     evidence || "No evidence snippets found.",
@@ -893,7 +1071,7 @@ export function createVoiceReviewApp(options?: {
       try {
         const url = new URL(request.url);
         if (request.method === "GET" && url.pathname === "/") {
-          return htmlResponse(renderNaturalConversationPage(config.defaultCategory));
+          return htmlResponse(renderNaturalConversationPage(config));
         }
         if (request.method === "GET" && url.pathname === "/models/silero_vad.onnx") {
           return await handleSileroModel();
@@ -1119,12 +1297,14 @@ async function handleInterpret(
   }
 
   const started = performance.now();
+  const interruption = normalizeInterruptionContext(body.interruption);
   const messages = buildInterpretMessages({
     transcript: body.transcript,
     cluster: body.cluster,
     understanding: isRecord(body.understanding)
       ? normalizeUnderstandingState(body.understanding, body.cluster)
       : undefined,
+    interruption,
   });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
@@ -1180,6 +1360,8 @@ async function handleConverse(
     }
     history = body.history;
   }
+  const question = body.question.trim();
+  const interruption = normalizeInterruptionContext(body.interruption);
   const evidenceResult = await runCommand({
     args: buildEvidenceArgs({
       pythonScript: evidenceScript(),
@@ -1194,21 +1376,95 @@ async function handleConverse(
   const evidence = parseConversationEvidence(evidenceResult.stdout, body.cluster);
 
   const llmStarted = performance.now();
-  const messages = buildConverseMessages({
-    question: body.question.trim(),
-    cluster: body.cluster,
-    history,
-    evidence,
+  const shallow = await fetchConverseAnswer({
+    config,
+    fetchImpl,
+    model: config.liteRtModel,
+    messages: buildConverseMessages({
+      question,
+      cluster: body.cluster,
+      history,
+      evidence,
+      evidenceDepth: "shallow",
+      interruption,
+    }),
   });
+
+  if (!isInsufficientEvidenceAnswer(shallow)) {
+    return jsonResponse({
+      answer: shallow,
+      evidence,
+      evidence_depth: "shallow",
+      timings: {
+        evidence_ms: evidenceResult.durationMs,
+        llm_ms: Math.round(performance.now() - llmStarted),
+      },
+    });
+  }
+
+  const deepEvidenceResult = await runCommand({
+    args: buildEvidenceArgs({
+      pythonScript: evidenceScript(),
+      dbPath: config.brainlayerDbPath,
+      members: body.cluster.members,
+      perMember: 8,
+      snippetChars: 1800,
+      question,
+      deep: true,
+    }),
+    cwd: process.cwd(),
+    env: processEnv(),
+  });
+  assertSuccess(deepEvidenceResult, "kg_evidence.py");
+  const deepEvidence = parseConversationEvidence(
+    deepEvidenceResult.stdout,
+    body.cluster,
+  );
+  const deep = await fetchConverseAnswer({
+    config,
+    fetchImpl,
+    model: config.deepLiteRtModel,
+    messages: buildConverseMessages({
+      question,
+      cluster: body.cluster,
+      history,
+      evidence: deepEvidence,
+      evidenceDepth: "deep",
+      interruption,
+    }),
+  });
+
+  return jsonResponse({
+    answer: isInsufficientEvidenceAnswer(deep)
+      ? "I looked deeper, but I still do not see evidence about that."
+      : deep,
+    preface: "Let me look deeper.",
+    evidence: deepEvidence,
+    evidence_depth: "deep",
+    deep_model: config.deepLiteRtModel,
+    timings: {
+      evidence_ms: evidenceResult.durationMs,
+      deep_evidence_ms: deepEvidenceResult.durationMs,
+      llm_ms: Math.round(performance.now() - llmStarted),
+    },
+  });
+}
+
+async function fetchConverseAnswer(options: {
+  config: VoiceReviewConfig;
+  fetchImpl: FetchLike;
+  model: string;
+  messages: Array<{ role: "system" | "user"; content: string }>;
+}): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+  const timeout = setTimeout(() => controller.abort(), options.config.requestTimeoutMs);
   try {
-    const response = await fetchImpl(config.liteRtUrl, {
+    const response = await options.fetchImpl(options.config.liteRtUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        model: config.liteRtModel,
-        messages,
+        model: options.model,
+        messages: options.messages,
         temperature: 0,
         max_tokens: 220,
         stream: false,
@@ -1219,18 +1475,22 @@ async function handleConverse(
       throw new Error(`LiteRT-LM failed: ${response.status} ${response.statusText}`);
     }
     const raw = await response.json();
-    const answer = extractChatContent(raw).replace(/\s+/g, " ").trim();
-    return jsonResponse({
-      answer,
-      evidence,
-      timings: {
-        evidence_ms: evidenceResult.durationMs,
-        llm_ms: Math.round(performance.now() - llmStarted),
-      },
-    });
+    return extractChatContent(raw).replace(/\s+/g, " ").trim();
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function isInsufficientEvidenceAnswer(answer: string): boolean {
+  const normalized = answer.trim().toLowerCase();
+  return (
+    normalized === "need_deeper_evidence" ||
+    normalized.includes("need_deeper_evidence") ||
+    normalized.includes("i don't see evidence") ||
+    normalized.includes("i don’t see evidence") ||
+    normalized.includes("provided snippets") ||
+    normalized.includes("not enough evidence")
+  );
 }
 
 async function handleTranscribe(
@@ -1321,6 +1581,16 @@ async function handleTts(
   const started = performance.now();
   const id = crypto.randomUUID();
   const mp3Path = join(config.tempDir, `${id}.mp3`);
+  const metadataPath = join(config.tempDir, `${id}.meta.ndjson`);
+  const text = humanizeSpokenText(body.text).slice(0, 4000);
+  const voice =
+    typeof body.voice === "string" && isSafeEdgeTtsVoice(body.voice)
+      ? body.voice
+      : config.ttsVoice;
+  const rate =
+    typeof body.rate === "string" && isSafeEdgeTtsRate(body.rate)
+      ? body.rate
+      : config.ttsRate;
   await mkdir(config.tempDir, { recursive: true });
   try {
     const python = resolveBinary("python3", [
@@ -1332,31 +1602,49 @@ async function handleTts(
     const result = await runCommand({
       args: [
         python,
-        "-m",
-        "edge_tts",
-        "--voice",
-        config.ttsVoice,
+        edgeTtsWordsScript(),
         "--text",
-        body.text.slice(0, 4000),
+        text,
+        "--voice",
+        voice,
+        "--rate",
+        rate,
         "--write-media",
         mp3Path,
+        "--write-metadata",
+        metadataPath,
       ],
       cwd: process.cwd(),
       env: processEnv(),
     });
     assertSuccess(result, "edge-tts");
     const bytes = await readFile(mp3Path);
+    const wordBoundaries = parseWordBoundaryMetadata(
+      await readFile(metadataPath, "utf8").catch(() => ""),
+    );
     return new Response(bytes, {
       status: 200,
       headers: {
         "content-type": "audio/mpeg",
         "cache-control": "no-store",
         "x-tts-ms": String(Math.round(performance.now() - started)),
+        "x-word-boundaries": JSON.stringify(wordBoundaries),
       },
     });
   } finally {
-    await rm(mp3Path, { force: true });
+    await Promise.allSettled([
+      rm(mp3Path, { force: true }),
+      rm(metadataPath, { force: true }),
+    ]);
   }
+}
+
+function isSafeEdgeTtsVoice(value: string): boolean {
+  return /^[a-z]{2,3}-[A-Z]{2,3}-[A-Za-z0-9]+Neural$/.test(value);
+}
+
+function isSafeEdgeTtsRate(value: string): boolean {
+  return /^[+-](?:[0-9]|[1-9][0-9]|100)%$/.test(value);
 }
 
 async function runShellCommand(call: CommandCall): Promise<CommandResult> {
@@ -1699,6 +1987,49 @@ function extractChatContent(raw: unknown): string {
   throw new Error("LiteRT response missing message content");
 }
 
+export function parseWordBoundaryMetadata(raw: string): WordBoundary[] {
+  return raw
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parsed = JSON.parse(line);
+      if (!isRecord(parsed) || parsed.type !== "WordBoundary") return null;
+      const offset = Number(parsed.offset);
+      const duration = Number(parsed.duration);
+      const text = typeof parsed.text === "string" ? parsed.text : "";
+      if (!Number.isFinite(offset) || !Number.isFinite(duration) || !text) {
+        return null;
+      }
+      return {
+        offset_ms: Math.round(offset / 10_000),
+        duration_ms: Math.round(duration / 10_000),
+        text,
+      };
+    })
+    .filter((item): item is WordBoundary => Boolean(item));
+}
+
+function normalizeInterruptionContext(value: unknown): InterruptionContext | null {
+  if (!isRecord(value)) return null;
+  const spoken =
+    typeof value.agent_speech_spoken_so_far === "string"
+      ? value.agent_speech_spoken_so_far.trim()
+      : "";
+  const remainder =
+    typeof value.agent_speech_unspoken_remainder === "string"
+      ? value.agent_speech_unspoken_remainder.trim()
+      : "";
+  const interruptedAtMs = Number(value.interrupted_at_ms);
+  if (!spoken && !remainder) return null;
+  if (!Number.isFinite(interruptedAtMs) || interruptedAtMs < 0) return null;
+  return {
+    agent_speech_spoken_so_far: spoken,
+    agent_speech_unspoken_remainder: remainder,
+    interrupted_at_ms: Math.round(interruptedAtMs),
+  };
+}
+
 function parseJsonObject(raw: string): unknown {
   const trimmed = raw.trim();
   const unfenced = trimmed
@@ -1726,6 +2057,10 @@ function driverScript(config: VoiceReviewConfig): string {
 
 function evidenceScript(): string {
   return join(import.meta.dir, "kg_evidence.py");
+}
+
+function edgeTtsWordsScript(): string {
+  return join(import.meta.dir, "../../scripts/edge-tts-words.py");
 }
 
 function driverEnv(config: VoiceReviewConfig): Record<string, string> {
@@ -1877,7 +2212,24 @@ function htmlResponse(html: string): Response {
   });
 }
 
-function renderNaturalConversationPage(defaultCategory: string): string {
+function renderNaturalConversationPage(config: VoiceReviewConfig): string {
+  const defaultCategory = config.defaultCategory;
+  const ttsVoices = [
+    "en-US-GuyNeural",
+    "en-US-JennyNeural",
+    "en-US-AndrewNeural",
+    "en-US-BrianMultilingualNeural",
+    "en-US-AvaNeural",
+    "en-US-AriaNeural",
+  ];
+  const selectedVoice = ttsVoices.includes(config.ttsVoice)
+    ? config.ttsVoice
+    : DEFAULT_CONFIG.ttsVoice;
+  const parsedRate = Number.parseInt(config.ttsRate.replace("%", ""), 10);
+  const selectedRate = Number.isFinite(parsedRate)
+    ? Math.max(-30, Math.min(10, parsedRate))
+    : -8;
+  const selectedRateLabel = `${selectedRate >= 0 ? "+" : ""}${selectedRate}%`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -1922,7 +2274,7 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     h1, h2, h3, p { margin: 0; }
     h1 { font-size: 24px; line-height: 1.1; }
     .sub { margin-top: 5px; color: var(--muted); font-size: 13px; }
-    .top-controls { display: flex; gap: 10px; align-items: center; }
+    .top-controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     select, button {
       font: inherit;
       border: 1px solid var(--line);
@@ -1931,6 +2283,18 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       border-radius: 8px;
     }
     select { padding: 10px 12px; min-width: 190px; }
+    .voice-control {
+      display: grid;
+      gap: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+    .voice-control select { min-width: 180px; padding: 8px 10px; }
+    .voice-control input[type="range"] { width: 150px; accent-color: var(--accent); }
+    .rate-row { display: flex; gap: 7px; align-items: center; }
+    output { min-width: 34px; color: var(--ink); text-transform: none; }
     button.session {
       min-width: 132px;
       padding: 10px 14px;
@@ -2129,6 +2493,10 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     .turn.agent { border-left: 4px solid var(--accent); }
     .turn.user { border-left: 4px solid var(--blue); }
     .turn.system { border-left: 4px solid var(--amber); }
+    .turn.is-paused {
+      opacity: 0.58;
+      background: #f7f8f9;
+    }
     .turn-label {
       color: var(--muted);
       font-size: 11px;
@@ -2144,11 +2512,42 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       overflow: hidden;
     }
     .progress > div { height: 100%; width: 0%; background: var(--green); transition: width 160ms ease; }
+    details.evidence {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: #fbfcfd;
+    }
+    details.evidence summary {
+      cursor: pointer;
+      font-weight: 900;
+      color: var(--muted);
+      list-style-position: inside;
+    }
+    .evidence-body {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .evidence-item {
+      border-top: 1px solid var(--line);
+      padding-top: 8px;
+      overflow-wrap: anywhere;
+    }
+    .resume-link {
+      color: var(--blue);
+      font-weight: 900;
+      text-decoration: none;
+      cursor: pointer;
+    }
     audio { display: none; }
     @media (max-width: 860px) {
       header { grid-template-columns: 1fr; align-items: start; }
       .top-controls { width: 100%; justify-content: space-between; }
       select { min-width: 0; flex: 1; }
+      .voice-control { flex: 1 1 160px; }
       main { grid-template-columns: 1fr; }
       .phase-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     }
@@ -2169,6 +2568,22 @@ function renderNaturalConversationPage(defaultCategory: string): string {
           )
           .join("")}
       </select>
+      <label class="voice-control">Voice
+        <select id="ttsVoice" aria-label="TTS voice">
+          ${ttsVoices
+            .map(
+              (voice) =>
+                `<option value="${voice}"${voice === selectedVoice ? " selected" : ""}>${voice}</option>`,
+            )
+            .join("")}
+        </select>
+      </label>
+      <label class="voice-control">Rate
+        <span class="rate-row">
+          <input id="ttsRate" type="range" min="-30" max="10" step="1" value="${selectedRate}" aria-label="TTS rate">
+          <output id="ttsRateValue">${selectedRateLabel}</output>
+        </span>
+      </label>
       <button id="sessionButton" class="session" type="button">Start session</button>
     </div>
   </header>
@@ -2222,7 +2637,19 @@ function renderNaturalConversationPage(defaultCategory: string): string {
 
       <section class="band">
         <h3>Conversation</h3>
+        <div id="pausedUtterance" class="turn agent is-paused" aria-label="paused utterance" hidden>
+          <div class="turn-label">paused utterance · <a id="resumePlayback" class="resume-link" href="#">resume</a></div>
+          <div id="pausedText"></div>
+        </div>
         <div id="turnLog" class="log" aria-live="polite"></div>
+      </section>
+
+      <section class="band">
+        <details id="evidencePanel" class="evidence">
+          <summary>Evidence</summary>
+          <div id="evidenceStatus" class="small">No evidence fetched.</div>
+          <div id="evidenceBody" class="evidence-body"></div>
+        </details>
       </section>
 
       <section class="band">
@@ -2259,7 +2686,7 @@ function renderNaturalConversationPage(defaultCategory: string): string {
         settleProgress: 0,
         showSettlingRing: false,
         playbackSpeechFrames: 0,
-        cancelPlayback: false,
+        pausePlayback: false,
         turnTaken: false
       };
     }
@@ -2267,7 +2694,7 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     function advanceTurnTakingFrame(current, frame) {
       const state = Object.assign({}, current, {
         config: Object.assign({}, current.config),
-        cancelPlayback: false,
+        pausePlayback: false,
         turnTaken: false
       });
       const speech = Boolean(frame.speech);
@@ -2281,7 +2708,7 @@ function renderNaturalConversationPage(defaultCategory: string): string {
             state.settleProgress = 0;
             state.showSettlingRing = false;
             state.playbackSpeechFrames = 0;
-            state.cancelPlayback = true;
+            state.pausePlayback = true;
           }
         } else {
           state.playbackSpeechFrames = 0;
@@ -2394,6 +2821,9 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     const $ = (id) => document.getElementById(id);
     const sessionButton = $("sessionButton");
     const category = $("category");
+    const ttsVoice = $("ttsVoice");
+    const ttsRate = $("ttsRate");
+    const ttsRateValue = $("ttsRateValue");
     const audio = $("audio");
     let sessionActive = false;
     let current = null;
@@ -2420,6 +2850,8 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     };
     let turnState = createTurnTakingState();
     let activePlayback = null;
+    let pausedUtterance = null;
+    let pendingInterruption = null;
     let heldTranscript = "";
     let conversationHistory = [];
     let healthRetryTimer = null;
@@ -2442,6 +2874,61 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       const node = $("vadMode");
       node.textContent = mode === "basic" ? "basic mode" : mode === "silero" ? "Silero VAD" : detail || "VAD pending";
       node.classList.toggle("basic", mode === "basic");
+    }
+
+    function selectedTtsVoice() {
+      return ttsVoice?.value || "en-US-GuyNeural";
+    }
+
+    function selectedTtsRate() {
+      const value = Number(ttsRate?.value || -8);
+      const prefix = value >= 0 ? "+" : "";
+      return prefix + String(value) + "%";
+    }
+
+    function updateTtsRateLabel() {
+      if (ttsRateValue) ttsRateValue.textContent = selectedTtsRate();
+    }
+
+    function splitInterruptedSpeech(text, wordBoundaries, interruptedAtMs) {
+      const words = String(text || "").trim().split(/\\s+/).filter(Boolean);
+      const safeInterruptedAtMs = Math.max(0, Math.round(interruptedAtMs || 0));
+      let spokenWordCount = 0;
+      if (Array.isArray(wordBoundaries) && wordBoundaries.length) {
+        spokenWordCount = wordBoundaries.filter((word) => Number(word.offset_ms || 0) <= safeInterruptedAtMs).length;
+      } else {
+        const approximateChars = Math.floor(safeInterruptedAtMs * 0.013);
+        let chars = 0;
+        for (const word of words) {
+          const next = chars + word.length + 1;
+          if (next > approximateChars) break;
+          spokenWordCount += 1;
+          chars = next;
+        }
+      }
+      spokenWordCount = Math.max(0, Math.min(words.length, spokenWordCount));
+      return {
+        agent_speech_spoken_so_far: words.slice(0, spokenWordCount).join(" "),
+        agent_speech_unspoken_remainder: words.slice(spokenWordCount).join(" "),
+        interrupted_at_ms: safeInterruptedAtMs
+      };
+    }
+
+    function humanizeSpokenText(input) {
+      return String(input || "")
+        .replace(/<\\/?[^>]+>/g, "")
+        .replace(/^#{1,6}\\s*/gm, "")
+        .replace(/^\\s*[-*]\\s+/gm, "")
+        .replace(/\\brt-[a-z0-9-]{6,}\\b/gi, "")
+        .replace(/\\bchunk\\s+\\d+\\b/gi, "")
+        .replace(/\\btype=[a-z0-9_-]+:?\\s*/gi, "")
+        .replace(/_/g, " ")
+        .replace(/[ \\t]*\\n+[ \\t]*/g, ". ")
+        .replace(/\\s+([.,:;!?])/g, "$1")
+        .replace(/:\\s*\\./g, ".")
+        .replace(/\\.\\s*\\./g, ".")
+        .replace(/\\s+/g, " ")
+        .trim();
     }
 
     async function api(path, options = {}) {
@@ -2482,7 +2969,8 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     async function endSession() {
       sessionActive = false;
       clearTimeout(healthRetryTimer);
-      cancelPlayback();
+      stopActivePlayback();
+      clearPausedUtterance();
       if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
       mediaRecorder = null;
       if (processor) processor.disconnect();
@@ -2661,15 +3149,22 @@ function renderNaturalConversationPage(defaultCategory: string): string {
     }
 
     function handleVadFrame(speech) {
-      if (!sessionActive || processingTurn) return;
+      if (!sessionActive) return;
       const previousPhase = turnState.phase;
       turnState = advanceTurnTakingFrame(turnState, { speech });
       renderPhase();
 
-      if (turnState.cancelPlayback) {
-        cancelPlayback();
+      if (turnState.pausePlayback) {
+        pendingInterruption = pausePlaybackForInterruption();
         beginTurnCapture();
         setStatus("LISTENING");
+        return;
+      }
+      if (processingTurn && !turnState.pausePlayback) {
+        if (speech && !collectingTurn) {
+          beginTurnCapture();
+          setStatus("LISTENING");
+        }
         return;
       }
       if (speech && (turnState.phase === "LISTENING" || previousPhase === "THINKING")) {
@@ -2735,17 +3230,20 @@ function renderNaturalConversationPage(defaultCategory: string): string {
         }
 
         const transcriptForInterpret = pause.transcript;
+        const interruptionForTurn = pendingInterruption;
         const interpretResponse = await api("/api/interpret", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             transcript: transcriptForInterpret,
             cluster: current,
-            understanding
+            understanding,
+            interruption: interruptionForTurn
           })
         });
         const interpreted = await interpretResponse.json();
-        await handleInterpretation(interpreted.decision, transcriptForInterpret);
+        await handleInterpretation(interpreted.decision, transcriptForInterpret, interruptionForTurn);
+        if (pendingInterruption === interruptionForTurn) pendingInterruption = null;
       } catch (error) {
         showLegFailure(error.message.includes("LiteRT") ? "brain offline — retrying" : "Turn failed: " + error.message);
       } finally {
@@ -2753,9 +3251,9 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       }
     }
 
-    async function handleInterpretation(decision, transcript) {
+    async function handleInterpretation(decision, transcript, interruption) {
       if (decision.action === "question") {
-        await answerQuestion(decision.question || transcript);
+        await answerQuestion(decision.question || transcript, interruption);
         return;
       }
 
@@ -2775,21 +3273,29 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       await recordDecision(terminal);
     }
 
-    async function answerQuestion(question) {
+    async function answerQuestion(question, interruption = null) {
+      setEvidenceStatus("checking evidence");
       const response = await api("/api/converse", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           question,
           cluster: current,
-          history: conversationHistory
+          history: conversationHistory,
+          interruption
         })
       });
       const body = await response.json();
       const answer = String(body.answer || "I don't see evidence about that").trim();
+      if (body.preface) {
+        setEvidenceStatus("fetching deeper evidence");
+        addTurn("system", "system", String(body.preface));
+        await speakAgent(String(body.preface), { log: false });
+      }
+      renderEvidence(body.evidence, body.evidence_depth || "shallow");
       conversationHistory.push({ question, answer });
       addTurn("agent", "agent", answer);
-      await speakAgent(answer);
+      await speakAgent(answer, { log: false });
     }
 
     async function recordDecision(decision) {
@@ -2813,43 +3319,34 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       return "Decision recorded.";
     }
 
-    async function speakAgent(text) {
+    async function speakAgent(text, options = {}) {
       if (!sessionActive || !text) return "skipped";
-      cancelPlayback();
+      stopActivePlayback();
       turnState.phase = "SPEAKING";
       turnState.playbackSpeechFrames = 0;
       renderPhase();
-      addTurn("agent", "agent", text);
+      const displayText = String(text);
+      const spokenText = humanizeSpokenText(displayText);
+      if (options.log !== false) addTurn("agent", "agent", displayText);
       try {
         const response = await api("/api/tts", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ text })
+          body: JSON.stringify({
+            text: spokenText,
+            voice: selectedTtsVoice(),
+            rate: selectedTtsRate()
+          })
         });
+        const wordBoundaries = JSON.parse(response.headers.get("x-word-boundaries") || "[]");
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
-        audio.src = url;
-        setStatus("SPEAKING");
-        return await new Promise((resolve) => {
-          const playback = { url, resolve };
-          activePlayback = playback;
-          const cleanup = (result) => {
-            audio.removeEventListener("ended", ended);
-            audio.removeEventListener("error", failed);
-            URL.revokeObjectURL(url);
-            if (activePlayback === playback) activePlayback = null;
-            if (turnState.phase === "SPEAKING") {
-              turnState = createTurnTakingState();
-              renderPhase();
-              setStatus("LISTENING");
-            }
-            resolve(result);
-          };
-          const ended = () => cleanup("ended");
-          const failed = () => cleanup("failed");
-          audio.addEventListener("ended", ended, { once: true });
-          audio.addEventListener("error", failed, { once: true });
-          audio.play().catch(() => cleanup("failed"));
+        return await playAudioUrl({
+          url,
+          displayText,
+          spokenText,
+          wordBoundaries,
+          startTime: 0
         });
       } catch (error) {
         showLegFailure("TTS failed: " + error.message);
@@ -2859,7 +3356,52 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       }
     }
 
-    function cancelPlayback() {
+    function playAudioUrl(playbackInput) {
+      const { url, displayText, spokenText, wordBoundaries, startTime } = playbackInput;
+      audio.src = url;
+      setStatus("SPEAKING");
+      turnState.phase = "SPEAKING";
+      turnState.playbackSpeechFrames = 0;
+      renderPhase();
+      return new Promise((resolve) => {
+        const playback = {
+          url,
+          resolve,
+          displayText,
+          spokenText,
+          wordBoundaries: Array.isArray(wordBoundaries) ? wordBoundaries : [],
+          cleanup: null
+        };
+        const cleanup = (result, keepUrl = false) => {
+          audio.removeEventListener("ended", ended);
+          audio.removeEventListener("error", failed);
+          if (!keepUrl) URL.revokeObjectURL(url);
+          if (activePlayback === playback) activePlayback = null;
+          if (turnState.phase === "SPEAKING") {
+            turnState = createTurnTakingState();
+            renderPhase();
+            setStatus("LISTENING");
+          }
+          resolve(result);
+        };
+        playback.cleanup = cleanup;
+        activePlayback = playback;
+        const ended = () => cleanup("ended");
+        const failed = () => cleanup("failed");
+        const start = () => {
+          try {
+            if (startTime) audio.currentTime = startTime;
+          } catch (_error) {}
+          audio.play().catch(() => cleanup("failed"));
+        };
+        audio.addEventListener("ended", ended, { once: true });
+        audio.addEventListener("error", failed, { once: true });
+        if (audio.readyState >= 1) start();
+        else audio.addEventListener("loadedmetadata", start, { once: true });
+      });
+    }
+
+    function stopActivePlayback() {
       if (!activePlayback && audio.paused) return "none";
       const playback = activePlayback;
       audio.pause();
@@ -2867,14 +3409,66 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       audio.src = "";
       audio.load();
       if (playback) {
-        URL.revokeObjectURL(playback.url);
-        playback.resolve("cancelled");
-        activePlayback = null;
+        playback.cleanup("stopped");
       }
       turnState.phase = "LISTENING";
       turnState.playbackSpeechFrames = 0;
       renderPhase();
-      return "cancelled";
+      return "stopped";
+    }
+
+    function pausePlaybackForInterruption() {
+      if (!activePlayback) return null;
+      const playback = activePlayback;
+      const interruptedAtMs = Math.max(0, Math.round((audio.currentTime || 0) * 1000));
+      audio.pause();
+      const interruption = splitInterruptedSpeech(
+        playback.spokenText,
+        playback.wordBoundaries,
+        interruptedAtMs
+      );
+      pausedUtterance = {
+        url: playback.url,
+        currentTime: audio.currentTime || 0,
+        displayText: playback.displayText,
+        spokenText: playback.spokenText,
+        wordBoundaries: playback.wordBoundaries,
+        interruption
+      };
+      playback.cleanup("paused", true);
+      renderPausedUtterance();
+      return interruption;
+    }
+
+    function renderPausedUtterance() {
+      if (!pausedUtterance) {
+        $("pausedUtterance").hidden = true;
+        $("pausedText").textContent = "";
+        return;
+      }
+      $("pausedUtterance").hidden = false;
+      $("pausedText").textContent = pausedUtterance.displayText;
+    }
+
+    function clearPausedUtterance() {
+      if (pausedUtterance?.url) URL.revokeObjectURL(pausedUtterance.url);
+      pausedUtterance = null;
+      renderPausedUtterance();
+    }
+
+    async function resumePausedUtterance() {
+      if (!sessionActive || !pausedUtterance) return;
+      stopActivePlayback();
+      const paused = pausedUtterance;
+      pausedUtterance = null;
+      renderPausedUtterance();
+      await playAudioUrl({
+        url: paused.url,
+        displayText: paused.displayText,
+        spokenText: paused.spokenText,
+        wordBoundaries: paused.wordBoundaries,
+        startTime: paused.currentTime
+      });
     }
 
     async function loadNext(play) {
@@ -2885,6 +3479,10 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       currentSpeak = body.speak || "";
       conversationHistory = [];
       heldTranscript = "";
+      pendingInterruption = null;
+      clearPausedUtterance();
+      setEvidenceStatus("No evidence fetched.");
+      $("evidenceBody").innerHTML = "";
       if (!current) {
         $("clusterId").textContent = "Complete";
         $("stem").textContent = "No cluster";
@@ -2936,6 +3534,29 @@ function renderNaturalConversationPage(defaultCategory: string): string {
         (unresolved.length
           ? "Resolve " + unresolved.map((member) => member.name + " (" + member.type + ")").join(" vs ") + "."
           : "All members resolved.");
+    }
+
+    function setEvidenceStatus(text) {
+      $("evidenceStatus").textContent = text;
+    }
+
+    function renderEvidence(evidence, depth) {
+      const members = Array.isArray(evidence?.members) ? evidence.members : [];
+      $("evidenceStatus").textContent = depth === "deep" ? "deeper evidence fetched" : "evidence fetched";
+      $("evidenceBody").innerHTML = members.map((member) => {
+        const snippets = Array.isArray(member.snippets) ? member.snippets : [];
+        const rows = snippets.map((snippet) =>
+          "<div class='evidence-item'>" +
+          "<strong>" + escapeHtml(member.name || member.id) + "</strong> " +
+          "<span>" + escapeHtml(member.type || "") + "</span><br>" +
+          "<span>" + escapeHtml(snippet.chunk_id || "") + "</span> · " +
+          "<span>" + escapeHtml(snippet.project || "unknown") + "</span> · " +
+          "<span>" + escapeHtml(snippet.content_type || "unknown") + "</span><br>" +
+          "<span>" + escapeHtml(snippet.text || "") + "</span>" +
+          "</div>"
+        ).join("");
+        return rows || "<div class='evidence-item'>" + escapeHtml(member.name || member.id) + ": no snippets</div>";
+      }).join("");
     }
 
     function addTurn(kind, label, text) {
@@ -3011,6 +3632,13 @@ function renderNaturalConversationPage(defaultCategory: string): string {
       await loadNext(false).catch((error) => showLegFailure(error.message));
     });
 
+    ttsRate?.addEventListener("input", updateTtsRateLabel);
+    $("resumePlayback").addEventListener("click", async (event) => {
+      event.preventDefault();
+      await resumePausedUtterance();
+    });
+
+    updateTtsRateLabel();
     renderPhase();
   </script>
 </body>

@@ -614,6 +614,8 @@ describe("VoiceReview web server helpers", () => {
       dbPath: "/tmp/fixture.db",
       members: cantaloupeCluster.members,
       perMember: 2,
+      question: "what context exists around the hiring manager",
+      deep: true,
     });
 
     expect(args).toEqual([
@@ -625,6 +627,9 @@ describe("VoiceReview web server helpers", () => {
       JSON.stringify(cantaloupeCluster.members),
       "--per-member",
       "2",
+      "--question",
+      "what context exists around the hiring manager",
+      "--deep",
     ]);
   });
 
@@ -840,7 +845,7 @@ describe("VoiceReview web server helpers", () => {
               {
                 message: {
                   content:
-                    "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+                    "The company member has one shown snippet about the hiring manager liking the candidate story.",
                 },
               },
             ],
@@ -869,11 +874,176 @@ describe("VoiceReview web server helpers", () => {
     expect(requestedBody.messages[1].content).toContain("chunk-company");
     expect(body).toMatchObject({
       answer:
-        "The company member has one shown snippet about the hiring manager liking the candidate story. I don't see more evidence than that in the provided snippets.",
+        "The company member has one shown snippet about the hiring manager liking the candidate story.",
       evidence,
+      evidence_depth: "shallow",
       timings: { evidence_ms: 7 },
     });
     expect(body.timings.llm_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("runs deeper BrainLayer evidence search instead of dead-ending on thin snippets", async () => {
+    const shallowEvidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "thin-company",
+              project: "coach",
+              content_type: "summary",
+              source: "brainlayer",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "thin context",
+              text: "Cantaloupe company summary.",
+            },
+          ],
+        },
+      ],
+    };
+    const deepEvidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "deep-company",
+              project: "coach",
+              content_type: "user_message",
+              source: "brainlayer",
+              created_at: "2026-03-11T07:38:09.956Z",
+              relevance: 0.72,
+              context: "full chunk context",
+              text: "The full BrainLayer chunk says the Cantaloupe hiring manager liked the candidate story and wanted follow-up.",
+            },
+          ],
+        },
+      ],
+    };
+    const calls: CommandCall[] = [];
+    const fetchBodies: any[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        brainlayerDbPath: "/tmp/fixture.db",
+        deepLiteRtModel: "gemma4-12b,gpu",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return commandResult(calls.length === 1 ? shallowEvidence : deepEvidence);
+      },
+      fetchImpl: async (_url, init) => {
+        const requestBody = JSON.parse(String(init?.body));
+        fetchBodies.push(requestBody);
+        const content =
+          fetchBodies.length === 1
+            ? "I don't see evidence about that in the provided snippets."
+            : "The deeper BrainLayer context says the hiring manager liked the candidate story and wanted follow-up.";
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content } }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: "what was the actual context around the hiring manager?",
+          cluster: cantaloupeCluster,
+        }),
+      }),
+    );
+
+    const body = await response.json();
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1].args).toContain("--deep");
+    expect(calls[1].args).toContain("--question");
+    expect(calls[1].args).toContain(
+      "what was the actual context around the hiring manager?",
+    );
+    expect(fetchBodies).toHaveLength(2);
+    expect(fetchBodies[0].model).toBe(DEFAULT_CONFIG.liteRtModel);
+    expect(fetchBodies[1].model).toBe("gemma4-12b,gpu");
+    expect(fetchBodies[1].messages[1].content).toContain("deep-company");
+    expect(body.answer).toBe(
+      "The deeper BrainLayer context says the hiring manager liked the candidate story and wanted follow-up.",
+    );
+    expect(body.preface).toBe("Let me look deeper.");
+    expect(body.evidence_depth).toBe("deep");
+    expect(body.deep_model).toBe("gemma4-12b,gpu");
+    expect(body.evidence).toEqual(deepEvidence);
+    expect(body.timings.evidence_ms).toBe(12);
+    expect(body.timings.deep_evidence_ms).toBe(12);
+  });
+
+  it("serves TTS audio with edge-tts word-boundary metadata and configurable cadence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-test-"));
+    const calls: CommandCall[] = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          const mediaPath = call.args[call.args.indexOf("--write-media") + 1];
+          const metadataPath =
+            call.args[call.args.indexOf("--write-metadata") + 1];
+          await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+          await writeFile(
+            metadataPath,
+            [
+              JSON.stringify({
+                type: "WordBoundary",
+                offset: 0,
+                duration: 1000000,
+                text: "Hello",
+              }),
+              JSON.stringify({
+                type: "WordBoundary",
+                offset: 1500000,
+                duration: 1000000,
+                text: "world",
+              }),
+            ].join("\n"),
+          );
+          return commandResult("");
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-12%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py"))).toBe(
+        true,
+      );
+      expect(calls[0].args).toContain("--write-metadata");
+      expect(calls[0].args).toContain("en-US-GuyNeural");
+      expect(calls[0].args).toContain("-12%");
+      expect(
+        JSON.parse(response.headers.get("x-word-boundaries") || "[]"),
+      ).toEqual([
+        { offset_ms: 0, duration_ms: 100, text: "Hello" },
+        { offset_ms: 150, duration_ms: 100, text: "world" },
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("normalizes legacy LiteRT action names to dashboard action names", () => {
