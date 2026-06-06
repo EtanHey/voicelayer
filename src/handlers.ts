@@ -7,6 +7,7 @@
 
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
 import {
+  assertSpeakerClear,
   speak,
   getHistoryEntry,
   playAudioNonBlocking,
@@ -280,6 +281,11 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
   const converseFlow = async (): Promise<McpResult> => {
+    // V1 policy: refuse instead of queueing while the user is recording.
+    // Queueing a question would make the eventual prompt stale and can still
+    // leak audio if the recording state changes while the caller waits.
+    assertSpeakerClear();
+
     // Wait for all queued playback to finish (P0-2: awaits full queue)
     await awaitCurrentPlayback();
 
@@ -392,6 +398,18 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
       formatError(
         "replay",
         `Audio file missing: ${entry.file}. It may have been cleaned up.`,
+      ),
+      true,
+    );
+  }
+
+  try {
+    assertSpeakerClear();
+  } catch (err) {
+    return textResult(
+      formatError(
+        "replay",
+        err instanceof Error ? err.message : String(err),
       ),
       true,
     );

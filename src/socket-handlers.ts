@@ -88,10 +88,18 @@ export function handleSocketCommand(
         }
         // Idle forces VoiceBar remount for same-text replay
         broadcast({ type: "state", state: "idle" });
-        playAudioNonBlocking(entry.file, {
-          text: entry.text.slice(0, 2000),
-          voice: entry.voice,
-        });
+        try {
+          playAudioNonBlocking(entry.file, {
+            text: entry.text.slice(0, 2000),
+            voice: entry.voice,
+          });
+        } catch (err) {
+          return buildAck(
+            command,
+            "reject",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         return buildAck(command, "accept");
       }
       return buildAck(command, "noop", "nothing to replay");

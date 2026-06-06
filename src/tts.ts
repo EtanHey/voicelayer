@@ -50,10 +50,18 @@ import type {
 import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
+import { getEffectiveRecordingState } from "./recording-state";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
 const RING_BUFFER_SIZE = 20;
+export const SPEAKER_OUTPUT_REFUSED_MESSAGE =
+  "user is recording — speaker output refused";
+
+export function assertSpeakerClear(): void {
+  if (getEffectiveRecordingState() === "idle") return;
+  throw new Error(SPEAKER_OUTPUT_REFUSED_MESSAGE);
+}
 
 // --- Voice Profiles ---
 
@@ -464,15 +472,24 @@ async function playClonedAudio(
     onPlaybackStart?: (startedAtMs: number) => void;
   },
 ): Promise<void> {
+  assertSpeakerClear();
   addToHistory(text, ttsFile, voiceLabel);
   const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
-  const proc = playAudioNonBlocking(ttsFile, {
-    text: speakingText,
-    voice: resolvedVoice,
-    priority: playbackPriorityForMode(options?.mode),
-    durationMs,
-    onStarted: options?.onPlaybackStart,
-  });
+  let proc: PlaybackHandle;
+  try {
+    proc = playAudioNonBlocking(ttsFile, {
+      text: speakingText,
+      voice: resolvedVoice,
+      priority: playbackPriorityForMode(options?.mode),
+      durationMs,
+      onStarted: options?.onPlaybackStart,
+    });
+  } catch (err) {
+    try {
+      unlinkSync(ttsFile);
+    } catch {}
+    throw err;
+  }
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
@@ -646,6 +663,22 @@ class PlaybackQueueManager {
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
       if (next.expiresAt <= Date.now()) {
+        completeJob(next);
+        continue;
+      }
+
+      try {
+        assertSpeakerClear();
+      } catch (err) {
+        broadcast({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+          recoverable: true,
+        });
+        if (this.depth() === 0) {
+          broadcast({ type: "state", state: "idle", source: "playback" });
+        }
+        this.emitQueueSnapshot();
         completeJob(next);
         continue;
       }
@@ -861,6 +894,7 @@ export function playAudioNonBlocking(
   audioFile: string,
   metadata?: PlaybackMetadata,
 ): PlaybackHandle {
+  assertSpeakerClear();
   return playbackQueueManager.enqueue(audioFile, metadata);
 }
 
@@ -924,6 +958,7 @@ export async function speak(
   options?: TextToSpeechOptions,
 ): Promise<TextToSpeechResult> {
   if (!text?.trim()) return {};
+  assertSpeakerClear();
 
   // SSML injection defense — strip tags before any TTS engine
   text = sanitizeTtsText(text);
@@ -1132,20 +1167,29 @@ async function speakWithEdgeTTS(
     } catch {}
   }
 
+  assertSpeakerClear();
   addToHistory(text, ttsFile, voice);
 
   // Pass metadata to queue — broadcasting happens when audio actually starts
-  const proc = playAudioNonBlocking(ttsFile, {
-    text: text.slice(0, 2000),
-    voice,
-    wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
-    priority: playbackPriorityForMode(options?.mode),
-    durationMs:
-      wordBoundaries.length > 0
-        ? inferBoundaryEndMs(wordBoundaries)
-        : undefined,
-    onStarted: options?.onPlaybackStart,
-  });
+  let proc: PlaybackHandle;
+  try {
+    proc = playAudioNonBlocking(ttsFile, {
+      text: text.slice(0, 2000),
+      voice,
+      wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
+      priority: playbackPriorityForMode(options?.mode),
+      durationMs:
+        wordBoundaries.length > 0
+          ? inferBoundaryEndMs(wordBoundaries)
+          : undefined,
+      onStarted: options?.onPlaybackStart,
+    });
+  } catch (err) {
+    try {
+      unlinkSync(ttsFile);
+    } catch {}
+    throw err;
+  }
   proc.exited.then(() => {
     try {
       unlinkSync(ttsFile);
