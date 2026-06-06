@@ -7,12 +7,18 @@
 
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
 import {
+  assertSpeakerClear,
+  isSpeakerOutputRefusedError,
   speak,
   getHistoryEntry,
   playAudioNonBlocking,
   awaitCurrentPlayback,
 } from "./tts";
 import { waitForInput, clearInput } from "./input";
+import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+} from "./recording-state";
 import {
   bookVoiceSession,
   isVoiceBooked,
@@ -280,6 +286,11 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
   const converseFlow = async (): Promise<McpResult> => {
+    // V1 policy: refuse instead of queueing while the user is recording.
+    // Queueing a question would make the eventual prompt stale and can still
+    // leak audio if the recording state changes while the caller waits.
+    assertSpeakerClear();
+
     // Wait for all queued playback to finish (P0-2: awaits full queue)
     await awaitCurrentPlayback();
 
@@ -324,14 +335,21 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     }, outerTimeoutMs);
   });
 
-  // P0-2: catch errors from speak()/waitForInput() — return clean error, broadcast idle
+  // P0-2: catch pipeline errors cleanly; keep active recording UI intact
+  // when v1 refuses voice_ask before question TTS.
   try {
     const result = await Promise.race([converseFlow(), timeoutPromise]);
     clearTimeout(timer!);
     return result;
   } catch (err) {
     clearTimeout(timer!);
-    broadcast({ type: "state", state: "idle" });
+    if (
+      !isSpeakerOutputRefusedError(err) &&
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
+      broadcast({ type: "state", state: "idle" });
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
     return textResult(`[converse] Error: ${message}`, true);
@@ -397,11 +415,33 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
     );
   }
 
+  try {
+    assertSpeakerClear();
+  } catch (err) {
+    return textResult(
+      formatError(
+        "replay",
+        err instanceof Error ? err.message : String(err),
+      ),
+      true,
+    );
+  }
+
   // Play audio non-blocking — pass metadata for queue-aware broadcasting
-  playAudioNonBlocking(entry.file, {
-    text: entry.text.slice(0, 2000),
-    voice: entry.voice,
-  });
+  try {
+    playAudioNonBlocking(entry.file, {
+      text: entry.text.slice(0, 2000),
+      voice: entry.voice,
+    });
+  } catch (err) {
+    return textResult(
+      formatError(
+        "replay",
+        err instanceof Error ? err.message : String(err),
+      ),
+      true,
+    );
+  }
 
   return textResult(formatReplay(index, entry.text));
 }

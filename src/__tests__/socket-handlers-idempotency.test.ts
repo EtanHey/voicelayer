@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { unlinkSync, writeFileSync } from "fs";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleSocketCommand } from "../socket-handlers";
 import * as tts from "../tts";
+
+const REPLAY_FILE = `/tmp/voicelayer-socket-replay-${process.pid}.mp3`;
+const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 describe("socket handler idempotency matrix", () => {
   let stopPlaybackSpy: ReturnType<typeof spyOn>;
@@ -34,8 +38,9 @@ describe("socket handler idempotency matrix", () => {
     recordingStateSpy = spyOn(input, "getRecordingState").mockReturnValue(
       "idle",
     );
+    writeFileSync(REPLAY_FILE, "fake replay");
     historySpy = spyOn(tts, "getHistoryEntry").mockReturnValue({
-      file: "/tmp/replay.mp3",
+      file: REPLAY_FILE,
       text: "latest replay",
       voice: "jenny",
       timestamp: Date.now(),
@@ -59,6 +64,9 @@ describe("socket handler idempotency matrix", () => {
     queueDepthSpy.mockRestore();
     recordingStateSpy.mockRestore();
     historySpy.mockRestore();
+    try {
+      unlinkSync(REPLAY_FILE);
+    } catch {}
     hasRetainedRecordingSpy.mockRestore();
     retranscribeLastCaptureSpy.mockRestore();
   });
@@ -133,6 +141,30 @@ describe("socket handler idempotency matrix", () => {
     expect(calls).toEqual(["stopPlayback", "waitForInput"]);
   });
 
+  it("does not broadcast idle when an accepted record hits a recording conflict", async () => {
+    waitForInputSpy.mockRejectedValue(
+      new Error("Recording already in progress (state: recording)"),
+    );
+
+    const response = handleSocketCommand({
+      cmd: "record",
+      id: "record-late-busy",
+    });
+    await Bun.sleep(0);
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "record-late-busy",
+    });
+    expect(
+      broadcastSpy.mock.calls.filter(
+        ([event]: any[]) => event.type === "state" && event.state === "idle",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("rejects replay while recording without restarting playback", () => {
     recordingStateSpy.mockReturnValue("recording");
 
@@ -147,6 +179,44 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(playAudioSpy).not.toHaveBeenCalled();
     expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("marks accepted replay to remount when playback starts", () => {
+    const response = handleSocketCommand({ cmd: "replay", id: "replay-idle" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "replay",
+      outcome: "accept",
+      id: "replay-idle",
+    });
+    expect(playAudioSpy).toHaveBeenCalledTimes(1);
+    expect((playAudioSpy.mock.calls[0][1] as any).preStartIdle).toBe(true);
+    expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not broadcast idle when replay is refused by the late speaker gate", () => {
+    playAudioSpy.mockImplementation(() => {
+      throw new Error(SPEAKER_REFUSED);
+    });
+
+    const response = handleSocketCommand({
+      cmd: "replay",
+      id: "replay-late-busy",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "replay",
+      outcome: "reject",
+      id: "replay-late-busy",
+      reason: SPEAKER_REFUSED,
+    });
+    expect(
+      broadcastSpy.mock.calls.filter(
+        ([event]: any[]) => event.type === "state" && event.state === "idle",
+      ),
+    ).toHaveLength(0);
   });
 
   it("rejects retranscribe-last while recording without starting a new transcription", () => {

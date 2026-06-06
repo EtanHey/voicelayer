@@ -20,6 +20,7 @@ import {
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import * as socketClient from "../socket-client";
 import * as actualPaths from "../paths";
+import * as recordingState from "../recording-state";
 import { LOCK_FILE } from "../paths";
 import { handleSocketCommand } from "../socket-handlers";
 
@@ -119,6 +120,33 @@ describe("H4: waitForInput broadcasts idle on recordToBuffer error", () => {
     );
     expect(errorBroadcast).toBeDefined();
     expect(errorBroadcast.message).toContain("sox");
+  });
+
+  it("does not broadcast idle when recording starts between waitForInput and recordToBuffer", async () => {
+    blockSox = false;
+    let stateCalls = 0;
+    const stateSpy = spyOn(
+      recordingState,
+      "getEffectiveRecordingState",
+    ).mockImplementation(() => {
+      stateCalls += 1;
+      return stateCalls === 1 ? "idle" : "recording";
+    });
+
+    try {
+      const { waitForInput } = await import("../input");
+
+      await expect(waitForInput(100, "quick", false)).rejects.toThrow(
+        "Recording already in progress (state: recording)",
+      );
+
+      const calls = broadcastSpy.mock.calls.map((c: any) => c[0]);
+      expect(
+        calls.filter((b: any) => b.type === "state" && b.state === "idle"),
+      ).toHaveLength(0);
+    } finally {
+      stateSpy.mockRestore();
+    }
   });
 });
 

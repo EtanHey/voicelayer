@@ -48,4 +48,8 @@ enum VoiceLayerPaths {
     static var retainedRecordingPath: String {
         environmentValue(retainedRecordingOverrideEnvironmentVariable) ?? tmpPath("voicelayer-last-recording.wav")
     }
+
+    static var enforcesSingletonInstance: Bool {
+        environmentValue(socketOverrideEnvironmentVariable) == nil
+    }
 }

@@ -119,6 +119,25 @@ describe("handleConverse resilience — P0-2", () => {
     expect(idles.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("does not broadcast idle when waitForInput() refuses an existing recording", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
+      new Error("Recording already in progress (state: recording)"),
+    );
+
+    const result = await handleConverse({
+      message: "test question",
+      timeout_seconds: 30,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Recording already in progress");
+    const idles = broadcasts.filter(
+      (b: any) => b.type === "state" && b.state === "idle",
+    );
+    expect(idles).toHaveLength(0);
+  });
+
   it("logs warning when VoiceBar is disconnected", async () => {
     const isConnectedSpy = spyOn(socketClient, "isConnected").mockReturnValue(
       false,

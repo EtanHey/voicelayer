@@ -38,6 +38,10 @@ import {
   removeAlias,
   removePromptTerm,
 } from "./stt-vocabulary-store";
+import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+} from "./recording-state";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -86,12 +90,21 @@ export function handleSocketCommand(
         if (isSpeaking) {
           stopPlayback();
         }
-        // Idle forces VoiceBar remount for same-text replay
-        broadcast({ type: "state", state: "idle" });
-        playAudioNonBlocking(entry.file, {
-          text: entry.text.slice(0, 2000),
-          voice: entry.voice,
-        });
+        try {
+          playAudioNonBlocking(entry.file, {
+            text: entry.text.slice(0, 2000),
+            voice: entry.voice,
+            // Idle forces VoiceBar remount for same-text replay, but the queue
+            // must emit it only after the speaker gate accepts playback.
+            preStartIdle: true,
+          });
+        } catch (err) {
+          return buildAck(
+            command,
+            "reject",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         return buildAck(command, "accept");
       }
       return buildAck(command, "noop", "nothing to replay");
@@ -152,7 +165,12 @@ export function handleSocketCommand(
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        broadcast({ type: "state", state: "idle", source: "recording" });
+        if (
+          !isRecordingConflictError(err) &&
+          getEffectiveRecordingState() === "idle"
+        ) {
+          broadcast({ type: "state", state: "idle", source: "recording" });
+        }
       });
       return buildAck(command, "accept");
     }

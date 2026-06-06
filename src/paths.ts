@@ -26,6 +26,7 @@ const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
 const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
 const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
+const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
 /**
@@ -66,6 +67,17 @@ export const STOP_FILE = join(STATE_DIR, `stop-${SESSION_TOKEN}`);
 
 /** Cancel signal file — set alongside STOP_FILE to discard recording (skip transcription). */
 export const CANCEL_FILE = join(STATE_DIR, `cancel-${SESSION_TOKEN}`);
+
+/** Cross-process recording state — lets speaker output gates see VoiceBar captures. */
+export function recordingStateFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return readOverride(
+    RECORDING_STATE_OVERRIDE_ENV,
+    join(STATE_DIR, "recording-state.json"),
+    env,
+  );
+}
 
 /** TTS audio file prefix — each speak() call generates a unique file. */
 export function ttsFilePath(pid: number, counter: number): string {
