@@ -165,6 +165,8 @@ async function createPageHarness(options: {
   };
   const speechCalls: string[] = [];
   const window = {
+    addEventListener() {},
+    removeEventListener() {},
     speechSynthesis: {
       cancel() {
         speechCalls.push("cancel");
@@ -693,6 +695,14 @@ describe("VoiceReview natural conversation redesign", () => {
       html.indexOf("function showLegFailure(message)"),
       html.indexOf("function isAbortError(error)"),
     );
+    const unloadTeardown = html.slice(
+      html.indexOf("function teardownAbandonedSession()"),
+      html.indexOf("function sleep(ms)"),
+    );
+    const eventBindings = html.slice(
+      html.indexOf('sessionButton.addEventListener("click"'),
+      html.indexOf("updateTtsRateLabel();"),
+    );
 
     expect(runtimeState).toContain("let sessionAbortController = null;");
     expect(teardown).toContain("sessionAbortController.abort();");
@@ -706,6 +716,12 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(teardown).toContain("sessionButton.textContent = \"Start session\";");
     expect(legFailure).toContain("void teardownSessionRuntime");
     expect(legFailure).not.toContain("speakSystemText(text)");
+    expect(unloadTeardown).toContain("teardownSessionRuntime");
+    expect(unloadTeardown).toContain("unload: true");
+    expect(eventBindings).toContain('window.addEventListener("pagehide"');
+    expect(eventBindings).toContain("teardownAbandonedSession");
+    expect(eventBindings).toContain('window.addEventListener("beforeunload"');
+    expect(eventBindings).not.toContain('window.addEventListener("visibilitychange"');
   });
 
   it("gates repeated brain-offline announcements by failures, backoff, and tab visibility", async () => {
@@ -730,7 +746,11 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(runtimeState).toContain("let healthFailureStreak = 0;");
     expect(runtimeState).toContain("let nextHealthAnnouncementAt = 0;");
     expect(runtimeState).toContain("let healthAnnouncementBackoffMs = 3000;");
+    expect(runtimeState).toContain("let healthRetryBackoffMs = 3000;");
+    expect(runtimeState).toContain("let liteRtWorkInFlight = 0;");
+    expect(html).toContain("async function withLiteRtWork(work)");
     expect(healthCheck).toContain("healthFailureStreak += 1;");
+    expect(healthCheck).toContain("if (liteRtWorkInFlight > 0)");
     expect(healthCheck).toContain(
       "if (!silent && canAnnounceHealthFailure())",
     );
@@ -743,5 +763,10 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(announce).toContain('document.visibilityState !== "visible"');
     expect(announce).toContain("nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;");
     expect(announce).toContain("Math.min(60000, healthAnnouncementBackoffMs * 2)");
+    expect(html).toContain("healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);");
+    expect(html).toContain("setTimeout(() => healthCheck(true), healthRetryBackoffMs)");
+    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/interpret\"");
+    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/converse\"");
+    expect(html).toContain("await withLiteRtWork(async () => api(\"/api/tts\"");
   });
 });
