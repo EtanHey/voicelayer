@@ -48,6 +48,13 @@ function initFakeRepo() {
   run(["git", "commit", "-m", "initial"]);
 }
 
+function writeFakeExecutable(name: string, body: string) {
+  const binDir = join(tempRoot, "fake-bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(join(binDir, name), body, { mode: 0o755 });
+  return binDir;
+}
+
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
   initFakeRepo();
@@ -115,5 +122,68 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("no daemon verification required");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
+  });
+
+  test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
+    const changed = join(tempRoot, "changed.txt");
+    const stateFile = join(tempRoot, "pgrep-state");
+    writeFileSync(changed, "src/socket-handlers.ts\n");
+    writeFileSync(stateFile, "before\n");
+
+    const fakeBin = writeFakeExecutable(
+      "pgrep",
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
+  if [ "$(cat "${stateFile}")" = "before" ]; then
+    printf '111\\n'
+  else
+    printf '222\\n'
+  fi
+  exit 0
+fi
+if [ "$1" = "-f" ]; then
+  exit 1
+fi
+exit 1
+`,
+    );
+    writeFakeExecutable(
+      "pkill",
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'after\\n' > "${stateFile}"
+`,
+    );
+    writeFakeExecutable(
+      "launchctl",
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "list" ] && [ "$2" = "com.voicelayer.voicebar" ]; then
+  exit 0
+fi
+exit 1
+`,
+    );
+    writeFakeExecutable("open", "#!/usr/bin/env bash\nexit 0\n");
+    writeFakeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
+
+    const result = run(["bash", scriptPath], {
+      env: {
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_BUILD: "1",
+        VOICELAYER_VERIFY_TESTER: "Unit Test",
+      },
+      input: "Y\nY\n",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("relaunching VoiceBar.app");
+    const artifacts = readdirSync(join(tempRoot, ".verified"));
+    expect(artifacts).toHaveLength(1);
+    const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
+    expect(body).toContain("Verified-Runtime:");
   });
 });

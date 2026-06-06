@@ -8,6 +8,7 @@ DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="${VOICELAYER_VERIFY_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_DIR="$REPO_ROOT/.verified"
 MCP_SOCKET_PATH="${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}"
+VOICEBAR_LAUNCHD_LABEL="com.voicelayer.voicebar"
 FORCE=0
 
 usage() {
@@ -56,9 +57,6 @@ daemon_path_matches() {
     src/process-lock.ts) return 0 ;;
     src/resolve-binary.ts) return 0 ;;
     src/socket-*.ts) return 0 ;;
-    src/socket-client.ts) return 0 ;;
-    src/socket-handlers.ts) return 0 ;;
-    src/socket-protocol.ts) return 0 ;;
     src/voicesdk/*) return 0 ;;
     src/soundlayer/*) return 0 ;;
     src/cli/voicelayer.sh) return 0 ;;
@@ -90,6 +88,44 @@ changed_files() {
   else
     git diff --name-only "$base_ref...HEAD"
   fi
+}
+
+is_voicebar_launchd_managed() {
+  command -v launchctl >/dev/null 2>&1 || return 1
+  launchctl list "$VOICEBAR_LAUNCHD_LABEL" >/dev/null 2>&1
+}
+
+wait_for_old_voicebar_pids_to_exit() {
+  local old_pids="$1"
+  for _ in $(seq 1 100); do
+    local still_running=""
+    for pid in $old_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=1
+        break
+      fi
+    done
+    [ -z "$still_running" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_voicebar_stop() {
+  local old_pids="$1"
+  if is_voicebar_launchd_managed; then
+    printf '[voicelayer-verify] VoiceBar is launchd-managed; waiting for old PID(s) to exit.\n'
+    wait_for_old_voicebar_pids_to_exit "$old_pids"
+    return $?
+  fi
+
+  for _ in $(seq 1 100); do
+    if ! pgrep -x VoiceBar >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
 }
 
 needs_verification=0
@@ -156,13 +192,7 @@ fi
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
   printf '[voicelayer-verify] stopping old VoiceBar process(es)...\n'
   pkill -x VoiceBar 2>/dev/null || true
-  for _ in $(seq 1 100); do
-    if ! pgrep -x VoiceBar >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-  if pgrep -x VoiceBar >/dev/null 2>&1; then
+  if ! wait_for_voicebar_stop "$running_pids"; then
     printf '[voicelayer-verify] VoiceBar did not stop cleanly; no artifact written.\n' >&2
     exit 1
   fi
