@@ -1071,7 +1071,12 @@ export function createVoiceReviewApp(options?: {
       try {
         const url = new URL(request.url);
         if (request.method === "GET" && url.pathname === "/") {
-          return htmlResponse(renderNaturalConversationPage(config));
+          return htmlResponse(
+            renderNaturalConversationPage(
+              config,
+              await loadAvailableCategories(config),
+            ),
+          );
         }
         if (request.method === "GET" && url.pathname === "/models/silero_vad.onnx") {
           return await handleSileroModel();
@@ -2212,7 +2217,44 @@ function htmlResponse(html: string): Response {
   });
 }
 
-function renderNaturalConversationPage(config: VoiceReviewConfig): string {
+const DEFAULT_REVIEW_CATEGORIES = [
+  "diagnosis-flag",
+  "sep-variants",
+  "identical-name",
+  "case-only",
+  "prefix-variants",
+];
+
+async function loadAvailableCategories(config: VoiceReviewConfig): Promise<string[]> {
+  const categories = new Set<string>([
+    config.defaultCategory,
+    ...DEFAULT_REVIEW_CATEGORIES,
+  ]);
+  try {
+    const parsed = JSON.parse(await readFile(config.batchPath, "utf8"));
+    if (isRecord(parsed)) {
+      for (const category of Object.keys(parsed)) {
+        if (category.trim()) categories.add(category);
+      }
+    }
+  } catch {
+    // Keep the page usable with defaults when the batch is unavailable.
+  }
+  return [...categories];
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderNaturalConversationPage(
+  config: VoiceReviewConfig,
+  availableCategories: string[],
+): string {
   const defaultCategory = config.defaultCategory;
   const ttsVoices = [
     "en-US-GuyNeural",
@@ -2561,10 +2603,10 @@ function renderNaturalConversationPage(config: VoiceReviewConfig): string {
     </div>
     <div class="top-controls">
       <select id="category" aria-label="Category">
-        ${["diagnosis-flag", "sep-variants", "identical-name", "case-only", "prefix-variants"]
+        ${availableCategories
           .map(
             (category) =>
-              `<option value="${category}"${category === defaultCategory ? " selected" : ""}>${category}</option>`,
+              `<option value="${escapeHtmlAttribute(category)}"${category === defaultCategory ? " selected" : ""}>${escapeHtmlAttribute(category)}</option>`,
           )
           .join("")}
       </select>
