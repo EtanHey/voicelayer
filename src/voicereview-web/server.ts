@@ -4105,6 +4105,17 @@ function renderNaturalConversationPage(
       void teardownSessionRuntime("", { unload: true });
     }
 
+    function resetAfterBfcacheRestore(event) {
+      if (!event.persisted) return;
+      turnState = createTurnTakingState();
+      renderPhase();
+      sessionButton.disabled = false;
+      sessionButton.textContent = "Start session";
+      sessionButton.classList.remove("is-active");
+      category.disabled = false;
+      if (!sessionActive) setStatus("Session ended.");
+    }
+
     function sleep(ms) {
       return new Promise((resolve) => setTimeout(resolve, ms));
     }
@@ -4130,6 +4141,7 @@ function renderNaturalConversationPage(
 
     window.addEventListener("pagehide", teardownAbandonedSession);
     window.addEventListener("beforeunload", teardownAbandonedSession);
+    window.addEventListener("pageshow", resetAfterBfcacheRestore);
 
     ttsRate?.addEventListener("input", updateTtsRateLabel);
     $("resumePlayback").addEventListener("click", async (event) => {

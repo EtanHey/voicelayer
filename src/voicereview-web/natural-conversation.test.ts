@@ -718,9 +718,14 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(legFailure).not.toContain("speakSystemText(text)");
     expect(unloadTeardown).toContain("teardownSessionRuntime");
     expect(unloadTeardown).toContain("unload: true");
+    expect(unloadTeardown).toContain("function resetAfterBfcacheRestore(event)");
+    expect(unloadTeardown).toContain("if (!event.persisted) return;");
+    expect(unloadTeardown).toContain("renderPhase();");
     expect(eventBindings).toContain('window.addEventListener("pagehide"');
     expect(eventBindings).toContain("teardownAbandonedSession");
     expect(eventBindings).toContain('window.addEventListener("beforeunload"');
+    expect(eventBindings).toContain('window.addEventListener("pageshow"');
+    expect(eventBindings).toContain("resetAfterBfcacheRestore");
     expect(eventBindings).not.toContain('window.addEventListener("visibilitychange"');
   });
 
