@@ -2443,7 +2443,7 @@ function errorMessage(error: unknown): string {
 function isAbortError(error: unknown): boolean {
   if (error instanceof DOMException && error.name === "AbortError") return true;
   if (error instanceof Error && error.name === "AbortError") return true;
-  return String(errorMessage(error)).toLowerCase().includes("aborted");
+  return false;
 }
 
 function abortError(): DOMException {
@@ -3337,7 +3337,7 @@ function renderNaturalConversationPage(
     async function healthCheck(silent) {
       if (liteRtWorkInFlight > 0) {
         $("healthMode").textContent = "brain busy";
-        scheduleHealthRetry();
+        scheduleHealthRetry({ backoff: false });
         return true;
       }
       try {
@@ -3368,11 +3368,13 @@ function renderNaturalConversationPage(
       return true;
     }
 
-    function scheduleHealthRetry() {
+    function scheduleHealthRetry(options = {}) {
       clearTimeout(healthRetryTimer);
       if (!sessionActive) return;
       healthRetryTimer = setTimeout(() => healthCheck(true), healthRetryBackoffMs);
-      healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);
+      if (options.backoff !== false) {
+        healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);
+      }
     }
 
     function showLegFailure(message) {

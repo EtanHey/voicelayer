@@ -1600,6 +1600,38 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("does not classify non-AbortError failures containing aborted as client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-nonabort-"));
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async () => {
+        throw new Error("edge-tts aborted internally before writing audio");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(body.error).toBe("edge-tts aborted internally before writing audio");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("strips structural metadata and repeated prompt segments from spoken TTS text", async () => {
     const spoken = humanizeSpokenText(
       [

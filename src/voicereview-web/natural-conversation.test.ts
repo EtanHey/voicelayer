@@ -751,6 +751,7 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).toContain("async function withLiteRtWork(work)");
     expect(healthCheck).toContain("healthFailureStreak += 1;");
     expect(healthCheck).toContain("if (liteRtWorkInFlight > 0)");
+    expect(healthCheck).toContain("scheduleHealthRetry({ backoff: false });");
     expect(healthCheck).toContain(
       "if (!silent && canAnnounceHealthFailure())",
     );
@@ -764,6 +765,7 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(announce).toContain("nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;");
     expect(announce).toContain("Math.min(60000, healthAnnouncementBackoffMs * 2)");
     expect(html).toContain("healthRetryBackoffMs = Math.min(60000, healthRetryBackoffMs * 2);");
+    expect(html).toContain("if (options.backoff !== false)");
     expect(html).toContain("setTimeout(() => healthCheck(true), healthRetryBackoffMs)");
     expect(html).toContain("await withLiteRtWork(async () => api(\"/api/interpret\"");
     expect(html).toContain("await withLiteRtWork(async () => api(\"/api/converse\"");
