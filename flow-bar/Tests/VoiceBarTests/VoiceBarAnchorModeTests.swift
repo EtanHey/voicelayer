@@ -3,29 +3,47 @@
 import XCTest
 
 final class VoiceBarAnchorModeTests: XCTestCase {
-    func testAnchorPreferencesPersistDefaultModeWhenMissing() {
+    func testAnchorPreferencesPersistDefaultModeWhenMissing() throws {
         let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
 
         let preferences = VoiceBarAnchorPreferences(defaults: defaults)
 
         XCTAssertEqual(preferences.loadAnchorMode(), .follow)
-        XCTAssertEqual(defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey), VoiceBarAnchorMode.follow.rawValue)
+        XCTAssertEqual(
+            defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey),
+            VoiceBarAnchorMode.follow.rawValue
+        )
     }
 
-    func testAnchorPreferencesPersistSelectedModeAndLock() {
+    func testAnchorPreferencesPersistSelectedModeAndRemoveLegacyLockState() throws {
         let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defaults.removePersistentDomain(forName: suiteName)
         let preferences = VoiceBarAnchorPreferences(defaults: defaults)
 
+        defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
         preferences.saveAnchorMode(.bottomCenter)
-        preferences.savePositionLocked(true)
 
         XCTAssertEqual(preferences.loadAnchorMode(), .bottomCenter)
-        XCTAssertTrue(preferences.loadPositionLocked())
-        XCTAssertEqual(defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey), VoiceBarAnchorMode.bottomCenter.rawValue)
+        XCTAssertEqual(
+            defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey),
+            VoiceBarAnchorMode.bottomCenter.rawValue
+        )
+        XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
+    }
+
+    func testAnchorPreferencesMigratesExistingLockKeyOutOfDefaults() throws {
+        let suiteName = "VoiceBarAnchorModeTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defaults.removePersistentDomain(forName: suiteName)
+        defaults.set(VoiceBarAnchorMode.topCenter.rawValue, forKey: VoiceBarAnchorPreferences.anchorModeKey)
+        defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
+        let preferences = VoiceBarAnchorPreferences(defaults: defaults)
+
+        XCTAssertEqual(preferences.loadAnchorMode(), .topCenter)
+        XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
     }
 
     func testVoiceBarDefaultsSupportsIsolatedQASuiteAndParallelOverride() {
@@ -73,7 +91,11 @@ final class VoiceBarAnchorModeTests: XCTestCase {
         )
 
         XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
-        XCTAssertEqual(placement.verticalOffset ?? -1, (24 + (pillSize.height / 2)) / visibleFrame.height, accuracy: 0.001)
+        XCTAssertEqual(
+            placement.verticalOffset ?? -1,
+            (24 + (pillSize.height / 2)) / visibleFrame.height,
+            accuracy: 0.001
+        )
         XCTAssertFalse(placement.followsMouse)
     }
 
@@ -88,4 +110,15 @@ final class VoiceBarAnchorModeTests: XCTestCase {
         XCTAssertTrue(placement.followsMouse)
     }
 
+    func testAnchorModesDefineDragAvailabilityWithoutStandaloneLock() {
+        XCTAssertTrue(VoiceBarAnchorMode.follow.allowsFreeDrag)
+        XCTAssertFalse(VoiceBarAnchorMode.topCenter.allowsFreeDrag)
+        XCTAssertFalse(VoiceBarAnchorMode.bottomCenter.allowsFreeDrag)
+    }
+
+    func testAnchorMenuTitlesPresentFollowModeAsOff() {
+        XCTAssertEqual(VoiceBarAnchorMode.follow.anchorMenuTitle, "Off")
+        XCTAssertEqual(VoiceBarAnchorMode.topCenter.anchorMenuTitle, "Top Center")
+        XCTAssertEqual(VoiceBarAnchorMode.bottomCenter.anchorMenuTitle, "Bottom Center")
+    }
 }

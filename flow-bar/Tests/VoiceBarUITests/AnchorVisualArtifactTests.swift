@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -15,16 +15,15 @@ final class AnchorVisualArtifactTests: XCTestCase {
             withIntermediateDirectories: true
         )
 
-        let states: [(mode: VoiceBarAnchorMode, locked: Bool, slug: String)] = [
-            (.follow, false, "follow-unlocked"),
-            (.bottomCenter, false, "bottom-center-unlocked"),
-            (.topCenter, true, "top-center-locked"),
+        let states: [(mode: VoiceBarAnchorMode, slug: String)] = [
+            (.follow, "follow-mouse"),
+            (.topCenter, "top-center"),
+            (.bottomCenter, "bottom-center"),
         ]
 
         for state in states {
             let controller = PillContextMenuController()
             controller.anchorModeProvider = { state.mode }
-            controller.isPositionLockedProvider = { state.locked }
             let menu = controller.makeMenu()
             let anchorMenu = try XCTUnwrap(menu.items.first { $0.title == "Anchor" }?.submenu)
 
@@ -46,8 +45,6 @@ final class AnchorVisualArtifactTests: XCTestCase {
                     onSelectDevice: { _ in },
                     anchorMode: { state.mode },
                     onSelectAnchorMode: { _ in },
-                    isPositionLocked: { state.locked },
-                    onSetPositionLocked: { _ in },
                     vocabularyPreview: {
                         STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
                     },
@@ -64,8 +61,8 @@ final class AnchorVisualArtifactTests: XCTestCase {
         }
     }
 
-    private func writePNG<Content: View>(
-        _ view: Content,
+    private func writePNG(
+        _ view: some View,
         size: CGSize,
         named name: String,
         in directory: URL

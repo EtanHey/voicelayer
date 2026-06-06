@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -24,48 +24,50 @@ final class DictionaryVisualArtifactTests: XCTestCase {
             ]
         )
 
-        try writePNG(
-            SettingsView(
-                hotkeyEnabled: true,
-                missingPermissions: [],
-                availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
-                selectedDeviceID: { "built-in" },
-                onSelectDevice: { _ in },
-                anchorMode: { .follow },
-                onSelectAnchorMode: { _ in },
-                isPositionLocked: { true },
-                onSetPositionLocked: { _ in },
-                vocabularyPreview: { preview },
-                onAddVocabularyAlias: { _, _ in },
-                onRemoveVocabularyAlias: { _ in },
-                initialTab: .dictionary
+        for scheme in [ColorScheme.light, .dark] {
+            try writePNG(
+                SettingsView(
+                    hotkeyEnabled: true,
+                    missingPermissions: [],
+                    availableDevices: { [MicrophoneDevice(id: "built-in", name: "MacBook Pro Microphone")] },
+                    selectedDeviceID: { "built-in" },
+                    onSelectDevice: { _ in },
+                    anchorMode: { .follow },
+                    onSelectAnchorMode: { _ in },
+                    vocabularyPreview: { preview },
+                    onAddVocabularyAlias: { _, _ in },
+                    onRemoveVocabularyAlias: { _ in },
+                    initialTab: .dictionary
+                )
+                .environment(\.colorScheme, scheme)
+                .frame(width: 520, height: 620),
+                size: CGSize(width: 520, height: 620),
+                named: "settings-dictionary-\(scheme.artifactSlug).png",
+                in: outputDirectory
             )
-            .environment(\.colorScheme, .light)
-            .frame(width: 520, height: 620),
-            size: CGSize(width: 520, height: 620),
-            named: "settings-dictionary.png",
-            in: outputDirectory
-        )
+        }
 
-        try writePNG(
-            DictionaryAddSheetView(
-                draft: STTVocabularyDraft(
-                    correct: "VoiceLayer",
-                    wrong: "voice lair"
-                ),
-                onSave: { _ in },
-                onCancel: {}
+        for scheme in [ColorScheme.light, .dark] {
+            try writePNG(
+                DictionaryAddSheetView(
+                    draft: STTVocabularyDraft(
+                        correct: "VoiceLayer",
+                        wrong: "voice lair"
+                    ),
+                    onSave: { _ in },
+                    onCancel: {}
+                )
+                .environment(\.colorScheme, scheme)
+                .frame(width: 420, height: 240),
+                size: CGSize(width: 420, height: 240),
+                named: "add-to-dictionary-sheet-\(scheme.artifactSlug).png",
+                in: outputDirectory
             )
-            .environment(\.colorScheme, .light)
-            .frame(width: 420, height: 240),
-            size: CGSize(width: 420, height: 240),
-            named: "add-to-dictionary-sheet.png",
-            in: outputDirectory
-        )
+        }
     }
 
-    private func writePNG<Content: View>(
-        _ view: Content,
+    private func writePNG(
+        _ view: some View,
         size: CGSize,
         named name: String,
         in directory: URL
@@ -98,5 +100,15 @@ final class DictionaryVisualArtifactTests: XCTestCase {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+}
+
+private extension ColorScheme {
+    var artifactSlug: String {
+        switch self {
+        case .light: "light"
+        case .dark: "dark"
+        @unknown default: "unknown"
+        }
     }
 }

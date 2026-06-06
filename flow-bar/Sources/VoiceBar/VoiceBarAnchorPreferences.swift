@@ -14,6 +14,7 @@ struct VoiceBarAnchorPreferences {
     func loadAnchorMode() -> VoiceBarAnchorMode {
         let storedValue = defaults.string(forKey: Self.anchorModeKey)
         let mode = VoiceBarAnchorMode(defaultsValue: storedValue)
+        removeLegacyPositionLock()
         if storedValue == nil {
             defaults.set(mode.rawValue, forKey: Self.anchorModeKey)
         }
@@ -22,13 +23,12 @@ struct VoiceBarAnchorPreferences {
 
     func saveAnchorMode(_ mode: VoiceBarAnchorMode) {
         defaults.set(mode.rawValue, forKey: Self.anchorModeKey)
+        removeLegacyPositionLock()
     }
 
-    func loadPositionLocked() -> Bool {
-        defaults.bool(forKey: Self.positionLockedKey)
-    }
-
-    func savePositionLocked(_ locked: Bool) {
-        defaults.set(locked, forKey: Self.positionLockedKey)
+    private func removeLegacyPositionLock() {
+        if defaults.object(forKey: Self.positionLockedKey) != nil {
+            defaults.removeObject(forKey: Self.positionLockedKey)
+        }
     }
 }

@@ -17,7 +17,6 @@ final class PillContextMenuControllerTests: XCTestCase {
     func testMenuIncludesVocabularySubmenuBetweenHistoryAndPaste() throws {
         let controller = PillContextMenuController()
         controller.anchorModeProvider = { .bottomCenter }
-        controller.isPositionLockedProvider = { true }
         controller.transcriptionVocabularyTermsProvider = {
             ["VoiceLayer", "Wispr Flow"]
         }
@@ -59,14 +58,12 @@ final class PillContextMenuControllerTests: XCTestCase {
         let anchorItem = try XCTUnwrap(menu.items.first { $0.title == "Anchor" })
         let anchorSubmenu = try XCTUnwrap(anchorItem.submenu)
         XCTAssertEqual(anchorSubmenu.items.map(\.title), [
-            "Follow Mouse",
-            "Bottom Center",
+            "Off",
             "Top Center",
-            "",
-            "Lock Position",
+            "Bottom Center",
         ])
-        XCTAssertEqual(anchorSubmenu.items[1].state, .on)
-        XCTAssertEqual(anchorSubmenu.items[4].state, .on)
+        XCTAssertEqual(anchorSubmenu.items[2].state, .on)
+        XCTAssertFalse(anchorSubmenu.items.map(\.title).contains("Lock Position"))
     }
 
     func testVocabularySubmenuShowsEmptyStateWhenSnapshotHasNoTermsOrCorrections() throws {
@@ -171,34 +168,45 @@ final class PillContextMenuControllerTests: XCTestCase {
 
         let anchorTitles = menu.items[6].submenu?.items.map(\.title)
         XCTAssertEqual(anchorTitles, [
-            "Follow Mouse",
-            "Bottom Center",
+            "Off",
             "Top Center",
-            "",
-            "Lock Position",
+            "Bottom Center",
         ])
         XCTAssertEqual(menu.items[6].submenu?.items[0].state, .on)
     }
 
-    func testAnchorSubmenuActionsCallHandlers() throws {
+    func testAnchorSubmenuActionsCallOnlyAnchorSelectionHandlers() throws {
         let controller = PillContextMenuController()
         controller.anchorModeProvider = { .follow }
-        controller.isPositionLockedProvider = { false }
         var selectedModes: [VoiceBarAnchorMode] = []
-        var lockValues: [Bool] = []
         controller.onSelectAnchorMode = { selectedModes.append($0) }
-        controller.onSetPositionLocked = { lockValues.append($0) }
 
         let anchorItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Anchor" })
         let submenu = try XCTUnwrap(anchorItem.submenu)
         let bottomCenter = try XCTUnwrap(submenu.items.first { $0.title == "Bottom Center" })
-        let lock = try XCTUnwrap(submenu.items.first { $0.title == "Lock Position" })
 
         _ = bottomCenter.target?.perform(bottomCenter.action, with: bottomCenter)
-        _ = lock.target?.perform(lock.action, with: lock)
 
         XCTAssertEqual(selectedModes, [.bottomCenter])
-        XCTAssertEqual(lockValues, [true])
+        XCTAssertNil(submenu.items.first { $0.title == "Lock Position" })
+    }
+
+    func testAnchorSubmenuHasExactlyOneCheckedStateForEachMode() throws {
+        for mode in VoiceBarAnchorMode.allCases {
+            let controller = PillContextMenuController()
+            controller.anchorModeProvider = { mode }
+
+            let anchorItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Anchor" })
+            let submenu = try XCTUnwrap(anchorItem.submenu)
+            let checkedItems = submenu.items.filter { $0.state == .on }
+
+            XCTAssertEqual(submenu.items.map(\.title), [
+                "Off",
+                "Top Center",
+                "Bottom Center",
+            ])
+            XCTAssertEqual(checkedItems.map(\.title), [mode.anchorMenuTitle])
+        }
     }
 
     func testTranscribeLatestRecordingActionCallsHandler() throws {

@@ -21,7 +21,6 @@ public final class PillContextMenuController: NSObject {
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
     public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
-    public var isPositionLockedProvider: () -> Bool = { false }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
@@ -34,7 +33,6 @@ public final class PillContextMenuController: NSObject {
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
     public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
-    public var onSetPositionLocked: (Bool) -> Void = { _ in }
     public var onQuit: () -> Void = {}
 
     public func makeMenu() -> NSMenu {
@@ -132,9 +130,9 @@ public final class PillContextMenuController: NSObject {
     public func makeAnchorSubmenu() -> NSMenu {
         let menu = NSMenu()
         let selectedMode = anchorModeProvider()
-        for mode in VoiceBarAnchorMode.allCases {
+        for mode in VoiceBarAnchorMode.anchorMenuModes {
             let item = NSMenuItem(
-                title: mode.displayName,
+                title: mode.anchorMenuTitle,
                 action: #selector(handleSelectAnchorMode(_:)),
                 keyEquivalent: ""
             )
@@ -143,17 +141,6 @@ public final class PillContextMenuController: NSObject {
             item.state = mode == selectedMode ? .on : .off
             menu.addItem(item)
         }
-
-        menu.addItem(.separator())
-
-        let lockItem = NSMenuItem(
-            title: "Lock Position",
-            action: #selector(handleTogglePositionLocked(_:)),
-            keyEquivalent: ""
-        )
-        lockItem.target = self
-        lockItem.state = isPositionLockedProvider() ? .on : .off
-        menu.addItem(lockItem)
         return menu
     }
 
@@ -339,10 +326,6 @@ public final class PillContextMenuController: NSObject {
               let mode = VoiceBarAnchorMode(rawValue: rawValue)
         else { return }
         onSelectAnchorMode(mode)
-    }
-
-    @objc private func handleTogglePositionLocked(_ sender: NSMenuItem) {
-        onSetPositionLocked(!isPositionLockedProvider())
     }
 
     @objc private func handleAddSelectionToDictionary() {

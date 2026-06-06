@@ -14,8 +14,6 @@ public struct SettingsView: View {
     public let onSelectDevice: (String) -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
-    public let isPositionLocked: () -> Bool
-    public let onSetPositionLocked: (Bool) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
@@ -25,7 +23,7 @@ public struct SettingsView: View {
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
-    @State private var positionLocked: Bool
+    @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
@@ -41,8 +39,6 @@ public struct SettingsView: View {
         onSelectDevice: @escaping (String) -> Void,
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
         onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
-        isPositionLocked: @escaping () -> Bool = { false },
-        onSetPositionLocked: @escaping (Bool) -> Void = { _ in },
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -60,17 +56,16 @@ public struct SettingsView: View {
         self.onSelectDevice = onSelectDevice
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
-        self.isPositionLocked = isPositionLocked
-        self.onSetPositionLocked = onSetPositionLocked
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        let initialAnchorMode = anchorMode()
         _selectedTab = State(initialValue: initialTab)
-        _selectedAnchorMode = State(initialValue: anchorMode())
-        _positionLocked = State(initialValue: isPositionLocked())
+        _selectedAnchorMode = State(initialValue: initialAnchorMode)
+        _selectedAnchoredMode = State(initialValue: initialAnchorMode == .bottomCenter ? .bottomCenter : .topCenter)
     }
 
     public var body: some View {
@@ -144,34 +139,34 @@ public struct SettingsView: View {
             }
 
             Section("Position") {
-                Picker("Anchor", selection: Binding(
-                    get: { selectedAnchorMode },
-                    set: { mode in
-                        selectedAnchorMode = mode
-                        onSelectAnchorMode(mode)
-                    }
-                )) {
-                    ForEach(VoiceBarAnchorMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
-                    }
-                }
-
-                Toggle("Lock position", isOn: Binding(
-                    get: { positionLocked },
-                    set: { locked in
-                        positionLocked = locked
-                        onSetPositionLocked(locked)
+                Toggle("Anchor", isOn: Binding(
+                    get: { selectedAnchorMode != .follow },
+                    set: { enabled in
+                        if enabled {
+                            selectAnchorMode(selectedAnchoredMode)
+                        } else {
+                            selectAnchorMode(.follow)
+                        }
                     }
                 ))
 
-                if let footnote = VoiceBarPositionLockPolicy.lockFootnote(
-                    anchorMode: selectedAnchorMode,
-                    isLocked: positionLocked
-                ) {
-                    Text(footnote)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if selectedAnchorMode != .follow {
+                    Picker("Position", selection: Binding(
+                        get: { selectedAnchoredMode },
+                        set: { mode in
+                            selectAnchorMode(mode)
+                        }
+                    )) {
+                        ForEach(VoiceBarAnchorMode.anchoredPositionModes) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
+
+                Text(positionModeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -208,7 +203,21 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         Form {
-            Section {
+            Section("Dictionary") {
+                correctionEditor
+
+                Divider()
+                    .padding(.vertical, 6)
+
+                DisclosureGroup(isExpanded: $correctionsExpanded) {
+                    correctionsList
+                } label: {
+                    Text("Corrections")
+                }
+
+                Divider()
+                    .padding(.vertical, 6)
+
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
@@ -216,34 +225,8 @@ public struct SettingsView: View {
                         .textFieldStyle(.plain)
                 }
                 .dictionaryTextField()
-            }
 
-            Section {
-                DisclosureGroup(isExpanded: $correctionsExpanded) {
-                    correctionEditor
-                        .padding(.top, 6)
-
-                    Divider()
-                        .padding(.vertical, 6)
-
-                    correctionsList
-                } label: {
-                    Text("Corrections")
-                }
-            }
-
-            Section("Prompt Terms") {
-                promptTermAddRow
-
-                let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
-                if terms.isEmpty {
-                    Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(terms, id: \.self) { term in
-                        promptTermRow(term)
-                    }
-                }
+                promptTermsList
             }
         }
         .formStyle(.grouped)
@@ -318,6 +301,17 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
+    private var positionModeDescription: String {
+        switch selectedAnchorMode {
+        case .follow:
+            "Follows the active screen while you drag freely."
+        case .topCenter:
+            "Anchored to top center on the active screen."
+        case .bottomCenter:
+            "Anchored to bottom center on the active screen."
+        }
+    }
+
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
@@ -369,6 +363,25 @@ public struct SettingsView: View {
                     saveCorrection()
                 }
                 .disabled(!currentDraft.canSaveAlias)
+            }
+        }
+    }
+
+    private var promptTermsList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Prompt Terms")
+                .font(.headline)
+
+            promptTermAddRow
+
+            let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
+            if terms.isEmpty {
+                Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(terms, id: \.self) { term in
+                    promptTermRow(term)
+                }
             }
         }
     }
@@ -425,6 +438,14 @@ public struct SettingsView: View {
         wrongText = ""
     }
 
+    private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
+        selectedAnchorMode = mode
+        if mode != .follow {
+            selectedAnchoredMode = mode
+        }
+        onSelectAnchorMode(mode)
+    }
+
     private func saveCorrection() {
         let draft = currentDraft
         guard draft.canSaveAlias else { return }
@@ -436,23 +457,5 @@ public struct SettingsView: View {
             draft.trimmedWrong
         )
         clearCorrectionEditor()
-    }
-}
-
-extension View {
-    /// Visible-at-rest input treatment: every dictionary field shows a border
-    /// and background before hover or focus. Kills the invisible-until-hover
-    /// class (Etan settings QA 2026-06-06).
-    func dictionaryTextField() -> some View {
-        padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(nsColor: .textBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .strokeBorder(Color(nsColor: .separatorColor))
-            )
     }
 }

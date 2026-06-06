@@ -4,7 +4,6 @@ import Foundation
 public enum VoiceBarPositionLockPolicy {
     public static func effectivePlacement(
         anchorMode: VoiceBarAnchorMode,
-        isLocked _: Bool,
         savedHorizontalOffset: CGFloat,
         savedVerticalOffset: CGFloat?,
         visibleFrame: CGRect,
@@ -24,12 +23,5 @@ public enum VoiceBarPositionLockPolicy {
             verticalOffset: savedVerticalOffset,
             followsMouse: true
         )
-    }
-
-    public static func lockFootnote(
-        anchorMode _: VoiceBarAnchorMode,
-        isLocked _: Bool
-    ) -> String? {
-        nil
     }
 }

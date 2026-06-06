@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 /// Renders the 2026-06-06 settings design pass in BOTH appearances.
@@ -54,8 +54,6 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
             onSelectDevice: { _ in },
             anchorMode: { .follow },
             onSelectAnchorMode: { _ in },
-            isPositionLocked: { true },
-            onSetPositionLocked: { _ in },
             vocabularyPreview: { preview },
             onAddVocabularyAlias: { _, _ in },
             onRemoveVocabularyAlias: { _ in },
@@ -66,8 +64,8 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
         )
     }
 
-    private func writePNG<Content: View>(
-        _ view: Content,
+    private func writePNG(
+        _ view: some View,
         size: CGSize,
         appearance: NSAppearance?,
         named name: String,
