@@ -91,6 +91,28 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("src/mcp-socket-owner.ts");
   });
 
+  test("requires runtime verification for recording state gate changes", async () => {
+    const changed = join(tempRoot, "changed.txt");
+    writeFileSync(changed, "src/recording-state.ts\n");
+
+    const result = run(["bash", scriptPath], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_RELAUNCH: "1",
+        VOICELAYER_VERIFY_TESTER: "Unit Test",
+      },
+      input: "Y\n",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const artifacts = readdirSync(join(tempRoot, ".verified"));
+    expect(artifacts).toHaveLength(1);
+    const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
+    expect(body).toContain("Verified-Runtime:");
+    expect(body).toContain("src/recording-state.ts");
+  });
+
   test("does not create an artifact when manual confirmation is rejected", () => {
     const changed = join(tempRoot, "changed.txt");
     writeFileSync(changed, "src/socket-handlers.ts\n");
@@ -127,8 +149,21 @@ describe("voicelayer-verify.sh", () => {
   test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
     const changed = join(tempRoot, "changed.txt");
     const stateFile = join(tempRoot, "pgrep-state");
+    const oldPid = "424242";
+    const bashEnv = join(tempRoot, "fake-bash-env");
     writeFileSync(changed, "src/socket-handlers.ts\n");
     writeFileSync(stateFile, "before\n");
+    writeFileSync(
+      bashEnv,
+      `kill() {
+  if [ "$1" = "-0" ] && [ "$2" = "${oldPid}" ]; then
+    [ "$(cat "${stateFile}")" = "before" ]
+    return $?
+  fi
+  command kill "$@"
+}
+`,
+    );
 
     const fakeBin = writeFakeExecutable(
       "pgrep",
@@ -136,7 +171,7 @@ describe("voicelayer-verify.sh", () => {
 set -euo pipefail
 if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
   if [ "$(cat "${stateFile}")" = "before" ]; then
-    printf '111\\n'
+    printf '${oldPid}\\n'
   else
     printf '222\\n'
   fi
@@ -170,6 +205,7 @@ exit 1
 
     const result = run(["bash", scriptPath], {
       env: {
+        BASH_ENV: bashEnv,
         PATH: `${fakeBin}:${process.env.PATH}`,
         VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
         VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,

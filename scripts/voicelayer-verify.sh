@@ -55,6 +55,7 @@ daemon_path_matches() {
     src/log-rotation.ts) return 0 ;;
     src/paths.ts) return 0 ;;
     src/process-lock.ts) return 0 ;;
+    src/recording-state.ts) return 0 ;;
     src/resolve-binary.ts) return 0 ;;
     src/socket-*.ts) return 0 ;;
     src/voicesdk/*) return 0 ;;
