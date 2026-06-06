@@ -504,6 +504,42 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(finishTurn).not.toContain("new Blob(turnChunks");
   });
 
+  it("does not start the next MediaRecorder until the previous turn blob is flushed", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const handleVad = html.slice(
+      html.indexOf("function handleVadFrame(speech)"),
+      html.indexOf("async function beginTurnCapture()"),
+    );
+    const beginTurn = html.slice(
+      html.indexOf("async function beginTurnCapture()"),
+      html.indexOf("async function finishAndProcessTurn()"),
+    );
+    const finishTurn = html.slice(
+      html.indexOf("async function finishAndProcessTurn()"),
+      html.indexOf("async function processTurnBlob(blob)"),
+    );
+    const stopTurn = html.slice(
+      html.indexOf("async function stopTurnRecorderAndBuildBlob()"),
+      html.indexOf("function enqueueAudioForVad"),
+    );
+
+    expect(beginTurn).toContain("if (collectingTurn || flushingTurn) return;");
+    expect(handleVad.indexOf("if (flushingTurn) return;")).toBeGreaterThan(-1);
+    expect(handleVad.indexOf("if (flushingTurn) return;")).toBeLessThan(
+      handleVad.indexOf("if (processingTurn && !turnState.pausePlayback)"),
+    );
+    expect(stopTurn).toContain("if (mediaRecorder === recorder) mediaRecorder = null;");
+    expect(finishTurn.indexOf("const blob = await stopTurnRecorderAndBuildBlob();")).toBeLessThan(
+      finishTurn.indexOf("flushingTurn = false;"),
+    );
+    expect(finishTurn.indexOf("flushingTurn = false;")).toBeLessThan(
+      finishTurn.indexOf("await processTurnBlob(blob);"),
+    );
+  });
+
   it("serves a simple chat column with collapsed evidence and no prior/current turn label soup", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
