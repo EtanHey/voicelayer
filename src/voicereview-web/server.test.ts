@@ -249,8 +249,51 @@ describe("VoiceReview web server helpers", () => {
       kind: "error",
       category: "diagnosis-flag",
       decided: 0,
+      label: "Stats unavailable",
+      healthLabel: "stats error",
       message:
         "Stats unavailable: kg_review_session.py failed with exit 1: ValueError: decision references cluster not in loaded batch",
+    });
+  });
+
+  it("serves an explicit queue-error state when stats say undecided items remain", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        if (call.args.includes("stats")) {
+          return commandResult({
+            per_category: {
+              "diagnosis-flag": {
+                total: 7,
+                explicit: 4,
+                by_rule: 1,
+                undecided: 2,
+              },
+            },
+          });
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=diagnosis-flag"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.queue_state).toEqual({
+      kind: "error",
+      category: "diagnosis-flag",
+      decided: 5,
+      label: "Queue unavailable",
+      healthLabel: "queue error",
+      message:
+        "Queue unavailable: 2 undecided items remain for category diagnosis-flag, but no item was served.",
     });
   });
 
