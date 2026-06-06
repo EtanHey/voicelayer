@@ -3409,7 +3409,7 @@ function renderNaturalConversationPage(
       if (!recorder || recorder.state === "inactive") {
         const blob = new Blob(turnChunks, { type: mimeType });
         turnChunks = [];
-        mediaRecorder = null;
+        if (mediaRecorder === recorder) mediaRecorder = null;
         return blob;
       }
 
@@ -3418,7 +3418,7 @@ function renderNaturalConversationPage(
       });
       recorder.stop();
       await stopped;
-      mediaRecorder = null;
+      if (mediaRecorder === recorder) mediaRecorder = null;
       const blob = new Blob(turnChunks, { type: mimeType });
       turnChunks = [];
       return blob;
@@ -3489,6 +3489,7 @@ function renderNaturalConversationPage(
       turnState = advanceTurnTakingFrame(turnState, { speech });
       renderPhase();
 
+      if (flushingTurn) return;
       if (turnState.pausePlayback) {
         pendingInterruption = pausePlaybackForInterruption();
         void beginTurnCapture();
@@ -3515,7 +3516,7 @@ function renderNaturalConversationPage(
     }
 
     async function beginTurnCapture() {
-      if (collectingTurn) return;
+      if (collectingTurn || flushingTurn) return;
       turnChunks = [];
       collectingTurn = true;
       try {
@@ -3534,6 +3535,7 @@ function renderNaturalConversationPage(
       try {
         await sleep(80);
         const blob = await stopTurnRecorderAndBuildBlob();
+        flushingTurn = false;
         await processTurnBlob(blob);
         turnState = createTurnTakingState();
         renderPhase();
