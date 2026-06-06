@@ -26,12 +26,12 @@ public struct DictionaryAddSheetView: View {
             VStack(alignment: .leading, spacing: 10) {
                 LabeledContent("Correct") {
                     TextField("Intended text", text: $correct)
-                        .textFieldStyle(.roundedBorder)
+                        .dictionaryTextField()
                 }
                 LabeledContent("Transcribed") {
                     HStack(spacing: 8) {
                         TextField("Misheard text", text: $wrong)
-                            .textFieldStyle(.roundedBorder)
+                            .dictionaryTextField()
                         Button("⇄") {
                             swap(&correct, &wrong)
                         }
