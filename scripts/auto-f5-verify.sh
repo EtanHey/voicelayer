@@ -9,6 +9,7 @@ DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="${VOICELAYER_AUTO_F5_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_SCRIPT="${VOICELAYER_AUTO_F5_VERIFY_SCRIPT:-$REPO_ROOT/scripts/voicelayer-verify.sh}"
 WORK_DIR="${VOICELAYER_AUTO_F5_WORK_DIR:-${TMPDIR:-/tmp}/voicelayer-auto-f5}"
+MAIN_REPO_ROOT="${VOICELAYER_AUTO_F5_MAIN_REPO_ROOT:-}"
 UTTERANCE="${VOICELAYER_AUTO_F5_UTTERANCE:-verification test}"
 EDGE_TTS_VOICE="${VOICELAYER_AUTO_F5_EDGE_TTS_VOICE:-en-US-AriaNeural}"
 IDLE_THRESHOLD_SECONDS="${VOICELAYER_AUTO_F5_IDLE_THRESHOLD_SECONDS:-120}"
@@ -18,6 +19,9 @@ PASTE_TIMEOUT_SECONDS="${VOICELAYER_AUTO_F5_PASTE_TIMEOUT_SECONDS:-120}"
 F5_SENDER="${VOICELAYER_AUTO_F5_SENDER:-swift}"
 VERIFY_TESTER="${VOICELAYER_VERIFY_TESTER:-auto-F5-etan-consented-live}"
 VOICEBAR_SOCKET_PATH="${QA_VOICE_SOCKET_PATH:-/tmp/voicelayer.sock}"
+RESTORE_MAIN_ON_FAILURE="${VOICELAYER_AUTO_F5_RESTORE_ON_FAILURE:-1}"
+VOICEBAR_LAUNCHD_LABEL="${VOICELAYER_AUTO_F5_VOICEBAR_LABEL:-com.voicelayer.voicebar}"
+MCP_DAEMON_LAUNCHD_LABEL="${VOICELAYER_AUTO_F5_MCP_DAEMON_LABEL:-com.voicelayer.mcp-daemon}"
 
 AUDIO_FILE="$WORK_DIR/verification-test-with-leading-silence.wav"
 SINK_FILE="${VOICELAYER_AUTO_F5_SINK_FILE:-$WORK_DIR/af5-paste-sink.txt}"
@@ -29,6 +33,8 @@ VERIFY_FIFO=""
 VERIFY_STDIN_OPEN=0
 PREVIOUS_VOLUME=""
 PREVIOUS_MUTED=""
+BRANCH_BUILD_INSTALLED=0
+RESTORE_MAIN_ATTEMPTED=0
 
 log() {
   printf '[auto-f5] %s\n' "$*"
@@ -92,6 +98,91 @@ artifact_path_from_verify_log() {
   )"
   [ -n "$path" ] || return 1
   printf '%s\n' "$path"
+}
+
+resolve_main_repo_root() {
+  if [ -n "${MAIN_REPO_ROOT:-}" ]; then
+    [ -d "$MAIN_REPO_ROOT" ] || return 1
+    printf '%s\n' "$MAIN_REPO_ROOT"
+    return 0
+  fi
+
+  local root=""
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      worktree\ *) root="${line#worktree }" ;;
+      branch\ refs/heads/main)
+        [ -n "$root" ] || return 1
+        printf '%s\n' "$root"
+        return 0
+        ;;
+    esac
+  done < <(git -C "$REPO_ROOT" worktree list --porcelain 2>/dev/null)
+
+  return 1
+}
+
+kickstart_launchd_service() {
+  local label="$1"
+  local domain="gui/$(id -u)"
+  local service="$domain/$label"
+
+  if ! command -v launchctl >/dev/null 2>&1; then
+    log "launchctl not found; cannot kickstart $label"
+    return 1
+  fi
+
+  if launchctl kickstart -k "$service" >/dev/null 2>&1; then
+    log "kickstarted launchd service: $service"
+    return 0
+  fi
+
+  local plist="$HOME/Library/LaunchAgents/$label.plist"
+  if [ -f "$plist" ]; then
+    launchctl bootstrap "$domain" "$plist" >/dev/null 2>&1 || true
+    if launchctl kickstart -k "$service" >/dev/null 2>&1; then
+      log "bootstrapped and kickstarted launchd service: $service"
+      return 0
+    fi
+  fi
+
+  log "could not kickstart launchd service: $service"
+  return 1
+}
+
+restore_last_known_good_main_build() {
+  [ "$RESTORE_MAIN_ON_FAILURE" = "1" ] || return 0
+  [ "$RESTORE_MAIN_ATTEMPTED" -eq 0 ] || return 0
+  RESTORE_MAIN_ATTEMPTED=1
+
+  local main_root
+  if ! main_root="$(resolve_main_repo_root)"; then
+    log "failed to restore main VoiceBar build: could not resolve main checkout"
+    return 1
+  fi
+
+  if [ ! -f "$main_root/flow-bar/build-app.sh" ]; then
+    log "failed to restore main VoiceBar build: missing $main_root/flow-bar/build-app.sh"
+    return 1
+  fi
+
+  log "restoring installed VoiceBar.app from main checkout: $main_root"
+  if ! (cd "$main_root" && bash flow-bar/build-app.sh); then
+    log "failed to rebuild VoiceBar.app from main checkout"
+    return 1
+  fi
+
+  local restored=0
+  kickstart_launchd_service "$MCP_DAEMON_LAUNCHD_LABEL" || restored=1
+  kickstart_launchd_service "$VOICEBAR_LAUNCHD_LABEL" || restored=1
+  return "$restored"
+}
+
+branch_build_was_installed() {
+  [ "$BRANCH_BUILD_INSTALLED" -eq 1 ] && return 0
+  [ -f "${LOG_FILE:-}" ] || return 1
+  grep -qF "[voicelayer-verify] relaunching VoiceBar.app" "$LOG_FILE"
 }
 
 recording_state_from_health_json() {
@@ -433,6 +524,7 @@ wait_for_verify_runtime_prompt() {
 
   while :; do
     if [ -f "$LOG_FILE" ] && grep -qF "Press F5 in VoiceBar" "$LOG_FILE"; then
+      BRANCH_BUILD_INSTALLED=1
       log "voicelayer-verify runtime prompt reached"
       return 0
     fi
@@ -527,6 +619,10 @@ cleanup() {
   close_verify_stdin
   [ -n "${VERIFY_FIFO:-}" ] && rm -f "$VERIFY_FIFO"
   restore_system_volume
+  if [ "$status" -ne 0 ] && branch_build_was_installed; then
+    restore_last_known_good_main_build \
+      || log "WARNING: failed to restore installed app to main after rejected auto-F5 cycle"
+  fi
   return "$status"
 }
 

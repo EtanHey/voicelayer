@@ -166,4 +166,66 @@ describe("auto-f5-verify.sh pure helpers", () => {
       "/tmp/repo/.verified/verified-runtime-feat-auto.txt",
     );
   });
+
+  test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const binDir = join(workDir, "bin");
+      const mainRoot = join(workDir, "main");
+      const buildLog = join(workDir, "build.log");
+      const launchctlLog = join(workDir, "launchctl.log");
+      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`;
+      writeFileSync(
+        join(mainRoot, "flow-bar", "build-app.sh"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf 'build-main=%s\\n' \"$PWD\" >> \"$BUILD_LOG\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(binDir, "launchctl"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf '%s\\n' \"$*\" >> \"$LAUNCHCTL_LOG\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = runFunction(
+        [
+          "BRANCH_BUILD_INSTALLED=1",
+          "set +e",
+          "false",
+          "cleanup",
+          'printf "cleanup_status=%s\\n" "$?"',
+        ].join("; "),
+        {
+          BUILD_LOG: buildLog,
+          LAUNCHCTL_LOG: launchctlLog,
+          PATH: `${binDir}:${process.env.PATH}`,
+          VOICELAYER_AUTO_F5_MAIN_REPO_ROOT: mainRoot,
+          VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).toContain("cleanup_status=1");
+      expect(await Bun.file(buildLog).text()).toContain(`build-main=${mainRoot}`);
+      const launchctlOutput = await Bun.file(launchctlLog).text();
+      const launchdDomain = `gui/${process.getuid?.() ?? 501}`;
+      expect(launchctlOutput).toContain(
+        `kickstart -k ${launchdDomain}/com.voicelayer.voicebar`,
+      );
+      expect(launchctlOutput).toContain(
+        `kickstart -k ${launchdDomain}/com.voicelayer.mcp-daemon`,
+      );
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
 });
