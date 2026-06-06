@@ -88,6 +88,12 @@ cd voicelayer && bun install
 bun run src/mcp-server-daemon.ts
 ```
 
+`launchd/install.sh` prefers the installed VoiceBar bundle at
+`/Applications/VoiceBar.app/Contents/Resources` and falls back to the checkout
+when the bundle is not present. LaunchAgent logs are written to
+`~/Library/Logs/VoiceLayer/`. Launchd keeps the daemon alive while
+`/tmp/.voicelayer-daemon-disabled` is absent.
+
 ### Disabling VoiceLayer
 `DISABLE_VOICELAYER=1` is a hard kill-switch for the MCP daemon.
 
@@ -95,12 +101,16 @@ bun run src/mcp-server-daemon.ts
 # Install the LaunchAgent in a disabled state and sync the runtime daemon flag
 DISABLE_VOICELAYER=1 ./launchd/install.sh
 
-# Or edit the template-generated plist and add:
-# <key>DISABLE_VOICELAYER</key>
-# <string>1</string>
+# Re-enable the LaunchAgent
+./launchd/install.sh
 ```
 
-If the daemon is already running, create `/tmp/.voicelayer-daemon-disabled` and it will shut down within 5 seconds. `./launchd/install.sh` also keeps that file in sync with `DISABLE_VOICELAYER`, so VoiceBar-launched daemons stay disabled too. To re-enable it, remove the env var from `~/Library/LaunchAgents/com.voicelayer.mcp-daemon.plist`, delete `/tmp/.voicelayer-daemon-disabled` if present, and restart the agent:
+If the daemon is already running, `DISABLE_VOICELAYER=1 ./launchd/install.sh`
+creates `/tmp/.voicelayer-daemon-disabled`, stops the current agent, and leaves
+launchd idle. Plain `./launchd/install.sh` removes the flag and bootstraps the
+agent again. For manual non-launchd runs, creating the flag still makes the
+daemon shut down within 5 seconds. If the plist is already loaded and only needs
+a manual nudge:
 
 ```bash
 launchctl kickstart -k "gui/$(id -u)/com.voicelayer.mcp-daemon"
