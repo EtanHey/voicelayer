@@ -193,7 +193,7 @@ async function createPageHarness(options: {
     "window",
     "SpeechSynthesisUtterance",
     "URL",
-    `${executableScript}\nreturn { loadNext, showLegFailure, endSession };`,
+    `${executableScript}\nreturn { loadNext, showLegFailure, endSession, humanizeSpokenText };`,
   )(
     document,
     fetchImpl,
@@ -204,6 +204,7 @@ async function createPageHarness(options: {
     loadNext: (play: boolean) => Promise<void>;
     showLegFailure: (message: string) => void;
     endSession: () => Promise<void>;
+    humanizeSpokenText: (input: string) => string;
   };
 
   return { api, fetchCalls, nodes, node: getNode, speechCalls };
@@ -624,6 +625,8 @@ describe("VoiceReview natural conversation redesign", () => {
           kind: "error",
           category: "diagnosis-flag",
           decided: 0,
+          label: "Stats unavailable",
+          healthLabel: "stats error",
           message: "Stats unavailable: stale decisions reference missing clusters.",
         },
       },
@@ -632,11 +635,34 @@ describe("VoiceReview natural conversation redesign", () => {
 
     expect(statsError.node("clusterId").textContent).toBe("Stats unavailable");
     expect(statsError.node("healthMode").textContent).toBe("stats error");
+    expect(statsError.node("healthMode").className).toContain("basic");
     expect(statsError.node("understandingNote").textContent).toBe(
       "Stats unavailable: stale decisions reference missing clusters.",
     );
     expect(statsError.node("status").textContent).toBe(
       "Stats unavailable: stale decisions reference missing clusters.",
+    );
+
+    const queueError = await createPageHarness({
+      nextResponse: {
+        cluster: null,
+        queue_state: {
+          kind: "error",
+          category: "diagnosis-flag",
+          decided: 5,
+          label: "Queue unavailable",
+          healthLabel: "queue error",
+          message:
+            "Queue unavailable: 2 undecided items remain for category diagnosis-flag, but no item was served.",
+        },
+      },
+    });
+    await queueError.api.loadNext(false);
+
+    expect(queueError.node("clusterId").textContent).toBe("Queue unavailable");
+    expect(queueError.node("healthMode").textContent).toBe("queue error");
+    expect(queueError.node("understandingNote").textContent).toBe(
+      "Queue unavailable: 2 undecided items remain for category diagnosis-flag, but no item was served.",
     );
 
     const failure = await createPageHarness({
@@ -705,6 +731,7 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(runtimeState).toContain("let nextHealthAnnouncementAt = 0;");
     expect(runtimeState).toContain("let healthAnnouncementBackoffMs = 3000;");
     expect(healthCheck).toContain("healthFailureStreak += 1;");
+    expect(healthCheck).toContain('$("healthMode").classList.remove("basic");');
     expect(healthCheck).toContain(
       "if (!silent && canAnnounceHealthFailure())",
     );
@@ -717,5 +744,30 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(announce).toContain('document.visibilityState !== "visible"');
     expect(announce).toContain("nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;");
     expect(announce).toContain("Math.min(60000, healthAnnouncementBackoffMs * 2)");
+  });
+
+  it("keeps client and server spoken-text sanitizers in sync for TTS playback metadata", async () => {
+    const page = await createPageHarness({});
+    const promptText = [
+      "Review this cluster.",
+      "Acme Corp (company, 42 chunks)",
+      "as context with 0 chunks",
+      "as evidence with 1 chunks",
+      "Review this cluster.",
+      "Should these merge?",
+    ].join("\n");
+    const membersText = [
+      "Members:",
+      "- FooBar (project, 2 chunks)",
+      "- Foo Bar (project, 1 chunks)",
+      "- FooBar CLI (tool, 1 chunks)",
+    ].join("\n");
+
+    expect(page.api.humanizeSpokenText(promptText)).toBe(
+      (server as any).humanizeSpokenText(promptText),
+    );
+    expect(page.api.humanizeSpokenText(membersText)).toBe(
+      (server as any).humanizeSpokenText(membersText),
+    );
   });
 });

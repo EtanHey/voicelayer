@@ -108,6 +108,8 @@ export interface QueueState {
   category: string;
   decided: number;
   message: string;
+  label?: string;
+  healthLabel?: string;
 }
 
 export interface CommandCall {
@@ -1937,10 +1939,12 @@ export function describeQueueState(stats: unknown, category: string): QueueState
   }
 
   return {
-    kind: "empty",
+    kind: "error",
     category,
     decided,
-    message: `No items found for category ${category}.`,
+    label: "Queue unavailable",
+    healthLabel: "queue error",
+    message: `Queue unavailable: ${undecided} undecided ${undecided === 1 ? "item remains" : "items remain"} for category ${category}, but no item was served.`,
   };
 }
 
@@ -1949,6 +1953,8 @@ function describeQueueStatsError(category: string, error: string): QueueState {
     kind: "error",
     category,
     decided: 0,
+    label: "Stats unavailable",
+    healthLabel: "stats error",
     message: `Stats unavailable: ${error}`,
   };
 }
@@ -3128,7 +3134,18 @@ function renderNaturalConversationPage(
     }
 
     function humanizeSpokenText(input) {
-      return String(input || "")
+      const tableNarration = humanizeMembersTable(input);
+      if (tableNarration) return tableNarration;
+
+      return dedupeSpokenLines(
+        String(input || "")
+          .replace(/^\\s*as\\s+[a-z0-9_-]+\\s+with\\s+\\d+\\s+chunks?\\.?\\s*$/gim, " ")
+          .replace(
+            /\\s*\\((?:context|evidence|metadata|snippet|chunk)[^)]*\\d+\\s+chunks?\\)/gi,
+            ""
+          )
+          .replace(/\\s*\\([^()\\n,]{1,80},\\s*\\d+\\s+chunks?\\)/gi, "")
+      )
         .replace(/<\\/?[^>]+>/g, "")
         .replace(/^#{1,6}\\s*/gm, "")
         .replace(/^\\s*[-*]\\s+/gm, "")
@@ -3140,8 +3157,84 @@ function renderNaturalConversationPage(
         .replace(/\\s+([.,:;!?])/g, "$1")
         .replace(/:\\s*\\./g, ".")
         .replace(/\\.\\s*\\./g, ".")
+        .replace(/([!?])\\s*\\./g, "$1")
         .replace(/\\s+/g, " ")
         .trim();
+    }
+
+    function dedupeSpokenLines(input) {
+      const seen = new Set();
+      const output = [];
+      for (const line of input.split(/\\n+/)) {
+        const clean = line.replace(/\\s+/g, " ").trim();
+        if (!clean) continue;
+        const key = clean.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        output.push(clean);
+      }
+      return output.join("\\n");
+    }
+
+    function humanizeMembersTable(input) {
+      const memberRows = String(input || "")
+        .split(/\\n+/)
+        .map((line) => line.match(/^\\s*[-*]\\s*(.+?)\\s+\\(([^,()]+),\\s*\\d+\\s+chunks?\\)\\s*$/i))
+        .filter(Boolean)
+        .map((match) => ({
+          name: match[1].trim(),
+          type: match[2].trim().toLowerCase()
+        }));
+      if (memberRows.length < 2) return null;
+
+      const byType = new Map();
+      for (const row of memberRows) {
+        byType.set(row.type, [...(byType.get(row.type) || []), row.name]);
+      }
+
+      const parts = [...byType.entries()].map(([type, names]) => {
+        const count = names.length;
+        const entryLabel = count === 1 ? "entry" : "entries";
+        const similar =
+          count > 1 &&
+          new Set(names.map((name) => name.toLowerCase().replace(/[^a-z0-9]/g, "")))
+            .size <= 1;
+        return [
+          numberWord(count),
+          type,
+          entryLabel,
+          similar ? "with similar names" : ""
+        ].filter(Boolean).join(" ");
+      });
+
+      return capitalize(numberWord(memberRows.length)) + " entries: " + joinNaturalList(parts) + ".";
+    }
+
+    function joinNaturalList(parts) {
+      if (parts.length <= 1) return parts[0] || "";
+      if (parts.length === 2) return parts[0] + ", and " + parts[1];
+      return parts.slice(0, -1).join(", ") + ", and " + parts[parts.length - 1];
+    }
+
+    function numberWord(value) {
+      const words = [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten"
+      ];
+      return words[value] || String(value);
+    }
+
+    function capitalize(value) {
+      return value ? value[0].toUpperCase() + value.slice(1) : value;
     }
 
     async function api(path, options = {}) {
@@ -3236,6 +3329,7 @@ function renderNaturalConversationPage(
         const response = await api("/api/health");
         const body = await response.json();
         $("healthMode").textContent = body.ok ? "brain online" : "brain offline";
+        $("healthMode").classList.remove("basic");
         healthFailureStreak = 0;
         nextHealthAnnouncementAt = 0;
         healthAnnouncementBackoffMs = 3000;
@@ -3779,22 +3873,25 @@ function renderNaturalConversationPage(
       const decided = Number.isFinite(Number(state.decided)) ? Number(state.decided) : 0;
       const isComplete = state.kind === "complete";
       const isError = state.kind === "error";
+      const errorLabel = state.label || "Queue unavailable";
       const message = state.message || (
         isComplete
           ? "All items in this queue are complete 🎉 " + String(decided) + " decided."
           : "No items found for category " + stateCategory + "."
       );
       understanding = null;
-      $("clusterId").textContent = isError ? "Stats unavailable" : isComplete ? "Queue complete" : "No items found";
+      $("clusterId").textContent = isError ? errorLabel : isComplete ? "Queue complete" : "No items found";
       $("stem").textContent = stateCategory;
       $("categoryBadge").textContent = stateCategory;
       if (isError) {
-        $("healthMode").textContent = "stats error";
+        $("healthMode").textContent = state.healthLabel || "queue error";
         $("healthMode").classList.add("basic");
+      } else {
+        $("healthMode").classList.remove("basic");
       }
       $("members").innerHTML =
         "<div class='member is-resolved'><div><div class='member-name'>" +
-        (isError ? "Stats unavailable" : isComplete ? "All queued items decided" : "No queued items") +
+        (isError ? errorLabel : isComplete ? "All queued items decided" : "No queued items") +
         "</div><div class='member-meta'>" + escapeHtml(message) + "</div></div><div class='member-tag " +
         (isError ? "irrelevant" : isComplete ? "merge" : "undecided") + "'>" +
         (isError ? "error" : isComplete ? String(decided) + " decided" : "empty") +
