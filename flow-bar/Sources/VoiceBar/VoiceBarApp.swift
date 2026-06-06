@@ -44,8 +44,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     private let commandModeAXHelper = CommandModeAXHelper()
 
+    private let defaults = VoiceBarDefaults.make()
     private let pillContextMenuController = PillContextMenuController()
     private let daemonController = VoiceBarDaemonController()
+    private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -60,6 +62,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
+    private var isPositionLocked = false
+    private var dictionarySheetWindow: NSWindow?
+    private var settingsWindow: NSWindow?
 
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
@@ -92,7 +97,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
-    private static let anchorModeKey = "VoiceBar.anchorMode"
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -129,15 +133,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Singleton guard — if another VoiceBar is already running, quit immediately.
         let myPID = ProcessInfo.processInfo.processIdentifier
-        let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-        let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
-        if !others.isEmpty {
-            NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
-            // Give a moment for the log to flush
-            DispatchQueue.main.async {
-                NSApplication.shared.terminate(nil)
+        if VoiceBarDefaults.shouldEnforceSingleton() {
+            let running = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+            let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
+            if !others.isEmpty {
+                NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
+                // Give a moment for the log to flush
+                DispatchQueue.main.async {
+                    NSApplication.shared.terminate(nil)
+                }
+                return
             }
-            return
         }
 
         // No Dock icon (LSUIElement equivalent)
@@ -145,7 +151,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Register with Launch Services so voicebar:// URL scheme works
         // after rebuilds (Launch Services caches bundle→scheme mappings).
-        if let bundleURL = Bundle.main.bundleURL as CFURL? {
+        if VoiceBarDefaults.shouldRegisterLaunchServices(),
+           let bundleURL = Bundle.main.bundleURL as CFURL? {
             let status = LSRegisterURL(bundleURL, true)
             if status != 0 {
                 NSLog("[VoiceBar] LSRegisterURL returned %d", status)
@@ -153,7 +160,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         configureGatekeptVoiceStateDependencies()
-        promptForAccessibilityIfNeeded()
+        if VoiceBarDefaults.shouldPromptForPermissions() {
+            promptForAccessibilityIfNeeded()
+        }
 
         // Socket server — listens on VoiceLayerPaths.socketPath
         let server = SocketServer(state: voiceState)
@@ -181,7 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = daemonController.activateIfNeeded()
 
         // Hotkey setup — F5 hold for push-to-talk.
-        setupHotkey()
+        if VoiceBarDefaults.shouldStartHotkey() {
+            setupHotkey()
+        }
         configureWakeRecovery()
 
         // Floating pill
@@ -198,15 +209,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         // Load saved position
-        if let saved = UserDefaults.standard.object(forKey: Self.horizontalOffsetKey) as? Double {
+        if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
             horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
         }
-        if let saved = UserDefaults.standard.object(forKey: Self.verticalOffsetKey) as? Double {
+        if let saved = defaults.object(forKey: Self.verticalOffsetKey) as? Double {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
-        anchorMode = VoiceBarAnchorMode(
-            defaultsValue: UserDefaults.standard.string(forKey: Self.anchorModeKey)
-        )
+        anchorMode = anchorPreferences.loadAnchorMode()
+        isPositionLocked = anchorPreferences.loadPositionLocked()
 
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
@@ -215,8 +225,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
+        pill.isPillDragEnabled = !isPositionLocked
         positionPanel(pill, on: nil)
-        pill.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        pill.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
@@ -250,6 +261,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         snoozeTask?.cancel()
+        dictionarySheetWindow?.close()
+        settingsWindow?.close()
         hotkeyManager?.stop()
         audioLevelMonitor.stop()
         daemonController.stop()
@@ -288,6 +301,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.selectedDeviceIDProvider = {
             MicrophoneDeviceManager.selectedInputDeviceID()
         }
+        pillContextMenuController.anchorModeProvider = { [weak self] in
+            self?.currentAnchorMode() ?? .follow
+        }
+        pillContextMenuController.isPositionLockedProvider = { [weak self] in
+            self?.currentPositionLocked() ?? false
+        }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
         }
@@ -310,6 +329,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.logDiagnostic(event: "context_menu_transcribe_latest_recording_tapped")
             self?.voiceState.retranscribeLastCapture()
         }
+        pillContextMenuController.onAddSelectionToDictionary = { [weak self] in
+            self?.presentAddToDictionarySheetFromSelection()
+        }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
             self?.voiceState.repasteLastTranscript()
@@ -321,6 +343,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillContextMenuController.onPasteTranscript = { [weak self] transcript in
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
             self?.voiceState.repasteTranscript(transcript)
+        }
+        pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
+            self?.selectAnchorMode(mode)
+        }
+        pillContextMenuController.onSetPositionLocked = { [weak self] locked in
+            self?.setPositionLocked(locked)
         }
         pillContextMenuController.onQuit = {
             NSApplication.shared.terminate(nil)
@@ -345,6 +373,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         isSnoozed = false
         voiceState.unsnooze()
         panel?.orderFront(nil)
+        reapplyAnchoredPanelPosition()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -532,7 +561,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        panel?.isMovableByWindowBackground = VoiceBarPresentation.isPanelDraggable(mode: mode)
+        panel?.isMovableByWindowBackground = isPositionLocked ? false : VoiceBarPresentation.isPanelDraggable(mode: mode)
+        panel?.isPillDragEnabled = !isPositionLocked
         applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -674,45 +704,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Mouse tracking
 
-    /// Reposition pill when mouse moves to a different screen.
+    /// Reposition pill when the active screen changes. Anchored modes still move
+    /// between screens; only their position within each screen is fixed.
     private func handleMouseMoved() {
-        guard anchorMode.placement(
-            visibleFrame: panel?.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
-            pillSize: panel?.frame.size ?? .zero
-        ).followsMouse else { return }
+        guard let panel else { return }
 
-        let mouseLocation = NSEvent.mouseLocation
-        // Capture screens array once to avoid TOCTOU race if a display disconnects.
         let screens = NSScreen.screens
-        guard let targetScreen = screens.firstIndex(where: {
-            NSMouseInRect(mouseLocation, $0.frame, false)
-        }) else { return }
+        guard let targetScreen = Self.screenIndexContainingMouse(in: screens) else { return }
 
         // Only reposition when the screen actually changes
         if targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
-            if let panel {
-                positionPanel(panel, on: screens[targetScreen])
-            }
+            positionPanel(panel, on: screens[targetScreen])
         }
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
-        let targetScreen = screen ?? panel.screen ?? NSScreen.main
+        let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? .zero
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
             pillSize: panel.frame.size
         )
-        // Follow mode with no explicit screen: defer to positionOnScreen's
-        // mouse-containing-screen lookup so the pill appears on the screen under
-        // the cursor — preserving pre-anchor multi-monitor default behavior.
-        let placementScreen = (placement.followsMouse && screen == nil) ? nil : targetScreen
         panel.positionOnScreen(
-            placementScreen,
+            targetScreen,
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset
+        )
+        if let targetScreen,
+           let index = NSScreen.screens.firstIndex(of: targetScreen) {
+            currentScreenIndex = index
+        }
+    }
+
+    private static func screenContainingMouse() -> NSScreen? {
+        let screens = NSScreen.screens
+        guard let index = screenIndexContainingMouse(in: screens) else { return nil }
+        return screens[index]
+    }
+
+    private static func screenIndexContainingMouse(in screens: [NSScreen]) -> Int? {
+        VoiceBarScreenFollowPolicy.targetScreenIndex(
+            mouseLocation: NSEvent.mouseLocation,
+            screenFrames: screens.map(\.frame)
         )
     }
 
@@ -721,31 +756,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         visibleFrame: CGRect,
         pillSize: CGSize
     ) -> VoiceBarAnchorPlacement {
-        let placement = anchorMode.placement(visibleFrame: visibleFrame, pillSize: pillSize)
-        guard placement.followsMouse else { return placement }
-        return VoiceBarAnchorPlacement(
-            horizontalOffset: horizontalOffset,
-            verticalOffset: verticalOffset,
-            followsMouse: true
+        VoiceBarPositionLockPolicy.effectivePlacement(
+            anchorMode: anchorMode,
+            isLocked: isPositionLocked,
+            savedHorizontalOffset: horizontalOffset,
+            savedVerticalOffset: verticalOffset,
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
         )
     }
 
     private func reapplyAnchoredPanelPosition() {
         guard let panel else { return }
-        if anchorMode.placement(
-            visibleFrame: panel.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero,
-            pillSize: panel.frame.size
-        ).followsMouse {
-            handleMouseMoved()
-        } else {
-            positionPanel(panel, on: panel.screen ?? NSScreen.main)
-        }
+        positionPanel(panel, on: Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
     }
 
     // MARK: - Drag persistence
 
     /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
+        guard !isPositionLocked else { return }
         guard anchorMode == .follow else { return }
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
@@ -753,8 +783,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let vOffset = (panel.frame.midY - visible.origin.y) / visible.height
         horizontalOffset = max(0.05, min(0.95, CGFloat(hOffset)))
         verticalOffset = max(0.0, min(0.95, CGFloat(vOffset)))
-        UserDefaults.standard.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
-        UserDefaults.standard.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
+        defaults.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
+        defaults.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
     }
 
     func currentAnchorMode() -> VoiceBarAnchorMode {
@@ -763,11 +793,90 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         anchorMode = mode
-        UserDefaults.standard.set(mode.rawValue, forKey: Self.anchorModeKey)
+        anchorPreferences.saveAnchorMode(mode)
         if let panel {
-            positionPanel(panel, on: panel.screen ?? NSScreen.main)
+            positionPanel(panel, on: nil)
             applyPanelLayout(animated: true)
         }
+    }
+
+    func currentPositionLocked() -> Bool {
+        isPositionLocked
+    }
+
+    func setPositionLocked(_ locked: Bool) {
+        isPositionLocked = locked
+        anchorPreferences.savePositionLocked(locked)
+        panel?.isPillDragEnabled = !locked
+        panel?.isMovableByWindowBackground = locked ? false : VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+    }
+
+    func currentVocabularyPreview() -> STTVocabularyPreview {
+        STTVocabularyPreview(
+            updatedAt: nil,
+            promptTerms: voiceState.transcriptionVocabularyTerms,
+            aliases: voiceState.transcriptionVocabularyAliases
+        )
+    }
+
+    private func presentAddToDictionarySheetFromSelection() {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let selection = FrontmostSelectionReader.readCurrentSelection()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                logDiagnostic(event: "context_menu_add_to_dictionary_tapped", details: [
+                    "selectionSource": selection?.source.rawValue ?? "none",
+                    "selectionLength": String(selection?.text.count ?? 0),
+                ])
+                presentDictionarySheet(
+                    draft: STTVocabularyDraft(
+                        correct: selection?.text ?? "",
+                        wrong: ""
+                    )
+                )
+            }
+        }
+    }
+
+    private func presentDictionarySheet(draft: STTVocabularyDraft) {
+        closeDictionarySheet()
+        NSApp.activate(ignoringOtherApps: true)
+        let rootView = DictionaryAddSheetView(
+            draft: draft,
+            onSave: { [weak self] draft in
+                self?.voiceState.addVocabularyAlias(
+                    correct: draft.trimmedCorrect,
+                    wrong: draft.trimmedWrong
+                )
+                self?.closeDictionarySheet()
+            },
+            onCancel: { [weak self] in
+                self?.closeDictionarySheet()
+            }
+        )
+        let hosting = NSHostingController(rootView: rootView)
+        let sheet = NSWindow(contentViewController: hosting)
+        sheet.title = "Add to Dictionary"
+        sheet.styleMask = [.titled]
+        sheet.isReleasedWhenClosed = false
+        sheet.setContentSize(NSSize(width: 380, height: 210))
+        dictionarySheetWindow = sheet
+
+        if let panel {
+            panel.beginSheet(sheet)
+        } else {
+            sheet.center()
+            sheet.orderFront(nil)
+        }
+    }
+
+    private func closeDictionarySheet() {
+        guard let sheet = dictionarySheetWindow else { return }
+        if let parent = sheet.sheetParent {
+            parent.endSheet(sheet)
+        }
+        sheet.close()
+        dictionarySheetWindow = nil
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
@@ -790,9 +899,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func openSettingsWindow() {
+    func openSettingsWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        if let settingsWindow {
+            settingsWindow.makeKeyAndOrderFront(nil)
+            settingsWindow.orderFrontRegardless()
+            return
+        }
+
+        let hosting = NSHostingController(rootView: makeSettingsView())
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "VoiceBar Settings"
+        window.contentViewController = hosting
+        window.isReleasedWhenClosed = false
+        window.isRestorable = false
+        window.collectionBehavior = [.moveToActiveSpace]
+        window.level = .floating
+        window.center()
+        settingsWindow = window
+
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+    }
+
+    func makeSettingsView() -> SettingsView {
+        SettingsView(
+            hotkeyEnabled: hotkeyEnabled,
+            missingPermissions: missingHotkeyPermissions,
+            availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
+            selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
+            onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
+            onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
+            isPositionLocked: { [weak self] in self?.currentPositionLocked() ?? false },
+            onSetPositionLocked: { [weak self] in self?.setPositionLocked($0) },
+            vocabularyPreview: { [weak self] in
+                self?.currentVocabularyPreview() ?? STTVocabularyPreview(
+                    updatedAt: nil,
+                    promptTerms: [],
+                    aliases: []
+                )
+            },
+            onAddVocabularyAlias: { [weak self] correct, wrong in
+                self?.voiceState.addVocabularyAlias(
+                    correct: correct,
+                    wrong: wrong
+                )
+            },
+            onRemoveVocabularyAlias: { [weak self] alias in
+                self?.voiceState.removeVocabularyAlias(alias)
+            }
+        )
     }
 
     private func resetHotkeyTracking() {
@@ -909,7 +1071,6 @@ struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        // Menu bar icon + dropdown
         MenuBarExtra("VoiceBar", systemImage: "waveform.circle.fill") {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -940,17 +1101,13 @@ struct VoiceBarApp: App {
             }
             .padding(8)
         }
-
-        Settings {
-            SettingsView(
-                hotkeyEnabled: appDelegate.hotkeyEnabled,
-                missingPermissions: appDelegate.missingHotkeyPermissions,
-                availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
-                selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
-                onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
-                anchorMode: { appDelegate.currentAnchorMode() },
-                onSelectAnchorMode: { appDelegate.selectAnchorMode($0) }
-            )
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.openSettingsWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
