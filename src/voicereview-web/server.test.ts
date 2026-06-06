@@ -335,6 +335,43 @@ describe("VoiceReview web server helpers", () => {
     expect(html).not.toContain("tap Record");
   });
 
+  it("renders a custom default category from the loaded batch as the selected option", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-category-test-"));
+    const batchPath = join(root, "batch.json");
+    await writeFile(
+      batchPath,
+      JSON.stringify({
+        "etan-queue": [],
+        "other-live": [],
+      }),
+    );
+    const app = createVoiceReviewApp({
+      config: {
+        defaultCategory: "etan-queue",
+        batchPath,
+      },
+    });
+
+    try {
+      const response = await app.fetch(new Request("http://localhost/"));
+      const html = await response.text();
+      const select = html.slice(
+        html.indexOf('<select id="category"'),
+        html.indexOf("</select>", html.indexOf('<select id="category"')),
+      );
+
+      expect(select).toContain(
+        '<option value="etan-queue" selected>etan-queue</option>',
+      );
+      expect(select).toContain('<option value="other-live">other-live</option>');
+      expect(select).toContain(
+        '<option value="diagnosis-flag">diagnosis-flag</option>',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects empty whisper transcripts before interpretation", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
     const calls: CommandCall[] = [];
