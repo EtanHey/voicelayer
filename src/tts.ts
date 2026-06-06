@@ -95,13 +95,13 @@ export function resolveVoice(name?: string): {
   warning?: string;
   fallbackVoice?: string;
 } {
-  if (!name) return { voice: DEFAULT_VOICE, engine: "edge-tts" };
+  const requestedName = name || DEFAULT_VOICE;
 
   // Tier 1: Check for cloned voice profile (profile.yaml)
-  if (hasClonedProfile(name)) {
-    const profile = loadProfile(name);
+  if (hasClonedProfile(requestedName)) {
+    const profile = loadProfile(requestedName);
     return {
-      voice: name,
+      voice: requestedName,
       engine: "cloned",
       fallbackVoice: profile?.fallback || DEFAULT_VOICE,
     };
@@ -109,28 +109,28 @@ export function resolveVoice(name?: string): {
 
   // Tier 2: Check preset profiles (voices.json)
   const profiles = loadVoiceProfiles();
-  const profile = profiles[name.toLowerCase()];
+  const profile = profiles[requestedName.toLowerCase()];
   if (profile) {
     if (profile.engine !== "edge-tts") {
       return {
         voice: DEFAULT_VOICE,
         engine: "edge-tts",
-        warning: `Voice profile "${name}" uses engine "${profile.engine}" which is not yet supported. Using default.`,
+        warning: `Voice profile "${requestedName}" uses engine "${profile.engine}" which is not yet supported. Using default.`,
       };
     }
     return { voice: profile.voice, engine: "edge-tts" };
   }
 
   // Tier 2b: Raw edge-tts voice name (e.g., "en-US-AndrewNeural")
-  if (/^[a-z]{2}-[A-Z]{2}-/i.test(name)) {
-    return { voice: name, engine: "edge-tts" };
+  if (/^[a-z]{2}-[A-Z]{2}-/i.test(requestedName)) {
+    return { voice: requestedName, engine: "edge-tts" };
   }
 
   // Unknown name — fallback with warning
   return {
     voice: DEFAULT_VOICE,
     engine: "edge-tts",
-    warning: `Unknown voice "${name}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.`,
+    warning: `Unknown voice "${requestedName}". Using default (${DEFAULT_VOICE}). Add it to ~/.voicelayer/voices.json or use a raw edge-tts voice name.`,
   };
 }
 
