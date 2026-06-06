@@ -34,6 +34,181 @@ const naturalCluster: ReviewCluster = {
   ],
 };
 
+type StubNode = {
+  className: string;
+  disabled: boolean;
+  hidden: boolean;
+  innerHTML: string;
+  scrollHeight: number;
+  scrollTop: number;
+  src: string;
+  textContent: string;
+  value: string;
+  currentTime: number;
+  paused: boolean;
+  readyState: number;
+  children: StubNode[];
+  classList: {
+    add: (name: string) => void;
+    remove: (name: string) => void;
+    toggle: (name: string, force?: boolean) => void;
+  };
+  style: Record<string, unknown> & {
+    setProperty: (name: string, value: string) => void;
+  };
+  addEventListener: () => void;
+  removeEventListener: () => void;
+  removeAttribute: (name: string) => void;
+  appendChild: (child: StubNode) => void;
+  load: () => void;
+  pause: () => void;
+  play: () => Promise<void>;
+};
+
+function createStubNode(id: string): StubNode {
+  const node = {
+    className: "",
+    disabled: false,
+    hidden: false,
+    innerHTML: "",
+    scrollHeight: 0,
+    scrollTop: 0,
+    src: "",
+    textContent: "",
+    value: "",
+    currentTime: 0,
+    paused: true,
+    readyState: 0,
+    children: [],
+    classList: {
+      add(name: string) {
+        const classes = new Set(node.className.split(/\s+/).filter(Boolean));
+        classes.add(name);
+        node.className = [...classes].join(" ");
+      },
+      remove(name: string) {
+        const classes = new Set(node.className.split(/\s+/).filter(Boolean));
+        classes.delete(name);
+        node.className = [...classes].join(" ");
+      },
+      toggle(name: string, force?: boolean) {
+        const enabled = force ?? !node.className.split(/\s+/).includes(name);
+        if (enabled) node.classList.add(name);
+        else node.classList.remove(name);
+      },
+    },
+    style: {
+      setProperty(name: string, value: string) {
+        node.style[name] = value;
+      },
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    removeAttribute(name: string) {
+      if (name === "src") node.src = "";
+    },
+    appendChild(child: StubNode) {
+      node.children.push(child);
+      node.innerHTML += child.innerHTML || child.textContent;
+      node.scrollHeight = node.children.length;
+    },
+    load() {
+      node.readyState = 0;
+    },
+    pause() {
+      node.paused = true;
+    },
+    play: async () => {
+      node.paused = false;
+    },
+  };
+  if (id === "category") node.value = "diagnosis-flag";
+  if (id === "ttsVoice") node.value = "en-US-GuyNeural";
+  if (id === "ttsRate") node.value = "-8";
+  return node;
+}
+
+async function createPageHarness(options: {
+  category?: string;
+  nextResponse?: unknown;
+  nextError?: Error;
+}) {
+  const app = createVoiceReviewApp();
+  const response = await app.fetch(new Request("http://localhost/"));
+  const html = await response.text();
+  const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
+  if (!script) throw new Error("page script not found");
+
+  const nodes = new Map<string, StubNode>();
+  const getNode = (id: string) => {
+    let node = nodes.get(id);
+    if (!node) {
+      node = createStubNode(id);
+      nodes.set(id, node);
+    }
+    return node;
+  };
+  getNode("category").value = options.category || "diagnosis-flag";
+
+  const document = {
+    getElementById: getNode,
+    createElement: (tag: string) => createStubNode(tag),
+  };
+  const fetchCalls: string[] = [];
+  const fetchImpl = async (path: string) => {
+    fetchCalls.push(path);
+    if (options.nextError) throw options.nextError;
+    return new Response(JSON.stringify(options.nextResponse), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const speechCalls: string[] = [];
+  const window = {
+    speechSynthesis: {
+      cancel() {
+        speechCalls.push("cancel");
+      },
+      speak() {
+        speechCalls.push("speak");
+      },
+    },
+  };
+  class SpeechSynthesisUtteranceStub {
+    onend: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+
+    constructor(public text: string) {}
+  }
+  const urlStub = {
+    revokeObjectURL() {},
+  };
+  const executableScript = script.replace(
+    /^\s*import\s+\*\s+as\s+ort\s+from\s+"\/vendor\/onnxruntime-web\/ort\.wasm\.min\.mjs";\s*/,
+    "",
+  );
+  const api = new Function(
+    "document",
+    "fetch",
+    "window",
+    "SpeechSynthesisUtterance",
+    "URL",
+    `${executableScript}\nreturn { loadNext, showLegFailure, endSession };`,
+  )(
+    document,
+    fetchImpl,
+    window,
+    SpeechSynthesisUtteranceStub,
+    urlStub,
+  ) as {
+    loadNext: (play: boolean) => Promise<void>;
+    showLegFailure: (message: string) => void;
+    endSession: () => Promise<void>;
+  };
+
+  return { api, fetchCalls, nodes, node: getNode, speechCalls };
+}
+
 describe("VoiceReview natural conversation redesign", () => {
   it("builds an update-first interpret prompt with per-member deltas", () => {
     const messages = buildInterpretMessages({
@@ -388,5 +563,159 @@ describe("VoiceReview natural conversation redesign", () => {
         },
       },
     });
+  });
+
+  it("renders explicit queue terminal and fetch error states during page bootstrap", async () => {
+    const complete = await createPageHarness({
+      nextResponse: {
+        cluster: null,
+        queue_state: {
+          kind: "complete",
+          category: "diagnosis-flag",
+          decided: 7,
+          message: "All items in this queue are complete 🎉 7 decided.",
+        },
+      },
+    });
+    await complete.api.loadNext(false);
+
+    expect(complete.fetchCalls).toEqual(["/api/next?category=diagnosis-flag"]);
+    expect(complete.node("clusterId").textContent).toBe("Queue complete");
+    expect(complete.node("stem").textContent).toBe("diagnosis-flag");
+    expect(complete.node("members").innerHTML).toContain("7 decided");
+    expect(complete.node("openQuestion").textContent).toBe(
+      "All items in this queue are complete 🎉 7 decided.",
+    );
+    expect(complete.node("decision").textContent).toBe(
+      "All items in this queue are complete 🎉 7 decided.",
+    );
+    expect(complete.node("status").textContent).toBe(
+      "All items in this queue are complete 🎉 7 decided.",
+    );
+
+    const empty = await createPageHarness({
+      category: "sep-variants",
+      nextResponse: {
+        cluster: null,
+        queue_state: {
+          kind: "empty",
+          category: "sep-variants",
+          decided: 0,
+          message: "No items found for category sep-variants.",
+        },
+      },
+    });
+    await empty.api.loadNext(false);
+
+    expect(empty.node("clusterId").textContent).toBe("No items found");
+    expect(empty.node("stem").textContent).toBe("sep-variants");
+    expect(empty.node("members").innerHTML).toContain("No queued items");
+    expect(empty.node("openQuestion").textContent).toBe(
+      "No items found for category sep-variants.",
+    );
+    expect(empty.node("status").textContent).toBe(
+      "No items found for category sep-variants.",
+    );
+
+    const statsError = await createPageHarness({
+      nextResponse: {
+        cluster: null,
+        queue_state: {
+          kind: "error",
+          category: "diagnosis-flag",
+          decided: 0,
+          message: "Stats unavailable: stale decisions reference missing clusters.",
+        },
+      },
+    });
+    await statsError.api.loadNext(false);
+
+    expect(statsError.node("clusterId").textContent).toBe("Stats unavailable");
+    expect(statsError.node("healthMode").textContent).toBe("stats error");
+    expect(statsError.node("understandingNote").textContent).toBe(
+      "Stats unavailable: stale decisions reference missing clusters.",
+    );
+    expect(statsError.node("status").textContent).toBe(
+      "Stats unavailable: stale decisions reference missing clusters.",
+    );
+
+    const failure = await createPageHarness({
+      nextError: new Error("network down"),
+    });
+    await failure.api.loadNext(false).catch((error) => {
+      failure.api.showLegFailure(error.message);
+    });
+
+    expect(failure.node("status").textContent).toBe("network down");
+    expect(failure.node("turnLog").innerHTML).toContain("network down");
+  });
+
+  it("renders stop and error state machine teardown hooks for fetches, VAD, recorder, and audio", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const runtimeState = html.slice(
+      html.indexOf("let sessionActive = false;"),
+      html.indexOf("function setStatus(text"),
+    );
+    const teardown = html.slice(
+      html.indexOf("async function teardownSessionRuntime"),
+      html.indexOf("async function healthCheck"),
+    );
+    const legFailure = html.slice(
+      html.indexOf("function showLegFailure(message)"),
+      html.indexOf("function isAbortError(error)"),
+    );
+
+    expect(runtimeState).toContain("let sessionAbortController = null;");
+    expect(teardown).toContain("sessionAbortController.abort();");
+    expect(teardown).toContain("stopActivePlayback();");
+    expect(teardown).toContain("vadState.queue = [];");
+    expect(teardown).toContain(
+      "vadState.pendingSamples = new Float32Array(0);",
+    );
+    expect(teardown).toContain("processingTurn = false;");
+    expect(teardown).toContain("mediaRecorder.stop();");
+    expect(teardown).toContain("sessionButton.textContent = \"Start session\";");
+    expect(legFailure).toContain("void teardownSessionRuntime");
+    expect(legFailure).not.toContain("speakSystemText(text)");
+  });
+
+  it("gates repeated brain-offline announcements by failures, backoff, and tab visibility", async () => {
+    const app = createVoiceReviewApp();
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    const runtimeState = html.slice(
+      html.indexOf("let healthRetryTimer = null;"),
+      html.indexOf("function setStatus(text"),
+    );
+    const healthCheck = html.slice(
+      html.indexOf("async function healthCheck(silent)"),
+      html.indexOf("function scheduleHealthRetry()"),
+    );
+    const announce = html.slice(
+      html.indexOf("function canAnnounceHealthFailure()"),
+      html.indexOf("function showLegFailure(message)"),
+    );
+
+    expect(html).toContain("const HEALTH_FAILURE_ANNOUNCE_THRESHOLD = 3;");
+    expect(runtimeState).toContain("let healthFailureStreak = 0;");
+    expect(runtimeState).toContain("let nextHealthAnnouncementAt = 0;");
+    expect(runtimeState).toContain("let healthAnnouncementBackoffMs = 3000;");
+    expect(healthCheck).toContain("healthFailureStreak += 1;");
+    expect(healthCheck).toContain(
+      "if (!silent && canAnnounceHealthFailure())",
+    );
+    expect(healthCheck).not.toContain(
+      "if (!silent) showLegFailure(\"brain offline — retrying\");",
+    );
+    expect(announce).toContain(
+      "healthFailureStreak < HEALTH_FAILURE_ANNOUNCE_THRESHOLD",
+    );
+    expect(announce).toContain('document.visibilityState !== "visible"');
+    expect(announce).toContain("nextHealthAnnouncementAt = now + healthAnnouncementBackoffMs;");
+    expect(announce).toContain("Math.min(60000, healthAnnouncementBackoffMs * 2)");
   });
 });
