@@ -319,6 +319,22 @@ export function buildWhisperArgs(options: {
   return args;
 }
 
+function isWebmContentType(contentType: string | null): boolean {
+  const mediaType = (contentType || "").toLowerCase().split(";")[0].trim();
+  return mediaType.endsWith("/webm");
+}
+
+async function hasEbmlHeader(audio: Blob): Promise<boolean> {
+  if (audio.size < 4) return false;
+  const header = new Uint8Array(await audio.slice(0, 4).arrayBuffer());
+  return (
+    header[0] === 0x1a &&
+    header[1] === 0x45 &&
+    header[2] === 0xdf &&
+    header[3] === 0xa3
+  );
+}
+
 export const BROWSER_VAD_CHUNK_SAMPLES = 512;
 export const BROWSER_VAD_CONTEXT_SAMPLES = 64;
 export const BROWSER_VAD_INPUT_SAMPLES =
@@ -1573,11 +1589,30 @@ async function handleTranscribe(
   const started = performance.now();
   const audio = await request.blob();
   if (audio.size === 0) return jsonResponse({ error: "empty audio" }, 400);
+  const contentType = request.headers.get("content-type");
+  if (isWebmContentType(contentType) && !(await hasEbmlHeader(audio))) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "voicereview_transcribe_invalid_webm",
+        code: "invalid_webm_header",
+        bytes: audio.size,
+      }),
+    );
+    return jsonResponse(
+      {
+        error: "invalid webm audio",
+        code: "invalid_webm_header",
+        recoverable: true,
+      },
+      422,
+    );
+  }
 
   const id = crypto.randomUUID();
   const inputPath = join(
     config.tempDir,
-    `${id}.${extensionForContentType(request.headers.get("content-type"))}`,
+    `${id}.${extensionForContentType(contentType)}`,
   );
   const wavPath = join(config.tempDir, `${id}.wav`);
   await mkdir(config.tempDir, { recursive: true });
@@ -3170,7 +3205,6 @@ function renderNaturalConversationPage(
         await healthCheck(false);
         await ensureMicOpen();
         await initVad();
-        startSessionRecorder();
         sessionActive = true;
         sessionButton.textContent = "End session";
         sessionButton.classList.add("is-active");
@@ -3350,18 +3384,44 @@ function renderNaturalConversationPage(
       }
     }
 
-    function startSessionRecorder() {
-      if (mediaRecorder && mediaRecorder.state !== "inactive") return;
+    function createTurnRecorder() {
       const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? { mimeType: "audio/webm;codecs=opus" }
         : {};
-      mediaRecorder = new MediaRecorder(stream, options);
-      mediaRecorder.ondataavailable = (event) => {
+      const recorder = new MediaRecorder(stream, options);
+      recorder.ondataavailable = (event) => {
         if (event.data.size > 0 && (collectingTurn || flushingTurn)) {
           turnChunks.push(event.data);
         }
       };
+      return recorder;
+    }
+
+    async function startTurnRecorder() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") return;
+      mediaRecorder = createTurnRecorder();
       mediaRecorder.start(250);
+    }
+
+    async function stopTurnRecorderAndBuildBlob() {
+      const recorder = mediaRecorder;
+      const mimeType = recorder?.mimeType || "audio/webm";
+      if (!recorder || recorder.state === "inactive") {
+        const blob = new Blob(turnChunks, { type: mimeType });
+        turnChunks = [];
+        mediaRecorder = null;
+        return blob;
+      }
+
+      const stopped = new Promise((resolve) => {
+        recorder.addEventListener("stop", resolve, { once: true });
+      });
+      recorder.stop();
+      await stopped;
+      mediaRecorder = null;
+      const blob = new Blob(turnChunks, { type: mimeType });
+      turnChunks = [];
+      return blob;
     }
 
     function enqueueAudioForVad(input, sampleRate) {
@@ -3431,19 +3491,19 @@ function renderNaturalConversationPage(
 
       if (turnState.pausePlayback) {
         pendingInterruption = pausePlaybackForInterruption();
-        beginTurnCapture();
+        void beginTurnCapture();
         setStatus("LISTENING");
         return;
       }
       if (processingTurn && !turnState.pausePlayback) {
         if (speech && !collectingTurn) {
-          beginTurnCapture();
+          void beginTurnCapture();
           setStatus("LISTENING");
         }
         return;
       }
       if (speech && (turnState.phase === "LISTENING" || previousPhase === "THINKING")) {
-        beginTurnCapture();
+        void beginTurnCapture();
         setStatus("LISTENING");
       }
       if (turnState.phase === "SETTLING") {
@@ -3454,11 +3514,16 @@ function renderNaturalConversationPage(
       }
     }
 
-    function beginTurnCapture() {
+    async function beginTurnCapture() {
       if (collectingTurn) return;
       turnChunks = [];
       collectingTurn = true;
-      try { mediaRecorder?.requestData(); } catch (_error) {}
+      try {
+        await startTurnRecorder();
+      } catch (error) {
+        collectingTurn = false;
+        showLegFailure("Recorder failed: " + error.message);
+      }
     }
 
     async function finishAndProcessTurn() {
@@ -3466,14 +3531,18 @@ function renderNaturalConversationPage(
       processingTurn = true;
       collectingTurn = false;
       flushingTurn = true;
-      try { mediaRecorder?.requestData(); } catch (_error) {}
-      await sleep(140);
-      flushingTurn = false;
-      const blob = new Blob(turnChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
-      turnChunks = [];
-      await processTurnBlob(blob);
-      turnState = createTurnTakingState();
-      renderPhase();
+      try {
+        await sleep(80);
+        const blob = await stopTurnRecorderAndBuildBlob();
+        await processTurnBlob(blob);
+        turnState = createTurnTakingState();
+        renderPhase();
+      } catch (error) {
+        showLegFailure("Turn failed: " + error.message);
+        processingTurn = false;
+      } finally {
+        flushingTurn = false;
+      }
     }
 
     async function processTurnBlob(blob) {

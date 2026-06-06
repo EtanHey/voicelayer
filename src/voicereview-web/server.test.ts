@@ -548,7 +548,7 @@ describe("VoiceReview web server helpers", () => {
       const response = await app.fetch(
         new Request("http://localhost/api/transcribe", {
           method: "POST",
-          headers: { "content-type": "audio/webm" },
+          headers: { "content-type": "application/octet-stream" },
           body: new Blob(["not real audio"]),
         }),
       );
@@ -569,6 +569,10 @@ describe("VoiceReview web server helpers", () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-failed-"));
     const failedDir = join(root, "failed");
     await mkdir(failedDir, { recursive: true });
+    const validWebmThatFailsDecode = new Blob([
+      new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+      "broken webm",
+    ]);
     const oldTime = new Date("2026-01-01T00:00:00.000Z");
     for (let index = 0; index < 22; index += 1) {
       const path = join(failedDir, `old-${String(index).padStart(2, "0")}.webm`);
@@ -596,7 +600,7 @@ describe("VoiceReview web server helpers", () => {
         new Request("http://localhost/api/transcribe", {
           method: "POST",
           headers: { "content-type": "audio/webm;codecs=opus" },
-          body: new Blob(["broken webm"]),
+          body: validWebmThatFailsDecode,
         }),
       );
       const body = await response.json();
@@ -610,8 +614,113 @@ describe("VoiceReview web server helpers", () => {
       expect(response.status).toBe(500);
       expect(body.error).toContain("Invalid EBML header");
       expect(failedFiles).toHaveLength(20);
-      expect(preservedContents).toContain("broken webm");
+      expect(preservedContents.some((content) => content.includes("broken webm"))).toBe(
+        true,
+      );
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("transcribes webm audio that starts with an EBML header", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const validWebm = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04,
+    ]);
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli") ? "turn two correction\n" : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob([validWebm], { type: "audio/webm" }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        text: "turn two correction",
+      });
+      expect(calls.map((call) => call.args[0])).toEqual([
+        "/test/bin/ffmpeg",
+        "/test/bin/whisper-cli",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects headerless mid-stream webm slices before ffmpeg", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    const validWebm = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04,
+    ]);
+    const headerlessMidstreamSlice = validWebm.slice(4);
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli") ? "should not run\n" : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      console.warn = (message?: unknown) => {
+        warnings.push(String(message));
+      };
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob([headerlessMidstreamSlice], { type: "audio/webm" }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: "invalid webm audio",
+        code: "invalid_webm_header",
+        recoverable: true,
+      });
+      expect(calls).toHaveLength(0);
+      expect(warnings).toHaveLength(1);
+      expect(JSON.parse(warnings[0])).toMatchObject({
+        event: "voicereview_transcribe_invalid_webm",
+        code: "invalid_webm_header",
+      });
+    } finally {
+      console.warn = originalWarn;
       await rm(root, { recursive: true, force: true });
     }
   });
