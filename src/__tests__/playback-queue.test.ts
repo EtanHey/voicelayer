@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
+import * as recordingState from "../recording-state";
 import * as socketClient from "../socket-client";
 
 // --- Mock helpers ---
@@ -263,6 +264,39 @@ describe("playback queue — P0-1 sequential playback", () => {
         process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
       }
       cleanupRecordingState();
+    }
+  });
+
+  it("does not emit replay pre-start idle or spawn when recording starts after the queue gate", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    let stateCalls = 0;
+    const stateSpy = spyOn(
+      recordingState,
+      "getEffectiveRecordingState",
+    ).mockImplementation(() => {
+      stateCalls += 1;
+      return stateCalls <= 2 ? "idle" : "recording";
+    });
+
+    try {
+      playAudioNonBlocking("/tmp/pq-replay-late-recording.mp3", {
+        text: "Replay",
+        voice: "TestVoice",
+        preStartIdle: true,
+      });
+      await Bun.sleep(50);
+
+      const idles = broadcasts.filter(
+        (b: any) => b.type === "state" && b.state === "idle",
+      );
+      const errors = broadcasts.filter(
+        (b: any) => b.type === "error" && b.message === SPEAKER_REFUSED,
+      );
+      expect(idles).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(playerMocks).toHaveLength(0);
+    } finally {
+      stateSpy.mockRestore();
     }
   });
 });

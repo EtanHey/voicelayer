@@ -141,6 +141,30 @@ describe("socket handler idempotency matrix", () => {
     expect(calls).toEqual(["stopPlayback", "waitForInput"]);
   });
 
+  it("does not broadcast idle when an accepted record hits a recording conflict", async () => {
+    waitForInputSpy.mockRejectedValue(
+      new Error("Recording already in progress (state: recording)"),
+    );
+
+    const response = handleSocketCommand({
+      cmd: "record",
+      id: "record-late-busy",
+    });
+    await Bun.sleep(0);
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "record-late-busy",
+    });
+    expect(
+      broadcastSpy.mock.calls.filter(
+        ([event]: any[]) => event.type === "state" && event.state === "idle",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("rejects replay while recording without restarting playback", () => {
     recordingStateSpy.mockReturnValue("recording");
 

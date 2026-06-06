@@ -16,6 +16,10 @@ import {
 } from "./tts";
 import { waitForInput, clearInput } from "./input";
 import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+} from "./recording-state";
+import {
   bookVoiceSession,
   isVoiceBooked,
   clearStopSignal,
@@ -339,7 +343,11 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     return result;
   } catch (err) {
     clearTimeout(timer!);
-    if (!isSpeakerOutputRefusedError(err)) {
+    if (
+      !isSpeakerOutputRefusedError(err) &&
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
       broadcast({ type: "state", state: "idle" });
     }
     const message = err instanceof Error ? err.message : String(err);
@@ -420,10 +428,20 @@ export async function handleReplay(args: unknown): Promise<McpResult> {
   }
 
   // Play audio non-blocking — pass metadata for queue-aware broadcasting
-  playAudioNonBlocking(entry.file, {
-    text: entry.text.slice(0, 2000),
-    voice: entry.voice,
-  });
+  try {
+    playAudioNonBlocking(entry.file, {
+      text: entry.text.slice(0, 2000),
+      voice: entry.voice,
+    });
+  } catch (err) {
+    return textResult(
+      formatError(
+        "replay",
+        err instanceof Error ? err.message : String(err),
+      ),
+      true,
+    );
+  }
 
   return textResult(formatReplay(index, entry.text));
 }

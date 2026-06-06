@@ -3,6 +3,7 @@ import { recordingStateFilePath, safeWriteFileSync } from "./paths";
 
 export type RecordingState = "idle" | "recording" | "transcribing";
 
+const RECORDING_CONFLICT_MESSAGE_PREFIX = "Recording already in progress";
 const VALID_STATES = new Set<RecordingState>([
   "idle",
   "recording",
@@ -101,4 +102,11 @@ export function getEffectiveRecordingState(): RecordingState {
   const persisted = readPersistedRecordingState();
   if (!persisted || persisted.state === "idle") return "idle";
   return isPidAlive(persisted.pid) ? persisted.state : "idle";
+}
+
+export function isRecordingConflictError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.startsWith(RECORDING_CONFLICT_MESSAGE_PREFIX)
+  );
 }

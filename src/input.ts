@@ -91,6 +91,7 @@ import { getLanguageModeFromEnv } from "./language-config";
 import type { MicCapture, MicCaptureOptions } from "./soundlayer";
 import {
   getEffectiveRecordingState,
+  isRecordingConflictError,
   setRecordingState,
 } from "./recording-state";
 
@@ -1603,7 +1604,12 @@ export async function waitForInput(
       message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle", source: "recording" });
+    if (
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
     throw err;
   }
   if (!pcmData) {

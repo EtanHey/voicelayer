@@ -38,6 +38,10 @@ import {
   removeAlias,
   removePromptTerm,
 } from "./stt-vocabulary-store";
+import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+} from "./recording-state";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -161,7 +165,12 @@ export function handleSocketCommand(
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        broadcast({ type: "state", state: "idle", source: "recording" });
+        if (
+          !isRecordingConflictError(err) &&
+          getEffectiveRecordingState() === "idle"
+        ) {
+          broadcast({ type: "state", state: "idle", source: "recording" });
+        }
       });
       return buildAck(command, "accept");
     }

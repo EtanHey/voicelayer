@@ -188,6 +188,31 @@ describe("speaker output recording gate", () => {
     }
   });
 
+  it("returns a structured replay error when recording starts before playback enqueue", async () => {
+    writeRecordingState("idle");
+    writeFileSync(TEST_REPLAY_FILE, "fake mp3");
+    const historySpy = spyOn(tts, "getHistoryEntry").mockReturnValue({
+      id: 0,
+      file: TEST_REPLAY_FILE,
+      text: "latest replay",
+      voice: "jenny",
+      timestamp: Date.now(),
+    });
+    const playSpy = spyOn(tts, "playAudioNonBlocking").mockImplementation(() => {
+      throw new Error(SPEAKER_REFUSED);
+    });
+
+    try {
+      const result = await handlers.handleReplay({ index: 0 });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(SPEAKER_REFUSED);
+    } finally {
+      historySpy.mockRestore();
+      playSpy.mockRestore();
+    }
+  });
+
   it("deletes synthesized TTS when recording starts after synthesis but before playback", async () => {
     writeRecordingState("idle");
     let synthesizedFile: string | null = null;

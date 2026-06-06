@@ -670,6 +670,20 @@ class PlaybackQueueManager {
     return hadActivity;
   }
 
+  private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
+    broadcast({
+      type: "error",
+      message: error instanceof Error ? error.message : String(error),
+      recoverable: true,
+    });
+    if (this.depth() === 0) {
+      broadcastPlaybackIdleIfSpeakerClear();
+    }
+    this.emitQueueSnapshot();
+    completeJob(job);
+    this.resolveIfIdle();
+  }
+
   private processNext() {
     if (this.current) return;
 
@@ -683,19 +697,16 @@ class PlaybackQueueManager {
       try {
         assertSpeakerClear();
       } catch (err) {
-        broadcast({
-          type: "error",
-          message: err instanceof Error ? err.message : String(err),
-          recoverable: true,
-        });
-        if (this.depth() === 0) {
-          broadcastPlaybackIdleIfSpeakerClear();
-        }
-        this.emitQueueSnapshot();
-        completeJob(next);
+        this.refuseQueuedPlayback(next, err);
         continue;
       }
 
+      try {
+        assertSpeakerClear();
+      } catch (err) {
+        this.refuseQueuedPlayback(next, err);
+        continue;
+      }
       if (next.metadata?.preStartIdle) {
         broadcast({ type: "state", state: "idle" });
       }
@@ -720,6 +731,12 @@ class PlaybackQueueManager {
         });
       }
 
+      try {
+        assertSpeakerClear();
+      } catch (err) {
+        this.refuseQueuedPlayback(next, err);
+        continue;
+      }
       let proc: ReturnType<typeof Bun.spawn>;
       try {
         proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
