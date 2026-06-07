@@ -349,7 +349,13 @@ tell application "System Events"
   end tell
 end tell
 OSA
-  log "focused TextEdit paste sink: $SINK_FILE"
+  # NIGHT-TRAIN harness fix: `keystroke "a" using command down` can leave the
+  # Cmd modifier stuck in the combined event state; subsequent F5 CGEvents then
+  # arrive as cmd+fn and VoiceBar (correctly) ignores the modified chord.
+  # Explicitly release Cmd and let the event state settle before F5.
+  osascript -e 'tell application "System Events" to key up command' >/dev/null 2>&1 || true
+  sleep 0.5
+  log "focused TextEdit paste sink: $SINK_FILE (modifier state flushed)"
 }
 
 read_textedit_sink() {
