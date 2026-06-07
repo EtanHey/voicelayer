@@ -97,8 +97,10 @@ const MAX_PREFIX_SHIFTED_SKIP_WORDS = 3;
 const MIN_PREFIX_SHIFTED_MATCH_WORDS = 4;
 const MIN_MEANINGFUL_TAIL_OVERLAP_WORDS = 2;
 const MIN_ECHOED_TAIL_WORDS = 3;
-const MAX_ECHOED_TAIL_WORDS = 6;
+const MAX_ECHOED_TAIL_WORDS = 10;
 const MAX_ECHOED_TAIL_LOOKBACK_WORDS = 18;
+const MIN_REPLAYED_TAIL_PHRASE_WORDS = 4;
+const MAX_REPLAYED_TAIL_PHRASE_WORDS = 10;
 const MAX_LEADING_PUNCTUATION_INSERTED_WORDS = 4;
 const MIN_LEADING_PUNCTUATION_OVERLAP_WORDS = 3;
 const TRAILING_FILLER_AFTER_QUESTION = /\?\s+(?:yeah|ok|okay)\.?$/iu;
@@ -164,13 +166,63 @@ function findChunkOverlap(
   return { overlap: 0, skipPrefix: 0 };
 }
 
-function hasMeaningfulTranscriptOverlap(current: string, next: string): boolean {
-  const currentWords = normalizeChunkWords(current);
-  const nextWords = normalizeChunkWords(next);
-  return (
-    findChunkOverlap(currentWords, nextWords).overlap >=
-    MIN_MEANINGFUL_TAIL_OVERLAP_WORDS
+function containsEarlierWordSequence(
+  words: string[],
+  sequence: string[],
+  beforeIndex: number,
+): boolean {
+  if (sequence.length === 0 || beforeIndex < sequence.length) return false;
+  const sequenceKey = overlapKey(sequence);
+  for (let index = 0; index + sequence.length <= beforeIndex; index++) {
+    if (overlapKey(words.slice(index, index + sequence.length)) === sequenceKey) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPromptEchoedTailReplay(
+  currentWords: string[],
+  nextWords: string[],
+  overlap: number,
+  skipPrefix: number,
+): boolean {
+  const maxReplayWords = Math.min(
+    MAX_REPLAYED_TAIL_PHRASE_WORDS,
+    nextWords.length - skipPrefix,
   );
+  if (maxReplayWords < MIN_REPLAYED_TAIL_PHRASE_WORDS) return false;
+
+  const boundaryStart = currentWords.length - overlap;
+  for (
+    let replayWords = maxReplayWords;
+    replayWords >= MIN_REPLAYED_TAIL_PHRASE_WORDS;
+    replayWords--
+  ) {
+    if (
+      containsEarlierWordSequence(
+        currentWords,
+        nextWords.slice(skipPrefix, skipPrefix + replayWords),
+        boundaryStart,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function mergeTailVerificationTranscript(current: string, tail: string): string {
+  const currentWords = normalizeChunkWords(current);
+  const tailWords = normalizeChunkWords(tail);
+  const { overlap, skipPrefix } = findChunkOverlap(currentWords, tailWords);
+  if (overlap < MIN_MEANINGFUL_TAIL_OVERLAP_WORDS) return current;
+  if (isPromptEchoedTailReplay(currentWords, tailWords, overlap, skipPrefix)) {
+    return current;
+  }
+
+  const merged = mergeChunkTranscripts([current, tail]);
+  return merged || current;
 }
 
 function hasLeadingPunctuationRepairOverlap(
@@ -409,7 +461,7 @@ function stripTailVerificationArtifact(text: string, fullText: string): string {
   return text.replace(TRAILING_FILLER_AFTER_QUESTION, "?");
 }
 
-function trimEchoedTrailingPhrase(text: string): string {
+function trimOneEchoedTrailingPhrase(text: string): string {
   const words = normalizeChunkWords(text);
   const maxPhraseWords = Math.min(
     MAX_ECHOED_TAIL_WORDS,
@@ -431,13 +483,23 @@ function trimEchoedTrailingPhrase(text: string): string {
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
       const interveningWords = tailStart - (index + phraseWords);
-      if (interveningWords >= 2 && overlapKey(candidate) === tailKey) {
+      if (interveningWords >= 0 && overlapKey(candidate) === tailKey) {
         return words.slice(0, tailStart).join(" ").trim();
       }
     }
   }
 
   return text.trim();
+}
+
+function trimEchoedTrailingPhrase(text: string): string {
+  let current = text.trim();
+  for (let passes = 0; passes < 8; passes++) {
+    const trimmed = trimOneEchoedTrailingPhrase(current);
+    if (trimmed === current) return current;
+    current = trimmed;
+  }
+  return current;
 }
 
 function combinePromptOverride(
@@ -829,10 +891,7 @@ export class WhisperServerBackend implements STTBackend {
           promptOverride: combinePromptOverride(options?.promptOverride, fullText),
         }),
       );
-      if (!hasMeaningfulTranscriptOverlap(fullText, tailText)) {
-        return fullText;
-      }
-      const merged = mergeChunkTranscripts([fullText, tailText]);
+      const merged = mergeTailVerificationTranscript(fullText, tailText);
       return merged ? stripTailVerificationArtifact(merged, fullText) : fullText;
     } catch (err) {
       console.error(

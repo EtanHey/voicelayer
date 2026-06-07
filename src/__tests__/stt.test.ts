@@ -385,6 +385,28 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
+    it("rejects prompted tail verification when it replays an earlier phrase instead of extending the transcript", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-replay-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't"
+            : "I don't want to leave anything for Anthropic, I don't want to leave anything for Anthropic";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't",
+      );
+      expect(result.backend).toBe("whisper-server");
+    });
+
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));
@@ -477,6 +499,46 @@ describe("STT backends", () => {
 
       expect(result.text).toBe(
         "what we were supposed to. For fuck's sake, this is getting sickening.",
+      );
+      expect(result.backend).toBe("whisper-server+clean");
+    });
+
+    it("trims adjacent echoed phrases from the end of resident decodes", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(31));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "unrelated tail text"
+            : "we should keep working through the night, I don't want to leave anything for Anthropic, I don't want to leave anything for Anthropic",
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "we should keep working through the night, I don't want to leave anything for Anthropic,",
+      );
+      expect(result.backend).toBe("whisper-server+clean");
+    });
+
+    it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      const repeated = "I don't want to leave anything for Anthropic";
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "unrelated tail text"
+            : `we should keep working through the night, ${repeated}, ${repeated}, ${repeated}`,
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "we should keep working through the night, I don't want to leave anything for Anthropic,",
       );
       expect(result.backend).toBe("whisper-server+clean");
     });
