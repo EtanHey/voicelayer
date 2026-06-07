@@ -144,7 +144,8 @@ enum VoiceBarDaemonEnvironment {
         let preservesQAOverrides = shouldPreserveQAOverrides(inherited)
         let preservesDevOverrides = shouldPreserveDevOverrides(inherited)
         for key in inheritedEnvironmentDenylist {
-            if preservesQAOverrides, preservedQAOverrideAllowlist.contains(key) {
+            if preservesQAOverrides || preservesDevOverrides,
+               preservedQAOverrideAllowlist.contains(key) {
                 continue
             }
             if preservesDevOverrides, preservedDevOverrideAllowlist.contains(key) {
@@ -173,7 +174,13 @@ enum VoiceBarDaemonEnvironment {
     }
 
     private static func shouldPreserveDevOverrides(_ environment: [String: String]) -> Bool {
-        environment[devInstanceEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+        if environment[devInstanceEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1" {
+            return true
+        }
+        return preservedDevOverrideAllowlist.contains { key in
+            guard key != devInstanceEnvironmentVariable else { return false }
+            return environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
     }
 }
 

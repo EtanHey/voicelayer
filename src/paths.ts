@@ -30,6 +30,8 @@ const MCP_SOCKET_OVERRIDE_ENV = "VOICELAYER_MCP_SOCKET_PATH";
 const LEGACY_MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
 const MCP_PID_OVERRIDE_ENV = "VOICELAYER_MCP_PID_PATH";
 const LEGACY_MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
+const DAEMON_PID_OVERRIDE_ENV = "VOICELAYER_DAEMON_PID_PATH";
+const LEGACY_DAEMON_PID_OVERRIDE_ENV = "QA_VOICE_DAEMON_PID_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "VOICELAYER_RETAINED_RECORDING_PATH";
 const LEGACY_RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "VOICELAYER_RECORDING_STATE_PATH";
@@ -244,7 +246,17 @@ export const MCP_PID_FILE = getMcpPidFilePath();
  * Standalone daemon PID file.
  * Separate from MCP_PID_FILE so daemon and MCP can coexist.
  */
-export const DAEMON_PID_FILE = tmpPath("voicelayer-daemon.pid");
+export function getDaemonPidFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return readOverride(
+    [DAEMON_PID_OVERRIDE_ENV, LEGACY_DAEMON_PID_OVERRIDE_ENV],
+    tmpPath(
+      isDevInstance(env) ? "voicelayer-dev-daemon.pid" : "voicelayer-daemon.pid",
+    ),
+    env,
+  );
+}
+
+export const DAEMON_PID_FILE = getDaemonPidFilePath();
 
 /**
  * Safe write that refuses to follow symlinks.

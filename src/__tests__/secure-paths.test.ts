@@ -63,6 +63,9 @@ describe("secure session paths", () => {
     expect(paths.getVoiceBarSocketPath(env)).toBe("/tmp/voicelayer-dev.sock");
     expect(paths.getMcpSocketPath(env)).toBe("/tmp/voicelayer-dev-mcp.sock");
     expect(paths.getMcpPidFilePath(env)).toBe("/tmp/voicelayer-dev-mcp.pid");
+    expect(paths.getDaemonPidFilePath(env)).toBe(
+      "/tmp/voicelayer-dev-daemon.pid",
+    );
     expect(paths.retainedRecordingFilePath(env)).toBe(
       "/tmp/voicelayer-dev-last-recording.wav",
     );
@@ -81,6 +84,15 @@ describe("secure session paths", () => {
         QA_VOICE_MCP_PID_PATH: "/tmp/voicelayer-qa-mcp.pid",
       } as NodeJS.ProcessEnv),
     ).toBe("/tmp/voicelayer-public-mcp.pid");
+  });
+
+  it("prefers public standalone daemon PID override over QA override", () => {
+    expect(
+      paths.getDaemonPidFilePath({
+        VOICELAYER_DAEMON_PID_PATH: "/tmp/voicelayer-public-daemon.pid",
+        QA_VOICE_DAEMON_PID_PATH: "/tmp/voicelayer-qa-daemon.pid",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-public-daemon.pid");
   });
 
   it("prefers public retained recording override over QA override", () => {

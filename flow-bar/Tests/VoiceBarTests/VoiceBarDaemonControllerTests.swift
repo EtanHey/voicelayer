@@ -542,6 +542,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 "VOICELAYER_MCP_PID_PATH": "/tmp/public-mcp.pid",
                 "VOICELAYER_RETAINED_RECORDING_PATH": "/tmp/public-last.wav",
                 "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
+                "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
                 "QA_VOICE_CHUNKED_STT": "1",
                 "CODEX_CI": "1",
                 "VOICELAYER_ALLOW_SOCKET_RECLAIM": "1",
@@ -554,10 +555,63 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(environment["VOICELAYER_MCP_SOCKET_PATH"], "/tmp/public-mcp.sock")
         XCTAssertEqual(environment["VOICELAYER_MCP_PID_PATH"], "/tmp/public-mcp.pid")
         XCTAssertEqual(environment["VOICELAYER_RETAINED_RECORDING_PATH"], "/tmp/public-last.wav")
-        XCTAssertNil(environment["QA_VOICE_SOCKET_PATH"])
+        XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
         XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
         XCTAssertNil(environment["CODEX_CI"])
         XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
+    }
+
+    func testDaemonLaunchPreservesPublicPathOverridesWithoutDevFlag() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICELAYER_SOCKET_PATH": "/tmp/public-voicebar.sock",
+                "VOICELAYER_MCP_SOCKET_PATH": "/tmp/public-mcp.sock",
+                "VOICELAYER_MCP_PID_PATH": "/tmp/public-mcp.pid",
+                "VOICELAYER_RETAINED_RECORDING_PATH": "/tmp/public-last.wav",
+                "VOICELAYER_RECORDING_STATE_PATH": "/tmp/public-recording-state.json",
+                "VOICELAYER_ALLOW_SOCKET_RECLAIM": "1",
+                "QA_VOICE_CHUNKED_STT": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["VOICELAYER_SOCKET_PATH"], "/tmp/public-voicebar.sock")
+        XCTAssertEqual(environment["VOICELAYER_MCP_SOCKET_PATH"], "/tmp/public-mcp.sock")
+        XCTAssertEqual(environment["VOICELAYER_MCP_PID_PATH"], "/tmp/public-mcp.pid")
+        XCTAssertEqual(environment["VOICELAYER_RETAINED_RECORDING_PATH"], "/tmp/public-last.wav")
+        XCTAssertEqual(environment["VOICELAYER_RECORDING_STATE_PATH"], "/tmp/public-recording-state.json")
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
+    }
+
+    func testDaemonLaunchPreservesLegacyPathOverridesForDevInstance() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICELAYER_DEV_INSTANCE": "1",
+                "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
+                "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
+                "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
+                "QA_VOICE_RECORDING_STATE_PATH": "/tmp/qa-recording-state.json",
+                "QA_VOICE_RETAINED_RECORDING_PATH": "/tmp/qa-last.wav",
+                "QA_VOICE_DISABLE_FLAG_PATH": "/tmp/qa-disable.flag",
+                "QA_VOICE_CHUNKED_STT": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["VOICELAYER_DEV_INSTANCE"], "1")
+        XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
+        XCTAssertEqual(environment["QA_VOICE_RECORDING_STATE_PATH"], "/tmp/qa-recording-state.json")
+        XCTAssertEqual(environment["QA_VOICE_RETAINED_RECORDING_PATH"], "/tmp/qa-last.wav")
+        XCTAssertEqual(environment["QA_VOICE_DISABLE_FLAG_PATH"], "/tmp/qa-disable.flag")
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertNil(environment["QA_VOICE_ALLOW_SOCKET_RECLAIM"])
         XCTAssertEqual(environment["PATH"], "/tmp/bin")
     }
 

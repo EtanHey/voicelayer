@@ -21,7 +21,7 @@ import { handleSocketCommand } from "./socket-handlers";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import {
-  DAEMON_PID_FILE,
+  getDaemonPidFilePath,
   getVoiceBarSocketPath,
   isDefaultVoiceBarSocketPath,
 } from "./paths";
@@ -44,7 +44,7 @@ export function createShutdownHandler(deps?: {
 }) {
   const disconnect = deps?.disconnect ?? disconnectFromBar;
   const releaseLock =
-    deps?.releaseLock ?? (() => releaseProcessLock(DAEMON_PID_FILE));
+    deps?.releaseLock ?? (() => releaseProcessLock(getDaemonPidFilePath()));
   const exit = deps?.exit ?? process.exit;
   let shutDown = false;
 
@@ -68,7 +68,8 @@ async function main() {
   );
 
   // 1. Acquire daemon-specific process lock (separate from MCP PID)
-  const lockResult = acquireProcessLock(DAEMON_PID_FILE);
+  const daemonPidFile = getDaemonPidFilePath();
+  const lockResult = acquireProcessLock(daemonPidFile);
   if (lockResult.killedStale) {
     console.error(
       `${LOG_PREFIX} Killed orphan daemon (PID ${lockResult.stalePid})`,
