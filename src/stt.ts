@@ -812,6 +812,7 @@ export class WhisperServerBackend implements STTBackend {
       if (chunkedResult) {
         const backendParts = [this.name, "chunks"];
         if (chunkedResult.headChanged) backendParts.push("head");
+        if (chunkedResult.cleaned) backendParts.push("clean");
         return {
           text: chunkedResult.text,
           backend: backendParts.join("+"),
@@ -967,7 +968,7 @@ export class WhisperServerBackend implements STTBackend {
   private async transcribeChunkedLongRecording(
     wavData: Uint8Array,
     options?: STTTranscribeOptions,
-  ): Promise<{ text: string; headChanged: boolean } | null> {
+  ): Promise<{ text: string; headChanged: boolean; cleaned: boolean } | null> {
     const info = parseWavPcmInfo(wavData);
     if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
       return null;
@@ -1012,7 +1013,14 @@ export class WhisperServerBackend implements STTBackend {
       mergedText,
       options,
     );
-    return { text: headResult.text, headChanged: headResult.changed };
+    const cleanedText = trimEchoedTrailingPhrase(headResult.text, {
+      allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+    });
+    return {
+      text: cleanedText,
+      headChanged: headResult.changed,
+      cleaned: cleanedText !== headResult.text,
+    };
   }
 
   private async verifyChunkedLeadingPunctuation(
