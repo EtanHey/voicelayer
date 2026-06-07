@@ -128,6 +128,9 @@ export interface CommandResult {
 export interface VoiceReviewConfig {
   port: number;
   hostname: string;
+  surfaceTitle: string;
+  surfaceSessionLabel: string;
+  categoryLabels: Record<string, string>;
   defaultCategory: string;
   brainlayerWorktree: string;
   brainlayerDbPath: string;
@@ -178,6 +181,9 @@ const HOME = homedir();
 export const DEFAULT_CONFIG: VoiceReviewConfig = {
   port: Number(process.env.VOICE_REVIEW_WEB_PORT || "8849"),
   hostname: process.env.VOICE_REVIEW_WEB_HOST || "127.0.0.1",
+  surfaceTitle: process.env.VOICE_REVIEW_SURFACE_TITLE || "",
+  surfaceSessionLabel: process.env.VOICE_REVIEW_SESSION_LABEL || "",
+  categoryLabels: parseCategoryLabels(process.env.VOICE_REVIEW_CATEGORY_LABELS),
   defaultCategory: process.env.VOICE_REVIEW_CATEGORY || "diagnosis-flag",
   brainlayerWorktree:
     process.env.VOICE_REVIEW_BRAINLAYER_WT || "/tmp/voice-review-wt",
@@ -631,7 +637,9 @@ export function humanizeSpokenText(input: string): string {
 
   const normalized = dedupeSpokenLines(
     String(input || "")
+      .replace(/,\s*category\s+[a-z0-9_-]+,\s*/gi, ", ")
       .replace(/\bas\s+[a-z0-9_-]+\s+with\s+\d+\s+chunks?\.?\s*/gi, " ")
+      .replace(/\bas\s+(?:context|evidence|metadata|snippet),?\s*/gi, " ")
       .replace(
         /\s*\((?:context|evidence|metadata|snippet|chunk)[^)]*\d+\s+chunks?\)/gi,
         "",
@@ -680,6 +688,14 @@ function dedupeSpokenSegments(input: string): string {
     if (!clean) continue;
     const key = normalizeSpokenSegmentKey(clean);
     if (key.length >= 48) {
+      let duplicate = false;
+      for (const seenKey of seen) {
+        if (seenKey.includes(key) || key.includes(seenKey)) {
+          duplicate = true;
+          break;
+        }
+      }
+      if (duplicate) continue;
       if (seen.has(key)) continue;
       seen.add(key);
     }
@@ -2772,12 +2788,87 @@ function escapeHtmlAttribute(value: string): string {
     .replaceAll(">", "&gt;");
 }
 
+function parseCategoryLabels(raw: string | undefined): Record<string, string> {
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const labels: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const category = key.trim();
+      const label = typeof value === "string" ? value.trim() : "";
+      if (category && label) labels[category] = label;
+    }
+    return labels;
+  } catch (_error) {
+    return {};
+  }
+}
+
+function isOrqiSurface(config: VoiceReviewConfig): boolean {
+  return (
+    config.port === 8861 ||
+    config.surfaceTitle.trim().toLowerCase() === "orqi"
+  );
+}
+
+function surfaceTitle(config: VoiceReviewConfig): string {
+  const configured = config.surfaceTitle.trim();
+  if (configured) return configured;
+  return isOrqiSurface(config) ? "ORQI" : "Voice Review";
+}
+
+function categoryLabelsForConfig(
+  config: VoiceReviewConfig,
+): Record<string, string> {
+  const labels: Record<string, string> = { ...config.categoryLabels };
+  if (isOrqiSurface(config)) {
+    labels["diagnosis-flag"] =
+      labels["diagnosis-flag"] || "Contested KG clusters";
+    labels["etan-queue"] = labels["etan-queue"] || "Etan KG queue";
+  }
+  return labels;
+}
+
+function categoryDisplayLabel(
+  category: string,
+  labels: Record<string, string>,
+): string {
+  return labels[category] || category;
+}
+
+function surfaceSessionLabel(
+  config: VoiceReviewConfig,
+  category: string,
+  labels: Record<string, string>,
+): string {
+  const configured = config.surfaceSessionLabel.trim();
+  if (configured) return configured;
+  if (isOrqiSurface(config)) return "KG review";
+  return categoryDisplayLabel(category, labels);
+}
+
+function scriptJson(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 function renderNaturalConversationPage(
   config: VoiceReviewConfig,
   availableCategories: string[],
   ttsEngines: VoiceReviewTtsEngines = DEFAULT_TTS_ENGINES,
 ): string {
   const defaultCategory = config.defaultCategory;
+  const title = surfaceTitle(config);
+  const categoryLabels = categoryLabelsForConfig(config);
+  const initialSessionLabel = surfaceSessionLabel(
+    config,
+    defaultCategory,
+    categoryLabels,
+  );
+  const categoryLabelsJson = scriptJson(categoryLabels);
   const ttsVoices = [
     "en-US-GuyNeural",
     "en-US-JennyNeural",
@@ -2807,7 +2898,7 @@ function renderNaturalConversationPage(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Voice Review</title>
+  <title>${escapeHtmlAttribute(title)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400..700;1,6..72,400..700&family=Schibsted+Grotesk:wght@400..700&display=swap" rel="stylesheet">
@@ -3469,8 +3560,8 @@ function renderNaturalConversationPage(
 </head>
 <body>
   <header>
-    <div class="wordmark">Voice Review</div>
-    <div id="sessionMeta" class="session-meta">${escapeHtmlAttribute(defaultCategory)}</div>
+    <div class="wordmark">${escapeHtmlAttribute(title)}</div>
+    <div id="sessionMeta" class="session-meta">${escapeHtmlAttribute(initialSessionLabel)}</div>
     <div class="header-actions">
       <details id="gearPopover" class="gear">
         <summary aria-label="Settings" role="button">
@@ -3483,7 +3574,7 @@ function renderNaturalConversationPage(
               ${availableCategories
                 .map(
                   (category) =>
-                    `<option value="${escapeHtmlAttribute(category)}"${category === defaultCategory ? " selected" : ""}>${escapeHtmlAttribute(category)}</option>`,
+                    `<option value="${escapeHtmlAttribute(category)}"${category === defaultCategory ? " selected" : ""}>${escapeHtmlAttribute(categoryDisplayLabel(category, categoryLabels))}</option>`,
                 )
                 .join("")}
             </select>
@@ -3618,6 +3709,12 @@ function renderNaturalConversationPage(
     const THINKING_PAUSE_PHRASES = ["wait", "hold on", "let me think", "hmm", "one sec", "רגע"];
     const CLONED_TTS_VOICES = new Set(${clonedVoiceSetJson});
     const EDGE_FALLBACK_VOICE = "${escapeHtmlAttribute(edgeFallbackVoice)}";
+    const CATEGORY_LABELS = ${categoryLabelsJson};
+
+    function displayCategoryLabel(categoryValue) {
+      const categoryName = String(categoryValue || "");
+      return CATEGORY_LABELS[categoryName] || categoryName;
+    }
 
     function createTurnTakingState(overrides = {}) {
       return {
@@ -3887,12 +3984,14 @@ function renderNaturalConversationPage(
         banner = (stageView && stageView.message) || "Something went wrong.";
         showBegin = true;
       } else if (state === "complete") {
+        const categoryLabel = displayCategoryLabel((stageView && stageView.category) || category.value);
         status = "All caught up";
-        caption = "Every cluster in " + ((stageView && stageView.category) || category.value) + " is resolved.";
+        caption = "Every cluster in " + categoryLabel + " is resolved.";
         stats = String((stageView && stageView.decided) || 0) + " decided";
         action = "Review another category";
       } else if (state === "empty") {
-        caption = "Nothing left to review in " + ((stageView && stageView.category) || category.value) + ".";
+        const categoryLabel = displayCategoryLabel((stageView && stageView.category) || category.value);
+        caption = "Nothing left to review in " + categoryLabel + ".";
         hint = "Pick another category to keep going.";
         action = "Switch category";
       }
@@ -4111,8 +4210,45 @@ function renderNaturalConversationPage(
       };
     }
 
-    function humanizeSpokenText(input) {
+    function normalizeSpokenSegmentKey(input) {
       return String(input || "")
+        .toLowerCase()
+        .replace(/[.!?]+$/g, "")
+        .replace(/^all named\\s+/i, "")
+        .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\\s+/g, " ")
+        .trim();
+    }
+
+    function dedupeSpokenSegments(input) {
+      const seen = new Set();
+      const segments = String(input || "").match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+      const output = [];
+      for (const segment of segments) {
+        const clean = segment.replace(/\\s+/g, " ").trim();
+        if (!clean) continue;
+        const key = normalizeSpokenSegmentKey(clean);
+        if (key.length >= 48) {
+          let duplicate = false;
+          for (const seenKey of seen) {
+            if (seenKey.includes(key) || key.includes(seenKey)) {
+              duplicate = true;
+              break;
+            }
+          }
+          if (duplicate || seen.has(key)) continue;
+          seen.add(key);
+        }
+        output.push(clean);
+      }
+      return output.join(" ").trim();
+    }
+
+    function humanizeSpokenText(input) {
+      const normalized = String(input || "")
+        .replace(/,\\s*category\\s+[a-z0-9_-]+,\\s*/gi, ", ")
+        .replace(/\\bas\\s+[a-z0-9_-]+\\s+with\\s+\\d+\\s+chunks?\\.?\\s*/gi, " ")
+        .replace(/\\bas\\s+(?:context|evidence|metadata|snippet),?\\s*/gi, " ")
         .replace(/<\\/?[^>]+>/g, "")
         .replace(/^#{1,6}\\s*/gm, "")
         .replace(/^\\s*[-*]\\s+/gm, "")
@@ -4126,6 +4262,7 @@ function renderNaturalConversationPage(
         .replace(/\\.\\s*\\./g, ".")
         .replace(/\\s+/g, " ")
         .trim();
+      return dedupeSpokenSegments(normalized);
     }
 
     async function api(path, options = {}) {
@@ -4910,7 +5047,7 @@ function renderNaturalConversationPage(
       current = null;
       currentQuestion = "";
       statusNote = "";
-      $("sessionMeta").textContent = stateCategory;
+      $("sessionMeta").textContent = displayCategoryLabel(stateCategory);
       if (kind === "error") {
         $("healthMode").textContent = "stats error";
         $("healthMode").classList.add("basic");
@@ -4930,7 +5067,7 @@ function renderNaturalConversationPage(
     function renderCluster() {
       stageView = null;
       $("stem").textContent = current.stem;
-      $("sessionMeta").textContent = current.category;
+      $("sessionMeta").textContent = displayCategoryLabel(current.category);
       renderUnderstanding();
     }
 
@@ -5129,7 +5266,7 @@ function renderNaturalConversationPage(
     });
 
     category.addEventListener("change", async () => {
-      $("sessionMeta").textContent = category.value;
+      $("sessionMeta").textContent = displayCategoryLabel(category.value);
       if (!sessionActive) return;
       const gear = $("gearPopover");
       gear.open = false;

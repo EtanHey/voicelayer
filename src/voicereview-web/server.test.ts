@@ -716,6 +716,51 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("renders the assigned KG session port with ORQI labels while preserving raw category values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-orqi-surface-test-"));
+    const batchPath = join(root, "batch.json");
+    await writeFile(
+      batchPath,
+      JSON.stringify({
+        "diagnosis-flag": [],
+        "etan-queue": [],
+      }),
+    );
+    const app = createVoiceReviewApp({
+      config: {
+        port: 8861,
+        defaultCategory: "diagnosis-flag",
+        batchPath,
+      },
+    });
+
+    try {
+      const response = await app.fetch(new Request("http://localhost/"));
+      const html = await response.text();
+      const select = html.slice(
+        html.indexOf('<select id="category"'),
+        html.indexOf("</select>", html.indexOf('<select id="category"')),
+      );
+
+      expect(html).toContain("<title>ORQI</title>");
+      expect(html).toContain('<div class="wordmark">ORQI</div>');
+      expect(html).toContain(
+        '<div id="sessionMeta" class="session-meta">KG review</div>',
+      );
+      expect(select).toContain(
+        '<option value="diagnosis-flag" selected>Contested KG clusters</option>',
+      );
+      expect(select).toContain(
+        '<option value="etan-queue">Etan KG queue</option>',
+      );
+      expect(html).toContain(
+        "$(\"sessionMeta\").textContent = displayCategoryLabel(current.category);",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects empty whisper transcripts before interpretation", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
     const calls: CommandCall[] = [];
@@ -2092,10 +2137,26 @@ describe("VoiceReview web server helpers", () => {
     const spoken = humanizeSpokenText(liveSpeak);
 
     expect(spoken).toBe(
-      `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. Merge, keep separate, mixed, or skip?`,
+      `Cluster 'Q1 of 6 — invocable substrates', 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. Merge, keep separate, mixed, or skip?`,
     );
+    expect(spoken).not.toContain("category etan-queue");
     expect(spoken).not.toContain("as question with 0 chunks");
     expect(spoken.match(/DICTIONARY QUESTION/g)).toHaveLength(1);
+  });
+
+  it("strips contested KG driver metadata from spoken cluster prompts", () => {
+    const liveSpeak = `Cluster 'android eas', category diagnosis-flag, 4 entries. Name variants: Android EAS, CONTESTED — judge said project should stay Project, technology should stay Tool because Android EAS is an automation/deployment path, but cluster script may have inferred Technology from role hints. CONTESTED — judge said project should stay Project, technology should stay Tool because Android EAS is an automation/deployment path, but cluster script may have inferred Technology from role hints. as context, Android EAS as project, Android EAS as tool, Android EAS as technology. Merge, keep separate, mixed, or skip?`;
+
+    const spoken = humanizeSpokenText(liveSpeak);
+
+    expect(spoken).toContain("Cluster 'android eas', 4 entries.");
+    expect(spoken).toContain("Android EAS as project");
+    expect(spoken).toContain("Android EAS as tool");
+    expect(spoken).toContain("Android EAS as technology");
+    expect(spoken).toContain("Merge, keep separate, mixed, or skip?");
+    expect(spoken).not.toContain("category diagnosis-flag");
+    expect(spoken).not.toContain("as context");
+    expect(spoken.match(/CONTESTED/g)).toHaveLength(1);
   });
 
   it("dedupes repeated long spoken segments without dropping repeated short words", () => {
