@@ -99,6 +99,7 @@ const MIN_MEANINGFUL_TAIL_OVERLAP_WORDS = 2;
 const MIN_ECHOED_TAIL_WORDS = 3;
 const MAX_ECHOED_TAIL_WORDS = 10;
 const MAX_ECHOED_TAIL_LOOKBACK_WORDS = 18;
+const MIN_NOVEL_TAIL_SUFFIX_WORDS = 2;
 const MIN_REPLAYED_TAIL_PHRASE_WORDS = 4;
 const MAX_REPLAYED_TAIL_PHRASE_WORDS = 10;
 const MAX_LEADING_PUNCTUATION_INSERTED_WORDS = 4;
@@ -181,12 +182,37 @@ function containsEarlierWordSequence(
   return false;
 }
 
+function hasNovelTailExtension(
+  currentWords: string[],
+  nextWords: string[],
+  overlap: number,
+  skipPrefix: number,
+): boolean {
+  const extension = nextWords.slice(skipPrefix + overlap);
+  const maxSuffixWords = Math.min(4, extension.length);
+  for (
+    let suffixWords = maxSuffixWords;
+    suffixWords >= MIN_NOVEL_TAIL_SUFFIX_WORDS;
+    suffixWords--
+  ) {
+    const suffix = extension.slice(extension.length - suffixWords);
+    if (!containsEarlierWordSequence(currentWords, suffix, currentWords.length)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isPromptEchoedTailReplay(
   currentWords: string[],
   nextWords: string[],
   overlap: number,
   skipPrefix: number,
 ): boolean {
+  if (hasNovelTailExtension(currentWords, nextWords, overlap, skipPrefix)) {
+    return false;
+  }
+
   const maxReplayWords = Math.min(
     MAX_REPLAYED_TAIL_PHRASE_WORDS,
     nextWords.length - skipPrefix,
