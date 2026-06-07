@@ -489,8 +489,11 @@ function stripTailVerificationArtifact(text: string, fullText: string): string {
 
 function trimOneEchoedTrailingPhrase(
   text: string,
-  options: { allowAdjacentEcho: boolean },
-): string {
+  options: {
+    allowAdjacentEcho: boolean;
+    allowAdjacentEchoContinuation: boolean;
+  },
+): { text: string; trimmedAdjacentEcho: boolean } {
   const words = normalizeChunkWords(text);
   const maxPhraseWords = Math.min(
     MAX_ECHOED_TAIL_WORDS,
@@ -512,16 +515,26 @@ function trimOneEchoedTrailingPhrase(
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
       const interveningWords = tailStart - (index + phraseWords);
+      const repeatedEarlier = containsEarlierWordSequence(
+        words,
+        candidate,
+        index,
+      );
       const allowedGap =
         interveningWords >= 2 ||
-        (options.allowAdjacentEcho && interveningWords === 0);
+        (options.allowAdjacentEcho &&
+          interveningWords === 0 &&
+          (options.allowAdjacentEchoContinuation || repeatedEarlier));
       if (allowedGap && overlapKey(candidate) === tailKey) {
-        return words.slice(0, tailStart).join(" ").trim();
+        return {
+          text: words.slice(0, tailStart).join(" ").trim(),
+          trimmedAdjacentEcho: interveningWords === 0,
+        };
       }
     }
   }
 
-  return text.trim();
+  return { text: text.trim(), trimmedAdjacentEcho: false };
 }
 
 function trimEchoedTrailingPhrase(
@@ -529,9 +542,15 @@ function trimEchoedTrailingPhrase(
   options: { allowAdjacentEcho: boolean },
 ): string {
   let current = text.trim();
+  let allowAdjacentEchoContinuation = false;
   for (let passes = 0; passes < 8; passes++) {
-    const trimmed = trimOneEchoedTrailingPhrase(current, options);
+    const result = trimOneEchoedTrailingPhrase(current, {
+      ...options,
+      allowAdjacentEchoContinuation,
+    });
+    const trimmed = result.text;
     if (trimmed === current) return current;
+    allowAdjacentEchoContinuation = result.trimmedAdjacentEcho;
     current = trimmed;
   }
   return current;

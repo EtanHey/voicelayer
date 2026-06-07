@@ -525,7 +525,7 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+clean");
     });
 
-    it("trims adjacent echoed phrases from the end of resident decodes", async () => {
+    it("preserves adjacent repeated phrases in long resident decodes when they appear only twice", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
@@ -533,15 +533,15 @@ describe("STT backends", () => {
         transcribeViaServer: async (_wavData, options) =>
           options?.prompt
             ? "unrelated tail text"
-            : "we should keep working through the night, I don't want to leave anything for Anthropic, I don't want to leave anything for Anthropic",
+            : "we should keep working through the night please repeat after me please repeat after me",
       });
 
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe(
-        "we should keep working through the night, I don't want to leave anything for Anthropic,",
+        "we should keep working through the night please repeat after me please repeat after me",
       );
-      expect(result.backend).toBe("whisper-server+clean");
+      expect(result.backend).toBe("whisper-server");
     });
 
     it("preserves intentional adjacent repeated phrases in short resident decodes", async () => {
