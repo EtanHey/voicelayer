@@ -430,6 +430,27 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
     }
 
     func testFreshSessionLivenessProbeUsesDaemonPidPath() {
+        let previousValues: [String: String?] = [
+            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.legacyDaemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.legacyDaemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.devInstanceEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.devInstanceEnvironmentVariable],
+        ]
+        for (key, _) in previousValues {
+            unsetenv(key)
+        }
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
         XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/voicelayer-mcp.pid")
         XCTAssertEqual(
             VoiceBarDaemonLivenessProbe.freshSessionCheckCommand,
@@ -583,6 +604,24 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(environment["VOICELAYER_RETAINED_RECORDING_PATH"], "/tmp/public-last.wav")
         XCTAssertEqual(environment["VOICELAYER_RECORDING_STATE_PATH"], "/tmp/public-recording-state.json")
         XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
+    }
+
+    func testDaemonLaunchKeepsSocketReclaimForPartialPublicPathOverrides() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICELAYER_RECORDING_STATE_PATH": "/tmp/public-recording-state.json",
+                "VOICELAYER_RETAINED_RECORDING_PATH": "/tmp/public-last.wav",
+                "VOICELAYER_ALLOW_SOCKET_RECLAIM": "0",
+                "QA_VOICE_CHUNKED_STT": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["VOICELAYER_RECORDING_STATE_PATH"], "/tmp/public-recording-state.json")
+        XCTAssertEqual(environment["VOICELAYER_RETAINED_RECORDING_PATH"], "/tmp/public-last.wav")
+        XCTAssertEqual(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
         XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
         XCTAssertEqual(environment["PATH"], "/tmp/bin")
     }

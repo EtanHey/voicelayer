@@ -156,7 +156,7 @@ enum VoiceBarDaemonEnvironment {
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
         env["PATH"] = path
-        if preservesQAOverrides || preservesDevOverrides {
+        if shouldDisableSocketReclaim(inherited, preservesQAOverrides: preservesQAOverrides) {
             env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
             env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
         } else {
@@ -180,6 +180,24 @@ enum VoiceBarDaemonEnvironment {
         return preservedDevOverrideAllowlist.contains { key in
             guard key != devInstanceEnvironmentVariable else { return false }
             return environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+    }
+
+    private static func shouldDisableSocketReclaim(
+        _ environment: [String: String],
+        preservesQAOverrides: Bool
+    ) -> Bool {
+        if preservesQAOverrides {
+            return true
+        }
+        if environment[devInstanceEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1" {
+            return true
+        }
+        return [
+            "VOICELAYER_SOCKET_PATH",
+            "VOICELAYER_MCP_SOCKET_PATH",
+        ].contains { key in
+            environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
     }
 }
