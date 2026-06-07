@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class BarViewClickabilityTests: XCTestCase {
-    private var windows: [NSWindow] = []
+    private static var retainedWindows: [NSWindow] = []
 
     final class SpyCommandRouter: BarCommandRouting {
         var cancelCount = 0
@@ -114,14 +114,19 @@ final class BarViewClickabilityTests: XCTestCase {
         let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
-            contentRect: host.frame,
+            contentRect: NSRect(
+                x: -10_000,
+                y: -10_000,
+                width: host.frame.width,
+                height: host.frame.height
+            ),
             styleMask: [.borderless],
             backing: .buffered,
             defer: false
         )
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
-        windows.append(window)
+        Self.retainedWindows.append(window)
         host.layoutSubtreeIfNeeded()
         return host
     }

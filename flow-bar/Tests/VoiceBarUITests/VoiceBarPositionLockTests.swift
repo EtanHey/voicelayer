@@ -60,6 +60,48 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
     }
 
+    func testFullEnvelopePanelPassesMouseDownThroughOutsideActiveHitRect() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 1728, height: 503)))
+        panel.activeHitRectProvider = {
+            NSRect(x: 700, y: 0, width: 328, height: 32)
+        }
+        let outside = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 864, y: 300),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        )!
+
+        XCTAssertTrue(panel.shouldPassThroughMouseEvent(outside))
+        XCTAssertFalse(panel.activeHitRectContains(pointInWindow: outside.locationInWindow))
+    }
+
+    func testFullEnvelopePanelKeepsMouseDownInsideActiveHitRect() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 1728, height: 503)))
+        panel.activeHitRectProvider = {
+            NSRect(x: 700, y: 0, width: 328, height: 32)
+        }
+        let inside = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: NSPoint(x: 864, y: 16),
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        )!
+
+        XCTAssertFalse(panel.shouldPassThroughMouseEvent(inside))
+        XCTAssertTrue(panel.activeHitRectContains(pointInWindow: inside.locationInWindow))
+    }
+
     func testScreenFollowPolicySelectsMouseScreenForAnchoredModes() {
         let screens = [
             CGRect(x: 0, y: 0, width: 1200, height: 800),

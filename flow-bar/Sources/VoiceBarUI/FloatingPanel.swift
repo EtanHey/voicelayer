@@ -20,7 +20,9 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var rightClickAction: (() -> Bool)?
+    public var escapeAction: (() -> Bool)?
     public var activeHitRectProvider: (() -> NSRect)?
+    public var mouseEventPassThroughPoster: ((NSEvent) -> Void)?
     public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
 
@@ -74,6 +76,15 @@ public final class FloatingPillPanel: NSPanel {
     /// user's active app. .nonactivatingPanel + canBecomeKey=true is sufficient
     /// for SwiftUI buttons to respond without activation.
     override public func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, event.keyCode == 53, escapeAction?() == true {
+            return
+        }
+
+        if shouldPassThroughMouseEvent(event) {
+            passMouseEventThrough(event)
+            return
+        }
+
         if event.type == .rightMouseDown {
             if rightClickAction?() == true {
                 return
@@ -86,7 +97,7 @@ public final class FloatingPillPanel: NSPanel {
         }
 
         if event.type == .leftMouseDown {
-            let startedInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
+            let startedInVisiblePill = activeHitRectContains(pointInWindow: event.locationInWindow)
             dragStartWasInVisiblePill = shouldHandlePillDrag(startedInVisiblePill: startedInVisiblePill)
         } else if event.type == .leftMouseDragged,
                   shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
@@ -105,6 +116,33 @@ public final class FloatingPillPanel: NSPanel {
 
     public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
         isPillDragEnabled && startedInVisiblePill
+    }
+
+    public func activeHitRectContains(pointInWindow: NSPoint) -> Bool {
+        guard let activeHitRectProvider else { return true }
+        let point = contentView?.convert(pointInWindow, from: nil) ?? pointInWindow
+        return activeHitRectProvider().contains(point)
+    }
+
+    public func shouldPassThroughMouseEvent(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            !activeHitRectContains(pointInWindow: event.locationInWindow)
+        default:
+            false
+        }
+    }
+
+    private func passMouseEventThrough(_ event: NSEvent) {
+        ignoresMouseEvents = true
+        if let mouseEventPassThroughPoster {
+            mouseEventPassThroughPoster(event)
+        } else if let cgEvent = event.cgEvent?.copy() {
+            cgEvent.post(tap: .cghidEventTap)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.ignoresMouseEvents = false
+        }
     }
 
     /// Position pill on the given screen (or the screen containing the mouse).

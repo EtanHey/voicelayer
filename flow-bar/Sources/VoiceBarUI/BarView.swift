@@ -75,6 +75,9 @@ public struct BarView: View {
     public var commandRouter: BarCommandRouting
     public var surfaceStyle: VoiceBarSurfaceStyle
     public var menuBarProfile: VoiceBarMenuBarDisplayProfile
+    public var v5IslandUIState: V5IslandUIState
+    public var v5ViewportWidth: CGFloat?
+    public var v5MaxShellHeight: CGFloat?
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
@@ -94,12 +97,18 @@ public struct BarView: View {
         state: VoiceState,
         commandRouter: BarCommandRouting,
         surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
-        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat,
+        v5IslandUIState: V5IslandUIState = V5IslandUIState(),
+        v5ViewportWidth: CGFloat? = nil,
+        v5MaxShellHeight: CGFloat? = nil
     ) {
         self.state = state
         self.commandRouter = commandRouter
         self.surfaceStyle = surfaceStyle
         self.menuBarProfile = menuBarProfile
+        self.v5IslandUIState = v5IslandUIState
+        self.v5ViewportWidth = v5ViewportWidth
+        self.v5MaxShellHeight = v5MaxShellHeight
     }
 
     // MARK: - Pill content (collapsed or expanded)
@@ -183,36 +192,47 @@ public struct BarView: View {
         )
         let notchWidth = menuBarProfile.notchRect?.width ?? V3Theme.previewNotchWidth
         let stripHeight = menuBarProfile.islandHeight
-        let viewportWidth = state.isTranscriptMenuPresented
+        let closedViewportWidth = V3IslandModel.layout(
+            for: projection.renderKind == .transcribing
+                ? .transcribing
+                : (projection.renderKind == .idle
+                    ? (projection.allowsHoverReveal && v5IslandUIState.isHovering ? .hover : .idle)
+                    : .recording),
+            closedNotchWidth: notchWidth,
+            stripHeight: stripHeight,
+            measuredMenuHeight: stripHeight
+        ).shellFrame.width
+        let envelopeWidth = v5ViewportWidth ?? (v5IslandUIState.isMenuPresented
             ? max(716, notchWidth + 2 * V3Theme.radiiExpanded.top)
-            : V3IslandModel.layout(
-                for: projection.renderKind == .transcribing
-                    ? .transcribing
-                    : (projection.renderKind == .idle
-                        ? (projection.allowsHoverReveal && state.isHovering ? .hover : .idle)
-                        : .recording),
-                closedNotchWidth: notchWidth,
-                stripHeight: stripHeight,
-                measuredMenuHeight: stripHeight
-            ).shellFrame.width
+            : closedViewportWidth)
+        let viewportWidth = if v5ViewportWidth != nil {
+            V5IslandPanelEnvelope.visibleShellViewportWidth(
+                screenWidth: envelopeWidth,
+                notchWidth: notchWidth,
+                isMenuPresented: v5IslandUIState.menuProgress > 0
+            )
+        } else {
+            envelopeWidth
+        }
+        let maxShellHeight = v5MaxShellHeight ?? max(stripHeight, v5IslandUIState.measuredMenuHeight)
 
         return V5LiveIslandView(
             projection: projection,
             notchWidth: notchWidth,
             stripHeight: stripHeight,
             viewportWidth: viewportWidth,
-            isHovering: state.isHovering,
-            isMenuPresented: Binding(
-                get: { state.isTranscriptMenuPresented },
-                set: { state.isTranscriptMenuPresented = $0 }
-            ),
+            maxShellHeight: maxShellHeight,
+            isHovering: v5IslandUIState.isHovering,
+            uiState: v5IslandUIState,
             onPrimaryTap: { commandRouter.handlePrimaryTap() },
             onStop: { commandRouter.handleStop() }
         )
+        .frame(width: envelopeWidth, height: maxShellHeight, alignment: .top)
         .onHover { hovering in
-            state.setHovering(hovering)
+            v5IslandUIState.setHovering(hovering)
         }
         .onChange(of: state.mode) { _, newMode in
+            v5IslandUIState.handleVoiceMode(newMode)
             handleModeChange(newMode)
         }
     }

@@ -14,6 +14,7 @@ public struct VoiceBarPanelLayout: Equatable {
         isPasteFlowActive: Bool = false,
         isHovering: Bool = false,
         isTranscriptMenuPresented: Bool = false,
+        v5MeasuredMenuHeight: CGFloat? = nil,
         surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
         menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat,
         padding: CGFloat
@@ -27,6 +28,7 @@ public struct VoiceBarPanelLayout: Equatable {
             queueItemCount: queueItemCount,
             isHovering: isHovering,
             isTranscriptMenuPresented: isTranscriptMenuPresented,
+            v5MeasuredMenuHeight: v5MeasuredMenuHeight,
             surfaceStyle: surfaceStyle,
             menuBarProfile: menuBarProfile
         )
@@ -65,6 +67,7 @@ public struct VoiceBarPanelLayout: Equatable {
         queueItemCount: Int,
         isHovering: Bool,
         isTranscriptMenuPresented: Bool,
+        v5MeasuredMenuHeight: CGFloat?,
         surfaceStyle: VoiceBarSurfaceStyle,
         menuBarProfile: VoiceBarMenuBarDisplayProfile
     ) -> CGSize {
@@ -74,6 +77,7 @@ public struct VoiceBarPanelLayout: Equatable {
                 isCollapsed: isCollapsed,
                 isHovering: isHovering,
                 isTranscriptMenuPresented: isTranscriptMenuPresented,
+                v5MeasuredMenuHeight: v5MeasuredMenuHeight,
                 surfaceStyle: surfaceStyle,
                 profile: menuBarProfile
             )
@@ -108,6 +112,7 @@ public struct VoiceBarPanelLayout: Equatable {
         isCollapsed: Bool,
         isHovering: Bool,
         isTranscriptMenuPresented: Bool,
+        v5MeasuredMenuHeight: CGFloat?,
         surfaceStyle: VoiceBarSurfaceStyle,
         profile: VoiceBarMenuBarDisplayProfile
     ) -> CGSize {
@@ -115,7 +120,10 @@ public struct VoiceBarPanelLayout: Equatable {
             let notchWidth = profile.notchRect?.width ?? V3Theme.previewNotchWidth
             let stripHeight = profile.islandHeight
             if isTranscriptMenuPresented {
-                return CGSize(width: 716, height: stripHeight + V3Theme.menuContentHeight + 140)
+                return CGSize(
+                    width: 716,
+                    height: max(stripHeight, v5MeasuredMenuHeight ?? V5IslandUIState.defaultMeasuredMenuHeight)
+                )
             }
             let state: V3IslandState = switch mode {
             case .idle, .disconnected:

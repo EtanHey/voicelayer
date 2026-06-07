@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             STTVocabularySnapshotLoader.load().aliases
         }
     )
+    private let v5IslandUIState = V5IslandUIState()
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
         resetHotkeyState: { [weak self] in
@@ -53,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
+    private var v5ClickOutsideGlobalMonitor: Any?
+    private var v5ClickOutsideLocalMonitor: Any?
     private var moveObserver: Any?
     private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
@@ -64,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var currentMenuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
+    private var lastRenderedSurfaceStyle: VoiceBarSurfaceStyle?
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
 
@@ -197,6 +201,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceState.diagnosticLogger = { [weak self] event, details in
             self?.logDiagnostic(event: event, details: details)
         }
+        v5IslandUIState.onPresentationChange = { [weak self] _ in
+            self?.handleV5IslandPresentationChange()
+        }
+        v5IslandUIState.onLayoutChange = { [weak self] in
+            self?.applyPanelLayout(animated: true)
+        }
         configurePillContextMenu()
 
         server.start()
@@ -220,27 +230,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? Self.preferredMenuBarScreen()
             : (Self.screenContainingMouse() ?? NSScreen.main)
         currentMenuBarProfile = Self.menuBarProfile(for: initialScreen)
+        v5IslandUIState.reset(.panelRecreated)
 
         // Floating pill / menu-bar island
         let initialLayout = Self.panelLayout(
             for: voiceState,
             surfaceStyle: currentSurfaceStyle,
-            menuBarProfile: currentMenuBarProfile
+            menuBarProfile: currentMenuBarProfile,
+            v5IslandUIState: v5IslandUIState
         )
+        let initialV5Envelope = currentSurfaceStyle == .v5Island
+            ? v5Envelope(for: initialScreen)
+            : nil
+        let initialContentSize = initialV5Envelope?.frame.size ?? initialLayout.panelSize
         let barView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
             surfaceStyle: currentSurfaceStyle,
-            menuBarProfile: currentMenuBarProfile
+            menuBarProfile: currentMenuBarProfile,
+            v5IslandUIState: v5IslandUIState,
+            v5ViewportWidth: initialV5Envelope?.frame.width,
+            v5MaxShellHeight: initialV5Envelope?.maxShellHeight
         )
+        lastRenderedSurfaceStyle = currentSurfaceStyle
+        writeV5SurfaceDiagnostic(context: "initial-root")
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitRectProvider = { [weak self] in
-            self?.panelLayoutForCurrentSurface().activeHitRect ?? .zero
+            self?.activeHitRectForCurrentSurface() ?? .zero
         }
         hosting.frame = NSRect(
             x: 0, y: 0,
-            width: initialLayout.panelSize.width,
-            height: initialLayout.panelSize.height
+            width: initialContentSize.width,
+            height: initialContentSize.height
         )
 
         let pill = FloatingPillPanel(content: hosting)
@@ -249,11 +270,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openSettingsWindow()
             return true
         }
+        pill.escapeAction = { [weak self] in
+            guard let self,
+                  currentSurfaceStyle == .v5Island,
+                  v5IslandUIState.isMenuPresented
+            else { return false }
+            v5IslandUIState.close(.escape)
+            return true
+        }
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitRectProvider = { [weak self] in
-            self?.panelLayoutForCurrentSurface().activeHitRect ?? .zero
+            self?.activeHitRectForCurrentSurface() ?? .zero
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
@@ -302,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        removeV5ClickOutsideMonitors()
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -587,9 +617,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
+        v5IslandUIState.handleVoiceMode(mode)
+        panel?.isMovableByWindowBackground = effectiveAnchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
-        panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
+        panel?.isPillDragEnabled = effectiveAnchorMode.allowsFreeDrag
         applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -609,10 +640,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             : (panel.screen ?? NSScreen.main)
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
         updateMenuBarProfile(for: targetScreen)
+        if currentSurfaceStyle == .v5Island,
+           let envelope = v5Envelope(for: targetScreen) {
+            refreshBarRootView()
+            panel.level = .popUpMenu
+            panel.contentView?.frame = NSRect(origin: .zero, size: envelope.frame.size)
+            panel.setFrame(envelope.frame, display: true, animate: false)
+            return
+        }
         let layout = Self.panelLayout(
             for: voiceState,
             surfaceStyle: currentSurfaceStyle,
-            menuBarProfile: currentMenuBarProfile
+            menuBarProfile: currentMenuBarProfile,
+            v5IslandUIState: v5IslandUIState
         )
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         panel.level = placement.menuBarAttached ? .popUpMenu : .floating
@@ -637,14 +677,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Self.panelLayout(
             for: voiceState,
             surfaceStyle: currentSurfaceStyle,
-            menuBarProfile: currentMenuBarProfile
+            menuBarProfile: currentMenuBarProfile,
+            v5IslandUIState: v5IslandUIState
         )
+    }
+
+    private func activeHitRectForCurrentSurface() -> NSRect {
+        guard currentSurfaceStyle == .v5Island else {
+            return panelLayoutForCurrentSurface().activeHitRect
+        }
+        let targetScreen = panel?.screen ?? Self.preferredMenuBarScreen() ?? NSScreen.main
+        guard let targetScreen,
+              let envelope = v5Envelope(for: targetScreen)
+        else { return .zero }
+        return V5IslandPanelEnvelope.activeHitRect(
+            screenWidth: envelope.frame.width,
+            notchWidth: currentMenuBarProfile.notchRect?.width ?? V3Theme.closedNotchWidth(for: targetScreen),
+            stripHeight: V3Theme.stripHeight(for: targetScreen),
+            maxShellHeight: envelope.maxShellHeight,
+            isMenuPresented: v5IslandUIState.isMenuPresented,
+            measuredMenuHeight: v5IslandUIState.measuredMenuHeight
+        )
+    }
+
+    private func handleV5IslandPresentationChange() {
+        guard currentSurfaceStyle == .v5Island else {
+            removeV5ClickOutsideMonitors()
+            return
+        }
+
+        if v5IslandUIState.isMenuPresented {
+            installV5ClickOutsideMonitors()
+        } else {
+            removeV5ClickOutsideMonitors()
+        }
+        applyPanelLayout(animated: true)
+    }
+
+    private func installV5ClickOutsideMonitors() {
+        guard v5ClickOutsideGlobalMonitor == nil, v5ClickOutsideLocalMonitor == nil else { return }
+
+        v5ClickOutsideGlobalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            self?.closeV5IslandIfClickIsOutsidePanel()
+        }
+
+        v5ClickOutsideLocalMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            self?.closeV5IslandIfClickIsOutsidePanel()
+            return event
+        }
+    }
+
+    private func removeV5ClickOutsideMonitors() {
+        if let monitor = v5ClickOutsideGlobalMonitor {
+            NSEvent.removeMonitor(monitor)
+            v5ClickOutsideGlobalMonitor = nil
+        }
+        if let monitor = v5ClickOutsideLocalMonitor {
+            NSEvent.removeMonitor(monitor)
+            v5ClickOutsideLocalMonitor = nil
+        }
+    }
+
+    private func closeV5IslandIfClickIsOutsidePanel() {
+        guard currentSurfaceStyle == .v5Island,
+              v5IslandUIState.isMenuPresented,
+              let panel
+        else { return }
+
+        let mouseLocation = NSEvent.mouseLocation
+        if !panel.frame.contains(mouseLocation) {
+            v5IslandUIState.close(.clickOutside)
+            return
+        }
+
+        let windowPoint = NSPoint(
+            x: mouseLocation.x - panel.frame.minX,
+            y: mouseLocation.y - panel.frame.minY
+        )
+        if !panel.activeHitRectContains(pointInWindow: windowPoint) {
+            v5IslandUIState.close(.clickOutside)
+        }
     }
 
     private static func panelLayout(
         for state: VoiceState?,
         surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
-        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat,
+        v5IslandUIState: V5IslandUIState? = nil
     ) -> VoiceBarPanelLayout {
         let mode = state?.mode ?? .idle
         let previewText = VoiceBarPresentation.transcriptPreviewText(
@@ -677,8 +800,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ),
             queueItemCount: state?.queueItems.count ?? 0,
             isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
-            isHovering: state?.isHovering ?? false,
-            isTranscriptMenuPresented: state?.isTranscriptMenuPresented ?? false,
+            isHovering: surfaceStyle == .v5Island
+                ? (v5IslandUIState?.isHovering ?? false)
+                : (state?.isHovering ?? false),
+            isTranscriptMenuPresented: surfaceStyle == .v5Island
+                ? (v5IslandUIState?.isMenuPresented ?? false)
+                : (state?.isTranscriptMenuPresented ?? false),
+            v5MeasuredMenuHeight: surfaceStyle == .v5Island
+                ? v5IslandUIState?.measuredMenuHeight
+                : nil,
             surfaceStyle: surfaceStyle,
             menuBarProfile: menuBarProfile,
             padding: Theme.panelPadding
@@ -786,11 +916,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
         let targetScreen = screen ??
-            (anchorMode == .topCenter ? Self.preferredMenuBarScreen() : Self.screenContainingMouse()) ??
+            (effectiveAnchorMode == .topCenter ? Self.preferredMenuBarScreen() : Self.screenContainingMouse()) ??
             panel.screen ??
             NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? .zero
         updateMenuBarProfile(for: targetScreen)
+        if currentSurfaceStyle == .v5Island,
+           let envelope = v5Envelope(for: targetScreen) {
+            refreshBarRootView()
+            panel.level = .popUpMenu
+            panel.contentView?.frame = NSRect(origin: .zero, size: envelope.frame.size)
+            panel.setFrame(envelope.frame, display: true, animate: false)
+            if let targetScreen,
+               let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
@@ -875,13 +1017,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func refreshBarRootView() {
         guard let hosting = panel?.contentView as? PillHostingView<BarView> else { return }
+        let surfaceStyle = currentSurfaceStyle
+        if let lastRenderedSurfaceStyle, lastRenderedSurfaceStyle != surfaceStyle {
+            v5IslandUIState.reset(.surfaceStyleChanged)
+        }
+        lastRenderedSurfaceStyle = surfaceStyle
+
+        let targetScreen = surfaceStyle == .v5Island
+            ? (panel?.screen ?? Self.preferredMenuBarScreen() ?? NSScreen.main)
+            : nil
+        let envelope = surfaceStyle == .v5Island ? v5Envelope(for: targetScreen) : nil
 
         hosting.rootView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
-            surfaceStyle: currentSurfaceStyle,
-            menuBarProfile: currentMenuBarProfile
+            surfaceStyle: surfaceStyle,
+            menuBarProfile: currentMenuBarProfile,
+            v5IslandUIState: v5IslandUIState,
+            v5ViewportWidth: envelope?.frame.width,
+            v5MaxShellHeight: envelope?.maxShellHeight
         )
+        writeV5SurfaceDiagnostic(context: "refresh-root")
+    }
+
+    private func v5Envelope(for screen: NSScreen?) -> V5IslandPanelEnvelope? {
+        guard let screen else { return nil }
+        return V5IslandPanelEnvelope.make(screenFrame: screen.frame)
     }
 
     private func anchorPlacement(
@@ -958,6 +1119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setV5IslandEnabled(_ enabled: Bool) {
+        v5IslandUIState.reset(.toggleChanged)
         V5IslandFeatureFlag.setEnabled(enabled, defaults: defaults)
         refreshBarRootView()
         if let panel {
@@ -968,6 +1130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
+        v5IslandUIState.reset(.anchorChanged)
         anchorMode = mode
         anchorPreferences.saveAnchorMode(mode)
         refreshBarRootView()

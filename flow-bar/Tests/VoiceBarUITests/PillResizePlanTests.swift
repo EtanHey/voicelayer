@@ -153,6 +153,16 @@ final class PillResizePlanTests: XCTestCase {
         XCTAssertEqual(expanded.midY, 967.5, accuracy: 0.001)
     }
 
+    func testV5MenuBarAttachedNotchedPanelIsTopFlush() {
+        let screenFrame = CGRect(x: 0, y: 0, width: 1728, height: 1117)
+        let envelope = V5IslandPanelEnvelope.make(screenFrame: screenFrame)
+
+        XCTAssertEqual(envelope.frame.minX, screenFrame.minX, accuracy: 0.001)
+        XCTAssertEqual(envelope.frame.width, screenFrame.width, accuracy: 0.001)
+        XCTAssertEqual(envelope.frame.maxY, screenFrame.maxY, accuracy: 0.001)
+        XCTAssertEqual(envelope.frame.height, screenFrame.height * 0.45, accuracy: 0.001)
+    }
+
     func testSavedVerticalPositionPreservesCenterDuringHeightChanges() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1000, height: 700)
 
