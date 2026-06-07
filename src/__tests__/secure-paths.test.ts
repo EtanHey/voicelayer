@@ -46,12 +46,47 @@ describe("secure session paths", () => {
     );
   });
 
+  it("getVoiceBarSocketPath prefers public override over QA override", () => {
+    expect(
+      paths.getVoiceBarSocketPath({
+        VOICELAYER_SOCKET_PATH: "/tmp/voicelayer-public.sock",
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-qa.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-public.sock");
+  });
+
+  it("dev instance flag moves runtime sockets off production defaults", () => {
+    const env = {
+      VOICELAYER_DEV_INSTANCE: "1",
+    } as NodeJS.ProcessEnv;
+
+    expect(paths.getVoiceBarSocketPath(env)).toBe("/tmp/voicelayer-dev.sock");
+    expect(paths.getMcpSocketPath(env)).toBe("/tmp/voicelayer-dev-mcp.sock");
+    expect(paths.getMcpPidFilePath(env)).toBe("/tmp/voicelayer-dev-mcp.pid");
+    expect(paths.isDefaultVoiceBarSocketPath(env)).toBe(false);
+    expect(paths.isDefaultMcpSocketPath(env)).toBe(false);
+  });
+
+  it("prefers public MCP PID override over QA override", () => {
+    expect(
+      paths.getMcpPidFilePath({
+        VOICELAYER_MCP_PID_PATH: "/tmp/voicelayer-public-mcp.pid",
+        QA_VOICE_MCP_PID_PATH: "/tmp/voicelayer-qa-mcp.pid",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-public-mcp.pid");
+  });
+
   it("reports default socket paths from centralized override state", () => {
     expect(paths.isDefaultVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
     expect(paths.isDefaultMcpSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
     expect(
       paths.isDefaultVoiceBarSocketPath({
         QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-private-test.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
+    expect(
+      paths.isDefaultVoiceBarSocketPath({
+        VOICELAYER_SOCKET_PATH: "/tmp/voicelayer-public-test.sock",
       } as NodeJS.ProcessEnv),
     ).toBe(false);
     expect(

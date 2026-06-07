@@ -95,6 +95,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 enum VoiceBarDaemonEnvironment {
     private static let preserveQAOverridesEnvironmentVariable = "VOICEBAR_QA_PRESERVE_OVERRIDES"
     private static let legacyPreserveQAOverridesEnvironmentVariable = "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"
+    private static let devInstanceEnvironmentVariable = "VOICELAYER_DEV_INSTANCE"
 
     private static let preservedQAOverrideAllowlist: Set<String> = [
         "QA_VOICE_DISABLE_FLAG_PATH",
@@ -103,6 +104,15 @@ enum VoiceBarDaemonEnvironment {
         "QA_VOICE_RECORDING_STATE_PATH",
         "QA_VOICE_RETAINED_RECORDING_PATH",
         "QA_VOICE_SOCKET_PATH",
+    ]
+
+    private static let preservedDevOverrideAllowlist: Set<String> = [
+        "VOICELAYER_DEV_INSTANCE",
+        "VOICELAYER_MCP_PID_PATH",
+        "VOICELAYER_MCP_SOCKET_PATH",
+        "VOICELAYER_RECORDING_STATE_PATH",
+        "VOICELAYER_RETAINED_RECORDING_PATH",
+        "VOICELAYER_SOCKET_PATH",
     ]
 
     private static let inheritedEnvironmentDenylist: Set<String> = [
@@ -118,6 +128,12 @@ enum VoiceBarDaemonEnvironment {
         "QA_VOICE_RETAINED_RECORDING_PATH",
         "QA_VOICE_SOCKET_PATH",
         "QA_VOICE_WISPR_DB_PATH",
+        "VOICELAYER_DEV_INSTANCE",
+        "VOICELAYER_MCP_PID_PATH",
+        "VOICELAYER_MCP_SOCKET_PATH",
+        "VOICELAYER_RECORDING_STATE_PATH",
+        "VOICELAYER_RETAINED_RECORDING_PATH",
+        "VOICELAYER_SOCKET_PATH",
     ]
 
     static func sanitizedDaemonEnvironment(
@@ -126,8 +142,12 @@ enum VoiceBarDaemonEnvironment {
     ) -> [String: String] {
         var env = inherited
         let preservesQAOverrides = shouldPreserveQAOverrides(inherited)
+        let preservesDevOverrides = shouldPreserveDevOverrides(inherited)
         for key in inheritedEnvironmentDenylist {
             if preservesQAOverrides, preservedQAOverrideAllowlist.contains(key) {
+                continue
+            }
+            if preservesDevOverrides, preservedDevOverrideAllowlist.contains(key) {
                 continue
             }
             env.removeValue(forKey: key)
@@ -135,7 +155,7 @@ enum VoiceBarDaemonEnvironment {
         env.removeValue(forKey: preserveQAOverridesEnvironmentVariable)
         env.removeValue(forKey: legacyPreserveQAOverridesEnvironmentVariable)
         env["PATH"] = path
-        if preservesQAOverrides {
+        if preservesQAOverrides || preservesDevOverrides {
             env.removeValue(forKey: "VOICELAYER_ALLOW_SOCKET_RECLAIM")
             env.removeValue(forKey: "QA_VOICE_ALLOW_SOCKET_RECLAIM")
         } else {
@@ -148,7 +168,12 @@ enum VoiceBarDaemonEnvironment {
 
     private static func shouldPreserveQAOverrides(_ environment: [String: String]) -> Bool {
         environment[preserveQAOverridesEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
-            environment[legacyPreserveQAOverridesEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+            environment[legacyPreserveQAOverridesEnvironmentVariable]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+    }
+
+    private static func shouldPreserveDevOverrides(_ environment: [String: String]) -> Bool {
+        environment[devInstanceEnvironmentVariable]?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
     }
 }
 
@@ -343,9 +368,9 @@ final class VoiceBarDaemonController {
             let reason = terminated.terminationReason
             DispatchQueue.main.async { [weak self, terminated] in
                 guard let self, !self.stopping else { return }
-                if self.process === terminated {
-                    self.process = nil
-                    self.ownsLaunchedProcess = false
+                if process === terminated {
+                    process = nil
+                    ownsLaunchedProcess = false
                 }
 
                 if VoiceLayerPaths.isVoicelayerDisabled() {
@@ -354,7 +379,7 @@ final class VoiceBarDaemonController {
                 }
 
                 let exitKind = code == 0 ? "exited unexpectedly" : "crashed"
-                self.scheduleRestart(exitKind: exitKind, code: code, reason: reason)
+                scheduleRestart(exitKind: exitKind, code: code, reason: reason)
             }
         }
 

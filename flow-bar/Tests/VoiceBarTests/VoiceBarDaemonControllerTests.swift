@@ -241,7 +241,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         launchConfiguration = nil
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        let restartDelays = scheduledBlocks.map(\.delay).filter { $0 < 300 }
         XCTAssertEqual(restartDelays, [1, 2])
         XCTAssertFalse(secondProcess.didRun)
     }
@@ -296,7 +296,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         secondProcess.capturedTerminationHandler?(secondProcess)
         drainMainQueue(until: { scheduledBlocks.map(\.delay).filter { $0 < 300 }.count == 2 })
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        let restartDelays = scheduledBlocks.map(\.delay).filter { $0 < 300 }
         XCTAssertEqual(restartDelays, [1, 1])
     }
 
@@ -319,7 +319,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         firstProcess.capturedTerminationHandler?(firstProcess)
         drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
+        let restartDelays = scheduledBlocks.map(\.delay).filter { $0 < 300 }
         XCTAssertEqual(restartDelays, [1])
     }
 
@@ -439,10 +439,14 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
     func testVoiceLayerPathsRespectQAOverrides() {
         let previousValues: [String: String?] = [
-            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
-            VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
-            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
-            VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable: ProcessInfo.processInfo.environment[VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable],
+            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
+            VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable],
         ]
         setenv(VoiceLayerPaths.socketOverrideEnvironmentVariable, "/tmp/qa-voicebar.sock", 1)
         setenv(VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable, "/tmp/qa-mcp.sock", 1)
@@ -463,6 +467,98 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/qa-mcp.pid")
         XCTAssertEqual(VoiceLayerPaths.retainedRecordingPath, "/tmp/qa-last.wav")
         XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
+    func testVoiceLayerPathsPreferPublicSocketOverride() {
+        let previousValues: [String: String?] = [
+            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
+            VoiceLayerPaths.legacySocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.legacySocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.devInstanceEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.devInstanceEnvironmentVariable],
+        ]
+        setenv(VoiceLayerPaths.socketOverrideEnvironmentVariable, "/tmp/public-voicebar.sock", 1)
+        setenv(VoiceLayerPaths.legacySocketOverrideEnvironmentVariable, "/tmp/qa-voicebar.sock", 1)
+        setenv(VoiceLayerPaths.devInstanceEnvironmentVariable, "1", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/public-voicebar.sock")
+        XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
+    func testVoiceLayerPathsUseIsolatedDefaultsForDevInstance() {
+        let previousValues: [String: String?] = [
+            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
+            VoiceLayerPaths.legacySocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.legacySocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.legacyMcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.legacyMcpSocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.legacyDaemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.legacyDaemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.devInstanceEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.devInstanceEnvironmentVariable],
+        ]
+        for (key, _) in previousValues {
+            unsetenv(key)
+        }
+        setenv(VoiceLayerPaths.devInstanceEnvironmentVariable, "1", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/voicelayer-dev.sock")
+        XCTAssertEqual(VoiceLayerPaths.mcpSocketPath, "/tmp/voicelayer-dev-mcp.sock")
+        XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/voicelayer-dev-mcp.pid")
+        XCTAssertTrue(VoiceLayerPaths.isDevInstance)
+        XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
+    func testDaemonLaunchPreservesPublicPathOverridesForDevInstance() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICELAYER_DEV_INSTANCE": "1",
+                "VOICELAYER_SOCKET_PATH": "/tmp/public-voicebar.sock",
+                "VOICELAYER_MCP_SOCKET_PATH": "/tmp/public-mcp.sock",
+                "VOICELAYER_MCP_PID_PATH": "/tmp/public-mcp.pid",
+                "VOICELAYER_RETAINED_RECORDING_PATH": "/tmp/public-last.wav",
+                "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
+                "QA_VOICE_CHUNKED_STT": "1",
+                "CODEX_CI": "1",
+                "VOICELAYER_ALLOW_SOCKET_RECLAIM": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["VOICELAYER_DEV_INSTANCE"], "1")
+        XCTAssertEqual(environment["VOICELAYER_SOCKET_PATH"], "/tmp/public-voicebar.sock")
+        XCTAssertEqual(environment["VOICELAYER_MCP_SOCKET_PATH"], "/tmp/public-mcp.sock")
+        XCTAssertEqual(environment["VOICELAYER_MCP_PID_PATH"], "/tmp/public-mcp.pid")
+        XCTAssertEqual(environment["VOICELAYER_RETAINED_RECORDING_PATH"], "/tmp/public-last.wav")
+        XCTAssertNil(environment["QA_VOICE_SOCKET_PATH"])
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertNil(environment["CODEX_CI"])
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
     }
 
     func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {

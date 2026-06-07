@@ -152,11 +152,17 @@ describe("daemon shutdown", () => {
 describe("daemon socket path", () => {
   it("defaults to VoiceBar's well-known socket", () => {
     const saved = process.env.QA_VOICE_SOCKET_PATH;
+    const savedPublic = process.env.VOICELAYER_SOCKET_PATH;
+    const savedDev = process.env.VOICELAYER_DEV_INSTANCE;
     delete process.env.QA_VOICE_SOCKET_PATH;
+    delete process.env.VOICELAYER_SOCKET_PATH;
+    delete process.env.VOICELAYER_DEV_INSTANCE;
     try {
       expect(getServeSocketPath()).toBeUndefined();
     } finally {
       if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
+      if (savedPublic) process.env.VOICELAYER_SOCKET_PATH = savedPublic;
+      if (savedDev) process.env.VOICELAYER_DEV_INSTANCE = savedDev;
     }
   });
 
@@ -168,6 +174,39 @@ describe("daemon socket path", () => {
     } finally {
       if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
       else delete process.env.QA_VOICE_SOCKET_PATH;
+    }
+  });
+
+  it("prefers public socket override for isolated verification", () => {
+    const saved = process.env.QA_VOICE_SOCKET_PATH;
+    const savedPublic = process.env.VOICELAYER_SOCKET_PATH;
+    process.env.QA_VOICE_SOCKET_PATH = "/tmp/voicelayer-qa.sock";
+    process.env.VOICELAYER_SOCKET_PATH = "/tmp/voicelayer-public.sock";
+    try {
+      expect(getServeSocketPath()).toBe("/tmp/voicelayer-public.sock");
+    } finally {
+      if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
+      else delete process.env.QA_VOICE_SOCKET_PATH;
+      if (savedPublic) process.env.VOICELAYER_SOCKET_PATH = savedPublic;
+      else delete process.env.VOICELAYER_SOCKET_PATH;
+    }
+  });
+
+  it("uses dev instance socket path when dev flag is set", () => {
+    const saved = process.env.QA_VOICE_SOCKET_PATH;
+    const savedPublic = process.env.VOICELAYER_SOCKET_PATH;
+    const savedDev = process.env.VOICELAYER_DEV_INSTANCE;
+    delete process.env.QA_VOICE_SOCKET_PATH;
+    delete process.env.VOICELAYER_SOCKET_PATH;
+    process.env.VOICELAYER_DEV_INSTANCE = "1";
+    try {
+      expect(getServeSocketPath()).toBe("/tmp/voicelayer-dev.sock");
+    } finally {
+      if (saved) process.env.QA_VOICE_SOCKET_PATH = saved;
+      if (savedPublic) process.env.VOICELAYER_SOCKET_PATH = savedPublic;
+      else delete process.env.VOICELAYER_SOCKET_PATH;
+      if (savedDev) process.env.VOICELAYER_DEV_INSTANCE = savedDev;
+      else delete process.env.VOICELAYER_DEV_INSTANCE;
     }
   });
 });

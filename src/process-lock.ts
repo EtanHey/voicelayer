@@ -13,17 +13,8 @@
  */
 
 import { existsSync, readFileSync, unlinkSync } from "fs";
-import { safeWriteFileSync } from "./paths";
-
-export const MCP_PID_FILE = "/tmp/voicelayer-mcp.pid";
-const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
-
-export function getMcpPidFilePath(
-  env: NodeJS.ProcessEnv = process.env,
-): string {
-  const override = env[MCP_PID_OVERRIDE_ENV]?.trim();
-  return override || MCP_PID_FILE;
-}
+import { MCP_PID_FILE, getMcpPidFilePath, safeWriteFileSync } from "./paths";
+export { MCP_PID_FILE, getMcpPidFilePath } from "./paths";
 
 interface PidLockData {
   pid: number;

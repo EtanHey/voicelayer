@@ -20,7 +20,11 @@ import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
-import { DAEMON_PID_FILE } from "./paths";
+import {
+  DAEMON_PID_FILE,
+  getVoiceBarSocketPath,
+  isDefaultVoiceBarSocketPath,
+} from "./paths";
 import { initEnrichedPATH } from "./resolve-binary";
 
 const LOG_PREFIX = "[voicelayer-serve]";
@@ -30,8 +34,7 @@ const LOG_PREFIX = "[voicelayer-serve]";
  * Normal production usage still connects to the default well-known socket.
  */
 export function getServeSocketPath(): string | undefined {
-  const override = process.env.QA_VOICE_SOCKET_PATH?.trim();
-  return override ? override : undefined;
+  return isDefaultVoiceBarSocketPath() ? undefined : getVoiceBarSocketPath();
 }
 
 export function createShutdownHandler(deps?: {

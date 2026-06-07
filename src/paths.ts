@@ -23,8 +23,13 @@ import { join } from "path";
 
 const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
-const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
-const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+const DEV_INSTANCE_ENV = "VOICELAYER_DEV_INSTANCE";
+const SOCKET_OVERRIDE_ENV = "VOICELAYER_SOCKET_PATH";
+const LEGACY_SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
+const MCP_SOCKET_OVERRIDE_ENV = "VOICELAYER_MCP_SOCKET_PATH";
+const LEGACY_MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+const MCP_PID_OVERRIDE_ENV = "VOICELAYER_MCP_PID_PATH";
+const LEGACY_MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
@@ -45,12 +50,20 @@ function tmpPath(name: string): string {
 }
 
 function readOverride(
-  name: string,
+  names: string | string[],
   fallback: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  const value = env[name]?.trim();
-  return value ? value : fallback;
+  const overrideNames = Array.isArray(names) ? names : [names];
+  for (const name of overrideNames) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return fallback;
+}
+
+function isDevInstance(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[DEV_INSTANCE_ENV]?.trim() === "1";
 }
 
 /**
@@ -147,13 +160,21 @@ export function isVoicelayerDisabled(options?: {
  * production VoiceBar and race record/stop commands.
  */
 export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(SOCKET_OVERRIDE_ENV, tmpPath("voicelayer.sock"), env);
+  return readOverride(
+    [SOCKET_OVERRIDE_ENV, LEGACY_SOCKET_OVERRIDE_ENV],
+    tmpPath(isDevInstance(env) ? "voicelayer-dev.sock" : "voicelayer.sock"),
+    env,
+  );
 }
 
 export function isDefaultVoiceBarSocketPath(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return !env[SOCKET_OVERRIDE_ENV]?.trim();
+  return (
+    !isDevInstance(env) &&
+    !env[SOCKET_OVERRIDE_ENV]?.trim() &&
+    !env[LEGACY_SOCKET_OVERRIDE_ENV]?.trim()
+  );
 }
 
 export const SOCKET_PATH = getVoiceBarSocketPath();
@@ -164,23 +185,44 @@ export const SOCKET_PATH = getVoiceBarSocketPath();
  * Separate from SOCKET_PATH so Voice Bar can keep serving on voicelayer.sock.
  */
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+  return readOverride(
+    [MCP_SOCKET_OVERRIDE_ENV, LEGACY_MCP_SOCKET_OVERRIDE_ENV],
+    tmpPath(isDevInstance(env) ? "voicelayer-dev-mcp.sock" : "voicelayer-mcp.sock"),
+    env,
+  );
 }
 
 export function getMcpSocketOverridePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const value = env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
-  return value ? value : null;
+  for (const name of [MCP_SOCKET_OVERRIDE_ENV, LEGACY_MCP_SOCKET_OVERRIDE_ENV]) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return isDevInstance(env) ? getMcpSocketPath(env) : null;
 }
 
 export function isDefaultMcpSocketPath(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return !env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
+  return (
+    !isDevInstance(env) &&
+    !env[MCP_SOCKET_OVERRIDE_ENV]?.trim() &&
+    !env[LEGACY_MCP_SOCKET_OVERRIDE_ENV]?.trim()
+  );
 }
 
 export const MCP_SOCKET_PATH = getMcpSocketPath();
+
+export function getMcpPidFilePath(env: NodeJS.ProcessEnv = process.env): string {
+  return readOverride(
+    [MCP_PID_OVERRIDE_ENV, LEGACY_MCP_PID_OVERRIDE_ENV],
+    tmpPath(isDevInstance(env) ? "voicelayer-dev-mcp.pid" : "voicelayer-mcp.pid"),
+    env,
+  );
+}
+
+export const MCP_PID_FILE = getMcpPidFilePath();
 
 /**
  * Standalone daemon PID file.
