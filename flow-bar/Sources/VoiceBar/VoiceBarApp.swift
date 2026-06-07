@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
+    private var currentMenuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
 
@@ -207,19 +208,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureWakeRecovery()
 
-        // Floating pill
-        let initialLayout = Self.panelLayout(for: voiceState)
-        let barView = BarView(state: voiceState, commandRouter: commandRouter)
-        let hosting = PillHostingView(rootView: barView)
-        hosting.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
-        }
-        hosting.frame = NSRect(
-            x: 0, y: 0,
-            width: initialLayout.panelSize.width,
-            height: initialLayout.panelSize.height
-        )
-
         // Load saved position
         if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
             horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
@@ -228,19 +216,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
         anchorMode = anchorPreferences.loadAnchorMode()
+        let initialScreen = anchorMode == .topCenter
+            ? Self.preferredMenuBarScreen()
+            : (Self.screenContainingMouse() ?? NSScreen.main)
+        currentMenuBarProfile = Self.menuBarProfile(for: initialScreen)
+
+        // Floating pill / menu-bar island
+        let initialLayout = Self.panelLayout(
+            for: voiceState,
+            surfaceStyle: currentSurfaceStyle,
+            menuBarProfile: currentMenuBarProfile
+        )
+        let barView = BarView(
+            state: voiceState,
+            commandRouter: commandRouter,
+            surfaceStyle: currentSurfaceStyle,
+            menuBarProfile: currentMenuBarProfile
+        )
+        let hosting = PillHostingView(rootView: barView)
+        hosting.activeHitRectProvider = { [weak self] in
+            self?.panelLayoutForCurrentSurface().activeHitRect ?? .zero
+        }
+        hosting.frame = NSRect(
+            x: 0, y: 0,
+            width: initialLayout.panelSize.width,
+            height: initialLayout.panelSize.height
+        )
 
         let pill = FloatingPillPanel(content: hosting)
+        pill.rightClickAction = { [weak self] in
+            guard let self, currentSurfaceStyle == .v5Island else { return false }
+            openSettingsWindow()
+            return true
+        }
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+            self?.panelLayoutForCurrentSurface().activeHitRect ?? .zero
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
         pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
         pill.orderFront(nil)
+        pill.orderFrontRegardless()
         panel = pill
         applyPanelLayout(animated: false)
         if let panelScreen = pill.screen {
@@ -584,14 +604,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyPanelLayout(animated: Bool) {
         guard let panel else { return }
-        let targetScreen = panel.screen ?? NSScreen.main
+        let targetScreen = anchorMode == .topCenter
+            ? Self.preferredMenuBarScreen()
+            : (panel.screen ?? NSScreen.main)
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
-        let layout = Self.panelLayout(for: voiceState)
+        updateMenuBarProfile(for: targetScreen)
+        let layout = Self.panelLayout(
+            for: voiceState,
+            surfaceStyle: currentSurfaceStyle,
+            menuBarProfile: currentMenuBarProfile
+        )
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
+        panel.level = placement.menuBarAttached ? .popUpMenu : .floating
         let plan = PillResizePlan.makeAnchored(
+            screenFrame: targetScreen?.frame,
             visibleFrame: visibleFrame,
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset,
+            menuBarAttached: placement.menuBarAttached,
+            menuBarProfile: currentMenuBarProfile,
             topPadding: Theme.topPadding,
             pillSize: layout.panelSize,
             from: previousVoiceMode,
@@ -602,7 +633,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
     }
 
-    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
+    private func panelLayoutForCurrentSurface() -> VoiceBarPanelLayout {
+        Self.panelLayout(
+            for: voiceState,
+            surfaceStyle: currentSurfaceStyle,
+            menuBarProfile: currentMenuBarProfile
+        )
+    }
+
+    private static func panelLayout(
+        for state: VoiceState?,
+        surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
+    ) -> VoiceBarPanelLayout {
         let mode = state?.mode ?? .idle
         let previewText = VoiceBarPresentation.transcriptPreviewText(
             mode: mode,
@@ -634,6 +677,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ),
             queueItemCount: state?.queueItems.count ?? 0,
             isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
+            isHovering: state?.isHovering ?? false,
+            isTranscriptMenuPresented: state?.isTranscriptMenuPresented ?? false,
+            surfaceStyle: surfaceStyle,
+            menuBarProfile: menuBarProfile,
             padding: Theme.panelPadding
         )
     }
@@ -717,6 +764,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
 
         let screens = NSScreen.screens
+        if anchorMode == .topCenter {
+            guard let targetScreen = Self.preferredMenuBarScreen(),
+                  let targetScreenIndex = screens.firstIndex(of: targetScreen)
+            else { return }
+            if targetScreenIndex != currentScreenIndex {
+                currentScreenIndex = targetScreenIndex
+                positionPanel(panel, on: targetScreen)
+            }
+            return
+        }
+
         guard let targetScreen = Self.screenIndexContainingMouse(in: screens) else { return }
 
         // Only reposition when the screen actually changes
@@ -727,17 +785,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
-        let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
+        let targetScreen = screen ??
+            (anchorMode == .topCenter ? Self.preferredMenuBarScreen() : Self.screenContainingMouse()) ??
+            panel.screen ??
+            NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? .zero
+        updateMenuBarProfile(for: targetScreen)
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
             pillSize: panel.frame.size
         )
+        panel.level = placement.menuBarAttached ? .popUpMenu : .floating
         panel.positionOnScreen(
             targetScreen,
             horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset
+            verticalOffset: placement.verticalOffset,
+            menuBarAttached: placement.menuBarAttached,
+            menuBarProfile: currentMenuBarProfile
         )
         if let targetScreen,
            let index = NSScreen.screens.firstIndex(of: targetScreen) {
@@ -751,10 +816,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return screens[index]
     }
 
+    private static func preferredMenuBarScreen() -> NSScreen? {
+        let screens = NSScreen.screens
+        guard !screens.isEmpty else { return nil }
+        let profiles = screens.map { menuBarProfile(for: $0) }
+        let builtInFlags = screens.map { isBuiltInDisplay($0) }
+        let selectedIndex = VoiceBarMenuBarGeometry.preferredMenuBarScreenIndex(
+            profiles: profiles,
+            isBuiltIn: builtInFlags,
+            mouseScreenIndex: screenIndexContainingMouse(in: screens)
+        )
+        guard let selectedIndex,
+              screens.indices.contains(selectedIndex)
+        else {
+            return screens.first
+        }
+        return screens[selectedIndex]
+    }
+
+    private static func isBuiltInDisplay(_ screen: NSScreen) -> Bool {
+        guard let displayID = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+        else {
+            return false
+        }
+        return CGDisplayIsBuiltin(displayID) != 0
+    }
+
     private static func screenIndexContainingMouse(in screens: [NSScreen]) -> Int? {
         VoiceBarScreenFollowPolicy.targetScreenIndex(
             mouseLocation: NSEvent.mouseLocation,
             screenFrames: screens.map(\.frame)
+        )
+    }
+
+    private static func menuBarProfile(for screen: NSScreen?) -> VoiceBarMenuBarDisplayProfile {
+        guard let screen else { return .flat }
+
+        if #available(macOS 12.0, *) {
+            return VoiceBarMenuBarGeometry.displayProfile(
+                screenFrame: screen.frame,
+                visibleFrame: screen.visibleFrame,
+                safeAreaTop: screen.safeAreaInsets.top,
+                auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+                auxiliaryTopRightArea: screen.auxiliaryTopRightArea
+            )
+        }
+
+        return .flat
+    }
+
+    private func updateMenuBarProfile(for screen: NSScreen?) {
+        let nextProfile = Self.menuBarProfile(for: screen)
+        guard nextProfile != currentMenuBarProfile else { return }
+
+        currentMenuBarProfile = nextProfile
+        refreshBarRootView()
+    }
+
+    private func refreshBarRootView() {
+        guard let hosting = panel?.contentView as? PillHostingView<BarView> else { return }
+
+        hosting.rootView = BarView(
+            state: voiceState,
+            commandRouter: commandRouter,
+            surfaceStyle: currentSurfaceStyle,
+            menuBarProfile: currentMenuBarProfile
         )
     }
 
@@ -774,7 +900,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func reapplyAnchoredPanelPosition() {
         guard let panel else { return }
-        positionPanel(panel, on: Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
+        let targetScreen = anchorMode == .topCenter
+            ? Self.preferredMenuBarScreen()
+            : (Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
+        positionPanel(panel, on: targetScreen)
     }
 
     // MARK: - Drag persistence
@@ -796,9 +925,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         anchorMode
     }
 
+    private var currentSurfaceStyle: VoiceBarSurfaceStyle {
+        VoiceBarSurfaceStyle.resolved(
+            anchorMode: anchorMode,
+            v5Enabled: isV5IslandEnabled
+        )
+    }
+
+    private var isV5IslandEnabled: Bool {
+        V5IslandFeatureFlag.isEnabled(defaults: defaults)
+    }
+
+    private func setV5IslandEnabled(_ enabled: Bool) {
+        V5IslandFeatureFlag.setEnabled(enabled, defaults: defaults)
+        refreshBarRootView()
+        if let panel {
+            positionPanel(panel, on: nil)
+            applyPanelLayout(animated: true)
+        }
+        refreshSettingsWindowAnchorState()
+    }
+
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         anchorMode = mode
         anchorPreferences.saveAnchorMode(mode)
+        refreshBarRootView()
         panel?.isPillDragEnabled = mode.allowsFreeDrag
         panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
@@ -944,6 +1095,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
             anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
             onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
+            isV5IslandEnabled: { [weak self] in self?.isV5IslandEnabled ?? true },
+            onSetV5IslandEnabled: { [weak self] in self?.setV5IslandEnabled($0) },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,

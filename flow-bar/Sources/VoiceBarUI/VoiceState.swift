@@ -70,10 +70,11 @@ public final class VoiceState {
     private static let maxVocabularyTerms = 512
     private static let maxVocabularyAliases = 512
 
-    // UI-bound properties -- all mutations must happen on the main thread.
+    /// UI-bound properties -- all mutations must happen on the main thread.
     public var mode: VoiceMode = .idle {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != mode) }
     }
+
     public var statusText: String = ""
     public var transcript: String = ""
     public var speechDetected: Bool = false
@@ -83,7 +84,12 @@ public final class VoiceState {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != transcribingStatusText) }
     }
 
+    public var isTranscriptMenuPresented: Bool = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != isTranscriptMenuPresented) }
+    }
+
     // Recording metadata
+    public var recordingStartedAt: Date?
     public var recordingMode: String? // "vad" or "ptt"
     public var silenceMode: String? // "quick" | "standard" | "thoughtful"
 
@@ -119,6 +125,7 @@ public final class VoiceState {
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
     }
+
     public var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty) }
     }
@@ -132,12 +139,15 @@ public final class VoiceState {
     public var queueDepth: Int = 0 {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != queueDepth) }
     }
+
     public var queueItems: [QueueItemState] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
     }
+
     public var commandModeState: CommandModeState? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != commandModeState) }
     }
+
     public var activeClipMarker: ClipMarkerState? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != activeClipMarker) }
     }
@@ -154,7 +164,9 @@ public final class VoiceState {
     }
 
     /// Whether the mouse is hovering over the pill.
-    public var isHovering: Bool = false
+    public var isHovering: Bool = false {
+        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != isHovering) }
+    }
 
     /// Timer for idle collapse.
     private var collapseTimer: Task<Void, Never>?
@@ -225,18 +237,23 @@ public final class VoiceState {
         pasteboard.clearContents()
         pasteboard.setString(string, forType: .string)
     }
+
     public var pasteboardSnapshotter: () -> PasteboardSnapshot? = {
         VoiceState.capturePasteboardSnapshot()
     }
+
     public var pasteboardSnapshotRestorer: (PasteboardSnapshot) -> Void = { snapshot in
         VoiceState.restorePasteboardSnapshot(snapshot)
     }
+
     public var pasteboardChangeCountProvider: () -> Int = {
         NSPasteboard.general.changeCount
     }
+
     public var currentDateProvider: () -> Date = {
         Date()
     }
+
     public var pasteboardRestoreDelay: TimeInterval = 0.2
 
     private let recentTranscriptionsSaver: ([String]) -> Void
@@ -279,8 +296,8 @@ public final class VoiceState {
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
         recentTranscriptions = Self.normalizeRecentTranscriptions(recentTranscriptionsLoader())
-        self.transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
-        self.transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+        transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+        transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
         )
     }
@@ -305,6 +322,7 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -338,6 +356,7 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -399,6 +418,7 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = true
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -497,6 +517,7 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: true)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         confirmationText = nil
         errorMessage = nil
@@ -515,6 +536,7 @@ public final class VoiceState {
         ])
         barInitiatedRecording = true
         if pressToTalk, isConnected {
+            recordingStartedAt = currentDateProvider()
             mode = .recording
             onModeChange?(.recording)
             expandFromCollapse()
@@ -585,6 +607,7 @@ public final class VoiceState {
                 pendingRecoveredTranscriptionPaste = false
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                recordingStartedAt = nil
                 mode = .speaking
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
@@ -607,6 +630,9 @@ public final class VoiceState {
                 transcribingStatusText = nil
                 errorMessage = nil
                 mode = .recording
+                if recordingStartedAt == nil {
+                    recordingStartedAt = currentDateProvider()
+                }
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
                 speechDetected = false
@@ -702,6 +728,22 @@ public final class VoiceState {
                 refreshAudioLevel()
             }
 
+        case "transcript_menu":
+            if let presented = event["presented"] as? Bool {
+                isTranscriptMenuPresented = presented
+            } else if let action = event["action"] as? String {
+                switch action {
+                case "show", "open":
+                    isTranscriptMenuPresented = true
+                case "hide", "close":
+                    isTranscriptMenuPresented = false
+                case "toggle":
+                    isTranscriptMenuPresented.toggle()
+                default:
+                    break
+                }
+            }
+
         case "command_mode":
             handleCommandModeEvent(event)
 
@@ -738,6 +780,7 @@ public final class VoiceState {
                 pendingIdleAfterAutoPasteCompletion = false
                 clearRecordStartLateRecovery(clearPasteTarget: false)
                 transcribingStartedAt = nil
+                recordingStartedAt = nil
                 transcribingStatusText = nil
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
@@ -805,6 +848,7 @@ public final class VoiceState {
         pendingRecoveredTranscriptionPaste = false
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -974,6 +1018,7 @@ public final class VoiceState {
         errorMessage = nil
         transcriptionTimeoutTask?.cancel()
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         resetAudioLevels()
         wordBoundaries = []
@@ -989,6 +1034,7 @@ public final class VoiceState {
     private func enterTranscribingMode() {
         let modeChanged = mode != .transcribing
         mode = .transcribing
+        recordingStartedAt = nil
         if modeChanged || transcribingStartedAt == nil {
             transcribingStartedAt = currentDateProvider()
         }
@@ -1034,6 +1080,7 @@ public final class VoiceState {
         deferredFinalTranscriptionTask?.cancel()
         deferredFinalTranscriptionTask = nil
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
@@ -1063,7 +1110,7 @@ public final class VoiceState {
             pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
         }
 
-        if shouldApplyPendingRecordingIdle && !shouldAutoPaste && !shouldPasteRecoveredTranscription {
+        if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
             enterIdleState(clearQueue: false)
         }
     }
@@ -1094,6 +1141,7 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
+        recordingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
         pendingIntent = nil
@@ -1167,15 +1215,17 @@ public final class VoiceState {
                 guard let self else { return }
                 let currentFront = frontmostAppProvider()
                 let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
-                let pasteTarget: NSRunningApplication?
-                if plan == .autoPaste {
-                    pasteTarget = (!currentIsSelf ? currentFront : nil) ?? targetApp
+                let pasteTarget: NSRunningApplication? = if plan == .autoPaste {
+                    (!currentIsSelf ? currentFront : nil) ?? targetApp
                 } else {
-                    pasteTarget = targetApp
+                    targetApp
                 }
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let capturedInsertionHandler =
-                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(pasteTarget, recordStartTargetApp)
+                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(
+                        pasteTarget,
+                        recordStartTargetApp
+                    )
                     ? insertionHandler
                     : nil
 
@@ -1252,7 +1302,7 @@ public final class VoiceState {
         pasted: Bool,
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
-        guard pasted else { return .failed(Self.genericPasteFailureMessage) }
+        guard pasted else { return .failed(genericPasteFailureMessage) }
         return .pasted
     }
 

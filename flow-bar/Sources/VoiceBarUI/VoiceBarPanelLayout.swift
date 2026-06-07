@@ -12,6 +12,10 @@ public struct VoiceBarPanelLayout: Equatable {
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
         isPasteFlowActive: Bool = false,
+        isHovering: Bool = false,
+        isTranscriptMenuPresented: Bool = false,
+        surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat,
         padding: CGFloat
     ) -> VoiceBarPanelLayout {
         let contentSize = contentSize(
@@ -20,9 +24,13 @@ public struct VoiceBarPanelLayout: Equatable {
             previewText: previewText,
             statusText: statusText,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: queueItemCount
+            queueItemCount: queueItemCount,
+            isHovering: isHovering,
+            isTranscriptMenuPresented: isTranscriptMenuPresented,
+            surfaceStyle: surfaceStyle,
+            menuBarProfile: menuBarProfile
         )
-        let safePadding = max(0, padding)
+        let safePadding = surfaceStyle == .menuBarIsland || surfaceStyle == .v5Island ? 0 : max(0, padding)
         let resolvedContentSize = if isPasteFlowActive, !isCollapsed {
             CGSize(
                 width: Theme.panelWidth - (safePadding * 2),
@@ -54,8 +62,23 @@ public struct VoiceBarPanelLayout: Equatable {
         previewText: String?,
         statusText: String,
         idleAccessoryButtonCount: Int,
-        queueItemCount: Int
+        queueItemCount: Int,
+        isHovering: Bool,
+        isTranscriptMenuPresented: Bool,
+        surfaceStyle: VoiceBarSurfaceStyle,
+        menuBarProfile: VoiceBarMenuBarDisplayProfile
     ) -> CGSize {
+        if surfaceStyle == .menuBarIsland || surfaceStyle == .v5Island {
+            return menuBarIslandContentSize(
+                mode: mode,
+                isCollapsed: isCollapsed,
+                isHovering: isHovering,
+                isTranscriptMenuPresented: isTranscriptMenuPresented,
+                surfaceStyle: surfaceStyle,
+                profile: menuBarProfile
+            )
+        }
+
         if isCollapsed {
             return CGSize(width: 30, height: 30)
         }
@@ -77,6 +100,52 @@ public struct VoiceBarPanelLayout: Equatable {
                 queueItemCount: queueItemCount
             ),
             height: height
+        )
+    }
+
+    private static func menuBarIslandContentSize(
+        mode: VoiceMode,
+        isCollapsed: Bool,
+        isHovering: Bool,
+        isTranscriptMenuPresented: Bool,
+        surfaceStyle: VoiceBarSurfaceStyle,
+        profile: VoiceBarMenuBarDisplayProfile
+    ) -> CGSize {
+        if surfaceStyle == .v5Island {
+            let notchWidth = profile.notchRect?.width ?? V3Theme.previewNotchWidth
+            let stripHeight = profile.islandHeight
+            if isTranscriptMenuPresented {
+                return CGSize(width: 716, height: stripHeight + V3Theme.menuContentHeight + 140)
+            }
+            let state: V3IslandState = switch mode {
+            case .idle, .disconnected:
+                isHovering && mode == .idle ? .hover : .idle
+            case .recording, .speaking, .error:
+                .recording
+            case .transcribing:
+                .transcribing
+            }
+            return V3IslandModel.layout(
+                for: state,
+                closedNotchWidth: notchWidth,
+                stripHeight: stripHeight,
+                measuredMenuHeight: stripHeight
+            ).shellFrame.size
+        }
+
+        if isTranscriptMenuPresented {
+            return CGSize(
+                width: max(
+                    Theme.menuBarTranscriptMenuWidth,
+                    profile.islandWidth(for: mode, isCollapsed: isCollapsed)
+                ),
+                height: profile.islandHeight + Theme.menuBarTranscriptMenuHeight
+            )
+        }
+
+        return CGSize(
+            width: profile.islandWidth(for: mode, isCollapsed: isCollapsed),
+            height: profile.islandHeight
         )
     }
 }

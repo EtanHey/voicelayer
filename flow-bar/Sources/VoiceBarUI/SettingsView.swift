@@ -14,6 +14,8 @@ public struct SettingsView: View {
     public let onSelectDevice: (String) -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
+    public let isV5IslandEnabled: () -> Bool
+    public let onSetV5IslandEnabled: (Bool) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
@@ -24,6 +26,7 @@ public struct SettingsView: View {
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
     @State private var selectedAnchoredMode: VoiceBarAnchorMode
+    @State private var v5IslandEnabled: Bool
     @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
@@ -39,6 +42,8 @@ public struct SettingsView: View {
         onSelectDevice: @escaping (String) -> Void,
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
         onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
+        isV5IslandEnabled: @escaping () -> Bool = { true },
+        onSetV5IslandEnabled: @escaping (Bool) -> Void = { _ in },
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -56,6 +61,8 @@ public struct SettingsView: View {
         self.onSelectDevice = onSelectDevice
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
+        self.isV5IslandEnabled = isV5IslandEnabled
+        self.onSetV5IslandEnabled = onSetV5IslandEnabled
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
@@ -66,6 +73,7 @@ public struct SettingsView: View {
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedAnchoredMode = State(initialValue: initialAnchorMode == .bottomCenter ? .bottomCenter : .topCenter)
+        _v5IslandEnabled = State(initialValue: isV5IslandEnabled())
     }
 
     public var body: some View {
@@ -165,6 +173,20 @@ public struct SettingsView: View {
                 }
 
                 Text(positionModeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Design") {
+                Toggle("New island design (v5)", isOn: Binding(
+                    get: { v5IslandEnabled },
+                    set: { enabled in
+                        v5IslandEnabled = enabled
+                        onSetV5IslandEnabled(enabled)
+                    }
+                ))
+
+                Text("Applies to Top Center. Bottom Center and Follow keep the legacy pill.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

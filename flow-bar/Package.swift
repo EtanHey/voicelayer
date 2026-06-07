@@ -16,6 +16,11 @@ let package = Package(
             name: "VoiceBarUI",
             path: "Sources/VoiceBarUI"
         ),
+        .executableTarget(
+            name: "V3MockDemo",
+            dependencies: ["VoiceBarUI"],
+            path: "Sources/V3MockDemo"
+        ),
         .testTarget(
             name: "VoiceBarTests",
             dependencies: ["VoiceBar", "VoiceBarUI"],

@@ -53,7 +53,12 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
         case .follow:
             VoiceBarAnchorPlacement(horizontalOffset: 0.5, verticalOffset: nil, followsMouse: true)
         case .topCenter:
-            VoiceBarAnchorPlacement(horizontalOffset: 0.5, verticalOffset: nil, followsMouse: false)
+            VoiceBarAnchorPlacement(
+                horizontalOffset: 0.5,
+                verticalOffset: nil,
+                followsMouse: false,
+                menuBarAttached: true
+            )
         case .bottomCenter:
             VoiceBarAnchorPlacement(
                 horizontalOffset: 0.5,
@@ -68,10 +73,17 @@ public struct VoiceBarAnchorPlacement: Equatable {
     public var horizontalOffset: CGFloat
     public var verticalOffset: CGFloat?
     public var followsMouse: Bool
+    public var menuBarAttached: Bool
 
-    public init(horizontalOffset: CGFloat, verticalOffset: CGFloat?, followsMouse: Bool) {
+    public init(
+        horizontalOffset: CGFloat,
+        verticalOffset: CGFloat?,
+        followsMouse: Bool,
+        menuBarAttached: Bool = false
+    ) {
         self.horizontalOffset = horizontalOffset
         self.verticalOffset = verticalOffset
         self.followsMouse = followsMouse
+        self.menuBarAttached = menuBarAttached
     }
 }

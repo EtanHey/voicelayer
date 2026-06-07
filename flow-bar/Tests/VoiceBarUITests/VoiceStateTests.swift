@@ -22,6 +22,8 @@ final class VoiceStateTests: XCTestCase {
     func testPressToTalkRecordShowsRecordingImmediately() {
         let state = VoiceState()
         state.setConnectionStatus(true)
+        let startedAt = Date(timeIntervalSinceReferenceDate: 240)
+        state.currentDateProvider = { startedAt }
         var sentCommand: [String: Any]?
         var modes: [VoiceMode] = []
 
@@ -35,9 +37,50 @@ final class VoiceStateTests: XCTestCase {
         state.record(pressToTalk: true)
 
         XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.recordingStartedAt, startedAt)
         XCTAssertEqual(modes, [.recording])
         XCTAssertEqual(sentCommand?["cmd"] as? String, "record")
         XCTAssertEqual(sentCommand?["press_to_talk"] as? Bool, true)
+    }
+
+    func testRecordingStartTimeFollowsSocketRecordingAndClearsOnTranscribing() {
+        let state = VoiceState()
+        let startedAt = Date(timeIntervalSinceReferenceDate: 480)
+        state.currentDateProvider = { startedAt }
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.recordingStartedAt, startedAt)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertNil(state.recordingStartedAt)
+    }
+
+    func testSocketRecordingDoesNotResetExistingPressToTalkStartTime() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        let localStart = Date(timeIntervalSinceReferenceDate: 600)
+        let socketStart = Date(timeIntervalSinceReferenceDate: 610)
+        state.currentDateProvider = { localStart }
+
+        state.record(pressToTalk: true)
+        state.currentDateProvider = { socketStart }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(state.recordingStartedAt, localStart)
     }
 
     func testBarRecordingUsesLongSafetyTimeout() {

@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -73,17 +73,33 @@ public struct ProcessingSpinner: View {
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
+    public var surfaceStyle: VoiceBarSurfaceStyle
+    public var menuBarProfile: VoiceBarMenuBarDisplayProfile
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
 
     public var body: some View {
-        pillContent
+        switch surfaceStyle {
+        case .floatingPill:
+            pillContent
+        case .menuBarIsland:
+            menuBarIslandContent
+        case .v5Island:
+            v5IslandContent
+        }
     }
 
-    public init(state: VoiceState, commandRouter: BarCommandRouting) {
+    public init(
+        state: VoiceState,
+        commandRouter: BarCommandRouting,
+        surfaceStyle: VoiceBarSurfaceStyle = .floatingPill,
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
+    ) {
         self.state = state
         self.commandRouter = commandRouter
+        self.surfaceStyle = surfaceStyle
+        self.menuBarProfile = menuBarProfile
     }
 
     // MARK: - Pill content (collapsed or expanded)
@@ -101,6 +117,314 @@ public struct BarView: View {
         .animation(Theme.pillTransition, value: state.isCollapsed)
         .onHover { hovering in
             state.setHovering(hovering)
+        }
+    }
+
+    private var menuBarIslandContent: some View {
+        VStack(spacing: 0) {
+            Button {
+                state.isTranscriptMenuPresented.toggle()
+                state.setHovering(true)
+            } label: {
+                menuBarIslandBody
+                    .frame(width: menuBarIslandWidth, height: menuBarIslandHeight)
+                    .background(menuBarIslandBackground, in: menuBarIslandShape)
+                    .overlay {
+                        if menuBarProfile.isNotched {
+                            VStack(spacing: 0) {
+                                Rectangle()
+                                    .fill(Color.black)
+                                    .frame(height: VoiceBarMenuBarGeometry.notchTopSealHeight)
+                                Spacer(minLength: 0)
+                            }
+                            .allowsHitTesting(false)
+                        } else {
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(0.16), lineWidth: 0.6)
+                                .allowsHitTesting(false)
+                        }
+                    }
+                    .overlay {
+                        menuBarIslandShape
+                            .stroke(menuBarIslandAccent, lineWidth: menuBarIslandBorderWidth)
+                            .allowsHitTesting(false)
+                            .animation(Theme.modeTransition, value: state.mode)
+                    }
+            }
+            .buttonStyle(.plain)
+            .contentShape(menuBarIslandShape)
+
+            if state.isTranscriptMenuPresented {
+                transcriptMenuShelf
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .frame(
+            width: menuBarSurfaceWidth,
+            height: menuBarSurfaceHeight,
+            alignment: .top
+        )
+        .onHover { hovering in
+            state.setHovering(hovering)
+        }
+        .animation(Theme.pillTransition, value: state.mode)
+        .animation(Theme.pillTransition, value: state.isTranscriptMenuPresented)
+    }
+
+    private var v5IslandContent: some View {
+        let projection = V5IslandProjection.make(
+            mode: state.mode,
+            audioLevel: state.audioLevel,
+            recordingStartedAt: state.recordingStartedAt,
+            recentTranscriptions: state.recentTranscriptions,
+            vocabularyTerms: state.transcriptionVocabularyTerms,
+            vocabularyAliases: state.transcriptionVocabularyAliases,
+            errorMessage: state.errorMessage
+        )
+        let notchWidth = menuBarProfile.notchRect?.width ?? V3Theme.previewNotchWidth
+        let stripHeight = menuBarProfile.islandHeight
+        let viewportWidth = state.isTranscriptMenuPresented
+            ? max(716, notchWidth + 2 * V3Theme.radiiExpanded.top)
+            : V3IslandModel.layout(
+                for: projection.renderKind == .transcribing
+                    ? .transcribing
+                    : (projection.renderKind == .idle
+                        ? (projection.allowsHoverReveal && state.isHovering ? .hover : .idle)
+                        : .recording),
+                closedNotchWidth: notchWidth,
+                stripHeight: stripHeight,
+                measuredMenuHeight: stripHeight
+            ).shellFrame.width
+
+        return V5LiveIslandView(
+            projection: projection,
+            notchWidth: notchWidth,
+            stripHeight: stripHeight,
+            viewportWidth: viewportWidth,
+            isHovering: state.isHovering,
+            isMenuPresented: Binding(
+                get: { state.isTranscriptMenuPresented },
+                set: { state.isTranscriptMenuPresented = $0 }
+            ),
+            onPrimaryTap: { commandRouter.handlePrimaryTap() },
+            onStop: { commandRouter.handleStop() }
+        )
+        .onHover { hovering in
+            state.setHovering(hovering)
+        }
+        .onChange(of: state.mode) { _, newMode in
+            handleModeChange(newMode)
+        }
+    }
+
+    private var menuBarIslandBody: some View {
+        let layout = menuBarIslandLayout
+        return HStack(spacing: 0) {
+            menuBarLeadingWing
+                .frame(width: layout.leadingWing.width, height: layout.leadingWing.height)
+
+            Rectangle()
+                .fill(Color.black)
+                .frame(width: layout.cameraSpacer.width, height: layout.cameraSpacer.height)
+                .accessibilityHidden(true)
+
+            menuBarTrailingWing
+                .frame(width: layout.trailingWing.width, height: layout.trailingWing.height)
+        }
+        .clipShape(menuBarIslandShape)
+    }
+
+    private var menuBarLeadingWing: some View {
+        HStack(spacing: 5) {
+            switch state.mode {
+            case .recording:
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(Theme.recordingColor)
+                Text("0:00")
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            case .speaking:
+                Image(systemName: "speaker.wave.2.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.speakingColor)
+            case .transcribing:
+                ProcessingSpinner()
+                    .scaleEffect(0.72)
+                    .frame(width: 10, height: 10)
+            case .disconnected, .error:
+                Circle()
+                    .fill(Theme.errorColor)
+                    .frame(width: 5, height: 5)
+            case .idle:
+                EmptyView()
+            }
+        }
+        .padding(.leading, menuBarProfile.isNotched ? 6 : 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var menuBarTrailingWing: some View {
+        HStack(spacing: 6) {
+            if state.mode == .recording {
+                menuBarWaveformMark
+            } else if state.mode == .transcribing {
+                Text("...")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.72))
+            } else if state.mode == .speaking {
+                Circle()
+                    .fill(Theme.speakingColor)
+                    .frame(width: 5, height: 5)
+            }
+        }
+        .padding(.trailing, menuBarProfile.isNotched ? 6 : 12)
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var menuBarIslandBackground: some ShapeStyle {
+        if menuBarProfile.isNotched {
+            return AnyShapeStyle(Color.black)
+        }
+        return AnyShapeStyle(.ultraThinMaterial)
+    }
+
+    private var menuBarIslandShape: AnyShape {
+        if menuBarProfile.isNotched {
+            return AnyShape(state.mode == .idle || state.mode == .disconnected
+                ? VoiceBarNotchShape.closed
+                : VoiceBarNotchShape.open)
+        }
+        return AnyShape(Capsule())
+    }
+
+    private var menuBarWaveformMark: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(Array([11.0, 17.0, 13.0, 19.0].enumerated()), id: \.offset) { _, height in
+                Capsule()
+                    .fill(Color.white.opacity(0.92))
+                    .frame(width: 3, height: height)
+            }
+        }
+        .frame(width: 27, height: 20)
+        .accessibilityHidden(true)
+    }
+
+    private var menuBarIslandWidth: CGFloat {
+        menuBarProfile.islandWidth(for: state.mode, isCollapsed: state.isCollapsed)
+    }
+
+    private var menuBarIslandHeight: CGFloat {
+        menuBarProfile.islandHeight
+    }
+
+    private var menuBarSurfaceWidth: CGFloat {
+        state.isTranscriptMenuPresented
+            ? max(Theme.menuBarTranscriptMenuWidth, menuBarIslandWidth)
+            : menuBarIslandWidth
+    }
+
+    private var menuBarSurfaceHeight: CGFloat {
+        state.isTranscriptMenuPresented
+            ? menuBarIslandHeight + Theme.menuBarTranscriptMenuHeight
+            : menuBarIslandHeight
+    }
+
+    private var transcriptMenuShelf: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(Color.black)
+                .frame(width: max(92, menuBarIslandWidth - 44), height: 8)
+
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text("Recent Transcripts")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.92))
+                    Spacer()
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+                .frame(height: 18)
+
+                VStack(spacing: 6) {
+                    TranscriptMenuRow(
+                        title: "Make the VoiceBar feel like it shipped with macOS.",
+                        detail: "2 min ago",
+                        leadingSystemImage: "text.quote",
+                        primaryAction: "Fix",
+                        secondaryAction: "Retry"
+                    )
+                    TranscriptMenuRow(
+                        title: "The menu should rise from the island, not pop as a context menu.",
+                        detail: "8 min ago",
+                        leadingSystemImage: "text.bubble.fill",
+                        primaryAction: "Fix",
+                        secondaryAction: "Retry"
+                    )
+                    TranscriptMenuRow(
+                        title: "Use the built-in notched display for every notched capture.",
+                        detail: "14 min ago",
+                        leadingSystemImage: "display",
+                        primaryAction: "Fix",
+                        secondaryAction: "Retry"
+                    )
+                    TranscriptMenuRow(
+                        title: "Untranscribed recording",
+                        detail: "0:47 retained audio",
+                        leadingSystemImage: "waveform",
+                        primaryAction: "Transcribe now",
+                        secondaryAction: nil,
+                        isPending: true
+                    )
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 11)
+            .padding(.bottom, 12)
+            .frame(width: Theme.menuBarTranscriptMenuWidth, height: Theme.menuBarTranscriptMenuHeight - 8)
+            .background {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .fill(Color.black.opacity(0.62))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.14), lineWidth: 0.7)
+            }
+            .shadow(color: .black.opacity(0.28), radius: 18, x: 0, y: 8)
+        }
+        .frame(width: Theme.menuBarTranscriptMenuWidth, height: Theme.menuBarTranscriptMenuHeight)
+    }
+
+    private var menuBarIslandLayout: VoiceBarMenuBarIslandContentLayout {
+        menuBarProfile.islandContentLayout(for: state.mode, isCollapsed: state.isCollapsed)
+    }
+
+    private var menuBarIslandAccent: Color {
+        switch state.mode {
+        case .recording:
+            Theme.recordingColor.opacity(0.42)
+        case .transcribing, .speaking:
+            Theme.speakingColor.opacity(0.32)
+        case .disconnected, .error:
+            Theme.errorColor.opacity(0.24)
+        case .idle:
+            Color.white.opacity(0.08)
+        }
+    }
+
+    private var menuBarIslandBorderWidth: CGFloat {
+        switch state.mode {
+        case .idle:
+            0.5
+        default:
+            0.8
         }
     }
 
@@ -196,6 +520,13 @@ public struct BarView: View {
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
+        if newMode == .error {
+            errorDismissTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                state.dismissError()
+            }
+        }
         if newMode != .idle {
             isHistoryPresented = false
             isVocabularyPresented = false
@@ -437,14 +768,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -560,7 +891,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -653,7 +984,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +1014,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))
@@ -736,5 +1069,70 @@ public struct BarView: View {
         }
         .buttonStyle(.plain)
         .transition(.scale.combined(with: .opacity))
+    }
+}
+
+private struct TranscriptMenuRow: View {
+    let title: String
+    let detail: String
+    let leadingSystemImage: String
+    let primaryAction: String
+    let secondaryAction: String?
+    var isPending: Bool = false
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: leadingSystemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isPending ? Theme.transcribingColor : Color.white.opacity(0.76))
+                .frame(width: 18, height: 18)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.92))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Text(detail)
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(.white.opacity(0.52))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 5) {
+                transcriptMenuAction(primaryAction, prominent: isPending)
+                if let secondaryAction {
+                    transcriptMenuAction(secondaryAction, prominent: false)
+                }
+            }
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 42)
+        .background(
+            Color.white.opacity(isPending ? 0.085 : 0.055),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Color.white.opacity(isPending ? 0.16 : 0.08), lineWidth: 0.5)
+        }
+    }
+
+    private func transcriptMenuAction(_ title: String, prominent: Bool) -> some View {
+        Button {} label: {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(prominent ? Color.black.opacity(0.88) : Color.white.opacity(0.78))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, prominent ? 8 : 7)
+                .frame(height: 22)
+                .background(
+                    prominent ? Color.white.opacity(0.92) : Color.white.opacity(0.08),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
     }
 }

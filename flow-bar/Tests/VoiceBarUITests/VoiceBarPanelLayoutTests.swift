@@ -27,6 +27,81 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertLessThan(layout.activeHitRect.height, Theme.pillCompactHeight)
     }
 
+    func testMenuBarIslandLayoutUsesNativeStripEnvelope() {
+        let notchedProfile = VoiceBarMenuBarDisplayProfile(
+            displayClass: .notched,
+            notchRect: CGRect(x: 771, y: 1085, width: 185, height: 32)
+        )
+        let disconnected = VoiceBarPanelLayout.make(
+            mode: .disconnected,
+            isCollapsed: false,
+            previewText: nil,
+            surfaceStyle: .menuBarIsland,
+            menuBarProfile: notchedProfile,
+            padding: Theme.panelPadding
+        )
+        let recording = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            surfaceStyle: .menuBarIsland,
+            menuBarProfile: notchedProfile,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(disconnected.panelSize.width, 185)
+        XCTAssertEqual(disconnected.panelSize.height, 32)
+        XCTAssertEqual(recording.panelSize.width, 285)
+        XCTAssertEqual(recording.panelSize.height, 32)
+        XCTAssertLessThan(recording.panelSize.height, Theme.pillCompactHeight)
+    }
+
+    func testMenuBarTranscriptMenuLayoutGrowsDownFromFullHeightIsland() {
+        let notchedProfile = VoiceBarMenuBarDisplayProfile(
+            displayClass: .notched,
+            notchRect: CGRect(x: 771, y: 1085, width: 185, height: 32)
+        )
+
+        let layout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            isTranscriptMenuPresented: true,
+            surfaceStyle: .menuBarIsland,
+            menuBarProfile: notchedProfile,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(layout.panelSize.width, Theme.menuBarTranscriptMenuWidth)
+        XCTAssertEqual(layout.panelSize.height, 32 + Theme.menuBarTranscriptMenuHeight)
+    }
+
+    func testFlatMenuBarIslandUsesWiderPillThanNotchedDisplay() {
+        let notchedProfile = VoiceBarMenuBarDisplayProfile(
+            displayClass: .notched,
+            notchRect: CGRect(x: 771, y: 1085, width: 185, height: 32)
+        )
+        let notched = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            surfaceStyle: .menuBarIsland,
+            menuBarProfile: notchedProfile,
+            padding: Theme.panelPadding
+        )
+        let flat = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            surfaceStyle: .menuBarIsland,
+            menuBarProfile: .flat,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(flat.panelSize.width, Theme.menuBarIslandFlatActiveWidth)
+        XCTAssertGreaterThan(flat.panelSize.width, notched.panelSize.width)
+    }
+
     func testExpandedIdlePanelFitsHotkeyHintAndAccessoryButtons() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,

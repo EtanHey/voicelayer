@@ -107,7 +107,20 @@ final class VoiceBarAnchorModeTests: XCTestCase {
 
         XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
         XCTAssertNil(placement.verticalOffset)
+        XCTAssertFalse(placement.menuBarAttached)
         XCTAssertTrue(placement.followsMouse)
+    }
+
+    func testTopCenterAnchorUsesMenuBarAttachedPlacement() {
+        let placement = VoiceBarAnchorMode.topCenter.placement(
+            visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            pillSize: CGSize(width: 190, height: 50)
+        )
+
+        XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
+        XCTAssertNil(placement.verticalOffset)
+        XCTAssertTrue(placement.menuBarAttached)
+        XCTAssertFalse(placement.followsMouse)
     }
 
     func testAnchorModesDefineDragAvailabilityWithoutStandaloneLock() {

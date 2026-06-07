@@ -37,6 +37,7 @@ final class VoiceBarPositionLockTests: XCTestCase {
 
         XCTAssertEqual(topPlacement.horizontalOffset, 0.5, accuracy: 0.001)
         XCTAssertNil(topPlacement.verticalOffset)
+        XCTAssertTrue(topPlacement.menuBarAttached)
         XCTAssertFalse(topPlacement.followsMouse)
         XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
         XCTAssertEqual(
@@ -44,6 +45,7 @@ final class VoiceBarPositionLockTests: XCTestCase {
             (24 + (pillSize.height / 2)) / visibleFrame.height,
             accuracy: 0.001
         )
+        XCTAssertFalse(placement.menuBarAttached)
         XCTAssertFalse(placement.followsMouse)
     }
 

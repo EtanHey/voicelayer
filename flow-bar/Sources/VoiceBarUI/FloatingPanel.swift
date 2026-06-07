@@ -9,7 +9,7 @@ import SwiftUI
 public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitRectProvider: (() -> NSRect)?
 
-    public override func hitTest(_ point: NSPoint) -> NSView? {
+    override public func hitTest(_ point: NSPoint) -> NSView? {
         if let activeHitRectProvider, !activeHitRectProvider().contains(point) {
             return nil
         }
@@ -19,6 +19,7 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
+    public var rightClickAction: (() -> Bool)?
     public var activeHitRectProvider: (() -> NSRect)?
     public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
@@ -64,7 +65,7 @@ public final class FloatingPillPanel: NSPanel {
 
     /// Allow key so SwiftUI Buttons respond to clicks.
     /// .nonactivatingPanel prevents the app from activating regardless.
-    public override var canBecomeKey: Bool {
+    override public var canBecomeKey: Bool {
         true
     }
 
@@ -72,18 +73,23 @@ public final class FloatingPillPanel: NSPanel {
     /// Note: removed makeKey() on left click — it was stealing focus from the
     /// user's active app. .nonactivatingPanel + canBecomeKey=true is sufficient
     /// for SwiftUI buttons to respond without activation.
-    public override func sendEvent(_ event: NSEvent) {
-        if event.type == .rightMouseDown,
-           let contentView,
-           let menu = contextMenuProvider?() {
-            NSMenu.popUpContextMenu(menu, with: event, for: contentView)
-            return
+    override public func sendEvent(_ event: NSEvent) {
+        if event.type == .rightMouseDown {
+            if rightClickAction?() == true {
+                return
+            }
+            if let contentView,
+               let menu = contextMenuProvider?() {
+                NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+                return
+            }
         }
 
         if event.type == .leftMouseDown {
             let startedInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
             dragStartWasInVisiblePill = shouldHandlePillDrag(startedInVisiblePill: startedInVisiblePill)
-        } else if event.type == .leftMouseDragged, shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
+        } else if event.type == .leftMouseDragged,
+                  shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
             performDrag(with: event)
             return
         } else if event.type == .leftMouseUp {
@@ -93,7 +99,7 @@ public final class FloatingPillPanel: NSPanel {
         super.sendEvent(event)
     }
 
-    public override var canBecomeMain: Bool {
+    override public var canBecomeMain: Bool {
         false
     }
 
@@ -110,15 +116,36 @@ public final class FloatingPillPanel: NSPanel {
     public func positionOnScreen(
         _ screen: NSScreen? = nil,
         horizontalOffset: CGFloat = Theme.horizontalOffset,
-        verticalOffset: CGFloat? = nil
+        verticalOffset: CGFloat? = nil,
+        menuBarAttached: Bool = false,
+        menuBarProfile: VoiceBarMenuBarDisplayProfile = .flat
     ) {
         let target = screen ?? screenContainingMouse() ?? NSScreen.main
         guard let target else { return }
         let visible = target.visibleFrame // excludes Dock & menu bar
+        let fullFrame = target.frame
         let size = frame.size
-        let x = visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
+        let x = if menuBarAttached {
+            VoiceBarMenuBarGeometry.attachedOriginX(
+                screenFrame: fullFrame,
+                visibleFrame: visible,
+                panelWidth: size.width,
+                horizontalOffset: horizontalOffset,
+                profile: menuBarProfile
+            )
+        } else {
+            visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
+        }
         let y: CGFloat = if let vOffset = verticalOffset {
             visible.origin.y + (visible.height * vOffset) - (size.height / 2)
+        } else if menuBarAttached {
+            VoiceBarMenuBarGeometry.attachedOriginY(
+                screenFrame: fullFrame,
+                visibleFrame: visible,
+                panelHeight: size.height,
+                fallbackTopPadding: Theme.topPadding,
+                profile: menuBarProfile
+            )
         } else {
             visible.maxY - Theme.topPadding - size.height
         }

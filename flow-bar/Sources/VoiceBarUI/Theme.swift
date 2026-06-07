@@ -34,6 +34,18 @@ public enum Theme {
     public static let pillActionButtonSize: CGFloat = 26
     public static let pillActionButtonSpacing: CGFloat = 2
     public static let pillSpeakingQueueWidth: CGFloat = 412
+    public static let menuBarIslandHeight: CGFloat = 24
+    public static let menuBarIslandNotchedFallbackWidth: CGFloat = 189
+    public static let menuBarIslandRecordingWingWidth: CGFloat = 50
+    public static let menuBarIslandExpandedWingWidth: CGFloat = 72
+    public static let menuBarIslandNotchedIdleMinWidth: CGFloat = 189
+    public static let menuBarIslandNotchedActiveMinWidth: CGFloat = 264
+    public static let menuBarIslandNotchedExpandedMinWidth: CGFloat = 300
+    public static let menuBarIslandFlatIdleWidth: CGFloat = 320
+    public static let menuBarIslandFlatActiveWidth: CGFloat = 360
+    public static let menuBarIslandFlatExpandedWidth: CGFloat = 400
+    public static let menuBarTranscriptMenuWidth: CGFloat = 386
+    public static let menuBarTranscriptMenuHeight: CGFloat = 272
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
     public static let panelWidth: CGFloat = 420
@@ -56,13 +68,11 @@ public enum Theme {
     public static func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
         let textWidth = compactStatusWidth(for: statusText)
         let safeButtonCount = max(0, accessoryButtonCount)
-        let accessoryButtonWidth: CGFloat
-        if safeButtonCount > 0 {
-            accessoryButtonWidth =
-                (CGFloat(safeButtonCount) * pillActionButtonSize) +
+        let accessoryButtonWidth: CGFloat = if safeButtonCount > 0 {
+            (CGFloat(safeButtonCount) * pillActionButtonSize) +
                 (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing)
         } else {
-            accessoryButtonWidth = 0
+            0
         }
         let accessoryLeadingGap: CGFloat = safeButtonCount > 0 ? 8 : 0
         let compactChromeWidth: CGFloat = 68
@@ -110,6 +120,7 @@ public enum Theme {
     public static func transcriptPreviewPillWidth(for text: String) -> CGFloat {
         min(panelWidth - (panelPadding * 2), transcriptPreviewWidth(for: text) + 82)
     }
+
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     public static let teleprompterViewportWidth: CGFloat = 280
@@ -132,7 +143,8 @@ public enum Theme {
     // MARK: - Animation
 
     public static let connectionTransition: Animation = .smooth(duration: 0.28)
-    public static let pillTransition: Animation = .smooth(duration: 0.34)
+    public static let pillTransition: Animation = .spring(response: 0.42, dampingFraction: 0.8)
+    public static let pillCloseTransition: Animation = .spring(response: 0.45, dampingFraction: 1.0)
     /// Smooth crossfade for mode changes — avoids bouncy intermediate states.
     public static let modeTransition: Animation = .smooth(duration: 0.24)
     public static let queueProgressTransition: Animation = .easeOut(duration: 0.18)
