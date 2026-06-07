@@ -144,6 +144,7 @@ export interface VoiceReviewConfig {
   ttsVoice: string;
   ttsRate: string;
   requestTimeoutMs: number;
+  finishCommand: string;
 }
 
 export const KG_FLAG_DECISIONS_SCHEMA = "kg-flag-decisions-v1";
@@ -226,6 +227,7 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
   ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-GuyNeural",
   ttsRate: process.env.VOICE_REVIEW_TTS_RATE || "-8%",
   requestTimeoutMs: Number(process.env.VOICE_REVIEW_TIMEOUT_MS || "60000"),
+  finishCommand: process.env.VOICE_REVIEW_FINISH_CMD || "",
 };
 
 export function mergeConfig(
@@ -1242,6 +1244,12 @@ export function createVoiceReviewApp(options?: {
         if (request.method === "POST" && url.pathname === "/api/tts") {
           return await handleTts(request, config, runCommand, ttsEngines);
         }
+        if (
+          request.method === "POST" &&
+          url.pathname === "/api/session/finish"
+        ) {
+          return await handleSessionFinish(request, config, runCommand);
+        }
         return jsonResponse({ error: "not found" }, 404);
       } catch (error) {
         if (isAbortError(error)) {
@@ -1251,6 +1259,55 @@ export function createVoiceReviewApp(options?: {
       }
     },
   };
+}
+
+async function handleSessionFinish(
+  request: Request,
+  config: VoiceReviewConfig,
+  runCommand: CommandRunner,
+): Promise<Response> {
+  if (!isValidSessionFinishRequest(request)) {
+    return jsonResponse({ error: "forbidden" }, 403);
+  }
+  const command = config.finishCommand.trim();
+  if (!command) {
+    return jsonResponse(
+      { error: "VOICE_REVIEW_FINISH_CMD is not configured" },
+      501,
+    );
+  }
+  const result = await runCommand({
+    args: ["/bin/zsh", "-lc", command],
+    cwd: config.brainlayerWorktree,
+    env: driverEnv(config),
+    signal: request.signal,
+  });
+  return jsonResponse(
+    {
+      ok: result.exitCode === 0,
+      exit_code: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      duration_ms: result.durationMs,
+    },
+    result.exitCode === 0 ? 200 : 500,
+  );
+}
+
+function isValidSessionFinishRequest(request: Request): boolean {
+  if (request.headers.get("x-voicereview-finish") !== "1") return false;
+  const requestOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("origin");
+  if (origin && origin !== requestOrigin) return false;
+  const referer = request.headers.get("referer");
+  if (!origin && referer) {
+    try {
+      return new URL(referer).origin === requestOrigin;
+    } catch (_error) {
+      return false;
+    }
+  }
+  return Boolean(origin || referer);
 }
 
 async function handleNext(
@@ -2744,6 +2801,7 @@ function renderNaturalConversationPage(
     ? Math.max(-30, Math.min(10, parsedRate))
     : -8;
   const selectedRateLabel = `${selectedRate >= 0 ? "+" : ""}${selectedRate}%`;
+  const finishSessionEnabled = Boolean(config.finishCommand.trim());
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -3747,6 +3805,7 @@ function renderNaturalConversationPage(
     let healthRetryBackoffMs = 3000;
     let liteRtWorkInFlight = 0;
     let sessionAbortController = null;
+    let finishingSession = false;
     let teardownPromise = null;
     let ttsFallbackAnnounced = false;
     // Stage view-state (presentation only — machine state lives in the vars above).
@@ -3765,6 +3824,7 @@ function renderNaturalConversationPage(
         return false;
       }
     })();
+    const finishSessionEnabled = ${JSON.stringify(finishSessionEnabled)};
 
     function setStatus(text, urgent = false) {
       // State words never write the DOM directly — renderState() is the only
@@ -4096,6 +4156,7 @@ function renderNaturalConversationPage(
     }
 
     async function startSession() {
+      if (finishingSession) return;
       sessionButton.disabled = true;
       // Never start over a teardown still releasing the recorder/context.
       if (teardownPromise) {
@@ -4111,7 +4172,7 @@ function renderNaturalConversationPage(
         sessionActive = true;
         stageView = null;
         statusNote = "";
-        sessionButton.textContent = "End session";
+        sessionButton.textContent = finishSessionEnabled ? "Finish session" : "End session";
         sessionButton.classList.add("is-active");
         category.disabled = true;
         turnState = createTurnTakingState();
@@ -4127,6 +4188,40 @@ function renderNaturalConversationPage(
     async function endSession() {
       teardownPromise = teardownSessionRuntime("Session ended.");
       await teardownPromise;
+    }
+
+    function finishSummary(result) {
+      const output = [result.stdout, result.stderr].filter(Boolean).join("\\n").trim();
+      if (!output) {
+        return result.ok ? "Finish command completed." : "Finish command failed with no output.";
+      }
+      return output;
+    }
+
+    async function finishSession() {
+      if (finishingSession) return;
+      finishingSession = true;
+      sessionButton.disabled = true;
+      try {
+        teardownPromise = teardownSessionRuntime("Finishing session...");
+        await teardownPromise;
+        const response = await fetch("/api/session/finish", {
+          method: "POST",
+          headers: { "x-voicereview-finish": "1" }
+        });
+        const result = await response.json();
+        if (!response.ok && result.error) throw new Error(result.error);
+        const summary = finishSummary(result);
+        setStatus(result.ok ? "Session finished." : "Session finish failed.", !result.ok);
+        addTurn("system", result.ok ? "finish" : "finish failed", summary);
+      } catch (error) {
+        const message = "Session finish failed: " + error.message;
+        setStatus(message, true);
+        addTurn("system", "finish failed", message);
+      } finally {
+        finishingSession = false;
+        sessionButton.disabled = false;
+      }
     }
 
     async function teardownSessionRuntime(message, options = {}) {
@@ -4991,6 +5086,7 @@ function renderNaturalConversationPage(
 
     function resetAfterBfcacheRestore(event) {
       if (!event.persisted) return;
+      finishingSession = false;
       turnState = createTurnTakingState();
       renderState();
       sessionButton.disabled = false;
@@ -5014,7 +5110,9 @@ function renderNaturalConversationPage(
     }
 
     sessionButton.addEventListener("click", async () => {
-      if (sessionActive) await endSession();
+      if (finishingSession) return;
+      if (sessionActive && finishSessionEnabled) await finishSession();
+      else if (sessionActive) await endSession();
       else await startSession();
     });
 

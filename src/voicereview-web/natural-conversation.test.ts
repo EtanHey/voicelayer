@@ -428,6 +428,7 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(html).not.toContain('id="phaseListening"');
     expect(html).toContain("Start session");
     expect(html).toContain("End session");
+    expect(html).toContain("const finishSessionEnabled = false;");
     expect(html).toContain("echoCancellation: true");
     expect(html).toContain("onnxruntime-web");
     expect(html).toContain("/models/silero_vad.onnx");
@@ -837,6 +838,7 @@ describe("VoiceReview natural conversation redesign", () => {
     );
 
     expect(runtimeState).toContain("let sessionAbortController = null;");
+    expect(runtimeState).toContain("let finishingSession = false;");
     expect(teardown).toContain("sessionAbortController.abort();");
     expect(teardown).toContain("stopActivePlayback();");
     expect(teardown).toContain("vadState.queue = [];");
@@ -846,6 +848,11 @@ describe("VoiceReview natural conversation redesign", () => {
     expect(teardown).toContain("processingTurn = false;");
     expect(teardown).toContain("mediaRecorder.stop();");
     expect(teardown).toContain('sessionButton.textContent = "Start session";');
+    expect(eventBindings).toContain(
+      "if (sessionActive && finishSessionEnabled) await finishSession();",
+    );
+    expect(eventBindings).toContain("if (finishingSession) return;");
+    expect(unloadTeardown).toContain("finishingSession = false;");
     expect(legFailure).toContain("teardownPromise = teardownSessionRuntime");
     expect(legFailure).not.toContain("speakSystemText(text)");
     expect(unloadTeardown).toContain("teardownSessionRuntime");

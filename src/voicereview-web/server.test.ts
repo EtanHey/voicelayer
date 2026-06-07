@@ -536,6 +536,10 @@ describe("VoiceReview web server helpers", () => {
     expect(html.match(/id="sessionButton"/g) || []).toHaveLength(1);
     expect(html).toContain("Start session");
     expect(html).toContain("End session");
+    expect(html).toContain("const finishSessionEnabled = false;");
+    expect(html).toContain("if (sessionActive && finishSessionEnabled) await finishSession();");
+    expect(html).toContain("let finishingSession = false;");
+    expect(html).toContain("if (finishingSession) return;");
     expect(html).toContain("LISTENING");
     expect(html).toContain("SETTLING");
     expect(html).toContain("THINKING");
@@ -544,6 +548,133 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("רגע");
     expect(html).not.toContain("Tap Record");
     expect(html).not.toContain("tap Record");
+  });
+
+  it("wires the ORB finish button when the session finish command is configured", async () => {
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("Finish session");
+    expect(html).toContain("const finishSessionEnabled = true;");
+    expect(html).toContain('fetch("/api/session/finish", {');
+    expect(html).toContain('"x-voicereview-finish": "1"');
+    expect(html).toContain(
+      "if (sessionActive && finishSessionEnabled) await finishSession();",
+    );
+  });
+
+  it("runs the configured session finish command and returns its output", async () => {
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/brainlayer-prod",
+        finishCommand: "bun run finish-session",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: "harvested 3\\napplied 2\\nqueued 1\\n",
+          stderr: "",
+          durationMs: 123,
+        };
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual([
+      "/bin/zsh",
+      "-lc",
+      "bun run finish-session",
+    ]);
+    expect(calls[0].cwd).toBe("/tmp/brainlayer-prod");
+    expect(calls[0].env.PYTHONPATH).toBe("/tmp/brainlayer-prod/src");
+    expect(body).toEqual({
+      ok: true,
+      exit_code: 0,
+      stdout: "harvested 3\\napplied 2\\nqueued 1\\n",
+      stderr: "",
+      duration_ms: 123,
+    });
+  });
+
+  it("keeps session finish disabled until VOICE_REVIEW_FINISH_CMD is configured", async () => {
+    const app = createVoiceReviewApp({ config: { finishCommand: "" } });
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toEqual({
+      error: "VOICE_REVIEW_FINISH_CMD is not configured",
+    });
+  });
+
+  it("rejects cross-origin session finish requests before running the command", async () => {
+    let calls = 0;
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+      runCommand: async () => {
+        calls += 1;
+        return commandResult("");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://evil.example",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toBe(0);
+    await expect(response.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("rejects headerless session finish posts before running the command", async () => {
+    let calls = 0;
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+      runCommand: async () => {
+        calls += 1;
+        return commandResult("");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toBe(0);
+    await expect(response.json()).resolves.toEqual({ error: "forbidden" });
   });
 
   it("renders a custom default category from the loaded batch as the selected option", async () => {
