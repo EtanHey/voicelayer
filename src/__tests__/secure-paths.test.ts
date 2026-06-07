@@ -63,8 +63,12 @@ describe("secure session paths", () => {
     expect(paths.getVoiceBarSocketPath(env)).toBe("/tmp/voicelayer-dev.sock");
     expect(paths.getMcpSocketPath(env)).toBe("/tmp/voicelayer-dev-mcp.sock");
     expect(paths.getMcpPidFilePath(env)).toBe("/tmp/voicelayer-dev-mcp.pid");
+    expect(paths.retainedRecordingFilePath(env)).toBe(
+      "/tmp/voicelayer-dev-last-recording.wav",
+    );
     expect(paths.isDefaultVoiceBarSocketPath(env)).toBe(false);
     expect(paths.isDefaultMcpSocketPath(env)).toBe(false);
+    expect(paths.shouldMcpDaemonAcceptVoiceBarCommands(env)).toBe(true);
   });
 
   it("prefers public MCP PID override over QA override", () => {
@@ -74,6 +78,24 @@ describe("secure session paths", () => {
         QA_VOICE_MCP_PID_PATH: "/tmp/voicelayer-qa-mcp.pid",
       } as NodeJS.ProcessEnv),
     ).toBe("/tmp/voicelayer-public-mcp.pid");
+  });
+
+  it("prefers public retained recording override over QA override", () => {
+    expect(
+      paths.retainedRecordingFilePath({
+        VOICELAYER_RETAINED_RECORDING_PATH: "/tmp/voicelayer-public-last.wav",
+        QA_VOICE_RETAINED_RECORDING_PATH: "/tmp/voicelayer-qa-last.wav",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/voicelayer-public-last.wav");
+  });
+
+  it("keeps command ownership disabled for arbitrary QA socket overrides", () => {
+    expect(
+      paths.shouldMcpDaemonAcceptVoiceBarCommands({
+        QA_VOICE_SOCKET_PATH: "/tmp/voicelayer-qa.sock",
+        QA_VOICE_MCP_SOCKET_PATH: "/tmp/voicelayer-qa-mcp.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe(false);
   });
 
   it("reports default socket paths from centralized override state", () => {

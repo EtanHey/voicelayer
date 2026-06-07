@@ -30,7 +30,8 @@ const MCP_SOCKET_OVERRIDE_ENV = "VOICELAYER_MCP_SOCKET_PATH";
 const LEGACY_MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
 const MCP_PID_OVERRIDE_ENV = "VOICELAYER_MCP_PID_PATH";
 const LEGACY_MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
-const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
+const RETAINED_RECORDING_OVERRIDE_ENV = "VOICELAYER_RETAINED_RECORDING_PATH";
+const LEGACY_RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
@@ -107,8 +108,12 @@ export function retainedRecordingFilePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   return readOverride(
-    RETAINED_RECORDING_OVERRIDE_ENV,
-    tmpPath("voicelayer-last-recording.wav"),
+    [RETAINED_RECORDING_OVERRIDE_ENV, LEGACY_RETAINED_RECORDING_OVERRIDE_ENV],
+    tmpPath(
+      isDevInstance(env)
+        ? "voicelayer-dev-last-recording.wav"
+        : "voicelayer-last-recording.wav",
+    ),
     env,
   );
 }
@@ -213,6 +218,13 @@ export function isDefaultMcpSocketPath(
 }
 
 export const MCP_SOCKET_PATH = getMcpSocketPath();
+
+export function shouldMcpDaemonAcceptVoiceBarCommands(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isDevInstance(env)) return true;
+  return isDefaultVoiceBarSocketPath(env) && isDefaultMcpSocketPath(env);
+}
 
 export function getMcpPidFilePath(env: NodeJS.ProcessEnv = process.env): string {
   return readOverride(
