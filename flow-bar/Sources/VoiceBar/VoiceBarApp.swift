@@ -216,7 +216,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
         anchorMode = anchorPreferences.loadAnchorMode()
-        let initialScreen = anchorMode == .topCenter
+        let initialScreen = effectiveAnchorMode == .topCenter
             ? Self.preferredMenuBarScreen()
             : (Self.screenContainingMouse() ?? NSScreen.main)
         currentMenuBarProfile = Self.menuBarProfile(for: initialScreen)
@@ -604,7 +604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func applyPanelLayout(animated: Bool) {
         guard let panel else { return }
-        let targetScreen = anchorMode == .topCenter
+        let targetScreen = effectiveAnchorMode == .topCenter
             ? Self.preferredMenuBarScreen()
             : (panel.screen ?? NSScreen.main)
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
@@ -764,7 +764,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
 
         let screens = NSScreen.screens
-        if anchorMode == .topCenter {
+        if effectiveAnchorMode == .topCenter {
             guard let targetScreen = Self.preferredMenuBarScreen(),
                   let targetScreenIndex = screens.firstIndex(of: targetScreen)
             else { return }
@@ -890,7 +890,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pillSize: CGSize
     ) -> VoiceBarAnchorPlacement {
         VoiceBarPositionLockPolicy.effectivePlacement(
-            anchorMode: anchorMode,
+            anchorMode: effectiveAnchorMode,
             savedHorizontalOffset: horizontalOffset,
             savedVerticalOffset: verticalOffset,
             visibleFrame: visibleFrame,
@@ -900,7 +900,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func reapplyAnchoredPanelPosition() {
         guard let panel else { return }
-        let targetScreen = anchorMode == .topCenter
+        let targetScreen = effectiveAnchorMode == .topCenter
             ? Self.preferredMenuBarScreen()
             : (Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
         positionPanel(panel, on: targetScreen)
@@ -910,7 +910,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Save the pill's position as percentages of screen dimensions.
     private func savePanelPosition() {
-        guard anchorMode.allowsFreeDrag else { return }
+        guard effectiveAnchorMode.allowsFreeDrag else { return }
         guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
@@ -927,8 +927,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var currentSurfaceStyle: VoiceBarSurfaceStyle {
         VoiceBarSurfaceStyle.resolved(
-            anchorMode: anchorMode,
+            anchorMode: effectiveAnchorMode,
             v5Enabled: isV5IslandEnabled
+        )
+    }
+
+    private var effectiveAnchorMode: VoiceBarAnchorMode {
+        isV5IslandEnabled ? .topCenter : anchorMode
+    }
+
+    private func writeV5SurfaceDiagnostic(context: String) {
+        let surface = currentSurfaceStyle
+        let payload = [
+            "context=\(context)",
+            "anchorMode=\(anchorMode.rawValue)",
+            "effectiveAnchorMode=\(effectiveAnchorMode.rawValue)",
+            "v5Enabled=\(isV5IslandEnabled ? "true" : "false")",
+            "surfaceStyle=\(String(describing: surface))",
+            "panelFrame=\(panel.map { NSStringFromRect($0.frame) } ?? "nil")",
+        ].joined(separator: "\n") + "\n"
+        try? payload.write(
+            to: URL(fileURLWithPath: "/tmp/voicebar-v5-surface-diagnostic.txt"),
+            atomically: true,
+            encoding: .utf8
         )
     }
 
