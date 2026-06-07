@@ -429,6 +429,29 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+tail");
     });
 
+    it("preserves a one-word tail extension after an intentionally repeated phrase", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-one-word-extension-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "intro alpha beta gamma delta prior thought and then alpha beta"
+            : "alpha beta gamma delta finale";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "intro alpha beta gamma delta prior thought and then alpha beta gamma delta finale",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));
