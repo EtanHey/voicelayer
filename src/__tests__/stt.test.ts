@@ -522,6 +522,24 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+clean");
     });
 
+    it("preserves intentional adjacent repeated phrases in short resident decodes", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-short-intentional-repeat-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(8));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () =>
+          "please repeat after me please repeat after me",
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "please repeat after me please repeat after me",
+      );
+      expect(result.backend).toBe("whisper-server");
+    });
+
     it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav";

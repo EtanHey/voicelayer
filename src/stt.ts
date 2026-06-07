@@ -461,7 +461,10 @@ function stripTailVerificationArtifact(text: string, fullText: string): string {
   return text.replace(TRAILING_FILLER_AFTER_QUESTION, "?");
 }
 
-function trimOneEchoedTrailingPhrase(text: string): string {
+function trimOneEchoedTrailingPhrase(
+  text: string,
+  options: { allowAdjacentEcho: boolean },
+): string {
   const words = normalizeChunkWords(text);
   const maxPhraseWords = Math.min(
     MAX_ECHOED_TAIL_WORDS,
@@ -483,7 +486,10 @@ function trimOneEchoedTrailingPhrase(text: string): string {
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
       const interveningWords = tailStart - (index + phraseWords);
-      if (interveningWords >= 0 && overlapKey(candidate) === tailKey) {
+      const allowedGap =
+        interveningWords >= 2 ||
+        (options.allowAdjacentEcho && interveningWords === 0);
+      if (allowedGap && overlapKey(candidate) === tailKey) {
         return words.slice(0, tailStart).join(" ").trim();
       }
     }
@@ -492,14 +498,22 @@ function trimOneEchoedTrailingPhrase(text: string): string {
   return text.trim();
 }
 
-function trimEchoedTrailingPhrase(text: string): string {
+function trimEchoedTrailingPhrase(
+  text: string,
+  options: { allowAdjacentEcho: boolean },
+): string {
   let current = text.trim();
   for (let passes = 0; passes < 8; passes++) {
-    const trimmed = trimOneEchoedTrailingPhrase(current);
+    const trimmed = trimOneEchoedTrailingPhrase(current, options);
     if (trimmed === current) return current;
     current = trimmed;
   }
   return current;
+}
+
+function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
+  const info = parseWavPcmInfo(wavData);
+  return !!info && info.durationSeconds >= WAV_TAIL_VERIFY_MIN_SECONDS;
 }
 
 function combinePromptOverride(
@@ -789,7 +803,9 @@ export class WhisperServerBackend implements STTBackend {
         headResult.text,
         options,
       );
-      const cleanedText = trimEchoedTrailingPhrase(verifiedText);
+      const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
+        allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+      });
       const backendParts = [this.name];
       if (headResult.changed) {
         backendParts.push(headResult.backendSuffix ?? "head");
