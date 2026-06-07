@@ -97,8 +97,11 @@ const MAX_PREFIX_SHIFTED_SKIP_WORDS = 3;
 const MIN_PREFIX_SHIFTED_MATCH_WORDS = 4;
 const MIN_MEANINGFUL_TAIL_OVERLAP_WORDS = 2;
 const MIN_ECHOED_TAIL_WORDS = 3;
-const MAX_ECHOED_TAIL_WORDS = 6;
+const MAX_ECHOED_TAIL_WORDS = 10;
 const MAX_ECHOED_TAIL_LOOKBACK_WORDS = 18;
+const MIN_NOVEL_TAIL_SUFFIX_WORDS = 1;
+const MIN_REPLAYED_TAIL_PHRASE_WORDS = 4;
+const MAX_REPLAYED_TAIL_PHRASE_WORDS = 10;
 const MAX_LEADING_PUNCTUATION_INSERTED_WORDS = 4;
 const MIN_LEADING_PUNCTUATION_OVERLAP_WORDS = 3;
 const TRAILING_FILLER_AFTER_QUESTION = /\?\s+(?:yeah|ok|okay)\.?$/iu;
@@ -164,13 +167,88 @@ function findChunkOverlap(
   return { overlap: 0, skipPrefix: 0 };
 }
 
-function hasMeaningfulTranscriptOverlap(current: string, next: string): boolean {
-  const currentWords = normalizeChunkWords(current);
-  const nextWords = normalizeChunkWords(next);
-  return (
-    findChunkOverlap(currentWords, nextWords).overlap >=
-    MIN_MEANINGFUL_TAIL_OVERLAP_WORDS
+function containsEarlierWordSequence(
+  words: string[],
+  sequence: string[],
+  beforeIndex: number,
+): boolean {
+  if (sequence.length === 0 || beforeIndex < sequence.length) return false;
+  const sequenceKey = overlapKey(sequence);
+  for (let index = 0; index + sequence.length <= beforeIndex; index++) {
+    if (overlapKey(words.slice(index, index + sequence.length)) === sequenceKey) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasNovelTailExtension(
+  currentWords: string[],
+  nextWords: string[],
+  overlap: number,
+  skipPrefix: number,
+): boolean {
+  const extension = nextWords.slice(skipPrefix + overlap);
+  const maxSuffixWords = Math.min(4, extension.length);
+  for (
+    let suffixWords = maxSuffixWords;
+    suffixWords >= MIN_NOVEL_TAIL_SUFFIX_WORDS;
+    suffixWords--
+  ) {
+    const suffix = extension.slice(extension.length - suffixWords);
+    if (!containsEarlierWordSequence(currentWords, suffix, currentWords.length)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isPromptEchoedTailReplay(
+  currentWords: string[],
+  nextWords: string[],
+  overlap: number,
+  skipPrefix: number,
+): boolean {
+  if (hasNovelTailExtension(currentWords, nextWords, overlap, skipPrefix)) {
+    return false;
+  }
+
+  const maxReplayWords = Math.min(
+    MAX_REPLAYED_TAIL_PHRASE_WORDS,
+    nextWords.length - skipPrefix,
   );
+  if (maxReplayWords < MIN_REPLAYED_TAIL_PHRASE_WORDS) return false;
+
+  const boundaryStart = currentWords.length - overlap;
+  for (
+    let replayWords = maxReplayWords;
+    replayWords >= MIN_REPLAYED_TAIL_PHRASE_WORDS;
+    replayWords--
+  ) {
+    if (
+      containsEarlierWordSequence(
+        currentWords,
+        nextWords.slice(skipPrefix, skipPrefix + replayWords),
+        boundaryStart,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function mergeTailVerificationTranscript(current: string, tail: string): string {
+  const currentWords = normalizeChunkWords(current);
+  const tailWords = normalizeChunkWords(tail);
+  const { overlap, skipPrefix } = findChunkOverlap(currentWords, tailWords);
+  if (overlap < MIN_MEANINGFUL_TAIL_OVERLAP_WORDS) return current;
+  if (isPromptEchoedTailReplay(currentWords, tailWords, overlap, skipPrefix)) {
+    return current;
+  }
+
+  const merged = mergeChunkTranscripts([current, tail]);
+  return merged || current;
 }
 
 function hasLeadingPunctuationRepairOverlap(
@@ -409,7 +487,13 @@ function stripTailVerificationArtifact(text: string, fullText: string): string {
   return text.replace(TRAILING_FILLER_AFTER_QUESTION, "?");
 }
 
-function trimEchoedTrailingPhrase(text: string): string {
+function trimOneEchoedTrailingPhrase(
+  text: string,
+  options: {
+    allowAdjacentEcho: boolean;
+    allowAdjacentEchoContinuation: boolean;
+  },
+): { text: string; trimmedAdjacentEcho: boolean } {
   const words = normalizeChunkWords(text);
   const maxPhraseWords = Math.min(
     MAX_ECHOED_TAIL_WORDS,
@@ -431,13 +515,50 @@ function trimEchoedTrailingPhrase(text: string): string {
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
       const interveningWords = tailStart - (index + phraseWords);
-      if (interveningWords >= 2 && overlapKey(candidate) === tailKey) {
-        return words.slice(0, tailStart).join(" ").trim();
+      const repeatedEarlier = containsEarlierWordSequence(
+        words,
+        candidate,
+        index,
+      );
+      const allowedGap =
+        interveningWords >= 2 ||
+        (options.allowAdjacentEcho &&
+          interveningWords === 0 &&
+          (options.allowAdjacentEchoContinuation || repeatedEarlier));
+      if (allowedGap && overlapKey(candidate) === tailKey) {
+        return {
+          text: words.slice(0, tailStart).join(" ").trim(),
+          trimmedAdjacentEcho: interveningWords === 0,
+        };
       }
     }
   }
 
-  return text.trim();
+  return { text: text.trim(), trimmedAdjacentEcho: false };
+}
+
+function trimEchoedTrailingPhrase(
+  text: string,
+  options: { allowAdjacentEcho: boolean },
+): string {
+  let current = text.trim();
+  let allowAdjacentEchoContinuation = false;
+  for (let passes = 0; passes < 8; passes++) {
+    const result = trimOneEchoedTrailingPhrase(current, {
+      ...options,
+      allowAdjacentEchoContinuation,
+    });
+    const trimmed = result.text;
+    if (trimmed === current) return current;
+    allowAdjacentEchoContinuation = result.trimmedAdjacentEcho;
+    current = trimmed;
+  }
+  return current;
+}
+
+function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
+  const info = parseWavPcmInfo(wavData);
+  return !!info && info.durationSeconds >= WAV_TAIL_VERIFY_MIN_SECONDS;
 }
 
 function combinePromptOverride(
@@ -727,7 +848,9 @@ export class WhisperServerBackend implements STTBackend {
         headResult.text,
         options,
       );
-      const cleanedText = trimEchoedTrailingPhrase(verifiedText);
+      const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
+        allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
+      });
       const backendParts = [this.name];
       if (headResult.changed) {
         backendParts.push(headResult.backendSuffix ?? "head");
@@ -829,10 +952,7 @@ export class WhisperServerBackend implements STTBackend {
           promptOverride: combinePromptOverride(options?.promptOverride, fullText),
         }),
       );
-      if (!hasMeaningfulTranscriptOverlap(fullText, tailText)) {
-        return fullText;
-      }
-      const merged = mergeChunkTranscripts([fullText, tailText]);
+      const merged = mergeTailVerificationTranscript(fullText, tailText);
       return merged ? stripTailVerificationArtifact(merged, fullText) : fullText;
     } catch (err) {
       console.error(
