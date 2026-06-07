@@ -720,6 +720,29 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
+    it("trims repeated tail loops after chunked long recordings are merged", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-chunked-tail-loop-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "first chunk";
+          if (calls === 2) return "chunk middle";
+          if (calls === 3) return "middle near final";
+          return "near final leave for anthropic leave for anthropic leave for anthropic";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "first chunk middle near final leave for anthropic",
+      );
+      expect(result.backend).toBe("whisper-server+chunks+clean");
+    });
+
     it("keeps short resident recordings on a single decode", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-short-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));
