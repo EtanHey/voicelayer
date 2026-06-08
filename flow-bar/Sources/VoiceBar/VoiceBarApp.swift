@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
+    private var appliedLayoutMetrics: VoiceBarLayoutMetrics = .standard
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
 
@@ -208,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureWakeRecovery()
 
         anchorMode = anchorPreferences.loadAnchorMode()
+        appliedLayoutMetrics = currentLayoutMetrics
 
         // Floating pill
         let initialLayout = panelLayout(for: voiceState)
@@ -587,7 +589,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let targetScreen = panel.screen ?? NSScreen.main
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
         let layout = panelLayout(for: voiceState)
-        refreshBarViewMetrics()
+        let newMetrics = currentLayoutMetrics
+        if newMetrics != appliedLayoutMetrics {
+            refreshBarViewMetrics(metrics: newMetrics)
+            appliedLayoutMetrics = newMetrics
+        }
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = PillResizePlan.makeAnchored(
             visibleFrame: visibleFrame,
@@ -644,12 +650,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func refreshBarViewMetrics() {
+    private func refreshBarViewMetrics(metrics: VoiceBarLayoutMetrics? = nil) {
         guard let hosting = panel?.contentView as? PillHostingView<BarView> else { return }
         hosting.rootView = BarView(
             state: voiceState,
             commandRouter: commandRouter,
-            metrics: currentLayoutMetrics
+            metrics: metrics ?? currentLayoutMetrics
         )
     }
 

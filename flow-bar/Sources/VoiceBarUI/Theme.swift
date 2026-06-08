@@ -162,7 +162,11 @@ public struct VoiceBarLayoutMetrics: Equatable {
     public let iconFontSize: CGFloat
     public let statusIconFrameWidth: CGFloat
     public let statusButtonSize: CGFloat
+    public let pillButtonIconFontSize: CGFloat
     public let idleDotSize: CGFloat
+    public let compactStatusCharWidth: CGFloat
+    public let compactStatusMinWidth: CGFloat
+    public let compactStatusMaxWidth: CGFloat
 
     public static let standard = VoiceBarLayoutMetrics(
         panelWidth: Theme.panelWidth,
@@ -176,7 +180,11 @@ public struct VoiceBarLayoutMetrics: Equatable {
         iconFontSize: 14,
         statusIconFrameWidth: 18,
         statusButtonSize: Theme.pillActionButtonSize,
-        idleDotSize: 6
+        pillButtonIconFontSize: 11,
+        idleDotSize: 6,
+        compactStatusCharWidth: 6.6,
+        compactStatusMinWidth: 52,
+        compactStatusMaxWidth: 220
     )
 
     public static let anchoredCompact = VoiceBarLayoutMetrics(
@@ -191,14 +199,18 @@ public struct VoiceBarLayoutMetrics: Equatable {
         iconFontSize: 12,
         statusIconFrameWidth: 16,
         statusButtonSize: 24,
-        idleDotSize: 5
+        pillButtonIconFontSize: 10,
+        idleDotSize: 5,
+        compactStatusCharWidth: 5.8,
+        compactStatusMinWidth: 52,
+        compactStatusMaxWidth: 160
     )
 
     public func compactStatusWidth(for text: String) -> CGFloat {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return 0 }
-        let estimated = CGFloat(trimmed.count) * (self == .standard ? 6.6 : 5.8)
-        return min(self == .standard ? 220 : 160, max(52, estimated))
+        let estimated = CGFloat(trimmed.count) * compactStatusCharWidth
+        return min(compactStatusMaxWidth, max(compactStatusMinWidth, estimated))
     }
 
     public func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {

@@ -48,7 +48,7 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(placement.followsMouse)
     }
 
-    func testBottomCenterUsesHalfClearanceForLowerAnchoredPlacement() {
+    func testBottomCenterUsesReducedClearanceForLowerAnchoredPlacement() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
         let pillSize = CGSize(width: 144, height: 36)
         let placement = VoiceBarAnchorMode.bottomCenter.placement(
@@ -58,7 +58,7 @@ final class VoiceBarPositionLockTests: XCTestCase {
 
         XCTAssertEqual(
             placement.verticalOffset ?? -1,
-            ((24 / 2) + (pillSize.height / 2)) / visibleFrame.height,
+            (12 + (pillSize.height / 2)) / visibleFrame.height,
             accuracy: 0.001
         )
     }

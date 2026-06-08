@@ -739,7 +739,7 @@ public struct BarView: View {
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: metrics == .standard ? 11 : 10, weight: .semibold))
+                .font(.system(size: metrics.pillButtonIconFontSize, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.8))
                 .frame(width: metrics.statusButtonSize, height: metrics.statusButtonSize)
                 .background(Color.white.opacity(0.06))
