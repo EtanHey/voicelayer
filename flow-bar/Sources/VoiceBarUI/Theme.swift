@@ -56,13 +56,11 @@ public enum Theme {
     public static func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
         let textWidth = compactStatusWidth(for: statusText)
         let safeButtonCount = max(0, accessoryButtonCount)
-        let accessoryButtonWidth: CGFloat
-        if safeButtonCount > 0 {
-            accessoryButtonWidth =
-                (CGFloat(safeButtonCount) * pillActionButtonSize) +
+        let accessoryButtonWidth: CGFloat = if safeButtonCount > 0 {
+            (CGFloat(safeButtonCount) * pillActionButtonSize) +
                 (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing)
         } else {
-            accessoryButtonWidth = 0
+            0
         }
         let accessoryLeadingGap: CGFloat = safeButtonCount > 0 ? 8 : 0
         let compactChromeWidth: CGFloat = 68
@@ -110,6 +108,7 @@ public enum Theme {
     public static func transcriptPreviewPillWidth(for text: String) -> CGFloat {
         min(panelWidth - (panelPadding * 2), transcriptPreviewWidth(for: text) + 82)
     }
+
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     public static let teleprompterViewportWidth: CGFloat = 280
@@ -126,6 +125,7 @@ public enum Theme {
     public static let horizontalOffset: CGFloat = 0.5
     /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
     public static let panelPadding: CGFloat = 4
+    public static let anchoredPanelPadding: CGFloat = 3
     /// Vertical offset from top of visible area.
     public static let topPadding: CGFloat = 12
 
@@ -147,6 +147,74 @@ public enum Theme {
         case .transcribing: transcribingColor
         case .error: errorColor
         }
+    }
+}
+
+public struct VoiceBarLayoutMetrics: Equatable {
+    public let panelWidth: CGFloat
+    public let panelPadding: CGFloat
+    public let pillCompactHeight: CGFloat
+    public let compactMinimumWidth: CGFloat
+    public let compactChromeWidth: CGFloat
+    public let horizontalPadding: CGFloat
+    public let contentSpacing: CGFloat
+    public let statusFontSize: CGFloat
+    public let iconFontSize: CGFloat
+    public let statusIconFrameWidth: CGFloat
+    public let statusButtonSize: CGFloat
+    public let idleDotSize: CGFloat
+
+    public static let standard = VoiceBarLayoutMetrics(
+        panelWidth: Theme.panelWidth,
+        panelPadding: Theme.panelPadding,
+        pillCompactHeight: Theme.pillCompactHeight,
+        compactMinimumWidth: 190,
+        compactChromeWidth: 68,
+        horizontalPadding: 14,
+        contentSpacing: 8,
+        statusFontSize: 12,
+        iconFontSize: 14,
+        statusIconFrameWidth: 18,
+        statusButtonSize: Theme.pillActionButtonSize,
+        idleDotSize: 6
+    )
+
+    public static let anchoredCompact = VoiceBarLayoutMetrics(
+        panelWidth: 320,
+        panelPadding: Theme.anchoredPanelPadding,
+        pillCompactHeight: 36,
+        compactMinimumWidth: 144,
+        compactChromeWidth: 48,
+        horizontalPadding: 10,
+        contentSpacing: 6,
+        statusFontSize: 11,
+        iconFontSize: 12,
+        statusIconFrameWidth: 16,
+        statusButtonSize: 24,
+        idleDotSize: 5
+    )
+
+    public func compactStatusWidth(for text: String) -> CGFloat {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        let estimated = CGFloat(trimmed.count) * (self == .standard ? 6.6 : 5.8)
+        return min(self == .standard ? 220 : 160, max(52, estimated))
+    }
+
+    public func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
+        let textWidth = compactStatusWidth(for: statusText)
+        let safeButtonCount = max(0, accessoryButtonCount)
+        let accessoryButtonWidth: CGFloat = if safeButtonCount > 0 {
+            (CGFloat(safeButtonCount) * statusButtonSize) +
+                (CGFloat(safeButtonCount - 1) * Theme.pillActionButtonSpacing)
+        } else {
+            0
+        }
+        let accessoryLeadingGap: CGFloat = safeButtonCount > 0 ? contentSpacing : 0
+        return min(
+            panelWidth - (panelPadding * 2),
+            max(compactMinimumWidth, textWidth + compactChromeWidth + accessoryLeadingGap + accessoryButtonWidth)
+        )
     }
 }
 

@@ -12,7 +12,8 @@ public struct VoiceBarPanelLayout: Equatable {
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
         isPasteFlowActive: Bool = false,
-        padding: CGFloat
+        padding: CGFloat,
+        metrics: VoiceBarLayoutMetrics = .standard
     ) -> VoiceBarPanelLayout {
         let contentSize = contentSize(
             mode: mode,
@@ -20,12 +21,13 @@ public struct VoiceBarPanelLayout: Equatable {
             previewText: previewText,
             statusText: statusText,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: queueItemCount
+            queueItemCount: queueItemCount,
+            metrics: metrics
         )
         let safePadding = max(0, padding)
         let resolvedContentSize = if isPasteFlowActive, !isCollapsed {
             CGSize(
-                width: Theme.panelWidth - (safePadding * 2),
+                width: metrics.panelWidth - (safePadding * 2),
                 height: contentSize.height
             )
         } else {
@@ -54,7 +56,8 @@ public struct VoiceBarPanelLayout: Equatable {
         previewText: String?,
         statusText: String,
         idleAccessoryButtonCount: Int,
-        queueItemCount: Int
+        queueItemCount: Int,
+        metrics: VoiceBarLayoutMetrics
     ) -> CGSize {
         if isCollapsed {
             return CGSize(width: 30, height: 30)
@@ -68,15 +71,39 @@ public struct VoiceBarPanelLayout: Equatable {
             )
         }
 
-        let height = mode == .speaking ? Theme.teleprompterViewportHeight : Theme.pillCompactHeight
+        let height = mode == .speaking ? Theme.teleprompterViewportHeight : metrics.pillCompactHeight
         return CGSize(
-            width: Theme.pillContentWidth(
+            width: pillContentWidth(
+                for: mode,
+                statusText: statusText,
+                idleAccessoryButtonCount: idleAccessoryButtonCount,
+                queueItemCount: queueItemCount,
+                metrics: metrics
+            ),
+            height: height
+        )
+    }
+
+    public static func pillContentWidth(
+        for mode: VoiceMode,
+        statusText: String,
+        idleAccessoryButtonCount: Int = 0,
+        queueItemCount: Int = 0,
+        metrics: VoiceBarLayoutMetrics = .standard
+    ) -> CGFloat {
+        switch mode {
+        case .idle, .disconnected:
+            metrics.compactPillWidth(
+                for: statusText,
+                accessoryButtonCount: mode == .idle ? idleAccessoryButtonCount : 0
+            )
+        default:
+            Theme.pillContentWidth(
                 for: mode,
                 statusText: statusText,
                 idleAccessoryButtonCount: idleAccessoryButtonCount,
                 queueItemCount: queueItemCount
-            ),
-            height: height
-        )
+            )
+        }
     }
 }

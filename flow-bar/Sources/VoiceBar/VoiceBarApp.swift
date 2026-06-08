@@ -207,12 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureWakeRecovery()
 
+        anchorMode = anchorPreferences.loadAnchorMode()
+
         // Floating pill
-        let initialLayout = Self.panelLayout(for: voiceState)
-        let barView = BarView(state: voiceState, commandRouter: commandRouter)
+        let initialLayout = panelLayout(for: voiceState)
+        let barView = BarView(state: voiceState, commandRouter: commandRouter, metrics: currentLayoutMetrics)
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+            self?.panelLayout(for: self?.voiceState).activeHitRect ?? .zero
         }
         hosting.frame = NSRect(
             x: 0, y: 0,
@@ -227,14 +229,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let saved = defaults.object(forKey: Self.verticalOffsetKey) as? Double {
             verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
         }
-        anchorMode = anchorPreferences.loadAnchorMode()
-
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+            self?.panelLayout(for: self?.voiceState).activeHitRect ?? .zero
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
@@ -586,7 +586,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
-        let layout = Self.panelLayout(for: voiceState)
+        let layout = panelLayout(for: voiceState)
+        refreshBarViewMetrics()
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = PillResizePlan.makeAnchored(
             visibleFrame: visibleFrame,
@@ -602,7 +603,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
     }
 
-    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
+    private var currentLayoutMetrics: VoiceBarLayoutMetrics {
+        anchorMode.allowsFreeDrag ? .standard : .anchoredCompact
+    }
+
+    private func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
         let mode = state?.mode ?? .idle
         let previewText = VoiceBarPresentation.transcriptPreviewText(
             mode: mode,
@@ -634,7 +639,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ),
             queueItemCount: state?.queueItems.count ?? 0,
             isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
-            padding: Theme.panelPadding
+            padding: currentLayoutMetrics.panelPadding,
+            metrics: currentLayoutMetrics
+        )
+    }
+
+    private func refreshBarViewMetrics() {
+        guard let hosting = panel?.contentView as? PillHostingView<BarView> else { return }
+        hosting.rootView = BarView(
+            state: voiceState,
+            commandRouter: commandRouter,
+            metrics: currentLayoutMetrics
         )
     }
 

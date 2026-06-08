@@ -41,6 +41,30 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
     }
 
+    func testAnchoredCompactIdlePanelIsSmallerButKeepsClickableHitTarget() {
+        let freeLayout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            padding: Theme.panelPadding,
+            metrics: .standard
+        )
+        let anchoredLayout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            padding: Theme.anchoredPanelPadding,
+            metrics: .anchoredCompact
+        )
+
+        XCTAssertLessThan(anchoredLayout.panelSize.width, freeLayout.panelSize.width)
+        XCTAssertLessThan(anchoredLayout.panelSize.height, freeLayout.panelSize.height)
+        XCTAssertGreaterThanOrEqual(anchoredLayout.activeHitRect.width, 44)
+        XCTAssertGreaterThanOrEqual(anchoredLayout.activeHitRect.height, 32)
+    }
+
     func testExpandedIdlePanelIncludesVisibleAccessoryButtonsInWidth() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,

@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -73,6 +73,7 @@ public struct ProcessingSpinner: View {
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
+    public var metrics: VoiceBarLayoutMetrics
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
@@ -81,9 +82,14 @@ public struct BarView: View {
         pillContent
     }
 
-    public init(state: VoiceState, commandRouter: BarCommandRouting) {
+    public init(
+        state: VoiceState,
+        commandRouter: BarCommandRouting,
+        metrics: VoiceBarLayoutMetrics = .standard
+    ) {
         self.state = state
         self.commandRouter = commandRouter
+        self.metrics = metrics
     }
 
     // MARK: - Pill content (collapsed or expanded)
@@ -131,7 +137,7 @@ public struct BarView: View {
     // MARK: - Expanded pill (full content)
 
     private var expandedPill: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: metrics.contentSpacing) {
             leadingIndicator
             stateContent
             if state.queueDepth > 1 {
@@ -141,10 +147,13 @@ public struct BarView: View {
                 actionButtons
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, metrics.horizontalPadding)
         .padding(.vertical, pillVerticalPadding)
         .frame(
-            minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
+            minWidth: state.mode == .speaking ? Theme.pillMinWidth : min(
+                Theme.pillCompactWidth,
+                metrics.compactMinimumWidth
+            ),
             alignment: .leading
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
@@ -245,7 +254,7 @@ public struct BarView: View {
         } else {
             Circle()
                 .fill(state.mode == .disconnected ? Theme.errorColor : Color.green)
-                .frame(width: 6, height: 6)
+                .frame(width: metrics.idleDotSize, height: metrics.idleDotSize)
         }
     }
 
@@ -281,7 +290,7 @@ public struct BarView: View {
                             PulsingStatusLabel(text: recordingContent.statusText)
                         } else {
                             Text(recordingContent.statusText)
-                                .font(.system(size: 12, weight: .medium))
+                                .font(.system(size: metrics.statusFontSize, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.9))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
@@ -312,11 +321,11 @@ public struct BarView: View {
                     }
                 }
             case .transcribing:
-                HStack(spacing: 8) {
+                HStack(spacing: metrics.contentSpacing) {
                     WaveformView(mode: .processing)
                     if !statusText.isEmpty {
                         Text(statusText)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.system(size: metrics.statusFontSize, weight: .medium))
                             .foregroundStyle(.white.opacity(0.9))
                             .lineLimit(1)
                             .truncationMode(.tail)
@@ -395,7 +404,7 @@ public struct BarView: View {
                 commandRouter.handlePrimaryTap()
             } label: {
                 statusIconImage
-                    .frame(width: 26, height: 26)
+                    .frame(width: metrics.statusButtonSize, height: metrics.statusButtonSize)
                     .contentShape(Circle())
             }
             .buttonStyle(.plain)
@@ -407,9 +416,9 @@ public struct BarView: View {
 
     private var statusIconImage: some View {
         Image(systemName: iconName)
-            .font(.system(size: transcriptPreviewIsVisible ? 16 : 14, weight: .semibold))
+            .font(.system(size: transcriptPreviewIsVisible ? 16 : metrics.iconFontSize, weight: .semibold))
             .foregroundStyle(Theme.stateColor(for: state.mode))
-            .frame(width: transcriptPreviewIsVisible ? 22 : 18)
+            .frame(width: transcriptPreviewIsVisible ? 22 : metrics.statusIconFrameWidth)
             .fixedSize()
             .layoutPriority(2)
             .contentTransition(.interpolate)
@@ -437,14 +446,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: metrics.statusFontSize, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -479,25 +488,26 @@ public struct BarView: View {
             return transcriptPreviewLayout.height
         }
         if compactPillUsesFixedHeight {
-            return Theme.pillCompactHeight
+            return metrics.pillCompactHeight
         }
         return nil
     }
 
     private var pillFixedWidth: CGFloat? {
         if state.keepsPasteFlowEnvelope {
-            return Theme.panelWidth - (Theme.panelPadding * 2)
+            return metrics.panelWidth - (metrics.panelPadding * 2)
         }
 
         if let transcriptPreviewText {
             return Theme.transcriptPreviewPillWidth(for: transcriptPreviewText)
         }
 
-        return Theme.pillContentWidth(
+        return VoiceBarPanelLayout.pillContentWidth(
             for: state.mode,
             statusText: statusText,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: state.queueItems.count
+            queueItemCount: state.queueItems.count,
+            metrics: metrics
         )
     }
 
@@ -560,7 +570,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -653,7 +663,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +693,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))
@@ -727,9 +739,9 @@ public struct BarView: View {
             action()
         } label: {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: metrics == .standard ? 11 : 10, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.8))
-                .frame(width: 26, height: 26)
+                .frame(width: metrics.statusButtonSize, height: metrics.statusButtonSize)
                 .background(Color.white.opacity(0.06))
                 .clipShape(Circle())
                 .contentShape(Circle())

@@ -7,11 +7,13 @@ public enum VoiceBarPositionLockPolicy {
         savedHorizontalOffset: CGFloat,
         savedVerticalOffset: CGFloat?,
         visibleFrame: CGRect,
-        pillSize: CGSize
+        pillSize: CGSize,
+        bottomClearance: CGFloat = 12
     ) -> VoiceBarAnchorPlacement {
         let anchorPlacement = anchorMode.placement(
             visibleFrame: visibleFrame,
-            pillSize: pillSize
+            pillSize: pillSize,
+            bottomClearance: bottomClearance
         )
 
         guard anchorPlacement.followsMouse else {

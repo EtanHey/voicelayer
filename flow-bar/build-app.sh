@@ -13,6 +13,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Apple Development: Etan Heyman (DXHB5E7P2D)}"
+VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -46,10 +47,30 @@ if [ ! -f "$BINARY" ]; then
     exit 1
 fi
 
-# Clean stale bundle before recreating
+# Clean stale bundle before recreating. Production replacements are guarded so
+# Etan's resident app is never removed while it is actively running.
 if [ -d "$APP_DIR" ]; then
-    echo "[build-app] Removing old bundle..."
-    rm -rf "$APP_DIR"
+    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ] &&
+       pgrep -x VoiceBar >/dev/null 2>&1 &&
+       [ "${VOICEBAR_FORCE_APP_REPLACE:-0}" != "1" ]; then
+        echo "[build-app] ERROR: Refusing to replace /Applications/VoiceBar.app while VoiceBar is running." >&2
+        echo "[build-app] Quit VoiceBar first, or set VOICEBAR_FORCE_APP_REPLACE=1 only after Etan says go." >&2
+        exit 1
+    fi
+
+    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+        mkdir -p "$VOICEBAR_BACKUP_DIR"
+        backup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.backup-$(date +%Y%m%d-%H%M%S).app"
+        echo "[build-app] Moving old bundle to $backup_path..."
+        mv "$APP_DIR" "$backup_path"
+        find "$VOICEBAR_BACKUP_DIR" -maxdepth 1 -name 'VoiceBar.backup-*.app' -type d \
+            | sort -r | sed -n '2,$p' | while IFS= read -r old_backup; do
+                rm -rf "$old_backup"
+            done
+    else
+        echo "[build-app] Removing old bundle..."
+        rm -rf "$APP_DIR"
+    fi
 fi
 
 echo "[build-app] Creating .app bundle at $APP_DIR..."

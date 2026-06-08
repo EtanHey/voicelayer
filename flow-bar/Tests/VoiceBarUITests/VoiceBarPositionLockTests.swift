@@ -32,7 +32,8 @@ final class VoiceBarPositionLockTests: XCTestCase {
             savedHorizontalOffset: 0.2,
             savedVerticalOffset: 0.3,
             visibleFrame: visibleFrame,
-            pillSize: pillSize
+            pillSize: pillSize,
+            bottomClearance: 24
         )
 
         XCTAssertEqual(topPlacement.horizontalOffset, 0.5, accuracy: 0.001)
@@ -45,6 +46,21 @@ final class VoiceBarPositionLockTests: XCTestCase {
             accuracy: 0.001
         )
         XCTAssertFalse(placement.followsMouse)
+    }
+
+    func testBottomCenterUsesHalfClearanceForLowerAnchoredPlacement() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let pillSize = CGSize(width: 144, height: 36)
+        let placement = VoiceBarAnchorMode.bottomCenter.placement(
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
+        )
+
+        XCTAssertEqual(
+            placement.verticalOffset ?? -1,
+            ((24 / 2) + (pillSize.height / 2)) / visibleFrame.height,
+            accuracy: 0.001
+        )
     }
 
     func testPanelDragDecisionRespectsLock() {
