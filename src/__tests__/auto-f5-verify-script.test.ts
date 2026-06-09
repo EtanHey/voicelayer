@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const repoRoot = new URL("../..", import.meta.url).pathname;
@@ -29,6 +31,89 @@ function text(bytes: Uint8Array) {
 }
 
 describe("auto-f5-verify.sh pure helpers", () => {
+  test("uses the HID-level Swift sender by default", () => {
+    const result = runFunction('printf "%s\\n" "$F5_SENDER"');
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout).trim()).toBe("swift");
+  });
+
+  test("passes the configured verification tester through to voicelayer-verify", () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const fakeVerifyScript = join(workDir, "voicelayer-verify.sh");
+      writeFileSync(
+        fakeVerifyScript,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf 'tester=%s\\n' \"${VOICELAYER_VERIFY_TESTER:-}\"",
+          "IFS= read -r answer || true",
+          "printf 'answer=%s\\n' \"$answer\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = runFunction(
+        [
+          "start_verify_process",
+          "printf 'Y\\n' >&3",
+          "close_verify_stdin",
+          'wait "$VERIFY_PID"',
+          'cat "$LOG_FILE"',
+        ].join("; "),
+        {
+          VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+          VOICELAYER_AUTO_F5_VERIFY_SCRIPT: fakeVerifyScript,
+          VOICELAYER_VERIFY_TESTER: "auto-F5-etan-consented-live",
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      const output = text(result.stdout);
+      expect(output).toContain("tester=auto-F5-etan-consented-live");
+      expect(output).toContain("answer=Y");
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  test("sends the Swift double-F5 lock gesture from one process", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const binDir = join(workDir, "bin");
+      const fakeSwift = join(binDir, "swift");
+      const invocations = join(workDir, "swift-invocations.txt");
+      await Bun.$`mkdir -p ${binDir}`;
+      writeFileSync(
+        fakeSwift,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf 'argc=%s\\n' \"$#\" >> \"$SWIFT_INVOCATIONS\"",
+          "printf 'args=%s\\n' \"$*\" >> \"$SWIFT_INVOCATIONS\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = runFunction("send_f5_start_locked", {
+        PATH: `${binDir}:${process.env.PATH}`,
+        SWIFT_INVOCATIONS: invocations,
+        VOICELAYER_AUTO_F5_SENDER: "swift",
+        VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = await Bun.file(invocations).text();
+      expect(output.match(/^argc=/gm)).toHaveLength(1);
+      expect(output).toContain(" 2 120000");
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   test("matches expected whisper variants of verification test", () => {
     const result = runFunction('sink_contains_verification "$SINK_TEXT"', {
       SINK_TEXT: "Verification test.\n",
@@ -80,5 +165,67 @@ describe("auto-f5-verify.sh pure helpers", () => {
     expect(text(result.stdout).trim()).toBe(
       "/tmp/repo/.verified/verified-runtime-feat-auto.txt",
     );
+  });
+
+  test("failed branch cycles restore main build and kickstart VoiceBar services", async () => {
+    const workDir = mkdtempSync(join(tmpdir(), "auto-f5-test-"));
+    try {
+      const binDir = join(workDir, "bin");
+      const mainRoot = join(workDir, "main");
+      const buildLog = join(workDir, "build.log");
+      const launchctlLog = join(workDir, "launchctl.log");
+      await Bun.$`mkdir -p ${binDir} ${mainRoot}/flow-bar`;
+      writeFileSync(
+        join(mainRoot, "flow-bar", "build-app.sh"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf 'build-main=%s\\n' \"$PWD\" >> \"$BUILD_LOG\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      writeFileSync(
+        join(binDir, "launchctl"),
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          "printf '%s\\n' \"$*\" >> \"$LAUNCHCTL_LOG\"",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const result = runFunction(
+        [
+          "BRANCH_BUILD_INSTALLED=1",
+          "set +e",
+          "false",
+          "cleanup",
+          'printf "cleanup_status=%s\\n" "$?"',
+        ].join("; "),
+        {
+          BUILD_LOG: buildLog,
+          LAUNCHCTL_LOG: launchctlLog,
+          PATH: `${binDir}:${process.env.PATH}`,
+          VOICELAYER_AUTO_F5_MAIN_REPO_ROOT: mainRoot,
+          VOICELAYER_AUTO_F5_WORK_DIR: workDir,
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(text(result.stdout)).toContain("cleanup_status=1");
+      expect(await Bun.file(buildLog).text()).toContain(`build-main=${mainRoot}`);
+      const launchctlOutput = await Bun.file(launchctlLog).text();
+      const launchdDomain = `gui/${process.getuid?.() ?? 501}`;
+      expect(launchctlOutput).toContain(
+        `kickstart -k ${launchdDomain}/com.voicelayer.voicebar`,
+      );
+      expect(launchctlOutput).toContain(
+        `kickstart -k ${launchdDomain}/com.voicelayer.mcp-daemon`,
+      );
+    } finally {
+      rmSync(workDir, { recursive: true, force: true });
+    }
   });
 });
