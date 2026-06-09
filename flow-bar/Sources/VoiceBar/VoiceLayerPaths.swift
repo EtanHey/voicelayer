@@ -11,6 +11,7 @@ enum VoiceLayerPaths {
     static let mcpSocketOverrideEnvironmentVariable = "QA_VOICE_MCP_SOCKET_PATH"
     static let daemonPIDOverrideEnvironmentVariable = "QA_VOICE_MCP_PID_PATH"
     static let retainedRecordingOverrideEnvironmentVariable = "QA_VOICE_RETAINED_RECORDING_PATH"
+    static let devInstanceEnvironmentVariable = "VOICELAYER_DEV_INSTANCE"
 
     static func tmpPath(_ name: String) -> String {
         "\(tmpDirectory)/\(name)"
@@ -20,6 +21,10 @@ enum VoiceLayerPaths {
         guard let rawValue = getenv(name) else { return nil }
         let value = String(cString: rawValue).trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
+    }
+
+    private static var isDevInstance: Bool {
+        environmentValue(devInstanceEnvironmentVariable) == "1"
     }
 
     static func voiceDisabledFlagPath() -> String {
@@ -34,22 +39,26 @@ enum VoiceLayerPaths {
     }
 
     static var socketPath: String {
-        environmentValue(socketOverrideEnvironmentVariable) ?? tmpPath("voicelayer.sock")
+        environmentValue(socketOverrideEnvironmentVariable)
+            ?? (isDevInstance ? tmpPath("voicelayer-dev.sock") : tmpPath("voicelayer.sock"))
     }
 
     static var mcpSocketPath: String {
-        environmentValue(mcpSocketOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.sock")
+        environmentValue(mcpSocketOverrideEnvironmentVariable)
+            ?? (isDevInstance ? tmpPath("voicelayer-dev-mcp.sock") : tmpPath("voicelayer-mcp.sock"))
     }
 
     static var daemonPIDPath: String {
-        environmentValue(daemonPIDOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.pid")
+        environmentValue(daemonPIDOverrideEnvironmentVariable)
+            ?? (isDevInstance ? tmpPath("voicelayer-dev-mcp.pid") : tmpPath("voicelayer-mcp.pid"))
     }
 
     static var retainedRecordingPath: String {
-        environmentValue(retainedRecordingOverrideEnvironmentVariable) ?? tmpPath("voicelayer-last-recording.wav")
+        environmentValue(retainedRecordingOverrideEnvironmentVariable)
+            ?? (isDevInstance ? tmpPath("voicelayer-dev-last-recording.wav") : tmpPath("voicelayer-last-recording.wav"))
     }
 
     static var enforcesSingletonInstance: Bool {
-        environmentValue(socketOverrideEnvironmentVariable) == nil
+        environmentValue(socketOverrideEnvironmentVariable) == nil && !isDevInstance
     }
 }

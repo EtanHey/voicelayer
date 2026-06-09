@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -127,15 +127,19 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 26 - 2 - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.maxX - Theme.notchSideRadius - 14 - 13, y: lowerBodyControlY)
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.maxX - Theme.notchSideRadius - 14 - 26 - 2 - 13, y: lowerBodyControlY)
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.minX + 14 + 3 + 8 + 9, y: host.bounds.midY)
+        NSPoint(x: host.bounds.minX + Theme.notchSideRadius + 14 + 12, y: lowerBodyControlY)
+    }
+
+    private var lowerBodyControlY: CGFloat {
+        Theme.panelPadding + (Theme.pillCompactHeight / 2)
     }
 
     private func click(_ host: NSView, at point: NSPoint) {

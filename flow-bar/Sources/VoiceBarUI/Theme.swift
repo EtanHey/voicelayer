@@ -26,7 +26,7 @@ public enum Theme {
     /// Dynamic width: pill shrink-wraps content with minimum size.
     public static let pillMinWidth: CGFloat = 100
     public static let pillCompactWidth: CGFloat = 136
-    public static let pillCompactHeight: CGFloat = 42
+    public static let pillCompactHeight: CGFloat = 31
     public static let pillStatusMaxWidth: CGFloat = 160
     public static let pillTranscriptPreviewWidth: CGFloat = 330
     public static let pillTranscriptPreviewHeight: CGFloat = 70
@@ -34,6 +34,9 @@ public enum Theme {
     public static let pillActionButtonSize: CGFloat = 26
     public static let pillActionButtonSpacing: CGFloat = 2
     public static let pillSpeakingQueueWidth: CGFloat = 412
+    public static let notchSideRadius: CGFloat = 11
+    public static let notchFusionBandHeight: CGFloat = 23
+    public static let notchCornerRadius: CGFloat = 13
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
     public static let panelWidth: CGFloat = 420
@@ -112,7 +115,7 @@ public enum Theme {
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     public static let teleprompterViewportWidth: CGFloat = 280
-    public static let teleprompterViewportHeight: CGFloat = 68
+    public static let teleprompterViewportHeight: CGFloat = 112
     public static let teleprompterWrapWidth: CGFloat = 272
     public static let teleprompterContentInset: CGFloat = 4
 
@@ -126,7 +129,7 @@ public enum Theme {
     /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
     public static let panelPadding: CGFloat = 4
     /// Vertical offset from top of visible area.
-    public static let topPadding: CGFloat = 12
+    public static let topPadding: CGFloat = 0
     /// Overlap above the usable desktop so the existing pill tucks behind the menu-bar notch.
     public static let topAnchorNotchOverlap: CGFloat = 22
 

@@ -1,6 +1,18 @@
+@testable import VoiceBar
 import XCTest
 
 final class VoiceBarBundleMetadataTests: XCTestCase {
+    func testDevInstanceUsesIsolatedSocketPathsAndSkipsSingleton() {
+        setenv("VOICELAYER_DEV_INSTANCE", "1", 1)
+        defer { unsetenv("VOICELAYER_DEV_INSTANCE") }
+
+        XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/voicelayer-dev.sock")
+        XCTAssertEqual(VoiceLayerPaths.mcpSocketPath, "/tmp/voicelayer-dev-mcp.sock")
+        XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/voicelayer-dev-mcp.pid")
+        XCTAssertEqual(VoiceLayerPaths.retainedRecordingPath, "/tmp/voicelayer-dev-last-recording.wav")
+        XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
     func testInfoPlistDeclaresVoiceBarUrlScheme() throws {
         let plistURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

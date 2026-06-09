@@ -119,6 +119,26 @@ describe("handleConverse resilience — P0-2", () => {
     expect(idles.length).toBeGreaterThanOrEqual(1);
   });
 
+  it("broadcasts waiting only while blocking question input is open", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    waitSpy = spyOn(input, "waitForInput").mockResolvedValue("answered");
+
+    const result = await handleConverse({
+      message: "test question",
+      timeout_seconds: 30,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(broadcasts).toContainEqual({
+      type: "blocking_question_waiting",
+      waiting: true,
+    });
+    expect(broadcasts).toContainEqual({
+      type: "blocking_question_waiting",
+      waiting: false,
+    });
+  });
+
   it("does not broadcast idle when waitForInput() refuses an existing recording", async () => {
     speakSpy = spyOn(tts, "speak").mockResolvedValue({});
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(

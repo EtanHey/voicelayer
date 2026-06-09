@@ -304,11 +304,17 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
 
     // Record mic audio, then transcribe with selected STT backend
     const pressToTalk = validated.press_to_talk ?? false;
-    const response = await waitForInput(
-      timeoutSeconds * 1000,
-      silenceMode,
-      pressToTalk,
-    );
+    broadcast({ type: "blocking_question_waiting", waiting: true });
+    let response: string | null;
+    try {
+      response = await waitForInput(
+        timeoutSeconds * 1000,
+        silenceMode,
+        pressToTalk,
+      );
+    } finally {
+      broadcast({ type: "blocking_question_waiting", waiting: false });
+    }
 
     if (response === null) {
       return textResult(formatAsk(null, { timeoutSeconds, pressToTalk }));
@@ -343,14 +349,17 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     return result;
   } catch (err) {
     clearTimeout(timer!);
+    const message = err instanceof Error ? err.message : String(err);
+    const isRecordingConflict =
+      isRecordingConflictError(err) ||
+      message.includes("Recording already in progress");
     if (
       !isSpeakerOutputRefusedError(err) &&
-      !isRecordingConflictError(err) &&
+      !isRecordingConflict &&
       getEffectiveRecordingState() === "idle"
     ) {
       broadcast({ type: "state", state: "idle" });
     }
-    const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
     return textResult(`[converse] Error: ${message}`, true);
   }

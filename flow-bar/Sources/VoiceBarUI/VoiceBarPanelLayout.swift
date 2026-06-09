@@ -3,6 +3,16 @@ import CoreGraphics
 public struct VoiceBarPanelLayout: Equatable {
     public var panelSize: CGSize
     public var activeHitRect: CGRect
+    public var lowerBodyRect: CGRect
+    public var topFusionRect: CGRect
+
+    public var bodySize: CGSize {
+        lowerBodyRect.size
+    }
+
+    public func containsActivePoint(_ point: CGPoint) -> Bool {
+        lowerBodyRect.contains(point) || topFusionRect.contains(point)
+    }
 
     public static func make(
         mode: VoiceMode,
@@ -31,21 +41,44 @@ public struct VoiceBarPanelLayout: Equatable {
         } else {
             contentSize
         }
-        let panelSize = CGSize(
+        let bodySize = CGSize(
             width: resolvedContentSize.width + (safePadding * 2),
             height: resolvedContentSize.height + (safePadding * 2)
+        )
+        let sideRadius = max(0, Theme.notchSideRadius)
+        let fusionHeight = max(0, Theme.notchFusionBandHeight)
+        let panelSize = CGSize(
+            width: bodySize.width + (sideRadius * 2),
+            height: bodySize.height + fusionHeight
+        )
+        let lowerBodyRect = CGRect(
+            x: sideRadius,
+            y: 0,
+            width: bodySize.width,
+            height: bodySize.height
+        )
+        let topFusionRect = CGRect(
+            x: 0,
+            y: bodySize.height,
+            width: panelSize.width,
+            height: fusionHeight
         )
         let hitInset: CGFloat = 2
         let horizontalInset = min(hitInset, max(0, resolvedContentSize.width / 2))
         let verticalInset = min(hitInset, max(0, resolvedContentSize.height / 2))
         let activeHitRect = CGRect(
-            x: safePadding + horizontalInset,
+            x: sideRadius + safePadding + horizontalInset,
             y: safePadding + verticalInset,
             width: max(1, resolvedContentSize.width - (horizontalInset * 2)),
             height: max(1, resolvedContentSize.height - (verticalInset * 2))
         )
 
-        return VoiceBarPanelLayout(panelSize: panelSize, activeHitRect: activeHitRect)
+        return VoiceBarPanelLayout(
+            panelSize: panelSize,
+            activeHitRect: activeHitRect,
+            lowerBodyRect: lowerBodyRect,
+            topFusionRect: topFusionRect
+        )
     }
 
     private static func contentSize(

@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -79,6 +79,29 @@ public struct BarView: View {
 
     public var body: some View {
         pillContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .padding(.horizontal, Theme.notchSideRadius)
+            .background {
+                NotchShape(hasAttachedPanel: state.mode == .speaking || isHistoryPresented || isVocabularyPresented)
+                    .fill(Color.black)
+            }
+            .overlay {
+                NotchShape(hasAttachedPanel: state.mode == .speaking || isHistoryPresented || isVocabularyPresented)
+                    .fill(stateWashColor)
+                    .allowsHitTesting(false)
+                    .animation(Theme.modeTransition, value: state.mode)
+            }
+            .overlay {
+                NotchShape(hasAttachedPanel: state.mode == .speaking || isHistoryPresented || isVocabularyPresented)
+                    .stroke(borderColor, lineWidth: borderWidth)
+                    .allowsHitTesting(false)
+                    .animation(Theme.modeTransition, value: state.mode)
+            }
+            .overlay {
+                NotchShape(hasAttachedPanel: state.mode == .speaking || isHistoryPresented || isVocabularyPresented)
+                    .stroke(Theme.pillInnerEdge, lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
     }
 
     public init(state: VoiceState, commandRouter: BarCommandRouting) {
@@ -111,12 +134,10 @@ public struct BarView: View {
             state.setHovering(true) // expand on tap
         } label: {
             ZStack(alignment: .topTrailing) {
-                Circle()
-                    .fill(Color.green) // VoiceBar is always alive — dot is always green
-                    .frame(width: 10, height: 10)
-                    .padding(8)
-                    .background(Theme.pillBackground)
-                    .clipShape(Capsule())
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.88))
+                    .frame(width: 30, height: 30)
 
                 if state.queueDepth > 1 {
                     queueBadge
@@ -131,14 +152,20 @@ public struct BarView: View {
     // MARK: - Expanded pill (full content)
 
     private var expandedPill: some View {
-        HStack(spacing: 8) {
-            leadingIndicator
-            stateContent
-            if state.queueDepth > 1 {
-                queueBadge
-            }
-            if !transcriptPreviewIsVisible {
-                actionButtons
+        Group {
+            if state.mode == .speaking {
+                speakingPanel
+            } else {
+                HStack(spacing: 8) {
+                    leadingIndicator
+                    stateContent
+                    if state.queueDepth > 1 {
+                        queueBadge
+                    }
+                    if !transcriptPreviewIsVisible {
+                        actionButtons
+                    }
+                }
             }
         }
         .padding(.horizontal, 14)
@@ -148,27 +175,6 @@ public struct BarView: View {
             alignment: .leading
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
-        .background(Theme.pillBackground)
-        .clipShape(Capsule())
-        .overlay {
-            Capsule()
-                .fill(stateWashColor)
-                .allowsHitTesting(false)
-                .animation(Theme.modeTransition, value: state.mode)
-        }
-        .overlay {
-            // State-dependent border glow
-            Capsule()
-                .strokeBorder(borderColor, lineWidth: borderWidth)
-                .allowsHitTesting(false)
-                .animation(Theme.modeTransition, value: state.mode)
-        }
-        .overlay {
-            // Subtle inner edge for depth
-            Capsule()
-                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
         // No drop shadow — clean edges like Wispr Flow
         .opacity(1.0)
         .fixedSize(horizontal: false, vertical: true)
@@ -190,6 +196,63 @@ public struct BarView: View {
             }
         }
         .contentShape(Capsule())
+    }
+
+    private var speakingPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                WaveformView(mode: .idle, audioLevel: state.audioLevel)
+                    .frame(width: 54)
+                Text(state.statusText.isEmpty ? "Speaking..." : state.statusText)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.94))
+                    .lineLimit(2)
+                    .frame(width: Theme.teleprompterViewportWidth, height: 36, alignment: .leading)
+            }
+
+            HStack(spacing: 8) {
+                Text("0:05")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.58))
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.16))
+                        .frame(height: 4)
+                    Capsule()
+                        .fill(Theme.speakingColor)
+                        .frame(width: 80, height: 4)
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 12, height: 12)
+                        .offset(x: 74)
+                }
+                .frame(width: 190, height: 14)
+                Text("0:12")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+
+            HStack(spacing: 22) {
+                pillButton(icon: "arrow.counterclockwise") { commandRouter.handleReplay() }
+                    .help("Restart")
+                pillButton(icon: "pause.fill") {}
+                    .help("Pause")
+                pillButton(icon: "stop.fill") { commandRouter.handleStop() }
+                    .help("Stop")
+                if state.isBlockingQuestionWaitingForUser {
+                    HStack(spacing: 5) {
+                        Circle()
+                            .fill(Theme.speakingColor)
+                            .frame(width: 6, height: 6)
+                        Text("waiting")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Theme.speakingColor.opacity(0.95))
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+        }
+        .frame(width: Theme.pillContentWidth(for: .speaking, statusText: statusText), alignment: .leading)
     }
 
     // MARK: - Error state
@@ -243,9 +306,25 @@ public struct BarView: View {
         } else if state.mode == .transcribing {
             ProcessingSpinner()
         } else {
-            Circle()
-                .fill(state.mode == .disconnected ? Theme.errorColor : Color.green)
-                .frame(width: 6, height: 6)
+            if state.mode == .idle || state.mode == .error {
+                Button {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                    commandRouter.handlePrimaryTap()
+                } label: {
+                    Image(systemName: state.mode == .error ? "exclamationmark.triangle.fill" : "mic.fill")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.stateColor(for: state.mode))
+                        .frame(width: 24, height: 26)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(state.mode == .error ? "Retry voice recording" : "Start voice recording")
+            } else {
+                Image(systemName: state.mode == .disconnected ? "bolt.horizontal.circle.fill" : "mic.fill")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.stateColor(for: state.mode))
+                    .frame(width: 18)
+            }
         }
     }
 
@@ -325,7 +404,6 @@ public struct BarView: View {
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(statusText.isEmpty ? "Transcribing" : statusText)
             default:
-                statusIcon
                 statusLabel
             }
         }
@@ -437,14 +515,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -544,8 +622,8 @@ public struct BarView: View {
     private var actionButtons: some View {
         HStack(spacing: 2) {
             if state.mode == .recording {
-                pillButton(icon: "xmark") { commandRouter.handleCancel() }
                 pillButton(icon: "stop.fill") { commandRouter.handleStop() }
+                pillButton(icon: "xmark") { commandRouter.handleCancel() }
             }
             if state.mode == .transcribing {
                 pillButton(icon: "xmark") { commandRouter.handleCancel() }
@@ -560,7 +638,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -586,36 +664,48 @@ public struct BarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(state.recentTranscriptions.enumerated()), id: \.offset) { index, item in
+                    ForEach(Array(state.recentHistoryItems.enumerated()), id: \.element.id) { index, item in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .top, spacing: 8) {
                                 if index == 0 {
-                                    Text("Latest")
+                                    Text(historyTimestamp(item.createdAt))
                                         .font(.system(size: 10, weight: .bold, design: .rounded))
+                                        .foregroundStyle(.secondary)
+                                }
+                                if let duration = formattedDuration(item.audioDurationMs) {
+                                    Text(duration)
+                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer(minLength: 0)
                                 HStack(spacing: 6) {
-                                    historyActionButton(title: "Copy") {
-                                        state.copyTranscript(item)
+                                    if !item.isFailed {
+                                        historyActionButton(title: "Copy") {
+                                            state.copyTranscript(item.text)
+                                            isHistoryPresented = false
+                                        }
+                                        historyActionButton(title: "Paste") {
+                                            state.repasteTranscript(item.text)
+                                            isHistoryPresented = false
+                                        }
+                                    }
+                                    historyActionButton(title: "Retry") {
+                                        state.retranscribeLastCapture()
                                         isHistoryPresented = false
                                     }
-                                    historyActionButton(title: "Paste") {
-                                        state.repasteTranscript(item)
-                                        isHistoryPresented = false
-                                    }
+                                    historyActionButton(title: "Delete") {}
                                 }
                             }
-                            Text(item)
+                            Text(item.isFailed ? "Transcription failed" : item.text)
                                 .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.primary)
+                                .foregroundStyle(item.isFailed ? Theme.errorColor : .primary)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
 
-                        if index < state.recentTranscriptions.count - 1 {
+                        if index < state.recentHistoryItems.count - 1 {
                             Divider()
                         }
                     }
@@ -637,11 +727,11 @@ public struct BarView: View {
 
     private var vocabularyPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Transcription Vocabulary")
+            Text("Corrections | Terms")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(.primary)
 
-            Text("Built-ins plus Wispr-derived hints used by local STT cleanup.")
+            Text("Corrections rewrite heard text. Terms keep one word verbatim.")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.secondary)
 
@@ -653,7 +743,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +773,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))
@@ -719,6 +811,24 @@ public struct BarView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .help(title)
+    }
+
+    private func formattedDuration(_ durationMs: Int?) -> String? {
+        guard let durationMs, durationMs > 0 else { return nil }
+        let seconds = Int((Double(durationMs) / 1000.0).rounded())
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func historyTimestamp(_ date: Date) -> String {
+        let elapsed = max(0, Date().timeIntervalSince(date))
+        if elapsed < 3600 {
+            let minutes = max(1, Int(elapsed / 60))
+            return "\(minutes)m ago"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 
     private func pillButton(icon: String, action: @escaping () -> Void) -> some View {
