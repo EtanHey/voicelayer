@@ -3,6 +3,14 @@ import CoreGraphics
 public struct VoiceBarPanelLayout: Equatable {
     public var panelSize: CGSize
     public var activeHitRect: CGRect
+    public var activeHitTest: ((CGPoint) -> Bool)?
+    public var contentRect: CGRect
+
+    public static func == (lhs: VoiceBarPanelLayout, rhs: VoiceBarPanelLayout) -> Bool {
+        lhs.panelSize == rhs.panelSize &&
+            lhs.activeHitRect == rhs.activeHitRect &&
+            lhs.contentRect == rhs.contentRect
+    }
 
     public static func make(
         mode: VoiceMode,
@@ -12,7 +20,8 @@ public struct VoiceBarPanelLayout: Equatable {
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
         isPasteFlowActive: Bool = false,
-        padding: CGFloat
+        padding: CGFloat,
+        usesNotchIsland: Bool = false
     ) -> VoiceBarPanelLayout {
         let contentSize = contentSize(
             mode: mode,
@@ -31,6 +40,22 @@ public struct VoiceBarPanelLayout: Equatable {
         } else {
             contentSize
         }
+        if usesNotchIsland, !isCollapsed {
+            let islandSize = NotchIslandGeometry.panelSize(for: resolvedContentSize)
+            let contentRect = NotchIslandGeometry.contentRect(for: resolvedContentSize)
+            let island = NotchIslandGeometry.make(
+                screenFrame: CGRect(origin: .zero, size: islandSize),
+                visibleFrame: CGRect(origin: .zero, size: islandSize),
+                contentSize: resolvedContentSize
+            )
+            return VoiceBarPanelLayout(
+                panelSize: islandSize,
+                activeHitRect: contentRect,
+                activeHitTest: { island.containsActiveHitPoint($0) },
+                contentRect: contentRect
+            )
+        }
+
         let panelSize = CGSize(
             width: resolvedContentSize.width + (safePadding * 2),
             height: resolvedContentSize.height + (safePadding * 2)
@@ -45,7 +70,17 @@ public struct VoiceBarPanelLayout: Equatable {
             height: max(1, resolvedContentSize.height - (verticalInset * 2))
         )
 
-        return VoiceBarPanelLayout(panelSize: panelSize, activeHitRect: activeHitRect)
+        return VoiceBarPanelLayout(
+            panelSize: panelSize,
+            activeHitRect: activeHitRect,
+            activeHitTest: nil,
+            contentRect: CGRect(
+                x: safePadding,
+                y: safePadding,
+                width: resolvedContentSize.width,
+                height: resolvedContentSize.height
+            )
+        )
     }
 
     private static func contentSize(

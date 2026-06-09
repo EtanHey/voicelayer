@@ -207,19 +207,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         configureWakeRecovery()
 
-        // Floating pill
-        let initialLayout = Self.panelLayout(for: voiceState)
-        let barView = BarView(state: voiceState, commandRouter: commandRouter)
-        let hosting = PillHostingView(rootView: barView)
-        hosting.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
-        }
-        hosting.frame = NSRect(
-            x: 0, y: 0,
-            width: initialLayout.panelSize.width,
-            height: initialLayout.panelSize.height
-        )
-
         // Load saved position
         if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
             horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
@@ -229,12 +216,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         anchorMode = anchorPreferences.loadAnchorMode()
 
+        // Floating pill
+        let initialLayout = panelLayout(for: voiceState)
+        let hosting = PillHostingView(rootView: makeBarRootView())
+        hosting.activeHitRectProvider = { [weak self] in
+            self?.panelLayout(for: self?.voiceState).activeHitRect ?? .zero
+        }
+        hosting.activeHitTestProvider = { [weak self] point in
+            guard let layout = self?.panelLayout(for: self?.voiceState) else { return false }
+            return layout.activeHitTest?(point) ?? layout.activeHitRect.contains(point)
+        }
+        hosting.frame = NSRect(
+            x: 0, y: 0,
+            width: initialLayout.panelSize.width,
+            height: initialLayout.panelSize.height
+        )
+
         let pill = FloatingPillPanel(content: hosting)
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+            self?.panelLayout(for: self?.voiceState).activeHitRect ?? .zero
+        }
+        pill.activeHitTestProvider = { [weak self] point in
+            guard let layout = self?.panelLayout(for: self?.voiceState) else { return false }
+            return layout.activeHitTest?(point) ?? layout.activeHitRect.contains(point)
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
@@ -586,7 +593,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
         guard let visibleFrame = targetScreen?.visibleFrame else { return }
-        let layout = Self.panelLayout(for: voiceState)
+        let layout = panelLayout(for: voiceState)
+        if anchorMode == .topCenter, let targetScreen {
+            let geometry = NotchIslandGeometry.make(
+                screenFrame: targetScreen.frame,
+                visibleFrame: visibleFrame,
+                contentSize: layout.contentRect.size
+            )
+            panel.contentView?.frame = NSRect(origin: .zero, size: geometry.windowFrame.size)
+            panel.setFrame(geometry.windowFrame, display: true, animate: animated)
+            return
+        }
+
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = PillResizePlan.makeAnchored(
             visibleFrame: visibleFrame,
@@ -602,39 +620,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
     }
 
-    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
-        let mode = state?.mode ?? .idle
-        let previewText = VoiceBarPresentation.transcriptPreviewText(
-            mode: mode,
-            confirmationText: state?.confirmationText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        let statusText = VoiceBarPresentation.liveStatusText(
-            mode: mode,
-            transcript: state?.transcript ?? "",
-            confirmationText: state?.confirmationText,
-            hotkeyPhase: state?.hotkeyPhase ?? .idle,
-            hotkeyEnabled: state?.hotkeyEnabled ?? false,
-            errorMessage: state?.errorMessage,
-            transcribingStatusText: state?.transcribingStatusText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        return VoiceBarPanelLayout.make(
-            mode: mode,
-            isCollapsed: state?.isCollapsed ?? false,
-            previewText: previewText,
-            statusText: statusText,
-            idleAccessoryButtonCount: VoiceBarPresentation.idleAccessoryButtonCount(
-                recentTranscriptions: state?.recentTranscriptions ?? [],
-                transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
-                transcriptionVocabularyAliases: state?.transcriptionVocabularyAliases ?? [],
-                canReplay: state?.canReplay ?? false
-            ),
-            queueItemCount: state?.queueItems.count ?? 0,
-            isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
-            padding: Theme.panelPadding
+    private func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
+        VoiceBarRootView.layout(for: state, usesNotchIsland: anchorMode == .topCenter)
+    }
+
+    private func makeBarRootView() -> AnyView {
+        AnyView(
+            VoiceBarRootView(
+                state: voiceState,
+                commandRouter: commandRouter,
+                usesNotchIsland: anchorMode == .topCenter
+            )
         )
     }
 
@@ -729,6 +725,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
         let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
         let visibleFrame = targetScreen?.visibleFrame ?? .zero
+        if anchorMode == .topCenter, let targetScreen {
+            let layout = panelLayout(for: voiceState)
+            let geometry = NotchIslandGeometry.make(
+                screenFrame: targetScreen.frame,
+                visibleFrame: visibleFrame,
+                contentSize: layout.contentRect.size
+            )
+            panel.setFrame(geometry.windowFrame, display: true)
+            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
+
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
@@ -799,6 +809,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         anchorMode = mode
         anchorPreferences.saveAnchorMode(mode)
+        if let hosting = panel?.contentView as? PillHostingView<AnyView> {
+            hosting.rootView = makeBarRootView()
+        }
         panel?.isPillDragEnabled = mode.allowsFreeDrag
         panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)

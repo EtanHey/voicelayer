@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -73,6 +73,7 @@ public struct ProcessingSpinner: View {
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
+    public var usesExternalChrome: Bool
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
@@ -81,9 +82,10 @@ public struct BarView: View {
         pillContent
     }
 
-    public init(state: VoiceState, commandRouter: BarCommandRouting) {
+    public init(state: VoiceState, commandRouter: BarCommandRouting, usesExternalChrome: Bool = false) {
         self.state = state
         self.commandRouter = commandRouter
+        self.usesExternalChrome = usesExternalChrome
     }
 
     // MARK: - Pill content (collapsed or expanded)
@@ -148,25 +150,31 @@ public struct BarView: View {
             alignment: .leading
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
-        .background(Theme.pillBackground)
+        .background(usesExternalChrome ? Color.clear : Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
             Capsule()
-                .fill(stateWashColor)
+                .fill(usesExternalChrome ? Color.clear : stateWashColor)
                 .allowsHitTesting(false)
                 .animation(Theme.modeTransition, value: state.mode)
         }
         .overlay {
             // State-dependent border glow
             Capsule()
-                .strokeBorder(borderColor, lineWidth: borderWidth)
+                .strokeBorder(
+                    usesExternalChrome ? Color.clear : borderColor,
+                    lineWidth: usesExternalChrome ? 0 : borderWidth
+                )
                 .allowsHitTesting(false)
                 .animation(Theme.modeTransition, value: state.mode)
         }
         .overlay {
             // Subtle inner edge for depth
             Capsule()
-                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
+                .strokeBorder(
+                    usesExternalChrome ? Color.clear : Theme.pillInnerEdge,
+                    lineWidth: usesExternalChrome ? 0 : 0.5
+                )
                 .allowsHitTesting(false)
         }
         // No drop shadow — clean edges like Wispr Flow
@@ -437,14 +445,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -560,7 +568,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -653,7 +661,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +691,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))
