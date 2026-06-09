@@ -17,8 +17,7 @@ final class AnchorVisualArtifactTests: XCTestCase {
 
         let states: [(mode: VoiceBarAnchorMode, slug: String)] = [
             (.follow, "follow-mouse"),
-            (.topCenter, "top-center"),
-            (.bottomCenter, "bottom-center"),
+            (.topCenter, "notch-center"),
         ]
 
         for state in states {

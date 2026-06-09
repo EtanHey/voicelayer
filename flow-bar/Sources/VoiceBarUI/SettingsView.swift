@@ -65,7 +65,11 @@ public struct SettingsView: View {
         let initialAnchorMode = anchorMode()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
-        _selectedAnchoredMode = State(initialValue: initialAnchorMode == .bottomCenter ? .bottomCenter : .topCenter)
+        _selectedAnchoredMode = State(
+            initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
+                ? initialAnchorMode
+                : .topCenter
+        )
     }
 
     public var body: some View {
@@ -306,9 +310,9 @@ public struct SettingsView: View {
         case .follow:
             "Follows the active screen while you drag freely."
         case .topCenter:
-            "Anchored to top center on the active screen."
+            "Anchored to the menu-bar notch on the active screen."
         case .bottomCenter:
-            "Anchored to bottom center on the active screen."
+            "Anchored to the menu-bar notch on the active screen."
         }
     }
 
