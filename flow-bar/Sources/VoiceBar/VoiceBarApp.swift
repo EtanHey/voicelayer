@@ -182,6 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         server.onControlCommand = { [weak self] command in
             self?.handleLocalControlCommand(command)
         }
+        server.onCaptureFailure = { [weak self] failureType in
+            self?.daemonController.handleCaptureFailure(type: failureType)
+        }
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in

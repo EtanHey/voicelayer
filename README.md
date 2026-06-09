@@ -78,43 +78,38 @@ git clone https://github.com/EtanHey/voicelayer.git
 cd voicelayer && bun install
 ```
 
-### Start the Daemon
+### Start VoiceBar
 
 ```bash
-# Option A: LaunchAgent (auto-start on login, auto-restart on crash)
+# Retire the old standalone daemon LaunchAgent, if present
 ./launchd/install.sh
 
-# Option B: Manual
-bun run src/mcp-server-daemon.ts
+# Build/run VoiceBar; the app owns the child daemon
+bash flow-bar/build-app.sh
 ```
 
-`launchd/install.sh` prefers the installed VoiceBar bundle at
-`/Applications/VoiceBar.app/Contents/Resources` and falls back to the checkout
-when the bundle is not present. LaunchAgent logs are written to
-`~/Library/Logs/VoiceLayer/`. Launchd keeps the daemon alive while
-`/tmp/.voicelayer-daemon-disabled` is absent.
+VoiceLayer's daily-driver supervision chain is `launchd -> VoiceBar.app -> child
+MCP daemon`. The standalone `com.voicelayer.mcp-daemon` LaunchAgent is retired
+because a launchd-owned daemon cannot reliably inherit VoiceBar's microphone
+permission. `launchd/install.sh` now removes that old LaunchAgent; it does not
+install or bootstrap a daemon plist. VoiceBar launches the daemon child from the
+installed bundle or checkout and restarts it on crashes, clean exits, and
+broken-mic silence signals.
 
 ### Disabling VoiceLayer
-`DISABLE_VOICELAYER=1` is a hard kill-switch for the MCP daemon.
+`DISABLE_VOICELAYER=1` and `/tmp/.voicelayer-daemon-disabled` are hard
+kill-switches for the MCP daemon child.
 
 ```bash
-# Install the LaunchAgent in a disabled state and sync the runtime daemon flag
-DISABLE_VOICELAYER=1 ./launchd/install.sh
+# Disable daemon child launch/restart
+touch /tmp/.voicelayer-daemon-disabled
 
-# Re-enable the LaunchAgent
-./launchd/install.sh
+# Re-enable daemon child launch/restart
+rm -f /tmp/.voicelayer-daemon-disabled
 ```
 
-If the daemon is already running, `DISABLE_VOICELAYER=1 ./launchd/install.sh`
-creates `/tmp/.voicelayer-daemon-disabled`, stops the current agent, and leaves
-launchd idle. Plain `./launchd/install.sh` removes the flag and bootstraps the
-agent again. For manual non-launchd runs, creating the flag still makes the
-daemon shut down within 5 seconds. If the plist is already loaded and only needs
-a manual nudge:
-
-```bash
-launchctl kickstart -k "gui/$(id -u)/com.voicelayer.mcp-daemon"
-```
+When the flag exists, VoiceBar treats exit 0 as an explicit terminal stop. All
+other child exits reschedule a restart.
 
 ### Configure MCP Clients
 
@@ -323,7 +318,7 @@ voicelayer/
 ├── scripts/
 │   ├── migrate-to-daemon.sh      # Batch .mcp.json migration
 │   └── edge-tts-words.py         # Word-level TTS with timestamps
-├── launchd/                      # macOS LaunchAgent auto-start
+├── launchd/                      # VoiceBar LaunchAgent + retired daemon cleanup
 ├── models/                       # Silero VAD ONNX model
 └── package.json                  # v2.0.0
 ```

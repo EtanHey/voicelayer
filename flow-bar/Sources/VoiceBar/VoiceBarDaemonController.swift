@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 import VoiceBarUI
@@ -198,7 +199,7 @@ enum VoiceBarDaemonLivenessProbe {
         }
 
         guard let pid = readDaemonPID(pidFilePath: pidFilePath, fileManager: fileManager) else {
-            NSLog("[VoiceBar] Treating live MCP socket as external daemon because PID file is absent")
+            NSLog("[VoiceBar] Treating live MCP socket as occupied because PID file is absent")
             return true
         }
         if let excludingPID, pid == excludingPID {
@@ -210,22 +211,6 @@ enum VoiceBarDaemonLivenessProbe {
             NSLog("[VoiceBar] MCP socket is live but daemon PID %d is stale", pid)
         }
         return true
-    }
-
-    static func isExternalDaemonRunning(
-        excludingPID ownedChildPID: Int32,
-        pidFilePath: String = VoiceLayerPaths.daemonPIDPath,
-        socketPath: String = VoiceLayerPaths.mcpSocketPath,
-        fileManager: FileManager = .default,
-        socketProbe: (String) -> Bool = VoiceBarDaemonLivenessProbe.isSocketLive
-    ) -> Bool {
-        isDaemonRunning(
-            pidFilePath: pidFilePath,
-            socketPath: socketPath,
-            fileManager: fileManager,
-            socketProbe: socketProbe,
-            excludingPID: ownedChildPID
-        )
     }
 
     private static func readDaemonPID(
@@ -257,27 +242,24 @@ final class VoiceBarDaemonController {
     typealias RestartScheduler = (_ delay: TimeInterval, _ block: @escaping () -> Void) -> Void
     typealias ProcessExitWaiter = (_ process: Process, _ timeout: TimeInterval) -> Bool
     typealias ForceKillProcess = (_ pid: Int32) -> Void
-    typealias ExternalDaemonProbe = (_ ownedChildPID: Int32) -> Bool
+    typealias MicrophonePermissionPrompter = (_ message: String) -> Void
 
     private static let stabilityResetDelay: TimeInterval = 300
-    private static let externalDaemonCheckInterval: TimeInterval = 5
     private static let gracefulStopTimeout: TimeInterval = 1.0
 
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
-    private let livenessProbe: () -> Bool
-    private let externalDaemonProbe: ExternalDaemonProbe
     private let processFactory: () -> Process
     private let restartScheduler: RestartScheduler
     private let processExitWaiter: ProcessExitWaiter
     private let forceKillProcess: ForceKillProcess
+    private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
     private var restartCount = 0
     private var isRestartScheduled = false
-    private var isExternalDaemonCheckScheduled = false
-    private var standDownProcessIdentifier: Int32?
+    private var consecutiveBrokenMicFailures = 0
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -301,9 +283,6 @@ final class VoiceBarDaemonController {
         livenessProbe: @escaping () -> Bool = {
             VoiceBarDaemonLivenessProbe.isDaemonRunning()
         },
-        externalDaemonProbe: @escaping ExternalDaemonProbe = { ownedPID in
-            VoiceBarDaemonLivenessProbe.isExternalDaemonRunning(excludingPID: ownedPID)
-        },
         processFactory: @escaping () -> Process = { Process() },
         restartScheduler: @escaping RestartScheduler = { delay, block in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
@@ -311,16 +290,17 @@ final class VoiceBarDaemonController {
         processExitWaiter: @escaping ProcessExitWaiter = VoiceBarDaemonController.waitForProcessExit,
         forceKillProcess: @escaping ForceKillProcess = { pid in
             _ = Darwin.kill(pid, SIGKILL)
-        }
+        },
+        microphonePermissionPrompter: @escaping MicrophonePermissionPrompter = VoiceBarDaemonController
+            .showMicrophonePermissionPrompt
     ) {
         self.executableURLProvider = executableURLProvider
         self.configurationProvider = configurationProvider
-        self.livenessProbe = livenessProbe
-        self.externalDaemonProbe = externalDaemonProbe
         self.processFactory = processFactory
         self.restartScheduler = restartScheduler
         self.processExitWaiter = processExitWaiter
         self.forceKillProcess = forceKillProcess
+        self.microphonePermissionPrompter = microphonePermissionPrompter
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
@@ -332,20 +312,29 @@ final class VoiceBarDaemonController {
 
         // If we already own a running child, skip
         if let process, process.isRunning {
-            if externalDaemonProbe(process.processIdentifier) {
-                NSLog("[VoiceBar] External daemon is live — stopping owned fallback child")
-                standDownOwnedChildForExternalDaemon()
-            }
-            return .alreadyRunning
-        }
-
-        if livenessProbe() {
-            NSLog("[VoiceBar] External daemon already running — skipping owned fallback child")
-            ownsLaunchedProcess = false
             return .alreadyRunning
         }
 
         return launch()
+    }
+
+    func handleCaptureFailure(type: String) {
+        guard type == "broken-mic" else { return }
+        guard !VoiceLayerPaths.isVoicelayerDisabled() else {
+            NSLog("[VoiceBar] Broken-mic capture failure while VoiceLayer disabled — not restarting daemon")
+            return
+        }
+
+        consecutiveBrokenMicFailures += 1
+        if consecutiveBrokenMicFailures >= 2 {
+            microphonePermissionPrompter(
+                "VoiceLayer is still receiving silence from the microphone after restarting its daemon. Re-grant Microphone permission to VoiceBar in System Settings, then retry recording."
+            )
+        }
+
+        NSLog("[VoiceBar] Broken-mic capture failure — respawning child daemon to refresh microphone TCC")
+        terminateOwnedChildForRespawn()
+        scheduleRestart(exitKind: "broken-mic", code: 0, reason: .exit)
     }
 
     private func launch() -> VoiceBarDaemonActivationResult {
@@ -371,8 +360,8 @@ final class VoiceBarDaemonController {
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
         proc.environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
 
-        // Monitor: restart crashes only. Exit 0 is a deliberate stand-down
-        // path when another daemon owns the MCP socket.
+        // Monitor: every unexpected death restarts. Exit 0 is terminal only
+        // when the explicit disable flag is present.
         proc.terminationHandler = { [weak self] terminated in
             let code = terminated.terminationStatus
             let reason = terminated.terminationReason
@@ -381,14 +370,6 @@ final class VoiceBarDaemonController {
                 if process === terminated {
                     process = nil
                     ownsLaunchedProcess = false
-                    isExternalDaemonCheckScheduled = false
-                }
-
-                if standDownProcessIdentifier == terminated.processIdentifier {
-                    standDownProcessIdentifier = nil
-                    NSLog("[VoiceBar] Owned daemon stood down for external daemon (code %d, reason %d)",
-                          code, reason.rawValue)
-                    return
                 }
 
                 if VoiceLayerPaths.isVoicelayerDisabled() {
@@ -396,12 +377,7 @@ final class VoiceBarDaemonController {
                     return
                 }
 
-                if code == 0 {
-                    NSLog("[VoiceBar] Daemon exited cleanly (code 0) — not restarting")
-                    return
-                }
-
-                scheduleRestart(exitKind: "crashed", code: code, reason: reason)
+                scheduleRestart(exitKind: code == 0 ? "exited cleanly" : "crashed", code: code, reason: reason)
             }
         }
 
@@ -411,7 +387,6 @@ final class VoiceBarDaemonController {
             ownsLaunchedProcess = true
             isRestartScheduled = false
             scheduleStabilityReset(for: proc)
-            scheduleExternalDaemonStandDownCheck(for: proc)
             NSLog("[VoiceBar] Daemon launched as child (PID %d, PPID %d)",
                   proc.processIdentifier, ProcessInfo.processInfo.processIdentifier)
             return .launched
@@ -478,45 +453,21 @@ final class VoiceBarDaemonController {
                 return
             }
             restartCount = 0
+            consecutiveBrokenMicFailures = 0
             NSLog("[VoiceBar] Daemon stable for %.0fs — reset restart counter", Self.stabilityResetDelay)
         }
     }
 
-    private func scheduleExternalDaemonStandDownCheck(for launchedProcess: Process) {
-        guard !isExternalDaemonCheckScheduled else { return }
-        isExternalDaemonCheckScheduled = true
-        restartScheduler(Self.externalDaemonCheckInterval) { [weak self, weak launchedProcess] in
-            guard let self else { return }
-            isExternalDaemonCheckScheduled = false
-            guard !stopping,
-                  let launchedProcess,
-                  process === launchedProcess,
-                  launchedProcess.isRunning
-            else {
-                return
-            }
-            if externalDaemonProbe(launchedProcess.processIdentifier) {
-                NSLog("[VoiceBar] External daemon became live — standing down owned fallback child")
-                standDownOwnedChildForExternalDaemon()
-                return
-            }
-            scheduleExternalDaemonStandDownCheck(for: launchedProcess)
-        }
-    }
-
-    private func standDownOwnedChildForExternalDaemon() {
-        isRestartScheduled = false
-        isExternalDaemonCheckScheduled = false
+    private func terminateOwnedChildForRespawn() {
         guard ownsLaunchedProcess, let process else {
             ownsLaunchedProcess = false
             self.process = nil
             return
         }
-        standDownProcessIdentifier = process.processIdentifier
         if process.isRunning {
             process.terminate()
             if !processExitWaiter(process, Self.gracefulStopTimeout), process.isRunning {
-                NSLog("[VoiceBar] Daemon did not stand down after SIGTERM — sending SIGKILL to PID %d",
+                NSLog("[VoiceBar] Daemon did not exit after broken-mic SIGTERM — sending SIGKILL to PID %d",
                       process.processIdentifier)
                 forceKillProcess(process.processIdentifier)
                 _ = processExitWaiter(process, Self.gracefulStopTimeout)
@@ -529,7 +480,6 @@ final class VoiceBarDaemonController {
     func stop() {
         stopping = true
         isRestartScheduled = false
-        isExternalDaemonCheckScheduled = false
         guard ownsLaunchedProcess, let process else { return }
         if process.isRunning {
             process.terminate()
@@ -550,5 +500,20 @@ final class VoiceBarDaemonController {
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
         return !process.isRunning
+    }
+
+    private static func showMicrophonePermissionPrompt(message: String) {
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "VoiceLayer microphone permission needs attention"
+            alert.informativeText = message
+            alert.addButton(withTitle: "Open System Settings")
+            alert.addButton(withTitle: "Later")
+            if alert.runModal() == .alertFirstButtonReturn,
+               let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 }
