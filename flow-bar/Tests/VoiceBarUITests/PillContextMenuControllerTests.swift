@@ -16,7 +16,7 @@ final class PillContextMenuControllerTests: XCTestCase {
 
     func testMenuIncludesVocabularySubmenuBetweenHistoryAndPaste() throws {
         let controller = PillContextMenuController()
-        controller.anchorModeProvider = { .bottomCenter }
+        controller.anchorModeProvider = { .topCenter }
         controller.transcriptionVocabularyTermsProvider = {
             ["VoiceLayer", "Wispr Flow"]
         }
@@ -59,10 +59,9 @@ final class PillContextMenuControllerTests: XCTestCase {
         let anchorSubmenu = try XCTUnwrap(anchorItem.submenu)
         XCTAssertEqual(anchorSubmenu.items.map(\.title), [
             "Off",
-            "Top Center",
-            "Bottom Center",
+            "Notch Center",
         ])
-        XCTAssertEqual(anchorSubmenu.items[2].state, .on)
+        XCTAssertEqual(anchorSubmenu.items[1].state, .on)
         XCTAssertFalse(anchorSubmenu.items.map(\.title).contains("Lock Position"))
     }
 
@@ -169,8 +168,7 @@ final class PillContextMenuControllerTests: XCTestCase {
         let anchorTitles = menu.items[6].submenu?.items.map(\.title)
         XCTAssertEqual(anchorTitles, [
             "Off",
-            "Top Center",
-            "Bottom Center",
+            "Notch Center",
         ])
         XCTAssertEqual(menu.items[6].submenu?.items[0].state, .on)
     }
@@ -183,16 +181,16 @@ final class PillContextMenuControllerTests: XCTestCase {
 
         let anchorItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Anchor" })
         let submenu = try XCTUnwrap(anchorItem.submenu)
-        let bottomCenter = try XCTUnwrap(submenu.items.first { $0.title == "Bottom Center" })
+        let notchCenter = try XCTUnwrap(submenu.items.first { $0.title == "Notch Center" })
 
-        _ = bottomCenter.target?.perform(bottomCenter.action, with: bottomCenter)
+        _ = notchCenter.target?.perform(notchCenter.action, with: notchCenter)
 
-        XCTAssertEqual(selectedModes, [.bottomCenter])
+        XCTAssertEqual(selectedModes, [.topCenter])
         XCTAssertNil(submenu.items.first { $0.title == "Lock Position" })
     }
 
     func testAnchorSubmenuHasExactlyOneCheckedStateForEachMode() throws {
-        for mode in VoiceBarAnchorMode.allCases {
+        for mode in VoiceBarAnchorMode.anchorMenuModes {
             let controller = PillContextMenuController()
             controller.anchorModeProvider = { mode }
 
@@ -202,8 +200,7 @@ final class PillContextMenuControllerTests: XCTestCase {
 
             XCTAssertEqual(submenu.items.map(\.title), [
                 "Off",
-                "Top Center",
-                "Bottom Center",
+                "Notch Center",
             ])
             XCTAssertEqual(checkedItems.map(\.title), [mode.anchorMenuTitle])
         }

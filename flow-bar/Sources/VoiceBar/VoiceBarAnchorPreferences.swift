@@ -15,7 +15,7 @@ struct VoiceBarAnchorPreferences {
         let storedValue = defaults.string(forKey: Self.anchorModeKey)
         let mode = VoiceBarAnchorMode(defaultsValue: storedValue)
         removeLegacyPositionLock()
-        if storedValue == nil {
+        if storedValue != mode.rawValue {
             defaults.set(mode.rawValue, forKey: Self.anchorModeKey)
         }
         return mode
