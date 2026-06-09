@@ -57,6 +57,10 @@ case "${1:-}" in
         shift
         exec bun "$SCRIPT_DIR/vocab.ts" "$@"
         ;;
+    update)
+        shift
+        exec bash "$PACKAGE_ROOT/scripts/voicelayer-update.sh" "$@"
+        ;;
     bar)
         shift
         FLOW_BAR_DIR="$(cd "$PACKAGE_ROOT/flow-bar" && pwd)"
@@ -99,6 +103,7 @@ case "${1:-}" in
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
         echo "  bar        Build and launch Voice Bar (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
+        echo "  update     Update app, daemon, model, and personal VoiceLayer data"
         echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
         echo "  bar-stop   Stop the Voice Bar if running"
         echo ""
@@ -108,6 +113,7 @@ case "${1:-}" in
         echo "  voicelayer daemon --port 8880"
         echo "  voicelayer bar"
         echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"
+        echo "  voicelayer update --dry-run"
         echo "  voicelayer hotkey install"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."
