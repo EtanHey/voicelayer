@@ -8,6 +8,7 @@ DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="${VOICELAYER_VERIFY_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_DIR="$REPO_ROOT/.verified"
 MCP_SOCKET_PATH="${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}"
+VOICEBAR_LAUNCHD_LABEL="com.voicelayer.voicebar"
 FORCE=0
 
 usage() {
@@ -54,11 +55,9 @@ daemon_path_matches() {
     src/log-rotation.ts) return 0 ;;
     src/paths.ts) return 0 ;;
     src/process-lock.ts) return 0 ;;
+    src/recording-state.ts) return 0 ;;
     src/resolve-binary.ts) return 0 ;;
     src/socket-*.ts) return 0 ;;
-    src/socket-client.ts) return 0 ;;
-    src/socket-handlers.ts) return 0 ;;
-    src/socket-protocol.ts) return 0 ;;
     src/voicesdk/*) return 0 ;;
     src/soundlayer/*) return 0 ;;
     src/cli/voicelayer.sh) return 0 ;;
@@ -89,6 +88,113 @@ changed_files() {
     git diff --name-only "$merge_base...HEAD"
   else
     git diff --name-only "$base_ref...HEAD"
+  fi
+}
+
+is_voicebar_launchd_managed() {
+  command -v launchctl >/dev/null 2>&1 || return 1
+  launchctl list "$VOICEBAR_LAUNCHD_LABEL" >/dev/null 2>&1
+}
+
+wait_for_old_voicebar_pids_to_exit() {
+  local old_pids="$1"
+  for _ in $(seq 1 100); do
+    local still_running=""
+    for pid in $old_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=1
+        break
+      fi
+    done
+    [ -z "$still_running" ] && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_voicebar_stop() {
+  local old_pids="$1"
+  if is_voicebar_launchd_managed; then
+    printf '[voicelayer-verify] VoiceBar is launchd-managed; waiting for old PID(s) to exit.\n'
+    wait_for_old_voicebar_pids_to_exit "$old_pids"
+    return $?
+  fi
+
+  for _ in $(seq 1 100); do
+    if ! pgrep -x VoiceBar >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+wait_for_launchd_voicebar_relaunch() {
+  local old_pids="$1"
+  for _ in $(seq 1 100); do
+    local new_pids=""
+    local pid
+    for pid in $(pgrep -x VoiceBar 2>/dev/null || true); do
+      local is_old=""
+      local old_pid
+      for old_pid in $old_pids; do
+        if [ "$pid" = "$old_pid" ]; then
+          is_old=1
+          break
+        fi
+      done
+      if [ -z "$is_old" ]; then
+        new_pids="${new_pids}${pid} "
+      fi
+    done
+    if [ -n "$new_pids" ]; then
+      printf '%s\n' "$new_pids"
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+find_daemon_pids() {
+  {
+    lsof -nP -U 2>/dev/null | awk -v socket="$MCP_SOCKET_PATH" '$NF == socket { print $2 }'
+    pgrep -f 'mcp-server-daemon\\.ts' 2>/dev/null || true
+  } | sort -n | uniq | tr '\n' ' '
+}
+
+stop_daemon_pids() {
+  local daemon_pids="$1"
+  if [ -z "$daemon_pids" ]; then
+    return 0
+  fi
+
+  printf '[voicelayer-verify] stopping old daemon process(es): %s\n' "$daemon_pids"
+  # shellcheck disable=SC2086
+  kill -TERM $daemon_pids 2>/dev/null || true
+  for _ in $(seq 1 100); do
+    local still_running=""
+    local pid
+    for pid in $daemon_pids; do
+      if kill -0 "$pid" 2>/dev/null; then
+        still_running=1
+        break
+      fi
+    done
+    [ -z "$still_running" ] && break
+    sleep 0.1
+  done
+  local still_running_pids=""
+  local pid
+  for pid in $daemon_pids; do
+    if kill -0 "$pid" 2>/dev/null; then
+      still_running_pids="${still_running_pids}${pid} "
+    fi
+  done
+  if [ -n "$still_running_pids" ]; then
+    printf '[voicelayer-verify] daemon did not stop after SIGTERM; sending SIGKILL to: %s\n' "$still_running_pids"
+    # shellcheck disable=SC2086
+    kill -KILL $still_running_pids 2>/dev/null || true
   fi
 }
 
@@ -154,54 +260,32 @@ else
 fi
 
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
+  launchd_managed=0
+  if is_voicebar_launchd_managed; then
+    launchd_managed=1
+  fi
+  daemon_pids="$(find_daemon_pids)"
+
   printf '[voicelayer-verify] stopping old VoiceBar process(es)...\n'
   pkill -x VoiceBar 2>/dev/null || true
-  for _ in $(seq 1 100); do
-    if ! pgrep -x VoiceBar >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-  if pgrep -x VoiceBar >/dev/null 2>&1; then
+  if ! wait_for_voicebar_stop "$running_pids"; then
     printf '[voicelayer-verify] VoiceBar did not stop cleanly; no artifact written.\n' >&2
     exit 1
   fi
-  daemon_pids="$(
-    {
-      lsof -nP -U 2>/dev/null | awk -v socket="$MCP_SOCKET_PATH" '$NF == socket { print $2 }'
-      pgrep -f 'mcp-server-daemon\\.ts' 2>/dev/null || true
-    } | sort -n | uniq | tr '\n' ' '
-  )"
-  if [ -n "$daemon_pids" ]; then
-    printf '[voicelayer-verify] stopping old daemon process(es): %s\n' "$daemon_pids"
-    # shellcheck disable=SC2086
-    kill -TERM $daemon_pids 2>/dev/null || true
-    for _ in $(seq 1 100); do
-      still_running=""
-      for pid in $daemon_pids; do
-        if kill -0 "$pid" 2>/dev/null; then
-          still_running=1
-          break
-        fi
-      done
-      [ -z "$still_running" ] && break
-      sleep 0.1
-    done
-    still_running_pids=""
-    for pid in $daemon_pids; do
-      if kill -0 "$pid" 2>/dev/null; then
-        still_running_pids="${still_running_pids}${pid} "
-      fi
-    done
-    if [ -n "$still_running_pids" ]; then
-      printf '[voicelayer-verify] daemon did not stop after SIGTERM; sending SIGKILL to: %s\n' "$still_running_pids"
-      # shellcheck disable=SC2086
-      kill -KILL $still_running_pids 2>/dev/null || true
+
+  stop_daemon_pids "$daemon_pids"
+
+  if [ "$launchd_managed" -eq 1 ]; then
+    if ! new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
+      printf '[voicelayer-verify] launchd did not relaunch VoiceBar; no artifact written.\n' >&2
+      exit 1
     fi
+    printf '[voicelayer-verify] launchd relaunched VoiceBar with PID(s): %s\n' "$new_pids"
+  else
+    printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
+    open -a VoiceBar
+    sleep 1
   fi
-  printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
-  open -a VoiceBar
-  sleep 1
 fi
 
 printf "Press F5 in VoiceBar, speak 'verification test', release, confirm paste fired (Y/n) "

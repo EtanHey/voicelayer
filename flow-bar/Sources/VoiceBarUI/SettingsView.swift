@@ -1,5 +1,11 @@
 import SwiftUI
 
+public enum SettingsTab: Hashable {
+    case general
+    case audio
+    case dictionary
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -8,6 +14,22 @@ public struct SettingsView: View {
     public let onSelectDevice: (String) -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
+    public let vocabularyPreview: () -> STTVocabularyPreview
+    public let onAddVocabularyAlias: (String, String) -> Void
+    public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    public let onAddPromptTerm: (String) -> Void
+    public let onRemovePromptTerm: (String) -> Void
+    public let isHotkeyRemapActive: () -> Bool
+
+    @State private var selectedTab: SettingsTab
+    @State private var selectedAnchorMode: VoiceBarAnchorMode
+    @State private var selectedAnchoredMode: VoiceBarAnchorMode
+    @State private var correctionsExpanded = true
+    @State private var dictionarySearch = ""
+    @State private var selectedAlias: STTVocabularyAliasPreview?
+    @State private var correctText = ""
+    @State private var wrongText = ""
+    @State private var newTermText = ""
 
     public init(
         hotkeyEnabled: Bool,
@@ -16,7 +38,16 @@ public struct SettingsView: View {
         selectedDeviceID: @escaping () -> String?,
         onSelectDevice: @escaping (String) -> Void,
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
-        onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in }
+        onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
+        vocabularyPreview: @escaping () -> STTVocabularyPreview = {
+            STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
+        },
+        onAddVocabularyAlias: @escaping (String, String) -> Void = { _, _ in },
+        onRemoveVocabularyAlias: @escaping (STTVocabularyAliasPreview) -> Void = { _ in },
+        onAddPromptTerm: @escaping (String) -> Void = { _ in },
+        onRemovePromptTerm: @escaping (String) -> Void = { _ in },
+        isHotkeyRemapActive: @escaping () -> Bool = { false },
+        initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -25,16 +56,36 @@ public struct SettingsView: View {
         self.onSelectDevice = onSelectDevice
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
+        self.vocabularyPreview = vocabularyPreview
+        self.onAddVocabularyAlias = onAddVocabularyAlias
+        self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
+        self.onAddPromptTerm = onAddPromptTerm
+        self.onRemovePromptTerm = onRemovePromptTerm
+        self.isHotkeyRemapActive = isHotkeyRemapActive
+        let initialAnchorMode = anchorMode()
+        _selectedTab = State(initialValue: initialTab)
+        _selectedAnchorMode = State(initialValue: initialAnchorMode)
+        _selectedAnchoredMode = State(
+            initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
+                ? initialAnchorMode
+                : .topCenter
+        )
     }
 
     public var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             generalTab
                 .tabItem { Label("General", systemImage: "gear") }
+                .tag(SettingsTab.general)
             audioTab
                 .tabItem { Label("Audio", systemImage: "mic.fill") }
+                .tag(SettingsTab.audio)
+            dictionaryTab
+                .tabItem { Label("Dictionary", systemImage: "text.book.closed") }
+                .tag(SettingsTab.dictionary)
         }
-        .frame(width: 420, height: 260)
+        .frame(width: 520, height: 620)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: - General Tab
@@ -43,7 +94,16 @@ public struct SettingsView: View {
         Form {
             Section("Hotkey") {
                 LabeledContent("Shortcut") {
-                    Text(VoiceBarHotkeyContract.primaryShortcutLabel)
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard")
+                            .foregroundStyle(.secondary)
+                        Text(VoiceBarHotkeyContract.shortcutChainLabel(remapDetected: isHotkeyRemapActive()))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if isHotkeyRemapActive() {
+                    Text(VoiceBarHotkeyContract.remapExplanation)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Status") {
@@ -83,14 +143,34 @@ public struct SettingsView: View {
             }
 
             Section("Position") {
-                Picker("Anchor", selection: Binding(
-                    get: { anchorMode() },
-                    set: { onSelectAnchorMode($0) }
-                )) {
-                    ForEach(VoiceBarAnchorMode.allCases) { mode in
-                        Text(mode.displayName).tag(mode)
+                Toggle("Anchor", isOn: Binding(
+                    get: { selectedAnchorMode != .follow },
+                    set: { enabled in
+                        if enabled {
+                            selectAnchorMode(selectedAnchoredMode)
+                        } else {
+                            selectAnchorMode(.follow)
+                        }
                     }
+                ))
+
+                if selectedAnchorMode != .follow {
+                    Picker("Position", selection: Binding(
+                        get: { selectedAnchoredMode },
+                        set: { mode in
+                            selectAnchorMode(mode)
+                        }
+                    )) {
+                        ForEach(VoiceBarAnchorMode.anchoredPositionModes) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
                 }
+
+                Text(positionModeDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -123,6 +203,95 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    // MARK: - Dictionary Tab
+
+    private var dictionaryTab: some View {
+        Form {
+            Section("Dictionary") {
+                correctionEditor
+
+                Divider()
+                    .padding(.vertical, 6)
+
+                DisclosureGroup(isExpanded: $correctionsExpanded) {
+                    correctionsList
+                } label: {
+                    Text("Corrections")
+                }
+
+                Divider()
+                    .padding(.vertical, 6)
+
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search corrections and terms", text: $dictionarySearch)
+                        .textFieldStyle(.plain)
+                }
+                .dictionaryTextField()
+
+                promptTermsList
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private var correctionsList: some View {
+        let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
+        if aliases.isEmpty {
+            Text("No corrections yet — add one above.")
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(aliases, id: \.self) { alias in
+                correctionRow(alias)
+            }
+        }
+    }
+
+    private var promptTermAddRow: some View {
+        HStack(spacing: 8) {
+            TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
+                .textFieldStyle(.plain)
+                .onSubmit(commitNewPromptTerm)
+                .dictionaryTextField()
+            Button(action: commitNewPromptTerm) {
+                Image(systemName: "plus.circle.fill")
+            }
+            .buttonStyle(.borderless)
+            .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .help("Add term")
+            .accessibilityLabel("Add prompt term")
+        }
+    }
+
+    private func promptTermRow(_ term: String) -> some View {
+        HStack {
+            Text(term)
+            Spacer()
+            deletePromptTermButton(term)
+        }
+    }
+
+    private func deletePromptTermButton(_ term: String) -> some View {
+        Button {
+            onRemovePromptTerm(term)
+        } label: {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete term")
+        .accessibilityLabel("Delete term \(term)")
+    }
+
+    private func commitNewPromptTerm() {
+        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onAddPromptTerm(trimmed)
+        newTermText = ""
+    }
+
     // MARK: - Helpers
 
     private var hotkeyStatusText: String {
@@ -136,9 +305,161 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
+    private var positionModeDescription: String {
+        switch selectedAnchorMode {
+        case .follow:
+            "Follows the active screen while you drag freely."
+        case .topCenter:
+            "Anchored to the menu-bar notch on the active screen."
+        case .bottomCenter:
+            "Anchored to the menu-bar notch on the active screen."
+        }
+    }
+
     private func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private var currentDraft: STTVocabularyDraft {
+        STTVocabularyDraft(
+            correct: correctText,
+            wrong: wrongText
+        )
+    }
+
+    /// Leading label column width shared by the two editor rows.
+    private static let editorLabelWidth: CGFloat = 92
+
+    private var correctionEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Explicit leading labels instead of LabeledContent: the grouped
+            // Form right-aligns LabeledContent values, which reads wrong once
+            // the fields have visible borders.
+            HStack(spacing: 8) {
+                Text("Correct")
+                    .frame(width: Self.editorLabelWidth, alignment: .leading)
+                TextField("Intended text", text: $correctText)
+                    .textFieldStyle(.plain)
+                    .dictionaryTextField()
+            }
+            HStack(spacing: 8) {
+                Text("Transcribed")
+                    .frame(width: Self.editorLabelWidth, alignment: .leading)
+                TextField("Misheard text", text: $wrongText)
+                    .textFieldStyle(.plain)
+                    .dictionaryTextField()
+                Button("⇄") {
+                    swap(&correctText, &wrongText)
+                }
+                .help("Swap correct and transcribed text")
+            }
+            HStack {
+                if let selectedAlias {
+                    Button("Delete") {
+                        onRemoveVocabularyAlias(selectedAlias)
+                        clearCorrectionEditor()
+                    }
+                }
+                Spacer()
+                Button(selectedAlias == nil ? "Add" : "Save") {
+                    saveCorrection()
+                }
+                .disabled(!currentDraft.canSaveAlias)
+            }
+        }
+    }
+
+    private var promptTermsList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Prompt Terms")
+                .font(.headline)
+
+            promptTermAddRow
+
+            let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
+            if terms.isEmpty {
+                Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(terms, id: \.self) { term in
+                    promptTermRow(term)
+                }
+            }
+        }
+    }
+
+    private func correctionRow(_ alias: STTVocabularyAliasPreview) -> some View {
+        HStack(spacing: 8) {
+            Text(alias.from)
+                .foregroundStyle(.secondary)
+            Image(systemName: "arrow.right")
+                .foregroundStyle(.secondary)
+            Text(alias.to)
+            Spacer()
+            Button {
+                beginEditing(alias)
+            } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless)
+            .help("Edit correction")
+            .accessibilityLabel("Edit correction \(alias.from)")
+            deleteCorrectionButton(alias)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            beginEditing(alias)
+        }
+    }
+
+    private func deleteCorrectionButton(_ alias: STTVocabularyAliasPreview) -> some View {
+        Button {
+            onRemoveVocabularyAlias(alias)
+            if selectedAlias == alias {
+                clearCorrectionEditor()
+            }
+        } label: {
+            Image(systemName: "trash")
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.red)
+        .help("Delete correction")
+        .accessibilityLabel("Delete correction \(alias.from)")
+    }
+
+    private func beginEditing(_ alias: STTVocabularyAliasPreview) {
+        correctionsExpanded = true
+        selectedAlias = alias
+        correctText = alias.to
+        wrongText = alias.from
+    }
+
+    private func clearCorrectionEditor() {
+        selectedAlias = nil
+        correctText = ""
+        wrongText = ""
+    }
+
+    private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
+        selectedAnchorMode = mode
+        if mode != .follow {
+            selectedAnchoredMode = mode
+        }
+        onSelectAnchorMode(mode)
+    }
+
+    private func saveCorrection() {
+        let draft = currentDraft
+        guard draft.canSaveAlias else { return }
+        if let selectedAlias {
+            onRemoveVocabularyAlias(selectedAlias)
+        }
+        onAddVocabularyAlias(
+            draft.trimmedCorrect,
+            draft.trimmedWrong
+        )
+        clearCorrectionEditor()
     }
 }

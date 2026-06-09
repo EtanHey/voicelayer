@@ -1,4 +1,12 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
@@ -15,8 +23,10 @@ import {
   decorateStatsWithSkippedCounts,
   decisionLockPath,
   DEFAULT_CONFIG,
+  humanizeSpokenText,
   legacyDecisionsToKgFlagV1,
   parseInterpretDecision,
+  runShellCommand,
   type ConversationEvidence,
   type CommandCall,
   type CommandResult,
@@ -53,8 +63,58 @@ function commandResult(stdout: unknown): CommandResult {
   };
 }
 
-
 describe("VoiceReview web server helpers", () => {
+  it("checks LiteRT health with the no-generation models endpoint", async () => {
+    let requestedUrl = "";
+    let requestedInit: RequestInit | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      fetchImpl: async (url, init) => {
+        requestedUrl = String(url);
+        requestedInit = init;
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/health"),
+    );
+
+    expect(response.status).toBe(200);
+    expect(requestedUrl).toBe("http://127.0.0.1:9379/v1/models");
+    expect(requestedInit?.method).toBe("GET");
+    expect(requestedInit?.body).toBeUndefined();
+    expect(requestedInit?.signal).toBeUndefined();
+  });
+
+  it("bounds LiteRT health without aborting the models probe", async () => {
+    let requestedInit: RequestInit | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+        requestTimeoutMs: 1,
+      },
+      fetchImpl: async (_url, init) => {
+        requestedInit = init;
+        return await new Promise<Response>(() => undefined);
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/health"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.legs.litert.error).toContain("timed out");
+    expect(requestedInit?.signal).toBeUndefined();
+  });
+
   it("builds driver args as arrays with request data in its own argv slot", () => {
     const args = buildDriverArgs("next", {
       pythonScript: "/tmp/voice-review-wt/scripts/kg_review_session.py",
@@ -67,12 +127,9 @@ describe("VoiceReview web server helpers", () => {
       "python3",
       "/tmp/voice-review-wt/scripts/kg_review_session.py",
       "next",
-      "--batch",
-      "/batch.json",
-      "--decisions",
-      "/decisions.json",
-      "--category",
-      "diagnosis-flag; rm -rf /",
+      "--batch=/batch.json",
+      "--decisions=/decisions.json",
+      "--category=diagnosis-flag; rm -rf /",
     ]);
   });
 
@@ -86,7 +143,10 @@ describe("VoiceReview web server helpers", () => {
       },
       runCommand: async (call) => {
         calls.push(call);
-        return commandResult({ cluster: cantaloupeCluster, speak: "Cluster text" });
+        return commandResult({
+          cluster: cantaloupeCluster,
+          speak: "Cluster text",
+        });
       },
     });
 
@@ -101,9 +161,152 @@ describe("VoiceReview web server helpers", () => {
       timings: { driver_ms: 12 },
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].args).toContain("--category");
+    expect(calls[0].args).toContain("--category=diagnosis-flag");
     expect(calls[0].env.PYTHONPATH).toBe("/tmp/voice-review-wt/src");
     expect(calls[0].cwd).toBe("/tmp/voice-review-wt");
+  });
+
+  it("serves explicit complete queue state with decided stats when /api/next has no cluster", async () => {
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        if (call.args.includes("stats")) {
+          return commandResult({
+            per_category: {
+              "diagnosis-flag": {
+                total: 7,
+                explicit: 5,
+                by_rule: 2,
+                undecided: 0,
+              },
+            },
+          });
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=diagnosis-flag"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(calls.map((call) => call.args[2])).toEqual(["next", "stats"]);
+    expect(body.queue_state).toEqual({
+      kind: "complete",
+      category: "diagnosis-flag",
+      decided: 7,
+      message: "All items in this queue are complete 🎉 7 decided.",
+    });
+  });
+
+  it("serves explicit empty queue state when stats have no items for the category", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        if (call.args.includes("stats")) {
+          return commandResult({
+            per_category: {
+              "diagnosis-flag": {
+                total: 7,
+                explicit: 5,
+                by_rule: 2,
+                undecided: 0,
+              },
+            },
+          });
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=sep-variants"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.queue_state).toEqual({
+      kind: "empty",
+      category: "sep-variants",
+      decided: 0,
+      message: "No items found for category sep-variants.",
+    });
+  });
+
+  it("serves degraded stats JSON instead of hard-failing when rollups reject stale decisions", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "ValueError: decision references cluster not in loaded batch",
+        durationMs: 9,
+      }),
+    });
+
+    const response = await app.fetch(new Request("http://localhost/api/stats"));
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      stats: null,
+      degraded: true,
+      error:
+        "stats unavailable: kg_review_session.py failed with exit 1: ValueError: decision references cluster not in loaded batch",
+      timings: { driver_ms: 9 },
+    });
+  });
+
+  it("serves an explicit stats-error queue state when /api/next empties but stats fail", async () => {
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/voice-review-wt",
+        batchPath: "/batch.json",
+        decisionsPath: "/decisions.json",
+      },
+      runCommand: async (call) => {
+        if (call.args.includes("stats")) {
+          return {
+            exitCode: 1,
+            stdout: "",
+            stderr:
+              "ValueError: decision references cluster not in loaded batch",
+            durationMs: 9,
+          };
+        }
+        return commandResult({ cluster: null, speak: "" });
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/next?category=diagnosis-flag"),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.queue_state).toEqual({
+      kind: "error",
+      category: "diagnosis-flag",
+      decided: 0,
+      message:
+        "Stats unavailable: kg_review_session.py failed with exit 1: ValueError: decision references cluster not in loaded batch",
+    });
   });
 
   it("records /api/decide through the shared KG review driver with voice source", async () => {
@@ -139,9 +342,12 @@ describe("VoiceReview web server helpers", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(calls[0].args).toContain("--batch");
-    expect(calls[0].args).toContain("/batch.json");
-    const decisionJson = calls[0].args[calls[0].args.indexOf("--decision-json") + 1];
+    expect(calls[0].args).toContain("--batch=/batch.json");
+    const decisionArg = calls[0].args.find((arg) =>
+      arg.startsWith("--decision-json="),
+    );
+    expect(decisionArg).toBeString();
+    const decisionJson = decisionArg?.slice("--decision-json=".length) || "{}";
     expect(JSON.parse(decisionJson)).toMatchObject({
       action: "merge",
       canonical_id: "16db6804-dc3e-5465-93d2-e3956c3f63f5",
@@ -317,14 +523,23 @@ describe("VoiceReview web server helpers", () => {
     });
   });
 
-  it("serves the natural conversation page with one session button and no tap-to-talk copy", async () => {
+  it("serves the natural conversation page with stage controls and no tap-to-talk copy", async () => {
     const app = createVoiceReviewApp();
     const response = await app.fetch(new Request("http://localhost/"));
     const html = await response.text();
 
-    expect((html.match(/<button\b/g) || [])).toHaveLength(1);
+    // Session control contract: Begin lives on the stage, End in the header,
+    // settings behind the gear popover. No always-on developer chrome.
+    expect(html).toContain('id="beginButton"');
+    expect(html).toContain('id="sessionButton"');
+    expect(html).toContain('id="gearPopover"');
+    expect(html.match(/id="sessionButton"/g) || []).toHaveLength(1);
     expect(html).toContain("Start session");
     expect(html).toContain("End session");
+    expect(html).toContain("const finishSessionEnabled = false;");
+    expect(html).toContain("if (sessionActive && finishSessionEnabled) await finishSession();");
+    expect(html).toContain("let finishingSession = false;");
+    expect(html).toContain("if (finishingSession) return;");
     expect(html).toContain("LISTENING");
     expect(html).toContain("SETTLING");
     expect(html).toContain("THINKING");
@@ -333,6 +548,172 @@ describe("VoiceReview web server helpers", () => {
     expect(html).toContain("רגע");
     expect(html).not.toContain("Tap Record");
     expect(html).not.toContain("tap Record");
+  });
+
+  it("wires the ORB finish button when the session finish command is configured", async () => {
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+    });
+    const response = await app.fetch(new Request("http://localhost/"));
+    const html = await response.text();
+
+    expect(html).toContain("Finish session");
+    expect(html).toContain("const finishSessionEnabled = true;");
+    expect(html).toContain('fetch("/api/session/finish", {');
+    expect(html).toContain('"x-voicereview-finish": "1"');
+    expect(html).toContain(
+      "if (sessionActive && finishSessionEnabled) await finishSession();",
+    );
+  });
+
+  it("runs the configured session finish command and returns its output", async () => {
+    const calls: CommandCall[] = [];
+    const app = createVoiceReviewApp({
+      config: {
+        brainlayerWorktree: "/tmp/brainlayer-prod",
+        finishCommand: "bun run finish-session",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: "harvested 3\\napplied 2\\nqueued 1\\n",
+          stderr: "",
+          durationMs: 123,
+        };
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual([
+      "/bin/zsh",
+      "-lc",
+      "bun run finish-session",
+    ]);
+    expect(calls[0].cwd).toBe("/tmp/brainlayer-prod");
+    expect(calls[0].env.PYTHONPATH).toBe("/tmp/brainlayer-prod/src");
+    expect(body).toEqual({
+      ok: true,
+      exit_code: 0,
+      stdout: "harvested 3\\napplied 2\\nqueued 1\\n",
+      stderr: "",
+      duration_ms: 123,
+    });
+  });
+
+  it("keeps session finish disabled until VOICE_REVIEW_FINISH_CMD is configured", async () => {
+    const app = createVoiceReviewApp({ config: { finishCommand: "" } });
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://localhost",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toEqual({
+      error: "VOICE_REVIEW_FINISH_CMD is not configured",
+    });
+  });
+
+  it("rejects cross-origin session finish requests before running the command", async () => {
+    let calls = 0;
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+      runCommand: async () => {
+        calls += 1;
+        return commandResult("");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+        headers: {
+          origin: "http://evil.example",
+          "x-voicereview-finish": "1",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toBe(0);
+    await expect(response.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("rejects headerless session finish posts before running the command", async () => {
+    let calls = 0;
+    const app = createVoiceReviewApp({
+      config: { finishCommand: "bun run finish-session" },
+      runCommand: async () => {
+        calls += 1;
+        return commandResult("");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/session/finish", {
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(calls).toBe(0);
+    await expect(response.json()).resolves.toEqual({ error: "forbidden" });
+  });
+
+  it("renders a custom default category from the loaded batch as the selected option", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-category-test-"));
+    const batchPath = join(root, "batch.json");
+    await writeFile(
+      batchPath,
+      JSON.stringify({
+        "etan-queue": [],
+        "other-live": [],
+      }),
+    );
+    const app = createVoiceReviewApp({
+      config: {
+        defaultCategory: "etan-queue",
+        batchPath,
+      },
+    });
+
+    try {
+      const response = await app.fetch(new Request("http://localhost/"));
+      const html = await response.text();
+      const select = html.slice(
+        html.indexOf('<select id="category"'),
+        html.indexOf("</select>", html.indexOf('<select id="category"')),
+      );
+
+      expect(select).toContain(
+        '<option value="etan-queue" selected>etan-queue</option>',
+      );
+      expect(select).toContain(
+        '<option value="other-live">other-live</option>',
+      );
+      expect(select).toContain(
+        '<option value="diagnosis-flag">diagnosis-flag</option>',
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("rejects empty whisper transcripts before interpretation", async () => {
@@ -360,7 +741,7 @@ describe("VoiceReview web server helpers", () => {
       const response = await app.fetch(
         new Request("http://localhost/api/transcribe", {
           method: "POST",
-          headers: { "content-type": "audio/webm" },
+          headers: { "content-type": "application/octet-stream" },
           body: new Blob(["not real audio"]),
         }),
       );
@@ -373,6 +754,214 @@ describe("VoiceReview web server helpers", () => {
         "/test/bin/whisper-cli",
       ]);
     } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves failed decode blobs under a capped failed directory", async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), "voicereview-transcribe-failed-"),
+    );
+    const failedDir = join(root, "failed");
+    await mkdir(failedDir, { recursive: true });
+    const validWebmThatFailsDecode = new Blob([
+      new Uint8Array([0x1a, 0x45, 0xdf, 0xa3]),
+      "broken webm",
+    ]);
+    const oldTime = new Date("2026-01-01T00:00:00.000Z");
+    for (let index = 0; index < 22; index += 1) {
+      const path = join(
+        failedDir,
+        `old-${String(index).padStart(2, "0")}.webm`,
+      );
+      await writeFile(path, `old-${index}`);
+      await utimes(path, oldTime, oldTime);
+    }
+
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async () => ({
+        exitCode: 1,
+        stdout: "",
+        stderr: "Invalid EBML header",
+        durationMs: 5,
+      }),
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm;codecs=opus" },
+          body: validWebmThatFailsDecode,
+        }),
+      );
+      const body = await response.json();
+      const failedFiles = await readdir(failedDir);
+      const preservedContents = await Promise.all(
+        failedFiles
+          .filter((name) => name.endsWith(".webm"))
+          .map((name) => readFile(join(failedDir, name), "utf8")),
+      );
+
+      expect(response.status).toBe(500);
+      expect(body.error).toContain("Invalid EBML header");
+      expect(failedFiles).toHaveLength(20);
+      expect(
+        preservedContents.some((content) => content.includes("broken webm")),
+      ).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("transcribes webm audio that starts with an EBML header", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const validWebm = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04,
+    ]);
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli")
+            ? "turn two correction\n"
+            : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob([validWebm], { type: "audio/webm" }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        text: "turn two correction",
+      });
+      expect(calls.map((call) => call.args[0])).toEqual([
+        "/test/bin/ffmpeg",
+        "/test/bin/whisper-cli",
+      ]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates client aborts into /api/transcribe subprocesses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-abort-"));
+    const clientAbort = new AbortController();
+    let commandSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        commandSignal = call.signal;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!commandSignal?.aborted) {
+          throw new Error("client abort did not reach transcribe subprocess");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: new Blob(["not real audio"]),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+      expect(commandSignal?.aborted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects headerless mid-stream webm slices before ffmpeg", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    const validWebm = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04,
+    ]);
+    const headerlessMidstreamSlice = validWebm.slice(4);
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: join(root, "missing-vocab.json"),
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli")
+            ? "should not run\n"
+            : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      console.warn = (message?: unknown) => {
+        warnings.push(String(message));
+      };
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob([headerlessMidstreamSlice], { type: "audio/webm" }),
+        }),
+      );
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: "invalid webm audio",
+        code: "invalid_webm_header",
+        recoverable: true,
+      });
+      expect(calls).toHaveLength(0);
+      expect(warnings).toHaveLength(1);
+      expect(JSON.parse(warnings[0])).toMatchObject({
+        event: "voicereview_transcribe_invalid_webm",
+        code: "invalid_webm_header",
+      });
+    } finally {
+      console.warn = originalWarn;
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -420,7 +1009,9 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[0].content).toContain("few-shot examples");
     expect(messages[0].content).toContain('"action":"question"');
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
-    expect(messages[1].content).toContain("16db6804-dc3e-5465-93d2-e3956c3f63f5");
+    expect(messages[1].content).toContain(
+      "16db6804-dc3e-5465-93d2-e3956c3f63f5",
+    );
   });
 
   it("parses English and Hebrew-English questions as non-decision turns", () => {
@@ -470,7 +1061,7 @@ describe("VoiceReview web server helpers", () => {
 
   it("parses fenced LiteRT JSON into a valid voice decision", () => {
     const decision = parseInterpretDecision(
-      "```json\n{\"action\":\"merge\",\"canonical_id\":\"16db6804-dc3e-5465-93d2-e3956c3f63f5\",\"note\":\"merge them all\"}\n```",
+      '```json\n{"action":"merge","canonical_id":"16db6804-dc3e-5465-93d2-e3956c3f63f5","note":"merge them all"}\n```',
       cantaloupeCluster,
       "merge them all",
     );
@@ -565,6 +1156,42 @@ describe("VoiceReview web server helpers", () => {
     });
   });
 
+  it("propagates client aborts into /api/interpret LiteRT fetches", async () => {
+    const clientAbort = new AbortController();
+    let upstreamSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        requestTimeoutMs: 60000,
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      fetchImpl: async (_url, init) => {
+        upstreamSignal = init?.signal as AbortSignal | undefined;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!upstreamSignal?.aborted) {
+          throw new Error("client abort did not reach upstream LiteRT fetch");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/interpret", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          transcript: "merge them all",
+          cluster: cantaloupeCluster,
+        }),
+        signal: clientAbort.signal,
+      }),
+    );
+
+    expect(response.status).toBe(499);
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(await response.json()).toEqual({ error: "request aborted" });
+  });
+
   it("serves /api/interpret question actions without forcing a decision", async () => {
     const app = createVoiceReviewApp({
       fetchImpl: async () =>
@@ -621,14 +1248,10 @@ describe("VoiceReview web server helpers", () => {
     expect(args).toEqual([
       "python3",
       "/repo/src/voicereview-web/kg_evidence.py",
-      "--db",
-      "/tmp/fixture.db",
-      "--members-json",
-      JSON.stringify(cantaloupeCluster.members),
-      "--per-member",
-      "2",
-      "--question",
-      "what context exists around the hiring manager",
+      "--db=/tmp/fixture.db",
+      `--members-json=${JSON.stringify(cantaloupeCluster.members)}`,
+      "--per-member=2",
+      "--question=what context exists around the hiring manager",
       "--deep",
     ]);
   });
@@ -684,10 +1307,20 @@ describe("VoiceReview web server helpers", () => {
       );
       db.prepare(
         "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
-      ).run(cantaloupeCluster.members[0].id, "chunk-company", 0.95, "company context");
+      ).run(
+        cantaloupeCluster.members[0].id,
+        "chunk-company",
+        0.95,
+        "company context",
+      );
       db.prepare(
         "INSERT INTO kg_entity_chunks (entity_id, chunk_id, relevance, context) VALUES (?, ?, ?, ?)",
-      ).run(cantaloupeCluster.members[1].id, "chunk-project", 0.9, "project context");
+      ).run(
+        cantaloupeCluster.members[1].id,
+        "chunk-project",
+        0.9,
+        "project context",
+      );
     } finally {
       db.close();
     }
@@ -788,7 +1421,9 @@ describe("VoiceReview web server helpers", () => {
       evidence,
     });
 
-    expect(messages[0].content).toContain("answer ONLY from the provided evidence");
+    expect(messages[0].content).toContain(
+      "answer ONLY from the provided evidence",
+    );
     expect(messages[0].content).toContain("2-4 sentences");
     expect(messages[0].content).toContain("I don't see evidence about that");
     expect(messages[1].content).toContain("diagnosis-flag:cantaloupe");
@@ -796,7 +1431,9 @@ describe("VoiceReview web server helpers", () => {
     expect(messages[1].content).toContain("chunk-company");
     expect(messages[1].content).toContain("company context");
     expect(messages[1].content).toContain("what is the difference?");
-    expect(messages[1].content).toContain("which chunks does the company one have?");
+    expect(messages[1].content).toContain(
+      "which chunks does the company one have?",
+    );
   });
 
   it("serves first-turn /api/converse with evidence timings and a grounded LiteRT answer", async () => {
@@ -868,8 +1505,7 @@ describe("VoiceReview web server helpers", () => {
 
     const body = await response.json();
     expect(response.status).toBe(200);
-    expect(calls[0].args).toContain("--db");
-    expect(calls[0].args).toContain("/tmp/fixture.db");
+    expect(calls[0].args).toContain("--db=/tmp/fixture.db");
     expect(requestedBody.model).toBe("gemma4-e4b,gpu");
     expect(requestedBody.messages[1].content).toContain("chunk-company");
     expect(body).toMatchObject({
@@ -880,6 +1516,68 @@ describe("VoiceReview web server helpers", () => {
       timings: { evidence_ms: 7 },
     });
     expect(body.timings.llm_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it("propagates client aborts into /api/converse evidence and LiteRT work", async () => {
+    const clientAbort = new AbortController();
+    let evidenceSignal: AbortSignal | undefined;
+    let upstreamSignal: AbortSignal | undefined;
+    const evidence: ConversationEvidence = {
+      members: [
+        {
+          ...cantaloupeCluster.members[0],
+          snippets: [
+            {
+              chunk_id: "chunk-company",
+              project: "coach",
+              content_type: "summary",
+              source: "brainlayer",
+              created_at: "2026-03-10T07:38:09.956Z",
+              relevance: 0.95,
+              context: "company context",
+              text: "Cantaloupe company evidence.",
+            },
+          ],
+        },
+      ],
+    };
+    const app = createVoiceReviewApp({
+      config: {
+        requestTimeoutMs: 60000,
+        brainlayerDbPath: "/tmp/fixture.db",
+        liteRtUrl: "http://127.0.0.1:9379/v1/chat/completions",
+      },
+      runCommand: async (call) => {
+        evidenceSignal = call.signal;
+        return commandResult(evidence);
+      },
+      fetchImpl: async (_url, init) => {
+        upstreamSignal = init?.signal as AbortSignal | undefined;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!upstreamSignal?.aborted) {
+          throw new Error("client abort did not reach upstream LiteRT fetch");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    const response = await app.fetch(
+      new Request("http://localhost/api/converse", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          question: "which chunks does the company one have?",
+          cluster: cantaloupeCluster,
+        }),
+        signal: clientAbort.signal,
+      }),
+    );
+
+    expect(response.status).toBe(499);
+    expect(evidenceSignal).toBeDefined();
+    expect(upstreamSignal?.aborted).toBe(true);
+    expect(evidenceSignal?.aborted).toBe(true);
   });
 
   it("runs deeper BrainLayer evidence search instead of dead-ending on thin snippets", async () => {
@@ -931,7 +1629,9 @@ describe("VoiceReview web server helpers", () => {
       },
       runCommand: async (call) => {
         calls.push(call);
-        return commandResult(calls.length === 1 ? shallowEvidence : deepEvidence);
+        return commandResult(
+          calls.length === 1 ? shallowEvidence : deepEvidence,
+        );
       },
       fetchImpl: async (_url, init) => {
         const requestBody = JSON.parse(String(init?.body));
@@ -962,9 +1662,8 @@ describe("VoiceReview web server helpers", () => {
     expect(response.status).toBe(200);
     expect(calls).toHaveLength(2);
     expect(calls[1].args).toContain("--deep");
-    expect(calls[1].args).toContain("--question");
     expect(calls[1].args).toContain(
-      "what was the actual context around the hiring manager?",
+      "--question=what was the actual context around the hiring manager?",
     );
     expect(fetchBodies).toHaveLength(2);
     expect(fetchBodies[0].model).toBe(DEFAULT_CONFIG.liteRtModel);
@@ -991,9 +1690,14 @@ describe("VoiceReview web server helpers", () => {
         },
         runCommand: async (call) => {
           calls.push(call);
-          const mediaPath = call.args[call.args.indexOf("--write-media") + 1];
+          const mediaPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-media="))
+              ?.slice("--write-media=".length) || "";
           const metadataPath =
-            call.args[call.args.indexOf("--write-metadata") + 1];
+            call.args
+              .find((arg) => arg.startsWith("--write-metadata="))
+              ?.slice("--write-metadata=".length) || "";
           await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
           await writeFile(
             metadataPath,
@@ -1029,12 +1733,16 @@ describe("VoiceReview web server helpers", () => {
       );
 
       expect(response.status).toBe(200);
-      expect(calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py"))).toBe(
-        true,
-      );
-      expect(calls[0].args).toContain("--write-metadata");
-      expect(calls[0].args).toContain("en-US-GuyNeural");
-      expect(calls[0].args).toContain("-12%");
+      expect(
+        calls[0].args.some((arg) => arg.endsWith("edge-tts-words.py")),
+      ).toBe(true);
+      expect(
+        calls[0].args.some((arg) => arg.startsWith("--write-metadata=")),
+      ).toBe(true);
+      expect(calls[0].args).toContain("--voice=en-US-GuyNeural");
+      expect(calls[0].args).toContain("--rate=-12%");
+      expect(calls[0].args).not.toContain("--rate");
+      expect(calls[0].args).not.toContain("-12%");
       expect(
         JSON.parse(response.headers.get("x-word-boundaries") || "[]"),
       ).toEqual([
@@ -1044,6 +1752,367 @@ describe("VoiceReview web server helpers", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("routes validated cloned voice profiles to Qwen3 without edge word metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-tts-test-"));
+    const calls: CommandCall[] = [];
+    const clonedCalls: Array<{ text: string; voice: string }> = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          return commandResult("");
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => voice === "theo-c3",
+          synthesizeCloned: async (text, voice) => {
+            clonedCalls.push({ text, voice });
+            return Buffer.from([4, 5, 6]);
+          },
+          listClonedProfiles: () => ["theo-c3"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Theo should read this.",
+            voice: "theo-c3",
+            rate: "-12%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect([...new Uint8Array(await response.arrayBuffer())]).toEqual([4, 5, 6]);
+      expect(calls).toHaveLength(0);
+      expect(clonedCalls).toEqual([
+        { text: "Theo should read this.", voice: "theo-c3" },
+      ]);
+      expect(response.headers.get("x-tts-engine")).toBe("qwen3");
+      expect(JSON.parse(response.headers.get("x-word-boundaries") || "[]")).toEqual(
+        [],
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects cloned voice path injection instead of routing to Qwen3", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-injection-test-"));
+    const calls: CommandCall[] = [];
+    const clonedCalls: string[] = [];
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+          ttsVoice: "en-US-GuyNeural",
+        },
+        runCommand: async (call) => {
+          calls.push(call);
+          const mediaPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-media="))
+              ?.slice("--write-media=".length) || "";
+          const metadataPath =
+            call.args
+              .find((arg) => arg.startsWith("--write-metadata="))
+              ?.slice("--write-metadata=".length) || "";
+          await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+          await writeFile(metadataPath, "");
+          return commandResult("");
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => {
+            clonedCalls.push(voice);
+            return voice === "../theo";
+          },
+          synthesizeCloned: async () => Buffer.from([4, 5, 6]),
+          listClonedProfiles: () => ["theo-c3"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "../theo",
+            rate: "-8%",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(200);
+      expect(calls[0].args).toContain("--voice=en-US-GuyNeural");
+      expect(clonedCalls).toEqual([]);
+      expect(response.headers.get("x-tts-engine")).toBe("edge-tts");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a clear 503 when the Theo engine is offline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-theo-offline-test-"));
+    try {
+      const app = createVoiceReviewApp({
+        config: {
+          tempDir: root,
+        },
+        ttsEngines: {
+          hasClonedProfile: (voice) => voice === "theo-v2",
+          synthesizeCloned: async () => null,
+          listClonedProfiles: () => ["theo-v2"],
+        },
+      });
+
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello from Theo.",
+            voice: "theo-v2",
+            rate: "-8%",
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(503);
+      expect(body.error).toBe("theo engine offline");
+      expect(body.fallback_voice).toBe("en-US-GuyNeural");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("propagates client aborts into /api/tts subprocesses", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-"));
+    const clientAbort = new AbortController();
+    let commandSignal: AbortSignal | undefined;
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async (call) => {
+        commandSignal = call.signal;
+        clientAbort.abort();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (!commandSignal?.aborted) {
+          throw new Error("client abort did not reach TTS subprocess");
+        }
+        throw new DOMException("request aborted", "AbortError");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+      expect(commandSignal?.aborted).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not return TTS subprocess success after the client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-abort-race-"));
+    const clientAbort = new AbortController();
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async (call) => {
+        const mediaPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-media="))
+            ?.slice("--write-media=".length) || "";
+        const metadataPath =
+          call.args
+            .find((arg) => arg.startsWith("--write-metadata="))
+            ?.slice("--write-metadata=".length) || "";
+        await writeFile(mediaPath, new Uint8Array([1, 2, 3]));
+        await writeFile(metadataPath, "");
+        clientAbort.abort();
+        return commandResult("");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+          signal: clientAbort.signal,
+        }),
+      );
+
+      expect(response.status).toBe(499);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a subprocess to exit before completing an abort", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-command-abort-"));
+    const markerPath = join(root, "terminated.txt");
+    const readyPath = join(root, "ready.txt");
+    const childPath = join(root, "child.js");
+    await writeFile(
+      childPath,
+      [
+        'const { writeFileSync } = await import("node:fs");',
+        `writeFileSync(${JSON.stringify(readyPath)}, "ready");`,
+        'process.on("SIGTERM", () => {',
+        "  setTimeout(() => {",
+        `    writeFileSync(${JSON.stringify(markerPath)}, "done");`,
+        "    process.exit(0);",
+        "  }, 25);",
+        "});",
+        "setInterval(() => {}, 1000);",
+      ].join("\n"),
+    );
+    const abort = new AbortController();
+
+    try {
+      const command = runShellCommand({
+        args: [process.execPath, childPath],
+        cwd: root,
+        env: { PATH: process.env.PATH || "" },
+        signal: abort.signal,
+      });
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        if (await readFile(readyPath, "utf8").catch(() => "")) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(await readFile(readyPath, "utf8")).toBe("ready");
+      abort.abort();
+
+      try {
+        await command;
+        throw new Error("expected command abort");
+      } catch (error) {
+        expect(error).toBeInstanceOf(DOMException);
+        expect((error as DOMException).name).toBe("AbortError");
+      }
+
+      expect(await readFile(markerPath, "utf8")).toBe("done");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not classify non-AbortError failures containing aborted as client aborts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-tts-nonabort-"));
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+      },
+      runCommand: async () => {
+        throw new Error("edge-tts aborted internally before writing audio");
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/tts", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            text: "Hello world",
+            voice: "en-US-GuyNeural",
+            rate: "-8%",
+          }),
+        }),
+      );
+      const body = await response.json();
+
+      expect(response.status).toBe(500);
+      expect(body.error).toBe(
+        "edge-tts aborted internally before writing audio",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("strips structural metadata and repeated prompt segments from spoken TTS text", async () => {
+    const spoken = humanizeSpokenText(
+      [
+        "Review this cluster.",
+        "Acme Corp (company, 42 chunks)",
+        "as context with 0 chunks",
+        "as evidence with 1 chunks",
+        "Should these merge?",
+        "",
+        "Review this cluster.",
+        "Acme Corp (company, 42 chunks)",
+        "as context with 0 chunks",
+        "as evidence with 1 chunks",
+        "Should these merge?",
+      ].join("\n"),
+    );
+
+    expect(spoken).toBe("Review this cluster. Acme Corp. Should these merge?");
+    expect(spoken).not.toContain("company");
+    expect(spoken).not.toContain("42 chunks");
+    expect(spoken).not.toContain("0 chunks");
+    expect(spoken).not.toContain("1 chunks");
+    expect(spoken).not.toContain("as context");
+    expect(spoken).not.toContain("as evidence");
+  });
+
+  it("strips live inline speak metadata and repeated prompt sentences from spoken TTS text", () => {
+    const liveSpeak = `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip.. DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. as question with 0 chunks. Merge, keep separate, mixed, or skip?`;
+
+    const spoken = humanizeSpokenText(liveSpeak);
+
+    expect(spoken).toBe(
+      `Cluster 'Q1 of 6 — invocable substrates', category etan-queue, 1 entries. All named DICTIONARY QUESTION (not a merge): TypeScript, Python, AI models like Qwen and Kokoro, frameworks like MLX — the test says build-WITH means Tool, but most people call these Technology. One ruling for all three families: Tools, or widen Technology? Capture Etan's answer verbatim as the note, then record skip. Merge, keep separate, mixed, or skip?`,
+    );
+    expect(spoken).not.toContain("as question with 0 chunks");
+    expect(spoken.match(/DICTIONARY QUESTION/g)).toHaveLength(1);
+  });
+
+  it("dedupes repeated long spoken segments without dropping repeated short words", () => {
+    const spoken = humanizeSpokenText(
+      [
+        "Wait.",
+        "Wait.",
+        "This long prompt sentence should only be spoken one time in the review flow.",
+        "This long prompt sentence should only be spoken one time in the review flow.",
+        "yes.",
+        "yes.",
+      ].join(" "),
+    );
+
+    expect(spoken).toBe(
+      "Wait. Wait. This long prompt sentence should only be spoken one time in the review flow. yes. yes.",
+    );
   });
 
   it("normalizes legacy LiteRT action names to dashboard action names", () => {

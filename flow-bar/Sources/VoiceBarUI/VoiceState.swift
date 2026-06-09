@@ -454,6 +454,38 @@ public final class VoiceState {
         showConfirmation("Copied")
     }
 
+    public func addVocabularyAlias(
+        correct: String,
+        wrong: String
+    ) {
+        let draft = STTVocabularyDraft(
+            correct: correct,
+            wrong: wrong
+        )
+        guard let payload = draft.addAliasPayload() else { return }
+        sendCommand?(payload)
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
+    public func removeVocabularyAlias(_ alias: STTVocabularyAliasPreview) {
+        sendCommand?(STTVocabularyCommandPayload.removeAlias(alias))
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
+    public func addVocabularyPromptTerm(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendCommand?(STTVocabularyCommandPayload.addTerm(trimmed))
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
+    public func removeVocabularyPromptTerm(_ term: String) {
+        let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        sendCommand?(STTVocabularyCommandPayload.removeTerm(trimmed))
+        sendCommand?(STTVocabularyCommandPayload.list())
+    }
+
     /// Start recording from the Voice Bar. Captures the frontmost app for paste-on-stop.
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
@@ -673,6 +705,9 @@ public final class VoiceState {
         case "command_mode":
             handleCommandModeEvent(event)
 
+        case "vocabulary", "vocab_list", "stt_vocabulary":
+            applyVocabularyEvent(event)
+
         case "clip_marker":
             if let id = event["marker_id"] as? String,
                let label = event["label"] as? String,
@@ -715,6 +750,31 @@ public final class VoiceState {
 
         default:
             break
+        }
+    }
+
+    private func applyVocabularyEvent(_ event: [String: Any]) {
+        var appliedSnapshot = false
+
+        if let promptTerms = event["prompt_terms"] as? [String] {
+            transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(promptTerms)
+            appliedSnapshot = true
+        }
+
+        if let aliases = event["aliases"] as? [[String: Any]] {
+            transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+                aliases.compactMap { alias in
+                    guard let from = alias["from"] as? String,
+                          let to = alias["to"] as? String
+                    else { return nil }
+                    return STTVocabularyAliasPreview(from: from, to: to)
+                }
+            )
+            appliedSnapshot = true
+        }
+
+        if !appliedSnapshot {
+            refreshTranscriptionVocabulary()
         }
     }
 

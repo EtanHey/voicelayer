@@ -15,7 +15,13 @@
 // Voice cloning uses 3 reference clips (~18.5s total) from the profile.yaml.
 // The daemon must be running for cloned voices to work (fallback: edge-tts).
 
-import { existsSync, lstatSync, readFileSync, statSync } from "fs";
+import {
+  existsSync,
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+} from "fs";
 import { join } from "path";
 
 const DAEMON_URL = "http://127.0.0.1:8880";
@@ -172,6 +178,22 @@ export function loadProfile(voiceName: string): VoiceProfile | null {
  */
 export function hasClonedProfile(voiceName: string): boolean {
   return loadProfile(voiceName) !== null;
+}
+
+/**
+ * List locally installed cloned voice profiles.
+ */
+export function listClonedVoiceProfiles(): string[] {
+  try {
+    if (!existsSync(VOICES_DIR)) return [];
+    return readdirSync(VOICES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => loadProfile(name) !== null)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
 }
 
 /**

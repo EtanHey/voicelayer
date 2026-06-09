@@ -61,7 +61,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
-    func testActivationStillLaunchesOwnedChildWhenExternalProbeSucceeds() {
+    func testActivationSkipsOwnedChildWhenExternalProbeSucceeds() {
         let process = ProcessSpy()
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
@@ -72,9 +72,9 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
         let result = controller.activateIfNeeded()
 
-        XCTAssertEqual(result, .launched)
-        XCTAssertTrue(process.didRun)
-        XCTAssertTrue(controller.ownsLaunchedProcess)
+        XCTAssertEqual(result, .alreadyRunning)
+        XCTAssertFalse(process.didRun)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
     func testActivationLaunchesDaemonWhenProbeFails() {
@@ -101,11 +101,13 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             "QA_VOICE_CHUNKED_STT": ProcessInfo.processInfo.environment["QA_VOICE_CHUNKED_STT"],
             "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
             "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
+            "QA_VOICE_RECORDING_STATE_PATH": ProcessInfo.processInfo.environment["QA_VOICE_RECORDING_STATE_PATH"],
             "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
         ]
         setenv("QA_VOICE_CHUNKED_STT", "1", 1)
         setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
         setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
+        setenv("QA_VOICE_RECORDING_STATE_PATH", "/tmp/test-recording-state.json", 1)
         setenv("CODEX_CI", "1", 1)
         defer {
             for (key, value) in previousValues {
@@ -130,12 +132,47 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_CHUNKED_STT"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_SOCKET_PATH"])
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_RECORDING_STATE_PATH"])
         XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
-        XCTAssertEqual(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
+        XCTAssertNil(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
         XCTAssertNotNil(process.capturedEnvironment?["PATH"])
     }
 
-    func testUnexpectedCleanExitSchedulesRelaunch() {
+    func testDaemonLaunchPreservesOnlyPathOverridesForIsolatedQAMode() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "VOICEBAR_QA_PRESERVE_OVERRIDES": "1",
+                "QA_VOICEBAR_PRESERVE_TEST_OVERRIDES": "1",
+                "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
+                "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
+                "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
+                "QA_VOICE_RECORDING_STATE_PATH": "/tmp/qa-recording-state.json",
+                "QA_VOICE_RETAINED_RECORDING_PATH": "/tmp/qa-last.wav",
+                "QA_VOICE_DISABLE_FLAG_PATH": "/tmp/qa-disable.flag",
+                "QA_VOICE_ALLOW_SOCKET_RECLAIM": "1",
+                "QA_VOICE_CHUNKED_STT": "1",
+                "CODEX_CI": "1",
+                "VOICELAYER_ALLOW_SOCKET_RECLAIM": "1",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
+        XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
+        XCTAssertEqual(environment["QA_VOICE_RECORDING_STATE_PATH"], "/tmp/qa-recording-state.json")
+        XCTAssertEqual(environment["QA_VOICE_RETAINED_RECORDING_PATH"], "/tmp/qa-last.wav")
+        XCTAssertEqual(environment["QA_VOICE_DISABLE_FLAG_PATH"], "/tmp/qa-disable.flag")
+        XCTAssertNil(environment["VOICEBAR_QA_PRESERVE_OVERRIDES"])
+        XCTAssertNil(environment["QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"])
+        XCTAssertNil(environment["QA_VOICE_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertNil(environment["QA_VOICE_CHUNKED_STT"])
+        XCTAssertNil(environment["CODEX_CI"])
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
+        XCTAssertEqual(environment["PATH"], "/tmp/bin")
+    }
+
+    func testCleanExitStandsDownWithoutRelaunch() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 0
         let secondProcess = ProcessSpy()
@@ -151,11 +188,32 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         _ = controller.activateIfNeeded()
 
         firstProcess.capturedTerminationHandler?(firstProcess)
-        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
-        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+        drainMainQueue(until: { !controller.ownsLaunchedProcess })
 
-        XCTAssertTrue(secondProcess.didRun)
-        XCTAssertTrue(controller.ownsLaunchedProcess)
+        XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
+        XCTAssertFalse(secondProcess.didRun)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
+    }
+
+    func testOwnedChildStandsDownWhenExternalDaemonAppears() {
+        let process = ProcessSpy()
+        var externalDaemonIsLive = false
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            externalDaemonProbe: { _ in externalDaemonIsLive },
+            processFactory: { process },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+
+        _ = controller.activateIfNeeded()
+        externalDaemonIsLive = true
+        scheduledBlocks.first(where: { $0.delay == 5 })?.block()
+
+        XCTAssertTrue(process.didReceiveTerminate)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
     func testCrashWhileDisabledDoesNotScheduleRelaunch() {
@@ -178,7 +236,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         firstProcess.capturedTerminationHandler?(firstProcess)
         drainMainQueue(until: { !controller.ownsLaunchedProcess })
 
-        XCTAssertTrue(scheduledBlocks.filter { $0.delay < 300 }.isEmpty)
+        XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
         XCTAssertFalse(secondProcess.didRun)
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
@@ -204,14 +262,38 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         launchConfiguration = nil
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
-        XCTAssertEqual(restartDelays, [1, 2])
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1, 2])
         XCTAssertFalse(secondProcess.didRun)
+    }
+
+    func testScheduledRestartRechecksExternalDaemonBeforeRelaunch() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var externalDaemonIsLive = false
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { externalDaemonIsLive },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        externalDaemonIsLive = true
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertFalse(secondProcess.didRun)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
     func testScheduledRestartSkipsWhenAnotherActivationAlreadyLaunchedChild() {
         let firstProcess = ProcessSpy()
-        firstProcess.capturedTerminationStatus = 0
+        firstProcess.capturedTerminationStatus = 1
         let secondProcess = ProcessSpy()
         let thirdProcess = ProcessSpy()
         var processQueue = [firstProcess, secondProcess, thirdProcess]
@@ -257,10 +339,9 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
         scheduledBlocks.last(where: { $0.delay == 300 })?.block()
         secondProcess.capturedTerminationHandler?(secondProcess)
-        drainMainQueue(until: { scheduledBlocks.map(\.delay).filter { $0 < 300 }.count == 2 })
+        drainMainQueue(until: { restartDelays(from: scheduledBlocks).count == 2 })
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
-        XCTAssertEqual(restartDelays, [1, 1])
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1, 1])
     }
 
     func testDuplicateTerminationsScheduleOnlyOneRestart() {
@@ -282,8 +363,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         firstProcess.capturedTerminationHandler?(firstProcess)
         drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
 
-        let restartDelays = scheduledBlocks.map { $0.delay }.filter { $0 < 300 }
-        XCTAssertEqual(restartDelays, [1])
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
     }
 
     func testActivationReturnsUnavailableWithoutLaunchConfiguration() {
@@ -400,6 +480,38 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         )
     }
 
+    func testVoiceLayerPathsRespectQAOverrides() {
+        let previousValues: [String: String?] = [
+            VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
+            VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
+            VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable],
+        ]
+        setenv(VoiceLayerPaths.socketOverrideEnvironmentVariable, "/tmp/qa-voicebar.sock", 1)
+        setenv(VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable, "/tmp/qa-mcp.sock", 1)
+        setenv(VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable, "/tmp/qa-mcp.pid", 1)
+        setenv(VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable, "/tmp/qa-last.wav", 1)
+        defer {
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
+            }
+        }
+
+        XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/qa-voicebar.sock")
+        XCTAssertEqual(VoiceLayerPaths.mcpSocketPath, "/tmp/qa-mcp.sock")
+        XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/qa-mcp.pid")
+        XCTAssertEqual(VoiceLayerPaths.retainedRecordingPath, "/tmp/qa-last.wav")
+        XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
     func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {
         let pidFile = temporaryPIDFile()
         try Data("{\"pid\":\(ProcessInfo.processInfo.processIdentifier)}".utf8)
@@ -429,6 +541,35 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
         XCTAssertTrue(isRunning)
     }
+
+    func testFreshSessionLivenessProbeTreatsLiveSocketWithoutPidFileAsExternalDaemon() {
+        let pidFile = temporaryPIDFile()
+
+        let isRunning = VoiceBarDaemonLivenessProbe.isDaemonRunning(
+            pidFilePath: pidFile,
+            socketPath: "/tmp/test-live-voicelayer-mcp.sock",
+            socketProbe: { _ in true }
+        )
+
+        XCTAssertTrue(isRunning)
+    }
+
+    func testFreshSessionLivenessProbeIgnoresOwnedChildPid() throws {
+        let pidFile = temporaryPIDFile()
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        try Data("{\"pid\":\(currentPID)}".utf8)
+            .write(to: URL(fileURLWithPath: pidFile))
+        defer { try? FileManager.default.removeItem(atPath: pidFile) }
+
+        let isRunning = VoiceBarDaemonLivenessProbe.isDaemonRunning(
+            pidFilePath: pidFile,
+            socketPath: "/tmp/test-live-voicelayer-mcp.sock",
+            socketProbe: { _ in true },
+            excludingPID: currentPID
+        )
+
+        XCTAssertFalse(isRunning)
+    }
 }
 
 private func testLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
@@ -441,6 +582,10 @@ private func testLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
 
 private func temporaryPIDFile() -> String {
     "\(NSTemporaryDirectory())voicebar-daemon-\(UUID().uuidString).pid"
+}
+
+private func restartDelays(from scheduledBlocks: [(delay: TimeInterval, block: () -> Void)]) -> [TimeInterval] {
+    scheduledBlocks.map(\.delay).filter { $0 < 300 && $0 != 5 }
 }
 
 private func drainMainQueue(

@@ -20,6 +20,7 @@ public final class PillContextMenuController: NSObject {
     public var transcriptionVocabularyAliasesProvider: () -> [STTVocabularyAliasPreview] = { [] }
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
+    public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
@@ -27,9 +28,11 @@ public final class PillContextMenuController: NSObject {
     public var isSnoozedProvider: () -> Bool = { false }
     public var onSelectDevice: (String) -> Void = { _ in }
     public var onTranscribeLatestRecording: () -> Void = {}
+    public var onAddSelectionToDictionary: () -> Void = {}
     public var onPasteLastTranscript: () -> Void = {}
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
+    public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
     public var onQuit: () -> Void = {}
 
     public func makeMenu() -> NSMenu {
@@ -73,9 +76,21 @@ public final class PillContextMenuController: NSObject {
         recoverItem.target = self
         menu.addItem(recoverItem)
 
+        let addDictionaryItem = NSMenuItem(
+            title: "Add to Dictionary…",
+            action: #selector(handleAddSelectionToDictionary),
+            keyEquivalent: ""
+        )
+        addDictionaryItem.target = self
+        menu.addItem(addDictionaryItem)
+
         let vocabularyItem = NSMenuItem(title: "Transcription Vocabulary", action: nil, keyEquivalent: "")
         vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
         menu.addItem(vocabularyItem)
+
+        let anchorItem = NSMenuItem(title: "Anchor", action: nil, keyEquivalent: "")
+        anchorItem.submenu = makeAnchorSubmenu()
+        menu.addItem(anchorItem)
 
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
@@ -109,6 +124,23 @@ public final class PillContextMenuController: NSObject {
         quitItem.target = self
         menu.addItem(quitItem)
 
+        return menu
+    }
+
+    public func makeAnchorSubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let selectedMode = anchorModeProvider()
+        for mode in VoiceBarAnchorMode.anchorMenuModes {
+            let item = NSMenuItem(
+                title: mode.anchorMenuTitle,
+                action: #selector(handleSelectAnchorMode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == selectedMode ? .on : .off
+            menu.addItem(item)
+        }
         return menu
     }
 
@@ -287,6 +319,17 @@ public final class PillContextMenuController: NSObject {
 
     @objc private func handleTranscribeLatestRecording() {
         onTranscribeLatestRecording()
+    }
+
+    @objc private func handleSelectAnchorMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = VoiceBarAnchorMode(rawValue: rawValue)
+        else { return }
+        onSelectAnchorMode(mode)
+    }
+
+    @objc private func handleAddSelectionToDictionary() {
+        onAddSelectionToDictionary()
     }
 }
 

@@ -7,6 +7,10 @@ enum VoiceLayerPaths {
     static let tmpDirectory = "/tmp"
     static let disableEnvironmentVariable = "DISABLE_VOICELAYER"
     static let disableFlagOverrideEnvironmentVariable = "QA_VOICE_DISABLE_FLAG_PATH"
+    static let socketOverrideEnvironmentVariable = "QA_VOICE_SOCKET_PATH"
+    static let mcpSocketOverrideEnvironmentVariable = "QA_VOICE_MCP_SOCKET_PATH"
+    static let daemonPIDOverrideEnvironmentVariable = "QA_VOICE_MCP_PID_PATH"
+    static let retainedRecordingOverrideEnvironmentVariable = "QA_VOICE_RETAINED_RECORDING_PATH"
 
     static func tmpPath(_ name: String) -> String {
         "\(tmpDirectory)/\(name)"
@@ -29,8 +33,23 @@ enum VoiceLayerPaths {
         return FileManager.default.fileExists(atPath: voiceDisabledFlagPath())
     }
 
-    static let socketPath = tmpPath("voicelayer.sock")
-    static let mcpSocketPath = tmpPath("voicelayer-mcp.sock")
-    static let daemonPIDPath = tmpPath("voicelayer-mcp.pid")
-    static let retainedRecordingPath = tmpPath("voicelayer-last-recording.wav")
+    static var socketPath: String {
+        environmentValue(socketOverrideEnvironmentVariable) ?? tmpPath("voicelayer.sock")
+    }
+
+    static var mcpSocketPath: String {
+        environmentValue(mcpSocketOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.sock")
+    }
+
+    static var daemonPIDPath: String {
+        environmentValue(daemonPIDOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.pid")
+    }
+
+    static var retainedRecordingPath: String {
+        environmentValue(retainedRecordingOverrideEnvironmentVariable) ?? tmpPath("voicelayer-last-recording.wav")
+    }
+
+    static var enforcesSingletonInstance: Bool {
+        environmentValue(socketOverrideEnvironmentVariable) == nil
+    }
 }

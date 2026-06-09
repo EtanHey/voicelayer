@@ -48,6 +48,13 @@ function initFakeRepo() {
   run(["git", "commit", "-m", "initial"]);
 }
 
+function writeFakeExecutable(name: string, body: string) {
+  const binDir = join(tempRoot, "fake-bin");
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(join(binDir, name), body, { mode: 0o755 });
+  return binDir;
+}
+
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
   initFakeRepo();
@@ -84,6 +91,28 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("src/mcp-socket-owner.ts");
   });
 
+  test("requires runtime verification for recording state gate changes", async () => {
+    const changed = join(tempRoot, "changed.txt");
+    writeFileSync(changed, "src/recording-state.ts\n");
+
+    const result = run(["bash", scriptPath], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_RELAUNCH: "1",
+        VOICELAYER_VERIFY_TESTER: "Unit Test",
+      },
+      input: "Y\n",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const artifacts = readdirSync(join(tempRoot, ".verified"));
+    expect(artifacts).toHaveLength(1);
+    const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
+    expect(body).toContain("Verified-Runtime:");
+    expect(body).toContain("src/recording-state.ts");
+  });
+
   test("does not create an artifact when manual confirmation is rejected", () => {
     const changed = join(tempRoot, "changed.txt");
     writeFileSync(changed, "src/socket-handlers.ts\n");
@@ -115,5 +144,91 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("no daemon verification required");
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
+  });
+
+  test("treats a launchd VoiceBar respawn as a successful relaunch", async () => {
+    const changed = join(tempRoot, "changed.txt");
+    const stateFile = join(tempRoot, "pgrep-state");
+    const openCalls = join(tempRoot, "open-calls");
+    const oldPid = "424242";
+    const bashEnv = join(tempRoot, "fake-bash-env");
+    writeFileSync(changed, "src/socket-handlers.ts\n");
+    writeFileSync(stateFile, "before\n");
+    writeFileSync(
+      bashEnv,
+      `kill() {
+  if [ "$1" = "-0" ] && [ "$2" = "${oldPid}" ]; then
+    [ "$(cat "${stateFile}")" = "before" ]
+    return $?
+  fi
+  command kill "$@"
+}
+`,
+    );
+
+    const fakeBin = writeFakeExecutable(
+      "pgrep",
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "-x" ] && [ "$2" = "VoiceBar" ]; then
+  if [ "$(cat "${stateFile}")" = "before" ]; then
+    printf '${oldPid}\\n'
+  else
+    printf '222\\n'
+  fi
+  exit 0
+fi
+if [ "$1" = "-f" ]; then
+  exit 1
+fi
+exit 1
+`,
+    );
+    writeFakeExecutable(
+      "pkill",
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf 'after\\n' > "${stateFile}"
+`,
+    );
+    writeFakeExecutable(
+      "launchctl",
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1" = "list" ] && [ "$2" = "com.voicelayer.voicebar" ]; then
+  exit 0
+fi
+exit 1
+`,
+    );
+    writeFakeExecutable(
+      "open",
+      `#!/usr/bin/env bash
+set -euo pipefail
+echo "$*" >> "${openCalls}"
+exit 0
+`,
+    );
+    writeFakeExecutable("lsof", "#!/usr/bin/env bash\nexit 1\n");
+
+    const result = run(["bash", scriptPath], {
+      env: {
+        BASH_ENV: bashEnv,
+        PATH: `${fakeBin}:${process.env.PATH}`,
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_BUILD: "1",
+        VOICELAYER_VERIFY_TESTER: "Unit Test",
+      },
+      input: "Y\nY\n",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("launchd relaunched VoiceBar");
+    expect(existsSync(openCalls)).toBe(false);
+    const artifacts = readdirSync(join(tempRoot, ".verified"));
+    expect(artifacts).toHaveLength(1);
+    const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
+    expect(body).toContain("Verified-Runtime:");
   });
 });

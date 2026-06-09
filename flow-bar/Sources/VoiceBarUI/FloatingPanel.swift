@@ -20,6 +20,7 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var activeHitRectProvider: (() -> NSRect)?
+    public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
 
     public init(content: NSView) {
@@ -80,8 +81,9 @@ public final class FloatingPillPanel: NSPanel {
         }
 
         if event.type == .leftMouseDown {
-            dragStartWasInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
-        } else if event.type == .leftMouseDragged, dragStartWasInVisiblePill {
+            let startedInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
+            dragStartWasInVisiblePill = shouldHandlePillDrag(startedInVisiblePill: startedInVisiblePill)
+        } else if event.type == .leftMouseDragged, shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
             performDrag(with: event)
             return
         } else if event.type == .leftMouseUp {
@@ -93,6 +95,10 @@ public final class FloatingPillPanel: NSPanel {
 
     public override var canBecomeMain: Bool {
         false
+    }
+
+    public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
+        isPillDragEnabled && startedInVisiblePill
     }
 
     /// Position pill on the given screen (or the screen containing the mouse).

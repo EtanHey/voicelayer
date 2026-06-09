@@ -33,9 +33,15 @@ import { getPlaybackQueueDepth } from "./tts";
 import { getRecordingState } from "./input";
 import {
   addAlias,
+  addPromptTerm,
   listVocabulary,
   removeAlias,
+  removePromptTerm,
 } from "./stt-vocabulary-store";
+import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+} from "./recording-state";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -84,18 +90,31 @@ export function handleSocketCommand(
         if (isSpeaking) {
           stopPlayback();
         }
-        // Idle forces VoiceBar remount for same-text replay
-        broadcast({ type: "state", state: "idle" });
-        playAudioNonBlocking(entry.file, {
-          text: entry.text.slice(0, 2000),
-          voice: entry.voice,
-        });
+        try {
+          playAudioNonBlocking(entry.file, {
+            text: entry.text.slice(0, 2000),
+            voice: entry.voice,
+            // Idle forces VoiceBar remount for same-text replay, but the queue
+            // must emit it only after the speaker gate accepts playback.
+            preStartIdle: true,
+          });
+        } catch (err) {
+          return buildAck(
+            command,
+            "reject",
+            err instanceof Error ? err.message : String(err),
+          );
+        }
         return buildAck(command, "accept");
       }
       return buildAck(command, "noop", "nothing to replay");
     }
     case "retranscribe_last": {
-      if (recordingState === "recording" || recordingState === "transcribing" || isSpeaking) {
+      if (
+        recordingState === "recording" ||
+        recordingState === "transcribing" ||
+        isSpeaking
+      ) {
         return buildAck(command, "reject", "busy");
       }
       if (!hasRetainedRecording()) {
@@ -146,7 +165,12 @@ export function handleSocketCommand(
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
         );
-        broadcast({ type: "state", state: "idle", source: "recording" });
+        if (
+          !isRecordingConflictError(err) &&
+          getEffectiveRecordingState() === "idle"
+        ) {
+          broadcast({ type: "state", state: "idle", source: "recording" });
+        }
       });
       return buildAck(command, "accept");
     }
@@ -198,7 +222,10 @@ export function handleSocketCommand(
     case "mark_clip":
       broadcast({
         type: "clip_marker",
-        marker_id: `command-${command.label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}`,
+        marker_id: `command-${command.label
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")}`,
         label: command.label,
         source: command.source ?? "command",
         status: "marked",
@@ -222,6 +249,25 @@ export function handleSocketCommand(
     case "vocab_remove": {
       try {
         const result = removeAlias(command.from);
+        return buildAck(
+          command,
+          result.removed ? "accept" : "noop",
+          result.removed ? undefined : "not found",
+        );
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    }
+    case "vocab_add_term":
+      try {
+        addPromptTerm(command.term);
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    case "vocab_remove_term": {
+      try {
+        const result = removePromptTerm(command.term);
         return buildAck(
           command,
           result.removed ? "accept" : "noop",

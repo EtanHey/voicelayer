@@ -385,6 +385,73 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server");
     });
 
+    it("rejects prompted tail verification when it replays an earlier phrase instead of extending the transcript", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-replay-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't"
+            : "I don't want to leave anything for Anthropic, I don't want to leave anything for Anthropic";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "use the collab file smart with monitors, because I don't want to leave anything for Anthropic, I mean I don't",
+      );
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("preserves a real tail extension that intentionally repeats an earlier phrase", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-repeat-extension-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "intro alpha beta gamma delta prior thought and then alpha beta"
+            : "alpha beta gamma delta new words";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "intro alpha beta gamma delta prior thought and then alpha beta gamma delta new words",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
+    it("preserves a one-word tail extension after an intentionally repeated phrase", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-one-word-extension-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "intro alpha beta gamma delta prior thought and then alpha beta"
+            : "alpha beta gamma delta finale";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "intro alpha beta gamma delta prior thought and then alpha beta gamma delta finale",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));
@@ -477,6 +544,64 @@ describe("STT backends", () => {
 
       expect(result.text).toBe(
         "what we were supposed to. For fuck's sake, this is getting sickening.",
+      );
+      expect(result.backend).toBe("whisper-server+clean");
+    });
+
+    it("preserves adjacent repeated phrases in long resident decodes when they appear only twice", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(31));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "unrelated tail text"
+            : "we should keep working through the night please repeat after me please repeat after me",
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "we should keep working through the night please repeat after me please repeat after me",
+      );
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("preserves intentional adjacent repeated phrases in short resident decodes", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-short-intentional-repeat-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(8));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () =>
+          "please repeat after me please repeat after me",
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "please repeat after me please repeat after me",
+      );
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-multi-adjacent-tail-echo-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(71));
+      const repeated = "I don't want to leave anything for Anthropic";
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "unrelated tail text"
+            : `we should keep working through the night, ${repeated}, ${repeated}, ${repeated}`,
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "we should keep working through the night, I don't want to leave anything for Anthropic,",
       );
       expect(result.backend).toBe("whisper-server+clean");
     });
@@ -593,6 +718,29 @@ describe("STT backends", () => {
         "first chunk has setup and middle chunk continues with final decision",
       );
       expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    it("trims repeated tail loops after chunked long recordings are merged", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-chunked-tail-loop-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "first chunk";
+          if (calls === 2) return "chunk middle";
+          if (calls === 3) return "middle near final";
+          return "near final leave for anthropic leave for anthropic leave for anthropic";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "first chunk middle near final leave for anthropic",
+      );
+      expect(result.backend).toBe("whisper-server+chunks+clean");
     });
 
     it("keeps short resident recordings on a single decode", async () => {

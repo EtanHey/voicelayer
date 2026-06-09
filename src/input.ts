@@ -89,6 +89,11 @@ import {
 } from "./stt";
 import { getLanguageModeFromEnv } from "./language-config";
 import type { MicCapture, MicCaptureOptions } from "./soundlayer";
+import {
+  getEffectiveRecordingState,
+  isRecordingConflictError,
+  setRecordingState,
+} from "./recording-state";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -122,7 +127,6 @@ const BROKEN_MIC_MESSAGE =
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-let recordingState: "idle" | "recording" | "transcribing" = "idle";
 let retainedPolishSurface: STTPolishSurface | null = null;
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
@@ -1169,6 +1173,14 @@ export async function recordToBuffer(
     return null;
   }
 
+  const currentRecordingState = getEffectiveRecordingState();
+  if (currentRecordingState !== "idle") {
+    throw new Error(
+      `Recording already in progress (state: ${currentRecordingState})`,
+    );
+  }
+  setRecordingState("recording");
+
   const silenceChunksNeeded = pressToTalk
     ? Infinity
     : silenceChunksForMode(silenceMode);
@@ -1184,6 +1196,7 @@ export async function recordToBuffer(
     "/usr/local/bin/rec",
   ]);
   if (!recPath) {
+    setRecordingState("idle");
     throw new Error(
       "sox not installed. Install:\n" +
         "  macOS: brew install sox\n" +
@@ -1215,7 +1228,12 @@ export async function recordToBuffer(
 
   // Reset VAD state for fresh recording (skip in PTT mode — no VAD needed)
   if (!pressToTalk) {
-    await resetVAD();
+    try {
+      await resetVAD();
+    } catch (err) {
+      setRecordingState("idle");
+      throw err;
+    }
   }
 
   // Clear any leftover stop/cancel signals from previous recording
@@ -1260,7 +1278,7 @@ export async function recordToBuffer(
     const finish = (error?: Error) => {
       if (resolved) return;
       resolved = true;
-      recordingState = "idle";
+      setRecordingState("idle");
       clearTimeout(timer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
 
@@ -1379,7 +1397,7 @@ export async function recordToBuffer(
       }
 
       // Broadcast recording state to Voice Bar
-      recordingState = "recording";
+      setRecordingState("recording");
       broadcast({
         type: "state",
         state: "recording",
@@ -1560,8 +1578,11 @@ export async function waitForInput(
   pressToTalk: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
-  if (recordingState !== "idle") {
-    throw new Error(`Recording already in progress (state: ${recordingState})`);
+  const currentRecordingState = getEffectiveRecordingState();
+  if (currentRecordingState !== "idle") {
+    throw new Error(
+      `Recording already in progress (state: ${currentRecordingState})`,
+    );
   }
 
   // Record audio to buffer
@@ -1583,7 +1604,12 @@ export async function waitForInput(
       message: `Recording failed: ${err instanceof Error ? err.message : String(err)}`,
       recoverable: true,
     });
-    broadcast({ type: "state", state: "idle", source: "recording" });
+    if (
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
     throw err;
   }
   if (!pcmData) {
@@ -1663,7 +1689,7 @@ export async function waitForInput(
   }
 
   // Broadcast transcribing state to Voice Bar
-  recordingState = "transcribing";
+  setRecordingState("transcribing");
   broadcast({ type: "state", state: "transcribing" });
   broadcast({
     type: "transcription_status",
@@ -1747,7 +1773,7 @@ export async function waitForInput(
       console.error(
         "[voicelayer] Recording cancelled during transcription — discarding transcript",
       );
-      recordingState = "idle";
+      setRecordingState("idle");
       broadcast({ type: "state", state: "idle", source: "recording" });
       return null;
     }
@@ -1775,12 +1801,12 @@ export async function waitForInput(
     if (text) {
       broadcast({ type: "transcription", text });
     }
-    recordingState = "idle";
+    setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
 
     return text || null;
   } catch (err) {
-    recordingState = "idle";
+    setRecordingState("idle");
     broadcast({
       type: "error",
       message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1805,7 +1831,7 @@ export function clearInput(): void {
 }
 
 export function getRecordingState(): "idle" | "recording" | "transcribing" {
-  return recordingState;
+  return getEffectiveRecordingState();
 }
 
 export class SoxMicCapture implements MicCapture {
@@ -1862,7 +1888,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     throw err;
   }
 
-  recordingState = "transcribing";
+  setRecordingState("transcribing");
   broadcast({ type: "state", state: "transcribing" });
   broadcast({
     type: "transcription_status",
@@ -1893,11 +1919,11 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     if (text) {
       broadcast({ type: "transcription", text });
     }
-    recordingState = "idle";
+    setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
     return text || null;
   } catch (err) {
-    recordingState = "idle";
+    setRecordingState("idle");
     const retryableError = retainedRetranscriptionError(wavPath, err);
     broadcast({
       type: "error",
