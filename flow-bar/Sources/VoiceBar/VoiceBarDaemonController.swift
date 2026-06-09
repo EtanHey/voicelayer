@@ -458,7 +458,7 @@ final class VoiceBarDaemonController {
                 return
             }
             NSLog("[VoiceBar] Restarting daemon (attempt %d, after %.0fs)", restartCount, delay)
-            let result = launch()
+            let result = activateIfNeeded()
             if result == .unavailable, !VoiceLayerPaths.isVoicelayerDisabled() {
                 NSLog("[VoiceBar] Daemon restart attempt failed — rescheduling")
                 scheduleRestart(exitKind: "relaunch failed", code: -1, reason: .exit)

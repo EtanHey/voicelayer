@@ -266,6 +266,31 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(secondProcess.didRun)
     }
 
+    func testScheduledRestartRechecksExternalDaemonBeforeRelaunch() {
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 1
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var externalDaemonIsLive = false
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { externalDaemonIsLive },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        externalDaemonIsLive = true
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertFalse(secondProcess.didRun)
+        XCTAssertFalse(controller.ownsLaunchedProcess)
+    }
+
     func testScheduledRestartSkipsWhenAnotherActivationAlreadyLaunchedChild() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 1
