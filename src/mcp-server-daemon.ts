@@ -31,7 +31,7 @@ import {
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
-import { terminateSocketOwners } from "./mcp-socket-owner";
+import { resolveMcpSocketStartup } from "./daemon-startup";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
@@ -88,44 +88,17 @@ async function main() {
     `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
   );
 
-  // Startup validation: refuse if another instance is actively listening.
-  // Retry with backoff — the old process may still be tearing down after SIGTERM.
-  let socketStillLive = false;
-  for (const delayMs of [0, 200, 500]) {
-    if (delayMs > 0) await Bun.sleep(delayMs);
-    if (!(await isSocketLive(MCP_SOCKET_PATH))) {
-      socketStillLive = false;
-      break;
-    }
-    socketStillLive = true;
-  }
-  if (socketStillLive) {
-    const reclaimedPids = terminateSocketOwners(MCP_SOCKET_PATH);
-    if (reclaimedPids.length > 0) {
-      console.error(
-        `[voicelayer-daemon] Reclaiming live MCP socket from PID(s): ${reclaimedPids.join(", ")}`,
-      );
-    } else {
-      console.error(
-        `[voicelayer-daemon] Live MCP socket had no discoverable owner; rechecking before fatal exit`,
-      );
-    }
-    for (const delayMs of [300, 700, 1500]) {
-      await Bun.sleep(delayMs);
-      if (!(await isSocketLive(MCP_SOCKET_PATH))) {
-        socketStillLive = false;
-        break;
-      }
-    }
-  }
-  if (socketStillLive) {
-    console.error(
-      `[voicelayer-daemon] FATAL: Another daemon is already listening on ${MCP_SOCKET_PATH}`,
-    );
-    console.error(
-      `[voicelayer-daemon] If this is stale, remove the socket: rm ${MCP_SOCKET_PATH}`,
-    );
-    process.exit(1);
+  // Startup validation: yield cleanly if another healthy daemon already owns
+  // the socket. Exit 0 prevents launchd KeepAlive from tight-respawning a
+  // redundant loser during VoiceBar/LaunchAgent contention.
+  const socketStartupDecision = await resolveMcpSocketStartup({
+    socketPath: MCP_SOCKET_PATH,
+    isSocketLive,
+    sleep: Bun.sleep,
+    log: console.error,
+  });
+  if (socketStartupDecision.action === "stand_down") {
+    process.exit(socketStartupDecision.exitCode);
   }
 
   // Acquire process lock after socket validation so a test or accidental start

@@ -46,6 +46,11 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(plistTemplate).not.toContain("<key>SuccessfulExit</key>");
   });
 
+  test("daemon respawns are throttled to avoid socket churn loops", () => {
+    expect(plistTemplate).toContain("<key>ThrottleInterval</key>");
+    expect(plistTemplate).toContain("<integer>10</integer>");
+  });
+
   test("VoiceBar rebuild installs the LaunchAgent only when the app is not running", () => {
     expect(buildScript).toContain("launchd/install.sh");
     expect(buildScript).toContain("VOICEBAR_SKIP_LAUNCHD_INSTALL");
