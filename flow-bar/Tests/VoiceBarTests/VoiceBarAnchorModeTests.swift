@@ -26,10 +26,10 @@ final class VoiceBarAnchorModeTests: XCTestCase {
         defaults.set(true, forKey: VoiceBarAnchorPreferences.positionLockedKey)
         preferences.saveAnchorMode(.bottomCenter)
 
-        XCTAssertEqual(preferences.loadAnchorMode(), .topCenter)
+        XCTAssertEqual(preferences.loadAnchorMode(), .bottomCenter)
         XCTAssertEqual(
             defaults.string(forKey: VoiceBarAnchorPreferences.anchorModeKey),
-            VoiceBarAnchorMode.topCenter.rawValue
+            VoiceBarAnchorMode.bottomCenter.rawValue
         )
         XCTAssertNil(defaults.object(forKey: VoiceBarAnchorPreferences.positionLockedKey))
     }
@@ -81,24 +81,22 @@ final class VoiceBarAnchorModeTests: XCTestCase {
         XCTAssertEqual(VoiceBarAnchorMode(defaultsValue: "wide-orange"), .follow)
     }
 
-    func testAnchoredModesUseTopNotchPlacement() {
+    func testBottomCenterAnchorUsesCenteredXAndDockClearedYOffset() {
         let visibleFrame = CGRect(x: 40, y: 80, width: 1440, height: 900)
         let pillSize = CGSize(width: 190, height: 50)
-        let expectedTopY = visibleFrame.maxY + 22
 
-        for mode in VoiceBarAnchorMode.anchoredPositionModes {
-            let placement = mode.placement(
-                visibleFrame: visibleFrame,
-                pillSize: pillSize
-            )
-            let minY = visibleFrame.origin.y
-                + (visibleFrame.height * (placement.verticalOffset ?? -1))
-                - (pillSize.height / 2)
+        let placement = VoiceBarAnchorMode.bottomCenter.placement(
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
+        )
 
-            XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
-            XCTAssertEqual(minY + pillSize.height, expectedTopY, accuracy: 0.001)
-            XCTAssertFalse(placement.followsMouse)
-        }
+        XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
+        XCTAssertEqual(
+            placement.verticalOffset ?? -1,
+            (24 + (pillSize.height / 2)) / visibleFrame.height,
+            accuracy: 0.001
+        )
+        XCTAssertFalse(placement.followsMouse)
     }
 
     func testFollowAnchorKeepsLegacyTopCenterMouseFollowing() {
@@ -120,7 +118,7 @@ final class VoiceBarAnchorModeTests: XCTestCase {
 
     func testAnchorMenuTitlesPresentFollowModeAsOff() {
         XCTAssertEqual(VoiceBarAnchorMode.follow.anchorMenuTitle, "Off")
-        XCTAssertEqual(VoiceBarAnchorMode.topCenter.anchorMenuTitle, "Notch Center")
-        XCTAssertEqual(VoiceBarAnchorMode.bottomCenter.anchorMenuTitle, "Notch Center")
+        XCTAssertEqual(VoiceBarAnchorMode.topCenter.anchorMenuTitle, "Top Center")
+        XCTAssertEqual(VoiceBarAnchorMode.bottomCenter.anchorMenuTitle, "Bottom Center")
     }
 }

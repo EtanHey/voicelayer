@@ -56,11 +56,13 @@ public enum Theme {
     public static func compactPillWidth(for statusText: String, accessoryButtonCount: Int = 0) -> CGFloat {
         let textWidth = compactStatusWidth(for: statusText)
         let safeButtonCount = max(0, accessoryButtonCount)
-        let accessoryButtonWidth: CGFloat = if safeButtonCount > 0 {
-            (CGFloat(safeButtonCount) * pillActionButtonSize) +
+        let accessoryButtonWidth: CGFloat
+        if safeButtonCount > 0 {
+            accessoryButtonWidth =
+                (CGFloat(safeButtonCount) * pillActionButtonSize) +
                 (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing)
         } else {
-            0
+            accessoryButtonWidth = 0
         }
         let accessoryLeadingGap: CGFloat = safeButtonCount > 0 ? 8 : 0
         let compactChromeWidth: CGFloat = 68
@@ -108,7 +110,6 @@ public enum Theme {
     public static func transcriptPreviewPillWidth(for text: String) -> CGFloat {
         min(panelWidth - (panelPadding * 2), transcriptPreviewWidth(for: text) + 82)
     }
-
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     public static let teleprompterViewportWidth: CGFloat = 280
@@ -127,8 +128,6 @@ public enum Theme {
     public static let panelPadding: CGFloat = 4
     /// Vertical offset from top of visible area.
     public static let topPadding: CGFloat = 12
-    /// Overlap above the usable desktop so the existing pill tucks behind the menu-bar notch.
-    public static let topAnchorNotchOverlap: CGFloat = 22
 
     // MARK: - Animation
 

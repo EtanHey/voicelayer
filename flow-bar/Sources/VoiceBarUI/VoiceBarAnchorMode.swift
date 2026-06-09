@@ -12,30 +12,31 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
     public static let anchorMenuModes: [VoiceBarAnchorMode] = [
         .follow,
         .topCenter,
+        .bottomCenter,
     ]
 
     public static let anchoredPositionModes: [VoiceBarAnchorMode] = [
         .topCenter,
+        .bottomCenter,
     ]
 
     public init(defaultsValue: String?) {
-        let mode = defaultsValue.flatMap(Self.init(rawValue:)) ?? .follow
-        self = mode == .bottomCenter ? .topCenter : mode
+        self = defaultsValue.flatMap(Self.init(rawValue:)) ?? .follow
     }
 
     public var displayName: String {
         switch self {
         case .follow: "Follow Mouse"
-        case .bottomCenter: "Notch Center"
-        case .topCenter: "Notch Center"
+        case .bottomCenter: "Bottom Center"
+        case .topCenter: "Top Center"
         }
     }
 
     public var anchorMenuTitle: String {
         switch self {
         case .follow: "Off"
-        case .bottomCenter: "Notch Center"
-        case .topCenter: "Notch Center"
+        case .bottomCenter: "Bottom Center"
+        case .topCenter: "Top Center"
         }
     }
 
@@ -46,34 +47,20 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
     public func placement(
         visibleFrame: CGRect,
         pillSize: CGSize,
-        bottomClearance: CGFloat = 24,
-        topOverlap: CGFloat = Theme.topAnchorNotchOverlap
+        bottomClearance: CGFloat = 24
     ) -> VoiceBarAnchorPlacement {
         switch self {
         case .follow:
             VoiceBarAnchorPlacement(horizontalOffset: 0.5, verticalOffset: nil, followsMouse: true)
-        case .topCenter, .bottomCenter:
+        case .topCenter:
+            VoiceBarAnchorPlacement(horizontalOffset: 0.5, verticalOffset: nil, followsMouse: false)
+        case .bottomCenter:
             VoiceBarAnchorPlacement(
                 horizontalOffset: 0.5,
-                verticalOffset: Self.topNotchVerticalOffset(
-                    visibleFrame: visibleFrame,
-                    pillSize: pillSize,
-                    topOverlap: topOverlap
-                ),
+                verticalOffset: min(0.95, max(0, (bottomClearance + (pillSize.height / 2)) / visibleFrame.height)),
                 followsMouse: false
             )
         }
-    }
-
-    private static func topNotchVerticalOffset(
-        visibleFrame: CGRect,
-        pillSize: CGSize,
-        topOverlap: CGFloat
-    ) -> CGFloat {
-        guard visibleFrame.height > 0 else { return 0.5 }
-        let targetTopY = visibleFrame.maxY + max(0, topOverlap)
-        let targetMidY = targetTopY - (pillSize.height / 2)
-        return (targetMidY - visibleFrame.origin.y) / visibleFrame.height
     }
 }
 
