@@ -214,6 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
+        hosting.activeHitTestProvider = { [weak self] point in
+            Self.panelLayout(for: self?.voiceState).containsActivePoint(point)
+        }
         hosting.frame = NSRect(
             x: 0, y: 0,
             width: initialLayout.panelSize.width,
@@ -585,11 +588,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyPanelLayout(animated: Bool) {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
-        guard let visibleFrame = targetScreen?.visibleFrame else { return }
+        guard let targetScreen else { return }
+        let visibleFrame = targetScreen.visibleFrame
+        let anchorFrame = placementFrame(for: targetScreen)
         let layout = Self.panelLayout(for: voiceState)
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = PillResizePlan.makeAnchored(
-            visibleFrame: visibleFrame,
+            visibleFrame: anchorFrame,
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset,
             topPadding: Theme.topPadding,
@@ -770,6 +775,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             visibleFrame: visibleFrame,
             pillSize: pillSize
         )
+    }
+
+    private func placementFrame(for screen: NSScreen) -> CGRect {
+        verticalOffset == nil ? screen.frame : screen.visibleFrame
     }
 
     private func reapplyAnchoredPanelPosition() {

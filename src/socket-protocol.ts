@@ -32,6 +32,7 @@ export interface StateEvent {
    * recording resets barInitiatedRecording before the transcription arrives, killing paste.
    */
   source?: "playback" | "recording";
+  duration_ms?: number;
 }
 
 export interface SpeechEvent {
@@ -45,6 +46,12 @@ export interface TranscriptionEvent {
   text: string;
   /** true = partial/streaming result, false = final result. */
   partial?: boolean;
+  duration_ms?: number;
+}
+
+export interface BlockingQuestionWaitingEvent {
+  type: "blocking_question_waiting";
+  waiting: boolean;
 }
 
 export interface TranscriptionStatusEvent {
@@ -162,6 +169,7 @@ export type SocketEvent =
   | StateEvent
   | SpeechEvent
   | TranscriptionEvent
+  | BlockingQuestionWaitingEvent
   | TranscriptionStatusEvent
   | AudioLevelEvent
   | ErrorEvent

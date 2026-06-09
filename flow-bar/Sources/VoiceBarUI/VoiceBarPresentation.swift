@@ -27,6 +27,17 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
     public var isMultiline: Bool
 }
 
+public enum DictionaryLearningOfferKind: Equatable {
+    case correction
+    case term
+}
+
+public struct DictionaryLearningOffer: Equatable {
+    public var kind: DictionaryLearningOfferKind
+    public var heard: String
+    public var written: String
+}
+
 public enum VoiceBarPresentation {
     public static let readyHotkeyHint = "F5 to talk"
     public static let holdToTalkHint = "Hold to talk"
@@ -71,14 +82,31 @@ public enum VoiceBarPresentation {
     public static func isHotkeyTransitionStatus(_ statusText: String) -> Bool {
         switch statusText {
         case holdToTalkHint, releaseToSendHint, tapAgainToLockHint:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 
     public static func isPanelDraggable(mode: VoiceMode) -> Bool {
         false
+    }
+
+    public static func dictionaryLearningOffer(original: String, edited: String) -> DictionaryLearningOffer? {
+        let originalWords = original.split(whereSeparator: \.isWhitespace).map(String.init)
+        let editedWords = edited.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard originalWords.count == editedWords.count else { return nil }
+
+        let changed = zip(originalWords, editedWords).filter { $0.0 != $0.1 }
+        guard changed.count == 1, let pair = changed.first else { return nil }
+        let heard = pair.0.trimmingCharacters(in: .punctuationCharacters)
+        let written = pair.1.trimmingCharacters(in: .punctuationCharacters)
+        guard !heard.isEmpty, !written.isEmpty else { return nil }
+
+        if heard.caseInsensitiveCompare(written) == .orderedSame {
+            return DictionaryLearningOffer(kind: .term, heard: written, written: written)
+        }
+        return DictionaryLearningOffer(kind: .correction, heard: heard, written: written)
     }
 
     public static func idleAccessoryButtonCount(
@@ -206,5 +234,4 @@ public enum VoiceBarPresentation {
             errorMessage ?? "Error"
         }
     }
-
 }

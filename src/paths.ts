@@ -27,6 +27,7 @@ const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
 const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
+const DEV_INSTANCE_ENV = "VOICELAYER_DEV_INSTANCE";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
 /**
@@ -42,6 +43,12 @@ mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 // Simple path join — avoids importing node:path just for concatenation
 function tmpPath(name: string): string {
   return `${TMP}/${name}`;
+}
+
+export function isVoicelayerDevInstance(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return env[DEV_INSTANCE_ENV]?.trim() === "1";
 }
 
 function readOverride(
@@ -95,7 +102,9 @@ export function retainedRecordingFilePath(
 ): string {
   return readOverride(
     RETAINED_RECORDING_OVERRIDE_ENV,
-    tmpPath("voicelayer-last-recording.wav"),
+    isVoicelayerDevInstance(env)
+      ? tmpPath("voicelayer-dev-last-recording.wav")
+      : tmpPath("voicelayer-last-recording.wav"),
     env,
   );
 }
@@ -147,7 +156,13 @@ export function isVoicelayerDisabled(options?: {
  * production VoiceBar and race record/stop commands.
  */
 export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(SOCKET_OVERRIDE_ENV, tmpPath("voicelayer.sock"), env);
+  return readOverride(
+    SOCKET_OVERRIDE_ENV,
+    isVoicelayerDevInstance(env)
+      ? tmpPath("voicelayer-dev.sock")
+      : tmpPath("voicelayer.sock"),
+    env,
+  );
 }
 
 export function isDefaultVoiceBarSocketPath(
@@ -164,7 +179,13 @@ export const SOCKET_PATH = getVoiceBarSocketPath();
  * Separate from SOCKET_PATH so Voice Bar can keep serving on voicelayer.sock.
  */
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+  return readOverride(
+    MCP_SOCKET_OVERRIDE_ENV,
+    isVoicelayerDevInstance(env)
+      ? tmpPath("voicelayer-dev-mcp.sock")
+      : tmpPath("voicelayer-mcp.sock"),
+    env,
+  );
 }
 
 export function getMcpSocketOverridePath(
@@ -186,7 +207,9 @@ export const MCP_SOCKET_PATH = getMcpSocketPath();
  * Standalone daemon PID file.
  * Separate from MCP_PID_FILE so daemon and MCP can coexist.
  */
-export const DAEMON_PID_FILE = tmpPath("voicelayer-daemon.pid");
+export const DAEMON_PID_FILE = isVoicelayerDevInstance()
+  ? tmpPath("voicelayer-dev-daemon.pid")
+  : tmpPath("voicelayer-daemon.pid");
 
 /**
  * Safe write that refuses to follow symlinks.

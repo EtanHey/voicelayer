@@ -46,6 +46,27 @@ describe("secure session paths", () => {
     );
   });
 
+  it("uses isolated dev-instance socket paths unless QA overrides are explicit", async () => {
+    const processLock = await import("../process-lock");
+    const devEnv = { VOICELAYER_DEV_INSTANCE: "1" } as NodeJS.ProcessEnv;
+
+    expect(paths.getVoiceBarSocketPath(devEnv)).toBe("/tmp/voicelayer-dev.sock");
+    expect(paths.getMcpSocketPath(devEnv)).toBe("/tmp/voicelayer-dev-mcp.sock");
+    expect(paths.retainedRecordingFilePath(devEnv)).toBe(
+      "/tmp/voicelayer-dev-last-recording.wav",
+    );
+    expect(processLock.getMcpPidFilePath(devEnv)).toBe(
+      "/tmp/voicelayer-dev-mcp.pid",
+    );
+
+    expect(
+      paths.getVoiceBarSocketPath({
+        VOICELAYER_DEV_INSTANCE: "1",
+        QA_VOICE_SOCKET_PATH: "/tmp/custom-dev.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/custom-dev.sock");
+  });
+
   it("reports default socket paths from centralized override state", () => {
     expect(paths.isDefaultVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(true);
     expect(paths.isDefaultMcpSocketPath({} as NodeJS.ProcessEnv)).toBe(true);

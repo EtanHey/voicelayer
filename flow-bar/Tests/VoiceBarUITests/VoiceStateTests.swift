@@ -2,6 +2,76 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testVoiceAskWaitingIndicatorOnlyFollowsExplicitBlockingEvent() {
+        let state = VoiceState()
+
+        state.handleEvent([
+            "type": "blocking_question_waiting",
+            "waiting": true,
+        ])
+        XCTAssertTrue(state.isBlockingQuestionWaitingForUser)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "plain speech",
+        ])
+        XCTAssertFalse(state.isBlockingQuestionWaitingForUser)
+    }
+
+    func testFinalTranscriptionStoresHistoryTimestampAndAudioDuration() {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let state = VoiceState(recentTranscriptionsLoader: { [] })
+        state.minimumTranscribingDisplayDuration = 0
+        state.currentDateProvider = { now }
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "keeps its audio time",
+            "duration_ms": 8400,
+        ])
+
+        XCTAssertEqual(state.recentHistoryItems.count, 1)
+        XCTAssertEqual(state.recentHistoryItems[0].text, "keeps its audio time")
+        XCTAssertEqual(state.recentHistoryItems[0].createdAt, now)
+        XCTAssertEqual(state.recentHistoryItems[0].audioDurationMs, 8400)
+    }
+
+    func testFailedTranscriptionStaysInHistoryAtRecordTimeWithAudioDuration() {
+        let started = Date(timeIntervalSince1970: 1_790_000_100)
+        let state = VoiceState(recentTranscriptionsLoader: { [] })
+        state.minimumTranscribingDisplayDuration = 0
+        state.currentDateProvider = { started }
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "duration_ms": 42000,
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "",
+            "duration_ms": 42000,
+        ])
+
+        XCTAssertEqual(state.recentHistoryItems.count, 1)
+        XCTAssertEqual(state.recentHistoryItems[0].createdAt, started)
+        XCTAssertEqual(state.recentHistoryItems[0].audioDurationMs, 42000)
+        XCTAssertTrue(state.recentHistoryItems[0].isFailed)
+    }
+
+    func testEditWordInferenceOffersCorrectionWhenOneWordChanges() {
+        let offer = VoiceBarPresentation.dictionaryLearningOffer(
+            original: "open the domekin dashboard",
+            edited: "open the Domica dashboard"
+        )
+
+        XCTAssertEqual(offer?.kind, .correction)
+        XCTAssertEqual(offer?.heard, "domekin")
+        XCTAssertEqual(offer?.written, "Domica")
+    }
+
     func testRecordIntentDoesNotTransitionLocally() {
         let state = VoiceState()
         var sentCommand: [String: Any]?
