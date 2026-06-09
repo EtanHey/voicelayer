@@ -56,7 +56,7 @@ final class VoiceBarDaemonLauncherTests: XCTestCase {
         XCTAssertNil(environment["QA_VOICE_SOCKET_PATH"])
         XCTAssertNil(environment["QA_VOICE_MCP_SOCKET_PATH"])
         XCTAssertNil(environment["CODEX_CI"])
-        XCTAssertEqual(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"], "1")
+        XCTAssertNil(environment["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
         let path = try XCTUnwrap(environment["PATH"])
         XCTAssertTrue(path.contains("/opt/homebrew/bin"))
         XCTAssertTrue(path.contains("/usr/local/bin"))
