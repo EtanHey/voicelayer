@@ -214,6 +214,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hosting.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
+        hosting.activeHitTestProvider = { [weak self] point in
+            Self.panelLayout(for: self?.voiceState).containsActivePoint(point)
+        }
         hosting.frame = NSRect(
             x: 0, y: 0,
             width: initialLayout.panelSize.width,
@@ -235,6 +238,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
+        }
+        pill.activeHitTestProvider = { [weak self] point in
+            Self.panelLayout(for: self?.voiceState).containsActivePoint(point)
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)

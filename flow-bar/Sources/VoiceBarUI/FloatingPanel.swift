@@ -8,10 +8,17 @@ import SwiftUI
 
 public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitRectProvider: (() -> NSRect)?
+    public var activeHitTestProvider: ((NSPoint) -> Bool)?
 
-    public override func hitTest(_ point: NSPoint) -> NSView? {
-        if let activeHitRectProvider, !activeHitRectProvider().contains(point) {
-            return nil
+    override public func hitTest(_ point: NSPoint) -> NSView? {
+        if let activeHitTestProvider {
+            if !activeHitTestProvider(point) {
+                return nil
+            }
+        } else {
+            if let activeHitRectProvider, !activeHitRectProvider().contains(point) {
+                return nil
+            }
         }
         return super.hitTest(point)
     }
@@ -20,6 +27,7 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var activeHitRectProvider: (() -> NSRect)?
+    public var activeHitTestProvider: ((NSPoint) -> Bool)?
     public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
 
@@ -64,7 +72,7 @@ public final class FloatingPillPanel: NSPanel {
 
     /// Allow key so SwiftUI Buttons respond to clicks.
     /// .nonactivatingPanel prevents the app from activating regardless.
-    public override var canBecomeKey: Bool {
+    override public var canBecomeKey: Bool {
         true
     }
 
@@ -72,7 +80,7 @@ public final class FloatingPillPanel: NSPanel {
     /// Note: removed makeKey() on left click — it was stealing focus from the
     /// user's active app. .nonactivatingPanel + canBecomeKey=true is sufficient
     /// for SwiftUI buttons to respond without activation.
-    public override func sendEvent(_ event: NSEvent) {
+    override public func sendEvent(_ event: NSEvent) {
         if event.type == .rightMouseDown,
            let contentView,
            let menu = contextMenuProvider?() {
@@ -81,9 +89,10 @@ public final class FloatingPillPanel: NSPanel {
         }
 
         if event.type == .leftMouseDown {
-            let startedInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
+            let startedInVisiblePill = pointIsActive(event.locationInWindow)
             dragStartWasInVisiblePill = shouldHandlePillDrag(startedInVisiblePill: startedInVisiblePill)
-        } else if event.type == .leftMouseDragged, shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
+        } else if event.type == .leftMouseDragged,
+                  shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
             performDrag(with: event)
             return
         } else if event.type == .leftMouseUp {
@@ -93,12 +102,19 @@ public final class FloatingPillPanel: NSPanel {
         super.sendEvent(event)
     }
 
-    public override var canBecomeMain: Bool {
+    override public var canBecomeMain: Bool {
         false
     }
 
     public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
         isPillDragEnabled && startedInVisiblePill
+    }
+
+    private func pointIsActive(_ point: NSPoint) -> Bool {
+        if let activeHitTestProvider {
+            return activeHitTestProvider(point)
+        }
+        return activeHitRectProvider?().contains(point) ?? true
     }
 
     /// Position pill on the given screen (or the screen containing the mouse).

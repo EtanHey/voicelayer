@@ -125,10 +125,16 @@ public enum Theme {
     public static let horizontalOffset: CGFloat = 0.5
     /// Extra transparent clearance around pill so capsule corners aren't clipped by window edge.
     public static let panelPadding: CGFloat = 4
+    /// Side radius used by the fused notch container. The visual body is inset
+    /// by this amount so the top island width is body width + 2 * radius.
+    public static let notchSideRadius: CGFloat = 18
     /// Vertical offset from top of visible area.
     public static let topPadding: CGFloat = 12
     /// Overlap above the usable desktop so the existing pill tucks behind the menu-bar notch.
     public static let topAnchorNotchOverlap: CGFloat = 22
+    /// Height reserved above the voice controls so the container reaches the
+    /// camera island instead of floating below it.
+    public static let notchFusionBandHeight: CGFloat = topAnchorNotchOverlap
 
     // MARK: - Animation
 

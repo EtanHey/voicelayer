@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -79,6 +79,29 @@ public struct BarView: View {
 
     public var body: some View {
         pillContent
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .padding(.horizontal, Theme.notchSideRadius)
+            .background {
+                NotchShape()
+                    .fill(Theme.pillBackground)
+            }
+            .overlay {
+                NotchShape()
+                    .fill(stateWashColor)
+                    .allowsHitTesting(false)
+                    .animation(Theme.modeTransition, value: state.mode)
+            }
+            .overlay {
+                NotchShape()
+                    .stroke(borderColor, lineWidth: borderWidth)
+                    .allowsHitTesting(false)
+                    .animation(Theme.modeTransition, value: state.mode)
+            }
+            .overlay {
+                NotchShape()
+                    .stroke(Theme.pillInnerEdge, lineWidth: 0.5)
+                    .allowsHitTesting(false)
+            }
     }
 
     public init(state: VoiceState, commandRouter: BarCommandRouting) {
@@ -148,27 +171,6 @@ public struct BarView: View {
             alignment: .leading
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
-        .background(Theme.pillBackground)
-        .clipShape(Capsule())
-        .overlay {
-            Capsule()
-                .fill(stateWashColor)
-                .allowsHitTesting(false)
-                .animation(Theme.modeTransition, value: state.mode)
-        }
-        .overlay {
-            // State-dependent border glow
-            Capsule()
-                .strokeBorder(borderColor, lineWidth: borderWidth)
-                .allowsHitTesting(false)
-                .animation(Theme.modeTransition, value: state.mode)
-        }
-        .overlay {
-            // Subtle inner edge for depth
-            Capsule()
-                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
-                .allowsHitTesting(false)
-        }
         // No drop shadow — clean edges like Wispr Flow
         .opacity(1.0)
         .fixedSize(horizontal: false, vertical: true)
@@ -437,14 +439,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -560,7 +562,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -653,7 +655,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +685,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))

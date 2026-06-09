@@ -10,8 +10,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 40)
-        XCTAssertLessThanOrEqual(layout.panelSize.height, 40)
+        XCTAssertLessThanOrEqual(layout.bodySize.width, 40)
+        XCTAssertLessThanOrEqual(layout.bodySize.height, 40)
     }
 
     func testActiveHitRectStaysInsideSmallCollapsedPanel() {
@@ -27,6 +27,49 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertLessThan(layout.activeHitRect.height, Theme.pillCompactHeight)
     }
 
+    func testNotchContainerAddsSideRadiusAndTopFusionBandToExpandedLayout() {
+        let contentWidth = Theme.compactPillWidth(for: VoiceBarPresentation.readyHotkeyHint)
+        let layout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(
+            layout.panelSize.width,
+            contentWidth + (Theme.panelPadding * 2) + (Theme.notchSideRadius * 2),
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            layout.panelSize.height,
+            Theme.pillCompactHeight + (Theme.panelPadding * 2) + Theme.notchFusionBandHeight,
+            accuracy: 0.001
+        )
+    }
+
+    func testNotchHitRegionIncludesTopFusionBandButExcludesLowerSideSlivers() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertTrue(layout.containsActivePoint(CGPoint(
+            x: layout.panelSize.width / 2,
+            y: layout.panelSize.height - 1
+        )))
+        XCTAssertTrue(layout.containsActivePoint(CGPoint(x: layout.activeHitRect.midX, y: layout.activeHitRect.midY)))
+        XCTAssertFalse(layout.containsActivePoint(CGPoint(x: Theme.notchSideRadius / 2, y: Theme.panelPadding + 1)))
+        XCTAssertFalse(layout.containsActivePoint(CGPoint(
+            x: layout.panelSize.width - (Theme.notchSideRadius / 2),
+            y: Theme.panelPadding + 1
+        )))
+    }
+
     func testExpandedIdlePanelFitsHotkeyHintAndAccessoryButtons() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,
@@ -36,9 +79,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 190)
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 220)
-        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertGreaterThanOrEqual(layout.bodySize.width, 190)
+        XCTAssertLessThanOrEqual(layout.bodySize.width, 220)
+        XCTAssertLessThan(layout.bodySize.width, Theme.panelWidth)
     }
 
     func testExpandedIdlePanelIncludesVisibleAccessoryButtonsInWidth() {
@@ -51,9 +94,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 220)
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 250)
-        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertGreaterThanOrEqual(layout.bodySize.width, 220)
+        XCTAssertLessThanOrEqual(layout.bodySize.width, 250)
+        XCTAssertLessThan(layout.bodySize.width, Theme.panelWidth)
     }
 
     func testExpandedIdlePanelWithTwoAccessoryButtonsDoesNotReserveEmptyRightRail() {
@@ -66,8 +109,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 190)
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 205)
+        XCTAssertGreaterThanOrEqual(layout.bodySize.width, 190)
+        XCTAssertLessThanOrEqual(layout.bodySize.width, 205)
     }
 
     func testExpandedIdlePanelAccessoriesNeverShrinkEmptyStatusBelowBaseMinimum() {
@@ -88,7 +131,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(accessoryLayout.panelSize.width, noAccessoryLayout.panelSize.width)
+        XCTAssertGreaterThanOrEqual(accessoryLayout.bodySize.width, noAccessoryLayout.bodySize.width)
     }
 
     func testExpandedIdlePanelGrowsForLongerStatusWithoutUsingFullPanel() {
@@ -100,8 +143,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThan(layout.panelSize.width, 260)
-        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertGreaterThan(layout.bodySize.width, 260)
+        XCTAssertLessThan(layout.bodySize.width, Theme.panelWidth)
     }
 
     func testHotkeyTransitionHintsReserveSamePanelWidth() {
@@ -120,7 +163,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(holdLayout.panelSize.width, lockLayout.panelSize.width)
+        XCTAssertEqual(holdLayout.bodySize.width, lockLayout.bodySize.width)
     }
 
     func testTranscriptPreviewPanelGrowsOnlyToPreviewContent() {
@@ -131,8 +174,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
-        XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
+        XCTAssertLessThan(layout.bodySize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.bodySize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
     func testTranscribingPanelIsCompactProcessingWaveformOnly() {
@@ -144,8 +187,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 112)
-        XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
+        XCTAssertLessThanOrEqual(layout.bodySize.width, 112)
+        XCTAssertEqual(layout.bodySize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
     func testTranscribingPanelExpandsForWarmupStatusText() {
@@ -157,9 +200,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 220)
-        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
-        XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
+        XCTAssertGreaterThanOrEqual(layout.bodySize.width, 220)
+        XCTAssertLessThan(layout.bodySize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.bodySize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
     func testPasteFlowKeepsFixedPanelWidthAcrossRecordingLoadingAndSuccess() {
@@ -188,9 +231,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(recording.panelSize.width, Theme.panelWidth)
-        XCTAssertEqual(loading.panelSize.width, Theme.panelWidth)
-        XCTAssertEqual(success.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(recording.bodySize.width, Theme.panelWidth)
+        XCTAssertEqual(loading.bodySize.width, Theme.panelWidth)
+        XCTAssertEqual(success.bodySize.width, Theme.panelWidth)
     }
 
     func testSpeakingQueuePanelFitsQueueVisualizationChrome() {
@@ -203,8 +246,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
-        XCTAssertEqual(layout.panelSize.height, Theme.teleprompterViewportHeight + (Theme.panelPadding * 2))
+        XCTAssertEqual(layout.bodySize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.bodySize.height, Theme.teleprompterViewportHeight + (Theme.panelPadding * 2))
     }
 
     func testLongTranscriptPreviewIncludesIconAndPaddingChrome() {
@@ -216,6 +259,6 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.bodySize.width, Theme.panelWidth)
     }
 }

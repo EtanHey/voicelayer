@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -110,9 +110,49 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
+    func testPillHostingViewUsesNativeNotchHitRegion() {
+        let state = VoiceState()
+        state.mode = .idle
+        state.isConnected = true
+        state.isCollapsed = false
+
+        let router = SpyCommandRouter()
+        let layout = VoiceBarPanelLayout.make(
+            mode: state.mode,
+            isCollapsed: state.isCollapsed,
+            previewText: nil,
+            statusText: VoiceBarPresentation.readyHotkeyHint,
+            padding: Theme.panelPadding
+        )
+        let host = PillHostingView(rootView: BarView(state: state, commandRouter: router))
+        host.activeHitTestProvider = { layout.containsActivePoint($0) }
+        host.frame = NSRect(origin: .zero, size: layout.panelSize)
+
+        XCTAssertNotNil(host.hitTest(NSPoint(x: layout.panelSize.width / 2, y: layout.panelSize.height - 1)))
+        XCTAssertNil(host.hitTest(NSPoint(x: Theme.notchSideRadius / 2, y: Theme.panelPadding + 1)))
+    }
+
     private func makeHost(state: VoiceState, router: SpyCommandRouter) -> NSHostingView<BarView> {
         let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
-        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let layout = VoiceBarPanelLayout.make(
+            mode: state.mode,
+            isCollapsed: state.isCollapsed,
+            previewText: nil,
+            statusText: VoiceBarPresentation.liveStatusText(
+                mode: state.mode,
+                transcript: state.transcript,
+                confirmationText: state.confirmationText,
+                hotkeyPhase: state.hotkeyPhase,
+                hotkeyEnabled: state.hotkeyEnabled,
+                errorMessage: state.errorMessage,
+                transcribingStatusText: state.transcribingStatusText,
+                commandModeState: state.commandModeState,
+                activeClipMarker: state.activeClipMarker
+            ),
+            queueItemCount: state.queueItems.count,
+            padding: Theme.panelPadding
+        )
+        host.frame = NSRect(origin: .zero, size: layout.panelSize)
         let window = NSWindow(
             contentRect: host.frame,
             styleMask: [.borderless],
@@ -127,15 +167,23 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 26 - 2 - 13, y: host.bounds.midY)
+        NSPoint(x: bodyMaxX(in: host) - 14 - 26 - 2 - 13, y: bodyMidY(in: host))
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 13, y: host.bounds.midY)
+        NSPoint(x: bodyMaxX(in: host) - 14 - 13, y: bodyMidY(in: host))
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.minX + 14 + 3 + 8 + 9, y: host.bounds.midY)
+        NSPoint(x: host.bounds.minX + Theme.notchSideRadius + 14 + 3 + 8 + 9, y: bodyMidY(in: host))
+    }
+
+    private func bodyMaxX(in host: NSView) -> CGFloat {
+        host.bounds.maxX - Theme.notchSideRadius
+    }
+
+    private func bodyMidY(in host: NSView) -> CGFloat {
+        (host.bounds.height - Theme.notchFusionBandHeight) / 2
     }
 
     private func click(_ host: NSView, at point: NSPoint) {
