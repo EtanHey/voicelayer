@@ -34,15 +34,33 @@ describe("MCP daemon LaunchAgent install contract", () => {
   test("installer leaves the disable flag under explicit caller control", () => {
     expect(installScript).toContain("/tmp/.voicelayer-daemon-disabled");
     expect(installScript).not.toContain('rm -f "$DAEMON_DISABLE_FLAG"');
-    expect(installScript).not.toContain('printf "disabled\\n" > "$DAEMON_DISABLE_FLAG"');
+    expect(installScript).not.toContain(
+      'printf "disabled\\n" > "$DAEMON_DISABLE_FLAG"',
+    );
   });
 
   test("VoiceBar rebuild does not install the retired daemon LaunchAgent", () => {
     expect(buildScript).toContain("launchd/install.sh");
-    expect(buildScript).toContain(
-      "Retiring MCP daemon LaunchAgent",
-    );
+    expect(buildScript).toContain("Retiring MCP daemon LaunchAgent");
     expect(buildScript).not.toContain("VOICEBAR_FORCE_LAUNCHD_INSTALL");
-    expect(buildScript).not.toContain("pgrep -x VoiceBar");
+  });
+
+  test("VoiceBar build script stores at most one app backup outside /Applications", () => {
+    expect(buildScript).not.toContain("/Applications/VoiceBar.backup-");
+    expect(buildScript).not.toMatch(
+      /\/Applications\/[^"\n]*VoiceBar\.backup-.*\.app/,
+    );
+    expect(buildScript).toContain(
+      'VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"',
+    );
+    expect(buildScript).toContain('mkdir -p "$VOICEBAR_BACKUP_DIR"');
+    expect(buildScript).toContain('find "$VOICEBAR_BACKUP_DIR"');
+  });
+
+  test("VoiceBar build script refuses to replace the live app without an explicit force flag", () => {
+    expect(buildScript).toContain("VOICEBAR_FORCE_APP_REPLACE");
+    expect(buildScript).toContain(
+      "Refusing to replace /Applications/VoiceBar.app while VoiceBar is running",
+    );
   });
 });
