@@ -23,6 +23,10 @@ public enum Theme {
 
     // MARK: - Pill dimensions
 
+    /// v9 closed notch-neck width (mock --notch-w). The funnel panel's flat top matches
+    /// this so it reads as growing from the camera island, not a wider clipped box.
+    public static let notchNeckWidth: CGFloat = 128
+
     /// Dynamic width: pill shrink-wraps content with minimum size.
     public static let pillMinWidth: CGFloat = 100
     public static let pillCompactWidth: CGFloat = 136

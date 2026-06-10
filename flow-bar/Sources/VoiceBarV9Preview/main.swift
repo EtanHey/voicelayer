@@ -25,10 +25,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `.ultraThinMaterial` blurs the real desktop wallpaper behind the panel — the only
         // honest test of whether Liquid Glass survives in an unfocused .nonactivatingPanel.
         let glassProbe = CommandLine.arguments.contains("--glass-probe")
-        let rootView: AnyView = glassProbe
-            ? AnyView(GlassProbeSurface())
-            : AnyView(NotchV9PreviewSurface())
-        let size = glassProbe ? NSSize(width: 340, height: 200) : NSSize(width: 460, height: 470)
+        // --live-states: render the REAL post-swap BarView for every voice state, so the
+        // qa-video gate captures the actual live view code with real on-screen glass.
+        let liveStates = CommandLine.arguments.contains("--live-states")
+        let rootView: AnyView
+        let size: NSSize
+        if glassProbe {
+            rootView = AnyView(GlassProbeSurface())
+            size = NSSize(width: 340, height: 200)
+        } else if liveStates {
+            rootView = AnyView(LiveBarStatesSurface())
+            size = NSSize(width: 520, height: 560)
+        } else {
+            rootView = AnyView(NotchV9PreviewSurface())
+            size = NSSize(width: 460, height: 470)
+        }
         let hosting = NSHostingView(rootView: rootView)
         hosting.frame = NSRect(origin: .zero, size: size)
 

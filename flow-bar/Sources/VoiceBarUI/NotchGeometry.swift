@@ -123,6 +123,87 @@ public struct NotchShape: Shape {
     }
 }
 
+// MARK: - BarSilhouette (mode → v9 shape mapping, steal-list §3)
+
+/// Which v9 silhouette a given voice mode renders. Pure mapping so the live BarView swap
+/// (Capsule → NotchShape/FunnelPanelShape) is unit-tested against the steal-list §3 state
+/// table without standing up SwiftUI.
+public enum BarSilhouette {
+    /// The two v9 silhouette kinds the live bar can take.
+    public enum Kind: Equatable, Sendable {
+        /// Compact black band hugging the camera island (idle / recording / transcribing /
+        /// error / disconnected) — one `NotchShape` flush to the menu bar.
+        case notchBand
+        /// The funnel that "grows OUT of the notch" — `FunnelPanelShape` for speaking.
+        case funnelPanel
+    }
+
+    /// steal-list §3 state table: speaking grows the funnel panel; every other state is the
+    /// bare notch band hugging the island.
+    public static func kind(for mode: VoiceMode) -> Kind {
+        switch mode {
+        case .speaking: .funnelPanel
+        case .idle, .recording, .transcribing, .error, .disconnected: .notchBand
+        }
+    }
+
+    /// The closed-island band shape (steal-list S3: top 6 / bottom 14).
+    public static func notchBandShape(
+        topRadius: CGFloat = NotchV9Style.closedTopRadius,
+        bottomRadius: CGFloat = NotchV9Style.closedBottomRadius
+    ) -> NotchShape {
+        NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+    }
+
+    /// The funnel panel shape sized to a given notch-neck width.
+    public static func funnelPanelShape(
+        neckWidth: CGFloat,
+        shoulderDrop: CGFloat = 22,
+        bottomRadius: CGFloat = 18
+    ) -> FunnelPanelShape {
+        FunnelPanelShape(neckWidth: neckWidth, shoulderDrop: shoulderDrop, bottomRadius: bottomRadius)
+    }
+}
+
+/// Type-erased v9 silhouette so the live BarView can drive `.clipShape`, `.contentShape`,
+/// `.fill`, and `.stroke` from a SINGLE value per state — `NotchShape` for the band, the
+/// `FunnelPanelShape` for the speaking funnel. (Plain `Shape`, not `InsettableShape`: the
+/// band carries its own hairline via `.stroke`, never `.strokeBorder`.)
+public struct BarShape: Shape {
+    public var kind: BarSilhouette.Kind
+    public var topRadius: CGFloat
+    public var bottomRadius: CGFloat
+    public var neckWidth: CGFloat
+    public var shoulderDrop: CGFloat
+
+    public init(
+        _ kind: BarSilhouette.Kind,
+        topRadius: CGFloat = NotchV9Style.closedTopRadius,
+        bottomRadius: CGFloat = NotchV9Style.closedBottomRadius,
+        neckWidth: CGFloat = 128,
+        shoulderDrop: CGFloat = 22
+    ) {
+        self.kind = kind
+        self.topRadius = topRadius
+        self.bottomRadius = bottomRadius
+        self.neckWidth = neckWidth
+        self.shoulderDrop = shoulderDrop
+    }
+
+    public func path(in rect: CGRect) -> Path {
+        switch kind {
+        case .notchBand:
+            NotchShape(topRadius: topRadius, bottomRadius: bottomRadius).path(in: rect)
+        case .funnelPanel:
+            FunnelPanelShape(
+                neckWidth: neckWidth,
+                shoulderDrop: shoulderDrop,
+                bottomRadius: bottomRadius
+            ).path(in: rect)
+        }
+    }
+}
+
 // MARK: - FunnelPanelShape (v9 headline — "grows out of the notch")
 
 /// The v9 panel silhouette. Unlike v8's square box, the panel's TOP narrows to the notch

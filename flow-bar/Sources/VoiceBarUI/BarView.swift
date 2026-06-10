@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -115,8 +115,10 @@ public struct BarView: View {
                     .fill(Color.green) // VoiceBar is always alive — dot is always green
                     .frame(width: 10, height: 10)
                     .padding(8)
-                    .background(Theme.pillBackground)
-                    .clipShape(Capsule())
+                    // v9 collapsed idle = the bare notch band silhouette (opaque black,
+                    // hugs the island), never a floating capsule.
+                    .background(NotchV9Style.bandFill)
+                    .clipShape(BarShape(.notchBand))
 
                 if state.queueDepth > 1 {
                     queueBadge
@@ -125,7 +127,7 @@ public struct BarView: View {
             }
         }
         .buttonStyle(.plain)
-        .contentShape(Capsule())
+        .contentShape(BarShape(.notchBand))
     }
 
     // MARK: - Expanded pill (full content)
@@ -143,31 +145,34 @@ public struct BarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, pillVerticalPadding)
+        // v9 funnel: push content below the inverse-shoulder neck zone so the waveform /
+        // teleprompter sit in the wide body, not clipped against the narrow notch neck
+        // (mock .gp.fun). Zero for the compact band states.
+        .padding(.top, funnelContentTopInset)
         .frame(
             minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
             alignment: .leading
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
-        .background(Theme.pillBackground)
-        .clipShape(Capsule())
+        // v9: the silhouette IS the bar — a black notch band that hugs the island for the
+        // compact states, and the funnel panel that "grows OUT of the notch" while speaking.
+        .background(barBackground)
+        .clipShape(barShape)
         .overlay {
-            Capsule()
+            // v9 carries the active-state hint as a subtle wash inside the silhouette
+            // (never a recolored shell — steal-list A6 / NotchBox-tint avoidance).
+            barShape
                 .fill(stateWashColor)
                 .allowsHitTesting(false)
                 .animation(Theme.modeTransition, value: state.mode)
         }
         .overlay {
-            // State-dependent border glow
-            Capsule()
-                .strokeBorder(borderColor, lineWidth: borderWidth)
+            // Single hairline edge (mock: .5px #ffffff22) — the v9 look carries on the
+            // black→glass gradient, not a heavy colored glow border.
+            barShape
+                .stroke(barEdgeColor, lineWidth: 0.5)
                 .allowsHitTesting(false)
                 .animation(Theme.modeTransition, value: state.mode)
-        }
-        .overlay {
-            // Subtle inner edge for depth
-            Capsule()
-                .strokeBorder(Theme.pillInnerEdge, lineWidth: 0.5)
-                .allowsHitTesting(false)
         }
         // No drop shadow — clean edges like Wispr Flow
         .opacity(1.0)
@@ -189,7 +194,50 @@ public struct BarView: View {
                 isVocabularyPresented = false
             }
         }
-        .contentShape(Capsule())
+        // Native hit-testing only: the live hit area is the silhouette path itself, so
+        // clicks outside the notch/funnel fall through (FloatingPanel.hitTest returns nil).
+        .contentShape(barShape)
+    }
+
+    // MARK: - v9 silhouette (Capsule → NotchShape / FunnelPanelShape)
+
+    /// Which v9 silhouette this state renders (steal-list §3 state table).
+    private var barSilhouetteKind: BarSilhouette.Kind {
+        BarSilhouette.kind(for: state.mode)
+    }
+
+    /// The single shape the bar clips / strokes / hit-tests against this state. The funnel
+    /// neck tracks the closed notch width so it reads as growing from the island.
+    private var barShape: BarShape {
+        BarShape(barSilhouetteKind, neckWidth: Theme.notchNeckWidth)
+    }
+
+    /// v9 fill: opaque black band for the compact states (never glass on the island —
+    /// steal-list A3), the black→glass gradient for the speaking funnel.
+    @ViewBuilder
+    private var barBackground: some View {
+        switch barSilhouetteKind {
+        case .notchBand:
+            NotchV9Style.bandFill
+        case .funnelPanel:
+            ZStack {
+                NotchV9Style.panelGradient
+            }
+        }
+    }
+
+    /// Hairline edge color — a touch brighter while speaking to lift the funnel off the
+    /// wallpaper, otherwise the mock's faint #ffffff22.
+    private var barEdgeColor: Color {
+        barSilhouetteKind == .funnelPanel
+            ? NotchV9Style.panelStroke
+            : Color.white.opacity(0.10)
+    }
+
+    /// Top inset that clears the funnel's inverse-shoulder neck zone (steal-list S3 shoulder
+    /// drop ≈ 22pt + a little breathing room). Only the speaking funnel needs it.
+    private var funnelContentTopInset: CGFloat {
+        barSilhouetteKind == .funnelPanel ? 24 : 0
     }
 
     // MARK: - Error state
@@ -437,14 +485,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -560,7 +608,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -653,7 +701,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +731,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))
