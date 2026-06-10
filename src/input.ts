@@ -1681,6 +1681,7 @@ export async function waitForInput(
         message: captureFailure.message,
         recoverable: true,
         show_during_bar_recording: true,
+        capture_failure: captureFailure.type,
       });
     } else {
       broadcast({ type: "state", state: "idle", source: "recording" });

@@ -55,6 +55,7 @@ final class SocketServer {
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
+    var onCaptureFailure: ((String) -> Void)?
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -222,8 +223,7 @@ final class SocketServer {
 
         // NDJSON framing: split on newlines
         while let buffer = clients[fd]?.buffer,
-              let idx = buffer.firstIndex(of: "\n")
-        {
+              let idx = buffer.firstIndex(of: "\n") {
             let line = String(buffer[buffer.startIndex ..< idx])
             clients[fd]?.buffer = String(buffer[buffer.index(after: idx)...])
             if !line.isEmpty {
@@ -253,6 +253,10 @@ final class SocketServer {
         }
 
         DispatchQueue.main.async { [weak self] in
+            if dict["type"] as? String == "error",
+               let captureFailure = dict["capture_failure"] as? String {
+                self?.onCaptureFailure?(captureFailure)
+            }
             self?.state.handleEvent(dict)
         }
     }
@@ -299,12 +303,15 @@ final class SocketServer {
             let bytes = Array(jsonString.utf8)
 
             let commandFDs = clients
-                .filter { $0.value.acceptsCommands }
+                .filter(\.value.acceptsCommands)
                 .map(\.key)
                 .sorted()
 
             guard let targetFD = commandFDs.first else {
-                NSLog("[VoiceBar] No command client registered; dropping command %@", jsonString.trimmingCharacters(in: .whitespacesAndNewlines))
+                NSLog(
+                    "[VoiceBar] No command client registered; dropping command %@",
+                    jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
                 notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is starting")
                 return
             }
@@ -325,7 +332,11 @@ final class SocketServer {
                 case .retry:
                     transientRetryCount += 1
                     if transientRetryCount >= 3 {
-                        NSLog("[VoiceBar] Socket write stalled (fd: %d) after %d retries", targetFD, transientRetryCount)
+                        NSLog(
+                            "[VoiceBar] Socket write stalled (fd: %d) after %d retries",
+                            targetFD,
+                            transientRetryCount
+                        )
                         deadFDs.append(targetFD)
                         deliveryFailed = true
                         totalWritten = bytes.count

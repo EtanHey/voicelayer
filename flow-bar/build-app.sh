@@ -103,14 +103,11 @@ fi
 
 echo "[build-app] Done: $APP_DIR"
 if [ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" = "1" ]; then
-    echo "[build-app] Skipping MCP daemon LaunchAgent install."
+    echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."
 elif [ "$APP_DIR" != "/Applications/VoiceBar.app" ]; then
-    echo "[build-app] Skipping MCP daemon LaunchAgent install."
-elif pgrep -x VoiceBar >/dev/null 2>&1 && [ "${VOICEBAR_FORCE_LAUNCHD_INSTALL:-0}" != "1" ]; then
-    echo "[build-app] Skipping MCP daemon LaunchAgent install while VoiceBar is running."
-    echo "[build-app] Quit VoiceBar first, or set VOICEBAR_FORCE_LAUNCHD_INSTALL=1 to force launchd install."
+    echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."
 else
-    echo "[build-app] Installing MCP daemon LaunchAgent..."
+    echo "[build-app] Retiring MCP daemon LaunchAgent..."
     bash "$REPO_ROOT/launchd/install.sh"
 fi
 echo "[build-app] To add to Login Items: System Settings > General > Login Items > +"

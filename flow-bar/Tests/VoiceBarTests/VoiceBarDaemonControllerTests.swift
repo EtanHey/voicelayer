@@ -61,7 +61,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
-    func testActivationSkipsOwnedChildWhenExternalProbeSucceeds() {
+    func testActivationLaunchesOwnedChildEvenWhenStaleSocketLooksLive() {
         let process = ProcessSpy()
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
@@ -72,9 +72,9 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
         let result = controller.activateIfNeeded()
 
-        XCTAssertEqual(result, .alreadyRunning)
-        XCTAssertFalse(process.didRun)
-        XCTAssertFalse(controller.ownsLaunchedProcess)
+        XCTAssertEqual(result, .launched)
+        XCTAssertTrue(process.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
     func testActivationLaunchesDaemonWhenProbeFails() {
@@ -172,7 +172,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(environment["PATH"], "/tmp/bin")
     }
 
-    func testCleanExitStandsDownWithoutRelaunch() {
+    func testCleanExitWithoutDisableFlagSchedulesRelaunch() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 0
         let secondProcess = ProcessSpy()
@@ -188,6 +188,38 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         _ = controller.activateIfNeeded()
 
         firstProcess.capturedTerminationHandler?(firstProcess)
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testCleanExitWithDisableFlagIsTerminal() {
+        let flagPath = "\(NSTemporaryDirectory())voicebar-disable-\(UUID().uuidString)"
+        setenv("QA_VOICE_DISABLE_FLAG_PATH", flagPath, 1)
+        defer {
+            unsetenv("QA_VOICE_DISABLE_FLAG_PATH")
+            try? FileManager.default.removeItem(atPath: flagPath)
+        }
+
+        let firstProcess = ProcessSpy()
+        firstProcess.capturedTerminationStatus = 0
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+        FileManager.default.createFile(atPath: flagPath, contents: Data("disabled".utf8))
+
+        firstProcess.capturedTerminationHandler?(firstProcess)
         drainMainQueue(until: { !controller.ownsLaunchedProcess })
 
         XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
@@ -195,25 +227,47 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
-    func testOwnedChildStandsDownWhenExternalDaemonAppears() {
+    func testNoExternalDaemonStandDownCheckIsScheduled() {
         let process = ProcessSpy()
-        var externalDaemonIsLive = false
         var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
-            externalDaemonProbe: { _ in externalDaemonIsLive },
             processFactory: { process },
             restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
         )
 
         _ = controller.activateIfNeeded()
-        externalDaemonIsLive = true
-        scheduledBlocks.first(where: { $0.delay == 5 })?.block()
 
-        XCTAssertTrue(process.didReceiveTerminate)
-        XCTAssertFalse(controller.ownsLaunchedProcess)
+        XCTAssertFalse(scheduledBlocks.contains { $0.delay == 5 })
+        XCTAssertFalse(process.didReceiveTerminate)
+        XCTAssertTrue(process.isRunning)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testBrokenMicSignalRespawnsOwnedChild() {
+        let firstProcess = ProcessSpy()
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        controller.handleCaptureFailure(type: "broken-mic")
+        drainMainQueue(until: { scheduledBlocks.contains { $0.delay == 1 } })
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertTrue(firstProcess.didReceiveTerminate)
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
     func testCrashWhileDisabledDoesNotScheduleRelaunch() {
@@ -266,7 +320,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(secondProcess.didRun)
     }
 
-    func testScheduledRestartRechecksExternalDaemonBeforeRelaunch() {
+    func testScheduledRestartRelaunchesEvenWhenStaleSocketLooksLive() {
         let firstProcess = ProcessSpy()
         firstProcess.capturedTerminationStatus = 1
         let secondProcess = ProcessSpy()
@@ -287,8 +341,8 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         externalDaemonIsLive = true
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
-        XCTAssertFalse(secondProcess.didRun)
-        XCTAssertFalse(controller.ownsLaunchedProcess)
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
     func testScheduledRestartSkipsWhenAnotherActivationAlreadyLaunchedChild() {
@@ -542,7 +596,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(isRunning)
     }
 
-    func testFreshSessionLivenessProbeTreatsLiveSocketWithoutPidFileAsExternalDaemon() {
+    func testFreshSessionLivenessProbeTreatsLiveSocketWithoutPidFileAsOccupied() {
         let pidFile = temporaryPIDFile()
 
         let isRunning = VoiceBarDaemonLivenessProbe.isDaemonRunning(

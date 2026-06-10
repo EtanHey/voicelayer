@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
-const plistTemplate = readFileSync(
-  join(repoRoot, "launchd", "com.voicelayer.mcp-daemon.plist"),
-  "utf-8",
+const retiredDaemonPlist = join(
+  repoRoot,
+  "launchd",
+  "com.voicelayer.mcp-daemon.plist",
 );
 const installScript = readFileSync(
   join(repoRoot, "launchd", "install.sh"),
@@ -17,47 +18,31 @@ const buildScript = readFileSync(
 );
 
 describe("MCP daemon LaunchAgent install contract", () => {
-  test("runs the daemon from the installed VoiceBar bundle by default", () => {
-    expect(installScript).toContain("/Applications/VoiceBar.app");
-    expect(installScript).toContain('BUNDLE_RESOURCES_DIR="$APP_DIR/Contents/Resources"');
-    expect(installScript).toContain(
-      '$BUNDLE_RESOURCES_DIR/src/mcp-server-daemon.ts',
-    );
+  test("retires the daemon LaunchAgent plist from the repo", () => {
+    expect(existsSync(retiredDaemonPlist)).toBe(false);
   });
 
-  test("plist bakes in daemon runtime PATH needed by launchd", () => {
-    expect(plistTemplate).toContain("__HOME__/.bun/bin");
-    expect(plistTemplate).toContain(
-      "/Library/Frameworks/Python.framework/Versions/3.13/bin",
-    );
-    expect(plistTemplate).toContain("/opt/homebrew/bin");
+  test("installer removes the retired daemon LaunchAgent instead of installing it", () => {
+    expect(installScript).toContain('LABEL="com.voicelayer.mcp-daemon"');
+    expect(installScript).toContain("Retiring %s");
+    expect(installScript).toContain('launchctl bootout "gui/$(id -u)/$LABEL"');
+    expect(installScript).toContain('rm -f "$PLIST_DST"');
+    expect(installScript).not.toContain("launchctl bootstrap");
+    expect(installScript).not.toContain("plutil -lint");
   });
 
-  test("daemon logs go to a stable user log directory", () => {
-    expect(plistTemplate).toContain("__LOG_DIR__");
-    expect(plistTemplate).not.toContain("/tmp/voicelayer-mcp-daemon.stderr.log");
-    expect(plistTemplate).not.toContain("/tmp/voicelayer-mcp-daemon.stdout.log");
+  test("installer leaves the disable flag under explicit caller control", () => {
+    expect(installScript).toContain("/tmp/.voicelayer-daemon-disabled");
+    expect(installScript).not.toContain('rm -f "$DAEMON_DISABLE_FLAG"');
+    expect(installScript).not.toContain('printf "disabled\\n" > "$DAEMON_DISABLE_FLAG"');
   });
 
-  test("daemon is kept alive unless explicitly disabled", () => {
-    expect(plistTemplate).toContain("<key>KeepAlive</key>");
-    expect(plistTemplate).toContain("<key>PathState</key>");
-    expect(plistTemplate).toContain("/tmp/.voicelayer-daemon-disabled");
-    expect(plistTemplate).not.toContain("<key>SuccessfulExit</key>");
-  });
-
-  test("daemon respawns are throttled to avoid socket churn loops", () => {
-    expect(plistTemplate).toContain("<key>ThrottleInterval</key>");
-    expect(plistTemplate).toContain("<integer>10</integer>");
-  });
-
-  test("VoiceBar rebuild installs the LaunchAgent only when the app is not running", () => {
+  test("VoiceBar rebuild does not install the retired daemon LaunchAgent", () => {
     expect(buildScript).toContain("launchd/install.sh");
-    expect(buildScript).toContain("VOICEBAR_SKIP_LAUNCHD_INSTALL");
-    expect(buildScript).toContain("VOICEBAR_FORCE_LAUNCHD_INSTALL");
-    expect(buildScript).toContain("pgrep -x VoiceBar");
     expect(buildScript).toContain(
-      "Skipping MCP daemon LaunchAgent install while VoiceBar is running",
+      "Retiring MCP daemon LaunchAgent",
     );
+    expect(buildScript).not.toContain("VOICEBAR_FORCE_LAUNCHD_INSTALL");
+    expect(buildScript).not.toContain("pgrep -x VoiceBar");
   });
 });

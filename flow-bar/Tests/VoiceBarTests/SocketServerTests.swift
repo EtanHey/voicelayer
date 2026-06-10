@@ -1,6 +1,6 @@
+import Darwin
 @testable import VoiceBar
 @testable import VoiceBarUI
-import Darwin
 import XCTest
 
 final class SocketServerTests: XCTestCase {
@@ -68,6 +68,25 @@ final class SocketServerTests: XCTestCase {
         XCTAssertEqual(state.mode, .recording)
     }
 
+    func testBrokenMicCaptureFailureRoutesToDaemonControllerCallbackAndVoiceState() {
+        let state = VoiceState()
+        let expectation = expectation(description: "capture failure routed")
+        let server = SocketServer(state: state)
+        server.onCaptureFailure = { failureType in
+            XCTAssertTrue(Thread.isMainThread)
+            XCTAssertEqual(failureType, "broken-mic")
+            expectation.fulfill()
+        }
+
+        server.parseLine(
+            #"{"type":"error","message":"Microphone returned silence","recoverable":true,"show_during_bar_recording":true,"capture_failure":"broken-mic"}"#
+        )
+
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertEqual(state.errorMessage, "Microphone returned silence")
+    }
+
     func testCommandsAreSentOnlyToClientHelloCommandOwner() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
@@ -88,8 +107,14 @@ final class SocketServerTests: XCTestCase {
             close(commandClient)
         }
 
-        try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: passiveClient)
-        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#,
+            to: passiveClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#,
+            to: commandClient
+        )
 
         Thread.sleep(forTimeInterval: 0.1)
         server.sendCommandToOwner(command: ["cmd": "record"])
@@ -121,11 +146,17 @@ final class SocketServerTests: XCTestCase {
             close(commandClient)
         }
 
-        try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: passiveClient)
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#,
+            to: passiveClient
+        )
         XCTAssertFalse(waitForConnectionStatus(state, connected: true, timeout: 0.2))
         XCTAssertFalse(state.isConnected)
 
-        try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#,
+            to: commandClient
+        )
         XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
     }
 

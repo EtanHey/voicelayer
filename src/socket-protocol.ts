@@ -66,6 +66,8 @@ export interface ErrorEvent {
   recoverable: boolean;
   /** true = surface this error even during a bar-initiated recording. */
   show_during_bar_recording?: boolean;
+  /** Machine-readable capture failure signal for VoiceBar daemon supervision. */
+  capture_failure?: "broken-mic";
 }
 
 /** Word boundary from edge-tts WordBoundary event. */
