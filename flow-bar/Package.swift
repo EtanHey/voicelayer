@@ -16,6 +16,14 @@ let package = Package(
             name: "VoiceBarUI",
             path: "Sources/VoiceBarUI"
         ),
+        // Isolated v9 geometry preview window — NO socket, NO daemon, cannot collide
+        // with the resident VoiceBar. Renders NotchV9PreviewSurface for native glass
+        // screenshots (the qa-video gate's real-glass capture).
+        .executableTarget(
+            name: "VoiceBarV9Preview",
+            dependencies: ["VoiceBarUI"],
+            path: "Sources/VoiceBarV9Preview"
+        ),
         .testTarget(
             name: "VoiceBarTests",
             dependencies: ["VoiceBar", "VoiceBarUI"],
