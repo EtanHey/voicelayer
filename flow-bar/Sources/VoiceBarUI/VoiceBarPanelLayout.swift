@@ -19,16 +19,33 @@ public struct VoiceBarPanelLayout: Equatable {
         isCollapsed: Bool,
         previewText: String?,
         statusText: String = "",
+        notchClosedSize: CGSize? = nil,
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
         isPasteFlowActive: Bool = false,
         padding: CGFloat
     ) -> VoiceBarPanelLayout {
+        if isCollapsed, let notchClosedSize {
+            let rect = CGRect(origin: .zero, size: notchClosedSize)
+            return VoiceBarPanelLayout(
+                panelSize: notchClosedSize,
+                activeHitRect: rect.insetBy(dx: 2, dy: 2),
+                lowerBodyRect: rect,
+                topFusionRect: CGRect(
+                    x: 0,
+                    y: max(0, notchClosedSize.height - 1),
+                    width: notchClosedSize.width,
+                    height: 1
+                )
+            )
+        }
+
         let contentSize = contentSize(
             mode: mode,
             isCollapsed: isCollapsed,
             previewText: previewText,
             statusText: statusText,
+            notchClosedSize: notchClosedSize,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
             queueItemCount: queueItemCount
         )
@@ -86,11 +103,12 @@ public struct VoiceBarPanelLayout: Equatable {
         isCollapsed: Bool,
         previewText: String?,
         statusText: String,
+        notchClosedSize: CGSize?,
         idleAccessoryButtonCount: Int,
         queueItemCount: Int
     ) -> CGSize {
         if isCollapsed {
-            return CGSize(width: 30, height: 30)
+            return notchClosedSize ?? CGSize(width: Theme.notchIslandWidth, height: Theme.notchFusionBandHeight)
         }
 
         if let previewText {

@@ -63,11 +63,7 @@ final class VoiceBarPositionLockTests: XCTestCase {
     func testPanelDragDecisionRespectsLock() {
         let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 48)))
 
-        panel.isPillDragEnabled = false
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: true))
-
-        panel.isPillDragEnabled = true
-        XCTAssertTrue(panel.shouldHandlePillDrag(startedInVisiblePill: true))
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
     }
 

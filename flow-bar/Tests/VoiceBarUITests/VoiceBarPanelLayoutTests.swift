@@ -16,6 +16,38 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, layout.lowerBodyRect.height + Theme.notchFusionBandHeight)
     }
 
+    func testRecordingActiveStateStaysInsideNotchStripWhenHardwareMetricsExist() {
+        let closedNotchSize = CGSize(width: 188, height: 38)
+        let layout = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "",
+            notchClosedSize: closedNotchSize,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(layout.panelSize.height, closedNotchSize.height)
+        XCTAssertEqual(layout.topFusionRect.height, closedNotchSize.height)
+        XCTAssertEqual(layout.lowerBodyRect.height, 0)
+        XCTAssertTrue(CGRect(origin: .zero, size: layout.panelSize).contains(layout.activeHitRect))
+    }
+
+    func testSpeakingMayExtendBelowNotchStripForTeleprompterUnderZone() {
+        let closedNotchSize = CGSize(width: 188, height: 38)
+        let layout = VoiceBarPanelLayout.make(
+            mode: .speaking,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "Speaking...",
+            notchClosedSize: closedNotchSize,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertGreaterThan(layout.panelSize.height, closedNotchSize.height)
+        XCTAssertGreaterThan(layout.lowerBodyRect.height, 0)
+    }
+
     func testV8NotchHitRegionIncludesTopFusionButRejectsTransparentCorners() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,
@@ -32,7 +64,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertFalse(layout.containsActivePoint(CGPoint(x: 1, y: 1)))
     }
 
-    func testCollapsedDotUsesSmallPanelEnvelope() {
+    func testCollapsedStateUsesClosedNotchEnvelope() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,
             isCollapsed: true,
@@ -40,8 +72,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThanOrEqual(layout.bodySize.width, 40)
-        XCTAssertLessThanOrEqual(layout.bodySize.height, 40)
+        XCTAssertEqual(layout.bodySize.width, Theme.notchIslandWidth + (Theme.panelPadding * 2))
+        XCTAssertEqual(layout.bodySize.height, Theme.notchFusionBandHeight + (Theme.panelPadding * 2))
     }
 
     func testActiveHitRectStaysInsideSmallCollapsedPanel() {

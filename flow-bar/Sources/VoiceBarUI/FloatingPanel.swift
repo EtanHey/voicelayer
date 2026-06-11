@@ -24,8 +24,6 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var activeHitRectProvider: (() -> NSRect)?
-    public var isPillDragEnabled = true
-    private var dragStartWasInVisiblePill = false
 
     public init(content: NSView) {
         super.init(
@@ -34,15 +32,16 @@ public final class FloatingPillPanel: NSPanel {
                 width: max(content.frame.width, 1),
                 height: max(content.frame.height, 1)
             ),
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.borderless, .nonactivatingPanel, .utilityWindow, .hudWindow],
             backing: .buffered,
             defer: false
         )
+        styleMask.insert([.nonactivatingPanel, .utilityWindow, .hudWindow])
 
         // --- Floating behaviour ---
         isFloatingPanel = true
-        level = .floating // above normal windows
-        becomesKeyOnlyIfNeeded = true // don't eagerly grab key
+        level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 3)
+        becomesKeyOnlyIfNeeded = false
 
         // --- Visibility ---
         hidesOnDeactivate = false // stay visible when app loses focus
@@ -51,6 +50,7 @@ public final class FloatingPillPanel: NSPanel {
             .canJoinAllSpaces, // visible on every Space
             .fullScreenAuxiliary, // visible over full-screen apps
             .stationary, // don't move with Spaces transitions
+            .ignoresCycle,
         ]
         animationBehavior = .utilityWindow
 
@@ -66,10 +66,8 @@ public final class FloatingPillPanel: NSPanel {
         contentView = content
     }
 
-    /// Allow key so SwiftUI Buttons respond to clicks.
-    /// .nonactivatingPanel prevents the app from activating regardless.
     override public var canBecomeKey: Bool {
-        true
+        false
     }
 
     /// Override sendEvent to handle right-click context menu.
@@ -84,17 +82,6 @@ public final class FloatingPillPanel: NSPanel {
             return
         }
 
-        if event.type == .leftMouseDown {
-            let startedInVisiblePill = activeHitRectProvider?().contains(event.locationInWindow) ?? true
-            dragStartWasInVisiblePill = shouldHandlePillDrag(startedInVisiblePill: startedInVisiblePill)
-        } else if event.type == .leftMouseDragged,
-                  shouldHandlePillDrag(startedInVisiblePill: dragStartWasInVisiblePill) {
-            performDrag(with: event)
-            return
-        } else if event.type == .leftMouseUp {
-            dragStartWasInVisiblePill = false
-        }
-
         super.sendEvent(event)
     }
 
@@ -103,32 +90,14 @@ public final class FloatingPillPanel: NSPanel {
     }
 
     public func shouldHandlePillDrag(startedInVisiblePill: Bool) -> Bool {
-        isPillDragEnabled && startedInVisiblePill
+        false
     }
 
-    /// Position pill on the given screen (or the screen containing the mouse).
-    /// macOS coordinates: origin at bottom-left, Y increases upward.
-    /// - Parameters:
-    ///   - horizontalOffset: 0.0–1.0 fraction of screen width for pill center.
-    ///   - verticalOffset: 0.0–1.0 fraction of screen height for pill center.
-    ///     nil = fixed top-center island placement.
-    public func positionOnScreen(
-        _ screen: NSScreen? = nil,
-        horizontalOffset: CGFloat = Theme.horizontalOffset,
-        verticalOffset: CGFloat? = nil
-    ) {
+    public func positionAsNotchApp(on screen: NSScreen? = nil) {
         let target = screen ?? screenContainingMouse() ?? NSScreen.main
         guard let target else { return }
-        let visible = target.visibleFrame // excludes Dock & menu bar
-        let fullFrame = target.frame
-        let size = frame.size
-        let x = visible.origin.x + (visible.width * horizontalOffset) - (size.width / 2)
-        let y: CGFloat = if let vOffset = verticalOffset {
-            visible.origin.y + (visible.height * vOffset) - (size.height / 2)
-        } else {
-            fullFrame.maxY - Theme.topPadding - size.height
-        }
-        setFrameOrigin(NSPoint(x: x, y: y))
+        let metrics = NotchAppScreenMetrics(screen: target)
+        setFrame(NotchAppGeometry.frame(for: frame.size, on: metrics), display: true)
     }
 
     /// Find which screen currently contains the mouse cursor.

@@ -117,7 +117,7 @@ public struct BarView: View {
 
     private var pillContent: some View {
         Group {
-            if state.isCollapsed {
+            if state.isCollapsed || displaysBareNotch {
                 collapsedPill
                     .transition(.scale.combined(with: .opacity))
             } else {
@@ -131,26 +131,26 @@ public struct BarView: View {
         }
     }
 
+    private var displaysBareNotch: Bool {
+        state.mode == .idle
+            && transcriptPreviewText == nil
+            && state.confirmationText == nil
+            && state.commandModeState == nil
+            && state.activeClipMarker == nil
+    }
+
     // MARK: - Collapsed pill (just dot)
 
     private var collapsedPill: some View {
         Button {
             state.setHovering(true) // expand on tap
         } label: {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.88))
-                    .frame(width: 30, height: 30)
-
-                if state.queueDepth > 1 {
-                    queueBadge
-                        .offset(x: 4, y: -2)
-                }
-            }
+            Color.clear
+                .frame(width: 30, height: 30)
         }
         .buttonStyle(.plain)
         .contentShape(Capsule())
+        .accessibilityHidden(true)
     }
 
     // MARK: - Expanded pill (full content)

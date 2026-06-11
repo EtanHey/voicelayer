@@ -53,15 +53,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
-    private var moveObserver: Any?
     private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
-    /// Saved offsets (0.0-1.0) for pill center positioning on screen.
-    private var horizontalOffset: CGFloat = Theme.horizontalOffset
-    private var verticalOffset: CGFloat? // nil = fixed top-center island placement
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
@@ -94,9 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var missingHotkeyPermissions: [HotkeyPermission] = []
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
-
-    private static let horizontalOffsetKey = "voicebar.horizontalOffset"
-    private static let verticalOffsetKey = "voicebar.verticalOffset"
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -226,13 +219,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             height: initialLayout.panelSize.height
         )
 
-        // Load saved position
-        if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
-            horizontalOffset = max(0.05, min(0.95, CGFloat(saved)))
-        }
-        if let saved = defaults.object(forKey: Self.verticalOffsetKey) as? Double {
-            verticalOffset = max(0.0, min(0.95, CGFloat(saved)))
-        }
         anchorMode = anchorPreferences.loadAnchorMode()
 
         let pill = FloatingPillPanel(content: hosting)
@@ -242,25 +228,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         pill.activeHitRectProvider = { [weak self] in
             Self.panelLayout(for: self?.voiceState).activeHitRect
         }
-        pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
-        pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
-            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        pill.isMovableByWindowBackground = false
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
-        }
-
-        // Save position when user drags the pill
-        moveObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didMoveNotification,
-            object: pill,
-            queue: .main
-        ) { [weak self] _ in
-            guard NSEvent.pressedMouseButtons != 0 else { return }
-            self?.savePanelPosition()
         }
 
         // Track mouse across screens — move pill to whichever monitor the cursor is on
@@ -287,9 +261,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
-        }
-        if let observer = moveObserver {
-            NotificationCenter.default.removeObserver(observer)
         }
         if let observer = displayObserver {
             NotificationCenter.default.removeObserver(observer)
@@ -573,9 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
-            VoiceBarPresentation.isPanelDraggable(mode: mode)
-        panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
+        panel?.isMovableByWindowBackground = false
         applyPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -592,25 +561,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
         guard let targetScreen else { return }
-        let visibleFrame = targetScreen.visibleFrame
-        let anchorFrame = placementFrame(for: targetScreen)
-        let layout = Self.panelLayout(for: voiceState)
-        let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
-        let plan = PillResizePlan.makeAnchored(
-            visibleFrame: anchorFrame,
-            horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset,
-            topPadding: Theme.topPadding,
-            pillSize: layout.panelSize,
-            from: previousVoiceMode,
-            to: currentVoiceMode,
-            padding: 0
-        )
+        let layout = Self.panelLayout(for: voiceState, on: targetScreen)
+        let metrics = NotchAppScreenMetrics(screen: targetScreen)
+        let frame = NotchAppGeometry.frame(for: layout.panelSize, on: metrics)
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
-        panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
+        panel.setFrame(frame, display: true, animate: animated)
     }
 
     private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
+        let metrics = NSScreen.main.map(NotchAppScreenMetrics.init(screen:))
+        return panelLayout(for: state, metrics: metrics)
+    }
+
+    private static func panelLayout(for state: VoiceState?, on screen: NSScreen) -> VoiceBarPanelLayout {
+        panelLayout(for: state, metrics: NotchAppScreenMetrics(screen: screen))
+    }
+
+    private static func panelLayout(
+        for state: VoiceState?,
+        metrics: NotchAppScreenMetrics?
+    ) -> VoiceBarPanelLayout {
         let mode = state?.mode ?? .idle
         let previewText = VoiceBarPresentation.transcriptPreviewText(
             mode: mode,
@@ -629,11 +599,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             commandModeState: state?.commandModeState,
             activeClipMarker: state?.activeClipMarker
         )
+        let notchClosedSize = metrics.map(NotchAppGeometry.closedSize(for:))
+        let isBareIdleNotch = mode == .idle
+            && previewText == nil
+            && state?.confirmationText == nil
+            && state?.commandModeState == nil
+            && state?.activeClipMarker == nil
         return VoiceBarPanelLayout.make(
             mode: mode,
-            isCollapsed: state?.isCollapsed ?? false,
+            isCollapsed: (state?.isCollapsed ?? false) || isBareIdleNotch,
             previewText: previewText,
             statusText: statusText,
+            notchClosedSize: notchClosedSize,
             idleAccessoryButtonCount: VoiceBarPresentation.idleAccessoryButtonCount(
                 recentTranscriptions: state?.recentTranscriptions ?? [],
                 transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
@@ -736,17 +713,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
         let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
-        let visibleFrame = targetScreen?.visibleFrame ?? .zero
-        let placement = anchorPlacement(
-            for: panel,
-            visibleFrame: visibleFrame,
-            pillSize: panel.frame.size
-        )
-        panel.positionOnScreen(
-            targetScreen,
-            horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset
-        )
+        panel.positionAsNotchApp(on: targetScreen)
         if let targetScreen,
            let index = NSScreen.screens.firstIndex(of: targetScreen) {
             currentScreenIndex = index
@@ -766,42 +733,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    private func anchorPlacement(
-        for panel: FloatingPillPanel,
-        visibleFrame: CGRect,
-        pillSize: CGSize
-    ) -> VoiceBarAnchorPlacement {
-        VoiceBarPositionLockPolicy.effectivePlacement(
-            anchorMode: anchorMode,
-            savedHorizontalOffset: horizontalOffset,
-            savedVerticalOffset: verticalOffset,
-            visibleFrame: visibleFrame,
-            pillSize: pillSize
-        )
-    }
-
-    private func placementFrame(for screen: NSScreen) -> CGRect {
-        verticalOffset == nil ? screen.frame : screen.visibleFrame
-    }
-
     private func reapplyAnchoredPanelPosition() {
         guard let panel else { return }
+        applyPanelLayout(animated: false)
         positionPanel(panel, on: Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
-    }
-
-    // MARK: - Drag persistence
-
-    /// Save the pill's position as percentages of screen dimensions.
-    private func savePanelPosition() {
-        guard anchorMode.allowsFreeDrag else { return }
-        guard let panel, let screen = panel.screen ?? NSScreen.main else { return }
-        let visible = screen.visibleFrame
-        let hOffset = (panel.frame.midX - visible.origin.x) / visible.width
-        let vOffset = (panel.frame.midY - visible.origin.y) / visible.height
-        horizontalOffset = max(0.05, min(0.95, CGFloat(hOffset)))
-        verticalOffset = max(0.0, min(0.95, CGFloat(vOffset)))
-        defaults.set(Double(horizontalOffset), forKey: Self.horizontalOffsetKey)
-        defaults.set(Double(verticalOffset!), forKey: Self.verticalOffsetKey)
     }
 
     func currentAnchorMode() -> VoiceBarAnchorMode {
@@ -811,9 +746,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
         anchorMode = mode
         anchorPreferences.saveAnchorMode(mode)
-        panel?.isPillDragEnabled = mode.allowsFreeDrag
-        panel?.isMovableByWindowBackground = mode.allowsFreeDrag &&
-            VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        panel?.isMovableByWindowBackground = false
         if let panel {
             positionPanel(panel, on: nil)
             applyPanelLayout(animated: true)

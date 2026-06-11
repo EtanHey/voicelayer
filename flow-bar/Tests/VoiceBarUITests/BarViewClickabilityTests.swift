@@ -60,7 +60,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
-    func testIdleMicButtonRoutesPrimaryAction() {
+    func testBareIdleNotchDoesNotRoutePrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
         state.isConnected = true
@@ -71,7 +71,7 @@ final class BarViewClickabilityTests: XCTestCase {
 
         click(host, at: statusIconCenter(in: host))
 
-        XCTAssertEqual(router.primaryTapCount, 1)
+        XCTAssertEqual(router.primaryTapCount, 0)
         XCTAssertEqual(router.cancelCount, 0)
         XCTAssertEqual(router.stopCount, 0)
     }
