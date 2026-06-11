@@ -131,7 +131,12 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - Theme.notchSideRadius - 14 - 26 - 2 - 13, y: lowerBodyControlY)
+        // v9 trailing wing: ✕ cancel (26pt) is rightmost; the ◼ stop (30pt) sits one
+        // 8pt gap to its left. Center = right margin + cancel + gap + half the stop.
+        NSPoint(
+            x: host.bounds.maxX - Theme.notchSideRadius - 14 - 26 - 8 - (Theme.stopButtonSize / 2),
+            y: lowerBodyControlY
+        )
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {

@@ -77,6 +77,10 @@ public struct BarView: View {
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
 
+    /// Horizontal padding applied inside the expanded pill content. Shared so the
+    /// recording-wing width math matches the actual padding exactly.
+    static let expandedHorizontalPadding: CGFloat = 14
+
     public var body: some View {
         pillContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
@@ -171,7 +175,7 @@ public struct BarView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, BarView.expandedHorizontalPadding)
         .padding(.vertical, pillVerticalPadding)
         .frame(
             minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
@@ -623,17 +627,28 @@ public struct BarView: View {
     // MARK: - v9 recording wings (flank the camera island)
 
     private var recordingWings: some View {
-        HStack(spacing: 0) {
+        // Fixed widths only — no maxWidth:.infinity and no degenerate heights, so the
+        // window's NSHostingView never reports an ambiguous/invalid fitting size during
+        // the per-second timer relayout (that ambiguity aborted the live window in v9.0).
+        // The two wings + the island gap fill the padded content area EXACTLY (no extra
+        // outer frame), so the trailing wing's ◼ stop / ✕ cancel stay clickable at the
+        // right edge (BarViewClickabilityTests).
+        let available = Theme.pillContentWidth(for: .recording, statusText: "")
+            - (BarView.expandedHorizontalPadding * 2)
+        let wingWidth = max(56, (available - Theme.notchIslandWidth) / 2)
+        return HStack(spacing: 0) {
             HStack(spacing: 7) {
                 PulsingDot()
                 recordingTimer
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: wingWidth, alignment: .leading)
 
-            // Transparent gap straddling the physical camera island.
-            Color.clear.frame(width: Theme.notchIslandWidth, height: 1)
+            // Transparent gap straddling the physical camera island (full content height).
+            Color.clear.frame(width: Theme.notchIslandWidth)
 
             HStack(spacing: 8) {
+                Spacer(minLength: 0)
                 WaveformView(
                     mode: state.speechDetected ? .speechDetected : .listening,
                     audioLevel: state.audioLevel
@@ -641,7 +656,7 @@ public struct BarView: View {
                 stopButton { commandRouter.handleStop() }
                 pillButton(icon: "xmark") { commandRouter.handleCancel() }
             }
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .frame(width: wingWidth, alignment: .trailing)
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Recording")
