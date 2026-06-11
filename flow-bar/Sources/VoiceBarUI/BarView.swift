@@ -155,6 +155,9 @@ public struct BarView: View {
         Group {
             if state.mode == .speaking {
                 speakingPanel
+            } else if state.mode == .recording {
+                // v9 refinement #2/#3: live indicators flank the camera island.
+                recordingWings
             } else {
                 HStack(spacing: 8) {
                     leadingIndicator
@@ -237,7 +240,7 @@ public struct BarView: View {
                     .help("Restart")
                 pillButton(icon: "pause.fill") {}
                     .help("Pause")
-                pillButton(icon: "stop.fill") { commandRouter.handleStop() }
+                stopButton { commandRouter.handleStop() }
                     .help("Stop")
                 if state.isBlockingQuestionWaitingForUser {
                     HStack(spacing: 5) {
@@ -615,6 +618,69 @@ public struct BarView: View {
             transcriptionVocabularyAliases: state.transcriptionVocabularyAliases,
             canReplay: state.canReplay
         )
+    }
+
+    // MARK: - v9 recording wings (flank the camera island)
+
+    private var recordingWings: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 7) {
+                PulsingDot()
+                recordingTimer
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Transparent gap straddling the physical camera island.
+            Color.clear.frame(width: Theme.notchIslandWidth, height: 1)
+
+            HStack(spacing: 8) {
+                WaveformView(
+                    mode: state.speechDetected ? .speechDetected : .listening,
+                    audioLevel: state.audioLevel
+                )
+                stopButton { commandRouter.handleStop() }
+                pillButton(icon: "xmark") { commandRouter.handleCancel() }
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Recording")
+    }
+
+    private var recordingTimer: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { _ in
+            Text(recordingElapsedText)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.92))
+        }
+    }
+
+    private var recordingElapsedText: String {
+        guard let start = state.recordingStartedAtForDisplay else { return "0:00" }
+        let elapsed = max(0, Date().timeIntervalSince(start))
+        let seconds = Int(elapsed)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
+    /// v9 refinement: a visibly larger ◼ stop button (red fill + glow) — the primary CTA.
+    private func stopButton(action: @escaping () -> Void) -> some View {
+        Button {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            action()
+        } label: {
+            Image(systemName: "stop.fill")
+                .font(.system(size: Theme.stopButtonGlyphSize, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: Theme.stopButtonSize, height: Theme.stopButtonSize)
+                .background(Theme.recordingColor)
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .shadow(color: Theme.recordingColor.opacity(0.55), radius: 6)
+                .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Stop")
+        .transition(.scale.combined(with: .opacity))
     }
 
     // MARK: - Action buttons

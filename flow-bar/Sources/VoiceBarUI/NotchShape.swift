@@ -7,8 +7,15 @@ public struct NotchShape: Shape {
         self.hasAttachedPanel = hasAttachedPanel
     }
 
+    /// v9 refinement #1 — when a panel is attached the bottom corners are softened by a
+    /// few px (`Theme.notchAttachedCornerRadius`) instead of v8's hard square (0).
+    public static func cornerRadius(hasAttachedPanel: Bool, rectHeight: CGFloat) -> CGFloat {
+        let base = hasAttachedPanel ? Theme.notchAttachedCornerRadius : Theme.notchCornerRadius
+        return min(base, rectHeight / 2)
+    }
+
     public func path(in rect: CGRect) -> Path {
-        let radius = hasAttachedPanel ? 0 : min(Theme.notchCornerRadius, rect.height / 2)
+        let radius = NotchShape.cornerRadius(hasAttachedPanel: hasAttachedPanel, rectHeight: rect.height)
         var path = Path()
 
         path.move(to: CGPoint(x: rect.minX, y: rect.minY))

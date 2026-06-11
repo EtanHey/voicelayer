@@ -146,6 +146,11 @@ public final class VoiceState {
     private var currentRecordingStartedAt: Date?
     private var currentRecordingDurationMs: Int?
 
+    /// Start time of the active recording, exposed so the v9 left wing can tick an elapsed timer.
+    public var recordingStartedAtForDisplay: Date? {
+        currentRecordingStartedAt
+    }
+
     /// Active STT vocabulary hints loaded from the daemon snapshot.
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }

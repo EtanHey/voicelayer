@@ -37,6 +37,16 @@ public enum Theme {
     public static let notchSideRadius: CGFloat = 11
     public static let notchFusionBandHeight: CGFloat = 23
     public static let notchCornerRadius: CGFloat = 13
+    /// v9 refinement #1 — attached-panel bottom corners are SLIGHTLY softened
+    /// ("90° like v8 but curved a bit"), a few px, NOT the rejected funnel.
+    /// v8 used 0 (fully square) when a panel was attached.
+    public static let notchAttachedCornerRadius: CGFloat = 5
+    /// v9 refinement #2 — width of the transparent gap that straddles the physical
+    /// camera island, so live indicators flank it left + right at menu-bar height.
+    public static let notchIslandWidth: CGFloat = 128
+    /// v9 refinement — the ◼ stop button is visibly larger than a standard pill button.
+    public static let stopButtonSize: CGFloat = 30
+    public static let stopButtonGlyphSize: CGFloat = 16
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
     public static let panelWidth: CGFloat = 420
@@ -90,7 +100,9 @@ public enum Theme {
     ) -> CGFloat {
         switch mode {
         case .recording:
-            return 154
+            // v9 refinement #2: wide enough to flank the camera island — left wing
+            // (dot + timer) | island gap | right wing (waveform + ◼ stop + ✕ cancel).
+            return 330
         case .transcribing:
             return transcribingPillWidth(for: statusText)
         case .speaking:
