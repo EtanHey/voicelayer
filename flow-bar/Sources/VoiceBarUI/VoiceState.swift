@@ -70,10 +70,11 @@ public final class VoiceState {
     private static let maxVocabularyTerms = 512
     private static let maxVocabularyAliases = 512
 
-    // UI-bound properties -- all mutations must happen on the main thread.
+    /// UI-bound properties -- all mutations must happen on the main thread.
     public var mode: VoiceMode = .idle {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != mode) }
     }
+
     public var statusText: String = ""
     public var transcript: String = ""
     public var speechDetected: Bool = false
@@ -119,6 +120,7 @@ public final class VoiceState {
     public var transcriptionVocabularyTerms: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyTerms.isEmpty) }
     }
+
     public var transcriptionVocabularyAliases: [STTVocabularyAliasPreview] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != transcriptionVocabularyAliases.isEmpty) }
     }
@@ -132,12 +134,15 @@ public final class VoiceState {
     public var queueDepth: Int = 0 {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != queueDepth) }
     }
+
     public var queueItems: [QueueItemState] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.count != queueItems.count) }
     }
+
     public var commandModeState: CommandModeState? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != commandModeState) }
     }
+
     public var activeClipMarker: ClipMarkerState? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != activeClipMarker) }
     }
@@ -225,19 +230,29 @@ public final class VoiceState {
         pasteboard.clearContents()
         pasteboard.setString(string, forType: .string)
     }
+
+    public var pasteboardStringProvider: () -> String? = {
+        NSPasteboard.general.string(forType: .string)
+    }
+
     public var pasteboardSnapshotter: () -> PasteboardSnapshot? = {
         VoiceState.capturePasteboardSnapshot()
     }
+
     public var pasteboardSnapshotRestorer: (PasteboardSnapshot) -> Void = { snapshot in
         VoiceState.restorePasteboardSnapshot(snapshot)
     }
+
     public var pasteboardChangeCountProvider: () -> Int = {
         NSPasteboard.general.changeCount
     }
+
     public var currentDateProvider: () -> Date = {
         Date()
     }
-    public var pasteboardRestoreDelay: TimeInterval = 0.2
+
+    /// Keep transcript on the clipboard long enough for slower targets to consume Cmd+V.
+    public var pasteboardRestoreDelay: TimeInterval = 1.25
 
     private let recentTranscriptionsSaver: ([String]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
@@ -257,6 +272,10 @@ public final class VoiceState {
     public var onModeChange: ((VoiceMode) -> Void)?
     public var onPanelLayoutChange: (() -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
+    public var controlLayerEventWriter: (String, [String: String]) -> Void = { event, details in
+        ControlLayerJournal.append(type: "voicebar.\(event)", payload: details)
+    }
+
     public var transcriptionTimeout: Duration = .seconds(30)
     public var barInitiatedTranscriptionTimeout: Duration = .seconds(900)
     public var barInitiatedSafetyTimeout: Duration = .seconds(3660)
@@ -279,8 +298,8 @@ public final class VoiceState {
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
         recentTranscriptions = Self.normalizeRecentTranscriptions(recentTranscriptionsLoader())
-        self.transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
-        self.transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
+        transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
+        transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
         )
     }
@@ -425,17 +444,18 @@ public final class VoiceState {
     }
 
     /// Paste the most recent transcript into the current target app again.
-    public func repasteLastTranscript() {
-        repasteTranscript(latestReusableTranscript)
+    public func repasteLastTranscript(source: String = "unknown") {
+        repasteTranscript(latestReusableTranscript, source: source)
     }
 
     /// Paste a specific transcript from history into the current target app.
-    public func repasteTranscript(_ text: String) {
+    public func repasteTranscript(_ text: String, source: String = "unknown") {
         let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reusableText.isEmpty else { return }
         logDiagnostic("repaste_requested", details: [
             "transcriptLength": String(reusableText.count),
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+            "source": source,
         ])
         pasteTranscript(reusableText, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
     }
@@ -1063,7 +1083,7 @@ public final class VoiceState {
             pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
         }
 
-        if shouldApplyPendingRecordingIdle && !shouldAutoPaste && !shouldPasteRecoveredTranscription {
+        if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
             enterIdleState(clearQueue: false)
         }
     }
@@ -1167,15 +1187,17 @@ public final class VoiceState {
                 guard let self else { return }
                 let currentFront = frontmostAppProvider()
                 let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
-                let pasteTarget: NSRunningApplication?
-                if plan == .autoPaste {
-                    pasteTarget = (!currentIsSelf ? currentFront : nil) ?? targetApp
+                let pasteTarget: NSRunningApplication? = if plan == .autoPaste {
+                    (!currentIsSelf ? currentFront : nil) ?? targetApp
                 } else {
-                    pasteTarget = targetApp
+                    targetApp
                 }
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let capturedInsertionHandler =
-                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(pasteTarget, recordStartTargetApp)
+                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(
+                        pasteTarget,
+                        recordStartTargetApp
+                    )
                     ? insertionHandler
                     : nil
 
@@ -1218,8 +1240,32 @@ public final class VoiceState {
                         "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
                     ])
                     let pasteboardSnapshot = pasteboardSnapshotter()
+                    let changeCountBeforeWrite = pasteboardChangeCountProvider()
                     pasteboardWriter(text)
                     let changeCountAfterWrite = pasteboardChangeCountProvider()
+                    let pasteboardTextAfterWrite = pasteboardStringProvider()
+                    let clipboardVerified = pasteboardTextAfterWrite == text
+                    logDiagnostic("paste_clipboard_write_result", details: [
+                        "plan": String(describing: plan),
+                        "targetApp": pasteTargetBundleID,
+                        "verified": boolString(clipboardVerified),
+                        "changeCountBefore": String(changeCountBeforeWrite),
+                        "changeCountAfter": String(changeCountAfterWrite),
+                        "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
+                        "expectedTextLength": String(text.count),
+                    ])
+                    guard clipboardVerified else {
+                        logDiagnostic("paste_clipboard_write_failed", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "changeCountBefore": String(changeCountBeforeWrite),
+                            "changeCountAfter": String(changeCountAfterWrite),
+                            "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
+                            "expectedTextLength": String(text.count),
+                        ])
+                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                        return
+                    }
                     let pasted = simulatedPasteHandler()
                     scheduleClipboardRestoreIfNeeded(
                         from: pasteboardSnapshot,
@@ -1252,7 +1298,7 @@ public final class VoiceState {
         pasted: Bool,
         plan: VoicePastePlan
     ) -> VoicePasteOutcome {
-        guard pasted else { return .failed(Self.genericPasteFailureMessage) }
+        guard pasted else { return .failed(genericPasteFailureMessage) }
         return .pasted
     }
 
@@ -1411,6 +1457,16 @@ public final class VoiceState {
 
     private func logDiagnostic(_ event: String, details: [String: String] = [:]) {
         diagnosticLogger?(event, details)
+        if Self.shouldMirrorDiagnosticToControlLayer(event) {
+            controlLayerEventWriter(event, details)
+        }
+    }
+
+    private static func shouldMirrorDiagnosticToControlLayer(_ event: String) -> Bool {
+        event == "transcription_final" ||
+            event == "repaste_requested" ||
+            event == "copy_transcript" ||
+            event.hasPrefix("paste_")
     }
 
     private func boolString(_ value: Bool) -> String {

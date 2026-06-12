@@ -55,8 +55,9 @@ interface STTPolishSocketResponse {
   error?: unknown;
 }
 
-const DEFAULT_POLISH_TIMEOUT_MS = 700;
-const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
+const DEFAULT_POLISH_TIMEOUT_MS = 5_000;
+export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
+export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
 const DEFAULT_POLISH_LOG_PATH = join(
   homedir(),
@@ -69,8 +70,9 @@ export function getSTTPolishMode(
   env: STTPolishEnv = process.env,
 ): STTPolishMode {
   const raw = env.QA_VOICE_STT_POLISH?.trim().toLowerCase();
+  if (raw === "off") return "off";
   if (raw === "shadow" || raw === "on") return raw;
-  return "off";
+  return "on";
 }
 
 export function getSTTPolishSocketPath(
@@ -79,8 +81,11 @@ export function getSTTPolishSocketPath(
   return env.QA_VOICE_STT_POLISH_SOCKET?.trim() || DEFAULT_POLISH_SOCKET;
 }
 
-function getSTTPolishEndpoint(env: STTPolishEnv = process.env): string | null {
-  return env.QA_VOICE_STT_POLISH_ENDPOINT?.trim() || null;
+export function getSTTPolishEndpoint(env: STTPolishEnv = process.env): string | null {
+  const configured = env.QA_VOICE_STT_POLISH_ENDPOINT?.trim();
+  if (configured) return configured;
+  if (env.QA_VOICE_STT_POLISH_SOCKET !== undefined) return null;
+  return DEFAULT_POLISH_ENDPOINT;
 }
 
 function getSTTPolishModel(env: STTPolishEnv = process.env): string {

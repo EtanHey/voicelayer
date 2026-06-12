@@ -145,10 +145,22 @@ describe("loadProfile + hasClonedProfile", () => {
 
 describe("isDaemonHealthy", () => {
   it("returns false when daemon is not running", async () => {
+    const savedTokenFile = process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
+    process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = join(
+      "/tmp",
+      `voicelayer-missing-tts-token-${process.pid}`,
+    );
     const { isDaemonHealthy } = await import("../tts/qwen3");
-    // No daemon running on 8880 in test env
-    const result = await isDaemonHealthy();
-    expect(result).toBe(false);
+    try {
+      const result = await isDaemonHealthy();
+      expect(result).toBe(false);
+    } finally {
+      if (savedTokenFile === undefined) {
+        delete process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE;
+      } else {
+        process.env.VOICELAYER_TTS_AUTH_TOKEN_FILE = savedTokenFile;
+      }
+    }
   });
 
   it("sends bearer auth from the shared token file", async () => {

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect } from "bun:test";
+import { Database } from "bun:sqlite";
 import { createHash } from "crypto";
 import ts from "typescript";
 import {
@@ -18,6 +19,7 @@ import {
   archiveWaitForInputRecording,
   calculateRMS,
   ChunkedRecordingSession,
+  classifyCaptureFailure,
   consumeCancelSignalForRecording,
   createWavBuffer,
   clearInput,
@@ -42,6 +44,50 @@ import { STOP_FILE } from "../paths";
 import { retainedRecordingFilePath } from "../paths";
 
 describe("input module", () => {
+  let testStateRoot: string | undefined;
+  let savedRecordingStatePath: string | undefined;
+  let savedRetainedRecordingPathForSuite: string | undefined;
+  let savedControlLayerDisable: string | undefined;
+
+  beforeEach(() => {
+    savedRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    savedRetainedRecordingPathForSuite =
+      process.env.QA_VOICE_RETAINED_RECORDING_PATH;
+    savedControlLayerDisable =
+      process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    testStateRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-test-"));
+    process.env.QA_VOICE_RECORDING_STATE_PATH = join(
+      testStateRoot,
+      "recording-state.json",
+    );
+    process.env.QA_VOICE_RETAINED_RECORDING_PATH = join(
+      testStateRoot,
+      "last-recording.wav",
+    );
+    process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
+  });
+
+  afterEach(() => {
+    if (testStateRoot) rmSync(testStateRoot, { recursive: true, force: true });
+    if (savedRecordingStatePath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
+    }
+    if (savedRetainedRecordingPathForSuite === undefined) {
+      delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
+    } else {
+      process.env.QA_VOICE_RETAINED_RECORDING_PATH =
+        savedRetainedRecordingPathForSuite;
+    }
+    if (savedControlLayerDisable === undefined) {
+      delete process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    } else {
+      process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL =
+        savedControlLayerDisable;
+    }
+  });
+
   describe("VoiceBar recording archive", () => {
     let archiveRoot: string | undefined;
     let savedRecordingsDir: string | undefined;
@@ -456,6 +502,13 @@ describe("input module", () => {
       expect(result.reason).toBe("too-quiet");
     });
 
+    it("allows long low-energy captures through STT instead of discarding them", () => {
+      const result = evaluateNoSpeechGate(pcmWithConstantSample(20, 3500));
+
+      expect(result.allowed).toBe(true);
+      expect(result.reason).toBeUndefined();
+    });
+
     it("allows quiet-but-real recordings through the relaxed gate", () => {
       const result = evaluateNoSpeechGate(pcmWithConstantSample(100, 700));
 
@@ -662,7 +715,7 @@ describe("input module", () => {
       expect(result.transcribedDurationMs).toBe(12250);
     });
 
-    it("allows the no-speech gate to evaluate trimmed PTT audio instead of raw long tails", () => {
+    it("keeps long low-energy PTT captures eligible for STT after trimming", () => {
       const speech = pcmWithConstantSample(1000, 2000);
       const veryLongSilence = pcmWithConstantSample(0, 1000000);
       const pcm = new Uint8Array(speech.byteLength + veryLongSilence.byteLength);
@@ -673,8 +726,8 @@ describe("input module", () => {
       const trim = trimTrailingSilenceForSTT(pcm, true);
       const trimmedGate = evaluateNoSpeechGate(trim.pcmData);
 
-      expect(rawGate.allowed).toBe(false);
-      expect(rawGate.reason).toBe("too-quiet");
+      expect(rawGate.allowed).toBe(true);
+      expect(rawGate.reason).toBeUndefined();
       expect(trim.trimmed).toBe(true);
       expect(trimmedGate.allowed).toBe(true);
     });
@@ -720,7 +773,7 @@ describe("input module", () => {
     });
   });
 
-  describe("broken mic detection", () => {
+  describe("no-speech capture classification", () => {
     function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
       const samples = Math.floor((16000 * durationMs) / 1000);
       const buffer = new Uint8Array(samples * 2);
@@ -731,13 +784,19 @@ describe("input module", () => {
       return buffer;
     }
 
-    it("flags long near-zero captures as broken mic instead of ordinary silence", async () => {
+    it("keeps long near-zero captures as silent dismisses", async () => {
       const input = (await import("../input")) as Record<string, any>;
       const gate = evaluateNoSpeechGate(pcmWithConstantSample(1, 3500));
 
-      expect(input.classifyCaptureFailure?.(gate)).toEqual({
+      expect(input.classifyCaptureFailure?.(gate)).toBeNull();
+    });
+
+    it("classifies true zero-RMS captures as broken mic for VoiceBar recovery", () => {
+      const gate = evaluateNoSpeechGate(pcmWithConstantSample(0, 3500));
+
+      expect(classifyCaptureFailure(gate)).toEqual({
         type: "broken-mic",
-        message: expect.stringContaining("Microphone"),
+        message: "Microphone returned silence",
       });
     });
 
@@ -884,6 +943,7 @@ describe("input module", () => {
       const tempDir = mkdtempSync(join(tmpdir(), "voicelayer-input-polish-"));
       const socketPath = join(tempDir, "polish.sock");
       const logPath = join(tempDir, "polish.jsonl");
+      const controlLayerRoot = join(tempDir, "control-layer");
       const received: string[] = [];
       const server = Bun.listen<{ buffer: string }>({
         unix: socketPath,
@@ -907,7 +967,11 @@ describe("input module", () => {
         },
       });
 
+      const savedDisable = process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+      const savedControlLayerBase = process.env.VOICELAYER_CONTROL_LAYER_BASE;
       try {
+        delete process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+        process.env.VOICELAYER_CONTROL_LAYER_BASE = controlLayerRoot;
         const env = {
           QA_VOICE_STT_POLISH: "on",
           QA_VOICE_STT_POLISH_SOCKET: socketPath,
@@ -925,7 +989,44 @@ describe("input module", () => {
           await new Promise((resolve) => setTimeout(resolve, 5));
         }
         expect(existsSync(logPath)).toBe(true);
+        const db = new Database(join(controlLayerRoot, "fleet-journal.db"), {
+          readonly: true,
+        });
+        try {
+          const row = db
+            .query(
+              "select topic, type, payload_json from events where type = 'transcription.polish'",
+            )
+            .get() as {
+            topic: string;
+            type: string;
+            payload_json: string;
+          } | null;
+          expect(row).not.toBeNull();
+          expect(row?.topic).toBe("voice.transcription");
+          const payload = JSON.parse(row?.payload_json ?? "{}");
+          expect(payload).toMatchObject({
+            mode: "on",
+            status: "applied",
+            surface: "dictation",
+            changed: true,
+          });
+          expect(payload.cleaned_chars).toBe("BrainLayer".length);
+          expect(payload.final_chars).toBe("BrainLayer.".length);
+        } finally {
+          db.close();
+        }
       } finally {
+        if (savedDisable === undefined) {
+          delete process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+        } else {
+          process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = savedDisable;
+        }
+        if (savedControlLayerBase === undefined) {
+          delete process.env.VOICELAYER_CONTROL_LAYER_BASE;
+        } else {
+          process.env.VOICELAYER_CONTROL_LAYER_BASE = savedControlLayerBase;
+        }
         server.stop(true);
         try {
           unlinkSync(socketPath);

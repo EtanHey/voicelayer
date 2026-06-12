@@ -36,6 +36,10 @@ interface AcquireResult {
   stalePid?: number;
 }
 
+interface AcquireProcessLockOptions {
+  killAlive?: boolean;
+}
+
 /** Check if a process is alive using kill(pid, 0) signal probe. */
 export function isProcessAlive(pid: number): boolean {
   try {
@@ -76,7 +80,9 @@ function readPidFile(pidPath: string = getMcpPidFilePath()): PidLockData | null 
  */
 export function acquireProcessLock(
   pidPath: string = getMcpPidFilePath(),
+  options: AcquireProcessLockOptions = {},
 ): AcquireResult {
+  const killAlive = options.killAlive ?? true;
   const existing = readPidFile(pidPath);
 
   if (!existing) {
@@ -95,6 +101,10 @@ export function acquireProcessLock(
   let killedStale = false;
 
   if (isProcessAlive(stalePid)) {
+    if (!killAlive) {
+      return { acquired: false, killedStale: false, stalePid };
+    }
+
     try {
       process.kill(stalePid, "SIGTERM");
       killedStale = true;

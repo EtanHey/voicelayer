@@ -16,6 +16,7 @@ import SwiftUI
 import VoiceBarUI
 
 private let legacySocketHotkeyDuplicateWindow: TimeInterval = 0.75
+private let launchExternalStartCommandGraceWindow: TimeInterval = 5.0
 
 // MARK: - App Delegate
 
@@ -89,6 +90,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastHotkeyActivityAt: TimeInterval?
     private var lastHotkeyActivitySource: HotkeyInputSource?
     private var activeHotkeySource: HotkeyInputSource?
+    var externalStartCommandGraceDeadline: TimeInterval? =
+        CFAbsoluteTimeGetCurrent() + launchExternalStartCommandGraceWindow
     /// Whether the hotkey system is enabled.
     var hotkeyEnabled: Bool = false
     var missingHotkeyPermissions: [HotkeyPermission] = []
@@ -100,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
-            commandRouter.handle(url: url)
+            handleExternalURL(url)
         }
     }
 
@@ -110,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let urlString = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
               let url = URL(string: urlString) else { return }
         NSLog("[VoiceBar] handleGetURLEvent: %@", urlString)
-        commandRouter.handle(url: url)
+        handleExternalURL(url)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -346,7 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pillContextMenuController.onPasteLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_paste_last_transcript_tapped")
-            self?.voiceState.repasteLastTranscript()
+            self?.voiceState.repasteLastTranscript(source: "context_menu_latest")
         }
         pillContextMenuController.onCopyLastTranscript = { [weak self] in
             self?.logDiagnostic(event: "context_menu_copy_last_transcript_tapped")
@@ -354,7 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         pillContextMenuController.onPasteTranscript = { [weak self] transcript in
             self?.logDiagnostic(event: "context_menu_paste_recent_transcript_tapped")
-            self?.voiceState.repasteTranscript(transcript)
+            self?.voiceState.repasteTranscript(transcript, source: "context_menu_history")
         }
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
@@ -497,7 +500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.commandRouter.handleCancel()
         }
         manager.onPasteLastTranscript = { [weak self] in
-            self?.voiceState.repasteLastTranscript()
+            self?.voiceState.repasteLastTranscript(source: "shift_f5")
         }
         manager.shouldHandleEscape = { [weak self] in
             guard let mode = self?.voiceState.mode else { return false }
@@ -669,6 +672,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func handleHotkeyHoldStart() {
+        guard !shouldSuppressLaunchStartCommand(rawCommand: "native-hotkey") else {
+            resetHotkeyTracking()
+            return
+        }
         commandRouter.handleHotkeyHoldStart()
     }
 
@@ -683,14 +690,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func handleLocalControlCommand(_ command: VoiceBarLocalControlCommand) {
         switch command {
         case .startRecording:
+            guard !shouldSuppressLaunchStartCommand(rawCommand: command.rawValue) else {
+                resetHotkeyTracking()
+                return
+            }
             handleHotkeyKeyDown(from: .legacySocket)
         case .stopRecording:
             handleHotkeyKeyUp(from: .legacySocket)
         case .toggle:
+            guard !shouldSuppressLaunchStartCommand(rawCommand: command.rawValue) else {
+                resetHotkeyTracking()
+                return
+            }
             commandRouter.handle(url: URL(string: "voicebar://toggle")!)
         case .pasteLastTranscript:
-            voiceState.repasteLastTranscript()
+            voiceState.repasteLastTranscript(source: "local_control")
         }
+    }
+
+    private func handleExternalURL(_ url: URL) {
+        commandRouter.handle(url: url)
+    }
+
+    private func shouldSuppressLaunchStartCommand(rawCommand: String) -> Bool {
+        guard let deadline = externalStartCommandGraceDeadline else { return false }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now <= deadline else {
+            externalStartCommandGraceDeadline = nil
+            return false
+        }
+
+        let wouldStartRecording =
+            rawCommand == "start-recording" ||
+            rawCommand == "native-hotkey" ||
+            (rawCommand == "toggle" && (voiceState.mode == .idle || voiceState.mode == .error))
+        guard wouldStartRecording else { return false }
+
+        NSLog("[VoiceBar] Ignoring %@ during launch start-command grace window", rawCommand)
+        return true
     }
 
     private func configureWakeRecovery() {
@@ -904,7 +941,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             pasteLastTranscript: { [weak self] in
                 self?.logDiagnostic(event: "menu_bar_paste_last_transcript_tapped")
-                self?.voiceState.repasteLastTranscript()
+                self?.voiceState.repasteLastTranscript(source: "menu_bar")
             },
             quit: { NSApplication.shared.terminate(nil) }
         )
@@ -991,8 +1028,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         lastHotkeyActivitySource = source
     }
 
-    private func handleHotkeyKeyDown(from source: HotkeyInputSource) {
+    func handleHotkeyKeyDown(from source: HotkeyInputSource) {
         let now = CFAbsoluteTimeGetCurrent()
+        if source == .native, shouldSuppressLaunchStartCommand(rawCommand: "native-hotkey") {
+            resetHotkeyTracking()
+            return
+        }
         guard !shouldIgnoreIncomingHotkeyEvent(from: source, now: now) else {
             NSLog("[VoiceBar] Ignoring duplicate %@ keyDown", source == .native ? "native" : "legacy socket")
             return

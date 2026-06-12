@@ -114,4 +114,35 @@ describe("process lock", () => {
     expect(result.killedStale).toBe(false);
     expect(result.stalePid).toBe(1);
   });
+
+  it("can refuse an alive owner without killing or replacing it", () => {
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+      }),
+    );
+
+    const result = acquireProcessLock(TEST_PID_FILE, { killAlive: false });
+    expect(result.acquired).toBe(true);
+    expect(result.killedStale).toBe(false);
+
+    writeFileSync(
+      TEST_PID_FILE,
+      JSON.stringify({
+        pid: 1,
+        startedAt: new Date().toISOString(),
+      }),
+    );
+
+    const refused = acquireProcessLock(TEST_PID_FILE, { killAlive: false });
+    expect(refused.acquired).toBe(false);
+    expect(refused.killedStale).toBe(false);
+    expect(refused.stalePid).toBe(1);
+
+    const content = readFileSync(TEST_PID_FILE, "utf-8");
+    const data = JSON.parse(content);
+    expect(data.pid).toBe(1);
+  });
 });

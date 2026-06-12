@@ -187,6 +187,23 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
+    func testErrorStatusNormalizesRawBusyError() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .error,
+                transcript: "",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: " busy ",
+                transcribingStatusText: nil,
+                commandModeState: nil,
+                activeClipMarker: nil
+            ),
+            "Busy"
+        )
+    }
+
     func testNativeBackgroundDraggingIsDisabledAcrossVoiceStates() {
         XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .idle))
         XCTAssertFalse(VoiceBarPresentation.isPanelDraggable(mode: .error))

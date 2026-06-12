@@ -26,6 +26,8 @@ class VoiceBarCommandRouter: BarCommandRouting {
             handleStartRecording()
         case "stop-recording":
             handleStop()
+        case "cancel":
+            handleCancel()
         default:
             NSLog("[VoiceBar] Unknown URL command: %@", command)
         }

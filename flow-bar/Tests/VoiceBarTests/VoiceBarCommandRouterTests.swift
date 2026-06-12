@@ -123,6 +123,22 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
     }
 
+    func testCancelURLCancelsActiveTranscription() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.mode = .transcribing
+        let router = VoiceBarCommandRouter(voiceState: state)
+
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        try router.handle(url: XCTUnwrap(URL(string: "voicebar://cancel")))
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+    }
+
     func testToggleCancelsActiveTranscription() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
@@ -287,6 +303,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()
         app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = nil
 
         try app.application(NSApplication.shared, open: [
             XCTUnwrap(URL(string: "voicebar://toggle")),
@@ -296,10 +313,75 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(app.voiceState.mode, .idle)
     }
 
+    func testAppDelegateAllowsExternalURLStartCommandsDuringLaunchGrace() throws {
+        let app = AppDelegate()
+        let spyRouter = SpyCommandRouter()
+        app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = CFAbsoluteTimeGetCurrent() + 60
+        app.voiceState.hotkeyEnabled = true
+
+        app.voiceState.setHotkeyPhase(.holding)
+        try app.application(NSApplication.shared, open: [
+            XCTUnwrap(URL(string: "voicebar://start-recording")),
+        ])
+
+        app.voiceState.setHotkeyPhase(.holding)
+        try app.application(NSApplication.shared, open: [
+            XCTUnwrap(URL(string: "voicebar://toggle")),
+        ])
+
+        XCTAssertEqual(
+            spyRouter.handledURLs.map(\.absoluteString),
+            ["voicebar://start-recording", "voicebar://toggle"]
+        )
+        XCTAssertEqual(app.voiceState.hotkeyPhase, .holding)
+    }
+
+    func testAppDelegateSuppressesLaunchGraceLocalStartCommandsButAllowsStop() throws {
+        let app = AppDelegate()
+        let spyRouter = SpyCommandRouter()
+        app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = CFAbsoluteTimeGetCurrent() + 60
+        app.voiceState.hotkeyEnabled = true
+
+        app.voiceState.setHotkeyPhase(.holding)
+        app.handleLocalControlCommand(.startRecording)
+        XCTAssertEqual(app.voiceState.hotkeyPhase, .idle)
+
+        app.voiceState.setHotkeyPhase(.holding)
+        app.handleLocalControlCommand(.toggle)
+        XCTAssertEqual(app.voiceState.hotkeyPhase, .idle)
+
+        XCTAssertTrue(spyRouter.handledURLs.isEmpty)
+        XCTAssertEqual(spyRouter.holdStartCount, 0)
+
+        app.voiceState.mode = .recording
+        try app.application(NSApplication.shared, open: [
+            XCTUnwrap(URL(string: "voicebar://stop-recording")),
+        ])
+
+        XCTAssertEqual(spyRouter.handledURLs.map(\.absoluteString), ["voicebar://stop-recording"])
+    }
+
+    func testAppDelegateSuppressesLaunchGraceNativeHotkeyStarts() {
+        let app = AppDelegate()
+        let spyRouter = SpyCommandRouter()
+        app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = CFAbsoluteTimeGetCurrent() + 60
+        app.voiceState.hotkeyEnabled = true
+        app.voiceState.setHotkeyPhase(.holding)
+
+        app.handleHotkeyHoldStart()
+
+        XCTAssertEqual(spyRouter.holdStartCount, 0)
+        XCTAssertEqual(app.voiceState.hotkeyPhase, .idle)
+    }
+
     func testAppDelegateRoutesHotkeyCallbacksThroughInjectedRouterWithoutDirectStateMutation() {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()
         app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = nil
 
         app.handleHotkeyHoldStart()
         app.handleHotkeyDoubleTap()
@@ -334,6 +416,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()
         app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = nil
         app.hotkeyEnabled = true
         app.configureHotkeyCallbacksForTesting()
 
@@ -351,6 +434,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()
         app.commandRouter = spyRouter
+        app.externalStartCommandGraceDeadline = nil
         app.hotkeyEnabled = true
         app.configureHotkeyCallbacksForTesting()
 

@@ -85,13 +85,15 @@ describe("stt-polish", () => {
     }
   });
 
-  it("defaults to off and preserves cleaned text", async () => {
-    expect(getSTTPolishMode({})).toBe("off");
+  it("defaults to on for production dictation", () => {
+    expect(getSTTPolishMode({})).toBe("on");
+  });
 
+  it("can be explicitly disabled and preserves cleaned text", async () => {
     const result = await polishTranscriptionText({
       rawText: "brain layer",
       cleanedText: "BrainLayer",
-      env: {},
+      env: { QA_VOICE_STT_POLISH: "off" },
     });
 
     expect(result).toMatchObject({

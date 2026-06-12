@@ -172,9 +172,9 @@ describe("rules-engine", () => {
       );
     });
 
-    it("preserves dictated comma before nonterminal punctuation", () => {
-      expect(applyRules("foo comma question mark bar")).toBe("Foo,? Bar");
-      expect(applyRules("foo comma exclamation mark bar")).toBe("Foo,! Bar");
+    it("normalizes dictated comma before terminal punctuation", () => {
+      expect(applyRules("foo comma question mark bar")).toBe("Foo? Bar");
+      expect(applyRules("foo comma exclamation mark bar")).toBe("Foo! Bar");
     });
 
     it("converts open/close paren", () => {

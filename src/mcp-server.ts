@@ -17,7 +17,6 @@ import { STOP_FILE } from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { getToolDefinitions } from "./mcp-tools";
 import { handleSocketCommand } from "./socket-handlers";
-import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -110,14 +109,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // --- Startup ---
 
 async function main() {
-  // Acquire process lock — kills any orphan MCP server still running
-  const lock = acquireProcessLock();
-  if (lock.killedStale) {
-    console.error(
-      `[voicelayer] Replaced orphan MCP server (PID ${lock.stalePid})`,
-    );
-  }
-
   try {
     await getBackend();
   } catch (err: unknown) {
@@ -143,19 +134,16 @@ async function main() {
 // --- Graceful shutdown ---
 
 process.on("SIGTERM", () => {
-  releaseProcessLock();
   disconnectFromBar();
   process.exit(0);
 });
 process.on("SIGINT", () => {
-  releaseProcessLock();
   disconnectFromBar();
   process.exit(0);
 });
 
 main().catch((err) => {
   console.error("[voicelayer] Fatal:", err);
-  releaseProcessLock();
   disconnectFromBar();
   process.exit(1);
 });

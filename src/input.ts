@@ -94,6 +94,7 @@ import {
   isRecordingConflictError,
   setRecordingState,
 } from "./recording-state";
+import { appendControlLayerEvent } from "./control-layer-journal";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -102,9 +103,7 @@ const BITS_PER_SAMPLE = 16;
 // AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
 const MIN_TRANSCRIBE_DURATION_MS = 600;
 const MIN_TRANSCRIBE_DBFS = -55;
-const BROKEN_MIC_MIN_DURATION_MS = 1500;
-const BROKEN_MIC_MAX_RMS = 1;
-const BROKEN_MIC_MAX_DBFS = -90;
+const MIN_LOW_ENERGY_TRANSCRIBE_DURATION_MS = 1500;
 const TRAILING_SILENCE_TRIM_WINDOW_MS = 250;
 const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS = 100;
@@ -117,8 +116,6 @@ const PRE_ROLL_MS = 500;
 const PRE_ROLL_CHUNKS = Math.ceil(
   (PRE_ROLL_MS / 1000) * (SAMPLE_RATE / VAD_CHUNK_SAMPLES),
 );
-const BROKEN_MIC_MESSAGE =
-  "Microphone input looks silent. Check VoiceBar > Microphone and macOS microphone access.";
 
 /**
  * Pre-speech timeout: if no speech is detected within this many seconds,
@@ -166,6 +163,22 @@ export async function finalizeTranscriptionTextForSurface(
     surface,
     env,
   });
+  appendControlLayerEvent(
+    "transcription.polish",
+    {
+      mode: polished.mode,
+      status: polished.status,
+      surface: polished.surface,
+      changed: polished.changed,
+      latency_ms: Math.round(polished.latencyMs),
+      raw_chars: rawText.length,
+      cleaned_chars: cleanedText.length,
+      polished_chars: polished.polishedText?.length ?? null,
+      final_chars: polished.text.length,
+      error: polished.error ?? null,
+    },
+    { topic: "voice.transcription" },
+  );
   return polished.text;
 }
 
@@ -585,7 +598,10 @@ export function evaluateNoSpeechGate(
   if (durationMs < MIN_TRANSCRIBE_DURATION_MS) {
     return { allowed: false, durationMs, rms, dbfs, reason: "too-short" };
   }
-  if (dbfs < MIN_TRANSCRIBE_DBFS) {
+  if (
+    dbfs < MIN_TRANSCRIBE_DBFS &&
+    (rms === 0 || durationMs < MIN_LOW_ENERGY_TRANSCRIBE_DURATION_MS)
+  ) {
     return { allowed: false, durationMs, rms, dbfs, reason: "too-quiet" };
   }
   return { allowed: true, durationMs, rms, dbfs };
@@ -716,16 +732,14 @@ export function classifyCaptureFailure(
 ): CaptureFailure | null {
   if (
     gate.reason === "too-quiet" &&
-    gate.durationMs >= BROKEN_MIC_MIN_DURATION_MS &&
-    gate.rms <= BROKEN_MIC_MAX_RMS &&
-    gate.dbfs <= BROKEN_MIC_MAX_DBFS
+    gate.rms === 0 &&
+    gate.durationMs >= MIN_TRANSCRIBE_DURATION_MS
   ) {
     return {
       type: "broken-mic",
-      message: BROKEN_MIC_MESSAGE,
+      message: "Microphone returned silence",
     };
   }
-
   return null;
 }
 
@@ -1584,6 +1598,12 @@ export async function waitForInput(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
   }
+  appendControlLayerEvent("capture.started", {
+    silence_mode: silenceMode,
+    press_to_talk: pressToTalk,
+    timeout_ms: timeoutMs,
+    archive_source: options.archiveSource ?? null,
+  });
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;
@@ -1598,6 +1618,13 @@ export async function waitForInput(
       chunkedSession,
     );
   } catch (err) {
+    appendControlLayerEvent("capture.recording_failed", {
+      error: err instanceof Error ? err.message : String(err),
+      recording_state: getEffectiveRecordingState(),
+      silence_mode: silenceMode,
+      press_to_talk: pressToTalk,
+      archive_source: options.archiveSource ?? null,
+    });
     // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
     broadcast({
       type: "error",
@@ -1645,6 +1672,13 @@ export async function waitForInput(
     console.error(
       "[voicelayer] Recording cancelled — retained audio for recovery",
     );
+    appendControlLayerEvent("capture.cancelled", {
+      duration_ms: pcmDurationMs(pcmData),
+      silence_mode: silenceMode,
+      press_to_talk: pressToTalk,
+      archive_source: options.archiveSource ?? null,
+      retained_recording: true,
+    });
     broadcast({ type: "state", state: "idle" });
     return null;
   }
@@ -1665,17 +1699,27 @@ export async function waitForInput(
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!noSpeechGate.allowed) {
+    const captureFailure = classifyCaptureFailure(noSpeechGate);
     console.error(
       `[voicelayer] Dropping recording before STT: ${noSpeechGate.reason} ` +
         `(duration=${noSpeechGate.durationMs}ms, rms=${noSpeechGate.rms.toFixed(0)}, ` +
         `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
     );
     clearCancelSignal();
-    const captureFailure = classifyCaptureFailure(noSpeechGate);
+    appendControlLayerEvent("capture.no_speech", {
+      reason: noSpeechGate.reason ?? null,
+      duration_ms: noSpeechGate.durationMs,
+      raw_duration_ms: sttTrim.rawDurationMs,
+      transcribed_duration_ms: sttTrim.transcribedDurationMs,
+      rms: noSpeechGate.rms,
+      dbfs: Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs : null,
+      trimmed: sttTrim.trimmed,
+      silence_mode: silenceMode,
+      press_to_talk: pressToTalk,
+      archive_source: options.archiveSource ?? null,
+      capture_failure: captureFailure?.type ?? null,
+    });
     if (captureFailure) {
-      console.error(
-        `[voicelayer] Surfacing capture failure: ${captureFailure.type}`,
-      );
       broadcast({
         type: "error",
         message: captureFailure.message,
@@ -1683,9 +1727,9 @@ export async function waitForInput(
         show_during_bar_recording: true,
         capture_failure: captureFailure.type,
       });
-    } else {
-      broadcast({ type: "state", state: "idle", source: "recording" });
+      return null;
     }
+    broadcast({ type: "state", state: "idle", source: "recording" });
     return null;
   }
 

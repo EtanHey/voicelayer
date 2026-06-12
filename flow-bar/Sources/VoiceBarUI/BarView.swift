@@ -61,7 +61,7 @@ public struct ProcessingSpinner: View {
                     style: StrokeStyle(lineWidth: 2.2, lineCap: .round)
                 )
                 .rotationEffect(.degrees(angle))
-            .frame(width: size, height: size)
+                .frame(width: size, height: size)
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -145,9 +145,9 @@ public struct BarView: View {
         .padding(.vertical, pillVerticalPadding)
         .frame(
             minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
-            alignment: .leading
+            alignment: pillContentAlignment
         )
-        .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: .leading)
+        .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: pillContentAlignment)
         .background(Theme.pillBackground)
         .clipShape(Capsule())
         .overlay {
@@ -242,6 +242,8 @@ public struct BarView: View {
             PulsingDot()
         } else if state.mode == .transcribing {
             ProcessingSpinner()
+        } else if state.mode == .error {
+            EmptyView()
         } else {
             Circle()
                 .fill(state.mode == .disconnected ? Theme.errorColor : Color.green)
@@ -324,6 +326,19 @@ public struct BarView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(statusText.isEmpty ? "Transcribing" : statusText)
+            case .error:
+                Button {
+                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                    commandRouter.handlePrimaryTap()
+                } label: {
+                    HStack(spacing: 8) {
+                        statusIconImage
+                        statusLabel
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Retry voice recording")
             default:
                 statusIcon
                 statusLabel
@@ -437,14 +452,14 @@ public struct BarView: View {
                 Text(statusText)
             }
         }
-            .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
-            .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
-            .lineLimit(statusLineLimit)
-            .truncationMode(.tail)
-            .contentTransition(.opacity)
-            .fixedSize(horizontal: false, vertical: true)
-            .layoutPriority(1)
+        .font(.system(size: 12, weight: .medium))
+        .foregroundStyle(.white.opacity(0.9))
+        .multilineTextAlignment(transcriptPreviewIsVisible ? .center : .leading)
+        .lineLimit(statusLineLimit)
+        .truncationMode(.tail)
+        .contentTransition(.opacity)
+        .fixedSize(horizontal: false, vertical: true)
+        .layoutPriority(1)
     }
 
     private var statusText: String {
@@ -499,6 +514,10 @@ public struct BarView: View {
             idleAccessoryButtonCount: idleAccessoryButtonCount,
             queueItemCount: state.queueItems.count
         )
+    }
+
+    private var pillContentAlignment: Alignment {
+        state.mode == .error ? .center : .leading
     }
 
     private var pillVerticalPadding: CGFloat {
@@ -560,7 +579,7 @@ public struct BarView: View {
                 historyButton
             }
             if state.mode == .idle,
-               (!state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty) {
+               !state.transcriptionVocabularyTerms.isEmpty || !state.transcriptionVocabularyAliases.isEmpty {
                 vocabularyButton
             }
             if state.mode == .idle, state.canReplay {
@@ -601,7 +620,7 @@ public struct BarView: View {
                                         isHistoryPresented = false
                                     }
                                     historyActionButton(title: "Paste") {
-                                        state.repasteTranscript(item)
+                                        state.repasteTranscript(item, source: "bar_history")
                                         isHistoryPresented = false
                                     }
                                 }
@@ -653,7 +672,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
+                                    id: \.offset) { index, item in
                                 VStack(alignment: .leading, spacing: 4) {
                                     if index == 0 {
                                         Text("Highest priority")
@@ -682,7 +702,8 @@ public struct BarView: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
 
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()), id: \.offset) { index, alias in
+                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
+                                    id: \.offset) { index, alias in
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(alias.to)
                                         .font(.system(size: 12, weight: .semibold))

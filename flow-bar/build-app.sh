@@ -61,13 +61,14 @@ if [ -d "$APP_DIR" ]; then
 
     if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
         mkdir -p "$VOICEBAR_BACKUP_DIR"
-        backup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.backup-$(date +%Y%m%d-%H%M%S).app"
-        echo "[build-app] Moving old bundle to $backup_path..."
-        mv "$APP_DIR" "$backup_path"
+        backup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.backup-$(date +%Y%m%d-%H%M%S).app.zip"
+        echo "[build-app] Archiving old bundle to $backup_path..."
+        ditto -c -k --keepParent "$APP_DIR" "$backup_path"
+        rm -rf "$APP_DIR"
         # Keep only the most recent backup; prune older ones.
-        find "$VOICEBAR_BACKUP_DIR" -maxdepth 1 -name 'VoiceBar.backup-*.app' -type d \
+        find "$VOICEBAR_BACKUP_DIR" -maxdepth 1 -name 'VoiceBar.backup-*.app.zip' -type f \
             | sort -r | sed -n '2,$p' | while IFS= read -r old_backup; do
-                rm -rf "$old_backup"
+                rm -f "$old_backup"
             done
     else
         echo "[build-app] Removing old bundle..."

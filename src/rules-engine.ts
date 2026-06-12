@@ -60,6 +60,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
   // Stage 2: Spoken punctuation
   if (!disabled?.has("punctuation")) {
     result = applyPunctuation(result);
+    result = normalizePunctuationClusters(result);
   }
 
   // Percent normalization (depends on number formatting and punctuation stages)
@@ -269,6 +270,12 @@ function applyPunctuation(text: string): string {
   );
   result = spaceAfterClosingProseQuotes(result);
   return result;
+}
+
+function normalizePunctuationClusters(text: string): string {
+  return text
+    .replace(/,\s*\.{1,}(?=\s|$)/g, ".")
+    .replace(/,\s*([!?])(?=\s|$)/g, "$1");
 }
 
 function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boolean {

@@ -165,6 +165,29 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testBundleMetadataUsesSingleVoiceBarAppName() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let plistURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("bundle")
+            .appendingPathComponent("Info.plist")
+
+        let data = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
+        let dict = try XCTUnwrap(plist as? [String: Any])
+
+        XCTAssertEqual(dict["CFBundleName"] as? String, "VoiceBar")
+        XCTAssertEqual(dict["CFBundleDisplayName"] as? String, "VoiceBar")
+        XCTAssertEqual(
+            dict["NSMicrophoneUsageDescription"] as? String,
+            "VoiceBar needs microphone access for voice recording"
+        )
+    }
+
     func testHotkeyEventFromSameSourceIsAllowedWhenNoOverlapExists() {
         let now = 10.0
 

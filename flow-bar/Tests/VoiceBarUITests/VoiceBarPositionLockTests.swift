@@ -36,28 +36,11 @@ final class VoiceBarPositionLockTests: XCTestCase {
         )
 
         XCTAssertEqual(topPlacement.horizontalOffset, 0.5, accuracy: 0.001)
-        XCTAssertNotNil(topPlacement.verticalOffset)
+        XCTAssertNil(topPlacement.verticalOffset)
         XCTAssertFalse(topPlacement.followsMouse)
         XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
-        XCTAssertEqual(placement.verticalOffset, topPlacement.verticalOffset)
+        XCTAssertNotNil(placement.verticalOffset)
         XCTAssertFalse(placement.followsMouse)
-    }
-
-    func testAnchoredModesPlaceBarBehindTopNotchBand() {
-        let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
-        let pillSize = CGSize(width: 190, height: 50)
-        let expectedTopY = visibleFrame.maxY + 22
-
-        for mode in VoiceBarAnchorMode.anchoredPositionModes {
-            let placement = mode.placement(visibleFrame: visibleFrame, pillSize: pillSize)
-            let minY = visibleFrame.origin.y
-                + (visibleFrame.height * (placement.verticalOffset ?? -1))
-                - (pillSize.height / 2)
-
-            XCTAssertEqual(placement.horizontalOffset, 0.5, accuracy: 0.001)
-            XCTAssertEqual(minY + pillSize.height, expectedTopY, accuracy: 0.001)
-            XCTAssertFalse(placement.followsMouse)
-        }
     }
 
     func testPanelDragDecisionRespectsLock() {

@@ -59,7 +59,8 @@ final class PillContextMenuControllerTests: XCTestCase {
         let anchorSubmenu = try XCTUnwrap(anchorItem.submenu)
         XCTAssertEqual(anchorSubmenu.items.map(\.title), [
             "Off",
-            "Notch Center",
+            "Top Center",
+            "Bottom Center",
         ])
         XCTAssertEqual(anchorSubmenu.items[1].state, .on)
         XCTAssertFalse(anchorSubmenu.items.map(\.title).contains("Lock Position"))
@@ -168,7 +169,8 @@ final class PillContextMenuControllerTests: XCTestCase {
         let anchorTitles = menu.items[6].submenu?.items.map(\.title)
         XCTAssertEqual(anchorTitles, [
             "Off",
-            "Notch Center",
+            "Top Center",
+            "Bottom Center",
         ])
         XCTAssertEqual(menu.items[6].submenu?.items[0].state, .on)
     }
@@ -181,9 +183,9 @@ final class PillContextMenuControllerTests: XCTestCase {
 
         let anchorItem = try XCTUnwrap(controller.makeMenu().items.first { $0.title == "Anchor" })
         let submenu = try XCTUnwrap(anchorItem.submenu)
-        let notchCenter = try XCTUnwrap(submenu.items.first { $0.title == "Notch Center" })
+        let topCenter = try XCTUnwrap(submenu.items.first { $0.title == "Top Center" })
 
-        _ = notchCenter.target?.perform(notchCenter.action, with: notchCenter)
+        _ = topCenter.target?.perform(topCenter.action, with: topCenter)
 
         XCTAssertEqual(selectedModes, [.topCenter])
         XCTAssertNil(submenu.items.first { $0.title == "Lock Position" })
@@ -200,7 +202,8 @@ final class PillContextMenuControllerTests: XCTestCase {
 
             XCTAssertEqual(submenu.items.map(\.title), [
                 "Off",
-                "Notch Center",
+                "Top Center",
+                "Bottom Center",
             ])
             XCTAssertEqual(checkedItems.map(\.title), [mode.anchorMenuTitle])
         }

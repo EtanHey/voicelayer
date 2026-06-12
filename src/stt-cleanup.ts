@@ -53,6 +53,9 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "wisper flow": "Wispr Flow",
   "repo golems": "repoGolem",
   "brain layer": "BrainLayer",
+  "brain layer claude": "BrainLayer Claude",
+  "brain layer clawed": "BrainLayer Claude",
+  "brain layer claud": "BrainLayer Claude",
   "brain bar": "BrainBar",
   "voice bar": "VoiceBar",
   "voice layer": "VoiceLayer",
@@ -472,7 +475,8 @@ export function cleanupTranscriptionText(
     aliases,
   };
   const cleaned = applyRules(trimmed, rulesConfig);
-  const deduplicated = collapseDuplicatedFunctionWords(cleaned);
+  const oneNormalized = normalizeConversationalOne(cleaned);
+  const deduplicated = collapseDuplicatedFunctionWords(oneNormalized);
   const normalized = normalizeCanonicalTerms(
     deduplicated,
     buildCanonicalTermPatterns(aliases),
@@ -487,6 +491,13 @@ function collapseDuplicatedFunctionWords(text: string): string {
     DUPLICATED_FUNCTION_WORD_PATTERN,
     (_match, word: string) => word,
   );
+}
+
+function normalizeConversationalOne(text: string): string {
+  return text
+    .replace(/\b1(?=\s+more\b)/giu, "one")
+    .replace(/\b(other)\s+1\b/giu, "$1 one")
+    .replace(/\bBrainLayer\s+(?:clawed|claud)\b/giu, "BrainLayer Claude");
 }
 
 function normalizePathTokens(text: string): string {
@@ -607,5 +618,6 @@ function normalizeSentenceStarts(text: string): string {
     /(^|[.!?]\s+)real tail of the sentence\b/giu,
     "$1Real tail of the sentence",
   );
+  result = result.replace(/(^|[.!?]\s+)one more\b/giu, "$1One more");
   return result;
 }

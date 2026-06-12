@@ -310,9 +310,9 @@ public struct SettingsView: View {
         case .follow:
             "Follows the active screen while you drag freely."
         case .topCenter:
-            "Anchored to the menu-bar notch on the active screen."
+            "Anchored to the top center of the active screen."
         case .bottomCenter:
-            "Anchored to the menu-bar notch on the active screen."
+            "Anchored to the bottom center of the active screen."
         }
     }
 

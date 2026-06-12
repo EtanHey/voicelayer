@@ -254,12 +254,14 @@ final class VoiceBarDaemonController {
     private let processExitWaiter: ProcessExitWaiter
     private let forceKillProcess: ForceKillProcess
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
+    private let livenessProbe: () -> Bool
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
     private var restartCount = 0
     private var isRestartScheduled = false
     private var consecutiveBrokenMicFailures = 0
+    private var lastBrokenMicFailureAt: Date?
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -301,6 +303,7 @@ final class VoiceBarDaemonController {
         self.processExitWaiter = processExitWaiter
         self.forceKillProcess = forceKillProcess
         self.microphonePermissionPrompter = microphonePermissionPrompter
+        self.livenessProbe = livenessProbe
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
@@ -325,7 +328,20 @@ final class VoiceBarDaemonController {
             return
         }
 
-        consecutiveBrokenMicFailures += 1
+        let now = Date()
+        if let lastBrokenMicFailureAt,
+           now.timeIntervalSince(lastBrokenMicFailureAt) <= 60 {
+            consecutiveBrokenMicFailures += 1
+        } else {
+            consecutiveBrokenMicFailures = 1
+        }
+        lastBrokenMicFailureAt = now
+
+        if consecutiveBrokenMicFailures < 2 {
+            NSLog("[VoiceBar] Broken-mic capture failure — waiting for confirmation before daemon respawn")
+            return
+        }
+
         if consecutiveBrokenMicFailures >= 2 {
             microphonePermissionPrompter(
                 "VoiceLayer is still receiving silence from the microphone after restarting its daemon. Re-grant Microphone permission to VoiceBar in System Settings, then retry recording."
@@ -358,7 +374,9 @@ final class VoiceBarDaemonController {
         proc.currentDirectoryURL = URL(fileURLWithPath: configuration.workingDirectory)
 
         // Set environment with enriched PATH — critical for sox/whisper/python3 resolution
-        proc.environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
+        var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
+        daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+        proc.environment = daemonEnvironment
 
         // Monitor: every unexpected death restarts. Exit 0 is terminal only
         // when the explicit disable flag is present.
@@ -374,6 +392,13 @@ final class VoiceBarDaemonController {
 
                 if VoiceLayerPaths.isVoicelayerDisabled() {
                     NSLog("[VoiceBar] Daemon exited (code %d) while VoiceLayer disabled — not restarting", code)
+                    return
+                }
+
+                if code == 0, livenessProbe() {
+                    restartCount = 0
+                    isRestartScheduled = false
+                    NSLog("[VoiceBar] Daemon exited cleanly while another MCP daemon is live — not restarting")
                     return
                 }
 
@@ -432,6 +457,12 @@ final class VoiceBarDaemonController {
                 NSLog("[VoiceBar] Skipping daemon restart; child process is already running")
                 return
             }
+            if livenessProbe() {
+                restartCount = 0
+                ownsLaunchedProcess = false
+                NSLog("[VoiceBar] Skipping daemon restart; another MCP daemon is live")
+                return
+            }
             NSLog("[VoiceBar] Restarting daemon (attempt %d, after %.0fs)", restartCount, delay)
             let result = activateIfNeeded()
             if result == .unavailable, !VoiceLayerPaths.isVoicelayerDisabled() {
@@ -454,6 +485,7 @@ final class VoiceBarDaemonController {
             }
             restartCount = 0
             consecutiveBrokenMicFailures = 0
+            lastBrokenMicFailureAt = nil
             NSLog("[VoiceBar] Daemon stable for %.0fs — reset restart counter", Self.stabilityResetDelay)
         }
     }

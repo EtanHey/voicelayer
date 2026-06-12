@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -69,7 +69,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let router = SpyCommandRouter()
         let host = makeHost(state: state, router: router)
 
-        click(host, at: statusIconCenter(in: host))
+        clickFirstPrimaryTap(in: host, router: router)
 
         XCTAssertEqual(router.primaryTapCount, 1)
         XCTAssertEqual(router.cancelCount, 0)
@@ -85,7 +85,7 @@ final class BarViewClickabilityTests: XCTestCase {
         let router = SpyCommandRouter()
         let host = makeHost(state: state, router: router)
 
-        click(host, at: statusIconCenter(in: host))
+        clickFirstPrimaryTap(in: host, router: router)
 
         XCTAssertEqual(router.primaryTapCount, 1)
         XCTAssertEqual(router.cancelCount, 0)
@@ -153,6 +153,19 @@ final class BarViewClickabilityTests: XCTestCase {
 
         window.sendEvent(downEvent)
         window.sendEvent(upEvent)
+    }
+
+    private func clickFirstPrimaryTap(in host: NSView, router: SpyCommandRouter) {
+        var x = host.bounds.minX
+        while x <= host.bounds.midX {
+            let before = router.primaryTapCount
+            click(host, at: NSPoint(x: x, y: host.bounds.midY))
+            if router.primaryTapCount > before {
+                return
+            }
+            x += 4
+        }
+        XCTFail("Expected to find a clickable status icon in the leading half of the pill; bounds=\(host.bounds)")
     }
 
     private func drag(_ host: NSView, from start: NSPoint, to end: NSPoint) {

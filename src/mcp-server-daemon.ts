@@ -28,14 +28,39 @@ import {
   isDefaultVoiceBarSocketPath,
   isVoicelayerDisabled,
 } from "./paths";
-import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
+import {
+  connectToBar,
+  disconnectFromBar,
+  isConnected,
+  onCommand,
+} from "./socket-client";
 import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
-import { resolveMcpSocketStartup } from "./daemon-startup";
+import { getConnectionCount, getUptimeSeconds } from "./daemon-health";
+import {
+  readProcessCommandLine,
+  resolveMcpPidOwnerStartup,
+  resolveMcpSocketStartup,
+} from "./daemon-startup";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
+import {
+  ensureSTTPolishServer,
+  stopSTTPolishServer,
+} from "./stt-polish-server";
+import {
+  appendControlLayerEvent,
+  startControlLayerHeartbeat,
+  stopControlLayerHeartbeat,
+} from "./control-layer-journal";
+import {
+  readProcessParentPid,
+  resolveInitialParentPid,
+  startParentProcessWatchdog,
+  type ParentProcessWatchdog,
+} from "./daemon-parent-watchdog";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -104,10 +129,45 @@ async function main() {
   // Acquire process lock after socket validation so a test or accidental start
   // against the live daily-driver socket cannot kill the existing daemon via
   // the PID file before discovering the socket is still owned.
-  const lockResult = acquireProcessLock();
-  if (lockResult.killedStale) {
+  const lockResult = acquireProcessLock(undefined, { killAlive: false });
+  let killedStalePid = lockResult.killedStale
+    ? lockResult.stalePid
+    : undefined;
+  if (!lockResult.acquired) {
+    const stalePid = lockResult.stalePid;
+    if (typeof stalePid !== "number") {
+      throw new Error("MCP PID lock refused acquisition without an owner PID");
+    }
+    const ownerDecision = await resolveMcpPidOwnerStartup({
+      ownerPid: stalePid,
+      socketPath: MCP_SOCKET_PATH,
+      isSocketLive,
+      sleep: Bun.sleep,
+      log: console.error,
+      readProcessCommand: readProcessCommandLine,
+    });
+    appendControlLayerEvent("daemon.pid_owner_live_decision", {
+      owner_pid: stalePid,
+      mcp_socket_path: MCP_SOCKET_PATH,
+      action: ownerDecision.action,
+      reason: ownerDecision.reason,
+      owner_command_kind: ownerDecision.ownerCommandKind,
+    });
+    if (ownerDecision.action === "stand_down") {
+      process.exit(0);
+    }
+
+    const reclaimResult = acquireProcessLock(undefined, { killAlive: true });
+    if (!reclaimResult.acquired) {
+      throw new Error(`Failed to reclaim MCP PID lock from PID ${stalePid}`);
+    }
+    killedStalePid = reclaimResult.killedStale
+      ? reclaimResult.stalePid
+      : killedStalePid;
+  }
+  if (killedStalePid !== undefined) {
     console.error(
-      `[voicelayer-daemon] Killed orphan MCP server (PID ${lockResult.stalePid})`,
+      `[voicelayer-daemon] Killed orphan MCP server (PID ${killedStalePid})`,
     );
   }
 
@@ -128,6 +188,16 @@ async function main() {
       `[voicelayer-daemon]   ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  void ensureSTTPolishServer().catch((err: unknown) => {
+    console.error(
+      `[voicelayer-daemon] STT polish server startup failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    appendControlLayerEvent(
+      "transcription.polish_server_failed",
+      { error: err instanceof Error ? err.message : String(err) },
+      { topic: "voice.transcription" },
+    );
+  });
 
   // Connect to Voice Bar for UI state
   onCommand(handleSocketCommand);
@@ -164,11 +234,27 @@ async function main() {
   console.error(
     `[voicelayer-daemon] socat config: socat STDIO UNIX-CONNECT:${MCP_SOCKET_PATH}`,
   );
+  appendControlLayerEvent("daemon.started", {
+    mcp_socket_path: MCP_SOCKET_PATH,
+    default_mcp_socket: isDefaultMcpSocketPath(),
+    default_voicebar_socket: isDefaultVoiceBarSocketPath(),
+    parent_pid: readProcessParentPid(),
+    expected_parent_pid: resolveInitialParentPid(),
+  });
+  startControlLayerHeartbeat(() => ({
+    uptime_seconds: getUptimeSeconds(),
+    mcp_connections: getConnectionCount(),
+    voicebar_connected: isConnected(),
+    mcp_socket_path: MCP_SOCKET_PATH,
+    parent_pid: readProcessParentPid(),
+    expected_parent_pid: resolveInitialParentPid(),
+  }));
 
   // Graceful shutdown: flush, close, remove socket, release PID lock
   let shuttingDown = false;
   let disablePollTimer: ReturnType<typeof setInterval> | null = null;
-  const shutdown = () => {
+  let parentWatchdog: ParentProcessWatchdog | null = null;
+  const shutdown = (reason = "signal") => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.error("[voicelayer-daemon] Shutting down...");
@@ -176,7 +262,19 @@ async function main() {
       clearInterval(disablePollTimer);
       disablePollTimer = null;
     }
+    parentWatchdog?.stop();
+    parentWatchdog = null;
+    appendControlLayerEvent("daemon.shutdown", {
+      reason,
+      uptime_seconds: getUptimeSeconds(),
+      mcp_connections: getConnectionCount(),
+      voicebar_connected: isConnected(),
+      parent_pid: readProcessParentPid(),
+      expected_parent_pid: resolveInitialParentPid(),
+    });
+    stopControlLayerHeartbeat();
     stopLogRotation();
+    stopSTTPolishServer();
     daemon.stop();
     disconnectFromBar();
     releaseProcessLock();
@@ -184,20 +282,37 @@ async function main() {
     process.exit(0);
   };
 
+  parentWatchdog = startParentProcessWatchdog({
+    onParentLost: (details) => {
+      console.error(
+        `[voicelayer-daemon] VoiceBar parent lost (expected ${details.initialParentPid}, current ${details.currentParentPid}) — shutting down`,
+      );
+      appendControlLayerEvent("daemon.parent_lost", {
+        initial_parent_pid: details.initialParentPid,
+        current_parent_pid: details.currentParentPid,
+      });
+      shutdown("parent_lost");
+    },
+  });
+
   disablePollTimer = setInterval(() => {
     if (!isVoicelayerDisabled()) return;
     console.error(
       "[voicelayer-daemon] Daemon disable flag detected — shutting down cleanly",
     );
-    shutdown();
+    shutdown("disable_flag");
   }, DISABLE_POLL_INTERVAL_MS);
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => shutdown("sigterm"));
+  process.on("SIGINT", () => shutdown("sigint"));
 }
 
 main().catch((err) => {
   console.error("[voicelayer-daemon] Fatal:", err);
+  appendControlLayerEvent("daemon.fatal", {
+    error: err instanceof Error ? err.message : String(err),
+  });
+  stopControlLayerHeartbeat();
   stopLogRotation();
   disconnectFromBar();
   releaseProcessLock();

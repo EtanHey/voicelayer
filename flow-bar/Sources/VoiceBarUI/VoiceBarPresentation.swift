@@ -71,9 +71,9 @@ public enum VoiceBarPresentation {
     public static func isHotkeyTransitionStatus(_ statusText: String) -> Bool {
         switch statusText {
         case holdToTalkHint, releaseToSendHint, tapAgainToLockHint:
-            return true
+            true
         default:
-            return false
+            false
         }
     }
 
@@ -203,8 +203,16 @@ public enum VoiceBarPresentation {
         case .transcribing:
             transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         case .error:
-            errorMessage ?? "Error"
+            errorStatusText(errorMessage)
         }
     }
 
+    public static func errorStatusText(_ errorMessage: String?) -> String {
+        let trimmed = errorMessage?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return "Error" }
+        if trimmed.lowercased() == "busy" {
+            return "Busy"
+        }
+        return trimmed
+    }
 }

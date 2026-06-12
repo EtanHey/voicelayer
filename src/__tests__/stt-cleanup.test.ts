@@ -455,6 +455,16 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("keeps conversational one as a word while preserving numeric agent counts", () => {
+    expect(
+      cleanupTranscriptionText(
+        "1 more thing. The other 1. I want 1 orcClaude and I want 1 BrainLayer clawed.",
+      ),
+    ).toBe(
+      "One more thing. The other one. I want 1 orcClaude and I want 1 BrainLayer Claude.",
+    );
+  });
+
   it("cleans Codex session-mining dictation without rewriting ordinary codecs", () => {
     expect(
       cleanupTranscriptionText(
@@ -570,5 +580,15 @@ describe("stt-cleanup", () => {
     expect(cleanupTranscriptionText("I mean this should stay too")).toBe(
       "I mean this should stay too",
     );
+  });
+
+  it("does not leave punctuation clusters after filler removal", () => {
+    expect(
+      cleanupTranscriptionText(
+        "let's see if we get any of those artifacts here, basically.",
+      ),
+    ).toBe("Let's see if we get any of those artifacts here.");
+
+    expect(cleanupTranscriptionText("then it does,..")).toBe("Then it does.");
   });
 });

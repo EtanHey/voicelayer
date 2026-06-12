@@ -52,8 +52,13 @@ describe("playback queue — P0-1 sequential playback", () => {
   let playerMocks: MockPlayer[];
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
+  let originalRecordingStatePath: string | undefined;
 
   beforeEach(async () => {
+    originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    process.env.QA_VOICE_RECORDING_STATE_PATH = TEST_RECORDING_STATE_FILE;
+    writeRecordingState("idle");
+
     try {
       const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
       stopPlayback();
@@ -123,6 +128,12 @@ describe("playback queue — P0-1 sequential playback", () => {
     broadcastSpy.mockRestore();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
+    cleanupRecordingState();
+    if (originalRecordingStatePath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
+    }
   });
 
   it("plays audio files sequentially — second spawns only after first finishes", async () => {
