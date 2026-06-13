@@ -81,6 +81,7 @@ import {
   type STTPolishEnv,
   type STTPolishSurface,
 } from "./stt-polish";
+import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
 import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
@@ -109,6 +110,8 @@ const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS = 100;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK = 350;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR = 0.12;
+const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_RMS = 30;
+const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_PEAK = 400;
 const PTT_STOP_CAPTURE_DRAIN_MS = 250;
 const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
 const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
@@ -179,6 +182,9 @@ export async function finalizeTranscriptionTextForSurface(
     },
     { topic: "voice.transcription" },
   );
+  if (polished.status === "failed") {
+    recoverDefaultSTTPolishServerAfterFailure(env);
+  }
   return polished.text;
 }
 
@@ -654,10 +660,20 @@ function isActiveTrimWindow(pcmData: Uint8Array): boolean {
   if (rms >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) return true;
 
   const zeroCrossingRate = zeroCrossings / sampleCount;
+  const speechlikeZeroCrossing =
+    zeroCrossingRate <= TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR;
+  if (
+    rms >= TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_RMS &&
+    peak >= TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_PEAK &&
+    speechlikeZeroCrossing
+  ) {
+    return true;
+  }
+
   return (
     rms >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS &&
     peak >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK &&
-    zeroCrossingRate <= TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR
+    speechlikeZeroCrossing
   );
 }
 
@@ -1688,6 +1704,14 @@ export async function waitForInput(
     console.error(
       `[voicelayer] Trimmed trailing silence before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
     );
+    appendControlLayerEvent("capture.stt_trim", {
+      raw_duration_ms: sttTrim.rawDurationMs,
+      transcribed_duration_ms: sttTrim.transcribedDurationMs,
+      trimmed_ms: sttTrim.rawDurationMs - sttTrim.transcribedDurationMs,
+      silence_mode: silenceMode,
+      press_to_talk: pressToTalk,
+      archive_source: options.archiveSource ?? null,
+    });
   }
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);

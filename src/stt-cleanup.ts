@@ -27,7 +27,12 @@ interface STTVocabularySnapshot {
 type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
+  "narration layer codex": "NarrationLayer Codex",
+  "brain layer codex": "BrainLayer Codex",
   "voice layer codex": "VoiceLayerCodex",
+  "cmux layer codex": "cmuxLayer Codex",
+  "c mux layer codex": "cmuxLayer Codex",
+  "cee mux layer codex": "cmuxLayer Codex",
   "sessions of codecs": "sessions of Codex",
   "session of codecs": "session of Codex",
   "skill creator claude": "SkillCreatorClaude",

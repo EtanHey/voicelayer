@@ -102,6 +102,30 @@ const MAX_ECHOED_TAIL_LOOKBACK_WORDS = 18;
 const MIN_NOVEL_TAIL_SUFFIX_WORDS = 1;
 const MIN_REPLAYED_TAIL_PHRASE_WORDS = 4;
 const MAX_REPLAYED_TAIL_PHRASE_WORDS = 10;
+const MAX_ORPHANED_TAIL_FRAGMENT_WORDS = 2;
+const MAX_TAIL_PREFIX_SHIFTED_SKIP_WORDS = 6;
+const DANGLING_TAIL_CONTINUATION_CUES = new Set([
+  "are you",
+  "are we",
+  "can i",
+  "can we",
+  "can you",
+  "could i",
+  "could we",
+  "could you",
+  "did you",
+  "do we",
+  "do you",
+  "does it",
+  "is it",
+  "should i",
+  "should we",
+  "should you",
+  "will you",
+  "would i",
+  "would we",
+  "would you",
+]);
 const MAX_LEADING_PUNCTUATION_INSERTED_WORDS = 4;
 const MIN_LEADING_PUNCTUATION_OVERLAP_WORDS = 3;
 const TRAILING_FILLER_AFTER_QUESTION = /\?\s+(?:yeah|ok|okay)\.?$/iu;
@@ -131,7 +155,10 @@ function preferPunctuatedOverlapWord(
 function findChunkOverlap(
   mergedWords: string[],
   nextWords: string[],
+  options: { maxPrefixShiftedSkipWords?: number } = {},
 ): { overlap: number; skipPrefix: number } {
+  const maxPrefixShiftedSkipWords =
+    options.maxPrefixShiftedSkipWords ?? MAX_PREFIX_SHIFTED_SKIP_WORDS;
   const maxOverlap = Math.min(mergedWords.length, nextWords.length);
 
   for (let size = maxOverlap; size > 0; size--) {
@@ -144,7 +171,7 @@ function findChunkOverlap(
 
   for (
     let prefix = 1;
-    prefix <= Math.min(MAX_PREFIX_SHIFTED_SKIP_WORDS, nextWords.length - 1);
+    prefix <= Math.min(maxPrefixShiftedSkipWords, nextWords.length - 1);
     prefix++
   ) {
     const shiftedMaxOverlap = Math.min(
@@ -203,6 +230,21 @@ function hasNovelTailExtension(
   return false;
 }
 
+function isDanglingTailContinuationCue(words: string[]): boolean {
+  if (words.length !== 2) return false;
+  return DANGLING_TAIL_CONTINUATION_CUES.has(
+    words.map(normalizeChunkWordForOverlap).join(" "),
+  );
+}
+
+function hasDanglingTailContinuationCue(currentWords: string[]): boolean {
+  return isDanglingTailContinuationCue(currentWords.slice(-2));
+}
+
+function startsWithDanglingTailContinuationCue(words: string[]): boolean {
+  return isDanglingTailContinuationCue(words.slice(0, 2));
+}
+
 function isPromptEchoedTailReplay(
   currentWords: string[],
   nextWords: string[],
@@ -210,6 +252,9 @@ function isPromptEchoedTailReplay(
   skipPrefix: number,
 ): boolean {
   if (hasNovelTailExtension(currentWords, nextWords, overlap, skipPrefix)) {
+    return false;
+  }
+  if (hasDanglingTailContinuationCue(currentWords)) {
     return false;
   }
 
@@ -238,17 +283,74 @@ function isPromptEchoedTailReplay(
   return false;
 }
 
-function mergeTailVerificationTranscript(current: string, tail: string): string {
-  const currentWords = normalizeChunkWords(current);
-  const tailWords = normalizeChunkWords(tail);
-  const { overlap, skipPrefix } = findChunkOverlap(currentWords, tailWords);
-  if (overlap < MIN_MEANINGFUL_TAIL_OVERLAP_WORDS) return current;
+interface TailVerificationMergeResult {
+  text: string;
+  confirmedOverlap: boolean;
+}
+
+function mergeTailVerificationWords(
+  currentWords: string[],
+  tailWords: string[],
+): TailVerificationMergeResult | null {
+  const { overlap, skipPrefix } = findChunkOverlap(currentWords, tailWords, {
+    maxPrefixShiftedSkipWords: MAX_TAIL_PREFIX_SHIFTED_SKIP_WORDS,
+  });
+  if (overlap < MIN_MEANINGFUL_TAIL_OVERLAP_WORDS) return null;
   if (isPromptEchoedTailReplay(currentWords, tailWords, overlap, skipPrefix)) {
-    return current;
+    return null;
   }
 
-  const merged = mergeChunkTranscripts([current, tail]);
-  return merged || current;
+  const merged = [...currentWords];
+  for (let index = 0; index < overlap; index++) {
+    const mergedIndex = merged.length - overlap + index;
+    merged[mergedIndex] = preferPunctuatedOverlapWord(
+      merged[mergedIndex],
+      tailWords[skipPrefix + index],
+      skipPrefix + index < tailWords.length - 1,
+    );
+  }
+  merged.push(...tailWords.slice(skipPrefix + overlap));
+  const text = merged.join(" ").trim();
+  return text ? { text, confirmedOverlap: true } : null;
+}
+
+function mergeTailVerificationTranscript(
+  current: string,
+  tail: string,
+): TailVerificationMergeResult {
+  const currentWords = normalizeChunkWords(current);
+  const tailWords = normalizeChunkWords(tail);
+  const directMerge = mergeTailVerificationWords(currentWords, tailWords);
+  if (directMerge) return directMerge;
+
+  for (
+    let dropWords = 1;
+    dropWords <= Math.min(MAX_ORPHANED_TAIL_FRAGMENT_WORDS, currentWords.length);
+    dropWords++
+  ) {
+    const retainedWords = currentWords.slice(0, -dropWords);
+    const droppedWords = currentWords.slice(-dropWords);
+    if (
+      dropWords === 1 &&
+      normalizeChunkWordForOverlap(droppedWords[0]).length <= 2
+    ) {
+      continue;
+    }
+    if (
+      !containsEarlierWordSequence(
+        retainedWords,
+        droppedWords,
+        retainedWords.length,
+      )
+    ) {
+      continue;
+    }
+
+    const repairedMerge = mergeTailVerificationWords(retainedWords, tailWords);
+    if (repairedMerge) return repairedMerge;
+  }
+
+  return { text: current, confirmedOverlap: false };
 }
 
 function hasLeadingPunctuationRepairOverlap(
@@ -338,9 +440,10 @@ interface WavPcmInfo {
   blockAlign: number;
 }
 
-const WAV_TAIL_VERIFY_MIN_SECONDS = 20;
+const WAV_TAIL_VERIFY_MIN_SECONDS = 12.5;
 const WAV_TAIL_VERIFY_SECONDS = 12;
 const WAV_HEAD_VERIFY_SECONDS = 12;
+const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
@@ -515,16 +618,27 @@ function trimOneEchoedTrailingPhrase(
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
       const interveningWords = tailStart - (index + phraseWords);
+      const bridgeWords = words.slice(index + phraseWords, tailStart);
+      if (startsWithDanglingTailContinuationCue(bridgeWords)) {
+        continue;
+      }
       const repeatedEarlier = containsEarlierWordSequence(
         words,
         candidate,
         index,
       );
-      const allowedGap =
-        interveningWords >= 2 ||
-        (options.allowAdjacentEcho &&
-          interveningWords === 0 &&
-          (options.allowAdjacentEchoContinuation || repeatedEarlier));
+      const repeatedPhraseBridge = isRepeatedPhraseBridge(
+        bridgeWords,
+        phraseWords,
+        tailKey,
+      ) || containsWordSequence(bridgeWords, candidate);
+      const allowedSeparatedEcho =
+        interveningWords >= 2 && !repeatedPhraseBridge;
+      const allowedAdjacentEcho =
+        options.allowAdjacentEcho &&
+        (interveningWords === 0 || repeatedPhraseBridge) &&
+        (options.allowAdjacentEchoContinuation || repeatedEarlier);
+      const allowedGap = allowedSeparatedEcho || allowedAdjacentEcho;
       if (allowedGap && overlapKey(candidate) === tailKey) {
         return {
           text: words.slice(0, tailStart).join(" ").trim(),
@@ -535,6 +649,33 @@ function trimOneEchoedTrailingPhrase(
   }
 
   return { text: text.trim(), trimmedAdjacentEcho: false };
+}
+
+function isRepeatedPhraseBridge(
+  bridgeWords: string[],
+  phraseWords: number,
+  phraseKey: string,
+): boolean {
+  if (bridgeWords.length === 0 || bridgeWords.length % phraseWords !== 0) {
+    return false;
+  }
+  for (let offset = 0; offset < bridgeWords.length; offset += phraseWords) {
+    if (overlapKey(bridgeWords.slice(offset, offset + phraseWords)) !== phraseKey) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function containsWordSequence(words: string[], sequence: string[]): boolean {
+  if (sequence.length === 0 || words.length < sequence.length) return false;
+  const sequenceKey = overlapKey(sequence);
+  for (let index = 0; index + sequence.length <= words.length; index++) {
+    if (overlapKey(words.slice(index, index + sequence.length)) === sequenceKey) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function trimEchoedTrailingPhrase(
@@ -558,7 +699,7 @@ function trimEchoedTrailingPhrase(
 
 function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
   const info = parseWavPcmInfo(wavData);
-  return !!info && info.durationSeconds >= WAV_TAIL_VERIFY_MIN_SECONDS;
+  return !!info && info.durationSeconds >= WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS;
 }
 
 function combinePromptOverride(
@@ -954,7 +1095,27 @@ export class WhisperServerBackend implements STTBackend {
         }),
       );
       const merged = mergeTailVerificationTranscript(fullText, tailText);
-      return merged ? stripTailVerificationArtifact(merged, fullText) : fullText;
+      if (merged.text !== fullText) {
+        return stripTailVerificationArtifact(merged.text, fullText);
+      }
+      if (
+        merged.confirmedOverlap &&
+        !hasDanglingTailContinuationCue(normalizeChunkWords(fullText))
+      ) {
+        return fullText;
+      }
+
+      const unpromptedTailText = await this.transcribeResident(
+        tailWav,
+        buildWhisperServerOptions({ ...options, promptOverride: undefined }),
+      );
+      const unpromptedMerged = mergeTailVerificationTranscript(
+        fullText,
+        unpromptedTailText,
+      );
+      return unpromptedMerged.text !== fullText
+        ? stripTailVerificationArtifact(unpromptedMerged.text, fullText)
+        : fullText;
     } catch (err) {
       console.error(
         `[voicelayer] whisper-server tail verification failed; keeping full-window text: ${

@@ -108,7 +108,8 @@ function buildPolishSystemPrompt(): string {
   return [
     "You are a transcript fixer for local voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix only obvious transcript artifacts: duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Fix only obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Use light punctuation: add periods or question marks when sentence boundaries are clear from the text, but do not over-polish.",
     "Never summarize, paraphrase, translate, add content, delete meaningful content, change tone, or invent code identifiers.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "If unsure, return the input unchanged.",
@@ -123,6 +124,8 @@ function buildPolishSystemPrompt(): string {
     "Output: תרים את ה-handleSocketCommand",
     "Input: This is already good.",
     "Output: This is already good.",
+    "Input: why did it do that i am confused",
+    "Output: Why did it do that? I am confused.",
     "Forbidden rewrite:",
     "Input: I think this might work.",
     "Output: This solution should work.",

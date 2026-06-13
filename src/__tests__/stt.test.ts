@@ -548,6 +548,146 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+clean");
     });
 
+    it("repairs a compressed final sentence when prompted tail decode has no overlap", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-compressed-sentence-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(31));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          calls++;
+          if (calls === 1) {
+            return "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. Tracks.";
+          }
+          if (options?.prompt) {
+            return "I like that Comfy UI feeds both tracks.";
+          }
+          return "or are they like sequenced? I'm confused about those tracks. I like that Comfy UI feeds both tracks.";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(3);
+      expect(result.text).toBe(
+        "Are these two separate or parallel tracks or are they sequenced? I'm confused about those tracks. I like that Comfy UI feeds both tracks.",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
+    it("repairs a prompted tail after dropping a repeated non-short orphan", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-prompted-orphan-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(31));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "I'm confused about those tracks. Tracks."
+            : "I'm confused about those tracks. I like that Comfy UI feeds both tracks.";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(2);
+      expect(result.text).toBe(
+        "I'm confused about those tracks. I like that Comfy UI feeds both tracks.",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
+    it("verifies medium recordings so live dictation does not lose the final phrase", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-medium-tail-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(17));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "can you just do this and then tell me when you have the next goal for the next brain layer codex do you"
+            : "and then tell me when you have the next goal for the next brain layer codex do you have the next goal for the next brain layer codex";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(2);
+      expect(result.text).toBe(
+        "can you just do this and then tell me when you have the next goal for the next brain layer codex do you have the next goal for the next brain layer codex",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
+    it("skips unprompted tail retry when prompted tail confirms the current ending", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-confirmed-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(17));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          calls++;
+          if (calls === 1) return "we should keep this current ending";
+          if (options?.prompt) return "this current ending";
+          return "this current ending hallucinated continuation";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(2);
+      expect(result.text).toBe("we should keep this current ending");
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("still retries unprompted tail when the confirmed ending is a dangling cue", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-dangling-confirmed-tail-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(17));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          calls++;
+          if (calls === 1) return "we should talk about it do you";
+          if (options?.prompt) return "talk about it do you";
+          return "talk about it do you want the next goal";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(3);
+      expect(result.text).toBe(
+        "we should talk about it do you want the next goal",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
+    it("refuses to drop a repeated short common word as a tail orphan", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-tail-short-orphan-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(31));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          return calls === 1
+            ? "I can do it. It."
+            : "I can do it. Then it should continue.";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe("I can do it. It.");
+      expect(result.backend).toBe("whisper-server");
+    });
+
     it("preserves adjacent repeated phrases in long resident decodes when they appear only twice", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
@@ -583,6 +723,45 @@ describe("STT backends", () => {
         "please repeat after me please repeat after me",
       );
       expect(result.backend).toBe("whisper-server");
+    });
+
+    it("preserves adjacent repeated phrases in medium resident decodes", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-medium-intentional-repeat-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(17));
+      const repeated = "please repeat after me";
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "repeat after me"
+            : `${repeated} ${repeated} ${repeated}`,
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(`${repeated} ${repeated} ${repeated}`);
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("still trims separated echoed phrases in medium resident decodes", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-medium-separated-echo-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(17));
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) =>
+          options?.prompt
+            ? "unrelated tail text"
+            : "what we were supposed to. For fuck's sake, this is getting sickening. For fuck's sake.",
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        "what we were supposed to. For fuck's sake, this is getting sickening.",
+      );
+      expect(result.backend).toBe("whisper-server+clean");
     });
 
     it("trims repeated adjacent echoed phrases until only the first dictated phrase remains", async () => {

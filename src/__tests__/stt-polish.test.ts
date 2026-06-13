@@ -497,6 +497,8 @@ describe("stt-polish", () => {
         content: string;
       }>;
       expect(messages[0].role).toBe("system");
+      expect(messages[0].content).toContain("missing sentence punctuation");
+      expect(messages[0].content).toContain("Why did it do that? I am confused.");
       expect(messages[0].content).toContain("If unsure, return the input unchanged");
       expect(messages[1].content).toContain(
         "Also, do / what's new and output that as your summary",

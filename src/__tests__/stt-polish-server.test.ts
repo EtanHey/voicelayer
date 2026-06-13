@@ -79,6 +79,154 @@ describe("stt-polish-server", () => {
     expect(events[1].payload).toMatchObject({ pid: 456, port: 8080 });
   });
 
+  it("reaps stale local polish port owners before spawning a replacement", async () => {
+    resetSTTPolishServerManagerForTests();
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    const spawnCalls: string[][] = [];
+    let readinessChecks = 0;
+
+    const result = await ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      findBinary: () => "/tmp/mlx_lm.server",
+      findStalePortOwnerPids: () => [70870],
+      killProcess: (pid, signal) => {
+        killed.push({ pid, signal });
+      },
+      isEndpointReady: async () => ++readinessChecks >= 2,
+      spawn: (args) => {
+        spawnCalls.push(args);
+        return { pid: 456, exited: new Promise(() => {}) };
+      },
+      appendEvent: (type, payload) => {
+        events.push({ type, payload });
+      },
+      sleep: async () => {},
+      startupTimeoutMs: 10_000,
+    });
+
+    expect(result).toMatchObject({ status: "ready", pid: 456 });
+    expect(killed).toEqual([{ pid: 70870, signal: "SIGTERM" }]);
+    expect(spawnCalls).toHaveLength(1);
+    expect(events.map((event) => event.type)).toEqual([
+      "transcription.polish_server_stale_owner_reaped",
+      "transcription.polish_server_starting",
+      "transcription.polish_server_ready",
+    ]);
+    expect(events[0].payload).toMatchObject({ port: 8080, pids: [70870] });
+  });
+
+  it("force-restarts a local polish owner even when health checks pass", async () => {
+    resetSTTPolishServerManagerForTests();
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    const spawnCalls: string[][] = [];
+
+    const result = await ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      forceRestart: true,
+      findBinary: () => "/tmp/mlx_lm.server",
+      findStalePortOwnerPids: () => [8080],
+      killProcess: (pid, signal) => {
+        killed.push({ pid, signal });
+      },
+      isEndpointReady: async () => true,
+      spawn: (args) => {
+        spawnCalls.push(args);
+        return { pid: 456, exited: new Promise(() => {}) };
+      },
+      appendEvent: () => {},
+      sleep: async () => {},
+      startupTimeoutMs: 10_000,
+    });
+
+    expect(result).toMatchObject({ status: "ready", pid: 456 });
+    expect(killed).toEqual([{ pid: 8080, signal: "SIGTERM" }]);
+    expect(spawnCalls).toHaveLength(1);
+  });
+
+  it("does not report ready while a stale owner still serves the polish port", async () => {
+    resetSTTPolishServerManagerForTests();
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    const signals: string[] = [];
+
+    const result = await ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      forceRestart: true,
+      findBinary: () => "/tmp/mlx_lm.server",
+      findStalePortOwnerPids: () => [70870],
+      findPortOwnerPids: () => [70870],
+      killProcess: (pid, signal) => {
+        killed.push({ pid, signal });
+      },
+      isEndpointReady: async () => true,
+      spawn: () => ({
+        pid: 456,
+        kill: (signal?: NodeJS.Signals) => {
+          signals.push(signal ?? "SIGTERM");
+        },
+        exited: new Promise(() => {}),
+      }),
+      appendEvent: () => {},
+      sleep: async () => {},
+      startupTimeoutMs: 1,
+    });
+
+    expect(result).toEqual({ status: "timeout" });
+    expect(killed).toEqual([{ pid: 70870, signal: "SIGTERM" }]);
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  it("coalesces force restart with an in-flight polish launch", async () => {
+    resetSTTPolishServerManagerForTests();
+    const spawnCalls: string[][] = [];
+    let ready = false;
+    let releaseSleep: (() => void) | null = null;
+
+    const firstLaunch = ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      findBinary: () => "/tmp/mlx_lm.server",
+      isEndpointReady: async () => ready,
+      spawn: (args) => {
+        spawnCalls.push(args);
+        return { pid: 456, exited: new Promise(() => {}) };
+      },
+      appendEvent: () => {},
+      sleep: async () =>
+        new Promise<void>((resolve) => {
+          releaseSleep = () => {
+            ready = true;
+            resolve();
+          };
+        }),
+      startupTimeoutMs: 10_000,
+    });
+
+    for (let attempts = 0; attempts < 10 && !releaseSleep; attempts++) {
+      await Bun.sleep(0);
+    }
+    if (!releaseSleep) throw new Error("first launch did not reach startup wait");
+
+    const forcedRecovery = ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      forceRestart: true,
+      findBinary: () => {
+        throw new Error("force restart should reuse in-flight launch");
+      },
+    });
+
+    expect(spawnCalls).toHaveLength(1);
+    releaseSleep();
+    await expect(firstLaunch).resolves.toMatchObject({
+      status: "ready",
+      pid: 456,
+    });
+    await expect(forcedRecovery).resolves.toMatchObject({
+      status: "ready",
+      pid: 456,
+    });
+    expect(spawnCalls).toHaveLength(1);
+  });
+
   it("terminates a spawned polish server when startup readiness times out", async () => {
     resetSTTPolishServerManagerForTests();
     const signals: string[] = [];

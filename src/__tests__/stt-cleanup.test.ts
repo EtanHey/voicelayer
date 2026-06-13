@@ -48,6 +48,16 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("OrcClaude");
   });
 
+  it("normalizes repoGolem layer aliases without splitting the entity names", () => {
+    const cleaned = cleanupTranscriptionText(
+      "send a new narration layer codex to compare brain layer codex, voice layer codex, and cmux layer codex",
+    );
+
+    expect(cleaned).toBe(
+      "Send a new NarrationLayer Codex to compare BrainLayer Codex, VoiceLayerCodex, and cmuxLayer Codex",
+    );
+  });
+
   it("covers the strict-score spoken-form misses", () => {
     const cleaned = cleanupTranscriptionText(
       "whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner",

@@ -578,6 +578,24 @@ describe("input module", () => {
       return buffer;
     }
 
+    function pcmWithSparseQuietSpeechlikeBurst(
+      peak: number,
+      durationMs: number,
+    ): Uint8Array {
+      const samples = Math.floor((16000 * durationMs) / 1000);
+      const buffer = new Uint8Array(samples * 2);
+      const view = new DataView(buffer.buffer);
+      const burstSamples = Math.min(samples, Math.floor(16000 * 0.02));
+      const frequencyHz = 180;
+      for (let i = 0; i < burstSamples; i++) {
+        const sample = Math.round(
+          peak * Math.sin((2 * Math.PI * frequencyHz * i) / 16000),
+        );
+        view.setInt16(i * 2, sample, true);
+      }
+      return buffer;
+    }
+
     it("trims a long quiet PTT tail before STT while preserving a short pad", () => {
       const speech = pcmWithConstantSample(2000, 2000);
       const quietTail = pcmWithConstantSample(0, 9000);
@@ -658,6 +676,24 @@ describe("input module", () => {
       expect(result.trimmed).toBe(false);
       expect(result.rawDurationMs).toBe(22250);
       expect(result.transcribedDurationMs).toBe(22250);
+    });
+
+    it("does not trim a low-RMS final speech burst after a long quiet PTT tail", () => {
+      const opening = pcmWithConstantSample(2000, 2000);
+      const roomNoise = pcmWithConstantSample(45, 14000);
+      const finalQuietWord = pcmWithSparseQuietSpeechlikeBurst(450, 250);
+      const pcm = new Uint8Array(
+        opening.byteLength + roomNoise.byteLength + finalQuietWord.byteLength,
+      );
+      pcm.set(opening);
+      pcm.set(roomNoise, opening.byteLength);
+      pcm.set(finalQuietWord, opening.byteLength + roomNoise.byteLength);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(false);
+      expect(result.rawDurationMs).toBe(16250);
+      expect(result.transcribedDurationMs).toBe(16250);
     });
 
     it("does not trim ordinary short pauses before stop", () => {

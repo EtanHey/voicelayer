@@ -1,3 +1,5 @@
+import { accessSync, constants } from "fs";
+
 import { resolveBinary } from "./resolve-binary";
 import { appendControlLayerEvent } from "./control-layer-journal";
 import {
@@ -30,7 +32,11 @@ export type STTPolishServerStatus =
 
 export interface EnsureSTTPolishServerOptions {
   env?: STTPolishEnv;
+  forceRestart?: boolean;
   findBinary?: () => string | null;
+  findPortOwnerPids?: () => number[];
+  findStalePortOwnerPids?: () => number[];
+  killProcess?: (pid: number, signal?: NodeJS.Signals) => void;
   isEndpointReady?: (endpoint: string) => Promise<boolean>;
   spawn?: SpawnPolishProcess;
   appendEvent?: (
@@ -72,7 +78,7 @@ export async function ensureSTTPolishServer(
   if (getSTTPolishMode(env) === "off") return { status: "disabled" };
   if (endpoint !== DEFAULT_POLISH_ENDPOINT) return { status: "external" };
 
-  if (await isReady(endpoint, options)) {
+  if (!options.forceRestart && await isReady(endpoint, options)) {
     return { status: "already-ready", pid: polishProcess?.pid };
   }
 
@@ -81,6 +87,18 @@ export async function ensureSTTPolishServer(
     polishLaunch = null;
   });
   return polishLaunch;
+}
+
+export function recoverDefaultSTTPolishServerAfterFailure(
+  env: STTPolishEnv = process.env,
+): void {
+  if (getSTTPolishMode(env) === "off") return;
+  if (getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return;
+  void ensureSTTPolishServer({ env, forceRestart: true }).catch((error: unknown) => {
+    console.error(
+      `[voicelayer] STT polish server recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 }
 
 async function startAndWaitForPolishServer(
@@ -99,6 +117,8 @@ async function startAndWaitForPolishServer(
     );
     return { status: "missing-binary" };
   }
+
+  await reapStaleDefaultPolishPortOwners(options, appendEvent);
 
   const args = [
     binary,
@@ -125,7 +145,10 @@ async function startAndWaitForPolishServer(
   const timeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isReady(endpoint, options)) {
+    if (
+      (await isReady(endpoint, options)) &&
+      isSpawnedPolishProcessServingPort(proc, options)
+    ) {
       appendEvent(
         "transcription.polish_server_ready",
         { endpoint, model: DEFAULT_POLISH_MODEL, port: DEFAULT_POLISH_PORT, pid: proc.pid },
@@ -154,12 +177,126 @@ async function startAndWaitForPolishServer(
   return { status: "timeout" };
 }
 
+async function reapStaleDefaultPolishPortOwners(
+  options: EnsureSTTPolishServerOptions,
+  appendEvent: NonNullable<EnsureSTTPolishServerOptions["appendEvent"]>,
+): Promise<void> {
+  const pids = getStaleDefaultPolishPortOwnerPids(options);
+  const currentManagedPid = polishProcess?.pid;
+  const reapablePids = [...new Set(pids)].filter(
+    (pid) => Number.isInteger(pid) && pid > 0 && pid !== process.pid,
+  );
+  if (reapablePids.length === 0) return;
+
+  const killProcess = options.killProcess ?? process.kill;
+  const killed: number[] = [];
+  for (const pid of reapablePids) {
+    try {
+      killProcess(pid, "SIGTERM");
+      killed.push(pid);
+      if (pid === currentManagedPid) polishProcess = null;
+    } catch {}
+  }
+  if (killed.length === 0) return;
+
+  appendEvent(
+    "transcription.polish_server_stale_owner_reaped",
+    { port: DEFAULT_POLISH_PORT, pids: killed },
+    { topic: "voice.transcription" },
+  );
+  await (options.sleep ?? Bun.sleep)(500);
+}
+
+function getStaleDefaultPolishPortOwnerPids(
+  options: EnsureSTTPolishServerOptions,
+): number[] {
+  if (options.findStalePortOwnerPids) return options.findStalePortOwnerPids();
+
+  const hasTestHooks =
+    options.findBinary !== undefined ||
+    options.isEndpointReady !== undefined ||
+    options.spawn !== undefined ||
+    options.killProcess !== undefined;
+  if (hasTestHooks) return [];
+
+  return findDefaultPolishPortOwnerPids();
+}
+
+function findDefaultPolishPortOwnerPids(): number[] {
+  return findDefaultPolishPortOwnerPidsUnfiltered().filter((pid) =>
+    isPolishServerPid(pid),
+  );
+}
+
+function findDefaultPolishPortOwnerPidsUnfiltered(): number[] {
+  const result = Bun.spawnSync(
+    ["lsof", "-nP", `-iTCP:${DEFAULT_POLISH_PORT}`, "-sTCP:LISTEN", "-t"],
+    { stdout: "pipe", stderr: "pipe" },
+  );
+  if (result.exitCode !== 0) return [];
+  return new TextDecoder()
+    .decode(result.stdout)
+    .split(/\s+/u)
+    .map((value) => Number(value))
+    .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+function isPolishServerPid(pid: number): boolean {
+  const result = Bun.spawnSync(["ps", "-p", String(pid), "-o", "command="], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  if (result.exitCode !== 0) return false;
+  const command = new TextDecoder().decode(result.stdout);
+  return (
+    command.includes("mlx_lm.server") &&
+    new RegExp(`--port(?:=|\\s+)${DEFAULT_POLISH_PORT}(?:\\s|$)`, "u").test(command)
+  );
+}
+
+function isSpawnedPolishProcessServingPort(
+  proc: ManagedPolishProcess,
+  options: EnsureSTTPolishServerOptions,
+): boolean {
+  const owners = getDefaultPolishPortOwnerPids(options);
+  return owners.includes(proc.pid);
+}
+
+function getDefaultPolishPortOwnerPids(
+  options: EnsureSTTPolishServerOptions,
+): number[] {
+  if (options.findPortOwnerPids) return options.findPortOwnerPids();
+
+  const hasTestHooks =
+    options.findBinary !== undefined ||
+    options.isEndpointReady !== undefined ||
+    options.spawn !== undefined ||
+    options.killProcess !== undefined ||
+    options.findStalePortOwnerPids !== undefined;
+  if (hasTestHooks) return polishProcess?.pid ? [polishProcess.pid] : [];
+
+  return findDefaultPolishPortOwnerPidsUnfiltered();
+}
+
 function findPolishServerBinary(): string | null {
-  return resolveBinary("mlx_lm.server", [
+  const knownCandidates = [
     "/Library/Frameworks/Python.framework/Versions/3.13/bin/mlx_lm.server",
     "/opt/homebrew/bin/mlx_lm.server",
     "/usr/local/bin/mlx_lm.server",
-  ]);
+  ];
+  for (const candidate of knownCandidates) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return resolveBinary("mlx_lm.server");
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function spawnPolishServer(
