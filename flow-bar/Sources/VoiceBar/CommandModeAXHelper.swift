@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import CoreGraphics
 import Foundation
 import VoiceBarUI
 
@@ -29,19 +30,23 @@ final class CommandModeAXHelper {
     private let writeSelectedText: (String) -> Bool
     /// Current focused-element value length, used to guard the legacy fallback.
     private let readValueLength: () -> Int?
+    /// Last-resort insertion primitive for read-only AX targets such as terminal emulators.
+    private let typeKeystrokes: (String) -> Bool
 
     init(
         readSelection: @escaping () -> CommandModeSelectionSnapshot? = CommandModeAXHelper.readFocusedSelectionSnapshot,
         writeValue: @escaping (String) -> Bool = CommandModeAXHelper.writeFocusedValue,
         readBackValue: @escaping () -> String? = CommandModeAXHelper.readFocusedValue,
         writeSelectedText: @escaping (String) -> Bool = CommandModeAXHelper.writeFocusedSelectedText,
-        readValueLength: @escaping () -> Int? = CommandModeAXHelper.readFocusedValueLength
+        readValueLength: @escaping () -> Int? = CommandModeAXHelper.readFocusedValueLength,
+        typeKeystrokes: @escaping (String) -> Bool = CommandModeAXHelper.typeUnicodeLive
     ) {
         self.readSelection = readSelection
         self.writeValue = writeValue
         self.readBackValue = readBackValue
         self.writeSelectedText = writeSelectedText
         self.readValueLength = readValueLength
+        self.typeKeystrokes = typeKeystrokes
     }
 
     /// Insert `text` at the caret (or over the current selection) using the surgical
@@ -50,33 +55,31 @@ final class CommandModeAXHelper {
     /// - Primary path: set kAXSelectedText to the chunk. On success → done; the whole
     ///   element value is NEVER read or rewritten (the wedge guard).
     /// - Guarded fallback: only when kAXSelectedText fails AND the current value is small
-    ///   (< largeValueThreshold) do we fall back to the legacy whole-value rewrite. If the
-    ///   value is large (or its length can't be read), return false — never do a large
-    ///   whole-value rewrite.
+    ///   (< largeValueThreshold) do we fall back to the legacy whole-value rewrite.
+    /// - Final fallback: type the chunk as Unicode key events, which covers read-only AX
+    ///   targets such as terminals while still avoiding large whole-value rewrites.
     func insertAtCursor(_ text: String) -> Bool {
         if writeSelectedText(text) {
             return true
         }
 
-        // kAXSelectedText rejected — only the legacy value-rewrite path can recover, and
-        // only for small values. Large values are the wedge risk: bail out.
-        guard let valueLength = readValueLength(), valueLength < Self.largeValueThreshold else {
-            return false
+        // kAXSelectedText rejected — the legacy value-rewrite path is only safe for
+        // small values. Large or unreadable values go straight to keystroke typing.
+        if let valueLength = readValueLength(), valueLength < Self.largeValueThreshold,
+           let snapshot = readSelection(),
+           let swiftRange = Range(snapshot.selectedRange, in: snapshot.value) {
+            let updatedValue = snapshot.value.replacingCharacters(in: swiftRange, with: text)
+            let disposition = Self.assessAXWrite(
+                expectedValue: updatedValue,
+                didWrite: writeValue(updatedValue),
+                readBackValue: readBackValue()
+            )
+            if disposition != .failed {
+                return true
+            }
         }
 
-        guard let snapshot = readSelection(),
-              let swiftRange = Range(snapshot.selectedRange, in: snapshot.value)
-        else {
-            return false
-        }
-
-        let updatedValue = snapshot.value.replacingCharacters(in: swiftRange, with: text)
-        let disposition = Self.assessAXWrite(
-            expectedValue: updatedValue,
-            didWrite: writeValue(updatedValue),
-            readBackValue: readBackValue()
-        )
-        return disposition != .failed
+        return typeKeystrokes(text)
     }
 
     func applyReplacement(_ replacement: String) -> CommandModeApplyResult {
@@ -107,7 +110,8 @@ final class CommandModeAXHelper {
             writeValue: { Self.writeValue($0, to: element) },
             readBackValue: { Self.readAttributeString(element, attribute: kAXValueAttribute as CFString) },
             writeSelectedText: { Self.writeSelectedText($0, to: element) },
-            readValueLength: { Self.readValueLength(for: element) }
+            readValueLength: { Self.readValueLength(for: element) },
+            typeKeystrokes: Self.typeUnicodeLive
         )
         return { text in
             helper.insertAtCursor(text)
@@ -154,6 +158,23 @@ final class CommandModeAXHelper {
     private static func writeFocusedSelectedText(_ text: String) -> Bool {
         guard let element = focusedElement() else { return false }
         return writeSelectedText(text, to: element)
+    }
+
+    private static func typeUnicodeLive(_ text: String) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        guard !text.isEmpty else { return true }
+        guard let source = CGEventSource(stateID: .combinedSessionState),
+              let keyDown = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+        else {
+            return false
+        }
+
+        var utf16 = Array(text.utf16)
+        keyDown.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.post(tap: .cgSessionEventTap)
+        return true
     }
 
     // MARK: - Element-scoped live AX primitives

@@ -66,6 +66,7 @@ final class CommandModeAXHelperTests: XCTestCase {
     func testInsertAtCursorUsesSelectedTextWriterAndNeverRewritesWholeValue() {
         var selectedTextWrites: [String] = []
         var wholeValueWrites: [String] = []
+        var typedText: [String] = []
         let helper = CommandModeAXHelper(
             writeValue: { value in
                 wholeValueWrites.append(value)
@@ -75,7 +76,11 @@ final class CommandModeAXHelperTests: XCTestCase {
                 selectedTextWrites.append(text)
                 return true
             },
-            readValueLength: { 12 }
+            readValueLength: { 12 },
+            typeKeystrokes: { text in
+                typedText.append(text)
+                return true
+            }
         )
 
         let inserted = helper.insertAtCursor("VoiceBar")
@@ -83,11 +88,13 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertTrue(inserted)
         XCTAssertEqual(selectedTextWrites, ["VoiceBar"])
         XCTAssertTrue(wholeValueWrites.isEmpty, "Whole-value rewrite must never run when kAXSelectedText succeeds")
+        XCTAssertTrue(typedText.isEmpty, "Keystroke fallback must not run when kAXSelectedText succeeds")
     }
 
     func testInsertAtCursorFallsBackToValueRewriteWhenSelectedTextFailsOnSmallValue() {
         var storedValue = "hello world"
         var wholeValueWrites: [String] = []
+        var typedText: [String] = []
         let helper = CommandModeAXHelper(
             readSelection: {
                 CommandModeSelectionSnapshot(value: storedValue, selectedRange: NSRange(location: 6, length: 5))
@@ -99,7 +106,11 @@ final class CommandModeAXHelperTests: XCTestCase {
             },
             readBackValue: { storedValue },
             writeSelectedText: { _ in false },
-            readValueLength: { (storedValue as NSString).length }
+            readValueLength: { (storedValue as NSString).length },
+            typeKeystrokes: { text in
+                typedText.append(text)
+                return true
+            }
         )
 
         let inserted = helper.insertAtCursor("VoiceBar")
@@ -107,10 +118,12 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertTrue(inserted)
         XCTAssertEqual(wholeValueWrites, ["hello VoiceBar"])
         XCTAssertEqual(storedValue, "hello VoiceBar")
+        XCTAssertTrue(typedText.isEmpty, "Keystroke fallback must not run when small-value AX rewrite succeeds")
     }
 
-    func testInsertAtCursorReturnsFalseWithoutValueRewriteWhenSelectedTextFailsOnLargeValue() {
+    func testInsertAtCursorTypesWithoutValueRewriteWhenSelectedTextFailsOnLargeValue() {
         var wholeValueWrites: [String] = []
+        var typedText: [String] = []
         let largeLength = CommandModeAXHelper.largeValueThreshold
         let helper = CommandModeAXHelper(
             readSelection: {
@@ -125,29 +138,63 @@ final class CommandModeAXHelperTests: XCTestCase {
             },
             readBackValue: { nil },
             writeSelectedText: { _ in false },
-            readValueLength: { largeLength }
+            readValueLength: { largeLength },
+            typeKeystrokes: { text in
+                typedText.append(text)
+                return true
+            }
         )
 
-        let inserted = helper.insertAtCursor("nope")
+        let inserted = helper.insertAtCursor("terminal text")
 
-        XCTAssertFalse(inserted)
+        XCTAssertTrue(inserted)
+        XCTAssertEqual(typedText, ["terminal text"])
         XCTAssertTrue(wholeValueWrites.isEmpty, "Large whole-value rewrite must never run (wedge guard)")
     }
 
-    func testInsertAtCursorReturnsFalseWhenSelectedTextFailsAndValueLengthUnknown() {
+    func testInsertAtCursorTypesWhenSelectedTextFailsAndValueLengthUnknown() {
         var wholeValueWrites: [String] = []
+        var typedText: [String] = []
         let helper = CommandModeAXHelper(
             writeValue: { value in
                 wholeValueWrites.append(value)
                 return true
             },
             writeSelectedText: { _ in false },
-            readValueLength: { nil }
+            readValueLength: { nil },
+            typeKeystrokes: { text in
+                typedText.append(text)
+                return true
+            }
         )
 
-        let inserted = helper.insertAtCursor("nope")
+        let inserted = helper.insertAtCursor("terminal text")
+
+        XCTAssertTrue(inserted)
+        XCTAssertEqual(typedText, ["terminal text"])
+        XCTAssertTrue(wholeValueWrites.isEmpty, "Unknown-length whole-value rewrite must never run (wedge guard)")
+    }
+
+    func testInsertAtCursorPropagatesKeystrokeFailureWhenAXPathsFail() {
+        var wholeValueWrites: [String] = []
+        var typedText: [String] = []
+        let helper = CommandModeAXHelper(
+            writeValue: { value in
+                wholeValueWrites.append(value)
+                return true
+            },
+            writeSelectedText: { _ in false },
+            readValueLength: { nil },
+            typeKeystrokes: { text in
+                typedText.append(text)
+                return false
+            }
+        )
+
+        let inserted = helper.insertAtCursor("terminal text")
 
         XCTAssertFalse(inserted)
-        XCTAssertTrue(wholeValueWrites.isEmpty)
+        XCTAssertEqual(typedText, ["terminal text"])
+        XCTAssertTrue(wholeValueWrites.isEmpty, "Unknown-length whole-value rewrite must never run (wedge guard)")
     }
 }
