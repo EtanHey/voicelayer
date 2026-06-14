@@ -195,6 +195,14 @@ public final class VoiceState {
     /// Delay before inserting after activating the target app.
     public var pasteConfirmationDelay: TimeInterval = 0.25
 
+    /// Inter-chunk delay for word-by-word paced streaming (cmuxlayer convergence:
+    /// chunk + small inter-chunk delay). Default ~18ms/word.
+    public var pasteStreamWordDelay: TimeInterval = 0.018
+
+    /// Transcripts with at most this many words are inserted in a single shot
+    /// (no pacing overhead). Above it, words stream in chunk-by-chunk.
+    public var pasteStreamSingleShotWordThreshold: Int = 1
+
     /// Test seam for delayed paste scheduling.
     public var pasteScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
@@ -1197,35 +1205,140 @@ public final class VoiceState {
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
                     let liveInsertionHandler = dictationInsertionHandlerProvider()
-                    let insertionAttempt = capturedInsertionHandler ?? liveInsertionHandler
-                    if let insertionAttempt, insertionAttempt(text) {
-                        logDiagnostic("paste_ax_insert_success", details: [
+                    guard let insertionAttempt = capturedInsertionHandler ?? liveInsertionHandler else {
+                        logDiagnostic("paste_ax_insert_miss", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,
-                            "source": capturedInsertionHandler == nil ? "focused" : "captured",
+                            "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                            "hadFocusedInsertion": boolString(liveInsertionHandler != nil),
                         ])
-                        finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+                        logDiagnostic("paste_clipboard_fallback_suppressed", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "reason": "transcript_paste_must_not_use_clipboard",
+                        ])
+                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
                         return
                     }
 
-                    logDiagnostic("paste_ax_insert_miss", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
-                        "hadFocusedInsertion": boolString(liveInsertionHandler != nil),
-                    ])
-                    logDiagnostic("paste_clipboard_fallback_suppressed", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "reason": "transcript_paste_must_not_use_clipboard",
-                    ])
-                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                    streamInsertText(
+                        text,
+                        insert: insertionAttempt,
+                        onSuccess: { [weak self] in
+                            guard let self else { return }
+                            logDiagnostic("paste_ax_insert_success", details: [
+                                "plan": String(describing: plan),
+                                "targetApp": pasteTargetBundleID,
+                                "source": capturedInsertionHandler == nil ? "focused" : "captured",
+                            ])
+                            finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+                        },
+                        onMiss: { [weak self] in
+                            guard let self else { return }
+                            logDiagnostic("paste_ax_insert_miss", details: [
+                                "plan": String(describing: plan),
+                                "targetApp": pasteTargetBundleID,
+                                "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                                "hadFocusedInsertion": boolString(liveInsertionHandler != nil),
+                            ])
+                            logDiagnostic("paste_clipboard_fallback_suppressed", details: [
+                                "plan": String(describing: plan),
+                                "targetApp": pasteTargetBundleID,
+                                "reason": "transcript_paste_must_not_use_clipboard",
+                            ])
+                            finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                        }
+                    )
                 }
             }
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
             return
         }
+    }
+
+    /// Split `text` into word chunks, preserving spacing by keeping the trailing
+    /// whitespace run with each word. Concatenating the chunks reproduces `text`
+    /// exactly. cmuxlayer convergence: the chunk unit here is the word.
+    static func wordChunks(_ text: String) -> [String] {
+        guard !text.isEmpty else { return [] }
+        var chunks: [String] = []
+        var current = ""
+        var inTrailingSpaces = false
+
+        for character in text {
+            let isSpace = character == " "
+            // A non-space that begins a new word AFTER we already accumulated a word
+            // plus its trailing space(s) closes the previous chunk.
+            if !isSpace, inTrailingSpaces {
+                chunks.append(current)
+                current = ""
+                inTrailingSpaces = false
+            }
+            current.append(character)
+            if isSpace {
+                // Only count it as a trailing space if the chunk already has a word.
+                inTrailingSpaces = current.contains { $0 != " " }
+            }
+        }
+        if !current.isEmpty {
+            chunks.append(current)
+        }
+        return chunks
+    }
+
+    /// Insert `text` via the surgical AX insert, paced word-by-word (cmuxlayer
+    /// convergence). Short transcripts (≤ `pasteStreamSingleShotWordThreshold` words)
+    /// insert in a single shot. Each chunk is inserted via `insert`; the next chunk is
+    /// scheduled after `pasteStreamWordDelay` using `pasteScheduler` so pacing is
+    /// deterministically testable. If a mid-stream chunk fails, streaming stops and
+    /// `onMiss` is reported (no further hammering).
+    func streamInsertText(
+        _ text: String,
+        insert: @escaping (String) -> Bool,
+        onSuccess: @escaping () -> Void,
+        onMiss: @escaping () -> Void
+    ) {
+        let chunks = Self.wordChunks(text)
+
+        // Empty transcript: nothing to insert, treat as a successful no-op insert.
+        guard !chunks.isEmpty else {
+            if insert(text) {
+                onSuccess()
+            } else {
+                onMiss()
+            }
+            return
+        }
+
+        // Single-shot path for short transcripts (no pacing overhead).
+        if chunks.count <= pasteStreamSingleShotWordThreshold {
+            if insert(text) {
+                onSuccess()
+            } else {
+                onMiss()
+            }
+            return
+        }
+
+        func step(_ index: Int) {
+            guard index < chunks.count else {
+                onSuccess()
+                return
+            }
+            guard insert(chunks[index]) else {
+                onMiss()
+                return
+            }
+            let next = index + 1
+            if next >= chunks.count {
+                onSuccess()
+                return
+            }
+            pasteScheduler(pasteStreamWordDelay) { step(next) }
+        }
+
+        step(0)
     }
 
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"

@@ -649,7 +649,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
-        XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
+        XCTAssertEqual(insertedTexts.joined(), "this is the full transcript ending with wow")
         XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
@@ -676,7 +676,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "paste into the focus that is current on release",
         ])
 
-        XCTAssertEqual(insertedTexts, ["paste into the focus that is current on release"])
+        XCTAssertEqual(insertedTexts.joined(), "paste into the focus that is current on release")
         XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "paste into the focus that is current on release")
     }
@@ -706,7 +706,9 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
-        XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
+        // Streaming stops at the first failed chunk (no hammering); only the first
+        // word chunk was attempted via AX. No clipboard fallback, retry hint shown.
+        XCTAssertEqual(insertedTexts, ["this "])
         XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
     }
@@ -812,12 +814,16 @@ final class VoiceStatePasteTests: XCTestCase {
         state.repasteTranscript("fresh transcript")
 
         XCTAssertEqual(scheduled.count, 1)
-        scheduled[0].block()
 
-        XCTAssertEqual(scheduled.count, 2)
-        scheduled[1].block()
+        // Drain activation + paste-delay + per-chunk streaming steps in order.
+        var drained = 0
+        while drained < scheduled.count {
+            let block = scheduled[drained].block
+            drained += 1
+            block()
+        }
 
-        XCTAssertEqual(insertedTexts, ["fresh transcript"])
+        XCTAssertEqual(insertedTexts.joined(), "fresh transcript")
         XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "fresh transcript")
     }
@@ -846,6 +852,169 @@ final class VoiceStatePasteTests: XCTestCase {
     func testRepasteWaitsForMenuFocusToSettle() {
         XCTAssertGreaterThan(VoicePastePlan.repaste.activationDelay, 0)
         XCTAssertEqual(VoicePastePlan.autoPaste.activationDelay, 0)
+    }
+
+    // MARK: - Word-by-word paced streaming (cmuxlayer convergence)
+
+    func testWordChunksPreserveSpacingAndConcatenateToOriginal() {
+        let text = "stream word by word smoothly"
+        let chunks = VoiceState.wordChunks(text)
+
+        XCTAssertEqual(chunks, ["stream ", "word ", "by ", "word ", "smoothly"])
+        XCTAssertEqual(chunks.joined(), text)
+    }
+
+    func testWordChunksKeepRunsOfSpacesWithPrecedingWord() {
+        let text = "hello   world"
+        let chunks = VoiceState.wordChunks(text)
+
+        XCTAssertEqual(chunks, ["hello   ", "world"])
+        XCTAssertEqual(chunks.joined(), text)
+    }
+
+    func testStreamInsertTextEmitsOrderedChunksViaPasteScheduler() {
+        let state = VoiceState()
+        var scheduled: [() -> Void] = []
+        state.pasteScheduler = { _, block in scheduled.append(block) }
+
+        var insertedChunks: [String] = []
+        var succeeded = false
+        var missed = false
+
+        state.streamInsertText(
+            "alpha beta gamma",
+            insert: { chunk in
+                insertedChunks.append(chunk)
+                return true
+            },
+            onSuccess: { succeeded = true },
+            onMiss: { missed = true }
+        )
+
+        // Drain the scheduled inter-chunk steps in order.
+        while !scheduled.isEmpty {
+            let next = scheduled.removeFirst()
+            next()
+        }
+
+        XCTAssertEqual(insertedChunks, ["alpha ", "beta ", "gamma"])
+        XCTAssertEqual(insertedChunks.joined(), "alpha beta gamma")
+        XCTAssertTrue(succeeded)
+        XCTAssertFalse(missed)
+    }
+
+    func testStreamInsertTextStopsAndReportsMissOnMidStreamFailure() {
+        let state = VoiceState()
+        var scheduled: [() -> Void] = []
+        state.pasteScheduler = { _, block in scheduled.append(block) }
+
+        var insertedChunks: [String] = []
+        var succeeded = false
+        var missed = false
+
+        state.streamInsertText(
+            "one two three four",
+            insert: { chunk in
+                insertedChunks.append(chunk)
+                // Fail on the second chunk.
+                return insertedChunks.count < 2
+            },
+            onSuccess: { succeeded = true },
+            onMiss: { missed = true }
+        )
+
+        while !scheduled.isEmpty {
+            let next = scheduled.removeFirst()
+            next()
+        }
+
+        XCTAssertEqual(insertedChunks, ["one ", "two "])
+        XCTAssertTrue(missed)
+        XCTAssertFalse(succeeded)
+    }
+
+    func testStreamInsertSingleWordInsertsInOneShotWithoutScheduling() {
+        let state = VoiceState()
+        var scheduleCount = 0
+        state.pasteScheduler = { _, block in
+            scheduleCount += 1
+            block()
+        }
+
+        var insertedChunks: [String] = []
+        var succeeded = false
+
+        state.streamInsertText(
+            "solo",
+            insert: { chunk in
+                insertedChunks.append(chunk)
+                return true
+            },
+            onSuccess: { succeeded = true },
+            onMiss: {}
+        )
+
+        XCTAssertEqual(insertedChunks, ["solo"])
+        XCTAssertEqual(scheduleCount, 0, "Single-word insert must not pace via scheduler")
+        XCTAssertTrue(succeeded)
+    }
+
+    func testStreamInsertEmptyTextInsertsOnceWithoutCrash() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+
+        var insertedChunks: [String] = []
+        var succeeded = false
+
+        state.streamInsertText(
+            "",
+            insert: { chunk in
+                insertedChunks.append(chunk)
+                return true
+            },
+            onSuccess: { succeeded = true },
+            onMiss: {}
+        )
+
+        XCTAssertEqual(insertedChunks, [""])
+        XCTAssertTrue(succeeded)
+    }
+
+    func testAutoPasteStreamsMultiWordTranscriptChunkByChunk() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
+        state.frontmostAppProvider = { frontmostApp }
+        state.targetAppActivator = { _ in }
+        state.pasteConfirmationDelay = 0
+
+        var scheduled: [() -> Void] = []
+        state.pasteScheduler = { _, block in scheduled.append(block) }
+
+        var insertedChunks: [String] = []
+        state.dictationInsertionHandlerProvider = {
+            { chunk in
+                insertedChunks.append(chunk)
+                return true
+            }
+        }
+
+        state.record()
+        frontmostApp = nil
+        state.handleEvent([
+            "type": "transcription",
+            "text": "this is the full transcript",
+        ])
+
+        // Drain activation + per-chunk scheduled steps.
+        while !scheduled.isEmpty {
+            let next = scheduled.removeFirst()
+            next()
+        }
+
+        XCTAssertEqual(insertedChunks.joined(), "this is the full transcript")
+        XCTAssertEqual(insertedChunks, ["this ", "is ", "the ", "full ", "transcript"])
+        XCTAssertEqual(state.confirmationText, "this is the full transcript")
     }
 
     func testRecentTranscriptionsAreMostRecentFirst() {
