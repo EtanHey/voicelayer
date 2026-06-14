@@ -44,6 +44,25 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(savedSnapshots.last, ["persist this transcript"])
     }
 
+    func testFinalTranscriptionDiagnosticsIncludePayloadFingerprintAndPreview() {
+        let state = VoiceState()
+        var diagnostics: [(String, [String: String])] = []
+        state.diagnosticLogger = { event, details in
+            diagnostics.append((event, details))
+        }
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "first line\nmiddle words and a distinctive final tail",
+        ])
+
+        let final = diagnostics.first { event, _ in event == "transcription_final" }?.1
+        XCTAssertEqual(final?["textLength"], "52")
+        XCTAssertEqual(final?["textHead"], "first line\\nmiddle words and a distinctive final tail")
+        XCTAssertEqual(final?["textTail"], "first line\\nmiddle words and a distinctive final tail")
+        XCTAssertEqual(final?["textFingerprint"]?.count, 16)
+    }
+
     func testFinalTranscriptionHistoryAccessoryRequestsPanelLayoutRefresh() {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
@@ -607,7 +626,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.transcript, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteUsesRecordedInputInsertionBeforeClipboardFallback() {
+    func testAutoPasteUsesRecordedInputInsertionWithoutClipboardFallback() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         var frontmostApp: NSRunningApplication? = NSRunningApplication.current
@@ -616,16 +635,11 @@ final class VoiceStatePasteTests: XCTestCase {
         state.targetAppActivator = { _ in }
 
         var insertedTexts: [String] = []
-        var pasteShortcutPosted = false
         state.dictationInsertionHandlerProvider = {
             { text in
                 insertedTexts.append(text)
                 return true
             }
-        }
-        state.simulatedPasteHandler = {
-            pasteShortcutPosted = true
-            return true
         }
 
         state.record()
@@ -636,11 +650,10 @@ final class VoiceStatePasteTests: XCTestCase {
         ])
 
         XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
-        XCTAssertFalse(pasteShortcutPosted)
         XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteDoesNotUseRecordStartInsertionWhenFocusIsAvailableAtPasteTime() {
+    func testAutoPasteUsesFocusedAXInsertionWhenFocusIsAvailableAtPasteTime() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -649,23 +662,13 @@ final class VoiceStatePasteTests: XCTestCase {
 
         var insertedTexts: [String] = []
         var clipboardWrites: [String] = []
-        var pasteboardString: String?
-        var pasteShortcutPosted = false
         state.dictationInsertionHandlerProvider = {
             { text in
                 insertedTexts.append(text)
                 return true
             }
         }
-        state.pasteboardWriter = {
-            clipboardWrites.append($0)
-            pasteboardString = $0
-        }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.simulatedPasteHandler = {
-            pasteShortcutPosted = true
-            return true
-        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
 
         state.record()
         state.handleEvent([
@@ -673,13 +676,12 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "paste into the focus that is current on release",
         ])
 
-        XCTAssertEqual(insertedTexts, [])
-        XCTAssertEqual(clipboardWrites, ["paste into the focus that is current on release"])
-        XCTAssertTrue(pasteShortcutPosted)
+        XCTAssertEqual(insertedTexts, ["paste into the focus that is current on release"])
+        XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "paste into the focus that is current on release")
     }
 
-    func testAutoPasteFallsBackToClipboardWhenRecordedInputInsertionFails() {
+    func testAutoPasteDoesNotUseClipboardFallbackWhenRecordedInputInsertionFails() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         var frontmostApp: NSRunningApplication? = NSRunningApplication.current
@@ -689,37 +691,13 @@ final class VoiceStatePasteTests: XCTestCase {
 
         var insertedTexts: [String] = []
         var clipboardWrites: [String] = []
-        var restoredSnapshots: [PasteboardSnapshot] = []
-        var pasteboardString: String?
-        var pasteShortcutPosted = false
-        var pasteboardChangeCount = 7
         state.dictationInsertionHandlerProvider = {
             { text in
                 insertedTexts.append(text)
                 return false
             }
         }
-        state.pasteboardSnapshotter = {
-            PasteboardSnapshot(
-                changeCount: pasteboardChangeCount,
-                items: [["public.utf8-plain-text": Data("user-copy".utf8)]]
-            )
-        }
-        state.pasteboardWriter = {
-            clipboardWrites.append($0)
-            pasteboardString = $0
-            pasteboardChangeCount += 1
-        }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.pasteboardChangeCountProvider = { pasteboardChangeCount }
-        state.pasteboardSnapshotRestorer = {
-            restoredSnapshots.append($0)
-            pasteboardChangeCount += 1
-        }
-        state.simulatedPasteHandler = {
-            pasteShortcutPosted = true
-            return true
-        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
 
         state.record()
         frontmostApp = nil
@@ -729,28 +707,19 @@ final class VoiceStatePasteTests: XCTestCase {
         ])
 
         XCTAssertEqual(insertedTexts, ["this is the full transcript ending with wow"])
-        XCTAssertEqual(clipboardWrites, ["this is the full transcript ending with wow"])
-        XCTAssertEqual(restoredSnapshots, [
-            PasteboardSnapshot(
-                changeCount: 7,
-                items: [["public.utf8-plain-text": Data("user-copy".utf8)]]
-            ),
-        ])
-        XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
     }
 
-    func testAutoPasteShowsSuccessTranscriptWhenNoFocusedInputWasCaptured() {
+    func testAutoPasteDoesNotUseClipboardFallbackWhenNoFocusedInputWasCaptured() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
         state.pasteScheduler = { _, block in block() }
         state.targetAppActivator = { _ in }
         state.dictationInsertionHandlerProvider = { nil }
-        var pasteboardString: String?
-        state.pasteboardWriter = { pasteboardString = $0 }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.simulatedPasteHandler = { true }
+        var clipboardWrites: [String] = []
+        state.pasteboardWriter = { clipboardWrites.append($0) }
 
         state.record()
         state.handleEvent([
@@ -758,31 +727,23 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this might not have an input",
         ])
 
-        XCTAssertEqual(state.confirmationText, "this might not have an input")
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
     }
 
-    func testAutoPasteDoesNotPostPasteShortcutWhenPasteboardWriteDoesNotLoadTranscript() {
+    func testAutoPasteDoesNotTouchClipboardWhenFocusedInsertionIsUnavailable() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
         state.pasteScheduler = { _, block in block() }
         state.targetAppActivator = { _ in }
         state.dictationInsertionHandlerProvider = { nil }
-        state.pasteboardSnapshotter = { nil }
 
         var clipboardWrites: [String] = []
         var controlLayerEvents: [(String, [String: String])] = []
-        var pasteShortcutPosted = false
         state.pasteboardWriter = { clipboardWrites.append($0) }
-        state.pasteboardStringProvider = {
-            "stale clipboard content that must not be pasted"
-        }
         state.controlLayerEventWriter = { event, details in
             controlLayerEvents.append((event, details))
-        }
-        state.simulatedPasteHandler = {
-            pasteShortcutPosted = true
-            return true
         }
 
         state.record()
@@ -791,88 +752,40 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "fresh transcript that must not paste stale clipboard content",
         ])
 
-        XCTAssertEqual(clipboardWrites, ["fresh transcript that must not paste stale clipboard content"])
-        XCTAssertFalse(pasteShortcutPosted)
+        XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
         XCTAssertTrue(controlLayerEvents.contains { event, details in
-            event == "paste_clipboard_write_failed" &&
-                details["expectedTextLength"] == "60" &&
-                details["pasteboardTextLength"] == "47"
+            event == "paste_clipboard_fallback_suppressed" &&
+                details["reason"] == "transcript_paste_must_not_use_clipboard"
         })
     }
 
-    func testAutoPasteSkipsClipboardRestoreIfClipboardChangedAgainAfterWrite() {
+    func testRepasteDoesNotUseClipboardFallbackWhenFocusedInsertionIsUnavailable() {
         let state = VoiceState()
         state.sendCommand = { _ in }
-        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
-        state.frontmostAppProvider = { frontmostApp }
+        state.frontmostAppProvider = { NSRunningApplication.current }
         state.targetAppActivator = { _ in }
 
-        var insertedTexts: [String] = []
         var clipboardWrites: [String] = []
-        var restoredSnapshots: [PasteboardSnapshot] = []
-        var pasteboardString: String?
-        var pasteShortcutPosted = false
-        var scheduledRestore: (() -> Void)?
-        var pasteboardChangeCount = 3
         var scheduledStepCount = 0
 
-        state.dictationInsertionHandlerProvider = {
-            { text in
-                insertedTexts.append(text)
-                return false
-            }
-        }
         state.pasteScheduler = { _, block in
             scheduledStepCount += 1
             if scheduledStepCount < 3 {
                 block()
             } else {
-                scheduledRestore = block
+                XCTFail("repaste should not schedule clipboard work when AX insertion is unavailable")
             }
         }
-        state.pasteboardSnapshotter = {
-            PasteboardSnapshot(
-                changeCount: pasteboardChangeCount,
-                items: [["public.utf8-plain-text": Data("user-copy".utf8)]]
-            )
-        }
-        state.pasteboardWriter = {
-            clipboardWrites.append($0)
-            pasteboardString = $0
-            pasteboardChangeCount += 1
-        }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.pasteboardChangeCountProvider = { pasteboardChangeCount }
-        state.pasteboardSnapshotRestorer = {
-            restoredSnapshots.append($0)
-            pasteboardChangeCount += 1
-        }
-        state.simulatedPasteHandler = {
-            pasteShortcutPosted = true
-            return true
-        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
 
-        state.record()
-        frontmostApp = nil
-        state.handleEvent([
-            "type": "transcription",
-            "text": "clipboard safety check",
-        ])
+        state.repasteTranscript("clipboard safety check")
 
-        XCTAssertEqual(insertedTexts, ["clipboard safety check"])
-        XCTAssertEqual(clipboardWrites, ["clipboard safety check"])
-        XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertNotNil(scheduledRestore)
-
-        // Simulate the user copying something else before our delayed restore fires.
-        pasteboardChangeCount += 1
-        scheduledRestore?()
-
-        XCTAssertEqual(restoredSnapshots, [])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
     }
 
-    func testAutoPasteKeepsTranscriptOnClipboardLongEnoughForSlowTargets() {
+    func testRepasteUsesFocusedAXInsertionWhenAvailable() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -880,31 +793,23 @@ final class VoiceStatePasteTests: XCTestCase {
         state.pasteConfirmationDelay = 0
 
         var scheduled: [(delay: TimeInterval, block: () -> Void)] = []
-        var pasteboardString: String?
-        var pasteboardChangeCount = 5
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
 
         state.pasteScheduler = { delay, block in
             scheduled.append((delay, block))
         }
-        state.pasteboardSnapshotter = {
-            PasteboardSnapshot(
-                changeCount: pasteboardChangeCount,
-                items: [["public.utf8-plain-text": Data("old clipboard".utf8)]]
-            )
+        state.dictationInsertionHandlerProvider = {
+            { text in
+                insertedTexts.append(text)
+                return true
+            }
         }
         state.pasteboardWriter = {
-            pasteboardString = $0
-            pasteboardChangeCount += 1
+            clipboardWrites.append($0)
         }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.pasteboardChangeCountProvider = { pasteboardChangeCount }
-        state.simulatedPasteHandler = { true }
 
-        state.record()
-        state.handleEvent([
-            "type": "transcription",
-            "text": "fresh transcript",
-        ])
+        state.repasteTranscript("fresh transcript")
 
         XCTAssertEqual(scheduled.count, 1)
         scheduled[0].block()
@@ -912,9 +817,9 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(scheduled.count, 2)
         scheduled[1].block()
 
-        XCTAssertEqual(pasteboardString, "fresh transcript")
-        XCTAssertEqual(scheduled.count, 3)
-        XCTAssertGreaterThanOrEqual(scheduled[2].delay, 1.0)
+        XCTAssertEqual(insertedTexts, ["fresh transcript"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertEqual(state.confirmationText, "fresh transcript")
     }
 
     func testAutoPasteFailureUsesGenericMessageInsteadOfAccessibilityBlame() {
@@ -924,10 +829,8 @@ final class VoiceStatePasteTests: XCTestCase {
         state.pasteScheduler = { _, block in block() }
         state.targetAppActivator = { _ in }
         state.dictationInsertionHandlerProvider = { { _ in false } }
-        var pasteboardString: String?
-        state.pasteboardWriter = { pasteboardString = $0 }
-        state.pasteboardStringProvider = { pasteboardString }
-        state.simulatedPasteHandler = { false }
+        var clipboardWrites: [String] = []
+        state.pasteboardWriter = { clipboardWrites.append($0) }
 
         state.record()
         state.handleEvent([
@@ -935,6 +838,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "this is the full transcript ending with wow",
         ])
 
+        XCTAssertEqual(clipboardWrites, [])
         XCTAssertEqual(state.confirmationText, "Paste failed — click input and press Shift+F5")
         XCTAssertFalse(state.confirmationText?.contains("Accessibility") ?? true)
     }

@@ -252,6 +252,15 @@ final class SocketServer {
             return
         }
 
+        guard shouldRouteClientEvent(from: fd) else {
+            NSLog(
+                "[VoiceBar] Ignoring event from non-command client (fd: %@, type: %@)",
+                fd.map(String.init) ?? "unknown",
+                dict["type"] as? String ?? "unknown"
+            )
+            return
+        }
+
         DispatchQueue.main.async { [weak self] in
             if dict["type"] as? String == "error",
                let captureFailure = dict["capture_failure"] as? String {
@@ -288,6 +297,11 @@ final class SocketServer {
             acceptsCommands ? "true" : "false"
         )
         updateConnectionState()
+    }
+
+    private func shouldRouteClientEvent(from fd: Int32?) -> Bool {
+        guard let fd else { return true }
+        return clients[fd]?.acceptsCommands == true
     }
 
     // MARK: - Send to command client

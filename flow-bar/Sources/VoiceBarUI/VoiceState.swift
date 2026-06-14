@@ -50,11 +50,6 @@ public struct ClipMarkerState: Equatable {
     public var status: String
 }
 
-public struct PasteboardSnapshot: Equatable {
-    public var changeCount: Int
-    public var items: [[String: Data]]
-}
-
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
@@ -197,7 +192,7 @@ public final class VoiceState {
     public var pasteHandler: ((String) -> Bool)?
     public var commandModeApplyHandler: ((String) -> CommandModeApplyResult)?
 
-    /// Delay before sending Cmd+V after activating the target app.
+    /// Delay before inserting after activating the target app.
     public var pasteConfirmationDelay: TimeInterval = 0.25
 
     /// Test seam for delayed paste scheduling.
@@ -215,44 +210,22 @@ public final class VoiceState {
         NSWorkspace.shared.frontmostApplication
     }
 
-    /// Test seam for the final Cmd+V event posting.
-    public var simulatedPasteHandler: () -> Bool = { false }
-
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
 
     /// Test seam for capturing a direct insertion closure tied to the focused input.
     public var dictationInsertionHandlerProvider: () -> ((String) -> Bool)? = { nil }
 
-    /// Test seam for clipboard writes used by fallback paste.
+    /// Test seam for explicit copy actions. Transcript insertion must not call this.
     public var pasteboardWriter: (String) -> Void = { string in
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(string, forType: .string)
     }
 
-    public var pasteboardStringProvider: () -> String? = {
-        NSPasteboard.general.string(forType: .string)
-    }
-
-    public var pasteboardSnapshotter: () -> PasteboardSnapshot? = {
-        VoiceState.capturePasteboardSnapshot()
-    }
-
-    public var pasteboardSnapshotRestorer: (PasteboardSnapshot) -> Void = { snapshot in
-        VoiceState.restorePasteboardSnapshot(snapshot)
-    }
-
-    public var pasteboardChangeCountProvider: () -> Int = {
-        NSPasteboard.general.changeCount
-    }
-
     public var currentDateProvider: () -> Date = {
         Date()
     }
-
-    /// Keep transcript on the clipboard long enough for slower targets to consume Cmd+V.
-    public var pasteboardRestoreDelay: TimeInterval = 1.25
 
     private let recentTranscriptionsSaver: ([String]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
@@ -1059,12 +1032,11 @@ public final class VoiceState {
         transcript = text
         rememberRecentTranscription(text)
         refreshTranscriptionVocabulary()
-        logDiagnostic("transcription_final", details: [
-            "textLength": String(text.count),
+        logDiagnostic("transcription_final", details: transcriptDiagnosticDetails(text).merging([
             "barInitiatedRecording": boolString(barInitiatedRecording),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
-        ])
+        ], uniquingKeysWith: { current, _ in current }))
 
         let shouldAutoPaste = barInitiatedRecording
         let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste
@@ -1142,7 +1114,7 @@ public final class VoiceState {
         return (!isSelf ? currentFront : nil) ?? frontmostAppOnRecordStart
     }
 
-    /// Refocuses the target app and pastes text via Cmd+V.
+    /// Refocuses the target app and inserts text through Accessibility.
     private func pasteTranscript(
         _ text: String,
         for targetApp: NSRunningApplication?,
@@ -1151,13 +1123,12 @@ public final class VoiceState {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
         let targetBundleID = targetApp?.bundleIdentifier ?? "nil"
-        logDiagnostic("paste_begin", details: [
+        logDiagnostic("paste_begin", details: transcriptDiagnosticDetails(text).merging([
             "plan": String(describing: plan),
             "targetApp": targetBundleID,
-            "textLength": String(text.count),
             "hasCapturedInsertion": boolString(insertionHandler != nil),
             "axTrusted": boolString(accessibilityTrustChecker(false)),
-        ])
+        ], uniquingKeysWith: { current, _ in current }))
 
         if let pasteHandler {
             if let targetApp {
@@ -1225,10 +1196,13 @@ public final class VoiceState {
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
-                    if let capturedInsertionHandler, capturedInsertionHandler(text) {
+                    let liveInsertionHandler = dictationInsertionHandlerProvider()
+                    let insertionAttempt = capturedInsertionHandler ?? liveInsertionHandler
+                    if let insertionAttempt, insertionAttempt(text) {
                         logDiagnostic("paste_ax_insert_success", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,
+                            "source": capturedInsertionHandler == nil ? "focused" : "captured",
                         ])
                         finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
                         return
@@ -1238,51 +1212,14 @@ public final class VoiceState {
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
                         "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                        "hadFocusedInsertion": boolString(liveInsertionHandler != nil),
                     ])
-                    let pasteboardSnapshot = pasteboardSnapshotter()
-                    let changeCountBeforeWrite = pasteboardChangeCountProvider()
-                    pasteboardWriter(text)
-                    let changeCountAfterWrite = pasteboardChangeCountProvider()
-                    let pasteboardTextAfterWrite = pasteboardStringProvider()
-                    let clipboardVerified = pasteboardTextAfterWrite == text
-                    logDiagnostic("paste_clipboard_write_result", details: [
+                    logDiagnostic("paste_clipboard_fallback_suppressed", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "verified": boolString(clipboardVerified),
-                        "changeCountBefore": String(changeCountBeforeWrite),
-                        "changeCountAfter": String(changeCountAfterWrite),
-                        "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                        "expectedTextLength": String(text.count),
+                        "reason": "transcript_paste_must_not_use_clipboard",
                     ])
-                    guard clipboardVerified else {
-                        logDiagnostic("paste_clipboard_write_failed", details: [
-                            "plan": String(describing: plan),
-                            "targetApp": pasteTargetBundleID,
-                            "changeCountBefore": String(changeCountBeforeWrite),
-                            "changeCountAfter": String(changeCountAfterWrite),
-                            "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                            "expectedTextLength": String(text.count),
-                        ])
-                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
-                        return
-                    }
-                    let pasted = simulatedPasteHandler()
-                    scheduleClipboardRestoreIfNeeded(
-                        from: pasteboardSnapshot,
-                        expectedChangeCount: changeCountAfterWrite
-                    )
-                    logDiagnostic("paste_cmdv_result", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "pasted": boolString(pasted),
-                    ])
-                    finishPasteConfirmation(
-                        outcome: Self.pasteOutcome(
-                            pasted: pasted,
-                            plan: plan
-                        ),
-                        text: text
-                    )
+                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
                 }
             }
             frontmostAppOnRecordStart = nil
@@ -1294,41 +1231,9 @@ public final class VoiceState {
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
     private static let pasteFailureRetryMessage = "Paste failed — click input and press Shift+F5"
 
-    private static func pasteOutcome(
-        pasted: Bool,
-        plan: VoicePastePlan
-    ) -> VoicePasteOutcome {
-        guard pasted else { return .failed(genericPasteFailureMessage) }
-        return .pasted
-    }
-
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
         guard let lhs, let rhs else { return false }
         return lhs.processIdentifier == rhs.processIdentifier
-    }
-
-    private func scheduleClipboardRestoreIfNeeded(
-        from snapshot: PasteboardSnapshot?,
-        expectedChangeCount: Int
-    ) {
-        guard let snapshot else { return }
-
-        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
-            guard let self else { return }
-            let currentChangeCount = pasteboardChangeCountProvider()
-            guard currentChangeCount == expectedChangeCount else {
-                logDiagnostic("paste_clipboard_restore_skipped", details: [
-                    "expectedChangeCount": String(expectedChangeCount),
-                    "currentChangeCount": String(currentChangeCount),
-                ])
-                return
-            }
-
-            pasteboardSnapshotRestorer(snapshot)
-            logDiagnostic("paste_clipboard_restored", details: [
-                "restoredItems": String(snapshot.items.count),
-            ])
-        }
     }
 
     private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
@@ -1473,6 +1378,31 @@ public final class VoiceState {
         value ? "true" : "false"
     }
 
+    private func transcriptDiagnosticDetails(_ text: String) -> [String: String] {
+        [
+            "textLength": String(text.count),
+            "textFingerprint": Self.stableTextFingerprint(text),
+            "textHead": Self.previewText(text, fromStart: true),
+            "textTail": Self.previewText(text, fromStart: false),
+        ]
+    }
+
+    private static func previewText(_ text: String, fromStart: Bool, limit: Int = 96) -> String {
+        let slice = fromStart ? text.prefix(limit) : text.suffix(limit)
+        return String(slice)
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+    }
+
+    private static func stableTextFingerprint(_ text: String) -> String {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return String(format: "%016llx", hash)
+    }
+
     private func notifyPanelLayoutChangedIfNeeded(_ changed: Bool) {
         guard changed else { return }
         DispatchQueue.main.async { [weak self] in
@@ -1555,33 +1485,5 @@ public final class VoiceState {
             mode = .error
             errorMessage = message
         }
-    }
-
-    private static func capturePasteboardSnapshot() -> PasteboardSnapshot? {
-        let pasteboard = NSPasteboard.general
-        let items = pasteboard.pasteboardItems?.compactMap { item -> [String: Data]? in
-            let values = item.types.reduce(into: [String: Data]()) { result, type in
-                if let data = item.data(forType: type) {
-                    result[type.rawValue] = data
-                }
-            }
-            return values.isEmpty ? nil : values
-        } ?? []
-
-        guard !items.isEmpty else { return nil }
-        return PasteboardSnapshot(changeCount: pasteboard.changeCount, items: items)
-    }
-
-    private static func restorePasteboardSnapshot(_ snapshot: PasteboardSnapshot) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        let items = snapshot.items.map { itemSnapshot -> NSPasteboardItem in
-            let item = NSPasteboardItem()
-            for (type, data) in itemSnapshot {
-                item.setData(data, forType: NSPasteboard.PasteboardType(type))
-            }
-            return item
-        }
-        pasteboard.writeObjects(items)
     }
 }

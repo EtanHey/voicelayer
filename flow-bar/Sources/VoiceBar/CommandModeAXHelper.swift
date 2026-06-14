@@ -18,36 +18,24 @@ final class CommandModeAXHelper {
     private let readSelection: () -> CommandModeSelectionSnapshot?
     private let writeValue: (String) -> Bool
     private let readBackValue: () -> String?
-    private let writePasteboard: (String) -> Void
-    private let postPasteShortcut: () -> Bool
 
     init(
         readSelection: @escaping () -> CommandModeSelectionSnapshot? = CommandModeAXHelper.readFocusedSelectionSnapshot,
         writeValue: @escaping (String) -> Bool = CommandModeAXHelper.writeFocusedValue,
-        readBackValue: @escaping () -> String? = CommandModeAXHelper.readFocusedValue,
-        writePasteboard: @escaping (String) -> Void = CommandModeAXHelper.writeStringToPasteboard,
-        postPasteShortcut: @escaping () -> Bool = CommandModeAXHelper.postPasteShortcutLive
+        readBackValue: @escaping () -> String? = CommandModeAXHelper.readFocusedValue
     ) {
         self.readSelection = readSelection
         self.writeValue = writeValue
         self.readBackValue = readBackValue
-        self.writePasteboard = writePasteboard
-        self.postPasteShortcut = postPasteShortcut
     }
 
     func applyReplacement(_ replacement: String) -> CommandModeApplyResult {
         guard let snapshot = readSelection() else {
-            writePasteboard(replacement)
-            return postPasteShortcut()
-                ? .clipboardFallback("Pasted fallback")
-                : .failed("No writable selection")
+            return .failed("No writable selection")
         }
 
         guard let swiftRange = Range(snapshot.selectedRange, in: snapshot.value) else {
-            writePasteboard(replacement)
-            return postPasteShortcut()
-                ? .clipboardFallback("Pasted fallback")
-                : .failed("Invalid selection range")
+            return .failed("Invalid selection range")
         }
 
         let updatedValue = snapshot.value.replacingCharacters(in: swiftRange, with: replacement)
@@ -57,10 +45,7 @@ final class CommandModeAXHelper {
             readBackValue: readBackValue()
         )
         guard disposition != .failed else {
-            writePasteboard(replacement)
-            return postPasteShortcut()
-                ? .clipboardFallback("Pasted fallback")
-                : .failed("AX write failed")
+            return .failed("AX write failed")
         }
         return .axVerified("Applied to selection")
     }
@@ -178,26 +163,5 @@ final class CommandModeAXHelper {
             kAXSelectedTextRangeAttribute as CFString,
             value
         ) == .success
-    }
-
-    private static func writeStringToPasteboard(_ string: String) {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString(string, forType: .string)
-    }
-
-    private static func postPasteShortcutLive() -> Bool {
-        guard AXIsProcessTrusted() else { return false }
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let down = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: true),
-              let up = CGEvent(keyboardEventSource: source, virtualKey: 0x09, keyDown: false)
-        else {
-            return false
-        }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
-        down.post(tap: .cghidEventTap)
-        up.post(tap: .cghidEventTap)
-        return true
     }
 }

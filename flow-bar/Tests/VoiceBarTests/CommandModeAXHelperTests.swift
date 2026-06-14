@@ -13,9 +13,7 @@ final class CommandModeAXHelperTests: XCTestCase {
                 storedValue = newValue
                 return true
             },
-            readBackValue: { storedValue },
-            writePasteboard: { _ in },
-            postPasteShortcut: { false }
+            readBackValue: { storedValue }
         )
 
         let result = helper.applyReplacement("VoiceBar")
@@ -25,39 +23,31 @@ final class CommandModeAXHelperTests: XCTestCase {
     }
 
     func testApplyReplacementTreatsSuccessfulAXWriteWithStaleReadBackAsSuccess() {
-        var pastedText: String?
         let helper = CommandModeAXHelper(
             readSelection: {
                 CommandModeSelectionSnapshot(value: "hello world", selectedRange: NSRange(location: 6, length: 5))
             },
             writeValue: { _ in true },
-            readBackValue: { "hello world" },
-            writePasteboard: { pastedText = $0 },
-            postPasteShortcut: { true }
+            readBackValue: { "hello world" }
         )
 
         let result = helper.applyReplacement("VoiceBar")
 
         XCTAssertEqual(result, .axVerified("Applied to selection"))
-        XCTAssertNil(pastedText)
     }
 
-    func testApplyReplacementFallsBackToClipboardWhenAXWriteFails() {
-        var pastedText: String?
+    func testApplyReplacementDoesNotTouchClipboardWhenAXWriteFails() {
         let helper = CommandModeAXHelper(
             readSelection: {
                 CommandModeSelectionSnapshot(value: "hello world", selectedRange: NSRange(location: 6, length: 5))
             },
             writeValue: { _ in false },
-            readBackValue: { nil },
-            writePasteboard: { pastedText = $0 },
-            postPasteShortcut: { true }
+            readBackValue: { nil }
         )
 
         let result = helper.applyReplacement("VoiceBar")
 
-        XCTAssertEqual(result, .clipboardFallback("Pasted fallback"))
-        XCTAssertEqual(pastedText, "VoiceBar")
+        XCTAssertEqual(result, .failed("AX write failed"))
     }
 
     func testAssessAXWriteTreatsMismatchAsAppliedUnverified() {

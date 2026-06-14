@@ -46,6 +46,33 @@ final class BoundaryContractTests: XCTestCase {
         )
     }
 
+    func testTranscriptPasteStateDoesNotExposeClipboardFallbackMachinery() throws {
+        let voiceStateURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/VoiceBarUI/VoiceState.swift")
+        let contents = try String(contentsOf: voiceStateURL, encoding: .utf8)
+
+        let forbiddenTokens = [
+            "simulatedPasteHandler",
+            "pasteboardStringProvider",
+            "pasteboardSnapshotter",
+            "pasteboardSnapshotRestorer",
+            "pasteboardChangeCountProvider",
+            "pasteboardRestoreDelay",
+            "scheduleClipboardRestoreIfNeeded",
+            "capturePasteboardSnapshot",
+            "restorePasteboardSnapshot",
+        ]
+
+        let violations = forbiddenTokens.filter { contents.contains($0) }
+        XCTAssertTrue(
+            violations.isEmpty,
+            "Transcript paste must not keep clipboard/Cmd+V fallback machinery: \(violations.joined(separator: ", "))"
+        )
+    }
+
     private func swiftSourceFiles(in directory: URL) throws -> [URL] {
         let resourceKeys: Set<URLResourceKey> = [.isRegularFileKey]
         guard let enumerator = FileManager.default.enumerator(

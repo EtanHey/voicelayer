@@ -425,9 +425,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func configureGatekeptVoiceStateDependencies() {
-        voiceState.simulatedPasteHandler = {
-            Self.simulatePaste()
-        }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
@@ -440,32 +437,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RetainedRecordingPreview.urlProvider = {
             URL(fileURLWithPath: VoiceLayerPaths.retainedRecordingPath)
         }
-    }
-
-    /// Simulate Cmd+V via CGEvent. Requires Accessibility permission.
-    /// Returns true if paste was posted, false if blocked (S3 fix: caller checks this).
-    @discardableResult
-    private static func simulatePaste() -> Bool {
-        guard isAccessibilityTrusted(prompt: false) else {
-            NSLog("[VoiceBar] simulatePaste: Accessibility not granted")
-            return false
-        }
-        guard let source = CGEventSource(stateID: .hidSystemState) else {
-            NSLog("[VoiceBar] simulatePaste: failed to create CGEventSource")
-            return false
-        }
-        let vKey: CGKeyCode = 0x09 // V
-        let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
-        let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        guard let vDown, let vUp else {
-            NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
-            return false
-        }
-        vDown.flags = .maskCommand
-        vUp.flags = .maskCommand
-        vDown.post(tap: .cghidEventTap)
-        vUp.post(tap: .cghidEventTap)
-        return true
     }
 
     private static func isAccessibilityTrusted(prompt: Bool) -> Bool {

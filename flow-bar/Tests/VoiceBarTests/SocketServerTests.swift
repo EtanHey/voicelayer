@@ -160,6 +160,45 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
     }
 
+    func testPassiveClientStateEventsDoNotMutateVoiceState() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+
+        let passiveClient = try connectUnixSocket(path: socketURL.path)
+        let commandClient = try connectUnixSocket(path: socketURL.path)
+        defer {
+            close(passiveClient)
+            close(commandClient)
+        }
+
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#,
+            to: passiveClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#,
+            to: commandClient
+        )
+        XCTAssertTrue(waitForConnectionStatus(state, connected: true, timeout: 1))
+
+        try writeLine(#"{"type":"state","state":"recording"}"#, to: passiveClient)
+        XCTAssertFalse(waitForMode(state, mode: .recording, timeout: 0.2))
+        XCTAssertNotEqual(state.mode, .recording)
+
+        try writeLine(#"{"type":"state","state":"recording"}"#, to: commandClient)
+        XCTAssertTrue(waitForMode(state, mode: .recording, timeout: 1))
+    }
+
     func testNoCommandOwnerRejectsPendingRecordIntent() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
