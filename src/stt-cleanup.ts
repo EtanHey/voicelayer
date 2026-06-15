@@ -27,26 +27,26 @@ interface STTVocabularySnapshot {
 type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
-  "narration layer codex": "NarrationLayer Codex",
-  "brain layer codex": "BrainLayer Codex",
-  "voice layer codex": "VoiceLayerCodex",
-  "cmux layer codex": "cmuxLayer Codex",
-  "c mux layer codex": "cmuxLayer Codex",
-  "cee mux layer codex": "cmuxLayer Codex",
+  "narration layer codex": "narrationlayerCodex",
+  "brain layer codex": "brainlayerCodex",
+  "voice layer codex": "voicelayerCodex",
+  "cmux layer codex": "cmuxlayerCodex",
+  "c mux layer codex": "cmuxlayerCodex",
+  "cee mux layer codex": "cmuxlayerCodex",
   "sessions of codecs": "sessions of Codex",
   "session of codecs": "session of Codex",
   "skill creator claude": "SkillCreatorClaude",
   "פול ריקווסט": "Pull Request",
-  "לבראנץ": "ל-branch",
+  לבראנץ: "ל-branch",
   "לבראנץ'": "ל-branch",
-  "לברנץ": "ל-branch",
+  לברנץ: "ל-branch",
   "לברנץ'": "ל-branch",
-  "בראנץ": "branch",
+  בראנץ: "branch",
   "בראנץ'": "branch",
-  "ברנץ": "branch",
+  ברנץ: "branch",
   "ברנץ'": "branch",
-  "קומיט": "commit",
-  "פוש": "push",
+  קומיט: "commit",
+  פוש: "push",
   "yash claude": "YashClaude",
   "yash claud": "YashClaude",
   "yash clawed": "YashClaude",
@@ -58,9 +58,9 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "wisper flow": "Wispr Flow",
   "repo golems": "repoGolem",
   "brain layer": "BrainLayer",
-  "brain layer claude": "BrainLayer Claude",
-  "brain layer clawed": "BrainLayer Claude",
-  "brain layer claud": "BrainLayer Claude",
+  "brain layer claude": "brainlayerClaude",
+  "brain layer clawed": "brainlayerClaude",
+  "brain layer claud": "brainlayerClaude",
   "brain bar": "BrainBar",
   "voice bar": "VoiceBar",
   "voice layer": "VoiceLayer",
@@ -97,9 +97,9 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   "t three code": "T3 Code",
   "tee three code": "T3 Code",
   "q e l o s": "Qelos",
-  "qelos": "Qelos",
+  qelos: "Qelos",
   "key loss": "Qelos",
-  "keylos": "Qelos",
+  keylos: "Qelos",
   "kilos project": "Qelos project",
   "kilos programming project": "Qelos programming project",
   "nano claw": "nanoClaw",
@@ -141,9 +141,8 @@ function sortAliasesBySourceLength(
   );
 }
 
-const ORDERED_BUILTIN_STT_ALIASES = sortAliasesBySourceLength(
-  BUILTIN_STT_ALIASES,
-);
+const ORDERED_BUILTIN_STT_ALIASES =
+  sortAliasesBySourceLength(BUILTIN_STT_ALIASES);
 const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "still expect VoiceLayer to keep",
   "real tail of the sentence",
@@ -158,10 +157,7 @@ function buildCanonicalTermPatterns(
     const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return [
       term.toLowerCase(),
-      new RegExp(
-        `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-        "giu",
-      ),
+      new RegExp(`(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`, "giu"),
       term,
     ] as [string, RegExp, string];
   });
@@ -193,7 +189,8 @@ function parseVocabularySnapshot(
 ): Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases"> {
   const promptTerms = Array.isArray(snapshot.prompt_terms)
     ? snapshot.prompt_terms.filter(
-        (term): term is string => typeof term === "string" && term.trim() !== "",
+        (term): term is string =>
+          typeof term === "string" && term.trim() !== "",
       )
     : [];
   const aliases: Record<string, string> = {};
@@ -446,7 +443,9 @@ function loadVocabularySnapshot(
   }
 }
 
-export function getSTTVocabularyPrompt(env: STTCleanupEnv = process.env): string {
+export function getSTTVocabularyPrompt(
+  env: STTCleanupEnv = process.env,
+): string {
   const snapshot = loadVocabularySnapshot(env);
   const slashCommands = collectSlashCommands(env, snapshot?.promptTerms ?? []);
   const canonicalTerms = [
@@ -502,7 +501,7 @@ function normalizeConversationalOne(text: string): string {
   return text
     .replace(/\b1(?=\s+more\b)/giu, "one")
     .replace(/\b(other)\s+1\b/giu, "$1 one")
-    .replace(/\bBrainLayer\s+(?:clawed|claud)\b/giu, "BrainLayer Claude");
+    .replace(/\bbrain\s*layer\s+(?:clawed|claud)\b/giu, "brainlayerClaude");
 }
 
 function normalizePathTokens(text: string): string {
@@ -512,7 +511,10 @@ function normalizePathTokens(text: string): string {
   );
 
   result = result.replace(/~\s*\/[^,;!?]*/gu, (match) =>
-    match.replace(/\s*\/\s*/g, "/").replace(/\s*-\s*/g, "-").toLowerCase(),
+    match
+      .replace(/\s*\/\s*/g, "/")
+      .replace(/\s*-\s*/g, "-")
+      .toLowerCase(),
   );
 
   result = result.replace(
@@ -563,7 +565,10 @@ function isMeaningfulTranscription(text: string): boolean {
     "oh my god",
   ]);
 
-  if (exactNoisePhrases.has(normalizedWords) || exactNoisePhrases.has(speechWords)) {
+  if (
+    exactNoisePhrases.has(normalizedWords) ||
+    exactNoisePhrases.has(speechWords)
+  ) {
     return false;
   }
 

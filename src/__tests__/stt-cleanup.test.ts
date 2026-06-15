@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -9,6 +9,27 @@ import {
 import { addAlias } from "../stt-vocabulary-store";
 
 describe("stt-cleanup", () => {
+  // Tests that assert deterministic BUILTIN_STT_ALIASES behavior call
+  // cleanupTranscriptionText() with no env, so they fall back to process.env
+  // and would otherwise pick up the developer's live STT vocabulary snapshot
+  // at ~/.local/state/voicelayer/stt-vocabulary.json. Per the "snapshot wins"
+  // alias-merge rule a stale snapshot alias (e.g. "voice layer codex" ->
+  // "VoiceLayerCodex") silently overrides the canonical builtin and flips these
+  // assertions on a per-machine basis. Kill-switch the snapshot for the whole
+  // block (tests that exercise snapshot behavior pass their own explicit env).
+  let previousVocabularyPath: string | undefined;
+  beforeAll(() => {
+    previousVocabularyPath = process.env.QA_VOICE_STT_VOCABULARY_PATH;
+    process.env.QA_VOICE_STT_VOCABULARY_PATH = "";
+  });
+  afterAll(() => {
+    if (previousVocabularyPath === undefined) {
+      delete process.env.QA_VOICE_STT_VOCABULARY_PATH;
+    } else {
+      process.env.QA_VOICE_STT_VOCABULARY_PATH = previousVocabularyPath;
+    }
+  });
+
   it("suppresses no-input STT hallucinations and non-speech labels", () => {
     expect(cleanupTranscriptionText("thank you")).toBe("");
     expect(cleanupTranscriptionText("Thank you.")).toBe("");
@@ -43,7 +64,7 @@ describe("stt-cleanup", () => {
     );
 
     expect(cleaned).toContain("orcClaude");
-    expect(cleaned).toContain("VoiceLayerCodex");
+    expect(cleaned).toContain("voicelayerCodex");
     expect(cleaned).toContain("Wispr Flow");
     expect(cleaned).not.toContain("OrcClaude");
   });
@@ -54,7 +75,7 @@ describe("stt-cleanup", () => {
     );
 
     expect(cleaned).toBe(
-      "Send a new NarrationLayer Codex to compare BrainLayer Codex, VoiceLayerCodex, and cmuxLayer Codex",
+      "Send a new narrationlayerCodex to compare brainlayerCodex, voicelayerCodex, and cmuxlayerCodex",
     );
   });
 
@@ -106,9 +127,7 @@ describe("stt-cleanup", () => {
       cleanupTranscriptionText(
         "Wait, what? Obsidian Vault is in -, is it ~ /.Golems - brain / zigon, what?",
       ),
-    ).toBe(
-      "Wait, what? Obsidian Vault is in ~/.golems-brain/zikaron, what?",
-    );
+    ).toBe("Wait, what? Obsidian Vault is in ~/.golems-brain/zikaron, what?");
     expect(cleanupTranscriptionText("keep the and/or wording")).toBe(
       "Keep the and/or wording",
     );
@@ -281,7 +300,8 @@ describe("stt-cleanup", () => {
   });
 
   it("derives spoken slash-command aliases from vocabulary prompt terms", async () => {
-    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-slash-command-test.json";
+    const snapshotPath =
+      "/tmp/voicelayer-stt-vocabulary-slash-command-test.json";
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -318,11 +338,23 @@ describe("stt-cleanup", () => {
     await Bun.$`mkdir -p ${commandTargetDir}`;
     await Bun.write(join(commandsDir, "whats-new.md"), "# /whats-new");
     await Bun.write(join(commandsDir, "README.md"), "# support doc");
-    await Bun.write(join(commandsDir, "frontend", "component.md"), "# /component");
-    await Bun.write(join(commandsDir, "large-plan", "SKILL.md"), "# /large-plan");
+    await Bun.write(
+      join(commandsDir, "frontend", "component.md"),
+      "# /component",
+    );
+    await Bun.write(
+      join(commandsDir, "large-plan", "SKILL.md"),
+      "# /large-plan",
+    );
     await Bun.write(join(commandTargetDir, "SKILL.md"), "# /skill-creator");
-    await Bun.write(join(commandsDir, ".git", "hooks", "pre-commit.md"), "# internal");
-    await Bun.write(join(commandsDir, "design", "references", "icon-design.md"), "# support doc");
+    await Bun.write(
+      join(commandsDir, ".git", "hooks", "pre-commit.md"),
+      "# internal",
+    );
+    await Bun.write(
+      join(commandsDir, "design", "references", "icon-design.md"),
+      "# support doc",
+    );
     await Bun.write(join(commandsDir, "LICENSE"), "not a slash command");
     symlinkSync(commandTargetDir, join(commandsDir, "skill-creator"));
 
@@ -359,11 +391,13 @@ describe("stt-cleanup", () => {
 
   it("cleans context-specific substitutions from long VoiceBar validation reads", () => {
     expect(
-      cleanupTranscriptionText("and then still accept VoiceLayer to keep the beginning"),
+      cleanupTranscriptionText(
+        "and then still accept VoiceLayer to keep the beginning",
+      ),
     ).toBe("And then still expect VoiceLayer to keep the beginning");
-    expect(cleanupTranscriptionText("keeps the real tale of the sentence")).toBe(
-      "Keeps the real tail of the sentence",
-    );
+    expect(
+      cleanupTranscriptionText("keeps the real tale of the sentence"),
+    ).toBe("Keeps the real tail of the sentence");
     expect(cleanupTranscriptionText("real tale of the sentence")).toBe(
       "Real tail of the sentence",
     );
@@ -430,7 +464,8 @@ describe("stt-cleanup", () => {
   });
 
   it("ignores unsafe broad aliases from the VoiceBar vocabulary snapshot", async () => {
-    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
+    const snapshotPath =
+      "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -471,7 +506,7 @@ describe("stt-cleanup", () => {
         "1 more thing. The other 1. I want 1 orcClaude and I want 1 BrainLayer clawed.",
       ),
     ).toBe(
-      "One more thing. The other one. I want 1 orcClaude and I want 1 BrainLayer Claude.",
+      "One more thing. The other one. I want 1 orcClaude and I want 1 brainlayerClaude.",
     );
   });
 
