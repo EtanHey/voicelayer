@@ -487,7 +487,36 @@ export function cleanupTranscriptionText(
   );
   const pathNormalized = normalizePathTokens(normalized);
   const sentenceCased = normalizeSentenceStarts(pathNormalized);
-  return isMeaningfulTranscription(sentenceCased) ? sentenceCased : "";
+  // Must run LAST: after the canonical-term pass folds "voice layer Codex"
+  // into the camelCase agent token, and after auto-cap/sentence-start so the
+  // re-emitted lowercase flags are never re-uppercased downstream.
+  const flagNormalized = normalizeAgentSpawnFlags(sentenceCased);
+  return isMeaningfulTranscription(flagNormalized) ? flagNormalized : "";
+}
+
+// Whisper renders dictated repoGolem spawn flags ("-s -c") as an upper-cased,
+// space-collapsed suffix glued to the camelCase agent identifier
+// (e.g. "voicelayerCodex-S-C", "orcClaude - S - C"). Recovered verbatim from
+// ~/.local/share/voicelayer/recordings/2026-06-15 (ab7eaf75, e6aba757). The
+// isolated, already-spaced form "voicelayerCodex -s -c" passes through cleanly,
+// so this is gated to the glued/loosely-spaced cluster that immediately follows
+// a camelCase agent-spawn token — ordinary prose flags ("the -s flag") and
+// stand-alone letters ("plan A or plan C") are never touched.
+const AGENT_SPAWN_FLAG_PATTERN =
+  /(\b[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)((?:\s*-\s*[A-Za-z]\b)+)/gu;
+
+function normalizeAgentSpawnFlags(text: string): string {
+  return text.replace(
+    AGENT_SPAWN_FLAG_PATTERN,
+    (_match, agent: string, cluster: string) => {
+      const flags = cluster.match(/-\s*([A-Za-z])\b/gu);
+      if (!flags) return _match;
+      const normalized = flags
+        .map((flag) => ` -${flag.replace(/[^A-Za-z]/g, "").toLowerCase()}`)
+        .join("");
+      return `${agent}${normalized}`;
+    },
+  );
 }
 
 function collapseDuplicatedFunctionWords(text: string): string {

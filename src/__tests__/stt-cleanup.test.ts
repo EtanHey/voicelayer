@@ -103,6 +103,51 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("normalizes repoGolem spawn flags glued onto an agent token", () => {
+    // Whisper renders dictated "-s -c" as an upper-cased, space-less suffix
+    // ("-S-C") glued to the camelCase agent identifier. Recovered verbatim from
+    // ~/.local/share/voicelayer/recordings/2026-06-15 (ab7eaf75, e6aba757).
+    expect(cleanupTranscriptionText("voicelayerCodex-S")).toBe(
+      "voicelayerCodex -s",
+    );
+    expect(cleanupTranscriptionText("voicelayerCodex-S-C")).toBe(
+      "voicelayerCodex -s -c",
+    );
+    // Recovered verbatim ends "Let's try one more. Happy Camper Orc Claude-S-C."
+    expect(
+      cleanupTranscriptionText("Let's try one more. happycampr orcClaude-S-C"),
+    ).toBe("Let's try one more. Happycampr orcClaude -s -c");
+    // The agent-name canonicalizer first folds "voice layer Codex" ->
+    // "voicelayerCodex"; the glued flag suffix must still be split off.
+    expect(cleanupTranscriptionText("voice layer Codex-S-C")).toBe(
+      "voicelayerCodex -s -c",
+    );
+  });
+
+  it("normalizes loosely-spaced repoGolem spawn flags after an agent token", () => {
+    expect(cleanupTranscriptionText("voicelayerCodex - S - C")).toBe(
+      "voicelayerCodex -s -c",
+    );
+    expect(cleanupTranscriptionText("orcClaude dash s dash c")).toBe(
+      "orcClaude -s -c",
+    );
+    expect(cleanupTranscriptionText("brainlayerClaude -w")).toBe(
+      "brainlayerClaude -w",
+    );
+  });
+
+  it("does not touch dash-letter flags or letters in ordinary prose", () => {
+    expect(cleanupTranscriptionText("remember to pass the -s flag")).toBe(
+      "Remember to pass the -s flag",
+    );
+    expect(cleanupTranscriptionText("we can do plan A or plan C")).toBe(
+      "We can do plan A or plan C",
+    );
+    expect(cleanupTranscriptionText("the build is -S today")).not.toContain(
+      "-s",
+    );
+  });
+
   it("preserves mixed Hebrew and lower-case dev dictation", () => {
     expect(cleanupTranscriptionText("use effect לא עובד")).toBe(
       "useEffect לא עובד",
