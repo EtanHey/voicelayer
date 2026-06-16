@@ -161,11 +161,13 @@ function stripTomlTable(body: string, tableName: string): string {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed === `[${tableName}]`) {
-      skipping = true;
-      continue;
-    }
-    if (skipping && trimmed.startsWith("[") && trimmed.endsWith("]")) {
+    const tableMatch = trimmed.match(/^\[([^\]]+)\]$/u);
+    if (tableMatch) {
+      const currentTable = tableMatch[1] ?? "";
+      if (currentTable === tableName || currentTable.startsWith(`${tableName}.`)) {
+        skipping = true;
+        continue;
+      }
       skipping = false;
     }
     if (!skipping) {

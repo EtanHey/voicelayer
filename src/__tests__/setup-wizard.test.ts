@@ -96,6 +96,9 @@ describe("voicelayer setup wizard helpers", () => {
           'command = "voicelayer-mcp"',
           "startup_timeout_sec = 20",
           "",
+          "[mcp_servers.voicelayer.env]",
+          'OLD_ENV = "stale"',
+          "",
           "[mcp_servers.brainlayer]",
           'command = "socat"',
           'args = ["STDIO", "UNIX-CONNECT:/tmp/mcplayer-brainlayer.sock"]',
@@ -117,6 +120,8 @@ describe("voicelayer setup wizard helpers", () => {
         'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
       );
       expect(body.match(/\[mcp_servers\.voicelayer\]/g)?.length).toBe(1);
+      expect(body).not.toContain("[mcp_servers.voicelayer.env]");
+      expect(body).not.toContain("OLD_ENV");
       expect(body).not.toContain('command = "voicelayer-mcp"');
     }));
 
