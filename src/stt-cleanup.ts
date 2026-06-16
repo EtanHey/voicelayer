@@ -443,27 +443,151 @@ function loadVocabularySnapshot(
   }
 }
 
+// Whisper's initial-prompt budget is n_text_ctx/2 tokens. For large-v3-turbo
+// (n_text_ctx=448) that is a HARD 224-token decoder cap, verbatim from
+// `whisper-cli --help`: "initial prompt (max n_text_ctx/2 tokens)". Tokens
+// beyond that are silently dropped AND a bloated prompt degrades decode quality
+// (Constitution DNV#12). getSTTVocabularyPrompt is hard-capped here at <=900
+// chars AND <=224 tokens. NOTE: getInitialPrompt's text + any
+// promptOverride/chunk-continuity prefix are concatenated on top of this and
+// are NOT counted against this budget, so the joined string can still overflow
+// — keeping the vocabulary half tight is what protects the load-bearing terms.
+const STT_VOCABULARY_PROMPT_MAX_CHARS = 900;
+const STT_VOCABULARY_PROMPT_MAX_TOKENS = 224;
+// Conservative whisper-tokenizer estimate (~4 chars/token) used to keep the
+// joined prompt under the token budget even when the char budget is generous.
+const STT_VOCABULARY_PROMPT_CHARS_PER_TOKEN = 4;
+
+// High-value PROPER NOUNS / system terms whisper mishears, in RANKED priority
+// order. Kept ahead of the broader builtin canonical seed set so the scarce
+// decode-bias budget is spent where it matters: agent names, product names,
+// people, and Hebrew-script terms whisper cannot guess. Slash-command "/..."
+// entries are intentionally NOT here — they stay as cleanup aliases only and
+// must never consume the prompt budget.
+const STT_VOCABULARY_PRIORITY_TERMS: string[] = [
+  "BrainLayer",
+  "VoiceLayer",
+  "skillCreator",
+  "Tailscale",
+  "happyCamper",
+  "Claude",
+  "orcClaude",
+  "Gemini",
+  "Codex",
+  "VoiceBar",
+  "BrainBar",
+  "Wispr Flow",
+  "cmux",
+  "repoGolem",
+  "VoiceLayerCodex",
+  "narrationLayer",
+  "BrainLayerClaude",
+  "BrainLayerCodex",
+  "voicelayerClaude",
+  "brainlayerGemini",
+  "cmuxlayerCodex",
+  "narrationlayerClaude",
+  "Tailnet",
+  "nanoClaw",
+  "Karabiner",
+  "ComfyUI",
+  "Qwen3",
+  "Opus",
+  "Sonnet",
+  "Gemma",
+  "MLX",
+  "Hermes",
+  "Theo",
+  "Whisper",
+  "Silero",
+  "VAD",
+  "FTS5",
+  "anti-gravity",
+  "Etan",
+  "B'naya",
+];
+
+// Budget (chars) reserved for the load-bearing ranked proper nouns so a runaway
+// user vocabulary snapshot can never starve the agent/product names whisper
+// mishears. User prompt_terms get first claim on the REMAINING budget; the
+// priority proper nouns are then guaranteed to fit within this reserve.
+const STT_VOCABULARY_PRIORITY_RESERVE_CHARS = 450;
+
+// Deterministically fill the prompt with priority-ordered, deduplicated terms,
+// dropping the lowest-priority entries first when over the char/token budget.
+// `maxChars` lets a higher tier leave headroom for a guaranteed lower tier.
+// Slash-command entries are dropped here (they remain cleanup aliases). Never
+// throws: non-string / empty / oversized terms are skipped, not fatal.
+function appendCappedVocabularyTerms(
+  state: { kept: string[]; seen: Set<string>; length: number },
+  terms: string[],
+  maxChars: number,
+): void {
+  for (const rawTerm of terms) {
+    const term = typeof rawTerm === "string" ? rawTerm.trim() : "";
+    if (!term) continue;
+    // Drop slash-command entries entirely — they must not consume the scarce
+    // decode-bias budget. They survive as cleanup aliases via collectSlashCommands.
+    if (term.startsWith("/")) continue;
+    const key = term.toLowerCase();
+    if (state.seen.has(key)) continue;
+
+    const separatorLength = state.kept.length === 0 ? 0 : 2; // ", "
+    const projected = state.length + separatorLength + term.length;
+    if (projected > maxChars) {
+      // Skip oversized term but keep trying shorter lower-priority terms.
+      continue;
+    }
+    const projectedTokens = Math.ceil(
+      projected / STT_VOCABULARY_PROMPT_CHARS_PER_TOKEN,
+    );
+    if (projectedTokens > STT_VOCABULARY_PROMPT_MAX_TOKENS) {
+      continue;
+    }
+
+    state.seen.add(key);
+    state.kept.push(term);
+    state.length = projected;
+  }
+}
+
 export function getSTTVocabularyPrompt(
   env: STTCleanupEnv = process.env,
 ): string {
   const snapshot = loadVocabularySnapshot(env);
-  const slashCommands = collectSlashCommands(env, snapshot?.promptTerms ?? []);
-  const canonicalTerms = [
-    ...new Set([
-      ...(snapshot?.promptTerms ?? []),
-      ...slashCommands,
-      "zikaron",
-      "golems-brain",
-      "~/.golems-brain/zikaron",
-      "עוסק פטור",
-      "רשות המסים",
-      "רחובות",
-      ...Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
-        (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
-      ),
-    ]),
-  ];
-  return canonicalTerms.join(", ");
+  // Tier 3 — the remaining builtin canonical VALUES (the seed set), minus the
+  // cleanup-only phrases. Lowest priority — dropped first when over budget.
+  const seedTerms = Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
+    (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
+  );
+
+  const state = { kept: [] as string[], seen: new Set<string>(), length: 0 };
+
+  // Tier 1 — user prompt_terms get first claim, but capped so they leave
+  // RESERVE headroom for the load-bearing proper nouns (Tier 2). Slash-command
+  // entries are dropped from the prompt entirely (they stay cleanup aliases via
+  // collectSlashCommands, so dictating "slash deploy" still resolves to /deploy).
+  appendCappedVocabularyTerms(
+    state,
+    snapshot?.promptTerms ?? [],
+    STT_VOCABULARY_PROMPT_MAX_CHARS - STT_VOCABULARY_PRIORITY_RESERVE_CHARS,
+  );
+  // Tier 2 — ranked high-value proper nouns whisper mishears. Guaranteed to fit
+  // within the reserved headroom left by Tier 1.
+  appendCappedVocabularyTerms(
+    state,
+    STT_VOCABULARY_PRIORITY_TERMS,
+    STT_VOCABULARY_PROMPT_MAX_CHARS,
+  );
+  // Tier 3 — remaining builtin canonical seed set, fills whatever budget is
+  // left, dropped first when over budget.
+  appendCappedVocabularyTerms(
+    state,
+    seedTerms,
+    STT_VOCABULARY_PROMPT_MAX_CHARS,
+  );
+
+  return state.kept.join(", ");
 }
 
 export function cleanupTranscriptionText(

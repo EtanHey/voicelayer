@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, symlinkSync } from "fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -680,5 +680,118 @@ describe("stt-cleanup", () => {
     ).toBe("Let's see if we get any of those artifacts here.");
 
     expect(cleanupTranscriptionText("then it does,..")).toBe("Then it does.");
+  });
+
+  describe("getSTTVocabularyPrompt budget cap (whisper ~224 tokens / ~900 chars)", () => {
+    // The decoder silently truncates an over-budget initial prompt AND a bloated
+    // prompt degrades decode quality (Constitution DNV#12). The prompt MUST stay
+    // <=900 chars even under a worst-case install with many slash-commands and a
+    // runaway user snapshot, while still carrying the load-bearing proper nouns.
+    const MAX_PROMPT_CHARS = 900;
+
+    function makeBloatedEnv(): {
+      env: { [key: string]: string | undefined };
+      cleanup: () => void;
+    } {
+      const commandsDir = mkdtempSync(
+        join(tmpdir(), "voicelayer-stt-budget-cmds-"),
+      );
+      const snapshotDir = mkdtempSync(
+        join(tmpdir(), "voicelayer-stt-budget-snap-"),
+      );
+      const snapshotPath = join(snapshotDir, "stt-vocabulary.json");
+
+      // 50 mock slash-commands — these are decode-noise that must NOT survive
+      // into the prompt (they remain cleanup aliases via collectSlashCommands).
+      for (let i = 0; i < 50; i++) {
+        writeFileSync(
+          join(commandsDir, `mock-command-${i}.md`),
+          `# /mock-command-${i}\n`,
+        );
+      }
+      // Runaway user snapshot: real terms + slash entries that must be dropped.
+      writeFileSync(
+        snapshotPath,
+        JSON.stringify({
+          prompt_terms: ["Domica", "SongScript", "/deploy", "/babysit-prs"],
+          aliases: [],
+        }),
+      );
+      return {
+        env: {
+          QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+          QA_VOICE_STT_COMMANDS_DIR: commandsDir,
+        },
+        cleanup: () => {
+          rmSync(commandsDir, { recursive: true, force: true });
+          rmSync(snapshotDir, { recursive: true, force: true });
+        },
+      };
+    }
+
+    it("caps the prompt at <=900 chars even with full builtins + 50 slash-commands", () => {
+      const { env, cleanup } = makeBloatedEnv();
+      try {
+        const prompt = getSTTVocabularyPrompt(env);
+        expect(prompt.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("keeps the load-bearing proper nouns within budget", () => {
+      const { env, cleanup } = makeBloatedEnv();
+      try {
+        const prompt = getSTTVocabularyPrompt(env);
+        expect(prompt).toContain("orcClaude");
+        // The Codex agent name survives the cap (ranked proper noun). The
+        // canonical priority-list casing is VoiceLayerCodex; case-insensitive
+        // check guards against future re-casing of the same load-bearing term.
+        expect(prompt.toLowerCase()).toContain("voicelayercodex");
+        expect(prompt).toContain("BrainLayer");
+        expect(prompt).toContain("Tailscale");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("drops all slash-command entries from the prompt", () => {
+      const { env, cleanup } = makeBloatedEnv();
+      try {
+        const prompt = getSTTVocabularyPrompt(env);
+        // No comma-separated term may be a slash-command (start with "/").
+        const slashCommandTerms = prompt
+          .split(", ")
+          .filter((term) => term.startsWith("/"));
+        expect(slashCommandTerms).toEqual([]);
+        expect(prompt).not.toContain("/mock-command-0");
+        expect(prompt).not.toContain("/deploy");
+        expect(prompt).not.toContain("/babysit-prs");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("gives user prompt_terms priority within the budget", () => {
+      const { env, cleanup } = makeBloatedEnv();
+      try {
+        const prompt = getSTTVocabularyPrompt(env);
+        expect(prompt).toContain("Domica");
+        expect(prompt).toContain("SongScript");
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("never throws and stays under budget with no snapshot/commands at all", () => {
+      let prompt = "";
+      expect(() => {
+        prompt = getSTTVocabularyPrompt({
+          QA_VOICE_STT_VOCABULARY_PATH: "",
+          QA_VOICE_STT_COMMANDS_DIR: "",
+        });
+      }).not.toThrow();
+      expect(prompt.length).toBeLessThanOrEqual(MAX_PROMPT_CHARS);
+    });
   });
 });
