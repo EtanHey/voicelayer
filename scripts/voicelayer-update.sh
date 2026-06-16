@@ -160,7 +160,17 @@ validate_args() {
 }
 
 detect_install_type() {
-    if [[ -d "$PACKAGE_ROOT/.git" ]]; then
+    local git_root
+    local package_root_real
+    local git_root_real
+    if git_root="$(git -C "$PACKAGE_ROOT" rev-parse --show-toplevel 2>/dev/null)"; then
+        package_root_real="$(cd "$PACKAGE_ROOT" && pwd -P)"
+        git_root_real="$(cd "$git_root" && pwd -P)"
+    else
+        git_root_real=""
+        package_root_real=""
+    fi
+    if [[ -n "$git_root_real" && "$git_root_real" == "$package_root_real" ]]; then
         printf 'git-checkout\n'
     else
         printf 'global-package\n'

@@ -213,6 +213,7 @@ describe("CLI integration", () => {
     const packageJson = await Bun.file("package.json").json();
     expect(packageJson.files).toContain("src/**/*.py");
     expect(packageJson.files).toContain("flow-bar/Package.swift");
+    expect(packageJson.files).toContain("flow-bar/build-app.sh");
     expect(packageJson.files).toContain("flow-bar/Sources/");
     expect(packageJson.files).toContain("flow-bar/Tests/");
     expect(packageJson.files).toContain("launchd/");

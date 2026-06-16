@@ -116,6 +116,34 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).not.toContain("bun pm update");
   });
 
+  test("package copy nested inside another git repo still uses global update path", () => {
+    const outerRepo = mkdtempSync(join(tmpdir(), "voicelayer-update-nested-"));
+    const packageRoot = join(outerRepo, "node_modules", "voicelayer-mcp");
+    const scriptsDir = join(packageRoot, "scripts");
+    const binDir = join(outerRepo, "bin");
+    mkdirSync(scriptsDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+    writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
+    Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
+    Bun.spawnSync(["git", "init", outerRepo], {
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+
+    const result = run(["bash", join(scriptsDir, "voicelayer-update.sh")], {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("INSTALL TYPE: global-package");
+    expect(stdout).toContain("+ bun update -g voicelayer-mcp");
+    expect(stdout).not.toContain("git -C");
+    expect(stdout).not.toContain(`bun install --cwd ${packageRoot}`);
+  });
+
   test("git checkout dependency install runs from the package root", () => {
     const result = run(["bash", updateScript], {
       VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
