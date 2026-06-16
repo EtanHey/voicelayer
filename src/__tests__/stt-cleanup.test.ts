@@ -79,6 +79,57 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("matches multi-word agent aliases when whisper glues/capitalizes the words", () => {
+    // Whisper renders the spaced spoken form "brain layer claude" as a
+    // glued+capitalized "BrainLayer Claude" (no internal space, capital L/C).
+    // The inter-word separator tolerates whitespace AND a glue boundary before
+    // a capital — but NEVER a comma or a period (see prose-negative test).
+    const positives: [string, string][] = [
+      ["BrainLayer Claude", "brainlayerClaude"],
+      ["VoiceLayer Codex", "voicelayerCodex"],
+      ["VoiceLayer Gemini", "voicelayerGemini"],
+      ["VoiceLayer Gemini", "voicelayerGemini"],
+      ["cmux Layer Gemini", "cmuxlayerGemini"],
+      ["cmux Layer Codex", "cmuxlayerCodex"],
+      ["VoiceLayer Clawed", "voicelayerClaude"],
+    ];
+    for (const [input, expected] of positives) {
+      expect(
+        cleanupTranscriptionText(input, {
+          QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+        }),
+      ).toBe(expected);
+    }
+  });
+
+  it("never fuses agent aliases across a comma or a period (prose negatives)", () => {
+    // HARD CONSTRAINT: glue/casing tolerance must NEVER cross a comma or a
+    // sentence-ending period. These real-prose strings must pass through
+    // semantically UNCHANGED by the alias matcher (auto-cap/sentence-start is
+    // separate and allowed).
+    const unchanged = [
+      "Use the brain. Layer the codex on top.",
+      "Inputs were voice, layer, claude.",
+      "Options: brain, layer, codex.",
+      "We hit the cmux. Layer, gemini ran the audit.",
+      "raise your voice, layer the sound",
+      "the brain, layer the cake",
+      "the narration, layer by layer, was steady",
+    ];
+    for (const input of unchanged) {
+      const cleaned = cleanupTranscriptionText(input, {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      });
+      // No agent compound may be produced: the lowercase-prefix camelCase
+      // agent tokens must never appear.
+      expect(cleaned).not.toMatch(
+        /(?:brainlayer|voicelayer|cmuxlayer|narrationlayer)(?:Claude|Codex|Gemini)/,
+      );
+      // The layer-bearing words must survive as separate prose words.
+      expect(cleaned.toLowerCase()).toContain("layer");
+    }
+  });
+
   it("covers the strict-score spoken-form misses", () => {
     const cleaned = cleanupTranscriptionText(
       "whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner",

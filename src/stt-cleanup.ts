@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { applyRules, type RulesConfig } from "./rules-engine";
+import {
+  applyRules,
+  buildAliasMatchPattern,
+  type RulesConfig,
+} from "./rules-engine";
 import {
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
@@ -28,9 +32,19 @@ type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   "narration layer codex": "narrationlayerCodex",
+  "narration layer gemini": "narrationlayerGemini",
   "brain layer codex": "brainlayerCodex",
+  "brain layer gemini": "brainlayerGemini",
   "voice layer codex": "voicelayerCodex",
+  "voice layer gemini": "voicelayerGemini",
+  "voice layer clawed": "voicelayerClaude",
+  "voice layer claude": "voicelayerClaude",
+  "voice layer claud": "voicelayerClaude",
   "cmux layer codex": "cmuxlayerCodex",
+  "cmux layer gemini": "cmuxlayerGemini",
+  "cmux layer clawed": "cmuxlayerClaude",
+  "cmux layer claude": "cmuxlayerClaude",
+  "cmux layer claud": "cmuxlayerClaude",
   "c mux layer codex": "cmuxlayerCodex",
   "cee mux layer codex": "cmuxlayerCodex",
   "sessions of codecs": "sessions of Codex",
@@ -154,12 +168,12 @@ function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
 ): CanonicalTermPattern[] {
   return [...new Set(Object.values(aliases))].map((term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return [
-      term.toLowerCase(),
-      new RegExp(`(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`, "giu"),
-      term,
-    ] as [string, RegExp, string];
+    // The canonical re-pass re-normalizes already-mangled output, so the term
+    // is both the `from` (what to find) and the `to` (the distinctive value
+    // gate). Shares the glue/casing-tolerant builder with applyAliases so both
+    // call sites tolerate the same whisper shapes.
+    const { pattern, prefilter } = buildAliasMatchPattern(term, term);
+    return [prefilter, pattern, term] as [string, RegExp, string];
   });
 }
 
