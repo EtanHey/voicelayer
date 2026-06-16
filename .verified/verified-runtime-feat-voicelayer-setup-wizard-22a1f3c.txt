@@ -1,0 +1,8 @@
+Verified-Runtime: 22a1f3c601aefb3660f32b5a6673f70e16df6af2
+timestamp: 2026-06-16T23:13:41Z
+branch: feat/voicelayer-setup-wizard
+sha: 22a1f3c601aefb3660f32b5a6673f70e16df6af2
+short_sha: 22a1f3c
+tester: Test User
+daemon_files:
+- src/cli/voicelayer.sh
