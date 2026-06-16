@@ -42,6 +42,10 @@ import {
   getEffectiveRecordingState,
   isRecordingConflictError,
 } from "./recording-state";
+import {
+  restartWhisperServerForPerformanceChange,
+  setWhisperPerformanceEffort,
+} from "./whisper-performance";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -277,6 +281,17 @@ export function handleSocketCommand(
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
     }
+    case "set_whisper_effort":
+      if (recordingState === "recording" || recordingState === "transcribing") {
+        return buildAck(command, "reject", "busy");
+      }
+      try {
+        setWhisperPerformanceEffort(command.effort);
+        restartWhisperServerForPerformanceChange();
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
   }
 }
 

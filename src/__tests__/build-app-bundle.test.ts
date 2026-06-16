@@ -14,6 +14,9 @@ const buildScript = readFileSync(
   join(import.meta.dir, "..", "..", "flow-bar", "build-app.sh"),
   "utf-8",
 );
+const packageJson = JSON.parse(
+  readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+);
 
 describe("build-app.sh bundles runtime assets", () => {
   test("bundles the Silero VAD model (regression: #241)", () => {
@@ -27,5 +30,17 @@ describe("build-app.sh bundles runtime assets", () => {
     expect(buildScript).toMatch(
       /cp .*edge-tts-words\.py.*Resources\/scripts|cp .*"\$APP_DIR\/Contents\/Resources\/scripts"/,
     );
+  });
+
+  test("bundles every file required by the F5 hidutil installer", () => {
+    expect(buildScript).toContain("scripts/install-voicebar-f5-hidutil.sh");
+    expect(buildScript).toContain("scripts/apply-voicebar-f5-hidutil.sh");
+    expect(buildScript).toContain("launchd/com.voicelayer.f5-to-f18-hidutil.plist");
+    expect(buildScript).toContain("require_bundle_file");
+    expect(buildScript).toMatch(/exit 1/);
+  });
+
+  test("npm package includes bundle metadata needed by build-app", () => {
+    expect(packageJson.files).toContain("flow-bar/bundle/");
   });
 });

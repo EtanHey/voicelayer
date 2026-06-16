@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -29,26 +36,23 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain("DRY RUN: yes");
-    expect(stdout).toContain("git pull --ff-only");
-    expect(stdout).toContain("bun install");
+    expect(stdout).toContain("INSTALL TYPE:");
+    expect(stdout).toContain("PACKAGE UPDATE:");
     expect(stdout).toContain("bash flow-bar/build-app.sh");
     expect(stdout).toContain("bash launchd/install.sh");
+    expect(stdout).toContain("restart VoiceLayer daemon");
+    expect(stdout).toContain("open /Applications/VoiceBar.app");
     expect(stdout).toContain("Qwen3 model");
-    expect(stdout).toContain("~/.voicelayer/voices/");
-    expect(stdout).toContain("~/.voicelayer/voices.json");
-    expect(stdout).toContain("~/.voicelayer/pronunciation.yaml");
-    expect(stdout).toContain("~/.voicelayer/daemon.secret");
-    expect(stdout).toContain("~/.local/state/voicelayer/stt-vocabulary.json");
-    expect(stdout).toContain("DATA SOURCE: pending Etan decision");
+    expect(stdout).toContain("Personal data sync: skipped");
   });
 
-  test("requires a data source for non-dry-run updates", () => {
+  test("non-dry-run updates can skip personal data sync", () => {
     const result = run(["bash", updateScript], {
-      VOICELAYER_UPDATE_SKIP_HOST_GUARD: "1",
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
     });
 
-    expect(result.exitCode).toBe(2);
-    expect(text(result.stderr)).toContain("--data-source is required");
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("VoiceLayer update complete.");
   });
 
   test("accepts either direct or brain-drive data source mode in dry-run", () => {
@@ -88,6 +92,48 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("VoiceLayer M1 update plan");
+  });
+
+  test("global Bun install path uses the actual global update command", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-global-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(scriptsDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+    writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
+    Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
+
+    const result = run(["bash", join(scriptsDir, "voicelayer-update.sh")], {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("PACKAGE UPDATE: bun update -g voicelayer-mcp");
+    expect(stdout).toContain("+ bun update -g voicelayer-mcp");
+    expect(stdout).not.toContain("bun pm update");
+  });
+
+  test("git checkout dependency install runs from the package root", () => {
+    const result = run(["bash", updateScript], {
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(`+ bun install --cwd ${repoRoot}`);
+    expect(stdout).not.toContain("+ bun install\n");
+  });
+
+  test("CLI exposes build-app and launches the canonical VoiceBar app bundle", () => {
+    const body = readFileSync(cliScript, "utf8");
+
+    expect(body).toContain("build-app)");
+    expect(body).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
+    expect(body).toContain('open "/Applications/VoiceBar.app"');
+    expect(body).not.toContain('exec ".build/release/VoiceBar"');
   });
 
   test("script uses the shell hardening baseline", () => {

@@ -372,5 +372,32 @@ describe("socket-protocol", () => {
       expect(parseCommand('{"cmd":"vocab_add_term","term":""}')).toBeNull();
       expect(parseCommand('{"cmd":"vocab_remove_term","term":" "}')).toBeNull();
     });
+
+    it("parses set_whisper_effort commands", () => {
+      expect(
+        parseCommand(
+          '{"cmd":"set_whisper_effort","effort":"fast","id":"effort-1"}',
+        ),
+      ).toEqual({
+        cmd: "set_whisper_effort",
+        effort: "fast",
+        id: "effort-1",
+      });
+      expect(
+        parseCommand('{"cmd":"set_whisper_effort","effort":"balanced"}'),
+      ).toEqual({
+        cmd: "set_whisper_effort",
+        effort: "balanced",
+      });
+      expect(
+        parseCommand('{"cmd":"set_whisper_effort","effort":"accurate"}'),
+      ).toEqual({
+        cmd: "set_whisper_effort",
+        effort: "accurate",
+      });
+      expect(
+        parseCommand('{"cmd":"set_whisper_effort","effort":"slow"}'),
+      ).toBeNull();
+    });
   });
 });

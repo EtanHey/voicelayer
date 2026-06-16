@@ -271,6 +271,7 @@ public final class VoiceState {
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     public var onModeChange: ((VoiceMode) -> Void)?
     public var onPanelLayoutChange: (() -> Void)?
+    public var onAckEvent: ((SocketAckEvent) -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
     public var controlLayerEventWriter: (String, [String: String]) -> Void = { event, details in
         ControlLayerJournal.append(type: "voicebar.\(event)", payload: details)
@@ -1481,8 +1482,13 @@ public final class VoiceState {
     }
 
     private func handleAckEvent(_ event: [String: Any]) {
-        guard let ack = SocketAckEvent(event: event),
-              pendingIntent?.id == ack.id,
+        guard let ack = SocketAckEvent(event: event) else {
+            return
+        }
+
+        onAckEvent?(ack)
+
+        guard pendingIntent?.id == ack.id,
               pendingIntent?.command == ack.command
         else {
             return

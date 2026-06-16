@@ -14,16 +14,22 @@ public struct SettingsView: View {
     public let onSelectDevice: (String) -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
+    public let performanceEffort: () -> VoiceBarPerformanceEffort
+    public let performanceEffortNotice: () -> String?
+    public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let onAddVocabularyAlias: (String, String) -> Void
     public let onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    public let isMicrophonePermissionGranted: () -> Bool
+    public let onRunKarabinerSetup: () -> Void
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
     @State private var selectedAnchoredMode: VoiceBarAnchorMode
+    @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
@@ -39,6 +45,9 @@ public struct SettingsView: View {
         onSelectDevice: @escaping (String) -> Void,
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
         onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
+        performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
+        performanceEffortNotice: @escaping () -> String? = { nil },
+        onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
         },
@@ -47,6 +56,8 @@ public struct SettingsView: View {
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        isMicrophonePermissionGranted: @escaping () -> Bool = { true },
+        onRunKarabinerSetup: @escaping () -> Void = {},
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -56,15 +67,22 @@ public struct SettingsView: View {
         self.onSelectDevice = onSelectDevice
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
+        self.performanceEffort = performanceEffort
+        self.performanceEffortNotice = performanceEffortNotice
+        self.onSelectPerformanceEffort = onSelectPerformanceEffort
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
         self.onRemoveVocabularyAlias = onRemoveVocabularyAlias
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
+        self.onRunKarabinerSetup = onRunKarabinerSetup
         let initialAnchorMode = anchorMode()
+        let initialPerformanceEffort = performanceEffort()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
+        _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -114,10 +132,24 @@ public struct SettingsView: View {
                         Text(hotkeyStatusText)
                     }
                 }
-                if !missingPermissions.isEmpty {
-                    LabeledContent("Fix") {
-                        Button("Open System Settings") {
-                            openAccessibilitySettings()
+                let permissions = effectiveMissingPermissions
+                if !permissions.isEmpty {
+                    ForEach(permissions, id: \.label) { permission in
+                        permissionRow(permission)
+                    }
+                }
+            }
+
+            Section("Karabiner") {
+                LabeledContent("F5 relay") {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(isHotkeyRemapActive() ? .green : .orange)
+                            .frame(width: 8, height: 8)
+                        Text(isHotkeyRemapActive() ? "Installed" : "Not installed")
+                            .foregroundStyle(.secondary)
+                        Button("Set up") {
+                            runKarabinerSetup()
                         }
                     }
                 }
@@ -197,6 +229,25 @@ public struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.radioGroup)
+                }
+            }
+
+            Section("Performance") {
+                Picker("Effort", selection: Binding(
+                    get: { selectedPerformanceEffort },
+                    set: { effort in
+                        onSelectPerformanceEffort(effort)
+                    }
+                )) {
+                    ForEach(VoiceBarPerformanceEffort.allCases) { effort in
+                        Text(performanceEffortLabel(effort)).tag(effort)
+                    }
+                }
+                .pickerStyle(.segmented)
+                if let notice = performanceEffortNotice() {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
         }
@@ -300,9 +351,18 @@ public struct SettingsView: View {
             switch $0 {
             case .inputMonitoring: "Input Monitoring"
             case .accessibility: "Accessibility"
+            case .microphone: "Microphone"
             }
         }
         return "Missing: \(names.joined(separator: ", "))"
+    }
+
+    private var effectiveMissingPermissions: [HotkeyPermission] {
+        var permissions = missingPermissions
+        if !isMicrophonePermissionGranted(), !permissions.contains(.microphone) {
+            permissions.append(.microphone)
+        }
+        return permissions
     }
 
     private var positionModeDescription: String {
@@ -316,9 +376,32 @@ public struct SettingsView: View {
         }
     }
 
-    private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+    private func permissionRow(_ permission: HotkeyPermission) -> some View {
+        LabeledContent(permission.label) {
+            Button("Open") {
+                openPermissionSettings(permission)
+            }
+        }
+    }
+
+    private func openPermissionSettings(_ permission: HotkeyPermission) {
+        if let url = URL(string: permission.settingsURLString) {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func runKarabinerSetup() {
+        onRunKarabinerSetup()
+    }
+
+    private func performanceEffortLabel(_ effort: VoiceBarPerformanceEffort) -> String {
+        switch effort {
+        case .fast:
+            "Fast"
+        case .balanced:
+            "Balanced"
+        case .accurate:
+            "Accurate"
         }
     }
 
@@ -461,5 +544,29 @@ public struct SettingsView: View {
             draft.trimmedWrong
         )
         clearCorrectionEditor()
+    }
+}
+
+private extension HotkeyPermission {
+    var label: String {
+        switch self {
+        case .inputMonitoring:
+            "Input Monitoring"
+        case .accessibility:
+            "Accessibility"
+        case .microphone:
+            "Microphone"
+        }
+    }
+
+    var settingsURLString: String {
+        switch self {
+        case .inputMonitoring:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+        case .accessibility:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        case .microphone:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+        }
     }
 }

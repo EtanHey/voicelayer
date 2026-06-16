@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as socketClient from "../socket-client";
 
 interface MockPlayer {
@@ -13,8 +14,21 @@ describe("tts priority queue", () => {
   let playerMocks: MockPlayer[];
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
+  const recordingStatePath = `/tmp/voicelayer-tts-priority-queue-state-${process.pid}.json`;
+  let originalRecordingStatePath: string | undefined;
 
   beforeEach(() => {
+    originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    process.env.QA_VOICE_RECORDING_STATE_PATH = recordingStatePath;
+    writeFileSync(
+      recordingStatePath,
+      JSON.stringify({
+        state: "idle",
+        pid: process.pid,
+        updated_at: new Date().toISOString(),
+      }),
+    );
+
     broadcasts = [];
     playerMocks = [];
 
@@ -70,6 +84,14 @@ describe("tts priority queue", () => {
     broadcastSpy.mockRestore();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
+    if (originalRecordingStatePath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
+    }
+    try {
+      if (existsSync(recordingStatePath)) unlinkSync(recordingStatePath);
+    } catch {}
   });
 
   it("critical playback barges in and discards stale queued low-priority items", async () => {

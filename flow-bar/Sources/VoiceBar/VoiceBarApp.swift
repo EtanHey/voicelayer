@@ -10,6 +10,7 @@
 
 import AppKit
 import ApplicationServices
+import AVFoundation
 import CoreGraphics
 import Darwin
 import SwiftUI
@@ -97,9 +98,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var missingHotkeyPermissions: [HotkeyPermission] = []
     /// Whether VoiceBar is snoozed (hidden for a timed period).
     var isSnoozed: Bool = false
+    private var performanceEffort: VoiceBarPerformanceEffort = .accurate
+    private var pendingPerformanceEffortID: String?
+    private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
+    private var performanceEffortNotice: String?
+    private var performanceEffortNoticeTask: Task<Void, Never>?
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
+    private static let performanceEffortKey = "voicebar.performanceEffort"
+
+    override init() {
+        super.init()
+        voiceState.onAckEvent = { [weak self] ack in
+            self?.handlePerformanceEffortAck(ack)
+        }
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -175,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         configureGatekeptVoiceStateDependencies()
+        performanceEffort = Self.loadPerformanceEffort(defaults: defaults)
         if VoiceBarDefaults.shouldPromptForPermissions() {
             promptForAccessibilityIfNeeded()
         }
@@ -455,16 +470,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
         let vKey: CGKeyCode = 0x09 // V
+        let commandKey: CGKeyCode = 0x37
+        let commandDown = CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: true)
         let vDown = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: true)
         let vUp = CGEvent(keyboardEventSource: source, virtualKey: vKey, keyDown: false)
-        guard let vDown, let vUp else {
+        let commandUp = CGEvent(keyboardEventSource: source, virtualKey: commandKey, keyDown: false)
+        guard let commandDown, let vDown, let vUp, let commandUp else {
             NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
             return false
         }
         vDown.flags = .maskCommand
         vUp.flags = .maskCommand
+        commandDown.post(tap: .cghidEventTap)
         vDown.post(tap: .cghidEventTap)
         vUp.post(tap: .cghidEventTap)
+        commandUp.post(tap: .cghidEventTap)
         return true
     }
 
@@ -522,6 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     switch $0 {
                     case .inputMonitoring: "Input Monitoring"
                     case .accessibility: "Accessibility"
+                    case .microphone: "Microphone"
                     }
                 }.joined(separator: ", ")
             )
@@ -849,6 +870,121 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshSettingsWindowAnchorState()
     }
 
+    func currentPerformanceEffort() -> VoiceBarPerformanceEffort {
+        performanceEffort
+    }
+
+    func currentPerformanceEffortNotice() -> String? {
+        performanceEffortNotice
+    }
+
+    func selectPerformanceEffort(_ effort: VoiceBarPerformanceEffort) {
+        guard effort != performanceEffort else {
+            clearPerformanceEffortNotice()
+            refreshSettingsWindowAnchorState()
+            return
+        }
+
+        guard let sendCommand = voiceState.sendCommand else {
+            rejectPendingPerformanceEffort(reason: "VoiceLayer is starting")
+            return
+        }
+
+        let id = UUID().uuidString
+        pendingPerformanceEffortID = id
+        pendingPerformanceEffort = effort
+        clearPerformanceEffortNotice()
+        sendCommand([
+            "cmd": "set_whisper_effort",
+            "effort": effort.rawValue,
+            "id": id,
+        ])
+        refreshSettingsWindowAnchorState()
+    }
+
+    private func handlePerformanceEffortAck(_ ack: SocketAckEvent) {
+        guard ack.command == .setWhisperEffort,
+              ack.id == pendingPerformanceEffortID
+        else {
+            return
+        }
+
+        let effort = pendingPerformanceEffort
+        pendingPerformanceEffortID = nil
+        pendingPerformanceEffort = nil
+
+        guard ack.outcome == .accept, let effort else {
+            rejectPendingPerformanceEffort(reason: ack.reason)
+            return
+        }
+
+        performanceEffort = effort
+        defaults.set(effort.rawValue, forKey: Self.performanceEffortKey)
+        clearPerformanceEffortNotice()
+        refreshSettingsWindowAnchorState()
+    }
+
+    private func rejectPendingPerformanceEffort(reason: String?) {
+        let trimmedReason = reason?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let suffix = trimmedReason?.isEmpty == false ? " - \(trimmedReason!), try again" : " - try again"
+        performanceEffortNotice = "Couldn't change effort\(suffix)"
+        refreshSettingsWindowAnchorState()
+        schedulePerformanceEffortNoticeClear(expectedNotice: performanceEffortNotice)
+    }
+
+    private func clearPerformanceEffortNotice() {
+        performanceEffortNoticeTask?.cancel()
+        performanceEffortNoticeTask = nil
+        performanceEffortNotice = nil
+    }
+
+    private func schedulePerformanceEffortNoticeClear(expectedNotice: String?) {
+        performanceEffortNoticeTask?.cancel()
+        performanceEffortNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard let self,
+                  !Task.isCancelled,
+                  performanceEffortNotice == expectedNotice
+            else {
+                return
+            }
+            performanceEffortNotice = nil
+            performanceEffortNoticeTask = nil
+            refreshSettingsWindowAnchorState()
+        }
+    }
+
+    private static func loadPerformanceEffort(defaults: UserDefaults) -> VoiceBarPerformanceEffort {
+        guard let rawValue = defaults.string(forKey: performanceEffortKey),
+              let effort = VoiceBarPerformanceEffort(rawValue: rawValue)
+        else {
+            return .accurate
+        }
+        return effort
+    }
+
+    private func microphonePermissionGranted() -> Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+    }
+
+    private func runKarabinerSetup() {
+        guard let scriptURL = Bundle.main.resourceURL?
+            .appendingPathComponent("scripts")
+            .appendingPathComponent("install-voicebar-f5-hidutil.sh")
+        else {
+            NSLog("[VoiceBar] Karabiner setup script not bundled")
+            return
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [scriptURL.path]
+        do {
+            try process.run()
+        } catch {
+            NSLog("[VoiceBar] Failed to run Karabiner setup: %@", String(describing: error))
+        }
+    }
+
     private func refreshSettingsWindowAnchorState() {
         guard let settingsWindow else { return }
         DispatchQueue.main.async { [weak self, weak settingsWindow] in
@@ -984,6 +1120,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
             anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
             onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
+            performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
+            performanceEffortNotice: { [weak self] in self?.currentPerformanceEffortNotice() },
+            onSelectPerformanceEffort: { [weak self] in self?.selectPerformanceEffort($0) },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,
@@ -1013,6 +1152,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         + VoiceBarHotkeyContract.remapAgentLabel
                         + ".plist"
                 )
+            },
+            isMicrophonePermissionGranted: { [weak self] in
+                self?.microphonePermissionGranted() ?? false
+            },
+            onRunKarabinerSetup: { [weak self] in
+                self?.runKarabinerSetup()
             }
         )
     }

@@ -24,6 +24,12 @@
 - Backend selection: `QA_VOICE_STT_BACKEND=whisper|wispr|auto` (default auto).
 - whisper.cpp binary detection checks `whisper-cli` then `whisper-cpp`.
 - Model search order: `QA_VOICE_WHISPER_MODEL` -> `~/.cache/whisper/ggml-large-v3-turbo.bin` -> any `ggml-*.bin` in `~/.cache/whisper/`.
+- Performance effort tiers (Settings -> Audio -> Performance, code in `src/whisper-performance.ts`): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`.
+
+## VoiceBar Settings (SwiftUI, `flow-bar/Sources/VoiceBarUI/SettingsView.swift`)
+- General tab: hotkey shortcut/status; permissions panel (Microphone + Accessibility + Input Monitoring) with "Open" links to the matching System Settings pane; Karabiner "Set up" helper (F5 relay install); gestures + pill position/anchor.
+- Audio tab: microphone input-device picker + Performance effort tier picker (Fast/Balanced/Accurate).
+- Dictionary tab: STT corrections + prompt terms (same store as `voicelayer vocab`).
 
 ## Voice Modes
 - `announce`, `brief`, `consult`: non-blocking TTS only.
@@ -50,10 +56,14 @@
 - Outputs: `~/.voicelayer/reports/qa-{date}-{id}.md`, `~/.voicelayer/briefs/discovery-{date}-{id}.md`.
 
 ## CLI Commands
-- `voicelayer bar` / `voicelayer bar-stop` for the Voice Bar app.
+- `voicelayer build-app` builds VoiceBar from source and installs `/Applications/VoiceBar.app` (override `--install-path`; refuses to overwrite a running VoiceBar; runs `launchd/install.sh` after). Routes to `flow-bar/build-app.sh`.
+- `voicelayer bar` launches the installed `/Applications/VoiceBar.app` via `open` (no longer builds a dev binary); errors out telling you to run `build-app` if the bundle is missing. `voicelayer bar-stop` stops it.
+- `voicelayer update` is a cross-machine updater (auto-detects git-checkout vs global-package install): updates the package, rebuilds the app, runs `launchd/install.sh`, pulls the Qwen3 model into `~/.voicelayer` if missing, and restarts the VoiceBar stack. Flags: `--dry-run`, `--data-mode skip|direct|brain-drive`, `--data-source SOURCE_HOME` (personal-data rsync is opt-in; default `skip`). Routes to `scripts/voicelayer-update.sh`.
+- `voicelayer hotkey install|status` installs/inspects the F5/Dictation -> F18 `hidutil` relay LaunchAgent.
 - `voicelayer daemon --port 8880` to run Qwen3-TTS.
 - `voicelayer extract ...` to collect voice samples.
 - `voicelayer clone ...` to build a voice profile.
+- `voicelayer vocab ...` to add/list/remove STT vocabulary aliases.
 
 ## Key Paths
 - Socket: `/tmp/voicelayer.sock` (fixed path — Voice Bar listens, MCP connects)

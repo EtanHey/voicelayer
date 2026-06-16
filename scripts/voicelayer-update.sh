@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Bring a secondary Mac up to date with the VoiceLayer app, daemon, model, and
-# untracked personal runtime data.
+# Update the installed VoiceLayer package, rebuild the canonical VoiceBar.app,
+# and restart the local VoiceBar-owned daemon stack.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HOME_DIR="${HOME:?HOME is required}"
 VOICELAYER_HOME="$HOME_DIR/.voicelayer"
 STATE_HOME="$HOME_DIR/.local/state/voicelayer"
@@ -13,15 +13,18 @@ MODEL_DIR="${VOICELAYER_UPDATE_MODEL_DIR:-$VOICELAYER_HOME/models/qwen3-tts-4bit
 QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit}"
 
 DRY_RUN=0
+DRY_RUN_COMMANDS="${VOICELAYER_UPDATE_DRY_RUN_COMMANDS:-0}"
 DATA_SOURCE="${VOICELAYER_UPDATE_DATA_SOURCE:-}"
-DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-pending}"
+DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-skip}"
 RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
+PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
+VOICEBAR_LABEL="com.voicelayer.voicebar"
 
 usage() {
     cat <<'EOF'
-Usage: voicelayer update [--dry-run] [--data-mode direct|brain-drive] --data-source SOURCE_HOME
+Usage: voicelayer update [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME]
 
-Runs on the target Mac. SOURCE_HOME is the source user's home directory, either:
+Runs on the target Mac. SOURCE_HOME is optional personal runtime data, either:
   direct:      main-mac.local:/Users/etanheyman
   brain-drive: /Volumes/BrainDrive/VoiceLayerBackup/etanheyman
 
@@ -29,6 +32,7 @@ Environment overrides:
   VOICELAYER_UPDATE_DATA_SOURCE
   VOICELAYER_UPDATE_DATA_MODE
   VOICELAYER_UPDATE_QWEN3_MODEL_REPO
+  VOICELAYER_UPDATE_DRY_RUN_COMMANDS=1  print and skip commands even without --dry-run
 EOF
 }
 
@@ -59,7 +63,7 @@ print_command() {
 
 run_cmd() {
     log "+ $(print_command "$@")"
-    if [[ "$DRY_RUN" -eq 0 ]]; then
+    if [[ "$DRY_RUN" -eq 0 && "$DRY_RUN_COMMANDS" != "1" ]]; then
         "$@"
     fi
 }
@@ -142,58 +146,81 @@ parse_args() {
 
 validate_args() {
     case "$DATA_MODE" in
-        pending|direct|brain-drive) ;;
+        skip|direct|brain-drive) ;;
         *)
-            err "--data-mode must be direct or brain-drive"
+            err "--data-mode must be skip, direct, or brain-drive"
             exit 2
             ;;
     esac
 
-    if [[ "$DRY_RUN" -eq 0 && -z "$DATA_SOURCE" ]]; then
-        err "--data-source is required for a real update; Etan still needs to pick direct rsync vs Brain Drive"
+    if [[ "$DATA_MODE" != "skip" && -z "$DATA_SOURCE" ]]; then
+        err "--data-source is required when --data-mode is direct or brain-drive"
         exit 2
     fi
 }
 
+detect_install_type() {
+    if [[ -d "$PACKAGE_ROOT/.git" ]]; then
+        printf 'git-checkout\n'
+    else
+        printf 'global-package\n'
+    fi
+}
+
+package_update_label() {
+    case "$(detect_install_type)" in
+        git-checkout)
+            printf 'git pull --ff-only && bun install\n'
+            ;;
+        *)
+            if command -v bun >/dev/null 2>&1; then
+                printf 'bun update -g %s\n' "$PACKAGE_NAME"
+            else
+                printf 'npm install -g %s\n' "$PACKAGE_NAME"
+            fi
+            ;;
+    esac
+}
+
 print_plan() {
+    local install_type
+    install_type="$(detect_install_type)"
     log "VoiceLayer M1 update plan"
     log "DRY RUN: $([[ "$DRY_RUN" -eq 1 ]] && printf yes || printf no)"
-    if [[ -n "$DATA_SOURCE" ]]; then
+    log "INSTALL TYPE: $install_type"
+    log "PACKAGE ROOT: $PACKAGE_ROOT"
+    log "PACKAGE UPDATE: $(package_update_label)"
+    if [[ "$DATA_MODE" != "skip" ]]; then
         log "DATA MODE: $DATA_MODE"
         log "DATA SOURCE: $DATA_SOURCE"
     else
-        log "DATA MODE: pending"
-        log "DATA SOURCE: pending Etan decision (recommended: Brain Drive backed source)"
+        log "DATA MODE: skip"
+        log "Personal data sync: skipped"
     fi
-    log "REPO: $REPO_ROOT"
     log "Qwen3 model: $MODEL_DIR ($QWEN3_MODEL_REPO)"
     log ""
     log "Steps:"
-    log "  1. git pull --ff-only"
-    log "  2. bun install"
+    log "  1. update package: $(package_update_label)"
+    log "  2. install package dependencies when running from a git checkout"
     log "  3. bash flow-bar/build-app.sh"
     log "  4. bash launchd/install.sh"
     log "  5. create/update $VENV_DIR and pull Qwen3 model if missing"
-    log "  6. rsync personal data:"
-    if [[ -n "$DATA_SOURCE" ]]; then
+    log "  6. restart VoiceLayer daemon by restarting VoiceBar"
+    log "  7. open /Applications/VoiceBar.app"
+    if [[ "$DATA_MODE" != "skip" ]]; then
+        log "  8. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
         log "     $(source_path ".voicelayer/voices.json") -> $VOICELAYER_HOME/voices.json"
         log "     $(source_path ".voicelayer/pronunciation.yaml") -> $VOICELAYER_HOME/pronunciation.yaml"
         log "     $(source_path ".voicelayer/daemon.secret") -> $VOICELAYER_HOME/daemon.secret"
         log "     $(source_path ".local/state/voicelayer/stt-vocabulary.json") -> $STATE_HOME/stt-vocabulary.json"
-    else
-        log "     ~/.voicelayer/voices/"
-        log "     ~/.voicelayer/voices.json"
-        log "     ~/.voicelayer/pronunciation.yaml"
-        log "     ~/.voicelayer/daemon.secret"
-        log "     ~/.local/state/voicelayer/stt-vocabulary.json"
     fi
     log ""
 }
 
 warn_if_dirty() {
     local status_output
-    status_output="$(git -C "$REPO_ROOT" status --porcelain)"
+    status_output="$(git -C "$PACKAGE_ROOT" status --porcelain)"
     if [[ -n "$status_output" ]]; then
         log "WARNING: git worktree has local changes; git pull --ff-only may fail."
         log "$status_output"
@@ -217,7 +244,7 @@ install_qwen3_model() {
 }
 
 sync_personal_data() {
-    if [[ -z "$DATA_SOURCE" ]]; then
+    if [[ "$DATA_MODE" = "skip" ]]; then
         return
     fi
     run_cmd mkdir -p "$VOICELAYER_HOME" "$STATE_HOME"
@@ -232,6 +259,40 @@ sync_personal_data() {
     fi
 }
 
+update_package() {
+    case "$(detect_install_type)" in
+        git-checkout)
+            ensure_command git
+            ensure_command bun
+            warn_if_dirty
+            run_cmd git -C "$PACKAGE_ROOT" pull --ff-only
+            run_cmd bun install --cwd "$PACKAGE_ROOT"
+            ;;
+        *)
+            if command -v bun >/dev/null 2>&1; then
+                run_cmd bun update -g "$PACKAGE_NAME"
+            else
+                ensure_command npm
+                run_cmd npm install -g "$PACKAGE_NAME"
+            fi
+            ;;
+    esac
+}
+
+restart_voicebar_stack() {
+    if command -v launchctl >/dev/null 2>&1 &&
+       launchctl print "gui/$(id -u)/$VOICEBAR_LABEL" >/dev/null 2>&1; then
+        run_cmd launchctl kickstart -k "gui/$(id -u)/$VOICEBAR_LABEL"
+    else
+        log "VoiceBar LaunchAgent is not loaded; launching app directly."
+    fi
+    if [[ "$DRY_RUN" -eq 0 && "$DRY_RUN_COMMANDS" != "1" && ! -d "/Applications/VoiceBar.app" ]]; then
+        err "VoiceBar.app is not installed at /Applications/VoiceBar.app"
+        exit 1
+    fi
+    run_cmd open "/Applications/VoiceBar.app"
+}
+
 main() {
     parse_args "$@"
     validate_args
@@ -241,18 +302,27 @@ main() {
         return 0
     fi
 
-    ensure_command git
-    ensure_command bun
+    case "$(detect_install_type)" in
+        git-checkout)
+            ensure_command bun
+            ;;
+        *)
+            if ! command -v bun >/dev/null 2>&1; then
+                ensure_command npm
+            fi
+            ;;
+    esac
     ensure_command python3
-    ensure_command "$RSYNC_BIN"
+    if [[ "$DATA_MODE" != "skip" ]]; then
+        ensure_command "$RSYNC_BIN"
+    fi
 
-    warn_if_dirty
-    run_cmd git -C "$REPO_ROOT" pull --ff-only
-    run_cmd bun install
-    run_cmd bash "$REPO_ROOT/flow-bar/build-app.sh"
-    run_cmd bash "$REPO_ROOT/launchd/install.sh"
+    update_package
+    run_cmd bash "$PACKAGE_ROOT/flow-bar/build-app.sh"
+    run_cmd bash "$PACKAGE_ROOT/launchd/install.sh"
     install_qwen3_model
     sync_personal_data
+    restart_voicebar_stack
     log "VoiceLayer update complete."
 }
 

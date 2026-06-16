@@ -310,4 +310,30 @@ final class AppLifecycleTests: XCTestCase {
             )
         )
     }
+
+    func testSimulatePastePostsRealCommandKeyEventsAroundV() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("VoiceBar")
+            .appendingPathComponent("VoiceBarApp.swift")
+
+        let source = try String(contentsOf: sourceURL)
+        XCTAssertTrue(source.contains("let commandKey: CGKeyCode = 0x37"))
+        XCTAssertTrue(source.contains("commandDown.post(tap: .cghidEventTap)"))
+        XCTAssertTrue(source.contains("commandUp.post(tap: .cghidEventTap)"))
+
+        let commandDownRange = try XCTUnwrap(source.range(of: "commandDown.post(tap: .cghidEventTap)"))
+        let vDownRange = try XCTUnwrap(source.range(of: "vDown.post(tap: .cghidEventTap)"))
+        let vUpRange = try XCTUnwrap(source.range(of: "vUp.post(tap: .cghidEventTap)"))
+        let commandUpRange = try XCTUnwrap(source.range(of: "commandUp.post(tap: .cghidEventTap)"))
+        XCTAssertLessThan(commandDownRange.lowerBound, vDownRange.lowerBound)
+        XCTAssertLessThan(vDownRange.lowerBound, vUpRange.lowerBound)
+        XCTAssertLessThan(vUpRange.lowerBound, commandUpRange.lowerBound)
+    }
 }
