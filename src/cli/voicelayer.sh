@@ -65,6 +65,10 @@ case "${1:-}" in
         shift
         exec bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "$@"
         ;;
+    setup)
+        shift
+        exec bun "$SCRIPT_DIR/setup.ts" "$PACKAGE_ROOT" "$@"
+        ;;
     bar)
         shift
         if [[ ! -d "/Applications/VoiceBar.app" ]]; then
@@ -106,6 +110,7 @@ case "${1:-}" in
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
         echo "  build-app  Build and install /Applications/VoiceBar.app"
+        echo "  setup      Install VoiceLayer, wire MCP, and guide macOS permissions"
         echo "  bar        Launch VoiceBar.app (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
         echo "  update     Update app, daemon, model, and personal VoiceLayer data"
@@ -116,6 +121,7 @@ case "${1:-}" in
         echo "  voicelayer extract --source 'https://youtube.com/@t3dotgg' --name theo --count 20"
         echo "  voicelayer clone --name theo"
         echo "  voicelayer daemon --port 8880"
+        echo "  voicelayer setup"
         echo "  voicelayer build-app"
         echo "  voicelayer bar"
         echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"

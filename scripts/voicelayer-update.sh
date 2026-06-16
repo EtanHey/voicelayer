@@ -160,7 +160,7 @@ validate_args() {
 }
 
 detect_install_type() {
-    if [[ -d "$PACKAGE_ROOT/.git" ]]; then
+    if git -C "$PACKAGE_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         printf 'git-checkout\n'
     else
         printf 'global-package\n'
