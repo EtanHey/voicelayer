@@ -51,7 +51,7 @@ describe("voicelayer setup wizard helpers", () => {
     }));
 
   test.each([
-    ["claude", [".claude", "settings.json"]],
+    ["claude", [".claude", ".mcp.json"]],
     ["cursor", [".cursor", "mcp.json"]],
     ["gemini", [".gemini", "config", "mcp_config.json"]],
   ] as const)(

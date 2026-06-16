@@ -56,7 +56,7 @@ export function detectAgentClis(
 export function resolveAgentConfigPath(agent: AgentId, home = defaultHome()): string {
   switch (agent) {
     case "claude":
-      return join(home, ".claude", "settings.json");
+      return join(home, ".claude", ".mcp.json");
     case "codex":
       return join(home, ".codex", "config.toml");
     case "cursor":
