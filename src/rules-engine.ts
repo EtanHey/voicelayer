@@ -208,10 +208,7 @@ function preservesPeriodBeforeTerminalPunctuation(token: string): boolean {
     return true;
   }
 
-  return (
-    /^(?:[a-z]\.)+[a-z]$/i.test(normalized) ||
-    /\d+\.\d+/.test(normalized)
-  );
+  return /^(?:[a-z]\.)+[a-z]$/i.test(normalized) || /\d+\.\d+/.test(normalized);
 }
 
 function preservesPeriodBeforeComma(token: string): boolean {
@@ -228,9 +225,7 @@ function preservesPeriodBeforeComma(token: string): boolean {
 }
 
 function normalizeTerminalPunctuationToken(token: string): string {
-  return token
-    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "")
-    .toLowerCase();
+  return token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}.]+$/gu, "").toLowerCase();
 }
 
 function applyPunctuation(text: string): string {
@@ -278,7 +273,10 @@ function normalizePunctuationClusters(text: string): string {
     .replace(/,\s*([!?])(?=\s|$)/g, "$1");
 }
 
-function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boolean {
+function hasCodeStringPrefixBeforeQuote(
+  text: string,
+  quoteIndex: number,
+): boolean {
   const beforeQuote = text.slice(0, quoteIndex);
   return /(?:^|[^\p{L}\p{N}_])(?:[rRuUbBfF]|[rR][fFbB]|[fFbB][rR])$/u.test(
     beforeQuote,
@@ -578,23 +576,15 @@ function applyAliases(text: string, aliases: Record<string, string>): string {
   let patterns = ALIAS_PATTERN_CACHE.get(aliases);
   if (!patterns) {
     patterns = Object.entries(aliases).map(([from, to]) => {
-      // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
-      const escaped = escapeRegex(from);
-      return [
-        from.toLowerCase(),
-        new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
-          "giu",
-        ),
-        to,
-      ];
+      const { pattern, prefilter } = buildAliasMatchPattern(from, to);
+      return [prefilter, pattern, to];
     });
     ALIAS_PATTERN_CACHE.set(aliases, patterns);
   }
 
   const lowerResult = result.toLowerCase();
-  for (const [fromLower, pattern, to] of patterns) {
-    if (!lowerResult.includes(fromLower)) continue;
+  for (const [prefilter, pattern, to] of patterns) {
+    if (prefilter && !lowerResult.includes(prefilter)) continue;
     result = result.replace(pattern, to);
   }
   return result;
@@ -602,4 +592,79 @@ function applyAliases(text: string, aliases: Record<string, string>): string {
 
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Camel-case / distinctive agent-or-product tokens that whisper provably
+ * mangles (intervening comma/period, or glued first words). Used to gate the
+ * punctuation/whitespace-tolerant matcher so prose function words can never
+ * collapse across a comma or sentence boundary.
+ */
+function isDistinctiveAliasValue(to: string): boolean {
+  // camelCase boundary (brainlayerCodex, BrainLayer, WhatsApp), OR a single
+  // token with no internal whitespace (a distinct product/agent name).
+  return /[a-z][A-Z]/u.test(to) || !/\s/u.test(to);
+}
+
+export interface AliasMatchPattern {
+  /** Unicode-aware boundary-anchored matcher. */
+  pattern: RegExp;
+  /**
+   * Cheap lowercase substring fast-path filter. For exact (literal) keys this
+   * is the full lowercased key (unchanged fast path). For tolerant keys the
+   * intervening punctuation/glue means the full key is NOT a contiguous
+   * substring of the dictated text, so the prefilter narrows to the FIRST word
+   * segment — still a useful skip, with the regex doing the real work.
+   */
+  prefilter: string;
+}
+
+/**
+ * Build the matcher for one alias `from` key.
+ *
+ * Single-word keys, Hebrew keys, and function-word/short-segment compounds
+ * keep the original exact literal-phrase behavior:
+ *   (?<=^|\s|[^\p{L}]) escaped (?=$|\s|[^\p{L}])    flags 'giu'
+ *
+ * Distinctive multi-word agent/product keys (every word segment >= 3 chars AND
+ * a camelCase/single-token value) ALSO tolerate, BETWEEN words only:
+ *   - optional single comma/period plus surrounding whitespace, and
+ *   - the words being glued when the next word begins with an uppercase letter
+ *     (whisper hears "brain layer" as "BrainLayer").
+ * The outer non-letter boundaries are unchanged, so leading/trailing word edges
+ * still require a non-letter boundary and unrelated prose words never fuse.
+ */
+export function buildAliasMatchPattern(
+  from: string,
+  to?: string,
+): AliasMatchPattern {
+  const segments = from.split(" ").filter((segment) => segment.length > 0);
+  const isDistinctiveMultiWord =
+    segments.length > 1 &&
+    segments.every((segment) => segment.length >= 3) &&
+    (to === undefined || isDistinctiveAliasValue(to));
+
+  let body: string;
+  let prefilter: string;
+  if (isDistinctiveMultiWord) {
+    // Allow optional single comma/period + surrounding whitespace between
+    // words, OR a glued boundary when the next word starts with an uppercase
+    // letter. Never crosses an unrelated word: each segment is matched
+    // literally and the separators only span punctuation/whitespace.
+    const interWord = "(?:[\\s]*[,.]?[\\s]*|(?=[A-Z]))";
+    body = segments.map((segment) => escapeRegex(segment)).join(interWord);
+    prefilter = segments[0].toLowerCase();
+  } else {
+    body = escapeRegex(from);
+    prefilter = from.toLowerCase();
+  }
+
+  // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic.
+  return {
+    pattern: new RegExp(
+      `(?<=^|\\s|[^\\p{L}])${body}(?=$|\\s|[^\\p{L}])`,
+      "giu",
+    ),
+    prefilter,
+  };
 }

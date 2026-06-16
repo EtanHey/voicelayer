@@ -79,6 +79,92 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("matches multi-word agent aliases when whisper inserts a comma between words", () => {
+    // Whisper emits a comma/period between the layer prefix and the agent
+    // suffix (recorded: "I said narration layer, Gemini."). The 3-word alias
+    // must still fire instead of leaving an orphaned ", Gemini".
+    expect(
+      cleanupTranscriptionText("narration layer, Gemini", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("narrationlayerGemini");
+    expect(
+      cleanupTranscriptionText("brain layer, claude", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("brainlayerClaude");
+    expect(
+      cleanupTranscriptionText("brain layer, gemini", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("brainlayerGemini");
+    expect(
+      cleanupTranscriptionText("Cmox Layer, Codex", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("cmuxlayerCodex");
+  });
+
+  it("matches multi-word agent aliases when whisper glues the first words together", () => {
+    // Whisper hears "brain layer" as a single token "BrainLayer" (no internal
+    // space), so the spaced key must tolerate the glue when the next segment
+    // starts with a capital. Recorded roster (2026-06-15) had "BrainLayer
+    // Claude", "VoiceLayer Codex", "VoiceLayer Gemini" all pass through raw.
+    expect(
+      cleanupTranscriptionText("BrainLayer Claude", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("brainlayerClaude");
+    expect(
+      cleanupTranscriptionText("VoiceLayer Codex", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("voicelayerCodex");
+    expect(
+      cleanupTranscriptionText("VoiceLayer Gemini", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("voicelayerGemini");
+  });
+
+  it("resolves the full dictated agent roster suffixes (gemini/clawed coverage)", () => {
+    expect(
+      cleanupTranscriptionText("narration layer gemini", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("narrationlayerGemini");
+    expect(
+      cleanupTranscriptionText("voice layer clawed", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("voicelayerClaude");
+    expect(
+      cleanupTranscriptionText("cmux layer gemini", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("cmuxlayerGemini");
+  });
+
+  it("does NOT collapse unrelated words across punctuation (prose negatives)", () => {
+    // Tolerance must only span the SAME word sequence with intervening
+    // punctuation — never fuse unrelated prose words.
+    expect(
+      cleanupTranscriptionText("the narration, layer by layer, was steady", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("The narration, layer by layer, was steady");
+    expect(
+      cleanupTranscriptionText("the brain, the layer is fine", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("The brain, the layer is fine");
+    expect(
+      cleanupTranscriptionText("I went to. A new file", {
+        QA_VOICE_STT_VOCABULARY_DISABLED: "1",
+      }),
+    ).toBe("I went to. A new file");
+  });
+
   it("covers the strict-score spoken-form misses", () => {
     const cleaned = cleanupTranscriptionText(
       "whisperflow orc clawed orcclawed skill creator clawed seamux cee mux karabiner",

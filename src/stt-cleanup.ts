@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { applyRules, type RulesConfig } from "./rules-engine";
+import {
+  applyRules,
+  buildAliasMatchPattern,
+  type RulesConfig,
+} from "./rules-engine";
 import {
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
@@ -28,9 +32,26 @@ type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   "narration layer codex": "narrationlayerCodex",
+  "narration layer gemini": "narrationlayerGemini",
+  "narration layer claude": "narrationlayerClaude",
+  "narration layer clawed": "narrationlayerClaude",
+  "narration layer claud": "narrationlayerClaude",
   "brain layer codex": "brainlayerCodex",
+  "brain layer gemini": "brainlayerGemini",
   "voice layer codex": "voicelayerCodex",
+  "voice layer gemini": "voicelayerGemini",
+  "voice layer clawed": "voicelayerClaude",
+  "voice layer claude": "voicelayerClaude",
+  "voice layer claud": "voicelayerClaude",
   "cmux layer codex": "cmuxlayerCodex",
+  "cmux layer gemini": "cmuxlayerGemini",
+  "cmux layer clawed": "cmuxlayerClaude",
+  "cmux layer claude": "cmuxlayerClaude",
+  "cmux layer claud": "cmuxlayerClaude",
+  "cmox layer codex": "cmuxlayerCodex",
+  "cmox layer gemini": "cmuxlayerGemini",
+  "cmox layer clawed": "cmuxlayerClaude",
+  "cmox layer claude": "cmuxlayerClaude",
   "c mux layer codex": "cmuxlayerCodex",
   "cee mux layer codex": "cmuxlayerCodex",
   "sessions of codecs": "sessions of Codex",
@@ -154,12 +175,12 @@ function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
 ): CanonicalTermPattern[] {
   return [...new Set(Object.values(aliases))].map((term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return [
-      term.toLowerCase(),
-      new RegExp(`(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`, "giu"),
-      term,
-    ] as [string, RegExp, string];
+    // The canonical re-pass re-normalizes already-mangled output, so the term
+    // is both the `from` (what to find) and the `to` (the distinctive value
+    // gate). Shares the punctuation/whitespace-tolerant builder with
+    // applyAliases so both call sites tolerate the same whisper shapes.
+    const { pattern, prefilter } = buildAliasMatchPattern(term, term);
+    return [prefilter, pattern, term] as [string, RegExp, string];
   });
 }
 
@@ -628,8 +649,8 @@ function normalizeCanonicalTerms(
 ): string {
   let result = text;
   const lowerResult = result.toLowerCase();
-  for (const [termLower, pattern, term] of patterns) {
-    if (!lowerResult.includes(termLower)) continue;
+  for (const [prefilter, pattern, term] of patterns) {
+    if (prefilter && !lowerResult.includes(prefilter)) continue;
     result = result.replace(pattern, term);
   }
   return result;
