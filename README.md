@@ -81,12 +81,20 @@ cd voicelayer && bun install
 ### Start VoiceBar
 
 ```bash
-# Retire the old standalone daemon LaunchAgent, if present
-./launchd/install.sh
+# Build + install /Applications/VoiceBar.app (also retires the old
+# standalone daemon LaunchAgent via launchd/install.sh).
+voicelayer build-app        # or: bash flow-bar/build-app.sh
 
-# Build/run VoiceBar; the app owns the child daemon
-bash flow-bar/build-app.sh
+# Launch the installed app; the app owns the child daemon
+voicelayer bar
 ```
+
+`voicelayer build-app` is the canonical builder — it compiles VoiceBar from
+source, installs to `/Applications/VoiceBar.app` (override with
+`--install-path`), refuses to overwrite a running VoiceBar, and runs
+`launchd/install.sh` afterward. `voicelayer bar` then opens the installed
+`/Applications/VoiceBar.app` (it no longer builds a bare dev binary); if the
+app isn't installed it tells you to run `voicelayer build-app` first.
 
 VoiceLayer's daily-driver supervision chain is `launchd -> VoiceBar.app -> child
 MCP daemon`. The standalone `com.voicelayer.mcp-daemon` LaunchAgent is retired
@@ -110,6 +118,27 @@ rm -f /tmp/.voicelayer-daemon-disabled
 
 When the flag exists, VoiceBar treats exit 0 as an explicit terminal stop. All
 other child exits reschedule a restart.
+
+### Updating VoiceLayer
+
+`voicelayer update` is a cross-machine updater that runs on whichever Mac you
+invoke it on (it auto-detects a git checkout vs a global package install). It
+updates the package, rebuilds `/Applications/VoiceBar.app`, runs
+`launchd/install.sh`, pulls the Qwen3-TTS model into `~/.voicelayer` if missing,
+and restarts the VoiceBar stack.
+
+```bash
+voicelayer update --dry-run            # print the plan without running it
+voicelayer update                      # package + app + model + restart
+
+# Optionally sync personal runtime data (voices, vocabulary, daemon secret):
+voicelayer update --data-mode direct       --data-source other-mac.local:/Users/<you>
+voicelayer update --data-mode brain-drive  --data-source /Volumes/BrainDrive/VoiceLayerBackup/<you>
+```
+
+Personal-data sync is opt-in (`--data-mode skip` is the default). When enabled,
+it rsyncs `~/.voicelayer/voices`, `voices.json`, `pronunciation.yaml`,
+`daemon.secret`, and the STT vocabulary from the source host.
 
 ### Configure MCP Clients
 
@@ -206,14 +235,34 @@ Floating SwiftUI widget providing visual feedback during voice interactions. Con
 
 ```bash
 bun add -g voicelayer-mcp
+voicelayer build-app            # Build + install /Applications/VoiceBar.app
 voicelayer hotkey install       # Install F5/Dictation -> F18 relay
-voicelayer bar                  # Build and launch Voice Bar
+voicelayer bar                  # Launch the installed VoiceBar.app
 ```
 
 **Hotkey Notes:**
 - Requires Input Monitoring permission (System Settings > Privacy & Security)
 - On keyboards where the physical key is Apple's Dictation key, `voicelayer hotkey install` installs a `hidutil` LaunchAgent to map F5/Dictation to VoiceBar's internal F18 relay.
 - The installer preserves non-VoiceBar `hidutil` mappings and is safe to rerun. `Shift+F5` re-pastes the latest transcript.
+- `voicelayer hotkey status` prints the LaunchAgent state and the current `hidutil` key mapping.
+
+### Settings
+
+Open VoiceBar's Settings window for in-app configuration:
+
+- **General** — hotkey status, a permissions panel (Microphone, Accessibility, Input Monitoring) with quick "Open" links to the right System Settings pane, and a Karabiner "Set up" helper for the F5 relay.
+- **Audio** — microphone input device + a **Performance** effort picker (see below).
+- **Dictionary** — STT corrections and prompt terms (the same vocabulary managed by `voicelayer vocab`).
+
+**Performance (STT effort tiers).** The Audio tab exposes three decoding-effort tiers that trade latency for accuracy on the *same* `large-v3-turbo` model (they only change whisper.cpp's beam search/best-of, not the model):
+
+| Tier | whisper.cpp args | Notes |
+|------|------------------|-------|
+| **Fast** | `-bo 1 -bs 1` | Lowest decode cost |
+| **Balanced** | `-bo 3 -bs 3` | Middle ground |
+| **Accurate** | `-bo 5 -bs 5` | Default; widest beam |
+
+The selection persists to `~/.local/state/voicelayer/whisper-performance.json`. Override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT=fast|balanced|accurate`.
 
 ### Advanced: Voice Cloning
 
@@ -246,6 +295,7 @@ path. The daemon only accepts `Host: 127.0.0.1:8880` /
 |----------|---------|-------------|
 | `QA_VOICE_STT_BACKEND` | `auto` | STT backend: `whisper`, `wispr`, or `auto` |
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Path to whisper.cpp GGML model |
+| `QA_VOICE_WHISPER_PERFORMANCE_EFFORT` | `accurate` | STT decode effort: `fast`, `balanced`, or `accurate` |
 | `QA_VOICE_WISPR_KEY` | -- | Wispr Flow API key (cloud fallback) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate |
