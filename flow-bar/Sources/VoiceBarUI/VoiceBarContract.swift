@@ -7,6 +7,7 @@ public enum IntentCommand: String {
     case retranscribeLast = "retranscribe_last"
     case toggle
     case record
+    case setWhisperEffort = "set_whisper_effort"
 }
 
 public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable {

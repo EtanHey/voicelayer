@@ -15,6 +15,7 @@ public struct SettingsView: View {
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
     public let performanceEffort: () -> VoiceBarPerformanceEffort
+    public let performanceEffortNotice: () -> String?
     public let onSelectPerformanceEffort: (VoiceBarPerformanceEffort) -> Void
     public let vocabularyPreview: () -> STTVocabularyPreview
     public let onAddVocabularyAlias: (String, String) -> Void
@@ -45,6 +46,7 @@ public struct SettingsView: View {
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
         onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
+        performanceEffortNotice: @escaping () -> String? = { nil },
         onSelectPerformanceEffort: @escaping (VoiceBarPerformanceEffort) -> Void = { _ in },
         vocabularyPreview: @escaping () -> STTVocabularyPreview = {
             STTVocabularyPreview(updatedAt: nil, promptTerms: [], aliases: [])
@@ -66,6 +68,7 @@ public struct SettingsView: View {
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
         self.performanceEffort = performanceEffort
+        self.performanceEffortNotice = performanceEffortNotice
         self.onSelectPerformanceEffort = onSelectPerformanceEffort
         self.vocabularyPreview = vocabularyPreview
         self.onAddVocabularyAlias = onAddVocabularyAlias
@@ -233,7 +236,6 @@ public struct SettingsView: View {
                 Picker("Effort", selection: Binding(
                     get: { selectedPerformanceEffort },
                     set: { effort in
-                        selectedPerformanceEffort = effort
                         onSelectPerformanceEffort(effort)
                     }
                 )) {
@@ -242,6 +244,11 @@ public struct SettingsView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                if let notice = performanceEffortNotice() {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             }
         }
         .formStyle(.grouped)

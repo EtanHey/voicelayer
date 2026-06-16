@@ -80,6 +80,14 @@ echo "[build-app] Creating .app bundle at $APP_DIR..."
 mkdir -p "$APP_DIR/Contents/MacOS"
 mkdir -p "$APP_DIR/Contents/Resources"
 
+require_bundle_file() {
+    local rel_path="$1"
+    if [ ! -f "$REPO_ROOT/$rel_path" ]; then
+        echo "[build-app] ERROR: required bundle file missing: $rel_path" >&2
+        exit 1
+    fi
+}
+
 cp "$BUNDLE_DIR/Info.plist" "$APP_DIR/Contents/"
 cp "$BINARY" "$APP_DIR/Contents/MacOS/VoiceBar"
 cp -R "$REPO_ROOT/src" "$APP_DIR/Contents/Resources/"
@@ -108,12 +116,17 @@ else
     echo "[build-app] WARNING: scripts/edge-tts-words.py not found — daemon TTS will fail until it is present." >&2
 fi
 
-if [ -f "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" ]; then
-    mkdir -p "$APP_DIR/Contents/Resources/scripts"
-    cp "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
-    chmod 755 "$APP_DIR/Contents/Resources/scripts/install-voicebar-f5-hidutil.sh"
-    echo "[build-app] F5 hidutil setup script bundled."
-fi
+require_bundle_file "scripts/install-voicebar-f5-hidutil.sh"
+require_bundle_file "scripts/apply-voicebar-f5-hidutil.sh"
+require_bundle_file "launchd/com.voicelayer.f5-to-f18-hidutil.plist"
+mkdir -p "$APP_DIR/Contents/Resources/scripts"
+mkdir -p "$APP_DIR/Contents/Resources/launchd"
+cp "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
+cp "$REPO_ROOT/scripts/apply-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
+cp "$REPO_ROOT/launchd/com.voicelayer.f5-to-f18-hidutil.plist" "$APP_DIR/Contents/Resources/launchd/"
+chmod 755 "$APP_DIR/Contents/Resources/scripts/install-voicebar-f5-hidutil.sh"
+chmod 755 "$APP_DIR/Contents/Resources/scripts/apply-voicebar-f5-hidutil.sh"
+echo "[build-app] F5 hidutil setup files bundled."
 
 # App icon
 if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then

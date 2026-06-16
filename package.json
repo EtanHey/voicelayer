@@ -12,6 +12,7 @@
     "src/**/*.py",
     "!src/__tests__/**",
     "flow-bar/Package.swift",
+    "flow-bar/bundle/",
     "flow-bar/Sources/",
     "flow-bar/Tests/",
     "launchd/",

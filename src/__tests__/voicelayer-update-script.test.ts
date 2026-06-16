@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import {
+  copyFileSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -85,6 +92,39 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("VoiceLayer M1 update plan");
+  });
+
+  test("global Bun install path uses the actual global update command", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-global-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    const binDir = join(tempRoot, "bin");
+    mkdirSync(scriptsDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+    writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
+    Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
+
+    const result = run(["bash", join(scriptsDir, "voicelayer-update.sh")], {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("PACKAGE UPDATE: bun update -g voicelayer-mcp");
+    expect(stdout).toContain("+ bun update -g voicelayer-mcp");
+    expect(stdout).not.toContain("bun pm update");
+  });
+
+  test("git checkout dependency install runs from the package root", () => {
+    const result = run(["bash", updateScript], {
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(`+ bun install --cwd ${repoRoot}`);
+    expect(stdout).not.toContain("+ bun install\n");
   });
 
   test("CLI exposes build-app and launches the canonical VoiceBar app bundle", () => {

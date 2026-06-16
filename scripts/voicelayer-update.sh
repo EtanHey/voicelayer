@@ -174,7 +174,7 @@ package_update_label() {
             ;;
         *)
             if command -v bun >/dev/null 2>&1; then
-                printf 'bun pm update -g %s\n' "$PACKAGE_NAME"
+                printf 'bun update -g %s\n' "$PACKAGE_NAME"
             else
                 printf 'npm install -g %s\n' "$PACKAGE_NAME"
             fi
@@ -266,11 +266,11 @@ update_package() {
             ensure_command bun
             warn_if_dirty
             run_cmd git -C "$PACKAGE_ROOT" pull --ff-only
-            run_cmd bun install
+            run_cmd bun install --cwd "$PACKAGE_ROOT"
             ;;
         *)
             if command -v bun >/dev/null 2>&1; then
-                run_cmd bun pm update -g "$PACKAGE_NAME"
+                run_cmd bun update -g "$PACKAGE_NAME"
             else
                 ensure_command npm
                 run_cmd npm install -g "$PACKAGE_NAME"
@@ -302,7 +302,16 @@ main() {
         return 0
     fi
 
-    ensure_command bun
+    case "$(detect_install_type)" in
+        git-checkout)
+            ensure_command bun
+            ;;
+        *)
+            if ! command -v bun >/dev/null 2>&1; then
+                ensure_command npm
+            fi
+            ;;
+    esac
     ensure_command python3
     if [[ "$DATA_MODE" != "skip" ]]; then
         ensure_command "$RSYNC_BIN"
