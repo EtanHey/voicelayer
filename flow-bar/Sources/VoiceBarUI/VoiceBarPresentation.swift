@@ -42,6 +42,7 @@ public enum VoiceBarPresentation {
             switch $0 {
             case .inputMonitoring: "Input Monitoring"
             case .accessibility: "Accessibility"
+            case .microphone: "Microphone"
             }
         }.sorted()
         guard !labels.isEmpty else { return "Hotkey: needs permission" }

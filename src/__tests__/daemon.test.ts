@@ -179,12 +179,13 @@ describe("CLI integration", () => {
     expect(cliSrc).toContain("daemon.ts");
   });
 
-  it("voicelayer.sh resolves flow-bar only inside the bar command", async () => {
+  it("voicelayer.sh launches the canonical app and builds only through build-app", async () => {
     const cliSrc = await Bun.file("src/cli/voicelayer.sh").text();
     expect(cliSrc).not.toMatch(/SCRIPT_DIR=.*\n\nFLOW_BAR_DIR=.*\n\ncase/s);
-    expect(cliSrc).toMatch(
-      /bar\)\n[\s\S]*FLOW_BAR_DIR=.*\n[\s\S]*swift build/s,
-    );
+    expect(cliSrc).toContain("build-app)");
+    expect(cliSrc).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
+    expect(cliSrc).toContain('open "/Applications/VoiceBar.app"');
+    expect(cliSrc).not.toContain('exec ".build/release/VoiceBar"');
   });
 
   it("voicelayer.sh help includes serve command", async () => {

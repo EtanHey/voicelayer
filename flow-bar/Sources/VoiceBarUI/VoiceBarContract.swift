@@ -9,6 +9,27 @@ public enum IntentCommand: String {
     case record
 }
 
+public enum VoiceBarPerformanceEffort: String, CaseIterable, Identifiable {
+    case fast
+    case balanced
+    case accurate
+
+    public var id: String {
+        rawValue
+    }
+
+    public var displayName: String {
+        switch self {
+        case .fast:
+            "Fast"
+        case .balanced:
+            "Balanced"
+        case .accurate:
+            "Accurate"
+        }
+    }
+}
+
 public enum IntentOutcome: String {
     case accept
     case noop
@@ -65,4 +86,5 @@ public protocol BarCommandRouting {
 public enum HotkeyPermission: Equatable {
     case inputMonitoring
     case accessibility
+    case microphone
 }

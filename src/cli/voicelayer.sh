@@ -61,14 +61,18 @@ case "${1:-}" in
         shift
         exec bash "$PACKAGE_ROOT/scripts/voicelayer-update.sh" "$@"
         ;;
+    build-app)
+        shift
+        exec bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "$@"
+        ;;
     bar)
         shift
-        FLOW_BAR_DIR="$(cd "$PACKAGE_ROOT/flow-bar" && pwd)"
-        echo "[voicelayer] Building Voice Bar..."
-        cd "$FLOW_BAR_DIR"
-        swift build -c release 2>&1 | tail -1
-        echo "[voicelayer] Launching Voice Bar..."
-        exec ".build/release/VoiceBar" "$@"
+        if [[ ! -d "/Applications/VoiceBar.app" ]]; then
+            echo "[voicelayer] VoiceBar.app is not installed. Run: voicelayer build-app" >&2
+            exit 1
+        fi
+        echo "[voicelayer] Launching /Applications/VoiceBar.app..."
+        exec open "/Applications/VoiceBar.app" --args "$@"
         ;;
     hotkey)
         shift
@@ -101,7 +105,8 @@ case "${1:-}" in
         echo "  extract    Extract voice samples from YouTube for voice cloning"
         echo "  clone      Create a voice profile from extracted samples"
         echo "  daemon     Start the TTS daemon (Qwen3-TTS on port 8880)"
-        echo "  bar        Build and launch Voice Bar (floating pill widget)"
+        echo "  build-app  Build and install /Applications/VoiceBar.app"
+        echo "  bar        Launch VoiceBar.app (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
         echo "  update     Update app, daemon, model, and personal VoiceLayer data"
         echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
@@ -111,6 +116,7 @@ case "${1:-}" in
         echo "  voicelayer extract --source 'https://youtube.com/@t3dotgg' --name theo --count 20"
         echo "  voicelayer clone --name theo"
         echo "  voicelayer daemon --port 8880"
+        echo "  voicelayer build-app"
         echo "  voicelayer bar"
         echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"
         echo "  voicelayer update --dry-run"

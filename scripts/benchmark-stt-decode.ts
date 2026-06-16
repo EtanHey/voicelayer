@@ -1,5 +1,12 @@
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "fs";
-import { basename, join } from "path";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "fs";
+import { basename, dirname, join } from "path";
 import {
   DEFAULT_DECODE_BENCHMARK_PLANS,
   type DecodeBenchmarkPlan,
@@ -7,6 +14,7 @@ import {
   type DecodeBenchmarkResult,
   buildWhisperCliArgs,
   buildWhisperServerArgs,
+  compareTranscriptToReference,
   formatBenchmarkMarkdown,
   scoreTranscript,
 } from "../src/stt-decode-benchmark";
@@ -311,6 +319,7 @@ async function runPlan(
     language: string;
     env: Record<string, string>;
     expected: string[];
+    referenceText?: string;
   },
 ): Promise<DecodeBenchmarkResult> {
   const start = performance.now();
@@ -340,6 +349,9 @@ async function runPlan(
       latencyMs,
       text,
       score: scoreTranscript(text, context.expected),
+      reference: context.referenceText
+        ? compareTranscriptToReference(text, context.referenceText)
+        : undefined,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -349,9 +361,19 @@ async function runPlan(
       latencyMs: performance.now() - start,
       text: "",
       score: scoreTranscript("", context.expected),
+      reference: context.referenceText
+        ? compareTranscriptToReference("", context.referenceText)
+        : undefined,
       error: message,
     };
   }
+}
+
+function readArchiveBaseline(audio: string): string | undefined {
+  const transcriptPath = join(dirname(audio), "voicelayer-transcript.txt");
+  if (!existsSync(transcriptPath)) return undefined;
+  const transcript = readFileSync(transcriptPath, "utf8").trim();
+  return transcript || undefined;
 }
 
 async function main(): Promise<void> {
@@ -386,6 +408,7 @@ async function main(): Promise<void> {
   for (const [audioIndex, audio] of options.audio.entries()) {
     for (const [planIndex, plan] of plans.entries()) {
       const port = options.portBase + audioIndex * plans.length + planIndex;
+      const referenceText = readArchiveBaseline(audio);
       console.error(`[bench] ${plan.id} ${audio}`);
       results.push(
         await runPlan(plan, audio, {
@@ -396,6 +419,7 @@ async function main(): Promise<void> {
           language: options.language,
           env,
           expected: options.expected,
+          referenceText,
         }),
       );
     }

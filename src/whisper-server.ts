@@ -13,6 +13,12 @@ import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
 import { resolveBinary } from "./resolve-binary";
+import {
+  configureWhisperPerformanceRestart,
+  getWhisperPerformanceEffort,
+  whisperPerformanceArgsForEffort,
+  type WhisperPerformanceEffort,
+} from "./whisper-performance";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -86,6 +92,7 @@ interface BuildLaunchPlanOptions {
   metalResourcesPath?: string;
   coreMLModelPath?: string;
   requestedAcceleration?: WhisperAccelerationRequest;
+  performanceEffort?: WhisperPerformanceEffort;
   inheritedEnv?: Record<string, string | undefined>;
   exists?: (path: string) => boolean;
 }
@@ -309,10 +316,9 @@ export function buildWhisperServerLaunchPlan(
     "-t",
     "4",
     "-nt", // no timestamps
-    "-bo",
-    "5",
-    "-bs",
-    "5",
+    ...whisperPerformanceArgsForEffort(
+      options.performanceEffort ?? getWhisperPerformanceEffort(inheritedEnv),
+    ),
     ...acceleration.args,
   ];
 
@@ -633,6 +639,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       metalResourcesPath: metalPath,
       coreMLModelPath: process.env.QA_VOICE_WHISPER_COREML_MODEL,
       requestedAcceleration,
+      performanceEffort: getWhisperPerformanceEffort(),
       inheritedEnv: process.env,
     });
 
@@ -724,6 +731,8 @@ export function stopServer(): void {
     serverState = null;
   }
 }
+
+configureWhisperPerformanceRestart(stopServer);
 
 /**
  * Transcribe a WAV audio buffer via whisper-server HTTP API.

@@ -7,6 +7,8 @@
  * Both the Bun socket client and SwiftUI Voice Bar server must agree on these types.
  */
 
+import type { WhisperPerformanceEffort } from "./whisper-performance";
+
 // --- Events: VoiceLayer → Voice Bar ---
 
 export type VoiceLayerState =
@@ -150,7 +152,8 @@ export type AckCommand =
   | "vocab_add"
   | "vocab_remove"
   | "vocab_add_term"
-  | "vocab_remove_term";
+  | "vocab_remove_term"
+  | "set_whisper_effort";
 
 export interface AckEvent {
   type: "ack";
@@ -253,6 +256,11 @@ export interface VocabRemoveTermCommand extends SocketCommandBase {
   term: string;
 }
 
+export interface SetWhisperEffortCommand extends SocketCommandBase {
+  cmd: "set_whisper_effort";
+  effort: WhisperPerformanceEffort;
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
@@ -267,7 +275,8 @@ export type SocketCommand =
   | VocabListCommand
   | VocabRemoveCommand
   | VocabAddTermCommand
-  | VocabRemoveTermCommand;
+  | VocabRemoveTermCommand
+  | SetWhisperEffortCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -401,6 +410,22 @@ export function parseCommand(line: string): SocketCommand | null {
           {
             cmd: "vocab_remove_term",
             term,
+          },
+          id,
+        );
+      }
+      case "set_whisper_effort": {
+        if (
+          parsed.effort !== "fast" &&
+          parsed.effort !== "balanced" &&
+          parsed.effort !== "accurate"
+        ) {
+          return null;
+        }
+        return withCommandId<SetWhisperEffortCommand>(
+          {
+            cmd: "set_whisper_effort",
+            effort: parsed.effort,
           },
           id,
         );

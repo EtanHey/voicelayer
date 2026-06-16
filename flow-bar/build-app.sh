@@ -108,6 +108,13 @@ else
     echo "[build-app] WARNING: scripts/edge-tts-words.py not found — daemon TTS will fail until it is present." >&2
 fi
 
+if [ -f "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" ]; then
+    mkdir -p "$APP_DIR/Contents/Resources/scripts"
+    cp "$REPO_ROOT/scripts/install-voicebar-f5-hidutil.sh" "$APP_DIR/Contents/Resources/scripts/"
+    chmod 755 "$APP_DIR/Contents/Resources/scripts/install-voicebar-f5-hidutil.sh"
+    echo "[build-app] F5 hidutil setup script bundled."
+fi
+
 # App icon
 if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     cp "$BUNDLE_DIR/VoiceBar.icns" "$APP_DIR/Contents/Resources/"

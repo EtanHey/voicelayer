@@ -35,12 +35,21 @@ export interface TranscriptScore {
   expectedPhraseHits: Record<string, boolean>;
 }
 
+export interface TranscriptReferenceComparison {
+  source: "archive-baseline";
+  text: string;
+  normalizedSimilarity: number;
+  charDelta: number;
+  wordDelta: number;
+}
+
 export interface DecodeBenchmarkResult {
   planId: string;
   audio: string;
   latencyMs: number;
   text: string;
   score: TranscriptScore;
+  reference?: TranscriptReferenceComparison;
   error?: string;
 }
 
@@ -51,6 +60,24 @@ export interface DecodeBenchmarkReport {
 }
 
 export const DEFAULT_DECODE_BENCHMARK_PLANS: DecodeBenchmarkPlan[] = [
+  {
+    id: "effort-fast",
+    kind: "server",
+    description: "Fast VoiceBar effort preset.",
+    decodeArgs: ["-bo", "1", "-bs", "1"],
+  },
+  {
+    id: "effort-balanced",
+    kind: "server",
+    description: "Balanced VoiceBar effort preset.",
+    decodeArgs: ["-bo", "3", "-bs", "3"],
+  },
+  {
+    id: "effort-accurate",
+    kind: "server",
+    description: "Accurate VoiceBar effort preset.",
+    decodeArgs: ["-bo", "5", "-bs", "5"],
+  },
   {
     id: "server-bo5-bs5",
     kind: "server",
@@ -167,6 +194,63 @@ export function scoreTranscript(
   };
 }
 
+function normalizedSimilarityText(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}']+/gu, " ")
+    .trim();
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  const current = new Array<number>(b.length + 1);
+
+  for (let i = 1; i <= a.length; i++) {
+    current[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const substitutionCost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        previous[j] + 1,
+        current[j - 1] + 1,
+        previous[j - 1] + substitutionCost,
+      );
+    }
+    for (let j = 0; j <= b.length; j++) previous[j] = current[j];
+  }
+
+  return previous[b.length];
+}
+
+export function normalizedTranscriptSimilarity(
+  candidate: string,
+  reference: string,
+): number {
+  const left = normalizedSimilarityText(candidate);
+  const right = normalizedSimilarityText(reference);
+  if (!left && !right) return 1;
+  const maxLength = Math.max(left.length, right.length);
+  if (maxLength === 0) return 1;
+  return 1 - levenshteinDistance(left, right) / maxLength;
+}
+
+export function compareTranscriptToReference(
+  candidate: string,
+  reference: string,
+): TranscriptReferenceComparison {
+  return {
+    source: "archive-baseline",
+    text: reference,
+    normalizedSimilarity: normalizedTranscriptSimilarity(candidate, reference),
+    charDelta: candidate.length - reference.length,
+    wordDelta: normalizeWords(candidate).length - normalizeWords(reference).length,
+  };
+}
+
 export function formatBenchmarkMarkdown(report: DecodeBenchmarkReport): string {
   const expectedPhrases = Array.from(
     new Set(
@@ -187,8 +271,8 @@ export function formatBenchmarkMarkdown(report: DecodeBenchmarkReport): string {
     "",
     "## Results",
     "",
-    "| Plan | Audio | Latency | Chars | Words | Repeated tail | Expected hits | Error |",
-    "| --- | --- | ---: | ---: | ---: | --- | --- | --- |",
+    "| Plan | Audio | Latency | Chars | Words | Archive sim | Word delta | Repeated tail | Expected hits | Error |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |",
   ];
 
   for (const result of report.results) {
@@ -202,17 +286,39 @@ export function formatBenchmarkMarkdown(report: DecodeBenchmarkReport): string {
           )
           .join("<br>")
       : "n/a";
+    const similarity =
+      result.reference?.normalizedSimilarity === undefined
+        ? "n/a"
+        : result.reference.normalizedSimilarity.toFixed(3);
+    const wordDelta =
+      result.reference?.wordDelta === undefined
+        ? "n/a"
+        : String(result.reference.wordDelta);
 
     lines.push(
       `| ${result.planId} | \`${result.audio}\` | ${Math.round(
         result.latencyMs,
-      )}ms | ${result.score.charCount} | ${result.score.wordCount} | ${repeated} | ${hits} | ${
+      )}ms | ${result.score.charCount} | ${result.score.wordCount} | ${similarity} | ${wordDelta} | ${repeated} | ${hits} | ${
         result.error ?? ""
       } |`,
     );
   }
 
-  lines.push("", "## Transcript Samples", "");
+  const references = new Map<string, string>();
+  for (const result of report.results) {
+    if (result.reference && !references.has(result.audio)) {
+      references.set(result.audio, result.reference.text);
+    }
+  }
+
+  if (references.size > 0) {
+    lines.push("", "## Archive Baselines", "");
+    for (const [audio, text] of references) {
+      lines.push(`### ${audio}`, "", "```text", text.trim(), "```", "");
+    }
+  }
+
+  lines.push("", "## Raw Effort Decode Samples", "");
 
   for (const result of report.results) {
     lines.push(`### ${result.planId} - ${result.audio}`, "");

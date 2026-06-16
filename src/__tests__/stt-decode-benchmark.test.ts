@@ -3,14 +3,19 @@ import {
   DEFAULT_DECODE_BENCHMARK_PLANS,
   buildWhisperCliArgs,
   buildWhisperServerArgs,
+  compareTranscriptToReference,
   detectRepeatedTail,
   formatBenchmarkMarkdown,
+  normalizedTranscriptSimilarity,
   scoreTranscript,
 } from "../stt-decode-benchmark";
 
 describe("stt-decode-benchmark", () => {
-  it("includes current resident settings, a faster beam variant, legacy server defaults, and CLI", () => {
+  it("includes effort presets, legacy server variants, and CLI", () => {
     expect(DEFAULT_DECODE_BENCHMARK_PLANS.map((plan) => plan.id)).toEqual([
+      "effort-fast",
+      "effort-balanced",
+      "effort-accurate",
       "server-bo5-bs5",
       "server-bo5-bs3",
       "server-defaults",
@@ -90,6 +95,19 @@ describe("stt-decode-benchmark", () => {
     expect(score.repeatedTail.repeated).toBe(true);
   });
 
+  it("compares raw effort output against an archive baseline", () => {
+    const comparison = compareTranscriptToReference(
+      "AgentHTMLRebuild ran with one cursor worker.",
+      "agent.htmlrebuild ran with one cursor worker.",
+    );
+
+    expect(comparison.source).toBe("archive-baseline");
+    expect(comparison.normalizedSimilarity).toBeGreaterThan(0.9);
+    expect(comparison.charDelta).toBe(-1);
+    expect(comparison.wordDelta).toBe(-1);
+    expect(normalizedTranscriptSimilarity("hello, world", "Hello world.")).toBe(1);
+  });
+
   it("formats a compact markdown table for benchmark runs", () => {
     const markdown = formatBenchmarkMarkdown({
       createdAt: "2026-05-17T10:30:00.000Z",
@@ -101,12 +119,16 @@ describe("stt-decode-benchmark", () => {
           latencyMs: 1234,
           text: "hello world",
           score: scoreTranscript("hello world", ["hello"]),
+          reference: compareTranscriptToReference("hello world", "hello world"),
         },
       ],
     });
 
     expect(markdown).toContain("# STT Decode Benchmark");
     expect(markdown).toContain("| server-bo5-bs5 |");
+    expect(markdown).toContain("Archive sim");
+    expect(markdown).toContain("## Archive Baselines");
+    expect(markdown).toContain("## Raw Effort Decode Samples");
     expect(markdown).toContain("hello");
   });
 });

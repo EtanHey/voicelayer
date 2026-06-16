@@ -38,6 +38,27 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("Picker(\"Anchor\""))
     }
 
+    func testAudioTabIncludesPerformanceEffortPicker() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("Section(\"Performance\")"))
+        XCTAssertTrue(source.contains("Picker(\"Effort\""))
+        XCTAssertTrue(source.contains("Fast"))
+        XCTAssertTrue(source.contains("Balanced"))
+        XCTAssertTrue(source.contains("Accurate"))
+        XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
+    }
+
+    func testGeneralTabShowsGranularPermissionAndKarabinerRows() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("permissionRow"))
+        XCTAssertTrue(source.contains("Microphone"))
+        XCTAssertTrue(source.contains("Privacy_Microphone"))
+        XCTAssertTrue(source.contains("Section(\"Karabiner\")"))
+        XCTAssertTrue(source.contains("runKarabinerSetup"))
+    }
+
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {
         let source = try settingsViewSource()
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1

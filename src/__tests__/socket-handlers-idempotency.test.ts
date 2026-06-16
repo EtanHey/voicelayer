@@ -5,6 +5,7 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleSocketCommand } from "../socket-handlers";
 import * as tts from "../tts";
+import * as whisperPerformance from "../whisper-performance";
 
 const REPLAY_FILE = `/tmp/voicelayer-socket-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
@@ -20,6 +21,8 @@ describe("socket handler idempotency matrix", () => {
   let historySpy: ReturnType<typeof spyOn>;
   let hasRetainedRecordingSpy: ReturnType<typeof spyOn>;
   let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
+  let setWhisperEffortSpy: ReturnType<typeof spyOn>;
+  let restartWhisperServerSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
@@ -53,6 +56,14 @@ describe("socket handler idempotency matrix", () => {
       input,
       "retranscribeLastCapture",
     ).mockResolvedValue("retranscribed note");
+    setWhisperEffortSpy = spyOn(
+      whisperPerformance,
+      "setWhisperPerformanceEffort",
+    ).mockImplementation(() => {});
+    restartWhisperServerSpy = spyOn(
+      whisperPerformance,
+      "restartWhisperServerForPerformanceChange",
+    ).mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -69,6 +80,8 @@ describe("socket handler idempotency matrix", () => {
     } catch {}
     hasRetainedRecordingSpy.mockRestore();
     retranscribeLastCaptureSpy.mockRestore();
+    setWhisperEffortSpy.mockRestore();
+    restartWhisperServerSpy.mockRestore();
   });
 
   it("returns noop for stop while idle without broadcasting or stopping playback", () => {
@@ -139,6 +152,64 @@ describe("socket handler idempotency matrix", () => {
       id: "record-speaking",
     });
     expect(calls).toEqual(["stopPlayback", "waitForInput"]);
+  });
+
+  it("persists whisper effort changes and restarts the whisper sidecar", () => {
+    const response = handleSocketCommand({
+      cmd: "set_whisper_effort",
+      id: "effort-fast",
+      effort: "fast",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "set_whisper_effort",
+      outcome: "accept",
+      id: "effort-fast",
+    });
+    expect(setWhisperEffortSpy).toHaveBeenCalledWith("fast");
+    expect(restartWhisperServerSpy).toHaveBeenCalled();
+  });
+
+  it("rejects whisper effort changes while recording without restarting the sidecar", () => {
+    recordingStateSpy.mockReturnValue("recording");
+
+    const response = handleSocketCommand({
+      cmd: "set_whisper_effort",
+      id: "effort-busy",
+      effort: "accurate",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "set_whisper_effort",
+      outcome: "reject",
+      id: "effort-busy",
+      reason: "busy",
+    });
+    expect(setWhisperEffortSpy).not.toHaveBeenCalled();
+    expect(restartWhisperServerSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns a reject ack when whisper effort persistence fails", () => {
+    setWhisperEffortSpy.mockImplementation(() => {
+      throw new Error("config write failed");
+    });
+
+    const response = handleSocketCommand({
+      cmd: "set_whisper_effort",
+      id: "effort-error",
+      effort: "balanced",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "set_whisper_effort",
+      outcome: "reject",
+      id: "effort-error",
+      reason: "config write failed",
+    });
+    expect(restartWhisperServerSpy).not.toHaveBeenCalled();
   });
 
   it("does not broadcast idle when an accepted record hits a recording conflict", async () => {

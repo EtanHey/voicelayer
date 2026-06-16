@@ -278,12 +278,14 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         let secondProcess = ProcessSpy()
         var processQueue = [firstProcess, secondProcess]
         var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        var promptedMessages: [String] = []
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
             processFactory: { processQueue.removeFirst() },
-            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
+            microphonePermissionPrompter: { message in promptedMessages.append(message) }
         )
         _ = controller.activateIfNeeded()
 
@@ -302,6 +304,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
         XCTAssertTrue(secondProcess.didRun)
         XCTAssertTrue(controller.ownsLaunchedProcess)
+        XCTAssertEqual(promptedMessages.count, 1)
     }
 
     func testCrashWhileDisabledDoesNotScheduleRelaunch() {

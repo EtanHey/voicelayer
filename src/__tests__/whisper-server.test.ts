@@ -10,6 +10,10 @@ import {
   resolveWhisperAccelerationPlan,
   transcribeViaServer,
 } from "../whisper-server";
+import {
+  parseWhisperPerformanceEffort,
+  whisperPerformanceArgsForEffort,
+} from "../whisper-performance";
 
 describe("whisper-server", () => {
   describe("isServerAvailable", () => {
@@ -162,6 +166,31 @@ usage: whisper-server [options]
       ]);
       expect(launch.env.PATH).toBe("/opt/homebrew/bin");
       expect(launch.acceleration.mode).toBe("cpu");
+    });
+
+    it("maps performance effort to whisper beam/search args", () => {
+      expect(whisperPerformanceArgsForEffort("fast")).toEqual(["-bo", "1", "-bs", "1"]);
+      expect(whisperPerformanceArgsForEffort("balanced")).toEqual(["-bo", "3", "-bs", "3"]);
+      expect(whisperPerformanceArgsForEffort("accurate")).toEqual(["-bo", "5", "-bs", "5"]);
+      expect(parseWhisperPerformanceEffort("FAST")).toBe("fast");
+      expect(parseWhisperPerformanceEffort("invalid")).toBeNull();
+    });
+
+    it("uses the requested performance effort in launch args", () => {
+      const launch = buildWhisperServerLaunchPlan({
+        binary: "/opt/homebrew/bin/whisper-server",
+        model: "/Users/me/.cache/whisper/ggml-large-v3-turbo.bin",
+        port: 18878,
+        helpText: serverHelp,
+        performanceEffort: "balanced",
+        inheritedEnv: { PATH: "/opt/homebrew/bin" },
+        exists: () => true,
+      });
+
+      const boIndex = launch.args.indexOf("-bo");
+      const bsIndex = launch.args.indexOf("-bs");
+      expect(launch.args.slice(boIndex, boIndex + 2)).toEqual(["-bo", "3"]);
+      expect(launch.args.slice(bsIndex, bsIndex + 2)).toEqual(["-bs", "3"]);
     });
 
     it("bounds whisper-server help probing and falls back to no help text on failure", () => {
