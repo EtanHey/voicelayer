@@ -73,7 +73,7 @@ export async function handleMcpRequest(
           capabilities: { tools: {} },
           serverInfo: {
             name: "voicelayer",
-            version: "2.0.0",
+            version: "2.1.0",
           },
         },
       };
