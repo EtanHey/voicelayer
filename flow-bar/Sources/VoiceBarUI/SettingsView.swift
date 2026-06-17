@@ -13,6 +13,12 @@ private enum DictEditorField: Hashable {
     case addVariant
 }
 
+private enum DictionaryCardLayout {
+    static let headerHeight: CGFloat = 24
+    static let inlineControlHeight: CGFloat = 28
+    static let inlineFieldVerticalPadding: CGFloat = 5
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -358,12 +364,17 @@ public struct SettingsView: View {
                     cancelTermRename()
                 }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(height: DictionaryCardLayout.headerHeight)
                 Button("Save") {
                     saveTermRename(entry.canonical)
                 }
                 .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .frame(height: DictionaryCardLayout.headerHeight)
                 .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+            .frame(minHeight: DictionaryCardLayout.headerHeight)
         } else {
             HStack(spacing: 8) {
                 Text(entry.canonical)
@@ -383,6 +394,7 @@ public struct SettingsView: View {
                     deleteDictionaryEntryButton(entry.canonical)
                 }
             }
+            .frame(minHeight: DictionaryCardLayout.headerHeight)
         }
     }
 
@@ -434,7 +446,7 @@ public struct SettingsView: View {
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .addVariant)
                 .onSubmit { saveVariant(entry.canonical) }
-                .padding(.vertical, 10)
+                .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
                 .padding(.horizontal, 12)
                 .background(
                     RoundedRectangle(cornerRadius: 8)
@@ -445,15 +457,20 @@ public struct SettingsView: View {
                         .stroke(Color.accentColor, lineWidth: 1.5)
                 )
                 .frame(maxWidth: .infinity)
+                .frame(height: DictionaryCardLayout.inlineControlHeight)
             Button("Cancel") {
                 addingVariantFor = nil
                 variantText = ""
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.inlineControlHeight)
             Button("Add") {
                 saveVariant(entry.canonical)
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.inlineControlHeight)
             .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
@@ -465,6 +482,8 @@ public struct SettingsView: View {
                 pendingDeleteCanonical = nil
             }
             .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.headerHeight)
             Button("Delete?", role: .destructive) {
                 SettingsDictionaryMutations.confirmDeleteTerm(
                     canonical,
@@ -474,6 +493,8 @@ public struct SettingsView: View {
                 )
             }
             .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.headerHeight)
             .tint(.red)
         } else {
             Button {
