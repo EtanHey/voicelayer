@@ -122,6 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var performanceEffort: VoiceBarPerformanceEffort = .accurate
     private var pendingPerformanceEffortID: String?
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
+    private var pendingPerformanceEffortPrevious: VoiceBarPerformanceEffort?
     private var performanceEffortNotice: String?
     private var performanceEffortNoticeTask: Task<Void, Never>?
     private lazy var cachedRelaySetupStatus = RelaySetupStatus(
@@ -920,8 +921,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let id = UUID().uuidString
+        let previousEffort = performanceEffort
+        performanceEffort = effort
         pendingPerformanceEffortID = id
         pendingPerformanceEffort = effort
+        pendingPerformanceEffortPrevious = previousEffort
         clearPerformanceEffortNotice()
         sendCommand([
             "cmd": "set_whisper_effort",
@@ -939,10 +943,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let effort = pendingPerformanceEffort
+        let previousEffort = pendingPerformanceEffortPrevious
         pendingPerformanceEffortID = nil
         pendingPerformanceEffort = nil
+        pendingPerformanceEffortPrevious = nil
 
         guard ack.outcome == .accept, let effort else {
+            if let previousEffort {
+                performanceEffort = previousEffort
+            }
             rejectPendingPerformanceEffort(reason: ack.reason)
             return
         }

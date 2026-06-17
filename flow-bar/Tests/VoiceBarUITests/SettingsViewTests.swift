@@ -83,9 +83,25 @@ final class SettingsViewTests: XCTestCase {
         )
     }
 
-    // Bugbot PR #261: the apply script remaps ONLY the dictation key; physical
-    // F5 reaches the event tap directly (keycode 96). The copy must not claim
-    // F5 itself is remapped.
+    func testPerformanceEffortPickerUpdatesLocalStateBeforeNotifyingApp() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(
+            source.contains(
+                """
+                set: { effort in
+                                        selectedPerformanceEffort = effort
+                                        onSelectPerformanceEffort(effort)
+                                    }
+                """
+            ),
+            "A single segmented-picker click must update SettingsView state before AppDelegate refreshes the root view"
+        )
+    }
+
+    /// Bugbot PR #261: the apply script remaps ONLY the dictation key; physical
+    /// F5 reaches the event tap directly (keycode 96). The copy must not claim
+    /// F5 itself is remapped.
     func testRemapExplanationDoesNotClaimF5IsRemapped() {
         XCTAssertTrue(
             VoiceBarHotkeyContract.remapExplanation.contains("com.voicelayer.f5-to-f18-hidutil")

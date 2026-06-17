@@ -239,6 +239,7 @@ public struct SettingsView: View {
                 Picker("Effort", selection: Binding(
                     get: { selectedPerformanceEffort },
                     set: { effort in
+                        selectedPerformanceEffort = effort
                         onSelectPerformanceEffort(effort)
                     }
                 )) {
