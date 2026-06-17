@@ -507,8 +507,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
             return false
         }
-        vDown.flags = .maskCommand
-        vUp.flags = .maskCommand
+        let pasteFlags = CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x000008)
+        vDown.flags = pasteFlags
+        vUp.flags = pasteFlags
         commandDown.post(tap: .cghidEventTap)
         vDown.post(tap: .cghidEventTap)
         vUp.post(tap: .cghidEventTap)

@@ -356,6 +356,7 @@ final class AppLifecycleTests: XCTestCase {
 
         let source = try String(contentsOf: sourceURL)
         XCTAssertTrue(source.contains("let commandKey: CGKeyCode = 0x37"))
+        XCTAssertTrue(source.contains("CGEventFlags.maskCommand.rawValue | 0x000008"))
         XCTAssertTrue(source.contains("commandDown.post(tap: .cghidEventTap)"))
         XCTAssertTrue(source.contains("commandUp.post(tap: .cghidEventTap)"))
 
