@@ -61,6 +61,7 @@ describe("stt-vocabulary-store", () => {
     );
 
     expect(updated.entries).toEqual([
+      { canonical: "Domica", variants: [] },
       { canonical: "Domica Labs", variants: ["domekin"] },
     ]);
     expect(typeof updated.updated_at).toBe("string");
@@ -68,7 +69,10 @@ describe("stt-vocabulary-store", () => {
 
     const raw = JSON.parse(readFileSync(vocabPath, "utf8"));
     expect(raw).toMatchObject({
-      entries: [{ canonical: "Domica Labs", variants: ["domekin"] }],
+      entries: [
+        { canonical: "Domica", variants: [] },
+        { canonical: "Domica Labs", variants: ["domekin"] },
+      ],
     });
     expect(raw.prompt_terms).toBeUndefined();
     expect(raw.aliases).toBeUndefined();

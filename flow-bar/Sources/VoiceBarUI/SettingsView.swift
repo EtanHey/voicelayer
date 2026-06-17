@@ -120,6 +120,9 @@ public struct SettingsView: View {
         }
         .frame(width: 520, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: vocabularyPreview()) { _, preview in
+            reconcileLocalEntries(with: preview.entries)
+        }
     }
 
     // MARK: - General Tab
@@ -556,6 +559,18 @@ public struct SettingsView: View {
         STTVocabularyPreview(updatedAt: nil, entries: localEntries)
     }
 
+    private var hasPendingDictionaryEdit: Bool {
+        editingCanonical != nil ||
+            addingVariantFor != nil ||
+            pendingDeleteCanonical != nil ||
+            !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func reconcileLocalEntries(with entries: [STTDictionaryEntry]) {
+        guard !hasPendingDictionaryEdit else { return }
+        localEntries = entries
+    }
+
     private func beginTermRename(_ canonical: String) {
         editingCanonical = canonical
         editTermText = canonical
@@ -627,7 +642,26 @@ enum SettingsDictionaryMutations {
         guard !trimmed.isEmpty, let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else {
             return
         }
+        guard localEntries[index].canonical.localizedCaseInsensitiveCompare(trimmed) != .orderedSame else {
+            editText = ""
+            return
+        }
         let variants = localEntries[index].variants
+        if let existingIndex = localEntries.firstIndex(where: {
+            $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            let targetCanonical = localEntries[existingIndex].canonical
+            for variant in variants where !localEntries[existingIndex].variants.contains(variant) {
+                localEntries[existingIndex].variants.append(variant)
+            }
+            localEntries.remove(at: index)
+            for variant in variants {
+                onAddVocabularyAlias(targetCanonical, variant)
+            }
+            onRemovePromptTerm(canonical)
+            editText = ""
+            return
+        }
         localEntries[index] = STTDictionaryEntry(canonical: trimmed, variants: variants)
         onAddPromptTerm(trimmed)
         for variant in variants {

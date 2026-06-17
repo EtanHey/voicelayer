@@ -293,9 +293,6 @@ function upsertEntryVariant(
     candidate.variants = candidate.variants.filter(
       (item) => aliasKey(item) !== variantKey,
     );
-    if (candidate !== entry && candidate.variants.length === 0) {
-      entries.splice(index, 1);
-    }
     if (!entry.variants.some((item) => aliasKey(item) === variantKey)) {
       entry.variants.push(existingVariant);
     }

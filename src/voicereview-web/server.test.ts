@@ -868,6 +868,61 @@ describe("VoiceReview web server helpers", () => {
     }
   });
 
+  it("builds the transcription prompt from canonical vocabulary entries", async () => {
+    const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-test-"));
+    const calls: CommandCall[] = [];
+    const vocabPath = join(root, "stt-vocabulary.json");
+    const validWebm = new Uint8Array([
+      0x1a, 0x45, 0xdf, 0xa3, 0x01, 0x02, 0x03, 0x04,
+    ]);
+    await writeFile(
+      vocabPath,
+      JSON.stringify({
+        entries: [
+          { canonical: "BrainLayer", variants: ["brain layer"] },
+          { canonical: "VoiceLayer", variants: [] },
+        ],
+      }),
+    );
+    const app = createVoiceReviewApp({
+      config: {
+        tempDir: root,
+        sttVocabularyPath: vocabPath,
+        ffmpegPath: "/test/bin/ffmpeg",
+        whisperCliPath: "/test/bin/whisper-cli",
+      },
+      runCommand: async (call) => {
+        calls.push(call);
+        return {
+          exitCode: 0,
+          stdout: call.args[0].includes("whisper-cli") ? "review note\n" : "",
+          stderr: "",
+          durationMs: 12,
+        };
+      },
+    });
+
+    try {
+      const response = await app.fetch(
+        new Request("http://localhost/api/transcribe", {
+          method: "POST",
+          headers: { "content-type": "audio/webm" },
+          body: new Blob([validWebm], { type: "audio/webm" }),
+        }),
+      );
+      const whisperCall = calls.find((call) =>
+        call.args[0].includes("whisper-cli"),
+      );
+      const promptIndex = whisperCall?.args.indexOf("--prompt") ?? -1;
+
+      expect(response.status).toBe(200);
+      expect(promptIndex).toBeGreaterThan(-1);
+      expect(whisperCall?.args[promptIndex + 1]).toBe("BrainLayer VoiceLayer");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("propagates client aborts into /api/transcribe subprocesses", async () => {
     const root = await mkdtemp(join(tmpdir(), "voicereview-transcribe-abort-"));
     const clientAbort = new AbortController();

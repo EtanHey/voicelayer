@@ -107,6 +107,97 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertEqual(editText, "")
     }
 
+    func testRenameTermUnchangedDoesNotRemoveEntry() {
+        var localEntries = [
+            STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
+        ]
+        var editText = "  VoiceLayer  "
+        var removedTerms: [String] = []
+        var addedTerms: [String] = []
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.renameTerm(
+            "VoiceLayer",
+            editText: &editText,
+            localEntries: &localEntries,
+            onAddPromptTerm: { addedTerms.append($0) },
+            onRemovePromptTerm: { removedTerms.append($0) },
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertTrue(addedTerms.isEmpty)
+        XCTAssertTrue(removedTerms.isEmpty)
+        XCTAssertTrue(addedAliases.isEmpty)
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"])])
+        XCTAssertEqual(editText, "")
+    }
+
+    func testRenameTermCaseOnlyDoesNotRemoveEntry() {
+        var localEntries = [
+            STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
+        ]
+        var editText = "voicelayer"
+        var removedTerms: [String] = []
+        var addedTerms: [String] = []
+
+        SettingsDictionaryMutations.renameTerm(
+            "VoiceLayer",
+            editText: &editText,
+            localEntries: &localEntries,
+            onAddPromptTerm: { addedTerms.append($0) },
+            onRemovePromptTerm: { removedTerms.append($0) },
+            onAddVocabularyAlias: { _, _ in }
+        )
+
+        XCTAssertTrue(addedTerms.isEmpty)
+        XCTAssertTrue(removedTerms.isEmpty)
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"])])
+        XCTAssertEqual(editText, "")
+    }
+
+    func testRenameTermToExistingCanonicalMergesVariants() {
+        var localEntries = [
+            STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair", "voice layer"]),
+            STTDictionaryEntry(canonical: "VoiceBar", variants: ["voice bar"]),
+        ]
+        var editText = "VoiceBar"
+        var removedTerms: [String] = []
+        var addedTerms: [String] = []
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.renameTerm(
+            "VoiceLayer",
+            editText: &editText,
+            localEntries: &localEntries,
+            onAddPromptTerm: { addedTerms.append($0) },
+            onRemovePromptTerm: { removedTerms.append($0) },
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertTrue(addedTerms.isEmpty)
+        XCTAssertEqual(removedTerms, ["VoiceLayer"])
+        XCTAssertEqual(addedAliases.map(\.correct), ["VoiceBar", "VoiceBar"])
+        XCTAssertEqual(addedAliases.map(\.wrong), ["voice lair", "voice layer"])
+        XCTAssertEqual(
+            localEntries,
+            [STTDictionaryEntry(canonical: "VoiceBar", variants: ["voice bar", "voice lair", "voice layer"])]
+        )
+        XCTAssertEqual(editText, "")
+    }
+
+    func testDictionaryReconcilesIdleLocalEntriesFromVocabularySnapshot() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(
+            source.contains(".onChange(of: vocabularyPreview())"),
+            "Dictionary cards should reconcile with later daemon vocabulary snapshots"
+        )
+        XCTAssertTrue(
+            source.contains("guard !hasPendingDictionaryEdit else { return }"),
+            "Snapshot reconciliation must not clobber an active inline edit"
+        )
+    }
+
     func testDeleteTermRequiresConfirmationBeforeMutating() {
         var localEntries = [
             STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),

@@ -196,6 +196,31 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testHidutilRelayMappingStatusFlagsStaleF5Relay() throws {
+        let mapping: [String: Any] = [
+            "UserKeyMapping": [
+                [
+                    "HIDKeyboardModifierMappingSrc": 51_539_607_759,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+                [
+                    "HIDKeyboardModifierMappingSrc": 30_064_771_134,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: mapping,
+            format: .xml,
+            options: 0
+        )
+
+        let status = AppDelegate.hidutilRelayMappingStatus(data)
+
+        XCTAssertTrue(status.dictationMappingActive)
+        XCTAssertTrue(status.staleF5MappingActive)
+    }
+
     func testBundleMetadataUsesSingleVoiceBarAppName() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

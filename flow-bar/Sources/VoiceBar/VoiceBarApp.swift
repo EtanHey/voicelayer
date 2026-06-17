@@ -18,6 +18,7 @@ import VoiceBarUI
 
 private let legacySocketHotkeyDuplicateWindow: TimeInterval = 0.75
 private let launchExternalStartCommandGraceWindow: TimeInterval = 5.0
+private let f5HIDMappingSource = 30_064_771_134
 private let dictationHIDMappingSource = 51_539_607_759
 private let f18HIDMappingDestination = 30_064_771_181
 
@@ -25,9 +26,10 @@ private struct RelaySetupStatus {
     var launchAgentInstalled: Bool
     var launchAgentLoaded: Bool
     var dictationMappingActive: Bool
+    var staleF5MappingActive: Bool
 
     var isReady: Bool {
-        launchAgentInstalled && launchAgentLoaded && dictationMappingActive
+        launchAgentInstalled && launchAgentLoaded && dictationMappingActive && !staleF5MappingActive
     }
 
     var summary: String {
@@ -36,6 +38,7 @@ private struct RelaySetupStatus {
         if !launchAgentInstalled { missing.append("LaunchAgent plist missing") }
         if !launchAgentLoaded { missing.append("LaunchAgent not loaded") }
         if !dictationMappingActive { missing.append("Dictation to F18 mapping missing") }
+        if staleF5MappingActive { missing.append("stale F5 to F18 mapping still active") }
         return "Relay needs attention: \(missing.joined(separator: ", "))."
     }
 }
@@ -128,7 +131,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var cachedRelaySetupStatus = RelaySetupStatus(
         launchAgentInstalled: relayLaunchAgentInstalled(),
         launchAgentLoaded: false,
-        dictationMappingActive: false
+        dictationMappingActive: false,
+        staleF5MappingActive: false
     )
     private var relaySetupStatusRefreshInFlight = false
     private var relaySetupInFlight = false
@@ -1094,10 +1098,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func currentRelaySetupStatus() -> RelaySetupStatus {
-        RelaySetupStatus(
+        let mappingStatus = relayMappingStatus()
+        return RelaySetupStatus(
             launchAgentInstalled: relayLaunchAgentInstalled(),
             launchAgentLoaded: relayLaunchAgentLoaded(),
-            dictationMappingActive: dictationRelayMappingActive()
+            dictationMappingActive: mappingStatus.dictationMappingActive,
+            staleF5MappingActive: mappingStatus.staleF5MappingActive
         )
     }
 
@@ -1114,17 +1120,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return result.exitCode == 0
     }
 
-    private func dictationRelayMappingActive() -> Bool {
+    private func relayMappingStatus() -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
         let result = Self.runProcess(
             executablePath: "/usr/bin/hidutil",
             arguments: ["property", "--get", "UserKeyMapping"]
         )
-        guard result.exitCode == 0 else { return false }
-        return Self.hidutilMappingContains(
-            result.outputData,
-            source: dictationHIDMappingSource,
-            destination: f18HIDMappingDestination
-        )
+        guard result.exitCode == 0 else { return (false, false) }
+        return Self.hidutilRelayMappingStatus(result.outputData)
     }
 
     private func relayLaunchAgentPath() -> String {
@@ -1167,6 +1169,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Self.hidutilInt(entry["HIDKeyboardModifierMappingSrc"]) == source &&
                 Self.hidutilInt(entry["HIDKeyboardModifierMappingDst"]) == destination
         }
+    }
+
+    static func hidutilRelayMappingStatus(_ data: Data) -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
+        (
+            dictationMappingActive: hidutilMappingContains(
+                data,
+                source: dictationHIDMappingSource,
+                destination: f18HIDMappingDestination
+            ),
+            staleF5MappingActive: hidutilMappingContains(
+                data,
+                source: f5HIDMappingSource,
+                destination: f18HIDMappingDestination
+            )
+        )
     }
 
     private static func hidutilInt(_ value: Any?) -> Int? {

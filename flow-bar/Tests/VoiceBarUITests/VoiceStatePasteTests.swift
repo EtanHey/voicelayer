@@ -745,7 +745,55 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted)
     }
 
-    func testAutoPasteUsesCapturedInsertionWhenTargetAppRemainsFrontmostAndFreshCaptureIsUnavailable() {
+    func testAutoPasteDoesNotUseCapturedInsertionWhenCurrentTargetIsFrontmostAndFreshCaptureIsUnavailable() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        let targetApp = FakeRunningApplication(
+            bundleIdentifier: "com.example.TargetApp",
+            processIdentifier: 1111
+        )
+        var frontmostApp: NSRunningApplication? = targetApp
+        state.frontmostAppProvider = { frontmostApp }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var captureAttempts = 0
+        var staleCapturedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteboardString: String?
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            captureAttempts += 1
+            guard captureAttempts == 1 else { return nil }
+            return { text in
+                staleCapturedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = {
+            clipboardWrites.append($0)
+            pasteboardString = $0
+        }
+        state.pasteboardStringProvider = { pasteboardString }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        frontmostApp = targetApp
+        state.handleEvent([
+            "type": "transcription",
+            "text": "paste via clipboard instead of stale captured ax",
+        ])
+
+        XCTAssertEqual(captureAttempts, 2)
+        XCTAssertEqual(staleCapturedTexts, [])
+        XCTAssertEqual(clipboardWrites, ["paste via clipboard instead of stale captured ax"])
+        XCTAssertTrue(pasteShortcutPosted)
+    }
+
+    func testAutoPasteDoesNotUseCapturedInsertionWhenTargetAppRemainsFrontmostAndFreshCaptureIsUnavailable() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -788,11 +836,11 @@ final class VoiceStatePasteTests: XCTestCase {
         ])
 
         XCTAssertEqual(captureAttempts, 2)
-        XCTAssertEqual(insertedTexts, ["ax should insert without touching clipboard"])
-        XCTAssertEqual(clipboardWrites, [])
-        XCTAssertEqual(pasteboardString, "original clipboard")
-        XCTAssertFalse(pasteShortcutPosted)
-        XCTAssertEqual(pasteOutcomes, ["insertedAtCursor"])
+        XCTAssertEqual(insertedTexts, [])
+        XCTAssertEqual(clipboardWrites, ["ax should insert without touching clipboard"])
+        XCTAssertEqual(pasteboardString, "ax should insert without touching clipboard")
+        XCTAssertTrue(pasteShortcutPosted)
+        XCTAssertEqual(pasteOutcomes, ["pasted"])
     }
 
     func testAutoPasteTreatsDifferentPidWithSameBundleIdentifierAsSameTargetForFreshInsertion() {

@@ -1218,7 +1218,7 @@ public final class VoiceState {
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
                 let capturedInsertionHandler =
-                    plan == .autoPaste && targetMatchesRecordStart
+                    plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget == nil
                         ? insertionHandler
                         : nil
 
