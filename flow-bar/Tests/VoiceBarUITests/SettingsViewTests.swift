@@ -57,6 +57,130 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("onRemovePromptTerm"))
     }
 
+    func testPromptTermAddTrimsCallsCallbackUpdatesLocalListAndClearsField() {
+        var localTerms = ["BrainLayer"]
+        var newTermText = "  VoiceLayer  "
+        var addedTerms: [String] = []
+
+        SettingsDictionaryMutations.commitNewPromptTerm(
+            newTermText: &newTermText,
+            localTerms: &localTerms,
+            onAddPromptTerm: { addedTerms.append($0) }
+        )
+
+        XCTAssertEqual(addedTerms, ["VoiceLayer"])
+        XCTAssertEqual(localTerms, ["BrainLayer", "VoiceLayer"])
+        XCTAssertEqual(newTermText, "")
+    }
+
+    func testPromptTermDeleteCallsCallbackAndRemovesLocalTerm() {
+        var localTerms = ["BrainLayer", "VoiceLayer"]
+        var removedTerms: [String] = []
+
+        SettingsDictionaryMutations.deletePromptTerm(
+            "VoiceLayer",
+            localTerms: &localTerms,
+            onRemovePromptTerm: { removedTerms.append($0) }
+        )
+
+        XCTAssertEqual(removedTerms, ["VoiceLayer"])
+        XCTAssertEqual(localTerms, ["BrainLayer"])
+    }
+
+    func testCorrectionSaveTrimsCallsCallbackUpdatesLocalListAndClearsFields() {
+        var localAliases = [STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer")]
+        var correctText = "  VoiceLayer  "
+        var wrongText = " voice lair "
+        var selectedAlias: STTVocabularyAliasPreview?
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.saveCorrection(
+            correctText: &correctText,
+            wrongText: &wrongText,
+            selectedAlias: &selectedAlias,
+            localAliases: &localAliases,
+            onRemoveVocabularyAlias: { _ in XCTFail("Adding a new correction must not remove an alias") },
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertEqual(addedAliases.map(\.correct), ["VoiceLayer"])
+        XCTAssertEqual(addedAliases.map(\.wrong), ["voice lair"])
+        XCTAssertEqual(
+            localAliases,
+            [
+                STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer"),
+                STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer"),
+            ]
+        )
+        XCTAssertEqual(correctText, "")
+        XCTAssertEqual(wrongText, "")
+        XCTAssertNil(selectedAlias)
+    }
+
+    func testCorrectionEditReplacesLocalAliasInPlaceAndClearsFields() {
+        let existingAlias = STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer")
+        var localAliases = [
+            STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer"),
+            existingAlias,
+        ]
+        var correctText = "  VoiceBar  "
+        var wrongText = " voice bar "
+        var selectedAlias: STTVocabularyAliasPreview? = existingAlias
+        var removedAliases: [STTVocabularyAliasPreview] = []
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.saveCorrection(
+            correctText: &correctText,
+            wrongText: &wrongText,
+            selectedAlias: &selectedAlias,
+            localAliases: &localAliases,
+            onRemoveVocabularyAlias: { removedAliases.append($0) },
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertEqual(removedAliases, [existingAlias])
+        XCTAssertEqual(addedAliases.map(\.correct), ["VoiceBar"])
+        XCTAssertEqual(addedAliases.map(\.wrong), ["voice bar"])
+        XCTAssertEqual(
+            localAliases,
+            [
+                STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer"),
+                STTVocabularyAliasPreview(from: "voice bar", to: "VoiceBar"),
+            ],
+            "Editing must replace the local row at the same index instead of jumping it to the bottom"
+        )
+        XCTAssertEqual(correctText, "")
+        XCTAssertEqual(wrongText, "")
+        XCTAssertNil(selectedAlias)
+    }
+
+    func testCorrectionDeleteCallsCallbackRemovesLocalAliasAndClearsSelectedDraft() {
+        let alias = STTVocabularyAliasPreview(from: "voice lair", to: "VoiceLayer")
+        var localAliases = [
+            STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer"),
+            alias,
+        ]
+        var correctText = "VoiceLayer"
+        var wrongText = "voice lair"
+        var selectedAlias: STTVocabularyAliasPreview? = alias
+        var removedAliases: [STTVocabularyAliasPreview] = []
+
+        SettingsDictionaryMutations.deleteCorrection(
+            alias,
+            correctText: &correctText,
+            wrongText: &wrongText,
+            selectedAlias: &selectedAlias,
+            localAliases: &localAliases,
+            onRemoveVocabularyAlias: { removedAliases.append($0) }
+        )
+
+        XCTAssertEqual(removedAliases, [alias])
+        XCTAssertEqual(localAliases, [STTVocabularyAliasPreview(from: "brain lair", to: "BrainLayer")])
+        XCTAssertEqual(correctText, "")
+        XCTAssertEqual(wrongText, "")
+        XCTAssertNil(selectedAlias)
+    }
+
     // MARK: - Gesture copy tells the truth (HotkeyManager wiring)
 
     func testGestureCopyMatchesActualHandlerBehavior() {

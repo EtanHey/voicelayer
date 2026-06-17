@@ -6,6 +6,13 @@ public enum SettingsTab: Hashable {
     case dictionary
 }
 
+private enum DictEditorField: Hashable {
+    case search
+    case correct
+    case wrong
+    case newTerm
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -33,11 +40,14 @@ public struct SettingsView: View {
     @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
     @State private var selectedAlias: STTVocabularyAliasPreview?
+    @State private var localAliases: [STTVocabularyAliasPreview]
+    @State private var localTerms: [String]
     @State private var correctText = ""
     @State private var wrongText = ""
     @State private var newTermText = ""
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
+    @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
         hotkeyEnabled: Bool,
@@ -84,9 +94,12 @@ public struct SettingsView: View {
         self.onRunRelaySetup = onRunRelaySetup
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
+        let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
+        _localAliases = State(initialValue: initialVocabulary.aliases)
+        _localTerms = State(initialValue: initialVocabulary.promptTerms)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -265,25 +278,24 @@ public struct SettingsView: View {
             Section("Dictionary") {
                 correctionEditor
 
-                Divider()
-                    .padding(.vertical, 6)
-
                 DisclosureGroup(isExpanded: $correctionsExpanded) {
                     correctionsList
                 } label: {
                     Text("Corrections")
                 }
 
-                Divider()
-                    .padding(.vertical, 6)
-
                 HStack(spacing: 6) {
                     Image(systemName: "magnifyingglass")
                         .foregroundStyle(.secondary)
                     TextField("Search corrections and terms", text: $dictionarySearch)
-                        .textFieldStyle(.plain)
+                        .dictionaryTextField()
+                        .focused($focusedEditorField, equals: .search)
                 }
-                .dictionaryTextField()
+                .dictionaryFieldContainer()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    focusedEditorField = .search
+                }
 
                 promptTermsList
             }
@@ -293,7 +305,7 @@ public struct SettingsView: View {
 
     @ViewBuilder
     private var correctionsList: some View {
-        let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
+        let aliases = localVocabularyPreview.filteredAliases(matching: dictionarySearch)
         if aliases.isEmpty {
             Text("No corrections yet — add one above.")
                 .foregroundStyle(.secondary)
@@ -306,10 +318,17 @@ public struct SettingsView: View {
 
     private var promptTermAddRow: some View {
         HStack(spacing: 8) {
-            TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
-                .textFieldStyle(.plain)
-                .onSubmit(commitNewPromptTerm)
-                .dictionaryTextField()
+            HStack {
+                TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
+                    .dictionaryTextField()
+                    .focused($focusedEditorField, equals: .newTerm)
+                    .onSubmit(commitNewPromptTerm)
+            }
+            .dictionaryFieldContainer()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusedEditorField = .newTerm
+            }
             Button(action: commitNewPromptTerm) {
                 Image(systemName: "plus.circle.fill")
             }
@@ -330,7 +349,11 @@ public struct SettingsView: View {
 
     private func deletePromptTermButton(_ term: String) -> some View {
         Button {
-            onRemovePromptTerm(term)
+            SettingsDictionaryMutations.deletePromptTerm(
+                term,
+                localTerms: &localTerms,
+                onRemovePromptTerm: onRemovePromptTerm
+            )
         } label: {
             Image(systemName: "trash")
         }
@@ -341,10 +364,11 @@ public struct SettingsView: View {
     }
 
     private func commitNewPromptTerm() {
-        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onAddPromptTerm(trimmed)
-        newTermText = ""
+        SettingsDictionaryMutations.commitNewPromptTerm(
+            newTermText: &newTermText,
+            localTerms: &localTerms,
+            onAddPromptTerm: onAddPromptTerm
+        )
     }
 
     // MARK: - Helpers
@@ -427,6 +451,10 @@ public struct SettingsView: View {
         )
     }
 
+    private var localVocabularyPreview: STTVocabularyPreview {
+        STTVocabularyPreview(updatedAt: nil, promptTerms: localTerms, aliases: localAliases)
+    }
+
     /// Leading label column width shared by the two editor rows.
     private static let editorLabelWidth: CGFloat = 92
 
@@ -438,26 +466,55 @@ public struct SettingsView: View {
             HStack(spacing: 8) {
                 Text("Correct")
                     .frame(width: Self.editorLabelWidth, alignment: .leading)
+                    .onTapGesture {
+                        focusedEditorField = .correct
+                    }
                 TextField("Intended text", text: $correctText)
-                    .textFieldStyle(.plain)
                     .dictionaryTextField()
+                    .focused($focusedEditorField, equals: .correct)
+                    .onSubmit {
+                        focusedEditorField = .wrong
+                    }
+            }
+            .dictionaryFieldContainer()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusedEditorField = .correct
             }
             HStack(spacing: 8) {
-                Text("Transcribed")
-                    .frame(width: Self.editorLabelWidth, alignment: .leading)
-                TextField("Misheard text", text: $wrongText)
-                    .textFieldStyle(.plain)
-                    .dictionaryTextField()
+                HStack(spacing: 8) {
+                    Text("Transcribed")
+                        .frame(width: Self.editorLabelWidth, alignment: .leading)
+                        .onTapGesture {
+                            focusedEditorField = .wrong
+                        }
+                    TextField("Misheard text", text: $wrongText)
+                        .dictionaryTextField()
+                        .focused($focusedEditorField, equals: .wrong)
+                        .onSubmit(saveCorrection)
+                }
+                .dictionaryFieldContainer()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    focusedEditorField = .wrong
+                }
                 Button("⇄") {
                     swap(&correctText, &wrongText)
                 }
                 .help("Swap correct and transcribed text")
             }
             HStack {
-                if let selectedAlias {
+                if let alias = selectedAlias {
                     Button("Delete") {
-                        onRemoveVocabularyAlias(selectedAlias)
-                        clearCorrectionEditor()
+                        SettingsDictionaryMutations.deleteCorrection(
+                            alias,
+                            correctText: &correctText,
+                            wrongText: &wrongText,
+                            selectedAlias: &selectedAlias,
+                            localAliases: &localAliases,
+                            onRemoveVocabularyAlias: onRemoveVocabularyAlias
+                        )
+                        focusedEditorField = nil
                     }
                 }
                 Spacer()
@@ -476,7 +533,7 @@ public struct SettingsView: View {
 
             promptTermAddRow
 
-            let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
+            let terms = localVocabularyPreview.filteredPromptTerms(matching: dictionarySearch)
             if terms.isEmpty {
                 Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
                     .foregroundStyle(.secondary)
@@ -507,6 +564,8 @@ public struct SettingsView: View {
             deleteCorrectionButton(alias)
         }
         .contentShape(Rectangle())
+        .background(selectedAlias == alias ? Color.accentColor.opacity(0.12) : .clear)
+        .cornerRadius(4)
         .onTapGesture {
             beginEditing(alias)
         }
@@ -514,9 +573,16 @@ public struct SettingsView: View {
 
     private func deleteCorrectionButton(_ alias: STTVocabularyAliasPreview) -> some View {
         Button {
-            onRemoveVocabularyAlias(alias)
-            if selectedAlias == alias {
-                clearCorrectionEditor()
+            SettingsDictionaryMutations.deleteCorrection(
+                alias,
+                correctText: &correctText,
+                wrongText: &wrongText,
+                selectedAlias: &selectedAlias,
+                localAliases: &localAliases,
+                onRemoveVocabularyAlias: onRemoveVocabularyAlias
+            )
+            if selectedAlias == nil {
+                focusedEditorField = nil
             }
         } label: {
             Image(systemName: "trash")
@@ -532,12 +598,14 @@ public struct SettingsView: View {
         selectedAlias = alias
         correctText = alias.to
         wrongText = alias.from
+        focusedEditorField = .correct
     }
 
     private func clearCorrectionEditor() {
         selectedAlias = nil
         correctText = ""
         wrongText = ""
+        focusedEditorField = nil
     }
 
     private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
@@ -549,16 +617,88 @@ public struct SettingsView: View {
     }
 
     private func saveCorrection() {
-        let draft = currentDraft
-        guard draft.canSaveAlias else { return }
-        if let selectedAlias {
-            onRemoveVocabularyAlias(selectedAlias)
-        }
-        onAddVocabularyAlias(
-            draft.trimmedCorrect,
-            draft.trimmedWrong
+        SettingsDictionaryMutations.saveCorrection(
+            correctText: &correctText,
+            wrongText: &wrongText,
+            selectedAlias: &selectedAlias,
+            localAliases: &localAliases,
+            onRemoveVocabularyAlias: onRemoveVocabularyAlias,
+            onAddVocabularyAlias: onAddVocabularyAlias
         )
-        clearCorrectionEditor()
+        focusedEditorField = nil
+    }
+}
+
+enum SettingsDictionaryMutations {
+    static func commitNewPromptTerm(
+        newTermText: inout String,
+        localTerms: inout [String],
+        onAddPromptTerm: (String) -> Void
+    ) {
+        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        localTerms.append(trimmed)
+        onAddPromptTerm(trimmed)
+        newTermText = ""
+    }
+
+    static func deletePromptTerm(
+        _ term: String,
+        localTerms: inout [String],
+        onRemovePromptTerm: (String) -> Void
+    ) {
+        localTerms.removeAll { $0 == term }
+        onRemovePromptTerm(term)
+    }
+
+    static func saveCorrection(
+        correctText: inout String,
+        wrongText: inout String,
+        selectedAlias: inout STTVocabularyAliasPreview?,
+        localAliases: inout [STTVocabularyAliasPreview],
+        onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void,
+        onAddVocabularyAlias: (String, String) -> Void
+    ) {
+        let draft = STTVocabularyDraft(correct: correctText, wrong: wrongText)
+        guard draft.canSaveAlias else { return }
+
+        let nextAlias = STTVocabularyAliasPreview(
+            from: draft.trimmedWrong,
+            to: draft.trimmedCorrect
+        )
+        if let editingAlias = selectedAlias {
+            if let index = localAliases.firstIndex(of: editingAlias) {
+                localAliases[index] = nextAlias
+            } else {
+                localAliases.removeAll { $0.from == editingAlias.from }
+                localAliases.append(nextAlias)
+            }
+            onRemoveVocabularyAlias(editingAlias)
+        } else {
+            localAliases.append(nextAlias)
+        }
+        onAddVocabularyAlias(draft.trimmedCorrect, draft.trimmedWrong)
+
+        selectedAlias = nil
+        correctText = ""
+        wrongText = ""
+    }
+
+    static func deleteCorrection(
+        _ alias: STTVocabularyAliasPreview,
+        correctText: inout String,
+        wrongText: inout String,
+        selectedAlias: inout STTVocabularyAliasPreview?,
+        localAliases: inout [STTVocabularyAliasPreview],
+        onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    ) {
+        localAliases.removeAll { $0 == alias }
+        onRemoveVocabularyAlias(alias)
+        if selectedAlias == alias {
+            selectedAlias = nil
+            correctText = ""
+            wrongText = ""
+        }
     }
 }
 
