@@ -941,12 +941,13 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pasteboardString, "new user clipboard")
     }
 
-    func testAutoPasteRestoresClipboardSynchronouslyAfterFallbackPaste() {
+    func testAutoPasteRestoresClipboardAfterFallbackPasteDelay() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
         state.targetAppActivator = { _ in }
         state.pasteConfirmationDelay = 0
+        state.pasteboardRestoreDelay = 1.25
 
         var scheduled: [(delay: TimeInterval, block: () -> Void)] = []
         var pasteboardString: String?
@@ -987,6 +988,14 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(scheduled.count, 2)
         scheduled[1].block()
 
+        XCTAssertEqual(pasteboardString, "fresh transcript")
+        XCTAssertEqual(restoredSnapshots, [])
+        XCTAssertEqual(state.confirmationText, "fresh transcript")
+        XCTAssertEqual(scheduled.count, 3)
+        XCTAssertEqual(scheduled[2].delay, 1.25)
+
+        scheduled[2].block()
+
         XCTAssertEqual(pasteboardString, "old clipboard")
         XCTAssertEqual(restoredSnapshots, [
             PasteboardSnapshot(
@@ -994,7 +1003,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 items: [["public.utf8-plain-text": Data("old clipboard".utf8)]]
             ),
         ])
-        XCTAssertEqual(scheduled.count, 2)
+        XCTAssertEqual(scheduled.count, 3)
     }
 
     func testAutoPasteFailureUsesGenericMessageInsteadOfAccessibilityBlame() {

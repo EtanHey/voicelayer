@@ -199,6 +199,7 @@ public final class VoiceState {
 
     /// Delay before sending Cmd+V after activating the target app.
     public var pasteConfirmationDelay: TimeInterval = 0.25
+    public var pasteboardRestoreDelay: TimeInterval = 1.25
 
     /// Test seam for delayed paste scheduling.
     public var pasteScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
@@ -1289,7 +1290,7 @@ public final class VoiceState {
                         return
                     }
                     let pasted = simulatedPasteHandler()
-                    restoreClipboardIfNeeded(
+                    scheduleClipboardRestoreIfNeeded(
                         from: pasteboardSnapshot,
                         expectedChangeCount: changeCountAfterWrite
                     )
@@ -1327,6 +1328,19 @@ public final class VoiceState {
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
         guard let lhs, let rhs else { return false }
         return lhs.processIdentifier == rhs.processIdentifier
+    }
+
+    private func scheduleClipboardRestoreIfNeeded(
+        from snapshot: PasteboardSnapshot?,
+        expectedChangeCount: Int
+    ) {
+        guard snapshot != nil else { return }
+        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
+            self?.restoreClipboardIfNeeded(
+                from: snapshot,
+                expectedChangeCount: expectedChangeCount
+            )
+        }
     }
 
     private func restoreClipboardIfNeeded(

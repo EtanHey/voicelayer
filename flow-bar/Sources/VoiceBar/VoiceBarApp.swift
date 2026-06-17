@@ -124,6 +124,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
     private var performanceEffortNotice: String?
     private var performanceEffortNoticeTask: Task<Void, Never>?
+    private lazy var cachedRelaySetupStatus = RelaySetupStatus(
+        launchAgentInstalled: relayLaunchAgentInstalled(),
+        launchAgentLoaded: false,
+        dictationMappingActive: false
+    )
+    private var relaySetupStatusRefreshInFlight = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -1018,11 +1024,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             status.summary,
             output
         )
-        refreshSettingsWindowAnchorState()
         guard process.terminationStatus == 0 else {
             return "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
         }
         return status.summary
+    }
+
+    private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async {
+                    completion("Relay setup failed: VoiceBar is not available.")
+                }
+                return
+            }
+            let result = runRelaySetup()
+            DispatchQueue.main.async { [weak self] in
+                completion(result)
+                self?.refreshRelaySetupStatusAsync()
+            }
+        }
+    }
+
+    private func refreshRelaySetupStatusAsync() {
+        guard !relaySetupStatusRefreshInFlight else { return }
+        relaySetupStatusRefreshInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let status = currentRelaySetupStatus()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                cachedRelaySetupStatus = status
+                relaySetupStatusRefreshInFlight = false
+                refreshSettingsWindowAnchorState()
+            }
+        }
     }
 
     private func currentRelaySetupStatus() -> RelaySetupStatus {
@@ -1211,6 +1247,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
+            refreshRelaySetupStatusAsync()
             return
         }
 
@@ -1232,6 +1269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        refreshRelaySetupStatusAsync()
     }
 
     func makeSettingsView() -> SettingsView {
@@ -1269,13 +1307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.voiceState.removeVocabularyPromptTerm(term)
             },
             isHotkeyRemapActive: { [weak self] in
-                self?.currentRelaySetupStatus().isReady ?? false
+                self?.cachedRelaySetupStatus.isReady ?? false
             },
             isMicrophonePermissionGranted: { [weak self] in
                 self?.microphonePermissionGranted() ?? false
             },
-            onRunRelaySetup: { [weak self] in
-                self?.runRelaySetup() ?? "Relay setup failed: VoiceBar is not available."
+            onRunRelaySetup: { [weak self] completion in
+                self?.runRelaySetupAsync(completion: completion)
+                    ?? completion("Relay setup failed: VoiceBar is not available.")
             }
         )
     }

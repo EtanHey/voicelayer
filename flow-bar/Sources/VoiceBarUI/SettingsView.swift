@@ -24,7 +24,7 @@ public struct SettingsView: View {
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
     public let isMicrophonePermissionGranted: () -> Bool
-    public let onRunRelaySetup: () -> String
+    public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -58,7 +58,9 @@ public struct SettingsView: View {
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
-        onRunRelaySetup: @escaping () -> String = { "Relay setup requested." },
+        onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
+            completion("Relay setup requested.")
+        },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -395,7 +397,10 @@ public struct SettingsView: View {
     }
 
     private func runRelaySetup() {
-        relaySetupFeedback = onRunRelaySetup()
+        relaySetupFeedback = "Setting up relay..."
+        onRunRelaySetup { feedback in
+            relaySetupFeedback = feedback
+        }
     }
 
     private func performanceEffortLabel(_ effort: VoiceBarPerformanceEffort) -> String {
