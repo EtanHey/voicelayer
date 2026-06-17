@@ -72,13 +72,26 @@ final class SettingsViewTests: XCTestCase {
             ))
         XCTAssertTrue(source
             .contains(
-                "Button(\"Add\") {\n                saveVariant(entry.canonical)\n            }\n            .buttonStyle(.borderedProminent)"
+                "Button(\"Cancel\") {\n                addingVariantFor = nil\n                variantText = \"\"\n            }\n            .buttonStyle(.bordered)\n            Button(\"Add\") {\n                saveVariant(entry.canonical)\n            }\n            .buttonStyle(.borderedProminent)"
             ))
         XCTAssertTrue(source
             .contains(
                 "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
             ))
         XCTAssertTrue(source.contains(".buttonStyle(.borderedProminent)\n            .tint(.red)"))
+    }
+
+    func testDeleteConfirmationHeaderHidesEditButton() throws {
+        let source = try settingsViewSource()
+        let headerSource = try XCTUnwrap(source.functionBody(named: "dictionaryEntryHeader"))
+        let deleteConfirmBranch = try XCTUnwrap(headerSource.range(of: "if pendingDeleteCanonical == entry.canonical"))
+        let editButton = headerSource.range(of: "beginTermRename(entry.canonical)")
+
+        XCTAssertNotNil(editButton)
+        XCTAssertTrue(
+            try XCTUnwrap(editButton?.lowerBound) > deleteConfirmBranch.upperBound,
+            "the edit pencil must only render outside the delete-confirm branch"
+        )
     }
 
     func testAddVariantInlineInputUsesOptionDAccentStyleAtRest() throws {

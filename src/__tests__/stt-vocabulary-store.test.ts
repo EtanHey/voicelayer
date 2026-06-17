@@ -8,6 +8,7 @@ import {
   listVocabulary,
   removeAlias,
   removePromptTerm,
+  vocabularyAliasesFromEntries,
 } from "../stt-vocabulary-store";
 
 describe("stt-vocabulary-store", () => {
@@ -94,6 +95,54 @@ describe("stt-vocabulary-store", () => {
     );
 
     expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: [] }]);
+  });
+
+  it("rejects variants that normalize to an existing canonical term", () => {
+    addPromptTerm("VoiceLayer", { path: vocabPath });
+
+    const updated = addAlias(
+      { from: "voice layer", to: "VoiceBar" },
+      { path: vocabPath },
+    );
+
+    expect(updated.changed).toBe(false);
+    expect(updated.warnings).toContainEqual({
+      code: "dictionary_alias_collision",
+      canonical: "VoiceBar",
+      existing: "VoiceLayer",
+    });
+    expect(updated.entries).toEqual([{ canonical: "VoiceLayer", variants: [] }]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: [] },
+    ]);
+  });
+
+  it("rejects prompt terms that normalize to an existing variant on another entry", () => {
+    addAlias({ from: "voicelair", to: "VoiceLayer" }, { path: vocabPath });
+
+    const updated = addPromptTerm("Voice Lair", { path: vocabPath });
+
+    expect(updated.changed).toBe(false);
+    expect(updated.warnings).toContainEqual({
+      code: "dictionary_alias_collision",
+      canonical: "Voice Lair",
+      existing: "VoiceLayer",
+    });
+    expect(updated.entries).toEqual([
+      { canonical: "VoiceLayer", variants: ["voicelair"] },
+    ]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: ["voicelair"] },
+    ]);
+  });
+
+  it("omits exported aliases whose source normalizes to a canonical key", () => {
+    expect(
+      vocabularyAliasesFromEntries([
+        { canonical: "VoiceLayer", variants: [] },
+        { canonical: "VoiceBar", variants: ["voice layer", "voice baar"] },
+      ]),
+    ).toEqual([{ from: "voice baar", to: "VoiceBar" }]);
   });
 
   it("warns when near-duplicate canonicals are added", () => {

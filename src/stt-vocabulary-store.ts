@@ -40,7 +40,7 @@ export interface STTVocabularySnapshot {
 }
 
 export interface STTVocabularyWarning {
-  code: "near_duplicate_canonical";
+  code: "near_duplicate_canonical" | "dictionary_alias_collision";
   canonical: string;
   existing: string;
 }
@@ -96,6 +96,14 @@ export function addAlias(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
+    const collision = canonicalAliasCollisionWarning(
+      snapshot.entries,
+      normalized.from,
+      normalized.to,
+    );
+    if (collision) {
+      return withWarnings({ ...snapshot, changed: false }, [collision]);
+    }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized.to);
     upsertEntryVariant(snapshot.entries, normalized.to, normalized.from);
     return withWarnings(
@@ -113,6 +121,13 @@ export function addPromptTerm(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
+    const collision = variantAliasCollisionWarning(
+      snapshot.entries,
+      normalized,
+    );
+    if (collision) {
+      return withWarnings({ ...snapshot, changed: false }, [collision]);
+    }
     const warnings = nearDuplicateWarnings(snapshot.entries, normalized);
     upsertEntry(snapshot.entries, normalized);
     return withWarnings(
@@ -319,11 +334,14 @@ function appendEntryVariant(
 export function vocabularyAliasesFromEntries(
   entries: STTDictionaryEntry[],
 ): STTVocabularyAlias[] {
+  const canonicalKeys = new Set(entries.map((entry) => aliasKey(entry.canonical)));
   return entries.flatMap((entry) =>
-    entry.variants.map((variant) => ({
-      from: variant,
-      to: entry.canonical,
-    })),
+    entry.variants
+      .filter((variant) => !canonicalKeys.has(aliasKey(variant)))
+      .map((variant) => ({
+        from: variant,
+        to: entry.canonical,
+      })),
   );
 }
 
@@ -363,6 +381,43 @@ function nearDuplicateWarnings(
         },
       ]
     : [];
+}
+
+function canonicalAliasCollisionWarning(
+  entries: STTDictionaryEntry[],
+  variant: string,
+  canonical: string,
+): STTVocabularyWarning | null {
+  const variantKey = aliasKey(variant);
+  const existing = entries.find(
+    (entry) =>
+      aliasKey(entry.canonical) === variantKey &&
+      entry.canonical.toLowerCase() !== canonical.toLowerCase(),
+  );
+  return existing
+    ? {
+        code: "dictionary_alias_collision",
+        canonical,
+        existing: existing.canonical,
+      }
+    : null;
+}
+
+function variantAliasCollisionWarning(
+  entries: STTDictionaryEntry[],
+  canonical: string,
+): STTVocabularyWarning | null {
+  const canonicalKey = aliasKey(canonical);
+  const existing = entries.find((entry) =>
+    entry.variants.some((variant) => aliasKey(variant) === canonicalKey),
+  );
+  return existing
+    ? {
+        code: "dictionary_alias_collision",
+        canonical,
+        existing: existing.canonical,
+      }
+    : null;
 }
 
 function withWarnings<T extends STTVocabularyMutationResult>(

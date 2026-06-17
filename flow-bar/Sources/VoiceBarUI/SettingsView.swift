@@ -369,15 +369,19 @@ public struct SettingsView: View {
                 Text(entry.canonical)
                     .font(.headline)
                 Spacer()
-                Button {
-                    beginTermRename(entry.canonical)
-                } label: {
-                    Image(systemName: "pencil")
+                if pendingDeleteCanonical == entry.canonical {
+                    deleteDictionaryEntryButton(entry.canonical)
+                } else {
+                    Button {
+                        beginTermRename(entry.canonical)
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Edit term")
+                    .accessibilityLabel("Edit term \(entry.canonical)")
+                    deleteDictionaryEntryButton(entry.canonical)
                 }
-                .buttonStyle(.borderless)
-                .help("Edit term")
-                .accessibilityLabel("Edit term \(entry.canonical)")
-                deleteDictionaryEntryButton(entry.canonical)
             }
         }
     }
@@ -441,16 +445,16 @@ public struct SettingsView: View {
                         .stroke(Color.accentColor, lineWidth: 1.5)
                 )
                 .frame(maxWidth: .infinity)
-            Button("Add") {
-                saveVariant(entry.canonical)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel") {
                 addingVariantFor = nil
                 variantText = ""
             }
             .buttonStyle(.bordered)
+            Button("Add") {
+                saveVariant(entry.canonical)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
     }
 
