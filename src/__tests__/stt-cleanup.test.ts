@@ -252,8 +252,10 @@ describe("stt-cleanup", () => {
     await Bun.write(
       snapshotPath,
       JSON.stringify({
-        prompt_terms: ["Domica", "SongScript"],
-        aliases: [],
+        entries: [
+          { canonical: "Domica", variants: [] },
+          { canonical: "SongScript", variants: [] },
+        ],
       }),
     );
 
@@ -281,8 +283,7 @@ describe("stt-cleanup", () => {
     await Bun.write(
       snapshotPath,
       JSON.stringify({
-        prompt_terms: ["Domica"],
-        aliases: [{ from: "domekin", to: "Domica" }],
+        entries: [{ canonical: "Domica", variants: ["domekin"] }],
       }),
     );
 
@@ -308,10 +309,9 @@ describe("stt-cleanup", () => {
     await Bun.write(
       snapshotPath,
       JSON.stringify({
-        prompt_terms: [],
-        aliases: [
-          { from: "domekin", to: "Domica" },
-          { from: "song strip", to: "SongScript" },
+        entries: [
+          { canonical: "Domica", variants: ["domekin"] },
+          { canonical: "SongScript", variants: ["song strip"] },
         ],
       }),
     );
@@ -350,8 +350,10 @@ describe("stt-cleanup", () => {
     await Bun.write(
       snapshotPath,
       JSON.stringify({
-        prompt_terms: ["/whats-new", "/large-plan"],
-        aliases: [],
+        entries: [
+          { canonical: "/whats-new", variants: [] },
+          { canonical: "/large-plan", variants: [] },
+        ],
       }),
     );
 
@@ -514,8 +516,7 @@ describe("stt-cleanup", () => {
     await Bun.write(
       snapshotPath,
       JSON.stringify({
-        prompt_terms: [],
-        aliases: [{ from: "codecs", to: "Codex" }],
+        entries: [{ canonical: "Codex", variants: ["codecs"] }],
       }),
     );
 

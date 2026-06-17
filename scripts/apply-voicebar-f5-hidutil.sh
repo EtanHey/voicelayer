@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Merge VoiceBar's F5/Dictation -> F18 relay into the current hidutil mapping.
+# Merge VoiceBar's Dictation-key -> F18 relay into the current hidutil mapping.
 set -euo pipefail
 
 readonly F5_SRC_DEC="30064771134" # 0x70000003E

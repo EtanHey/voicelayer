@@ -23,7 +23,7 @@ final class PerformanceEffortSelectionTests: XCTestCase {
         let id = try XCTUnwrap(sentCommand?["id"] as? String)
         XCTAssertEqual(sentCommand?["cmd"] as? String, "set_whisper_effort")
         XCTAssertEqual(sentCommand?["effort"] as? String, "fast")
-        XCTAssertEqual(app.currentPerformanceEffort(), .accurate)
+        XCTAssertEqual(app.currentPerformanceEffort(), .fast)
         XCTAssertNil(UserDefaults.standard.string(forKey: "voicebar.performanceEffort"))
 
         app.voiceState.handleEvent([
@@ -36,6 +36,23 @@ final class PerformanceEffortSelectionTests: XCTestCase {
         XCTAssertEqual(app.currentPerformanceEffort(), .fast)
         XCTAssertEqual(UserDefaults.standard.string(forKey: "voicebar.performanceEffort"), "fast")
         XCTAssertNil(app.currentPerformanceEffortNotice())
+    }
+
+    func testEffortSelectionCommitsImmediatelyWithoutSecondClick() {
+        let app = AppDelegate()
+        var sentCommands: [[String: Any]] = []
+        app.voiceState.sendCommand = { sentCommands.append($0) }
+
+        app.selectPerformanceEffort(.fast)
+
+        XCTAssertEqual(app.currentPerformanceEffort(), .fast)
+        XCTAssertEqual(sentCommands.count, 1)
+
+        app.selectPerformanceEffort(.fast)
+
+        XCTAssertEqual(app.currentPerformanceEffort(), .fast)
+        XCTAssertEqual(sentCommands.count, 1)
+        XCTAssertNil(UserDefaults.standard.string(forKey: "voicebar.performanceEffort"))
     }
 
     func testRejectedEffortSelectionKeepsCurrentValueAndShowsNotice() throws {

@@ -207,6 +207,20 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, Theme.teleprompterViewportHeight + (Theme.panelPadding * 2))
     }
 
+    func testSpeakingTeleprompterPanelUsesFullPanelEnvelope() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .speaking,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "A long spoken sentence should wrap inside the teleprompter instead of clipping.",
+            queueItemCount: 1,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertLessThanOrEqual(Theme.teleprompterViewportWidth, Theme.speakingTeleprompterAvailableWidth)
+    }
+
     func testLongTranscriptPreviewIncludesIconAndPaddingChrome() {
         let previewText = "If we can make it that transcribing either never shows because it is just an unloading state, or shows fully."
         let layout = VoiceBarPanelLayout.make(

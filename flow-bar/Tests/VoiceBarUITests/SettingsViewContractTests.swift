@@ -10,24 +10,26 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("onSetPositionLocked"))
     }
 
-    func testDictionaryTabUsesOneCoherentDictionarySection() throws {
+    func testDictionaryTabUsesCanonicalCardSurface() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("Section(\"Dictionary\")"))
+        XCTAssertTrue(source.contains("dictionaryEntryCard"))
+        XCTAssertTrue(source.contains("variantChips"))
         XCTAssertFalse(source.contains("Section(\"Find\")"))
         XCTAssertFalse(source.contains("Section(\"Prompt Terms\")"))
+        XCTAssertFalse(source.contains("DisclosureGroup"))
     }
 
-    func testDictionaryAddFormAppearsBeforeCollapsibleCorrectionsList() throws {
+    func testDictionaryAddAndSearchAppearBeforeCanonicalCards() throws {
         let source = try settingsViewSource()
-        let editorRange = try XCTUnwrap(source.range(of: "correctionEditor"))
-        let disclosureRange = try XCTUnwrap(source.range(of: "DisclosureGroup"))
-        let searchRange = try XCTUnwrap(source.range(of: "TextField(\"Search corrections and terms\""))
-        let promptTermsRange = try XCTUnwrap(source.range(of: "promptTermsList"))
+        let addRange = try XCTUnwrap(source.range(of: "addTermRow"))
+        let searchRange = try XCTUnwrap(source.range(of: "searchRow"))
+        let cardRange = try XCTUnwrap(source.range(of: "dictionaryEntryCard"))
+        let addVariantRange = try XCTUnwrap(source.range(of: "addVariantInlineEditor"))
 
-        XCTAssertLessThan(editorRange.lowerBound, disclosureRange.lowerBound)
-        XCTAssertLessThan(disclosureRange.lowerBound, searchRange.lowerBound)
-        XCTAssertLessThan(disclosureRange.lowerBound, promptTermsRange.lowerBound)
+        XCTAssertLessThan(addRange.lowerBound, searchRange.lowerBound)
+        XCTAssertLessThan(searchRange.lowerBound, cardRange.lowerBound)
+        XCTAssertLessThan(cardRange.lowerBound, addVariantRange.lowerBound)
     }
 
     func testSettingsAnchorUsesOneToggleAndTopBottomPicker() throws {
@@ -49,14 +51,17 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
     }
 
-    func testGeneralTabShowsGranularPermissionAndKarabinerRows() throws {
+    func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Karabiner\")"))
-        XCTAssertTrue(source.contains("runKarabinerSetup"))
+        XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
+        XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
+        XCTAssertTrue(source.contains("runRelaySetup"))
+        XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
+        XCTAssertFalse(source.contains("Section(\"Karabiner\")"))
     }
 
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {

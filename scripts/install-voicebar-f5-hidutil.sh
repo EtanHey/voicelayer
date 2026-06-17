@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install VoiceBar's macOS F5/Dictation -> F18 hidutil relay.
+# Install VoiceBar's macOS Dictation-key -> F18 hidutil relay.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

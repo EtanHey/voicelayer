@@ -165,6 +165,62 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testHidutilMappingParserDetectsDictationToF18Relay() throws {
+        let mapping: [String: Any] = [
+            "UserKeyMapping": [
+                [
+                    "HIDKeyboardModifierMappingSrc": 51_539_607_759,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: mapping,
+            format: .xml,
+            options: 0
+        )
+
+        XCTAssertTrue(
+            AppDelegate.hidutilMappingContains(
+                data,
+                source: 51_539_607_759,
+                destination: 30_064_771_181
+            )
+        )
+        XCTAssertFalse(
+            AppDelegate.hidutilMappingContains(
+                data,
+                source: 30_064_771_134,
+                destination: 30_064_771_181
+            )
+        )
+    }
+
+    func testHidutilRelayMappingStatusFlagsStaleF5Relay() throws {
+        let mapping: [String: Any] = [
+            "UserKeyMapping": [
+                [
+                    "HIDKeyboardModifierMappingSrc": 51_539_607_759,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+                [
+                    "HIDKeyboardModifierMappingSrc": 30_064_771_134,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: mapping,
+            format: .xml,
+            options: 0
+        )
+
+        let status = AppDelegate.hidutilRelayMappingStatus(data)
+
+        XCTAssertTrue(status.dictationMappingActive)
+        XCTAssertTrue(status.staleF5MappingActive)
+    }
+
     func testBundleMetadataUsesSingleVoiceBarAppName() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -325,6 +381,7 @@ final class AppLifecycleTests: XCTestCase {
 
         let source = try String(contentsOf: sourceURL)
         XCTAssertTrue(source.contains("let commandKey: CGKeyCode = 0x37"))
+        XCTAssertTrue(source.contains("CGEventFlags.maskCommand.rawValue | 0x000008"))
         XCTAssertTrue(source.contains("commandDown.post(tap: .cghidEventTap)"))
         XCTAssertTrue(source.contains("commandUp.post(tap: .cghidEventTap)"))
 

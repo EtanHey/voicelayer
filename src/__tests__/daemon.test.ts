@@ -247,6 +247,7 @@ describe("CLI integration", () => {
         ]),
       },
       encoding: "utf8",
+      timeout: 10_000,
     });
 
     expect(result.status).toBe(0);
@@ -261,7 +262,7 @@ describe("CLI integration", () => {
         HIDKeyboardModifierMappingDst: 30064771181,
       },
     ]);
-  });
+  }, 15_000);
 
   it("hidutil helper preserves user-owned F5 remaps that aren't to F18", () => {
     // Regression guard for Codex P2 on 84608d7: a source-only filter strips

@@ -83,6 +83,8 @@ public struct TeleprompterWord: Equatable, Identifiable {
 }
 
 public enum TeleprompterContentModel {
+    public static let maxDisplayTokenLength = 24
+
     public static func words(
         text: String,
         wordBoundaries: [TeleprompterBoundary]
@@ -99,27 +101,55 @@ public enum TeleprompterContentModel {
             .filter { !$0.text.isEmpty }
 
         if !boundaryWords.isEmpty {
-            return boundaryWords.enumerated().map { index, word in
-                TeleprompterWord(
-                    id: index,
-                    text: word.text,
-                    offsetMs: word.offsetMs,
-                    durationMs: word.durationMs
-                )
-            }
+            return assignStableIDs(to: boundaryWords.flatMap(splitDisplayToken))
         }
 
-        return text
+        let textWords = text
             .split(separator: " ")
-            .enumerated()
-            .map { index, word in
+            .map { word in
                 TeleprompterWord(
-                    id: index,
+                    id: 0,
                     text: String(word),
                     offsetMs: nil,
                     durationMs: nil
                 )
             }
+            .flatMap(splitDisplayToken)
+        return assignStableIDs(to: textWords)
+    }
+
+    private static func assignStableIDs(to words: [TeleprompterWord]) -> [TeleprompterWord] {
+        words.enumerated().map { index, word in
+            TeleprompterWord(
+                id: index,
+                text: word.text,
+                offsetMs: word.offsetMs,
+                durationMs: word.durationMs
+            )
+        }
+    }
+
+    private static func splitDisplayToken(_ word: TeleprompterWord) -> [TeleprompterWord] {
+        guard word.text.count > maxDisplayTokenLength else { return [word] }
+        var chunks: [TeleprompterWord] = []
+        var start = word.text.startIndex
+        while start < word.text.endIndex {
+            let end = word.text.index(
+                start,
+                offsetBy: maxDisplayTokenLength,
+                limitedBy: word.text.endIndex
+            ) ?? word.text.endIndex
+            chunks.append(
+                TeleprompterWord(
+                    id: 0,
+                    text: String(word.text[start ..< end]),
+                    offsetMs: word.offsetMs,
+                    durationMs: word.durationMs
+                )
+            )
+            start = end
+        }
+        return chunks
     }
 }
 
@@ -158,23 +188,17 @@ public struct TeleprompterView: View {
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-
-                    FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
-                        wordViews
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                    Spacer(minLength: 0)
+                FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
+                    wordViews
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 4)
+                .padding(.vertical, Theme.teleprompterContentInset)
                 .frame(
                     maxWidth: .infinity,
                     minHeight: Theme.teleprompterViewportHeight,
                     alignment: .center
                 )
-                .padding(.horizontal, 4)
-                .padding(.vertical, Theme.teleprompterContentInset)
             }
             .clipped()
             .onAppear {
@@ -203,6 +227,9 @@ public struct TeleprompterView: View {
                     size: 16,
                     weight: word.id == currentIndex ? .bold : .medium
                 ))
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: Theme.teleprompterWrapWidth, alignment: .leading)
                 .foregroundStyle(
                     .white.opacity(opacityFor(word.id))
                 )

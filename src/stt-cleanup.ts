@@ -3,8 +3,11 @@ import { homedir } from "os";
 import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
 import {
+  canonicalTermsFromEntries,
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
+  vocabularyAliasesFromEntries,
+  type STTDictionaryEntry,
 } from "./stt-vocabulary-store";
 
 export interface STTCleanupEnv {
@@ -14,12 +17,8 @@ export interface STTCleanupEnv {
   QA_VOICE_STT_COMMANDS_DIR?: string;
 }
 
-interface STTVocabularyAlias {
-  from: string;
-  to: string;
-}
-
 interface STTVocabularySnapshot {
+  entries?: unknown;
   prompt_terms?: unknown;
   aliases?: unknown;
 }
@@ -187,6 +186,19 @@ function getVocabularySnapshotPath(env: STTCleanupEnv): string | null {
 function parseVocabularySnapshot(
   snapshot: STTVocabularySnapshot,
 ): Pick<LoadedVocabularySnapshot, "promptTerms" | "aliases"> {
+  if (Array.isArray(snapshot.entries)) {
+    const entries = parseDictionaryEntries(snapshot.entries);
+    const aliases = Object.fromEntries(
+      vocabularyAliasesFromEntries(entries)
+        .filter((alias) => !isUnsafeDynamicAliasSource(alias.from))
+        .map((alias) => [alias.from, alias.to]),
+    );
+    return {
+      promptTerms: canonicalTermsFromEntries(entries),
+      aliases,
+    };
+  }
+
   const promptTerms = Array.isArray(snapshot.prompt_terms)
     ? snapshot.prompt_terms.filter(
         (term): term is string =>
@@ -196,13 +208,8 @@ function parseVocabularySnapshot(
   const aliases: Record<string, string> = {};
   if (Array.isArray(snapshot.aliases)) {
     for (const alias of snapshot.aliases) {
-      if (
-        alias &&
-        typeof alias === "object" &&
-        "from" in alias &&
-        "to" in alias
-      ) {
-        const { from, to } = alias as Partial<STTVocabularyAlias>;
+      if (alias && typeof alias === "object" && "from" in alias && "to" in alias) {
+        const { from, to } = alias as Partial<{ from: string; to: string }>;
         if (typeof from === "string" && typeof to === "string") {
           const trimmedFrom = from.trim();
           const trimmedTo = to.trim();
@@ -218,6 +225,25 @@ function parseVocabularySnapshot(
     }
   }
   return { promptTerms, aliases };
+}
+
+function parseDictionaryEntries(values: unknown[]): STTDictionaryEntry[] {
+  const entries: STTDictionaryEntry[] = [];
+  for (const value of values) {
+    if (!value || typeof value !== "object") continue;
+    const { canonical, variants } = value as Partial<STTDictionaryEntry>;
+    if (typeof canonical !== "string" || canonical.trim() === "") continue;
+    entries.push({
+      canonical: canonical.trim(),
+      variants: Array.isArray(variants)
+        ? variants.filter(
+            (variant): variant is string =>
+              typeof variant === "string" && variant.trim() !== "",
+          ).map((variant) => variant.trim())
+        : [],
+    });
+  }
+  return entries;
 }
 
 function buildLoadedVocabularySnapshot(

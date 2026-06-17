@@ -6,6 +6,19 @@ public enum SettingsTab: Hashable {
     case dictionary
 }
 
+private enum DictEditorField: Hashable {
+    case search
+    case newTerm
+    case editTerm
+    case addVariant
+}
+
+private enum DictionaryCardLayout {
+    static let headerHeight: CGFloat = 24
+    static let inlineControlHeight: CGFloat = 28
+    static let inlineFieldVerticalPadding: CGFloat = 5
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -24,18 +37,23 @@ public struct SettingsView: View {
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
     public let isMicrophonePermissionGranted: () -> Bool
-    public let onRunKarabinerSetup: () -> Void
+    public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
     @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
-    @State private var correctionsExpanded = true
     @State private var dictionarySearch = ""
-    @State private var selectedAlias: STTVocabularyAliasPreview?
-    @State private var correctText = ""
-    @State private var wrongText = ""
+    @State private var localEntries: [STTDictionaryEntry]
+    @State private var editingCanonical: String?
+    @State private var editTermText = ""
+    @State private var addingVariantFor: String?
+    @State private var variantText = ""
+    @State private var pendingDeleteCanonical: String?
     @State private var newTermText = ""
+    @State private var relaySetupFeedback: String?
+    @State private var relaySetupRunning = false
+    @FocusState private var focusedEditorField: DictEditorField?
 
     public init(
         hotkeyEnabled: Bool,
@@ -57,7 +75,9 @@ public struct SettingsView: View {
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
-        onRunKarabinerSetup: @escaping () -> Void = {},
+        onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
+            completion("Relay setup requested.")
+        },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -77,12 +97,14 @@ public struct SettingsView: View {
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
-        self.onRunKarabinerSetup = onRunKarabinerSetup
+        self.onRunRelaySetup = onRunRelaySetup
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
+        let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
+        _localEntries = State(initialValue: initialVocabulary.entries)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -104,13 +126,16 @@ public struct SettingsView: View {
         }
         .frame(width: 520, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))
+        .onChange(of: vocabularyPreview()) { _, preview in
+            reconcileLocalEntries(with: preview.entries)
+        }
     }
 
     // MARK: - General Tab
 
     private var generalTab: some View {
         Form {
-            Section("Hotkey") {
+            Section("Permissions & Hotkey Setup") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -127,31 +152,30 @@ public struct SettingsView: View {
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(hotkeyEnabled ? .green : .orange)
+                            .fill(hotkeyEnabled ? .green : .red)
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
                 }
-                let permissions = effectiveMissingPermissions
-                if !permissions.isEmpty {
-                    ForEach(permissions, id: \.label) { permission in
-                        permissionRow(permission)
+
+                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+
+                LabeledContent("Relay (hidutil LaunchAgent)") {
+                    HStack(spacing: 8) {
+                        statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
+                        Button("Set up") {
+                            runRelaySetup()
+                        }
+                        .disabled(relaySetupRunning)
                     }
                 }
-            }
 
-            Section("Karabiner") {
-                LabeledContent("F5 relay") {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(isHotkeyRemapActive() ? .green : .orange)
-                            .frame(width: 8, height: 8)
-                        Text(isHotkeyRemapActive() ? "Installed" : "Not installed")
-                            .foregroundStyle(.secondary)
-                        Button("Set up") {
-                            runKarabinerSetup()
-                        }
-                    }
+                if let relaySetupFeedback {
+                    Text(relaySetupFeedback)
+                        .font(.caption)
+                        .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                 }
             }
 
@@ -236,6 +260,7 @@ public struct SettingsView: View {
                 Picker("Effort", selection: Binding(
                     get: { selectedPerformanceEffort },
                     set: { effort in
+                        selectedPerformanceEffort = effort
                         onSelectPerformanceEffort(effort)
                     }
                 )) {
@@ -257,90 +282,242 @@ public struct SettingsView: View {
     // MARK: - Dictionary Tab
 
     private var dictionaryTab: some View {
-        Form {
-            Section("Dictionary") {
-                correctionEditor
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                addTermRow
+                searchRow
 
-                Divider()
-                    .padding(.vertical, 6)
-
-                DisclosureGroup(isExpanded: $correctionsExpanded) {
-                    correctionsList
-                } label: {
-                    Text("Corrections")
+                ForEach(localVocabularyPreview.filteredEntries(matching: dictionarySearch), id: \.canonical) { entry in
+                    dictionaryEntryCard(entry)
                 }
-
-                Divider()
-                    .padding(.vertical, 6)
-
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search corrections and terms", text: $dictionarySearch)
-                        .textFieldStyle(.plain)
-                }
-                .dictionaryTextField()
-
-                promptTermsList
             }
-        }
-        .formStyle(.grouped)
-    }
-
-    @ViewBuilder
-    private var correctionsList: some View {
-        let aliases = vocabularyPreview().filteredAliases(matching: dictionarySearch)
-        if aliases.isEmpty {
-            Text("No corrections yet — add one above.")
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(aliases, id: \.self) { alias in
-                correctionRow(alias)
-            }
+            .padding(18)
         }
     }
 
-    private var promptTermAddRow: some View {
+    private var addTermRow: some View {
         HStack(spacing: 8) {
-            TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
-                .textFieldStyle(.plain)
-                .onSubmit(commitNewPromptTerm)
-                .dictionaryTextField()
-            Button(action: commitNewPromptTerm) {
+            HStack {
+                TextField("Add a term, e.g. VoiceLayer", text: $newTermText)
+                    .dictionaryTextField()
+                    .focused($focusedEditorField, equals: .newTerm)
+                    .onSubmit(commitNewTerm)
+            }
+            .dictionaryFieldContainer()
+            .contentShape(Rectangle())
+            .onTapGesture {
+                focusedEditorField = .newTerm
+            }
+            Button(action: commitNewTerm) {
                 Image(systemName: "plus.circle.fill")
             }
             .buttonStyle(.borderless)
             .disabled(newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .help("Add term")
-            .accessibilityLabel("Add prompt term")
+            .accessibilityLabel("Add term")
         }
     }
 
-    private func promptTermRow(_ term: String) -> some View {
-        HStack {
-            Text(term)
-            Spacer()
-            deletePromptTermButton(term)
+    private var searchRow: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search terms and variants", text: $dictionarySearch)
+                .dictionaryTextField()
+                .focused($focusedEditorField, equals: .search)
+        }
+        .dictionaryFieldContainer()
+        .contentShape(Rectangle())
+        .onTapGesture {
+            focusedEditorField = .search
         }
     }
 
-    private func deletePromptTermButton(_ term: String) -> some View {
+    private func dictionaryEntryCard(_ entry: STTDictionaryEntry) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            dictionaryEntryHeader(entry)
+            Divider()
+            variantChips(entry)
+            if addingVariantFor == entry.canonical {
+                addVariantInlineEditor(entry)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func dictionaryEntryHeader(_ entry: STTDictionaryEntry) -> some View {
+        if editingCanonical == entry.canonical {
+            HStack(spacing: 8) {
+                TextField("Term", text: $editTermText)
+                    .dictionaryTextField()
+                    .focused($focusedEditorField, equals: .editTerm)
+                    .onSubmit { saveTermRename(entry.canonical) }
+                    .frame(maxWidth: .infinity)
+                Button("Cancel") {
+                    cancelTermRename()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .frame(height: DictionaryCardLayout.headerHeight)
+                Button("Save") {
+                    saveTermRename(entry.canonical)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .frame(height: DictionaryCardLayout.headerHeight)
+                .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .frame(minHeight: DictionaryCardLayout.headerHeight)
+        } else {
+            HStack(spacing: 8) {
+                Text(entry.canonical)
+                    .font(.headline)
+                Spacer()
+                if pendingDeleteCanonical == entry.canonical {
+                    deleteDictionaryEntryButton(entry.canonical)
+                } else {
+                    Button {
+                        beginTermRename(entry.canonical)
+                    } label: {
+                        Image(systemName: "pencil")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Edit term")
+                    .accessibilityLabel("Edit term \(entry.canonical)")
+                    deleteDictionaryEntryButton(entry.canonical)
+                }
+            }
+            .frame(minHeight: DictionaryCardLayout.headerHeight)
+        }
+    }
+
+    private func variantChips(_ entry: STTDictionaryEntry) -> some View {
+        FlowLayout(spacing: 8) {
+            ForEach(entry.variants, id: \.self) { variant in
+                HStack(spacing: 6) {
+                    Text(variant)
+                    Button {
+                        SettingsDictionaryMutations.removeVariant(
+                            canonical: entry.canonical,
+                            variant: variant,
+                            localEntries: &localEntries,
+                            onRemoveVocabularyAlias: onRemoveVocabularyAlias
+                        )
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Remove variant \(variant)")
+                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(Color(nsColor: .quaternaryLabelColor).opacity(0.24))
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+            }
+            addVariantButton(entry.canonical)
+        }
+    }
+
+    private func addVariantButton(_ canonical: String) -> some View {
         Button {
-            onRemovePromptTerm(term)
+            addingVariantFor = canonical
+            variantText = ""
+            focusedEditorField = .addVariant
         } label: {
-            Image(systemName: "trash")
+            Text("+ add misheard variant")
+                .padding(.vertical, 5)
         }
         .buttonStyle(.borderless)
-        .foregroundStyle(.red)
-        .help("Delete term")
-        .accessibilityLabel("Delete term \(term)")
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Add misheard variant for \(canonical)")
     }
 
-    private func commitNewPromptTerm() {
-        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        onAddPromptTerm(trimmed)
-        newTermText = ""
+    private func addVariantInlineEditor(_ entry: STTDictionaryEntry) -> some View {
+        HStack(spacing: 8) {
+            TextField("Type the misheard spelling...", text: $variantText)
+                .dictionaryTextField()
+                .focused($focusedEditorField, equals: .addVariant)
+                .onSubmit { saveVariant(entry.canonical) }
+                .padding(.vertical, DictionaryCardLayout.inlineFieldVerticalPadding)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(addVariantInputFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: DictionaryCardLayout.inlineControlHeight)
+            Button("Cancel") {
+                addingVariantFor = nil
+                variantText = ""
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.inlineControlHeight)
+            Button("Add") {
+                saveVariant(entry.canonical)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.inlineControlHeight)
+            .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+    }
+
+    @ViewBuilder
+    private func deleteDictionaryEntryButton(_ canonical: String) -> some View {
+        if pendingDeleteCanonical == canonical {
+            Button("Cancel") {
+                pendingDeleteCanonical = nil
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.headerHeight)
+            Button("Delete?", role: .destructive) {
+                SettingsDictionaryMutations.confirmDeleteTerm(
+                    canonical,
+                    pendingDeleteCanonical: &pendingDeleteCanonical,
+                    localEntries: &localEntries,
+                    onRemovePromptTerm: onRemovePromptTerm
+                )
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .frame(height: DictionaryCardLayout.headerHeight)
+            .tint(.red)
+        } else {
+            Button {
+                SettingsDictionaryMutations.requestDeleteTerm(
+                    canonical,
+                    pendingDeleteCanonical: &pendingDeleteCanonical
+                )
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.red)
+            .help("Delete term")
+            .accessibilityLabel("Delete term \(canonical)")
+        }
+    }
+
+    private func commitNewTerm() {
+        SettingsDictionaryMutations.commitNewTerm(
+            newTermText: &newTermText,
+            localEntries: &localEntries,
+            onAddPromptTerm: onAddPromptTerm
+        )
     }
 
     // MARK: - Helpers
@@ -357,14 +534,6 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private var effectiveMissingPermissions: [HotkeyPermission] {
-        var permissions = missingPermissions
-        if !isMicrophonePermissionGranted(), !permissions.contains(.microphone) {
-            permissions.append(.microphone)
-        }
-        return permissions
-    }
-
     private var positionModeDescription: String {
         switch selectedAnchorMode {
         case .follow:
@@ -376,11 +545,24 @@ public struct SettingsView: View {
         }
     }
 
-    private func permissionRow(_ permission: HotkeyPermission) -> some View {
+    private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
         LabeledContent(permission.label) {
-            Button("Open") {
-                openPermissionSettings(permission)
+            HStack(spacing: 8) {
+                statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
+                Button("Open") {
+                    openPermissionSettings(permission)
+                }
             }
+        }
+    }
+
+    private func statusBadge(_ text: String, isReady: Bool) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isReady ? .green : .red)
+                .frame(width: 8, height: 8)
+            Text(text)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -390,8 +572,14 @@ public struct SettingsView: View {
         }
     }
 
-    private func runKarabinerSetup() {
-        onRunKarabinerSetup()
+    private func runRelaySetup() {
+        guard !relaySetupRunning else { return }
+        relaySetupRunning = true
+        relaySetupFeedback = "Setting up relay..."
+        onRunRelaySetup { feedback in
+            relaySetupFeedback = feedback
+            relaySetupRunning = false
+        }
     }
 
     private func performanceEffortLabel(_ effort: VoiceBarPerformanceEffort) -> String {
@@ -405,124 +593,57 @@ public struct SettingsView: View {
         }
     }
 
-    private var currentDraft: STTVocabularyDraft {
-        STTVocabularyDraft(
-            correct: correctText,
-            wrong: wrongText
+    private var localVocabularyPreview: STTVocabularyPreview {
+        STTVocabularyPreview(updatedAt: nil, entries: localEntries)
+    }
+
+    private var hasPendingDictionaryEdit: Bool {
+        editingCanonical != nil ||
+            addingVariantFor != nil ||
+            pendingDeleteCanonical != nil ||
+            !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func reconcileLocalEntries(with entries: [STTDictionaryEntry]) {
+        guard !hasPendingDictionaryEdit else { return }
+        localEntries = entries
+    }
+
+    private func beginTermRename(_ canonical: String) {
+        editingCanonical = canonical
+        editTermText = canonical
+        pendingDeleteCanonical = nil
+        focusedEditorField = .editTerm
+    }
+
+    private func cancelTermRename() {
+        editingCanonical = nil
+        editTermText = ""
+        focusedEditorField = nil
+    }
+
+    private func saveTermRename(_ canonical: String) {
+        SettingsDictionaryMutations.renameTerm(
+            canonical,
+            editText: &editTermText,
+            localEntries: &localEntries,
+            onAddPromptTerm: onAddPromptTerm,
+            onRemovePromptTerm: onRemovePromptTerm,
+            onAddVocabularyAlias: onAddVocabularyAlias
         )
+        editingCanonical = nil
+        focusedEditorField = nil
     }
 
-    /// Leading label column width shared by the two editor rows.
-    private static let editorLabelWidth: CGFloat = 92
-
-    private var correctionEditor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            // Explicit leading labels instead of LabeledContent: the grouped
-            // Form right-aligns LabeledContent values, which reads wrong once
-            // the fields have visible borders.
-            HStack(spacing: 8) {
-                Text("Correct")
-                    .frame(width: Self.editorLabelWidth, alignment: .leading)
-                TextField("Intended text", text: $correctText)
-                    .textFieldStyle(.plain)
-                    .dictionaryTextField()
-            }
-            HStack(spacing: 8) {
-                Text("Transcribed")
-                    .frame(width: Self.editorLabelWidth, alignment: .leading)
-                TextField("Misheard text", text: $wrongText)
-                    .textFieldStyle(.plain)
-                    .dictionaryTextField()
-                Button("⇄") {
-                    swap(&correctText, &wrongText)
-                }
-                .help("Swap correct and transcribed text")
-            }
-            HStack {
-                if let selectedAlias {
-                    Button("Delete") {
-                        onRemoveVocabularyAlias(selectedAlias)
-                        clearCorrectionEditor()
-                    }
-                }
-                Spacer()
-                Button(selectedAlias == nil ? "Add" : "Save") {
-                    saveCorrection()
-                }
-                .disabled(!currentDraft.canSaveAlias)
-            }
-        }
-    }
-
-    private var promptTermsList: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Prompt Terms")
-                .font(.headline)
-
-            promptTermAddRow
-
-            let terms = vocabularyPreview().filteredPromptTerms(matching: dictionarySearch)
-            if terms.isEmpty {
-                Text("No prompt terms yet — terms bias transcription toward your vocabulary.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(terms, id: \.self) { term in
-                    promptTermRow(term)
-                }
-            }
-        }
-    }
-
-    private func correctionRow(_ alias: STTVocabularyAliasPreview) -> some View {
-        HStack(spacing: 8) {
-            Text(alias.from)
-                .foregroundStyle(.secondary)
-            Image(systemName: "arrow.right")
-                .foregroundStyle(.secondary)
-            Text(alias.to)
-            Spacer()
-            Button {
-                beginEditing(alias)
-            } label: {
-                Image(systemName: "pencil")
-            }
-            .buttonStyle(.borderless)
-            .help("Edit correction")
-            .accessibilityLabel("Edit correction \(alias.from)")
-            deleteCorrectionButton(alias)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture {
-            beginEditing(alias)
-        }
-    }
-
-    private func deleteCorrectionButton(_ alias: STTVocabularyAliasPreview) -> some View {
-        Button {
-            onRemoveVocabularyAlias(alias)
-            if selectedAlias == alias {
-                clearCorrectionEditor()
-            }
-        } label: {
-            Image(systemName: "trash")
-        }
-        .buttonStyle(.borderless)
-        .foregroundStyle(.red)
-        .help("Delete correction")
-        .accessibilityLabel("Delete correction \(alias.from)")
-    }
-
-    private func beginEditing(_ alias: STTVocabularyAliasPreview) {
-        correctionsExpanded = true
-        selectedAlias = alias
-        correctText = alias.to
-        wrongText = alias.from
-    }
-
-    private func clearCorrectionEditor() {
-        selectedAlias = nil
-        correctText = ""
-        wrongText = ""
+    private func saveVariant(_ canonical: String) {
+        SettingsDictionaryMutations.addVariant(
+            canonical: canonical,
+            variantText: &variantText,
+            addingVariantFor: &addingVariantFor,
+            localEntries: &localEntries,
+            onAddVocabularyAlias: onAddVocabularyAlias
+        )
+        focusedEditorField = nil
     }
 
     private func selectAnchorMode(_ mode: VoiceBarAnchorMode) {
@@ -533,17 +654,136 @@ public struct SettingsView: View {
         onSelectAnchorMode(mode)
     }
 
-    private func saveCorrection() {
-        let draft = currentDraft
-        guard draft.canSaveAlias else { return }
-        if let selectedAlias {
-            onRemoveVocabularyAlias(selectedAlias)
+    private var addVariantInputFill: Color {
+        Color(red: 31 / 255, green: 39 / 255, blue: 51 / 255)
+    }
+}
+
+enum SettingsDictionaryMutations {
+    static func commitNewTerm(
+        newTermText: inout String,
+        localEntries: inout [STTDictionaryEntry],
+        onAddPromptTerm: (String) -> Void
+    ) {
+        let trimmed = newTermText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        upsertEntry(trimmed, in: &localEntries)
+        onAddPromptTerm(trimmed)
+        newTermText = ""
+    }
+
+    static func renameTerm(
+        _ canonical: String,
+        editText: inout String,
+        localEntries: inout [STTDictionaryEntry],
+        onAddPromptTerm: (String) -> Void,
+        onRemovePromptTerm: (String) -> Void,
+        onAddVocabularyAlias: (String, String) -> Void
+    ) {
+        let trimmed = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else {
+            return
         }
-        onAddVocabularyAlias(
-            draft.trimmedCorrect,
-            draft.trimmedWrong
-        )
-        clearCorrectionEditor()
+        guard localEntries[index].canonical.localizedCaseInsensitiveCompare(trimmed) != .orderedSame else {
+            editText = ""
+            return
+        }
+        let variants = localEntries[index].variants
+        if let existingIndex = localEntries.firstIndex(where: {
+            $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            let targetCanonical = localEntries[existingIndex].canonical
+            for variant in variants where !localEntries[existingIndex].variants.contains(variant) {
+                localEntries[existingIndex].variants.append(variant)
+            }
+            localEntries.remove(at: index)
+            for variant in variants {
+                onAddVocabularyAlias(targetCanonical, variant)
+            }
+            onRemovePromptTerm(canonical)
+            editText = ""
+            return
+        }
+        localEntries[index] = STTDictionaryEntry(canonical: trimmed, variants: variants)
+        onAddPromptTerm(trimmed)
+        for variant in variants {
+            onAddVocabularyAlias(trimmed, variant)
+        }
+        onRemovePromptTerm(canonical)
+        editText = ""
+    }
+
+    static func requestDeleteTerm(
+        _ canonical: String,
+        pendingDeleteCanonical: inout String?
+    ) {
+        pendingDeleteCanonical = canonical
+    }
+
+    static func confirmDeleteTerm(
+        _ canonical: String,
+        pendingDeleteCanonical: inout String?,
+        localEntries: inout [STTDictionaryEntry],
+        onRemovePromptTerm: (String) -> Void
+    ) {
+        guard pendingDeleteCanonical == canonical else { return }
+        localEntries.removeAll { $0.canonical == canonical }
+        onRemovePromptTerm(canonical)
+        pendingDeleteCanonical = nil
+    }
+
+    static func addVariant(
+        canonical: String,
+        variantText: inout String,
+        addingVariantFor: inout String?,
+        localEntries: inout [STTDictionaryEntry],
+        onAddVocabularyAlias: (String, String) -> Void
+    ) {
+        let trimmed = variantText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        upsertEntry(canonical, in: &localEntries)
+        guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
+        guard aliasKey(trimmed) != aliasKey(localEntries[index].canonical) else {
+            variantText = ""
+            addingVariantFor = nil
+            return
+        }
+        if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
+            localEntries[index].variants.append(trimmed)
+            onAddVocabularyAlias(canonical, trimmed)
+        }
+        variantText = ""
+        addingVariantFor = nil
+    }
+
+    static func removeVariant(
+        canonical: String,
+        variant: String,
+        localEntries: inout [STTDictionaryEntry],
+        onRemoveVocabularyAlias: (STTVocabularyAliasPreview) -> Void
+    ) {
+        guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
+        localEntries[index].variants.removeAll { $0 == variant }
+        onRemoveVocabularyAlias(STTVocabularyAliasPreview(from: variant, to: canonical))
+    }
+
+    private static func upsertEntry(_ canonical: String, in entries: inout [STTDictionaryEntry]) {
+        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(canonical) == .orderedSame })
+        else {
+            return
+        }
+        entries.append(STTDictionaryEntry(canonical: canonical, variants: []))
+    }
+
+    private static func aliasKey(_ value: String) -> String {
+        value.lowercased().unicodeScalars.reduce(into: "") { result, scalar in
+            switch scalar.value {
+            case 48 ... 57, 97 ... 122:
+                result.unicodeScalars.append(scalar)
+            default:
+                break
+            }
+        }
     }
 }
 

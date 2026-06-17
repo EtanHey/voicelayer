@@ -237,7 +237,15 @@ export function handleSocketCommand(
       return buildAck(command, "accept");
     case "vocab_add":
       try {
-        addAlias({ from: command.from, to: command.to });
+        const result = addAlias({ from: command.from, to: command.to });
+        const collisionReason = vocabularyCollisionReason(
+          result.warnings,
+          command.from,
+          "alias",
+        );
+        if (collisionReason) {
+          return buildAck(command, "reject", collisionReason);
+        }
         return buildAck(command, "accept");
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
@@ -264,7 +272,15 @@ export function handleSocketCommand(
     }
     case "vocab_add_term":
       try {
-        addPromptTerm(command.term);
+        const result = addPromptTerm(command.term);
+        const collisionReason = vocabularyCollisionReason(
+          result.warnings,
+          command.term,
+          "term",
+        );
+        if (collisionReason) {
+          return buildAck(command, "reject", collisionReason);
+        }
         return buildAck(command, "accept");
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
@@ -297,6 +313,22 @@ export function handleSocketCommand(
 
 function vocabularyErrorReason(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function vocabularyCollisionReason(
+  warnings: { code: string; existing: string }[] | undefined,
+  submitted: string,
+  mode: "alias" | "term",
+): string | null {
+  const collision = warnings?.find(
+    (warning) => warning.code === "dictionary_alias_collision",
+  );
+  if (!collision) return null;
+  const trimmed = submitted.trim();
+  if (mode === "alias") {
+    return `${trimmed} is already a canonical term: ${collision.existing}`;
+  }
+  return `${trimmed} is already a variant of ${collision.existing}`;
 }
 
 function buildAck(

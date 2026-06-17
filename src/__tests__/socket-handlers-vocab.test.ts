@@ -54,8 +54,8 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "vocab-add-1",
     });
-    expect(listVocabulary({ path: vocabPath }).aliases).toEqual([
-      { from: "domekin", to: "Domica" },
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "Domica", variants: ["domekin"] },
     ]);
   });
 
@@ -76,6 +76,28 @@ describe("socket vocabulary commands", () => {
     });
   });
 
+  it("rejects aliases that collide with an existing canonical and explains why", () => {
+    addPromptTerm("VoiceLayer", { path: vocabPath });
+
+    const response = handleSocketCommand({
+      cmd: "vocab_add",
+      id: "vocab-add-collision",
+      from: "voice layer",
+      to: "VoiceBar",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "vocab_add",
+      outcome: "reject",
+      id: "vocab-add-collision",
+      reason: "voice layer is already a canonical term: VoiceLayer",
+    });
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: [] },
+    ]);
+  });
+
   it("lists the current vocabulary snapshot", () => {
     addPromptTerm("Domica", { path: vocabPath });
     addAlias({ from: "domekin", to: "Domica" }, { path: vocabPath });
@@ -89,8 +111,7 @@ describe("socket vocabulary commands", () => {
       type: "vocab_list",
       id: "vocab-list-1",
       updated_at: expect.any(String),
-      prompt_terms: ["Domica"],
-      aliases: [{ from: "domekin", to: "Domica" }],
+      entries: [{ canonical: "Domica", variants: ["domekin"] }],
     });
   });
 
@@ -137,8 +158,8 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "term-add-1",
     });
-    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([
-      "VoiceLayer",
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: [] },
     ]);
   });
 
@@ -157,6 +178,27 @@ describe("socket vocabulary commands", () => {
     });
   });
 
+  it("rejects prompt terms that collide with an existing variant and explains why", () => {
+    addAlias({ from: "voicelair", to: "VoiceLayer" }, { path: vocabPath });
+
+    const response = handleSocketCommand({
+      cmd: "vocab_add_term",
+      id: "term-add-collision",
+      term: "Voice Lair",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "vocab_add_term",
+      outcome: "reject",
+      id: "term-add-collision",
+      reason: "Voice Lair is already a variant of VoiceLayer",
+    });
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: ["voicelair"] },
+    ]);
+  });
+
   it("removes a prompt term and returns noop when it is already absent", () => {
     addPromptTerm("VoiceLayer", { path: vocabPath });
 
@@ -172,7 +214,7 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "term-remove-1",
     });
-    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([]);
     expect(
       handleSocketCommand({
         cmd: "vocab_remove_term",

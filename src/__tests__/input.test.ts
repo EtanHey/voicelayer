@@ -48,6 +48,7 @@ describe("input module", () => {
   let savedRecordingStatePath: string | undefined;
   let savedRetainedRecordingPathForSuite: string | undefined;
   let savedControlLayerDisable: string | undefined;
+  let savedVocabularyPath: string | undefined;
 
   beforeEach(() => {
     savedRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
@@ -55,6 +56,7 @@ describe("input module", () => {
       process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedControlLayerDisable =
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    savedVocabularyPath = process.env.QA_VOICE_STT_VOCABULARY_PATH;
     testStateRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-test-"));
     process.env.QA_VOICE_RECORDING_STATE_PATH = join(
       testStateRoot,
@@ -65,6 +67,7 @@ describe("input module", () => {
       "last-recording.wav",
     );
     process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
+    process.env.QA_VOICE_STT_VOCABULARY_PATH = "";
   });
 
   afterEach(() => {
@@ -85,6 +88,11 @@ describe("input module", () => {
     } else {
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL =
         savedControlLayerDisable;
+    }
+    if (savedVocabularyPath === undefined) {
+      delete process.env.QA_VOICE_STT_VOCABULARY_PATH;
+    } else {
+      process.env.QA_VOICE_STT_VOCABULARY_PATH = savedVocabularyPath;
     }
   });
 

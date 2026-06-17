@@ -40,4 +40,15 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(words.map(\.text), ["three", "visible", "lines"])
         XCTAssertEqual(words.map(\.offsetMs), [nil, nil, nil])
     }
+
+    func testSplitsLongUnspacedTokensSoTheyCanWrapInsideViewport() {
+        let words = TeleprompterContentModel.words(
+            text: "SupercalifragilisticexpialidociousShouldNotClip",
+            wordBoundaries: []
+        )
+
+        XCTAssertGreaterThan(words.count, 1)
+        XCTAssertEqual(words.map(\.text).joined(), "SupercalifragilisticexpialidociousShouldNotClip")
+        XCTAssertTrue(words.allSatisfy { $0.text.count <= TeleprompterContentModel.maxDisplayTokenLength })
+    }
 }

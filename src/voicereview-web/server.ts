@@ -2269,10 +2269,7 @@ async function loadVocabularyPrompt(path: string): Promise<string> {
   try {
     const raw = await readFile(path, "utf8");
     const parsed = JSON.parse(raw);
-    const terms =
-      isRecord(parsed) && Array.isArray(parsed.prompt_terms)
-        ? parsed.prompt_terms
-        : [];
+    const terms = vocabularyPromptTerms(parsed);
     return buildWhisperPrompt(terms, 224);
   } catch {
     return buildWhisperPrompt(
@@ -2280,6 +2277,22 @@ async function loadVocabularyPrompt(path: string): Promise<string> {
       224,
     );
   }
+}
+
+function vocabularyPromptTerms(parsed: unknown): string[] {
+  if (!isRecord(parsed)) return [];
+  if (Array.isArray(parsed.entries)) {
+    return parsed.entries
+      .map((entry) =>
+        isRecord(entry) && typeof entry.canonical === "string"
+          ? entry.canonical
+          : "",
+      )
+      .filter((term) => term.trim() !== "");
+  }
+  return Array.isArray(parsed.prompt_terms)
+    ? parsed.prompt_terms.filter((term): term is string => typeof term === "string")
+    : [];
 }
 
 function flattenFlagBatch(raw: unknown): ReviewCluster[] {

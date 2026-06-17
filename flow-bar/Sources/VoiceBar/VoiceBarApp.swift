@@ -18,6 +18,30 @@ import VoiceBarUI
 
 private let legacySocketHotkeyDuplicateWindow: TimeInterval = 0.75
 private let launchExternalStartCommandGraceWindow: TimeInterval = 5.0
+private let f5HIDMappingSource = 30_064_771_134
+private let dictationHIDMappingSource = 51_539_607_759
+private let f18HIDMappingDestination = 30_064_771_181
+
+private struct RelaySetupStatus {
+    var launchAgentInstalled: Bool
+    var launchAgentLoaded: Bool
+    var dictationMappingActive: Bool
+    var staleF5MappingActive: Bool
+
+    var isReady: Bool {
+        launchAgentInstalled && launchAgentLoaded && dictationMappingActive && !staleF5MappingActive
+    }
+
+    var summary: String {
+        if isReady { return "Relay ready: LaunchAgent loaded and Dictation maps to F18." }
+        var missing: [String] = []
+        if !launchAgentInstalled { missing.append("LaunchAgent plist missing") }
+        if !launchAgentLoaded { missing.append("LaunchAgent not loaded") }
+        if !dictationMappingActive { missing.append("Dictation to F18 mapping missing") }
+        if staleF5MappingActive { missing.append("stale F5 to F18 mapping still active") }
+        return "Relay needs attention: \(missing.joined(separator: ", "))."
+    }
+}
 
 // MARK: - App Delegate
 
@@ -101,8 +125,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var performanceEffort: VoiceBarPerformanceEffort = .accurate
     private var pendingPerformanceEffortID: String?
     private var pendingPerformanceEffort: VoiceBarPerformanceEffort?
+    private var pendingPerformanceEffortPrevious: VoiceBarPerformanceEffort?
     private var performanceEffortNotice: String?
     private var performanceEffortNoticeTask: Task<Void, Never>?
+    private lazy var cachedRelaySetupStatus = RelaySetupStatus(
+        launchAgentInstalled: relayLaunchAgentInstalled(),
+        launchAgentLoaded: false,
+        dictationMappingActive: false,
+        staleF5MappingActive: false
+    )
+    private var relaySetupStatusRefreshInFlight = false
+    private var relaySetupInFlight = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -479,8 +512,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("[VoiceBar] simulatePaste: failed to create CGEvent")
             return false
         }
-        vDown.flags = .maskCommand
-        vUp.flags = .maskCommand
+        let pasteFlags = CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x000008)
+        vDown.flags = pasteFlags
+        vUp.flags = pasteFlags
         commandDown.post(tap: .cghidEventTap)
         vDown.post(tap: .cghidEventTap)
         vUp.post(tap: .cghidEventTap)
@@ -891,8 +925,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let id = UUID().uuidString
+        let previousEffort = performanceEffort
+        performanceEffort = effort
         pendingPerformanceEffortID = id
         pendingPerformanceEffort = effort
+        pendingPerformanceEffortPrevious = previousEffort
         clearPerformanceEffortNotice()
         sendCommand([
             "cmd": "set_whisper_effort",
@@ -910,10 +947,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let effort = pendingPerformanceEffort
+        let previousEffort = pendingPerformanceEffortPrevious
         pendingPerformanceEffortID = nil
         pendingPerformanceEffort = nil
+        pendingPerformanceEffortPrevious = nil
 
         guard ack.outcome == .accept, let effort else {
+            if let previousEffort {
+                performanceEffort = previousEffort
+            }
             rejectPendingPerformanceEffort(reason: ack.reason)
             return
         }
@@ -967,22 +1009,188 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    private func runKarabinerSetup() {
+    private func runRelaySetup() -> (message: String, status: RelaySetupStatus) {
         guard let scriptURL = Bundle.main.resourceURL?
             .appendingPathComponent("scripts")
             .appendingPathComponent("install-voicebar-f5-hidutil.sh")
         else {
-            NSLog("[VoiceBar] Karabiner setup script not bundled")
-            return
+            NSLog("[VoiceBar] Relay setup script not bundled")
+            return (
+                "Relay setup failed: bundled installer script not found.",
+                currentRelaySetupStatus()
+            )
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
         process.arguments = [scriptURL.path]
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
         do {
             try process.run()
+            process.waitUntilExit()
         } catch {
-            NSLog("[VoiceBar] Failed to run Karabiner setup: %@", String(describing: error))
+            NSLog("[VoiceBar] Failed to run relay setup: %@", String(describing: error))
+            return (
+                "Relay setup failed: \(error.localizedDescription)",
+                currentRelaySetupStatus()
+            )
         }
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: outputData, encoding: .utf8) ?? ""
+        let status = currentRelaySetupStatus()
+        NSLog(
+            "[VoiceBar] Relay setup finished exit=%d status=%@ output=%@",
+            process.terminationStatus,
+            status.summary,
+            output
+        )
+        guard process.terminationStatus == 0 else {
+            return (
+                "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))",
+                status
+            )
+        }
+        return (status.summary, status)
+    }
+
+    private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+        guard !relaySetupInFlight else {
+            completion("Relay setup is already running.")
+            return
+        }
+        relaySetupInFlight = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else {
+                DispatchQueue.main.async {
+                    completion("Relay setup failed: VoiceBar is not available.")
+                }
+                return
+            }
+            let result = runRelaySetup()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    completion(result.message)
+                    return
+                }
+                cachedRelaySetupStatus = result.status
+                relaySetupInFlight = false
+                completion(result.message)
+            }
+        }
+    }
+
+    private func refreshRelaySetupStatusAsync() {
+        guard !relaySetupStatusRefreshInFlight else { return }
+        relaySetupStatusRefreshInFlight = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            let status = currentRelaySetupStatus()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                cachedRelaySetupStatus = status
+                relaySetupStatusRefreshInFlight = false
+                if !relaySetupInFlight {
+                    refreshSettingsWindowAnchorState()
+                }
+            }
+        }
+    }
+
+    private func currentRelaySetupStatus() -> RelaySetupStatus {
+        let mappingStatus = relayMappingStatus()
+        return RelaySetupStatus(
+            launchAgentInstalled: relayLaunchAgentInstalled(),
+            launchAgentLoaded: relayLaunchAgentLoaded(),
+            dictationMappingActive: mappingStatus.dictationMappingActive,
+            staleF5MappingActive: mappingStatus.staleF5MappingActive
+        )
+    }
+
+    private func relayLaunchAgentInstalled() -> Bool {
+        FileManager.default.fileExists(atPath: relayLaunchAgentPath())
+    }
+
+    private func relayLaunchAgentLoaded() -> Bool {
+        let uid = getuid()
+        let result = Self.runProcess(
+            executablePath: "/bin/launchctl",
+            arguments: ["print", "gui/\(uid)/\(VoiceBarHotkeyContract.remapAgentLabel)"]
+        )
+        return result.exitCode == 0
+    }
+
+    private func relayMappingStatus() -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
+        let result = Self.runProcess(
+            executablePath: "/usr/bin/hidutil",
+            arguments: ["property", "--get", "UserKeyMapping"]
+        )
+        guard result.exitCode == 0 else { return (false, false) }
+        return Self.hidutilRelayMappingStatus(result.outputData)
+    }
+
+    private func relayLaunchAgentPath() -> String {
+        NSHomeDirectory()
+            + "/Library/LaunchAgents/"
+            + VoiceBarHotkeyContract.remapAgentLabel
+            + ".plist"
+    }
+
+    private static func runProcess(executablePath: String, arguments: [String]) -> (exitCode: Int32, outputData: Data) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executablePath)
+        process.arguments = arguments
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return (process.terminationStatus, pipe.fileHandleForReading.readDataToEndOfFile())
+        } catch {
+            return (127, Data(String(describing: error).utf8))
+        }
+    }
+
+    static func hidutilMappingContains(_ data: Data, source: Int, destination: Int) -> Bool {
+        guard let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) else {
+            let output = String(data: data, encoding: .utf8) ?? ""
+            return output.contains(String(source)) && output.contains(String(destination))
+        }
+        let mappings: [[String: Any]] = if let array = plist as? [[String: Any]] {
+            array
+        } else if let dict = plist as? [String: Any],
+                  let array = dict["UserKeyMapping"] as? [[String: Any]] {
+            array
+        } else {
+            []
+        }
+        return mappings.contains { entry in
+            Self.hidutilInt(entry["HIDKeyboardModifierMappingSrc"]) == source &&
+                Self.hidutilInt(entry["HIDKeyboardModifierMappingDst"]) == destination
+        }
+    }
+
+    static func hidutilRelayMappingStatus(_ data: Data) -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
+        (
+            dictationMappingActive: hidutilMappingContains(
+                data,
+                source: dictationHIDMappingSource,
+                destination: f18HIDMappingDestination
+            ),
+            staleF5MappingActive: hidutilMappingContains(
+                data,
+                source: f5HIDMappingSource,
+                destination: f18HIDMappingDestination
+            )
+        )
+    }
+
+    private static func hidutilInt(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        if let value = value as? NSNumber { return value.intValue }
+        if let value = value as? String { return Int(value) }
+        return nil
     }
 
     private func refreshSettingsWindowAnchorState() {
@@ -1088,6 +1296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)
             settingsWindow.orderFrontRegardless()
+            refreshRelaySetupStatusAsync()
             return
         }
 
@@ -1109,6 +1318,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        refreshRelaySetupStatusAsync()
     }
 
     func makeSettingsView() -> SettingsView {
@@ -1145,19 +1355,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onRemovePromptTerm: { [weak self] term in
                 self?.voiceState.removeVocabularyPromptTerm(term)
             },
-            isHotkeyRemapActive: {
-                FileManager.default.fileExists(
-                    atPath: NSHomeDirectory()
-                        + "/Library/LaunchAgents/"
-                        + VoiceBarHotkeyContract.remapAgentLabel
-                        + ".plist"
-                )
+            isHotkeyRemapActive: { [weak self] in
+                self?.cachedRelaySetupStatus.isReady ?? false
             },
             isMicrophonePermissionGranted: { [weak self] in
                 self?.microphonePermissionGranted() ?? false
             },
-            onRunKarabinerSetup: { [weak self] in
-                self?.runKarabinerSetup()
+            onRunRelaySetup: { [weak self] completion in
+                self?.runRelaySetupAsync(completion: completion)
+                    ?? completion("Relay setup failed: VoiceBar is not available.")
             }
         )
     }

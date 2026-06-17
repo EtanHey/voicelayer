@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -8,6 +8,7 @@ import {
   listVocabulary,
   removeAlias,
   removePromptTerm,
+  vocabularyAliasesFromEntries,
 } from "../stt-vocabulary-store";
 
 describe("stt-vocabulary-store", () => {
@@ -26,28 +27,56 @@ describe("stt-vocabulary-store", () => {
   it("lists an empty snapshot when the vocabulary file does not exist", () => {
     expect(listVocabulary({ path: vocabPath })).toEqual({
       updated_at: null,
-      prompt_terms: [],
-      aliases: [],
+      entries: [],
     });
   });
 
-  it("adds aliases, stamps updated_at, and dedupes by source without changing source casing", () => {
+  it("migrates old prompt_terms and aliases losslessly into canonical entries", () => {
+    writeFileSync(
+      vocabPath,
+      JSON.stringify({
+        updated_at: "2026-06-17T10:00:00.000Z",
+        prompt_terms: ["Domica", "SongScript", "domica"],
+        aliases: [
+          { from: "domekin", to: "Domica" },
+          { from: "song strip", to: "SongScript" },
+          { from: "song-strip", to: "SongScript" },
+        ],
+      }),
+    );
+
+    expect(listVocabulary({ path: vocabPath })).toEqual({
+      updated_at: "2026-06-17T10:00:00.000Z",
+      entries: [
+        { canonical: "Domica", variants: ["domekin"] },
+        { canonical: "SongScript", variants: ["song strip", "song-strip"] },
+      ],
+    });
+  });
+
+  it("adds variants, stamps updated_at, and dedupes by alias key without changing casing", () => {
     addAlias({ from: "domekin", to: "Domica" }, { path: vocabPath });
     const updated = addAlias(
-      { from: "DOMEKIN", to: "Domica Labs" },
+      { from: "dome-kin", to: "Domica Labs" },
       { path: vocabPath },
     );
 
-    expect(updated.aliases).toEqual([{ from: "domekin", to: "Domica Labs" }]);
-    expect(updated.prompt_terms).toEqual([]);
+    expect(updated.entries).toEqual([
+      { canonical: "Domica", variants: [] },
+      { canonical: "Domica Labs", variants: ["domekin"] },
+    ]);
     expect(typeof updated.updated_at).toBe("string");
     expect(Number.isNaN(Date.parse(updated.updated_at!))).toBe(false);
 
     const raw = JSON.parse(readFileSync(vocabPath, "utf8"));
     expect(raw).toMatchObject({
-      prompt_terms: [],
-      aliases: [{ from: "domekin", to: "Domica Labs" }],
+      entries: [
+        { canonical: "Domica", variants: [] },
+        { canonical: "Domica Labs", variants: ["domekin"] },
+      ],
     });
+    expect(raw.prompt_terms).toBeUndefined();
+    expect(raw.aliases).toBeUndefined();
     expect(typeof raw.updated_at).toBe("string");
     expect(existsSync(`${vocabPath}.lock`)).toBe(false);
   });
@@ -56,8 +85,80 @@ describe("stt-vocabulary-store", () => {
     addPromptTerm("Domica", { path: vocabPath });
     const updated = addPromptTerm("domica", { path: vocabPath });
 
-    expect(updated.prompt_terms).toEqual(["Domica"]);
-    expect(updated.aliases).toEqual([]);
+    expect(updated.entries).toEqual([{ canonical: "Domica", variants: [] }]);
+  });
+
+  it("ignores variants that normalize to the same alias key as their canonical", () => {
+    const updated = addAlias(
+      { from: "React.js", to: "ReactJS" },
+      { path: vocabPath },
+    );
+
+    expect(updated.entries).toEqual([{ canonical: "ReactJS", variants: [] }]);
+  });
+
+  it("rejects variants that normalize to an existing canonical term", () => {
+    addPromptTerm("VoiceLayer", { path: vocabPath });
+
+    const updated = addAlias(
+      { from: "voice layer", to: "VoiceBar" },
+      { path: vocabPath },
+    );
+
+    expect(updated.changed).toBe(false);
+    expect(updated.warnings).toContainEqual({
+      code: "dictionary_alias_collision",
+      canonical: "VoiceBar",
+      existing: "VoiceLayer",
+    });
+    expect(updated.entries).toEqual([{ canonical: "VoiceLayer", variants: [] }]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: [] },
+    ]);
+  });
+
+  it("rejects prompt terms that normalize to an existing variant on another entry", () => {
+    addAlias({ from: "voicelair", to: "VoiceLayer" }, { path: vocabPath });
+
+    const updated = addPromptTerm("Voice Lair", { path: vocabPath });
+
+    expect(updated.changed).toBe(false);
+    expect(updated.warnings).toContainEqual({
+      code: "dictionary_alias_collision",
+      canonical: "Voice Lair",
+      existing: "VoiceLayer",
+    });
+    expect(updated.entries).toEqual([
+      { canonical: "VoiceLayer", variants: ["voicelair"] },
+    ]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: ["voicelair"] },
+    ]);
+  });
+
+  it("omits exported aliases whose source normalizes to a canonical key", () => {
+    expect(
+      vocabularyAliasesFromEntries([
+        { canonical: "VoiceLayer", variants: [] },
+        { canonical: "VoiceBar", variants: ["voice layer", "voice baar"] },
+      ]),
+    ).toEqual([{ from: "voice baar", to: "VoiceBar" }]);
+  });
+
+  it("warns when near-duplicate canonicals are added", () => {
+    addPromptTerm("VoiceLayer", { path: vocabPath });
+
+    const updated = addPromptTerm("VoiceLayers", { path: vocabPath });
+
+    expect(updated.warnings).toContainEqual({
+      code: "near_duplicate_canonical",
+      canonical: "VoiceLayers",
+      existing: "VoiceLayer",
+    });
+    expect(updated.entries.map((entry) => entry.canonical)).toEqual([
+      "VoiceLayer",
+      "VoiceLayers",
+    ]);
   });
 
   it("removes aliases by source case-insensitively", () => {
@@ -65,17 +166,16 @@ describe("stt-vocabulary-store", () => {
 
     const updated = removeAlias("SONG STRIP", { path: vocabPath });
 
-    expect(updated.aliases).toEqual([]);
-    expect(listVocabulary({ path: vocabPath }).aliases).toEqual([]);
+    expect(updated.entries).toEqual([{ canonical: "SongScript", variants: [] }]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "SongScript", variants: [] },
+    ]);
   });
 
   it("rejects invalid aliases and unsafe broad alias sources", () => {
     expect(() =>
       addAlias({ from: "", to: "Domica" }, { path: vocabPath }),
     ).toThrow(/from/i);
-    expect(() =>
-      addAlias({ from: "Domica", to: "Domica" }, { path: vocabPath }),
-    ).toThrow(/different/i);
     expect(() =>
       addAlias({ from: "codecs", to: "Codex" }, { path: vocabPath }),
     ).toThrow(/unsafe/i);
@@ -88,13 +188,14 @@ describe("stt-vocabulary-store", () => {
   it("removes prompt terms case-insensitively and reports removal", () => {
     addPromptTerm("Domica", { path: vocabPath });
     addPromptTerm("SongScript", { path: vocabPath });
+    addAlias({ from: "domekin", to: "Domica" }, { path: vocabPath });
 
     const updated = removePromptTerm("DOMICA", { path: vocabPath });
 
     expect(updated.removed).toBe(true);
-    expect(updated.prompt_terms).toEqual(["SongScript"]);
-    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([
-      "SongScript",
+    expect(updated.entries).toEqual([{ canonical: "SongScript", variants: [] }]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "SongScript", variants: [] },
     ]);
   });
 
@@ -105,7 +206,7 @@ describe("stt-vocabulary-store", () => {
 
     expect(updated.removed).toBe(false);
     expect(updated.changed).toBe(false);
-    expect(updated.prompt_terms).toEqual(["Domica"]);
+    expect(updated.entries).toEqual([{ canonical: "Domica", variants: [] }]);
   });
 
   it("rejects empty prompt term removal", () => {
