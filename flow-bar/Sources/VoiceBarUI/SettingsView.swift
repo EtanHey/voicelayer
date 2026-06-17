@@ -37,6 +37,7 @@ public struct SettingsView: View {
     @State private var wrongText = ""
     @State private var newTermText = ""
     @State private var relaySetupFeedback: String?
+    @State private var relaySetupRunning = false
 
     public init(
         hotkeyEnabled: Bool,
@@ -146,6 +147,7 @@ public struct SettingsView: View {
                         Button("Set up") {
                             runRelaySetup()
                         }
+                        .disabled(relaySetupRunning)
                     }
                 }
 
@@ -397,9 +399,12 @@ public struct SettingsView: View {
     }
 
     private func runRelaySetup() {
+        guard !relaySetupRunning else { return }
+        relaySetupRunning = true
         relaySetupFeedback = "Setting up relay..."
         onRunRelaySetup { feedback in
             relaySetupFeedback = feedback
+            relaySetupRunning = false
         }
     }
 

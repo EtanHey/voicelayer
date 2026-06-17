@@ -1041,6 +1041,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+        guard !relaySetupInFlight else {
+            completion("Relay setup is already running.")
+            return
+        }
         relaySetupInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else {

@@ -58,6 +58,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
         XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
         XCTAssertTrue(source.contains("runRelaySetup"))
+        XCTAssertTrue(source.contains(".disabled(relaySetupRunning)"))
         XCTAssertFalse(source.contains("Section(\"Karabiner\")"))
     }
 
