@@ -782,6 +782,22 @@ public final class VoiceState {
     private func applyVocabularyEvent(_ event: [String: Any]) {
         var appliedSnapshot = false
 
+        if let entries = event["entries"] as? [[String: Any]] {
+            let preview = STTVocabularyPreview(
+                updatedAt: event["updated_at"] as? String,
+                entries: entries.compactMap { entry in
+                    guard let canonical = entry["canonical"] as? String else { return nil }
+                    return STTDictionaryEntry(
+                        canonical: canonical,
+                        variants: entry["variants"] as? [String] ?? []
+                    )
+                }
+            )
+            transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(preview.promptTerms)
+            transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(preview.aliases)
+            appliedSnapshot = true
+        }
+
         if let promptTerms = event["prompt_terms"] as? [String] {
             transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(promptTerms)
             appliedSnapshot = true

@@ -289,8 +289,7 @@ export interface VocabListResponse {
   type: "vocab_list";
   id?: string;
   updated_at: string | null;
-  prompt_terms: string[];
-  aliases: Array<{ from: string; to: string }>;
+  entries: Array<{ canonical: string; variants: string[] }>;
 }
 
 export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;

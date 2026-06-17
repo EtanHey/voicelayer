@@ -10,21 +10,113 @@ public struct STTVocabularyAliasPreview: Codable, Equatable, Hashable {
     }
 }
 
+public struct STTDictionaryEntry: Codable, Equatable, Hashable {
+    public var canonical: String
+    public var variants: [String]
+
+    public init(canonical: String, variants: [String]) {
+        self.canonical = canonical
+        self.variants = variants
+    }
+}
+
 public struct STTVocabularyPreview: Codable, Equatable {
     public var updatedAt: String?
-    public var promptTerms: [String]
-    public var aliases: [STTVocabularyAliasPreview]
+    public var entries: [STTDictionaryEntry]
+
+    public init(updatedAt: String?, entries: [STTDictionaryEntry]) {
+        self.updatedAt = updatedAt
+        self.entries = entries
+    }
 
     public init(updatedAt: String?, promptTerms: [String], aliases: [STTVocabularyAliasPreview]) {
         self.updatedAt = updatedAt
-        self.promptTerms = promptTerms
-        self.aliases = aliases
+        var entries: [STTDictionaryEntry] = []
+        for term in promptTerms {
+            Self.upsertEntry(canonical: term, in: &entries)
+        }
+        for alias in aliases {
+            Self.upsertVariant(alias.from, canonical: alias.to, in: &entries)
+        }
+        self.entries = entries
     }
 
     public enum CodingKeys: String, CodingKey {
         case updatedAt = "updated_at"
+        case entries
         case promptTerms = "prompt_terms"
         case aliases
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        if let decodedEntries = try container.decodeIfPresent([STTDictionaryEntry].self, forKey: .entries) {
+            entries = Self.normalizedEntries(decodedEntries)
+            return
+        }
+        let promptTerms = try container.decodeIfPresent([String].self, forKey: .promptTerms) ?? []
+        let aliases = try container.decodeIfPresent([STTVocabularyAliasPreview].self, forKey: .aliases) ?? []
+        var migrated: [STTDictionaryEntry] = []
+        for term in promptTerms {
+            Self.upsertEntry(canonical: term, in: &migrated)
+        }
+        for alias in aliases {
+            Self.upsertVariant(alias.from, canonical: alias.to, in: &migrated)
+        }
+        entries = migrated
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
+        try container.encode(entries, forKey: .entries)
+    }
+
+    public var promptTerms: [String] {
+        entries.map(\.canonical)
+    }
+
+    public var aliases: [STTVocabularyAliasPreview] {
+        entries.flatMap { entry in
+            entry.variants.map { STTVocabularyAliasPreview(from: $0, to: entry.canonical) }
+        }
+    }
+
+    private static func normalizedEntries(_ input: [STTDictionaryEntry]) -> [STTDictionaryEntry] {
+        var entries: [STTDictionaryEntry] = []
+        for entry in input {
+            upsertEntry(canonical: entry.canonical, in: &entries)
+            for variant in entry.variants {
+                upsertVariant(variant, canonical: entry.canonical, in: &entries)
+            }
+        }
+        return entries
+    }
+
+    private static func upsertEntry(canonical: String, in entries: inout [STTDictionaryEntry]) {
+        let trimmed = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !entries.contains(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            return
+        }
+        entries.append(STTDictionaryEntry(canonical: trimmed, variants: []))
+    }
+
+    private static func upsertVariant(_ variant: String, canonical: String, in entries: inout [STTDictionaryEntry]) {
+        let trimmedVariant = variant.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCanonical = canonical.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedVariant.isEmpty, !trimmedCanonical.isEmpty else { return }
+        upsertEntry(canonical: trimmedCanonical, in: &entries)
+        guard let index = entries
+            .firstIndex(where: { $0.canonical.localizedCaseInsensitiveCompare(trimmedCanonical) == .orderedSame })
+        else {
+            return
+        }
+        let variantKey = aliasKey(trimmedVariant)
+        guard variantKey != aliasKey(entries[index].canonical) else { return }
+        guard !entries[index].variants.contains(where: { aliasKey($0) == variantKey }) else { return }
+        entries[index].variants.append(trimmedVariant)
     }
 }
 
@@ -124,6 +216,18 @@ public enum STTVocabularyCommandPayload {
 }
 
 public extension STTVocabularyPreview {
+    func filteredEntries(matching query: String) -> [STTDictionaryEntry] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sortedEntries = entries.sorted {
+            $0.canonical.localizedCaseInsensitiveCompare($1.canonical) == .orderedAscending
+        }
+        guard !trimmed.isEmpty else { return sortedEntries }
+        return sortedEntries.filter { entry in
+            entry.canonical.localizedCaseInsensitiveContains(trimmed) ||
+                entry.variants.contains { $0.localizedCaseInsensitiveContains(trimmed) }
+        }
+    }
+
     func filteredAliases(matching query: String) -> [STTVocabularyAliasPreview] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return aliases }
@@ -138,4 +242,10 @@ public extension STTVocabularyPreview {
         guard !trimmed.isEmpty else { return promptTerms }
         return promptTerms.filter { $0.localizedCaseInsensitiveContains(trimmed) }
     }
+}
+
+private func aliasKey(_ value: String) -> String {
+    value
+        .lowercased()
+        .filter { ($0.isASCII && $0.isLetter) || $0.isNumber }
 }

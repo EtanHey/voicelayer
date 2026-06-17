@@ -54,8 +54,8 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "vocab-add-1",
     });
-    expect(listVocabulary({ path: vocabPath }).aliases).toEqual([
-      { from: "domekin", to: "Domica" },
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "Domica", variants: ["domekin"] },
     ]);
   });
 
@@ -89,8 +89,7 @@ describe("socket vocabulary commands", () => {
       type: "vocab_list",
       id: "vocab-list-1",
       updated_at: expect.any(String),
-      prompt_terms: ["Domica"],
-      aliases: [{ from: "domekin", to: "Domica" }],
+      entries: [{ canonical: "Domica", variants: ["domekin"] }],
     });
   });
 
@@ -137,8 +136,8 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "term-add-1",
     });
-    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([
-      "VoiceLayer",
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([
+      { canonical: "VoiceLayer", variants: [] },
     ]);
   });
 
@@ -172,7 +171,7 @@ describe("socket vocabulary commands", () => {
       outcome: "accept",
       id: "term-remove-1",
     });
-    expect(listVocabulary({ path: vocabPath }).prompt_terms).toEqual([]);
+    expect(listVocabulary({ path: vocabPath }).entries).toEqual([]);
     expect(
       handleSocketCommand({
         cmd: "vocab_remove_term",

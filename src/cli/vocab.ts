@@ -3,6 +3,8 @@ import {
   addAlias,
   listVocabulary,
   removeAlias,
+  addPromptTerm,
+  removePromptTerm,
   type STTVocabularyStoreOptions,
 } from "../stt-vocabulary-store";
 
@@ -12,7 +14,7 @@ interface VocabularyCliDeps {
   stderr?: (line: string) => void;
 }
 
-type ParsedFlags = Record<string, string>;
+type ParsedFlags = Record<string, string[]>;
 
 export async function runVocabularyCli(
   argv: string[],
@@ -27,10 +29,27 @@ export async function runVocabularyCli(
     switch (command) {
       case "add": {
         const flags = parseFlags(rest);
-        const wrong = requireFlag(flags, "--wrong");
-        const right = requireFlag(flags, "--right");
-        addAlias({ from: wrong, to: right }, options);
-        stdout(`Added alias: ${wrong.trim()} -> ${right.trim()}\n`);
+        if (hasFlag(flags, "--wrong") || hasFlag(flags, "--right")) {
+          const wrong = requireFlag(flags, "--wrong");
+          const right = requireFlag(flags, "--right");
+          addAlias({ from: wrong, to: right }, options);
+          stdout(`Added variant: ${wrong.trim()} -> ${right.trim()}\n`);
+          return 0;
+        }
+        const term = requireFlag(flags, "--term");
+        addPromptTerm(term, options);
+        for (const variant of flags["--variant"] ?? []) {
+          addAlias({ from: variant, to: term }, options);
+        }
+        stdout(`Added term: ${term.trim()}\n`);
+        return 0;
+      }
+      case "add-variant": {
+        const flags = parseFlags(rest);
+        const term = requireFlag(flags, "--term");
+        const variant = requireFlag(flags, "--variant");
+        addAlias({ from: variant, to: term }, options);
+        stdout(`Added variant: ${variant.trim()} -> ${term.trim()}\n`);
         return 0;
       }
       case "list": {
@@ -40,12 +59,22 @@ export async function runVocabularyCli(
       }
       case "remove": {
         const flags = parseFlags(rest);
-        const wrong = requireFlag(flags, "--wrong");
-        const result = removeAlias(wrong, options);
+        if (hasFlag(flags, "--wrong")) {
+          const wrong = requireFlag(flags, "--wrong");
+          const result = removeAlias(wrong, options);
+          if (result.removed) {
+            stdout(`Removed variant: ${wrong.trim()}\n`);
+          } else {
+            stdout(`No variant found: ${wrong.trim()}\n`);
+          }
+          return 0;
+        }
+        const term = requireFlag(flags, "--term");
+        const result = removePromptTerm(term, options);
         if (result.removed) {
-          stdout(`Removed alias: ${wrong.trim()}\n`);
+          stdout(`Removed term: ${term.trim()}\n`);
         } else {
-          stdout(`No alias found: ${wrong.trim()}\n`);
+          stdout(`No term found: ${term.trim()}\n`);
         }
         return 0;
       }
@@ -75,38 +104,35 @@ function parseFlags(argv: string[]): ParsedFlags {
     if (value === undefined || value.startsWith("--")) {
       throw new Error(`${arg} is required`);
     }
-    flags[arg] = value;
+    flags[arg] = [...(flags[arg] ?? []), value];
   }
   return flags;
 }
 
 function requireFlag(flags: ParsedFlags, flag: string): string {
-  const value = flags[flag]?.trim();
+  const value = flags[flag]?.[0]?.trim();
   if (!value) {
     throw new Error(`${flag} is required`);
   }
   return value;
 }
 
+function hasFlag(flags: ParsedFlags, flag: string): boolean {
+  return (flags[flag]?.length ?? 0) > 0;
+}
+
 function formatVocabularyList(snapshot: {
-  prompt_terms: string[];
-  aliases: Array<{ from: string; to: string }>;
+  entries: Array<{ canonical: string; variants: string[] }>;
 }): string {
-  if (snapshot.prompt_terms.length === 0 && snapshot.aliases.length === 0) {
+  if (snapshot.entries.length === 0) {
     return "No STT vocabulary entries.\n";
   }
 
   const lines: string[] = [];
-  if (snapshot.prompt_terms.length > 0) {
-    lines.push("Prompt terms:");
-    for (const term of snapshot.prompt_terms) {
-      lines.push(`  - ${term}`);
-    }
-  }
-  if (snapshot.aliases.length > 0) {
-    lines.push("Aliases:");
-    for (const alias of snapshot.aliases) {
-      lines.push(`  - ${alias.from} -> ${alias.to}`);
+  for (const entry of snapshot.entries) {
+    lines.push(`- ${entry.canonical}`);
+    if (entry.variants.length > 0) {
+      lines.push(`  variants: ${entry.variants.join(", ")}`);
     }
   }
   return `${lines.join("\n")}\n`;
@@ -116,9 +142,11 @@ function usage(): string {
   return `Usage: voicelayer vocab <command> [options]
 
 Commands:
-  add --wrong X --right Y   Add or update an STT alias
-  list                      List STT vocabulary entries
-  remove --wrong X          Remove an STT alias
+  add --term X [--variant V...]      Add a canonical STT term
+  add --wrong X --right Y            Back-compat alias add
+  add-variant --term X --variant V   Add a misheard variant
+  list                               List STT vocabulary entries
+  remove --term X                    Remove a canonical STT term
 `;
 }
 

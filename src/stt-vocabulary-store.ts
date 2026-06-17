@@ -29,10 +29,20 @@ export interface STTVocabularyAlias {
   to: string;
 }
 
+export interface STTDictionaryEntry {
+  canonical: string;
+  variants: string[];
+}
+
 export interface STTVocabularySnapshot {
   updated_at: string | null;
-  prompt_terms: string[];
-  aliases: STTVocabularyAlias[];
+  entries: STTDictionaryEntry[];
+}
+
+export interface STTVocabularyWarning {
+  code: "near_duplicate_canonical";
+  canonical: string;
+  existing: string;
 }
 
 export interface STTVocabularyStoreOptions {
@@ -46,10 +56,12 @@ export interface STTVocabularyStoreOptions {
 export type STTVocabularyMutationResult = STTVocabularySnapshot & {
   changed: boolean;
   removed?: boolean;
+  warnings?: STTVocabularyWarning[];
 };
 
 interface RawVocabularySnapshot {
   updated_at?: unknown;
+  entries?: unknown;
   prompt_terms?: unknown;
   aliases?: unknown;
 }
@@ -84,18 +96,12 @@ export function addAlias(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
-    const existingIndex = snapshot.aliases.findIndex(
-      (entry) => entry.from.toLowerCase() === normalized.from.toLowerCase(),
+    const warnings = nearDuplicateWarnings(snapshot.entries, normalized.to);
+    upsertEntryVariant(snapshot.entries, normalized.to, normalized.from);
+    return withWarnings(
+      writeSnapshot(path, stampSnapshot(snapshot, options), true),
+      warnings,
     );
-    if (existingIndex >= 0) {
-      snapshot.aliases[existingIndex] = {
-        from: snapshot.aliases[existingIndex].from,
-        to: normalized.to,
-      };
-    } else {
-      snapshot.aliases.push(normalized);
-    }
-    return writeSnapshot(path, stampSnapshot(snapshot, options), true);
   });
 }
 
@@ -107,13 +113,12 @@ export function addPromptTerm(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
-    const exists = snapshot.prompt_terms.some(
-      (entry) => entry.toLowerCase() === normalized.toLowerCase(),
+    const warnings = nearDuplicateWarnings(snapshot.entries, normalized);
+    upsertEntry(snapshot.entries, normalized);
+    return withWarnings(
+      writeSnapshot(path, stampSnapshot(snapshot, options), true),
+      warnings,
     );
-    if (!exists) {
-      snapshot.prompt_terms.push(normalized);
-    }
-    return writeSnapshot(path, stampSnapshot(snapshot, options), true);
   });
 }
 
@@ -125,14 +130,14 @@ export function removePromptTerm(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
-    const promptTerms = snapshot.prompt_terms.filter(
-      (entry) => entry.toLowerCase() !== normalized.toLowerCase(),
+    const entries = snapshot.entries.filter(
+      (entry) => entry.canonical.toLowerCase() !== normalized.toLowerCase(),
     );
-    const removed = promptTerms.length !== snapshot.prompt_terms.length;
+    const removed = entries.length !== snapshot.entries.length;
     if (!removed) {
       return { ...snapshot, changed: false, removed: false };
     }
-    snapshot.prompt_terms = promptTerms;
+    snapshot.entries = entries;
     return {
       ...writeSnapshot(path, stampSnapshot(snapshot, options), true),
       removed,
@@ -148,14 +153,20 @@ export function removeAlias(
   const path = getSTTVocabularyPath(options);
   return withVocabularyLock(path, options, () => {
     const snapshot = readSnapshot(path);
-    const aliases = snapshot.aliases.filter(
-      (entry) => entry.from.toLowerCase() !== normalizedFrom.toLowerCase(),
-    );
-    const removed = aliases.length !== snapshot.aliases.length;
+    const normalizedKey = aliasKey(normalizedFrom);
+    let removed = false;
+    for (const entry of snapshot.entries) {
+      const nextVariants = entry.variants.filter(
+        (variant) => aliasKey(variant) !== normalizedKey,
+      );
+      if (nextVariants.length !== entry.variants.length) {
+        removed = true;
+        entry.variants = nextVariants;
+      }
+    }
     if (!removed) {
       return { ...snapshot, changed: false, removed: false };
     }
-    snapshot.aliases = aliases;
     return {
       ...writeSnapshot(path, stampSnapshot(snapshot, options), true),
       removed,
@@ -166,9 +177,6 @@ export function removeAlias(
 function validateAlias(alias: STTVocabularyAlias): STTVocabularyAlias {
   const from = validateAliasSource(alias.from);
   const to = validateText(alias.to, "to");
-  if (from.toLowerCase() === to.toLowerCase()) {
-    throw new Error("from and to must be different");
-  }
   return { from, to };
 }
 
@@ -190,7 +198,7 @@ function validateText(value: string, label: string): string {
 
 function readSnapshot(path: string): STTVocabularySnapshot {
   if (!existsSync(path)) {
-    return { updated_at: null, prompt_terms: [], aliases: [] };
+    return { updated_at: null, entries: [] };
   }
 
   const parsed = JSON.parse(
@@ -202,10 +210,27 @@ function readSnapshot(path: string): STTVocabularySnapshot {
 function normalizeSnapshot(
   parsed: RawVocabularySnapshot,
 ): STTVocabularySnapshot {
-  const promptTerms = Array.isArray(parsed.prompt_terms)
-    ? dedupeStrings(parsed.prompt_terms.filter(isNonEmptyString))
-    : [];
-  const aliases: STTVocabularyAlias[] = [];
+  const entries = Array.isArray(parsed.entries)
+    ? normalizeEntries(parsed.entries)
+    : migrateLegacySnapshot(parsed);
+  return {
+    updated_at:
+      typeof parsed.updated_at === "string" && parsed.updated_at.trim()
+        ? parsed.updated_at
+        : null,
+    entries,
+  };
+}
+
+function migrateLegacySnapshot(parsed: RawVocabularySnapshot): STTDictionaryEntry[] {
+  const entries: STTDictionaryEntry[] = [];
+  if (Array.isArray(parsed.prompt_terms)) {
+    for (const term of parsed.prompt_terms) {
+      if (isNonEmptyString(term)) {
+        upsertEntry(entries, term.trim());
+      }
+    }
+  }
   if (Array.isArray(parsed.aliases)) {
     for (const entry of parsed.aliases) {
       if (!entry || typeof entry !== "object") continue;
@@ -213,50 +238,161 @@ function normalizeSnapshot(
       if (!isNonEmptyString(from) || !isNonEmptyString(to)) continue;
       const normalizedFrom = from.trim();
       if (isUnsafeDynamicAliasSource(normalizedFrom)) continue;
-      upsertAlias(aliases, {
-        from: normalizedFrom,
-        to: to.trim(),
-      });
+      appendEntryVariant(entries, to.trim(), normalizedFrom);
     }
   }
-  return {
-    updated_at:
-      typeof parsed.updated_at === "string" && parsed.updated_at.trim()
-        ? parsed.updated_at
-        : null,
-    prompt_terms: promptTerms,
-    aliases,
-  };
+  return entries;
 }
 
-function dedupeStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
+function normalizeEntries(values: unknown[]): STTDictionaryEntry[] {
+  const entries: STTDictionaryEntry[] = [];
   for (const value of values) {
-    const trimmed = value.trim();
-    const key = trimmed.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    result.push(trimmed);
+    if (!value || typeof value !== "object") continue;
+    const { canonical, variants } = value as Partial<STTDictionaryEntry>;
+    if (!isNonEmptyString(canonical)) continue;
+    upsertEntry(entries, canonical.trim());
+    if (!Array.isArray(variants)) continue;
+    for (const variant of variants) {
+      if (!isNonEmptyString(variant)) continue;
+      const normalizedVariant = variant.trim();
+      if (isUnsafeDynamicAliasSource(normalizedVariant)) continue;
+      appendEntryVariant(entries, canonical.trim(), normalizedVariant);
+    }
   }
-  return result;
+  return entries;
 }
 
-function upsertAlias(
-  aliases: STTVocabularyAlias[],
-  alias: STTVocabularyAlias,
-): void {
-  const existingIndex = aliases.findIndex(
-    (entry) => entry.from.toLowerCase() === alias.from.toLowerCase(),
+function upsertEntry(entries: STTDictionaryEntry[], canonical: string): void {
+  const existing = entries.find(
+    (entry) => entry.canonical.toLowerCase() === canonical.toLowerCase(),
   );
-  if (existingIndex >= 0) {
-    aliases[existingIndex] = {
-      from: aliases[existingIndex].from,
-      to: alias.to,
-    };
+  if (existing) return;
+  entries.push({ canonical, variants: [] });
+}
+
+function upsertEntryVariant(
+  entries: STTDictionaryEntry[],
+  canonical: string,
+  variant: string,
+): void {
+  upsertEntry(entries, canonical);
+  const entry = entries.find(
+    (candidate) => candidate.canonical.toLowerCase() === canonical.toLowerCase(),
+  );
+  if (!entry) return;
+
+  const variantKey = aliasKey(variant);
+  if (variantKey === aliasKey(entry.canonical)) return;
+
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const candidate = entries[index];
+    const existingVariant = candidate.variants.find(
+      (item) => aliasKey(item) === variantKey,
+    );
+    if (!existingVariant) continue;
+    candidate.variants = candidate.variants.filter(
+      (item) => aliasKey(item) !== variantKey,
+    );
+    if (candidate !== entry && candidate.variants.length === 0) {
+      entries.splice(index, 1);
+    }
+    if (!entry.variants.some((item) => aliasKey(item) === variantKey)) {
+      entry.variants.push(existingVariant);
+    }
     return;
   }
-  aliases.push(alias);
+  entry.variants.push(variant);
+}
+
+function appendEntryVariant(
+  entries: STTDictionaryEntry[],
+  canonical: string,
+  variant: string,
+): void {
+  upsertEntry(entries, canonical);
+  const entry = entries.find(
+    (candidate) => candidate.canonical.toLowerCase() === canonical.toLowerCase(),
+  );
+  if (!entry) return;
+  if (aliasKey(variant) === aliasKey(entry.canonical)) return;
+  if (entry.variants.includes(variant)) return;
+  entry.variants.push(variant);
+}
+
+export function vocabularyAliasesFromEntries(
+  entries: STTDictionaryEntry[],
+): STTVocabularyAlias[] {
+  return entries.flatMap((entry) =>
+    entry.variants.map((variant) => ({
+      from: variant,
+      to: entry.canonical,
+    })),
+  );
+}
+
+export function canonicalTermsFromEntries(entries: STTDictionaryEntry[]): string[] {
+  return entries.map((entry) => entry.canonical);
+}
+
+export function aliasKey(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+export function sameOrNearDuplicate(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (aliasKey(left) === aliasKey(right)) return true;
+  if (Math.min(left.length, right.length) < 5) return false;
+  const leftKey = aliasKey(left);
+  const rightKey = aliasKey(right);
+  const denominator = Math.max(leftKey.length, rightKey.length, 1);
+  return levenshtein(leftKey, rightKey) / denominator <= 0.16;
+}
+
+function nearDuplicateWarnings(
+  entries: STTDictionaryEntry[],
+  canonical: string,
+): STTVocabularyWarning[] {
+  const existing = entries.find(
+    (entry) =>
+      entry.canonical.toLowerCase() !== canonical.toLowerCase() &&
+      sameOrNearDuplicate(entry.canonical, canonical),
+  );
+  return existing
+    ? [
+        {
+          code: "near_duplicate_canonical",
+          canonical,
+          existing: existing.canonical,
+        },
+      ]
+    : [];
+}
+
+function withWarnings<T extends STTVocabularyMutationResult>(
+  result: T,
+  warnings: STTVocabularyWarning[],
+): T {
+  if (warnings.length === 0) return result;
+  return { ...result, warnings };
+}
+
+function levenshtein(left: string, right: string): number {
+  if (left === right) return 0;
+  if (!left) return right.length;
+  if (!right) return left.length;
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex++) {
+    const current = [leftIndex + 1];
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex++) {
+      const insertCost = current[rightIndex] + 1;
+      const deleteCost = previous[rightIndex + 1] + 1;
+      const replaceCost =
+        previous[rightIndex] + (left[leftIndex] === right[rightIndex] ? 0 : 1);
+      current.push(Math.min(insertCost, deleteCost, replaceCost));
+    }
+    previous = current;
+  }
+  return previous[previous.length - 1];
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -269,8 +405,7 @@ function stampSnapshot(
 ): STTVocabularySnapshot {
   return {
     updated_at: (options.now?.() ?? new Date()).toISOString(),
-    prompt_terms: snapshot.prompt_terms,
-    aliases: snapshot.aliases,
+    entries: snapshot.entries,
   };
 }
 
