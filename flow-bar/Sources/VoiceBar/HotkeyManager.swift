@@ -425,6 +425,10 @@ func hotkeyAction(
             return .ignore
         }
         guard autorepeat == 0 else {
+            if gestureIsActive {
+                NSLog("[HotkeyManager] Consuming autorepeat for re-paste keycode %lld while gesture is active", keycode)
+                return .consume
+            }
             NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
             return .ignore
         }
@@ -455,6 +459,13 @@ func hotkeyAction(
             return .ignore
         }
         guard autorepeat == 0 else {
+            if gestureIsActive {
+                NSLog(
+                    "[HotkeyManager] Consuming autorepeat for keycode %lld in modifier mode while gesture is active",
+                    keycode
+                )
+                return .consume
+            }
             NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld in modifier mode", keycode)
             return .ignore
         }
@@ -488,6 +499,10 @@ func hotkeyAction(
         return .ignore
     }
     guard autorepeat == 0 else {
+        if gestureIsActive {
+            NSLog("[HotkeyManager] Consuming autorepeat for keycode %lld while gesture is active", keycode)
+            return .consume
+        }
         NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld", keycode)
         return .ignore
     }
@@ -556,7 +571,7 @@ private func postReturnKeyPress() {
     let returnKeycode = CGKeyCode(36)
     CGEvent(keyboardEventSource: source, virtualKey: returnKeycode, keyDown: true)?
         .post(tap: .cghidEventTap)
-    usleep(10_000)
+    usleep(10000)
     CGEvent(keyboardEventSource: source, virtualKey: returnKeycode, keyDown: false)?
         .post(tap: .cghidEventTap)
 }
@@ -648,16 +663,15 @@ private func hotkeyCallback(
     }
 
     let isMouseHotkeyEvent = type == .otherMouseDown || type == .otherMouseUp
-    let action: HotkeyAction
-    if isMouseHotkeyEvent {
-        action = mouseHotkeyAction(
+    let action: HotkeyAction = if isMouseHotkeyEvent {
+        mouseHotkeyAction(
             type: type,
             buttonNumber: mouseButtonNumber,
             targetMouseButtons: ctx.targetMouseButtons,
             enterMouseButtons: ctx.enterMouseButtons
         )
     } else {
-        action = hotkeyAction(
+        hotkeyAction(
             type: type,
             keycode: keycode,
             flags: event.flags,

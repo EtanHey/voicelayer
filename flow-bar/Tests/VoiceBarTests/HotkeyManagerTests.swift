@@ -355,6 +355,7 @@ final class HotkeyManagerTests: XCTestCase {
     }
 
     // MARK: - Plain-mode system shortcuts must pass through
+
     //
     // In plain mode the hotkey is the bare F5 (or F18 from the hidutil relay),
     // plus the Shift+F5 re-paste chord. Any other modifier+F5 combo (Cmd+F5
@@ -424,6 +425,7 @@ final class HotkeyManagerTests: XCTestCase {
     }
 
     // MARK: - Active-hold escape hatch for modified releases
+
     //
     // The plain-mode modifier guard returns .ignore so system chords pass
     // through, BUT when a VoiceBar gesture is already active and the user
@@ -547,7 +549,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testNonModifierModeIgnoresAutorepeat() {
+    func testNonModifierModeIgnoresAutorepeatWhenGestureIsIdle() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
@@ -558,6 +560,27 @@ final class HotkeyManagerTests: XCTestCase {
                 useModifierMode: false
             ),
             .ignore
+        )
+    }
+
+    func testNonModifierModeConsumesAutorepeatDuringActiveGesture() {
+        let action = hotkeyAction(
+            type: .keyDown,
+            keycode: 96,
+            flags: [],
+            autorepeat: 1,
+            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+            useModifierMode: false,
+            gestureIsActive: true
+        )
+
+        XCTAssertEqual(action, .consume)
+        XCTAssertTrue(
+            shouldConsumeHotkeyEvent(
+                hotkeyAction: action,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                keycode: 96
+            )
         )
     }
 

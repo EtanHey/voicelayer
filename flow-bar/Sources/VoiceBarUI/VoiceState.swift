@@ -251,9 +251,6 @@ public final class VoiceState {
         Date()
     }
 
-    /// Keep transcript on the clipboard long enough for slower targets to consume Cmd+V.
-    public var pasteboardRestoreDelay: TimeInterval = 1.25
-
     private let recentTranscriptionsSaver: ([String]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
     private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
@@ -1188,19 +1185,18 @@ public final class VoiceState {
                 guard let self else { return }
                 let currentFront = frontmostAppProvider()
                 let currentIsSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
+                let currentPasteTarget = !currentIsSelf ? currentFront : nil
                 let pasteTarget: NSRunningApplication? = if plan == .autoPaste {
-                    (!currentIsSelf ? currentFront : nil) ?? targetApp
+                    currentPasteTarget ?? targetApp
                 } else {
                     targetApp
                 }
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
+                let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
                 let capturedInsertionHandler =
-                    plan == .autoPaste && (currentFront == nil || currentIsSelf) && Self.sameApp(
-                        pasteTarget,
-                        recordStartTargetApp
-                    )
-                    ? insertionHandler
-                    : nil
+                    plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget == nil
+                        ? insertionHandler
+                        : nil
 
                 guard let pasteTarget else {
                     logDiagnostic("paste_no_target", details: [
@@ -1226,10 +1222,33 @@ public final class VoiceState {
 
                 pasteScheduler(pasteDelay) { [weak self] in
                     guard let self else { return }
+                    if plan == .autoPaste, insertionHandler != nil, !targetMatchesRecordStart {
+                        logDiagnostic("paste_ax_insert_skipped", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "reason": "target_mismatch",
+                        ])
+                    }
+
+                    let freshInsertionHandler =
+                        plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget != nil
+                            ? dictationInsertionHandlerProvider()
+                            : nil
+                    if let freshInsertionHandler, freshInsertionHandler(text) {
+                        logDiagnostic("paste_ax_insert_success", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "source": "fresh",
+                        ])
+                        finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+                        return
+                    }
+
                     if let capturedInsertionHandler, capturedInsertionHandler(text) {
                         logDiagnostic("paste_ax_insert_success", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,
+                            "source": "captured",
                         ])
                         finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
                         return
@@ -1239,6 +1258,8 @@ public final class VoiceState {
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
                         "hadCapturedInsertion": boolString(capturedInsertionHandler != nil),
+                        "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
+                        "axTrusted": boolString(accessibilityTrustChecker(false)),
                     ])
                     let pasteboardSnapshot = pasteboardSnapshotter()
                     let changeCountBeforeWrite = pasteboardChangeCountProvider()
@@ -1268,7 +1289,7 @@ public final class VoiceState {
                         return
                     }
                     let pasted = simulatedPasteHandler()
-                    scheduleClipboardRestoreIfNeeded(
+                    restoreClipboardIfNeeded(
                         from: pasteboardSnapshot,
                         expectedChangeCount: changeCountAfterWrite
                     )
@@ -1308,28 +1329,25 @@ public final class VoiceState {
         return lhs.processIdentifier == rhs.processIdentifier
     }
 
-    private func scheduleClipboardRestoreIfNeeded(
+    private func restoreClipboardIfNeeded(
         from snapshot: PasteboardSnapshot?,
         expectedChangeCount: Int
     ) {
         guard let snapshot else { return }
 
-        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
-            guard let self else { return }
-            let currentChangeCount = pasteboardChangeCountProvider()
-            guard currentChangeCount == expectedChangeCount else {
-                logDiagnostic("paste_clipboard_restore_skipped", details: [
-                    "expectedChangeCount": String(expectedChangeCount),
-                    "currentChangeCount": String(currentChangeCount),
-                ])
-                return
-            }
-
-            pasteboardSnapshotRestorer(snapshot)
-            logDiagnostic("paste_clipboard_restored", details: [
-                "restoredItems": String(snapshot.items.count),
+        let currentChangeCount = pasteboardChangeCountProvider()
+        guard currentChangeCount == expectedChangeCount else {
+            logDiagnostic("paste_clipboard_restore_skipped", details: [
+                "expectedChangeCount": String(expectedChangeCount),
+                "currentChangeCount": String(currentChangeCount),
             ])
+            return
         }
+
+        pasteboardSnapshotRestorer(snapshot)
+        logDiagnostic("paste_clipboard_restored", details: [
+            "restoredItems": String(snapshot.items.count),
+        ])
     }
 
     private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {

@@ -1,6 +1,6 @@
-@testable import VoiceBarUI
 import AppKit
 import SwiftUI
+@testable import VoiceBarUI
 import XCTest
 
 @MainActor
@@ -64,8 +64,61 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             let outputURL = outputDirectory.appendingPathComponent("\(mode.rawValue).png")
             try data.write(to: outputURL, options: .atomic)
             XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
-            XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0, 0)
+            XCTAssertGreaterThan(
+                try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0,
+                0
+            )
         }
+    }
+
+    func testWritesLongSpeakingTeleprompterArtifact() throws {
+        let outputDirectory = repoRoot()
+            .appendingPathComponent("docs.local")
+            .appendingPathComponent("phase1")
+            .appendingPathComponent("visual-qa")
+            .appendingPathComponent("after")
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let state = VoiceState()
+        state.mode = .speaking
+        state.isConnected = true
+        state.hotkeyEnabled = true
+        state.isCollapsed = false
+        state.statusText = "This is a longer VoiceBar spoken teleprompter line with SupercalifragilisticexpialidociousShouldNotClip at the edge"
+
+        let layout = VoiceBarPanelLayout.make(
+            mode: state.mode,
+            isCollapsed: state.isCollapsed,
+            previewText: nil,
+            statusText: state.statusText,
+            padding: Theme.panelPadding
+        )
+        let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
+            .frame(width: layout.panelSize.width, height: layout.panelSize.height)
+
+        let host = NSHostingView(rootView: view)
+        host.frame = NSRect(origin: .zero, size: layout.panelSize)
+        host.layoutSubtreeIfNeeded()
+
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            XCTFail("Could not create bitmap for long speaking teleprompter")
+            return
+        }
+        bitmap.size = layout.panelSize
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            XCTFail("Could not encode long speaking teleprompter PNG")
+            return
+        }
+
+        let outputURL = outputDirectory.appendingPathComponent("speaking-long-teleprompter.png")
+        try data.write(to: outputURL, options: .atomic)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0, 0)
     }
 
     private func snapshotState(for mode: VoiceMode) -> VoiceState {

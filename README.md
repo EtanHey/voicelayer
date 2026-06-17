@@ -236,13 +236,13 @@ Floating SwiftUI widget providing visual feedback during voice interactions. Con
 ```bash
 bun add -g voicelayer-mcp
 voicelayer build-app            # Build + install /Applications/VoiceBar.app
-voicelayer hotkey install       # Install F5/Dictation -> F18 relay
+voicelayer hotkey install       # Install Dictation-key -> F18 relay
 voicelayer bar                  # Launch the installed VoiceBar.app
 ```
 
 **Hotkey Notes:**
 - Requires Input Monitoring permission (System Settings > Privacy & Security)
-- On keyboards where the physical key is Apple's Dictation key, `voicelayer hotkey install` installs a `hidutil` LaunchAgent to map F5/Dictation to VoiceBar's internal F18 relay.
+- On keyboards where the physical key is Apple's Dictation key, `voicelayer hotkey install` installs a `hidutil` LaunchAgent to map the Dictation key to VoiceBar's internal F18 relay. Physical F5 is handled natively by VoiceBar.
 - The installer preserves non-VoiceBar `hidutil` mappings and is safe to rerun. `Shift+F5` re-pastes the latest transcript.
 - `voicelayer hotkey status` prints the LaunchAgent state and the current `hidutil` key mapping.
 
@@ -250,7 +250,7 @@ voicelayer bar                  # Launch the installed VoiceBar.app
 
 Open VoiceBar's Settings window for in-app configuration:
 
-- **General** — hotkey status, a permissions panel (Microphone, Accessibility, Input Monitoring) with quick "Open" links to the right System Settings pane, and a Karabiner "Set up" helper for the F5 relay.
+- **General** — a permissions and hotkey setup panel (Microphone, Accessibility, Input Monitoring, and the hidutil relay) with per-row status plus quick "Open" and "Set up" actions.
 - **Audio** — microphone input device + a **Performance** effort picker (see below).
 - **Dictionary** — STT corrections and prompt terms (the same vocabulary managed by `voicelayer vocab`).
 

@@ -24,7 +24,7 @@ public struct SettingsView: View {
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
     public let isMicrophonePermissionGranted: () -> Bool
-    public let onRunKarabinerSetup: () -> Void
+    public let onRunRelaySetup: () -> String
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -36,6 +36,7 @@ public struct SettingsView: View {
     @State private var correctText = ""
     @State private var wrongText = ""
     @State private var newTermText = ""
+    @State private var relaySetupFeedback: String?
 
     public init(
         hotkeyEnabled: Bool,
@@ -57,7 +58,7 @@ public struct SettingsView: View {
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
-        onRunKarabinerSetup: @escaping () -> Void = {},
+        onRunRelaySetup: @escaping () -> String = { "Relay setup requested." },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -77,7 +78,7 @@ public struct SettingsView: View {
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
-        self.onRunKarabinerSetup = onRunKarabinerSetup
+        self.onRunRelaySetup = onRunRelaySetup
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         _selectedTab = State(initialValue: initialTab)
@@ -110,7 +111,7 @@ public struct SettingsView: View {
 
     private var generalTab: some View {
         Form {
-            Section("Hotkey") {
+            Section("Permissions & Hotkey Setup") {
                 LabeledContent("Shortcut") {
                     HStack(spacing: 6) {
                         Image(systemName: "keyboard")
@@ -127,31 +128,29 @@ public struct SettingsView: View {
                 LabeledContent("Status") {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(hotkeyEnabled ? .green : .orange)
+                            .fill(hotkeyEnabled ? .green : .red)
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
                 }
-                let permissions = effectiveMissingPermissions
-                if !permissions.isEmpty {
-                    ForEach(permissions, id: \.label) { permission in
-                        permissionRow(permission)
-                    }
-                }
-            }
 
-            Section("Karabiner") {
-                LabeledContent("F5 relay") {
+                permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
+                permissionRow(.accessibility, isGranted: !missingPermissions.contains(.accessibility))
+                permissionRow(.inputMonitoring, isGranted: !missingPermissions.contains(.inputMonitoring))
+
+                LabeledContent("Relay (hidutil LaunchAgent)") {
                     HStack(spacing: 8) {
-                        Circle()
-                            .fill(isHotkeyRemapActive() ? .green : .orange)
-                            .frame(width: 8, height: 8)
-                        Text(isHotkeyRemapActive() ? "Installed" : "Not installed")
-                            .foregroundStyle(.secondary)
+                        statusBadge(isHotkeyRemapActive() ? "Ready" : "Needs setup", isReady: isHotkeyRemapActive())
                         Button("Set up") {
-                            runKarabinerSetup()
+                            runRelaySetup()
                         }
                     }
+                }
+
+                if let relaySetupFeedback {
+                    Text(relaySetupFeedback)
+                        .font(.caption)
+                        .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                 }
             }
 
@@ -357,14 +356,6 @@ public struct SettingsView: View {
         return "Missing: \(names.joined(separator: ", "))"
     }
 
-    private var effectiveMissingPermissions: [HotkeyPermission] {
-        var permissions = missingPermissions
-        if !isMicrophonePermissionGranted(), !permissions.contains(.microphone) {
-            permissions.append(.microphone)
-        }
-        return permissions
-    }
-
     private var positionModeDescription: String {
         switch selectedAnchorMode {
         case .follow:
@@ -376,11 +367,24 @@ public struct SettingsView: View {
         }
     }
 
-    private func permissionRow(_ permission: HotkeyPermission) -> some View {
+    private func permissionRow(_ permission: HotkeyPermission, isGranted: Bool) -> some View {
         LabeledContent(permission.label) {
-            Button("Open") {
-                openPermissionSettings(permission)
+            HStack(spacing: 8) {
+                statusBadge(isGranted ? "Granted" : "Missing", isReady: isGranted)
+                Button("Open") {
+                    openPermissionSettings(permission)
+                }
             }
+        }
+    }
+
+    private func statusBadge(_ text: String, isReady: Bool) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isReady ? .green : .red)
+                .frame(width: 8, height: 8)
+            Text(text)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -390,8 +394,8 @@ public struct SettingsView: View {
         }
     }
 
-    private func runKarabinerSetup() {
-        onRunKarabinerSetup()
+    private func runRelaySetup() {
+        relaySetupFeedback = onRunRelaySetup()
     }
 
     private func performanceEffortLabel(_ effort: VoiceBarPerformanceEffort) -> String {

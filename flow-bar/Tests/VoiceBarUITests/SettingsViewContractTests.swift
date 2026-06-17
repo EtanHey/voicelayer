@@ -49,14 +49,16 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
     }
 
-    func testGeneralTabShowsGranularPermissionAndKarabinerRows() throws {
+    func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
         let source = try settingsViewSource()
 
         XCTAssertTrue(source.contains("permissionRow"))
         XCTAssertTrue(source.contains("Microphone"))
         XCTAssertTrue(source.contains("Privacy_Microphone"))
-        XCTAssertTrue(source.contains("Section(\"Karabiner\")"))
-        XCTAssertTrue(source.contains("runKarabinerSetup"))
+        XCTAssertTrue(source.contains("Section(\"Permissions & Hotkey Setup\")"))
+        XCTAssertTrue(source.contains("Relay (hidutil LaunchAgent)"))
+        XCTAssertTrue(source.contains("runRelaySetup"))
+        XCTAssertFalse(source.contains("Section(\"Karabiner\")"))
     }
 
     func testDictionaryTextFieldsUseVisibleDictionaryFieldTreatment() throws {

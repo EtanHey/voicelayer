@@ -640,7 +640,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "this is the full transcript ending with wow")
     }
 
-    func testAutoPasteDoesNotUseRecordStartInsertionWhenFocusIsAvailableAtPasteTime() {
+    func testAutoPasteUsesRecordStartInsertionWhenSameTargetIsFrontmostAtPasteTime() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -673,10 +673,91 @@ final class VoiceStatePasteTests: XCTestCase {
             "text": "paste into the focus that is current on release",
         ])
 
-        XCTAssertEqual(insertedTexts, [])
-        XCTAssertEqual(clipboardWrites, ["paste into the focus that is current on release"])
-        XCTAssertTrue(pasteShortcutPosted)
+        XCTAssertEqual(insertedTexts, ["paste into the focus that is current on release"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
         XCTAssertEqual(state.confirmationText, "paste into the focus that is current on release")
+    }
+
+    func testAutoPasteUsesFreshFocusedInsertionInsteadOfStaleCapturedInsertionWhenTargetIsFrontmost() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.frontmostAppProvider = { NSRunningApplication.current }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var captureAttempts = 0
+        var staleCapturedTexts: [String] = []
+        var freshFocusedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            captureAttempts += 1
+            if captureAttempts == 1 {
+                return { text in
+                    staleCapturedTexts.append(text)
+                    return true
+                }
+            }
+            return { text in
+                freshFocusedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": "paste into the input focused at release",
+        ])
+
+        XCTAssertEqual(captureAttempts, 2)
+        XCTAssertEqual(staleCapturedTexts, [])
+        XCTAssertEqual(freshFocusedTexts, ["paste into the input focused at release"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
+    }
+
+    func testAutoPasteAttemptsFreshInsertionCaptureBeforeClipboardFallback() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.frontmostAppProvider = { NSRunningApplication.current }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var captureAttempts = 0
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            captureAttempts += 1
+            guard captureAttempts > 1 else { return nil }
+            return { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": "fresh capture should insert here",
+        ])
+
+        XCTAssertEqual(captureAttempts, 2)
+        XCTAssertEqual(insertedTexts, ["fresh capture should insert here"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
     }
 
     func testAutoPasteFallsBackToClipboardWhenRecordedInputInsertionFails() {
@@ -801,7 +882,7 @@ final class VoiceStatePasteTests: XCTestCase {
         })
     }
 
-    func testAutoPasteSkipsClipboardRestoreIfClipboardChangedAgainAfterWrite() {
+    func testAutoPasteSkipsClipboardRestoreIfClipboardChangesDuringFallbackPaste() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         var frontmostApp: NSRunningApplication? = NSRunningApplication.current
@@ -813,9 +894,7 @@ final class VoiceStatePasteTests: XCTestCase {
         var restoredSnapshots: [PasteboardSnapshot] = []
         var pasteboardString: String?
         var pasteShortcutPosted = false
-        var scheduledRestore: (() -> Void)?
         var pasteboardChangeCount = 3
-        var scheduledStepCount = 0
 
         state.dictationInsertionHandlerProvider = {
             { text in
@@ -823,14 +902,7 @@ final class VoiceStatePasteTests: XCTestCase {
                 return false
             }
         }
-        state.pasteScheduler = { _, block in
-            scheduledStepCount += 1
-            if scheduledStepCount < 3 {
-                block()
-            } else {
-                scheduledRestore = block
-            }
-        }
+        state.pasteScheduler = { _, block in block() }
         state.pasteboardSnapshotter = {
             PasteboardSnapshot(
                 changeCount: pasteboardChangeCount,
@@ -850,6 +922,8 @@ final class VoiceStatePasteTests: XCTestCase {
         }
         state.simulatedPasteHandler = {
             pasteShortcutPosted = true
+            pasteboardString = "new user clipboard"
+            pasteboardChangeCount += 1
             return true
         }
 
@@ -863,16 +937,11 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(insertedTexts, ["clipboard safety check"])
         XCTAssertEqual(clipboardWrites, ["clipboard safety check"])
         XCTAssertTrue(pasteShortcutPosted)
-        XCTAssertNotNil(scheduledRestore)
-
-        // Simulate the user copying something else before our delayed restore fires.
-        pasteboardChangeCount += 1
-        scheduledRestore?()
-
         XCTAssertEqual(restoredSnapshots, [])
+        XCTAssertEqual(pasteboardString, "new user clipboard")
     }
 
-    func testAutoPasteKeepsTranscriptOnClipboardLongEnoughForSlowTargets() {
+    func testAutoPasteRestoresClipboardSynchronouslyAfterFallbackPaste() {
         let state = VoiceState()
         state.sendCommand = { _ in }
         state.frontmostAppProvider = { NSRunningApplication.current }
@@ -882,6 +951,7 @@ final class VoiceStatePasteTests: XCTestCase {
         var scheduled: [(delay: TimeInterval, block: () -> Void)] = []
         var pasteboardString: String?
         var pasteboardChangeCount = 5
+        var restoredSnapshots: [PasteboardSnapshot] = []
 
         state.pasteScheduler = { delay, block in
             scheduled.append((delay, block))
@@ -898,6 +968,11 @@ final class VoiceStatePasteTests: XCTestCase {
         }
         state.pasteboardStringProvider = { pasteboardString }
         state.pasteboardChangeCountProvider = { pasteboardChangeCount }
+        state.pasteboardSnapshotRestorer = {
+            restoredSnapshots.append($0)
+            pasteboardString = "old clipboard"
+            pasteboardChangeCount += 1
+        }
         state.simulatedPasteHandler = { true }
 
         state.record()
@@ -912,9 +987,14 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(scheduled.count, 2)
         scheduled[1].block()
 
-        XCTAssertEqual(pasteboardString, "fresh transcript")
-        XCTAssertEqual(scheduled.count, 3)
-        XCTAssertGreaterThanOrEqual(scheduled[2].delay, 1.0)
+        XCTAssertEqual(pasteboardString, "old clipboard")
+        XCTAssertEqual(restoredSnapshots, [
+            PasteboardSnapshot(
+                changeCount: 5,
+                items: [["public.utf8-plain-text": Data("old clipboard".utf8)]]
+            ),
+        ])
+        XCTAssertEqual(scheduled.count, 2)
     }
 
     func testAutoPasteFailureUsesGenericMessageInsteadOfAccessibilityBlame() {

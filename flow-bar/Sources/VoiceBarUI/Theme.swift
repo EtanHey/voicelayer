@@ -91,7 +91,7 @@ public enum Theme {
         case .transcribing:
             return transcribingPillWidth(for: statusText)
         case .speaking:
-            return queueItemCount > 1 ? pillSpeakingQueueWidth : 340
+            return pillSpeakingQueueWidth
         case .error:
             return 210
         case .idle, .disconnected:
@@ -112,9 +112,14 @@ public enum Theme {
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
     public static let teleprompterViewportWidth: CGFloat = 280
-    public static let teleprompterViewportHeight: CGFloat = 68
+    public static let teleprompterViewportHeight: CGFloat = 78
     public static let teleprompterWrapWidth: CGFloat = 272
     public static let teleprompterContentInset: CGFloat = 4
+
+    public static let speakingTeleprompterChromeWidth: CGFloat =
+        14 + 14 + 6 + 46 + pillActionButtonSize + (8 * 3)
+    public static let speakingTeleprompterAvailableWidth: CGFloat =
+        pillSpeakingQueueWidth - speakingTeleprompterChromeWidth
 
     /// Seconds of idle before pill collapses.
     public static let collapseDelay: TimeInterval = 5.0
