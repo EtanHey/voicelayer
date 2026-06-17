@@ -1232,7 +1232,7 @@ public final class VoiceState {
                     }
 
                     let freshInsertionHandler =
-                        plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget != nil
+                        plan == .autoPaste && targetMatchesRecordStart
                             ? dictationInsertionHandlerProvider()
                             : nil
                     if let freshInsertionHandler, freshInsertionHandler(text) {
@@ -1245,7 +1245,9 @@ public final class VoiceState {
                         return
                     }
 
-                    if let capturedInsertionHandler, capturedInsertionHandler(text) {
+                    if freshInsertionHandler == nil,
+                       let capturedInsertionHandler,
+                       capturedInsertionHandler(text) {
                         logDiagnostic("paste_ax_insert_success", details: [
                             "plan": String(describing: plan),
                             "targetApp": pasteTargetBundleID,

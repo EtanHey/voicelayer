@@ -723,6 +723,54 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted)
     }
 
+    func testAutoPasteAttemptsFreshInsertionAfterActivatingRecordedTarget() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        var frontmostApp: NSRunningApplication? = NSRunningApplication.current
+        state.frontmostAppProvider = { frontmostApp }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in
+            frontmostApp = NSRunningApplication.current
+        }
+
+        var captureAttempts = 0
+        var staleCapturedTexts: [String] = []
+        var freshFocusedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            captureAttempts += 1
+            if captureAttempts == 1 {
+                return { text in
+                    staleCapturedTexts.append(text)
+                    return true
+                }
+            }
+            return { text in
+                freshFocusedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        frontmostApp = nil
+        state.handleEvent([
+            "type": "transcription",
+            "text": "paste into target after activation",
+        ])
+
+        XCTAssertEqual(captureAttempts, 2)
+        XCTAssertEqual(staleCapturedTexts, [])
+        XCTAssertEqual(freshFocusedTexts, ["paste into target after activation"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
+    }
+
     func testAutoPasteAttemptsFreshInsertionCaptureBeforeClipboardFallback() {
         let state = VoiceState()
         state.sendCommand = { _ in }

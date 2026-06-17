@@ -130,6 +130,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         dictationMappingActive: false
     )
     private var relaySetupStatusRefreshInFlight = false
+    private var relaySetupInFlight = false
 
     private static let horizontalOffsetKey = "voicebar.horizontalOffset"
     private static let verticalOffsetKey = "voicebar.verticalOffset"
@@ -994,13 +995,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 
-    private func runRelaySetup() -> String {
+    private func runRelaySetup() -> (message: String, status: RelaySetupStatus) {
         guard let scriptURL = Bundle.main.resourceURL?
             .appendingPathComponent("scripts")
             .appendingPathComponent("install-voicebar-f5-hidutil.sh")
         else {
             NSLog("[VoiceBar] Relay setup script not bundled")
-            return "Relay setup failed: bundled installer script not found."
+            return (
+                "Relay setup failed: bundled installer script not found.",
+                currentRelaySetupStatus()
+            )
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
@@ -1013,7 +1017,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             process.waitUntilExit()
         } catch {
             NSLog("[VoiceBar] Failed to run relay setup: %@", String(describing: error))
-            return "Relay setup failed: \(error.localizedDescription)"
+            return (
+                "Relay setup failed: \(error.localizedDescription)",
+                currentRelaySetupStatus()
+            )
         }
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: outputData, encoding: .utf8) ?? ""
@@ -1025,12 +1032,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             output
         )
         guard process.terminationStatus == 0 else {
-            return "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            return (
+                "Relay setup failed (exit \(process.terminationStatus)): \(output.trimmingCharacters(in: .whitespacesAndNewlines))",
+                status
+            )
         }
-        return status.summary
+        return (status.summary, status)
     }
 
     private func runRelaySetupAsync(completion: @escaping (String) -> Void) {
+        relaySetupInFlight = true
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else {
                 DispatchQueue.main.async {
@@ -1040,8 +1051,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let result = runRelaySetup()
             DispatchQueue.main.async { [weak self] in
-                completion(result)
-                self?.refreshRelaySetupStatusAsync()
+                guard let self else {
+                    completion(result.message)
+                    return
+                }
+                cachedRelaySetupStatus = result.status
+                relaySetupInFlight = false
+                completion(result.message)
             }
         }
     }
@@ -1056,7 +1072,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self else { return }
                 cachedRelaySetupStatus = status
                 relaySetupStatusRefreshInFlight = false
-                refreshSettingsWindowAnchorState()
+                if !relaySetupInFlight {
+                    refreshSettingsWindowAnchorState()
+                }
             }
         }
     }
