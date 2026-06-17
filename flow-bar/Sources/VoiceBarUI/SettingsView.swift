@@ -357,10 +357,11 @@ public struct SettingsView: View {
                 Button("Cancel") {
                     cancelTermRename()
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.bordered)
                 Button("Save") {
                     saveTermRename(entry.canonical)
                 }
+                .buttonStyle(.borderedProminent)
                 .disabled(editTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         } else {
@@ -416,6 +417,7 @@ public struct SettingsView: View {
             focusedEditorField = .addVariant
         } label: {
             Text("+ add misheard variant")
+                .padding(.vertical, 5)
         }
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
@@ -432,12 +434,13 @@ public struct SettingsView: View {
             Button("Add") {
                 saveVariant(entry.canonical)
             }
+            .buttonStyle(.borderedProminent)
             .disabled(variantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             Button("Cancel") {
                 addingVariantFor = nil
                 variantText = ""
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.bordered)
         }
     }
 
@@ -447,8 +450,8 @@ public struct SettingsView: View {
             Button("Cancel") {
                 pendingDeleteCanonical = nil
             }
-            .buttonStyle(.borderless)
-            Button("Delete?") {
+            .buttonStyle(.bordered)
+            Button("Delete?", role: .destructive) {
                 SettingsDictionaryMutations.confirmDeleteTerm(
                     canonical,
                     pendingDeleteCanonical: &pendingDeleteCanonical,
@@ -456,8 +459,8 @@ public struct SettingsView: View {
                     onRemovePromptTerm: onRemovePromptTerm
                 )
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.red)
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
         } else {
             Button {
                 SettingsDictionaryMutations.requestDeleteTerm(
@@ -701,10 +704,15 @@ enum SettingsDictionaryMutations {
         guard !trimmed.isEmpty else { return }
         upsertEntry(canonical, in: &localEntries)
         guard let index = localEntries.firstIndex(where: { $0.canonical == canonical }) else { return }
-        if !localEntries[index].variants.contains(trimmed) {
-            localEntries[index].variants.append(trimmed)
+        guard aliasKey(trimmed) != aliasKey(localEntries[index].canonical) else {
+            variantText = ""
+            addingVariantFor = nil
+            return
         }
-        onAddVocabularyAlias(canonical, trimmed)
+        if !localEntries[index].variants.contains(where: { aliasKey($0) == aliasKey(trimmed) }) {
+            localEntries[index].variants.append(trimmed)
+            onAddVocabularyAlias(canonical, trimmed)
+        }
         variantText = ""
         addingVariantFor = nil
     }
@@ -726,6 +734,17 @@ enum SettingsDictionaryMutations {
             return
         }
         entries.append(STTDictionaryEntry(canonical: canonical, variants: []))
+    }
+
+    private static func aliasKey(_ value: String) -> String {
+        value.lowercased().unicodeScalars.reduce(into: "") { result, scalar in
+            switch scalar.value {
+            case 48 ... 57, 97 ... 122:
+                result.unicodeScalars.append(scalar)
+            default:
+                break
+            }
+        }
     }
 }
 

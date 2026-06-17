@@ -48,6 +48,39 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains("add misheard variant"))
     }
 
+    func testVariantAddAffordanceUsesChipMatchingVerticalPadding() throws {
+        let source = try settingsViewSource()
+        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantButton"))
+
+        XCTAssertTrue(functionSource.contains(".padding(.vertical, 5)"))
+    }
+
+    func testDictionaryTextActionsUseStyledButtons() throws {
+        let source = try settingsViewSource()
+        let borderedCount = source.components(separatedBy: ".buttonStyle(.bordered)").count - 1
+        let prominentCount = source.components(separatedBy: ".buttonStyle(.borderedProminent)").count - 1
+
+        XCTAssertGreaterThanOrEqual(borderedCount, 3)
+        XCTAssertGreaterThanOrEqual(prominentCount, 3)
+        XCTAssertTrue(source
+            .contains(
+                "Button(\"Cancel\") {\n                    cancelTermRename()\n                }\n                .buttonStyle(.bordered)"
+            ))
+        XCTAssertTrue(source
+            .contains(
+                "Button(\"Save\") {\n                    saveTermRename(entry.canonical)\n                }\n                .buttonStyle(.borderedProminent)"
+            ))
+        XCTAssertTrue(source
+            .contains(
+                "Button(\"Add\") {\n                saveVariant(entry.canonical)\n            }\n            .buttonStyle(.borderedProminent)"
+            ))
+        XCTAssertTrue(source
+            .contains(
+                "Button(\"Delete?\", role: .destructive) {\n                SettingsDictionaryMutations.confirmDeleteTerm("
+            ))
+        XCTAssertTrue(source.contains(".buttonStyle(.borderedProminent)\n            .tint(.red)"))
+    }
+
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 
@@ -230,7 +263,7 @@ final class SettingsViewTests: XCTestCase {
         var localEntries = [
             STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair"]),
         ]
-        var variantText = " voice layer "
+        var variantText = " voice later "
         var addingVariantFor: String? = "VoiceLayer"
         var addedAliases: [(correct: String, wrong: String)] = []
 
@@ -243,11 +276,33 @@ final class SettingsViewTests: XCTestCase {
         )
 
         XCTAssertEqual(addedAliases.map(\.correct), ["VoiceLayer"])
-        XCTAssertEqual(addedAliases.map(\.wrong), ["voice layer"])
+        XCTAssertEqual(addedAliases.map(\.wrong), ["voice later"])
         XCTAssertEqual(
             localEntries,
-            [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair", "voice layer"])]
+            [STTDictionaryEntry(canonical: "VoiceLayer", variants: ["voice lair", "voice later"])]
         )
+        XCTAssertEqual(variantText, "")
+        XCTAssertNil(addingVariantFor)
+    }
+
+    func testAddVariantMatchingCanonicalAliasKeyIsNoOp() {
+        var localEntries = [
+            STTDictionaryEntry(canonical: "La La", variants: ["la law"]),
+        ]
+        var variantText = " lala "
+        var addingVariantFor: String? = "La La"
+        var addedAliases: [(correct: String, wrong: String)] = []
+
+        SettingsDictionaryMutations.addVariant(
+            canonical: "La La",
+            variantText: &variantText,
+            addingVariantFor: &addingVariantFor,
+            localEntries: &localEntries,
+            onAddVocabularyAlias: { correct, wrong in addedAliases.append((correct, wrong)) }
+        )
+
+        XCTAssertTrue(addedAliases.isEmpty)
+        XCTAssertEqual(localEntries, [STTDictionaryEntry(canonical: "La La", variants: ["la law"])])
         XCTAssertEqual(variantText, "")
         XCTAssertNil(addingVariantFor)
     }
@@ -337,5 +392,16 @@ final class SettingsViewTests: XCTestCase {
             .appendingPathComponent("VoiceBarUI")
             .appendingPathComponent("SettingsView.swift")
         return try String(contentsOf: settingsURL)
+    }
+}
+
+private extension String {
+    func functionBody(named functionName: String) -> String? {
+        guard let start = range(of: "private func \(functionName)") else { return nil }
+        let suffix = self[start.lowerBound...]
+        guard let nextFunction = suffix.dropFirst().range(of: "\n    private func ") else {
+            return String(suffix)
+        }
+        return String(suffix[..<nextFunction.lowerBound])
     }
 }
