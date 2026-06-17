@@ -31,7 +31,13 @@ jobs:
       - name: Type check
         run: bun run typecheck
 
-      - name: Publish
+      # npm Trusted Publishing (OIDC) — no NPM_TOKEN secret required.
+      # Requires npm >= 11.5.1 and a Trusted Publisher configured for
+      # `voicelayer-mcp` on npmjs.com (repo: EtanHey/voicelayer,
+      # workflow: .github/workflows/publish.yml). `id-token: write` (above)
+      # supplies the OIDC token; provenance is attested automatically.
+      - name: Upgrade npm (OIDC trusted publishing support)
+        run: npm install -g npm@latest
+
+      - name: Publish (OIDC trusted publishing)
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
