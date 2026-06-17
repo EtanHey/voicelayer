@@ -1202,7 +1202,7 @@ public final class VoiceState {
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
                 let capturedInsertionHandler =
-                    plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget == nil
+                    plan == .autoPaste && targetMatchesRecordStart
                         ? insertionHandler
                         : nil
 
@@ -1239,7 +1239,7 @@ public final class VoiceState {
                     }
 
                     let freshInsertionHandler =
-                        plan == .autoPaste && targetMatchesRecordStart
+                        plan == .autoPaste
                             ? dictationInsertionHandlerProvider()
                             : nil
                     if let freshInsertionHandler, freshInsertionHandler(text) {
@@ -1252,8 +1252,7 @@ public final class VoiceState {
                         return
                     }
 
-                    if freshInsertionHandler == nil,
-                       let capturedInsertionHandler,
+                    if let capturedInsertionHandler,
                        capturedInsertionHandler(text) {
                         logDiagnostic("paste_ax_insert_success", details: [
                             "plan": String(describing: plan),
@@ -1336,6 +1335,11 @@ public final class VoiceState {
 
     private static func sameApp(_ lhs: NSRunningApplication?, _ rhs: NSRunningApplication?) -> Bool {
         guard let lhs, let rhs else { return false }
+        if let lhsBundleIdentifier = lhs.bundleIdentifier,
+           let rhsBundleIdentifier = rhs.bundleIdentifier {
+            return lhsBundleIdentifier == rhsBundleIdentifier
+        }
+
         return lhs.processIdentifier == rhs.processIdentifier
     }
 
