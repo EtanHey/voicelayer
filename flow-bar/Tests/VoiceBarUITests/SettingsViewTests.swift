@@ -81,6 +81,17 @@ final class SettingsViewTests: XCTestCase {
         XCTAssertTrue(source.contains(".buttonStyle(.borderedProminent)\n            .tint(.red)"))
     }
 
+    func testAddVariantInlineInputUsesOptionDAccentStyleAtRest() throws {
+        let source = try settingsViewSource()
+        let functionSource = try XCTUnwrap(source.functionBody(named: "addVariantInlineEditor"))
+
+        XCTAssertTrue(functionSource.contains(".padding(.vertical, 10)"))
+        XCTAssertTrue(functionSource.contains(".padding(.horizontal, 12)"))
+        XCTAssertTrue(functionSource.contains(".fill(addVariantInputFill)"))
+        XCTAssertTrue(functionSource.contains(".stroke(Color.accentColor, lineWidth: 1.5)"))
+        XCTAssertTrue(functionSource.contains("RoundedRectangle(cornerRadius: 8)"))
+    }
+
     func testDictionaryDoesNotRenderOldSplitSections() throws {
         let source = try settingsViewSource()
 

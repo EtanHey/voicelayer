@@ -430,6 +430,16 @@ public struct SettingsView: View {
                 .dictionaryTextField()
                 .focused($focusedEditorField, equals: .addVariant)
                 .onSubmit { saveVariant(entry.canonical) }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(addVariantInputFill)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
+                )
                 .frame(maxWidth: .infinity)
             Button("Add") {
                 saveVariant(entry.canonical)
@@ -617,6 +627,10 @@ public struct SettingsView: View {
             selectedAnchoredMode = mode
         }
         onSelectAnchorMode(mode)
+    }
+
+    private var addVariantInputFill: Color {
+        Color(red: 31 / 255, green: 39 / 255, blue: 51 / 255)
     }
 }
 
