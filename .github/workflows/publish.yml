@@ -18,10 +18,13 @@ jobs:
         with:
           bun-version: latest
 
+      # No registry-url: that makes setup-node write a token-based .npmrc
+      # (always-auth + empty NODE_AUTH_TOKEN) which overrides OIDC and 404s.
+      # OIDC Trusted Publishing needs npm to see NO _authToken so it exchanges
+      # the GitHub OIDC token for a short-lived publish token itself.
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       - run: bun install --frozen-lockfile
 
