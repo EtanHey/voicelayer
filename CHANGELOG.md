@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-06-18
+
+### Fixed
+- VoiceBar STT: reject prompt-driven hallucinations from very short final chunks while preserving real terminal speech when an unprompted decode confirms it.
+
+## [2.1.0] - 2026-06-17
+
 ### Added
 - CLI voice coaching loop (Phase 1) — 16-chunk transcription, structured coaching workflow via `voicelayer` CLI (#53)
 
