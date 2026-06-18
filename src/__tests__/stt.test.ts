@@ -922,6 +922,58 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks+clean");
     });
 
+    it("ignores non-overlapping hallucinations from a very short final chunk", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-short-final-hallucination-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(108));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro setup";
+          if (calls === 2) return "setup middle";
+          if (calls === 3) return "middle plan";
+          if (calls === 4) return "plan look at ponytail skill";
+          if (calls === 5)
+            return "so I am going to put it in the middle of the ponytail";
+          return "thank you";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(6);
+      expect(result.text).toBe("intro setup middle plan look at ponytail skill");
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    it("keeps non-overlapping speech from a very short final chunk when unprompted decode agrees", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-short-final-real-tail-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(108));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro setup";
+          if (calls === 2) return "setup middle";
+          if (calls === 3) return "middle plan";
+          if (calls === 4) return "plan look at ponytail skill";
+          return "please restart voicebar now";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(6);
+      expect(result.text).toBe(
+        "intro setup middle plan look at ponytail skill please restart voicebar now",
+      );
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
     it("keeps short resident recordings on a single decode", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-short-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));

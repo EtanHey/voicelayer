@@ -104,6 +104,8 @@ const MIN_REPLAYED_TAIL_PHRASE_WORDS = 4;
 const MAX_REPLAYED_TAIL_PHRASE_WORDS = 10;
 const MAX_ORPHANED_TAIL_FRAGMENT_WORDS = 2;
 const MAX_TAIL_PREFIX_SHIFTED_SKIP_WORDS = 6;
+const MIN_SHORT_FINAL_CONFIRMATION_WORDS = 3;
+const MIN_SHORT_FINAL_CONFIRMATION_RATIO = 0.7;
 const DANGLING_TAIL_CONTINUATION_CUES = new Set([
   "are you",
   "are we",
@@ -583,6 +585,33 @@ export function mergeChunkTranscripts(chunks: string[]): string {
   }
 
   return merged.join(" ").trim();
+}
+
+function hasChunkBoundaryOverlap(currentText: string, nextText: string): boolean {
+  const currentWords = normalizeChunkWords(currentText);
+  const nextWords = normalizeChunkWords(nextText);
+  if (currentWords.length === 0 || nextWords.length === 0) return false;
+  return findChunkOverlap(currentWords, nextWords).overlap > 0;
+}
+
+function shortFinalChunkAgrees(
+  promptedText: string,
+  unpromptedText: string,
+): boolean {
+  const promptedWords = normalizeChunkWords(promptedText);
+  const unpromptedWords = normalizeChunkWords(unpromptedText);
+  if (promptedWords.length === 0 || unpromptedWords.length === 0) return false;
+  if (containsWordSequence(unpromptedWords, promptedWords)) return true;
+  if (!containsWordSequence(promptedWords, unpromptedWords)) return false;
+
+  const minimumConfirmationWords =
+    promptedWords.length <= 2
+      ? promptedWords.length
+      : Math.max(
+          MIN_SHORT_FINAL_CONFIRMATION_WORDS,
+          Math.ceil(promptedWords.length * MIN_SHORT_FINAL_CONFIRMATION_RATIO),
+        );
+  return unpromptedWords.length >= minimumConfirmationWords;
 }
 
 function stripTailVerificationArtifact(text: string, fullText: string): string {
@@ -1142,6 +1171,9 @@ export class WhisperServerBackend implements STTBackend {
       startSeconds < info.durationSeconds;
       startSeconds += stepSeconds
     ) {
+      const isVeryShortFinalChunk =
+        startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds &&
+        info.durationSeconds - startSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
       const segment = sliceWavSegment(
         wavData,
         startSeconds,
@@ -1159,6 +1191,19 @@ export class WhisperServerBackend implements STTBackend {
         }),
       );
       if (!text.trim()) return null;
+      if (
+        isVeryShortFinalChunk &&
+        mergedSoFar &&
+        !hasChunkBoundaryOverlap(mergedSoFar, text)
+      ) {
+        const unpromptedText = await this.transcribeResident(
+          segment,
+          buildWhisperServerOptions({ ...options, promptOverride: undefined }),
+        );
+        if (!shortFinalChunkAgrees(text, unpromptedText)) {
+          break;
+        }
+      }
       transcripts.push(text);
 
       if (startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds) {
