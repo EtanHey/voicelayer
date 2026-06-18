@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-06-18
+
+### Fixed
+
+- VoiceBar STT: stop launching resident whisper-server in no-timestamps mode, which could hallucinate fluent trailing sentences on medium-length recordings; normalize timestamped segment output into a single transcript.
+
 ## [2.1.1] - 2026-06-18
 
 ### Fixed

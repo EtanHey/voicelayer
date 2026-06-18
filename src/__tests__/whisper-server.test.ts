@@ -157,7 +157,6 @@ usage: whisper-server [options]
         "127.0.0.1",
         "-t",
         "4",
-        "-nt",
         "-bo",
         "5",
         "-bs",
@@ -166,6 +165,8 @@ usage: whisper-server [options]
       ]);
       expect(launch.env.PATH).toBe("/opt/homebrew/bin");
       expect(launch.acceleration.mode).toBe("cpu");
+      expect(launch.args).not.toContain("-nt");
+      expect(launch.args).not.toContain("--no-timestamps");
     });
 
     it("maps performance effort to whisper beam/search args", () => {
@@ -496,6 +497,30 @@ usage: whisper-server [options]
         expect(text).toBe("שלום");
         expect(inferenceForm?.get("language")).toBe("he");
         expect(inferenceForm?.get("prompt")).toBe("פוש ברנץ Pull Request");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("normalizes timestamped-mode segment newlines from whisper-server JSON", async () => {
+      const originalFetch = globalThis.fetch;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async () =>
+        new Response(
+          JSON.stringify({
+            text: " first segment\n second segment\n\n third segment\n",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        );
+
+      try {
+        const text = await transcribeViaServer(new Uint8Array([1, 2]), 5555);
+
+        expect(text).toBe("first segment second segment third segment");
       } finally {
         globalThis.fetch = originalFetch;
       }

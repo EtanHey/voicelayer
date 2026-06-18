@@ -250,11 +250,31 @@ recording_state_from_shared_source() {
     cd "$REPO_ROOT"
     bun --silent -e '
       const mod = await import("./src/recording-state.ts");
-      const reader = mod.getRecordingState ?? mod.readRecordingState;
+      const reader = mod.getEffectiveRecordingState ?? mod.getRecordingState ?? mod.readRecordingState;
       const state = typeof reader === "function" ? await reader() : mod.recordingState;
       if (typeof state === "string") console.log(state);
     ' 2>/dev/null
   )
+}
+
+current_recording_state() {
+  local state=""
+  local health=""
+
+  if state="$(recording_state_from_shared_source 2>/dev/null)" && [ -n "$state" ]; then
+    printf '%s\n' "$state"
+    return 0
+  fi
+
+  if health="$(voicebar_health_json "$VOICEBAR_SOCKET_PATH" 2>/dev/null)"; then
+    state="$(recording_state_from_health_json "$health")"
+    if [ -n "$state" ]; then
+      printf '%s\n' "$state"
+      return 0
+    fi
+  fi
+
+  return 1
 }
 
 assert_no_recording_in_progress() {
@@ -435,6 +455,96 @@ send_f5_stop() {
   send_f5_once
 }
 
+wait_for_recording_state() {
+  local expected_state="$1"
+  local timeout_seconds="$2"
+  local start_time
+  local now
+  local state=""
+  start_time="$(date +%s)"
+
+  while :; do
+    state="$(current_recording_state 2>/dev/null || true)"
+    if [ "$state" = "$expected_state" ]; then
+      log "VoiceBar state reached $expected_state"
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if (( now - start_time >= timeout_seconds )); then
+      log "VoiceBar state did not reach $expected_state within ${timeout_seconds}s (last=${state:-unknown})"
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+wait_for_recording_to_stop() {
+  local timeout_seconds="$1"
+  local start_time
+  local now
+  local state=""
+  start_time="$(date +%s)"
+
+  while :; do
+    state="$(current_recording_state 2>/dev/null || true)"
+    case "$state" in
+      idle|transcribing|speaking|error)
+        if pgrep -x rec >/dev/null 2>&1; then
+          log "VoiceBar reported state=$state but rec process is still running"
+          sleep 0.5
+          continue
+        fi
+        log "VoiceBar left recording state (state=$state)"
+        return 0
+        ;;
+    esac
+
+    if [ -z "$state" ] && ! pgrep -x rec >/dev/null 2>&1; then
+      log "VoiceBar recording process ended (state unavailable)"
+      return 0
+    fi
+
+    now="$(date +%s)"
+    if (( now - start_time >= timeout_seconds )); then
+      log "VoiceBar still appears to be recording after ${timeout_seconds}s (state=${state:-unknown})"
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+stop_recording_with_f5_retry() {
+  local attempt
+  for attempt in 1 2 3; do
+    send_f5_stop
+    if wait_for_recording_to_stop 8; then
+      return 0
+    fi
+    log "retrying F5 stop because recording did not stop (attempt $attempt)"
+  done
+  return 1
+}
+
+cleanup_stuck_recording() {
+  local state=""
+  state="$(current_recording_state 2>/dev/null || true)"
+  if [ "$state" != "recording" ] && ! pgrep -x rec >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "cleanup stopping active VoiceBar recording after failed auto-F5 cycle"
+  stop_recording_with_f5_retry && return 0
+
+  open 'voicebar://stop-recording' >/dev/null 2>&1 || true
+  wait_for_recording_to_stop 10 && return 0
+
+  if pgrep -x rec >/dev/null 2>&1; then
+    log "cleanup killing stuck rec process"
+    pkill -x rec >/dev/null 2>&1 || true
+  fi
+}
+
 prepare_textedit_sink() {
   mkdir -p "$WORK_DIR"
   : >"$SINK_FILE"
@@ -579,8 +689,17 @@ run_f5_capture_cycle() {
   start_audio_loop
   sleep 0.2
   send_f5_start_locked
+  if ! wait_for_recording_state recording 20; then
+    stop_audio_loop
+    cleanup_stuck_recording
+    return 1
+  fi
   sleep "$RECORD_SECONDS"
-  send_f5_stop
+  if ! stop_recording_with_f5_retry; then
+    stop_audio_loop
+    cleanup_stuck_recording
+    return 1
+  fi
   stop_audio_loop
 
   if wait_for_sink_match "$PASTE_TIMEOUT_SECONDS"; then

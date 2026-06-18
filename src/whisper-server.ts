@@ -315,7 +315,6 @@ export function buildWhisperServerLaunchPlan(
     "127.0.0.1",
     "-t",
     "4",
-    "-nt", // no timestamps
     ...whisperPerformanceArgsForEffort(
       options.performanceEffort ?? getWhisperPerformanceEffort(inheritedEnv),
     ),
@@ -756,6 +755,15 @@ export async function transcribeViaServer(
   return transcribeViaServerAttempt(wavData, port, true, options);
 }
 
+function normalizeTranscriptionText(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+}
+
 async function transcribeViaServerAttempt(
   wavData: Uint8Array,
   port: number | undefined,
@@ -813,7 +821,7 @@ async function transcribeViaServerAttempt(
     if (result.error) {
       throw new Error(`whisper-server inference error: ${result.error}`);
     }
-    return (result.text || "").trim();
+    return normalizeTranscriptionText(result.text || "");
   } finally {
     clearTimeout(timer);
   }

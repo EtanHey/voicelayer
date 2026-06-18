@@ -34,7 +34,7 @@ import {
 const server = new Server(
   {
     name: "voicelayer",
-    version: "2.1.0",
+    version: "2.1.2",
   },
   {
     capabilities: { tools: {} },
@@ -126,7 +126,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    "[voicelayer] MCP server v2.1 running — modes: announce, brief, consult, converse, replay, toggle",
+    "[voicelayer] MCP server v2.1.2 running — modes: announce, brief, consult, converse, replay, toggle",
   );
   console.error("[voicelayer] Connected to Voice Bar as client");
 }
