@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-06-19
+
+### Fixed
+
+- VoiceBar STT polish: allow punctuation repair for long timestamped transcripts when the polish model writes equivalent standalone number words such as `three` for `3`, while still rejecting real numeric changes.
+
 ## [2.1.2] - 2026-06-18
 
 ### Fixed

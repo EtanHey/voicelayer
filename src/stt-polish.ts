@@ -303,13 +303,105 @@ function protectedSlashTokens(text: string): string[] {
   );
 }
 
-function protectedNumericTokens(text: string): string[] {
+const UNIT_NUMBER_WORD_VALUES: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+};
+
+const TEEN_NUMBER_WORD_VALUES: Record<string, number> = {
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+};
+
+const TENS_NUMBER_WORD_VALUES: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+const NUMBER_WORD_VALUES: Record<string, number> = {
+  ...UNIT_NUMBER_WORD_VALUES,
+  ...TEEN_NUMBER_WORD_VALUES,
+  ...TENS_NUMBER_WORD_VALUES,
+};
+
+const NUMBER_WORD_PATTERN = Object.keys(NUMBER_WORD_VALUES).join("|");
+const PROTECTED_NUMERIC_TOKEN_PATTERN = new RegExp(
+  `(?<![\\p{L}\\p{N}_])(?:\\d+(?:[.,:]\\d+)*(?:%|[A-Za-z]+)?|${NUMBER_WORD_PATTERN})(?![\\p{L}\\p{N}_])`,
+  "giu",
+);
+
+function normalizeProtectedNumericToken(token: string): string {
+  const lower = token.toLowerCase();
+  return String(NUMBER_WORD_VALUES[lower] ?? lower);
+}
+
+function canJoinNumberWordTokens(
+  left: string,
+  right: string,
+  separator: string,
+): boolean {
   return (
-    text
-      .normalize("NFKC")
-      .match(/(?<![\p{L}\p{N}_])\d+(?:[.,:]\d+)*(?:%|[A-Za-z]+)?(?![\p{L}\p{N}_])/gu)
-      ?.map((token) => token.toLowerCase()) ?? []
+    TENS_NUMBER_WORD_VALUES[left] !== undefined &&
+    UNIT_NUMBER_WORD_VALUES[right] !== undefined &&
+    UNIT_NUMBER_WORD_VALUES[right] > 0 &&
+    /^[\s-]+$/u.test(separator)
   );
+}
+
+function protectedNumericTokens(text: string): string[] {
+  const normalized = text.normalize("NFKC");
+  const matches = Array.from(normalized.matchAll(PROTECTED_NUMERIC_TOKEN_PATTERN));
+  const tokens: string[] = [];
+
+  for (let index = 0; index < matches.length; index++) {
+    const match = matches[index];
+    const token = match[0];
+    const lower = token.toLowerCase();
+    const next = matches[index + 1];
+    const nextLower = next?.[0].toLowerCase();
+
+    if (
+      next &&
+      nextLower &&
+      canJoinNumberWordTokens(
+        lower,
+        nextLower,
+        normalized.slice((match.index ?? 0) + token.length, next.index ?? 0),
+      )
+    ) {
+      tokens.push(
+        String(TENS_NUMBER_WORD_VALUES[lower] + UNIT_NUMBER_WORD_VALUES[nextLower]),
+      );
+      index++;
+      continue;
+    }
+
+    tokens.push(normalizeProtectedNumericToken(token));
+  }
+
+  return tokens;
 }
 
 function sameTokenSequence(left: string[], right: string[]): boolean {

@@ -451,6 +451,53 @@ describe("stt-polish", () => {
     expect(result.error).toContain("changed protected tokens");
   });
 
+  it("allows punctuation repair when digit tokens are only written as equivalent number words", async () => {
+    server = createMockPolishServer(() => ({
+      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+    }));
+
+    const cleanedText =
+      "So wait what do you mean follow up backlog why did you all not do it well it seems like we've evaled this very good and I'm now seeing the golemsClaude on your right 3 minor non-blocking gaps failure recur record path untested cleanup skip is silent exit 0 with no Telegram warning no boundary test for adjacency window edge well I mean again this should have been more compounding I want this to be fucking hard fucking rock solid can you get your own id your own Claude session id and send that to me";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "So wait, what do you mean follow-up backlog? Why did you all not do it well? It seems like we've evaled this very good, and I'm now seeing the golemsClaude on your right. Three minor non-blocking gaps: failure recur, record path untested, cleanup skip is silent exit 0 with no Telegram warning, no boundary test for adjacency window edge. Well, I mean again, this should have been more compounding. I want this to be fucking hard, fucking rock solid. Can you get your own ID, your own Claude session ID, and send that to me?",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows punctuation repair when multi-digit tokens are written as equivalent number words", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Review forty two dashboard files before 6pm.",
+    }));
+
+    const cleanedText = "Review 42 dashboard files before 6pm";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Review forty two dashboard files before 6pm.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
   it("calls an OpenAI-compatible local polish endpoint when configured", async () => {
     const requests: Record<string, unknown>[] = [];
     const server = Bun.serve({
