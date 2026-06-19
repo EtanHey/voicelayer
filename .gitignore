@@ -23,6 +23,8 @@ flow-bar/.build/
 
 # Machine-local Claude config
 .claude.local.md
+.agents/
+video.mp4
 
 # Local runtime verification receipts
 .verified/
