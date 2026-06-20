@@ -39,11 +39,33 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("INSTALL TYPE:");
     expect(stdout).toContain("PACKAGE UPDATE:");
     expect(stdout).toContain("bash flow-bar/build-app.sh");
-    expect(stdout).toContain("bash launchd/install.sh");
-    expect(stdout).toContain("restart VoiceLayer daemon");
-    expect(stdout).toContain("open /Applications/VoiceBar.app");
+    expect(stdout).toContain(
+      "build-app.sh relaunches VoiceBar unless --no-relaunch is set",
+    );
+    expect(stdout).not.toContain("bash launchd/install.sh");
+    expect(stdout).not.toContain("restart VoiceLayer daemon");
+    expect(stdout).not.toContain("open /Applications/VoiceBar.app");
     expect(stdout).toContain("Qwen3 model");
     expect(stdout).toContain("Personal data sync: skipped");
+  });
+
+  test("dry-run passes VoiceBar stop and relaunch opt-outs to build-app", () => {
+    const result = run([
+      "bash",
+      updateScript,
+      "--dry-run",
+      "--no-stop",
+      "--no-relaunch",
+    ]);
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      "bash flow-bar/build-app.sh --no-stop --no-relaunch",
+    );
+    expect(stdout).toContain(
+      "build-app.sh relaunches VoiceBar unless --no-relaunch is set",
+    );
   });
 
   test("non-dry-run updates can skip personal data sync", () => {

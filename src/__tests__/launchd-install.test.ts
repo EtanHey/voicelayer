@@ -57,10 +57,29 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(buildScript).toContain('find "$VOICEBAR_BACKUP_DIR"');
   });
 
-  test("VoiceBar build script refuses to replace the live app without an explicit force flag", () => {
-    expect(buildScript).toContain("VOICEBAR_FORCE_APP_REPLACE");
-    expect(buildScript).toContain(
-      "Refusing to replace /Applications/VoiceBar.app while VoiceBar is running",
-    );
+  test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {
+    const stopIndex = buildScript.indexOf("stop_voicebar_instances");
+    const buildIndex = buildScript.indexOf("swift build -c release");
+    const signIndex = buildScript.indexOf("codesign --force --deep");
+    const relaunchIndex = buildScript.lastIndexOf("relaunch_voicebar_app");
+
+    expect(buildScript).toContain('VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"');
+    expect(buildScript).toContain("CFBundleIdentifier");
+    expect(buildScript).toContain("voicebar_target_pids");
+    expect(buildScript).toContain("voicebar_descendant_pids");
+    expect(buildScript).toContain("osascript -e");
+    expect(buildScript).toContain("signal_pids TERM");
+    expect(buildScript).toContain("signal_pids KILL");
+    expect(buildScript).toContain('open "$APP_DIR"');
+    expect(buildScript).toContain("wait_for_exactly_one_voicebar_instance");
+    expect(stopIndex).toBeGreaterThan(-1);
+    expect(buildIndex).toBeGreaterThan(stopIndex);
+    expect(signIndex).toBeGreaterThan(buildIndex);
+    expect(relaunchIndex).toBeGreaterThan(signIndex);
+    expect(buildScript).toContain("--no-stop");
+    expect(buildScript).toContain("--no-relaunch");
+    expect(buildScript).not.toContain("VOICEBAR_FORCE_APP_REPLACE");
+    expect(buildScript).not.toContain("Refusing to replace /Applications/VoiceBar.app");
+    expect(buildScript).not.toMatch(/\b(pkill|killall)\b/);
   });
 });

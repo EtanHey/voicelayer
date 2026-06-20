@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Update the installed VoiceLayer package, rebuild the canonical VoiceBar.app,
-# and restart the local VoiceBar-owned daemon stack.
+# and let build-app complete the local VoiceBar-owned daemon stack restart.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,11 +18,11 @@ DATA_SOURCE="${VOICELAYER_UPDATE_DATA_SOURCE:-}"
 DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-skip}"
 RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
-VOICEBAR_LABEL="com.voicelayer.voicebar"
+BUILD_APP_ARGS=()
 
 usage() {
     cat <<'EOF'
-Usage: voicelayer update [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME]
+Usage: voicelayer update [--dry-run] [--data-mode skip|direct|brain-drive] [--data-source SOURCE_HOME] [--no-stop] [--no-relaunch]
 
 Runs on the target Mac. SOURCE_HOME is optional personal runtime data, either:
   direct:      main-mac.local:/Users/etanheyman
@@ -131,6 +131,14 @@ parse_args() {
                 DATA_MODE="$2"
                 shift 2
                 ;;
+            --no-stop)
+                BUILD_APP_ARGS+=("--no-stop")
+                shift
+                ;;
+            --no-relaunch)
+                BUILD_APP_ARGS+=("--no-relaunch")
+                shift
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -212,13 +220,11 @@ print_plan() {
     log "Steps:"
     log "  1. update package: $(package_update_label)"
     log "  2. install package dependencies when running from a git checkout"
-    log "  3. bash flow-bar/build-app.sh"
-    log "  4. bash launchd/install.sh"
-    log "  5. create/update $VENV_DIR and pull Qwen3 model if missing"
-    log "  6. restart VoiceLayer daemon by restarting VoiceBar"
-    log "  7. open /Applications/VoiceBar.app"
+    log "  3. bash flow-bar/build-app.sh ${BUILD_APP_ARGS[*]:-}"
+    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
+    log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
     if [[ "$DATA_MODE" != "skip" ]]; then
-        log "  8. rsync personal data:"
+        log "  6. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
         log "     $(source_path ".voicelayer/voices.json") -> $VOICELAYER_HOME/voices.json"
         log "     $(source_path ".voicelayer/pronunciation.yaml") -> $VOICELAYER_HOME/pronunciation.yaml"
@@ -289,20 +295,6 @@ update_package() {
     esac
 }
 
-restart_voicebar_stack() {
-    if command -v launchctl >/dev/null 2>&1 &&
-       launchctl print "gui/$(id -u)/$VOICEBAR_LABEL" >/dev/null 2>&1; then
-        run_cmd launchctl kickstart -k "gui/$(id -u)/$VOICEBAR_LABEL"
-    else
-        log "VoiceBar LaunchAgent is not loaded; launching app directly."
-    fi
-    if [[ "$DRY_RUN" -eq 0 && "$DRY_RUN_COMMANDS" != "1" && ! -d "/Applications/VoiceBar.app" ]]; then
-        err "VoiceBar.app is not installed at /Applications/VoiceBar.app"
-        exit 1
-    fi
-    run_cmd open "/Applications/VoiceBar.app"
-}
-
 main() {
     parse_args "$@"
     validate_args
@@ -328,11 +320,9 @@ main() {
     fi
 
     update_package
-    run_cmd bash "$PACKAGE_ROOT/flow-bar/build-app.sh"
-    run_cmd bash "$PACKAGE_ROOT/launchd/install.sh"
+    run_cmd bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
     install_qwen3_model
     sync_personal_data
-    restart_voicebar_stack
     log "VoiceLayer update complete."
 }
 
