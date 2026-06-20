@@ -308,3 +308,124 @@ describe("socket handler idempotency matrix", () => {
     expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
   });
 });
+
+// V1 — single-recorder invariant: a bar-initiated `record` must claim the
+// cross-process voice-session lock (bookVoiceSession), exactly like
+// handleConverse does for voice_ask. Without it, an F5 dictation that starts
+// before any MCP voice_ask leaves NO lock on disk, so a voice_ask in a second
+// daemon process books + records concurrently → two `sox` on one mic →
+// rms=0 silence → whisper hallucination → lost transcript (M1 escalation #7d).
+//
+// NOTE: these live in this file (not a standalone one) on purpose — adding a
+// new test file that spies on the shared tts/socket-client/session-booking
+// modules destabilizes the full suite (bun schedules files concurrently, so a
+// new file's spies leak into the playback/converse suites). Folding into an
+// existing heavily-spied file keeps the suite's file-set — and its
+// concurrency profile — unchanged.
+describe("socket-handlers record — cross-process booking (V1)", () => {
+  let waitForInputSpy: ReturnType<typeof spyOn>;
+  let broadcastSpy: ReturnType<typeof spyOn>;
+  let stopPlaybackSpy: ReturnType<typeof spyOn>;
+  let queueDepthSpy: ReturnType<typeof spyOn>;
+  let recordingStateSpy: ReturnType<typeof spyOn>;
+  let isVoiceBookedSpy: ReturnType<typeof spyOn>;
+  let bookVoiceSessionSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
+      () => {},
+    );
+    stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
+    queueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0);
+    recordingStateSpy = spyOn(input, "getRecordingState").mockReturnValue(
+      "idle",
+    );
+    isVoiceBookedSpy = spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({
+      booked: false,
+      ownedByUs: false,
+    });
+    bookVoiceSessionSpy = spyOn(
+      sessionBooking,
+      "bookVoiceSession",
+    ).mockReturnValue({ success: true });
+  });
+
+  afterEach(() => {
+    waitForInputSpy.mockRestore();
+    broadcastSpy.mockRestore();
+    stopPlaybackSpy.mockRestore();
+    queueDepthSpy.mockRestore();
+    recordingStateSpy.mockRestore();
+    isVoiceBookedSpy.mockRestore();
+    bookVoiceSessionSpy.mockRestore();
+  });
+
+  it("claims the voice-session lock before recording when nothing is booked", () => {
+    const response = handleSocketCommand({ cmd: "record", id: "rec-book" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "rec-book",
+    });
+    expect(bookVoiceSessionSpy).toHaveBeenCalledTimes(1);
+    expect(waitForInputSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects without recording when the lock cannot be claimed (lost race)", () => {
+    // isVoiceBooked still reports free at check time, but the atomic book loses
+    // the race to a competing process between check and write.
+    bookVoiceSessionSpy.mockReturnValue({
+      success: false,
+      error: "Line is busy — voice booked by session other (race condition)",
+    });
+
+    const response = handleSocketCommand({ cmd: "record", id: "rec-race" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "reject",
+      id: "rec-race",
+      reason: "busy",
+    });
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not re-book when this process already owns the session", () => {
+    isVoiceBookedSpy.mockReturnValue({ booked: true, ownedByUs: true });
+
+    const response = handleSocketCommand({ cmd: "record", id: "rec-owned" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "rec-owned",
+    });
+    expect(bookVoiceSessionSpy).not.toHaveBeenCalled();
+    expect(waitForInputSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects when another process owns the session (unchanged behavior)", () => {
+    isVoiceBookedSpy.mockReturnValue({
+      booked: true,
+      ownedByUs: false,
+      owner: { pid: 999, sessionId: "other", startedAt: "now" },
+    });
+
+    const response = handleSocketCommand({ cmd: "record", id: "rec-busy" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "reject",
+      id: "rec-busy",
+      reason: "busy",
+    });
+    expect(bookVoiceSessionSpy).not.toHaveBeenCalled();
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+});

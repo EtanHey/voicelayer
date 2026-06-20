@@ -19,7 +19,11 @@ import {
   hasRetainedRecording,
   retranscribeLastCapture,
 } from "./input";
-import { isVoiceBooked, setCancelSignal } from "./session-booking";
+import {
+  bookVoiceSession,
+  isVoiceBooked,
+  setCancelSignal,
+} from "./session-booking";
 import { broadcast } from "./socket-client";
 import type {
   AckCommand,
@@ -156,6 +160,23 @@ export function handleSocketCommand(
           recoverable: true,
         });
         return buildAck(command, "reject", "busy");
+      }
+      // V1 single-recorder invariant: claim the cross-process voice-session
+      // lock before recording, mirroring handleConverse. A bar-initiated F5
+      // recording previously checked the lock but never wrote one, so a
+      // voice_ask in a second daemon process could book + record concurrently
+      // → two `sox` on one mic → rms=0 silence → lost transcript (#7d). The
+      // lockfile is the single mic mutex honored by both entry points.
+      if (!booking.booked) {
+        const claim = bookVoiceSession();
+        if (!claim.success) {
+          broadcast({
+            type: "error",
+            message: `Line is busy — ${claim.error ?? "another session holds voice"}`,
+            recoverable: true,
+          });
+          return buildAck(command, "reject", "busy");
+        }
       }
       if (isSpeaking) {
         stopPlayback();
