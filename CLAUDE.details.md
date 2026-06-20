@@ -79,7 +79,7 @@
 
 ## Dependencies (setup)
 - sox (`rec`), edge-tts, whisper-cpp (optional), yt-dlp, ffmpeg
-- Python: mlx-audio, fastapi, uvicorn, silero-vad, torch, soundfile
+- Python: mlx-audio, fastapi, uvicorn, numpy, pydantic, silero-vad, torch, soundfile
 - Optional: demucs, pyannote.audio
 
 ## Naming

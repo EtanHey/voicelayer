@@ -27,7 +27,7 @@ pip3 install demucs            # Source separation (removes background music)
 pip3 install pyannote.audio    # Speaker diarization (multi-speaker videos)
 
 # TTS daemon
-pip3 install mlx-audio fastapi uvicorn
+pip3 install mlx-audio fastapi uvicorn numpy pydantic
 ```
 
 ## Step 1: Extract Voice Samples
