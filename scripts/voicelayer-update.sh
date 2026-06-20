@@ -255,7 +255,7 @@ install_qwen3_model() {
         run_cmd python3 -m venv "$VENV_DIR"
     fi
     run_cmd "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    run_cmd "$VENV_DIR/bin/python" -m pip install "$MLX_AUDIO_VERSION_SPEC" huggingface_hub
+    run_cmd "$VENV_DIR/bin/python" -m pip install "$MLX_AUDIO_VERSION_SPEC" huggingface_hub uvicorn fastapi pydantic soundfile numpy
     run_cmd mkdir -p "$MODEL_DIR"
     run_cmd "$VENV_DIR/bin/huggingface-cli" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR"
 }
