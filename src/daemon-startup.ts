@@ -14,6 +14,10 @@ export type McpPidOwnerStartupDecision =
       ownerCommandKind: PidOwnerCommandKind;
     };
 
+export type OrphanStartupDecision =
+  | { action: "run"; reason: "parent_alive" | "orphan_override" }
+  | { action: "stand_down"; reason: "missing_parent" | "parent_not_alive" };
+
 export type PidOwnerCommandKind =
   | "mcp-daemon"
   | "legacy-or-unrelated"
@@ -29,6 +33,51 @@ export interface ResolveMcpSocketStartupOptions {
 const STARTUP_CHECK_DELAYS_MS = [0, 200, 500];
 const STAND_DOWN_CONFIRMATION_DELAYS_MS = [300, 700, 1500];
 const PID_OWNER_SOCKET_GRACE_DELAYS_MS = [0, 250, 750, 1500];
+
+export function resolveOrphanStartupDecision({
+  initialParentPid,
+  isParentAlive,
+  allowOrphan,
+}: {
+  initialParentPid: number;
+  isParentAlive: boolean;
+  allowOrphan: boolean;
+}): OrphanStartupDecision {
+  if (allowOrphan) {
+    return { action: "run", reason: "orphan_override" };
+  }
+  if (!Number.isFinite(initialParentPid) || initialParentPid <= 1) {
+    return { action: "stand_down", reason: "missing_parent" };
+  }
+  if (!isParentAlive) {
+    return { action: "stand_down", reason: "parent_not_alive" };
+  }
+  return { action: "run", reason: "parent_alive" };
+}
+
+/**
+ * Liveness probe for the VoiceBar parent at daemon startup. Signal 0 sends
+ * nothing — it only checks existence/permission. EPERM means the process is
+ * alive but not signalable by us, so it counts as alive. PIDs <= 1 (no real
+ * parent / reparented to launchd) are never alive.
+ */
+export function isProcessAlive(
+  pid: number,
+  kill: (pid: number, signal: number) => void = (p, s) => process.kill(p, s),
+): boolean {
+  if (!Number.isFinite(pid) || pid <= 1) return false;
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return (
+      typeof err === "object" &&
+      err !== null &&
+      "code" in err &&
+      err.code === "EPERM"
+    );
+  }
+}
 
 /**
  * Decide whether this daemon instance may claim the MCP socket.
@@ -97,7 +146,9 @@ export async function resolveMcpPidOwnerStartup({
     }
   }
 
-  const ownerCommandKind = classifyPidOwnerCommand(readProcessCommand(ownerPid));
+  const ownerCommandKind = classifyPidOwnerCommand(
+    readProcessCommand(ownerPid),
+  );
   if (ownerCommandKind === "mcp-daemon") {
     log(
       `[voicelayer-daemon] MCP PID owner appears to be a starting daemon without a live socket yet (PID ${ownerPid}); standing down`,

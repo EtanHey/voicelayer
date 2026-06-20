@@ -38,9 +38,11 @@ import { handleSocketCommand } from "./socket-handlers";
 import { createMcpDaemon, isSocketLive } from "./mcp-daemon";
 import { getConnectionCount, getUptimeSeconds } from "./daemon-health";
 import {
+  isProcessAlive,
   readProcessCommandLine,
   resolveMcpPidOwnerStartup,
   resolveMcpSocketStartup,
+  resolveOrphanStartupDecision,
 } from "./daemon-startup";
 import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
@@ -98,10 +100,25 @@ const toolDispatch: Record<
 
 // --- Startup ---
 
+const ALLOW_ORPHAN_DAEMON_ENV = "VOICELAYER_ALLOW_ORPHAN_DAEMON";
+
 async function main() {
   if (isVoicelayerDisabled()) {
     console.error(
       `[voicelayer-daemon] ${DISABLE_VOICELAYER}=1 or daemon disable flag present — exiting`,
+    );
+    process.exit(0);
+  }
+
+  const initialParentPid = resolveInitialParentPid();
+  const orphanStartupDecision = resolveOrphanStartupDecision({
+    initialParentPid,
+    isParentAlive: isProcessAlive(initialParentPid),
+    allowOrphan: process.env[ALLOW_ORPHAN_DAEMON_ENV] === "1",
+  });
+  if (orphanStartupDecision.action === "stand_down") {
+    console.error(
+      `[voicelayer-daemon] Refusing orphan startup (${orphanStartupDecision.reason}; parent PID ${initialParentPid}). VoiceBar.app must spawn the MCP daemon. Set ${ALLOW_ORPHAN_DAEMON_ENV}=1 only for isolated dev/QA runs.`,
     );
     process.exit(0);
   }
@@ -130,9 +147,7 @@ async function main() {
   // against the live daily-driver socket cannot kill the existing daemon via
   // the PID file before discovering the socket is still owned.
   const lockResult = acquireProcessLock(undefined, { killAlive: false });
-  let killedStalePid = lockResult.killedStale
-    ? lockResult.stalePid
-    : undefined;
+  let killedStalePid = lockResult.killedStale ? lockResult.stalePid : undefined;
   if (!lockResult.acquired) {
     const stalePid = lockResult.stalePid;
     if (typeof stalePid !== "number") {

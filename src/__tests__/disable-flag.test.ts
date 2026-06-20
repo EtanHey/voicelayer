@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import {
-  existsSync,
-  mkdirSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from "fs";
+import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
 const TEST_DIR = `/tmp/voicelayer-disable-flag-${process.pid}`;
 const TEST_MCP_SOCKET_PATH = `${TEST_DIR}/voicelayer-mcp.sock`;
@@ -49,6 +43,10 @@ function spawnDaemon(extraEnv: Record<string, string | undefined> = {}) {
       QA_VOICE_MCP_SOCKET_PATH: TEST_MCP_SOCKET_PATH,
       QA_VOICE_MCP_PID_PATH: TEST_MCP_PID_PATH,
       QA_VOICE_DISABLE_FLAG_PATH: TEST_DISABLE_FLAG_PATH,
+      // These tests exercise the disable flag, not the sole-owner guard; opt
+      // out of orphan enforcement so they don't depend on an incidental live
+      // parent PID.
+      VOICELAYER_ALLOW_ORPHAN_DAEMON: "1",
       ...extraEnv,
     },
   });

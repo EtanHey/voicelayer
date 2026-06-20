@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
   classifyPidOwnerCommand,
+  isProcessAlive,
   resolveMcpPidOwnerStartup,
   resolveMcpSocketStartup,
+  resolveOrphanStartupDecision,
 } from "../daemon-startup";
 
 describe("MCP daemon startup socket ownership", () => {
@@ -124,5 +126,83 @@ describe("MCP daemon startup socket ownership", () => {
       "legacy-or-unrelated",
     );
     expect(classifyPidOwnerCommand(null)).toBe("unknown");
+  });
+});
+
+describe("MCP daemon orphan startup guard", () => {
+  test("stands down when no VoiceBar parent is available and override is absent", () => {
+    expect(
+      resolveOrphanStartupDecision({
+        initialParentPid: 1,
+        isParentAlive: false,
+        allowOrphan: false,
+      }),
+    ).toEqual({ action: "stand_down", reason: "missing_parent" });
+  });
+
+  test("stands down when VoiceBar parent pid is dead and override is absent", () => {
+    expect(
+      resolveOrphanStartupDecision({
+        initialParentPid: 4321,
+        isParentAlive: false,
+        allowOrphan: false,
+      }),
+    ).toEqual({ action: "stand_down", reason: "parent_not_alive" });
+  });
+
+  test("runs when VoiceBar parent pid is live", () => {
+    expect(
+      resolveOrphanStartupDecision({
+        initialParentPid: 4321,
+        isParentAlive: true,
+        allowOrphan: false,
+      }),
+    ).toEqual({ action: "run", reason: "parent_alive" });
+  });
+
+  test("runs when orphan override is explicitly set", () => {
+    expect(
+      resolveOrphanStartupDecision({
+        initialParentPid: 1,
+        isParentAlive: false,
+        allowOrphan: true,
+      }),
+    ).toEqual({ action: "run", reason: "orphan_override" });
+  });
+});
+
+describe("isProcessAlive", () => {
+  const esrch = Object.assign(new Error("no such process"), { code: "ESRCH" });
+  const eperm = Object.assign(new Error("operation not permitted"), {
+    code: "EPERM",
+  });
+
+  test("is alive when the signal-0 probe succeeds", () => {
+    expect(isProcessAlive(4321, () => {})).toBe(true);
+  });
+
+  test("is dead when the probe throws ESRCH", () => {
+    expect(
+      isProcessAlive(4321, () => {
+        throw esrch;
+      }),
+    ).toBe(false);
+  });
+
+  test("treats EPERM as alive (exists but not signalable)", () => {
+    expect(
+      isProcessAlive(4321, () => {
+        throw eperm;
+      }),
+    ).toBe(true);
+  });
+
+  test("never probes sentinel PIDs <= 1", () => {
+    let probed = false;
+    const decision = isProcessAlive(1, () => {
+      probed = true;
+    });
+    expect(decision).toBe(false);
+    expect(probed).toBe(false);
   });
 });
