@@ -94,6 +94,29 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    autostart)
+        shift
+        case "${1:-install}" in
+            install)
+                exec "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
+                ;;
+            status)
+                label="com.voicelayer.voicebar"
+                plist="$HOME/Library/LaunchAgents/$label.plist"
+                if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
+                    state="loaded"
+                else
+                    state="notloaded"
+                fi
+                printf '%s %s\n' "$label" "$state"
+                printf 'path: %s\n' "$plist"
+                ;;
+            *)
+                echo "Usage: voicelayer autostart [install|status]"
+                exit 1
+                ;;
+        esac
+        ;;
     bar-stop)
         if pkill -f "VoiceBar" 2>/dev/null; then
             echo "[voicelayer] Voice Bar stopped."
@@ -114,6 +137,7 @@ case "${1:-}" in
         echo "  bar        Launch VoiceBar.app (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
         echo "  update     Update app, daemon, model, and personal VoiceLayer data"
+        echo "  autostart  Install or inspect the VoiceBar login LaunchAgent"
         echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
         echo "  bar-stop   Stop the Voice Bar if running"
         echo ""
@@ -126,6 +150,7 @@ case "${1:-}" in
         echo "  voicelayer bar"
         echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"
         echo "  voicelayer update --dry-run"
+        echo "  voicelayer autostart install"
         echo "  voicelayer hotkey install"
         echo ""
         echo "Run 'voicelayer <command> --help' for command-specific options."
