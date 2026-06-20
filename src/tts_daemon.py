@@ -30,6 +30,7 @@ import logging
 import os
 import secrets
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Mapping
@@ -158,6 +159,41 @@ def validate_reference_wav_path(
     return resolved
 
 
+def synthesize_mp3_bytes(
+    generate_audio_func,
+    *,
+    text: str,
+    model,
+    ref_audio: Path,
+    ref_text: str,
+) -> bytes:
+    """Run mlx-audio generation and return the MP3 file it writes."""
+    with tempfile.TemporaryDirectory(prefix="voicelayer-tts-") as temp_dir:
+        output_dir = Path(temp_dir)
+        file_prefix = "synthesis"
+        output_file = output_dir / f"{file_prefix}.mp3"
+
+        generate_audio_func(
+            text=text,
+            model=model,
+            ref_audio=str(ref_audio),
+            ref_text=ref_text,
+            output_path=str(output_dir),
+            file_prefix=file_prefix,
+            audio_format="mp3",
+            join_audio=True,
+            verbose=False,
+        )
+
+        if not output_file.exists():
+            raise RuntimeError(f"mlx-audio did not write {output_file.name}")
+
+        mp3_bytes = output_file.read_bytes()
+        if not mp3_bytes:
+            raise RuntimeError(f"mlx-audio wrote empty {output_file.name}")
+        return mp3_bytes
+
+
 def create_app(
     model_path: str = str(DEFAULT_MODEL_PATH),
     host: str = "127.0.0.1",
@@ -175,7 +211,9 @@ def create_app(
         sys.exit(1)
 
     try:
-        import mlx_audio
+        import mlx_audio  # noqa: F401
+        from mlx_audio.tts.generate import generate_audio
+        from mlx_audio.tts.utils import load as load_tts_model
     except ImportError:
         logger.error("mlx-audio not installed. Run: pip install mlx-audio")
         sys.exit(1)
@@ -234,7 +272,7 @@ def create_app(
         logger.info(f"Loading model from {model_path}...")
         start = time.time()
         try:
-            model = mlx_audio.load(model_path)
+            model = load_tts_model(model_path)
             model_load_time = time.time() - start
             logger.info(f"Model loaded in {model_load_time:.1f}s")
         except Exception as e:
@@ -294,14 +332,14 @@ def create_app(
         start = time.time()
         try:
             # Generate speech using zero-shot cloning
-            audio = model.generate(
+            mp3_bytes = synthesize_mp3_bytes(
+                generate_audio,
                 text=req.text,
-                reference_audio=str(ref_path),
-                reference_text=req.reference_text,
+                model=model,
+                ref_audio=ref_path,
+                ref_text=req.reference_text,
             )
 
-            # Convert to MP3 bytes
-            mp3_bytes = audio.to_bytes(format="mp3")
             audio_b64 = base64.b64encode(mp3_bytes).decode("ascii")
 
             duration_ms = (time.time() - start) * 1000

@@ -30,6 +30,17 @@ SCRIPT_PATH="$(voicelayer_resolve_self)"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+voicelayer_tts_python() {
+    local venv_python="${VOICELAYER_TTS_VENV_PYTHON:-$HOME/.voicelayer/venv/bin/python}"
+    if [[ -n "${VOICELAYER_TTS_PYTHON:-}" ]]; then
+        printf '%s\n' "$VOICELAYER_TTS_PYTHON"
+    elif [[ -x "$venv_python" ]]; then
+        printf '%s\n' "$venv_python"
+    else
+        printf '%s\n' "python3"
+    fi
+}
+
 # Debug seam — tests assert symlink resolution by reading this value.
 if [[ "${VOICELAYER_DEBUG_PACKAGE_ROOT:-0}" = "1" ]]; then
     printf '%s\n' "$PACKAGE_ROOT"
@@ -47,7 +58,12 @@ case "${1:-}" in
         ;;
     daemon)
         shift
-        exec python3 "$SCRIPT_DIR/../tts_daemon.py" "$@"
+        tts_python="$(voicelayer_tts_python)"
+        if [[ "${VOICELAYER_DEBUG_TTS_PYTHON:-0}" = "1" ]]; then
+            printf '%s\n' "$tts_python"
+            exit 0
+        fi
+        exec "$tts_python" "$SCRIPT_DIR/../tts_daemon.py" "$@"
         ;;
     serve)
         shift

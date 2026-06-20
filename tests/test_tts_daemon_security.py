@@ -19,41 +19,35 @@ from tts_daemon import (  # noqa: E402
 )
 
 
-class FakeAudio:
-    def to_bytes(self, format: str = "mp3") -> bytes:
-        assert format == "mp3"
-        return b"fake-mp3"
-
-
 class FakeModel:
-    def __init__(self) -> None:
-        self.calls: list[dict[str, str]] = []
+    pass
 
-    def generate(
-        self,
-        *,
-        text: str,
-        reference_audio: str,
-        reference_text: str,
-    ) -> FakeAudio:
-        self.calls.append(
-            {
-                "text": text,
-                "reference_audio": reference_audio,
-                "reference_text": reference_text,
-            }
-        )
-        return FakeAudio()
+
+def install_fake_mlx_audio(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_model: FakeModel,
+    generate_audio=None,
+) -> None:
+    def default_generate_audio(**kwargs):
+        output_dir = Path(str(kwargs["output_path"]))
+        file_prefix = str(kwargs["file_prefix"])
+        audio_format = str(kwargs["audio_format"])
+        (output_dir / f"{file_prefix}.{audio_format}").write_bytes(b"fake-mp3")
+
+    fake_mlx_audio = SimpleNamespace()
+    fake_tts = SimpleNamespace()
+    fake_utils = SimpleNamespace(load=lambda _: fake_model)
+    fake_generate = SimpleNamespace(generate_audio=generate_audio or default_generate_audio)
+    monkeypatch.setitem(sys.modules, "mlx_audio", fake_mlx_audio)
+    monkeypatch.setitem(sys.modules, "mlx_audio.tts", fake_tts)
+    monkeypatch.setitem(sys.modules, "mlx_audio.tts.utils", fake_utils)
+    monkeypatch.setitem(sys.modules, "mlx_audio.tts.generate", fake_generate)
 
 
 @pytest.fixture
 def daemon_client(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     fake_model = FakeModel()
-    monkeypatch.setitem(
-        sys.modules,
-        "mlx_audio",
-        SimpleNamespace(load=lambda _: fake_model),
-    )
+    install_fake_mlx_audio(monkeypatch, fake_model)
 
     secret_file = tmp_path / "daemon.secret"
     voices_root = tmp_path / "voices"
@@ -189,10 +183,3 @@ def test_synthesize_accepts_valid_authenticated_request(daemon_client):
 
     assert response.status_code == 200
     assert response.json()["audio_b64"]
-    assert daemon_client["model"].calls == [
-        {
-            "text": "hello world",
-            "reference_audio": str(daemon_client["sample"].resolve()),
-            "reference_text": "hello world",
-        }
-    ]

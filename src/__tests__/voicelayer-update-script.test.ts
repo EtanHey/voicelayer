@@ -194,4 +194,12 @@ describe("voicelayer-update.sh", () => {
     expect(body).not.toContain("eval ");
     expect(body).not.toContain("bash -c");
   });
+
+  test("pins mlx-audio to the 0.4 release line for Qwen3", () => {
+    const body = readFileSync(updateScript, "utf8");
+
+    expect(body).toContain('MLX_AUDIO_VERSION_SPEC="${VOICELAYER_UPDATE_MLX_AUDIO_VERSION_SPEC:-mlx-audio>=0.4,<0.5}"');
+    expect(body).toContain('"$MLX_AUDIO_VERSION_SPEC" huggingface_hub');
+    expect(body).not.toContain("pip install mlx-audio huggingface_hub");
+  });
 });

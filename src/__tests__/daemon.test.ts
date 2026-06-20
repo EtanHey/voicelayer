@@ -13,7 +13,9 @@ import {
   readFileSync,
   unlinkSync,
   mkdtempSync,
+  mkdirSync,
   symlinkSync,
+  writeFileSync,
   rmSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -387,6 +389,81 @@ describe("CLI integration", () => {
 
       expect(result.status).toBe(0);
       expect(result.stdout.trim()).toBe(repoRoot);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("voicelayer daemon prefers the VoiceLayer venv Python", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "voicelayer-tts-python-"));
+    const fakeHome = join(tmp, "home");
+    const venvBin = join(fakeHome, ".voicelayer", "venv", "bin");
+    mkdirSync(venvBin, { recursive: true });
+    writeFileSync(join(venvBin, "python"), "#!/usr/bin/env bash\nexit 0\n");
+    spawnSync("chmod", ["755", join(venvBin, "python")]);
+
+    try {
+      const result = spawnSync("bash", ["src/cli/voicelayer.sh", "daemon"], {
+        env: {
+          ...process.env,
+          HOME: fakeHome,
+          VOICELAYER_DEBUG_TTS_PYTHON: "1",
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe(join(venvBin, "python"));
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("voicelayer daemon falls back to bare python3 when the venv is missing", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "voicelayer-tts-python-"));
+    const fakeHome = join(tmp, "home");
+    mkdirSync(fakeHome, { recursive: true });
+
+    try {
+      const result = spawnSync("bash", ["src/cli/voicelayer.sh", "daemon"], {
+        env: {
+          ...process.env,
+          HOME: fakeHome,
+          VOICELAYER_DEBUG_TTS_PYTHON: "1",
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("python3");
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("voicelayer daemon respects VOICELAYER_TTS_PYTHON override", () => {
+    const tmp = mkdtempSync(join(tmpdir(), "voicelayer-tts-python-"));
+    const fakeHome = join(tmp, "home");
+    const customBin = join(tmp, "custom");
+    const customPython = join(customBin, "python");
+    mkdirSync(fakeHome, { recursive: true });
+    mkdirSync(customBin, { recursive: true });
+    writeFileSync(customPython, "#!/usr/bin/env bash\nexit 0\n");
+    spawnSync("chmod", ["755", customPython]);
+
+    try {
+      const result = spawnSync("bash", ["src/cli/voicelayer.sh", "daemon"], {
+        env: {
+          ...process.env,
+          HOME: fakeHome,
+          VOICELAYER_TTS_PYTHON: customPython,
+          VOICELAYER_DEBUG_TTS_PYTHON: "1",
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe(customPython);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
