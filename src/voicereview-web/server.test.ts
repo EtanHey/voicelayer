@@ -1742,6 +1742,7 @@ describe("VoiceReview web server helpers", () => {
       const app = createVoiceReviewApp({
         config: {
           tempDir: root,
+          enableClonedTts: true,
         },
         runCommand: async (call) => {
           calls.push(call);
@@ -1817,6 +1818,7 @@ describe("VoiceReview web server helpers", () => {
       const app = createVoiceReviewApp({
         config: {
           tempDir: root,
+          enableClonedTts: true,
         },
         runCommand: async (call) => {
           calls.push(call);
@@ -1920,6 +1922,7 @@ describe("VoiceReview web server helpers", () => {
       const app = createVoiceReviewApp({
         config: {
           tempDir: root,
+          enableClonedTts: true,
         },
         ttsEngines: {
           hasClonedProfile: (voice) => voice === "theo-v2",

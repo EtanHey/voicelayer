@@ -143,6 +143,7 @@ export interface VoiceReviewConfig {
   tempDir: string;
   ttsVoice: string;
   ttsRate: string;
+  enableClonedTts: boolean;
   requestTimeoutMs: number;
   finishCommand: string;
 }
@@ -226,6 +227,7 @@ export const DEFAULT_CONFIG: VoiceReviewConfig = {
     process.env.VOICE_REVIEW_TEMP_DIR || join(tmpdir(), "voicereview-web"),
   ttsVoice: process.env.VOICE_REVIEW_TTS_VOICE || "en-US-GuyNeural",
   ttsRate: process.env.VOICE_REVIEW_TTS_RATE || "-8%",
+  enableClonedTts: process.env.VOICE_REVIEW_ENABLE_CLONED_TTS === "1",
   requestTimeoutMs: Number(process.env.VOICE_REVIEW_TIMEOUT_MS || "60000"),
   finishCommand: process.env.VOICE_REVIEW_FINISH_CMD || "",
 };
@@ -1928,6 +1930,7 @@ async function handleTts(
   const text = humanizeSpokenText(body.text).slice(0, 4000);
   const requestedVoice = typeof body.voice === "string" ? body.voice : "";
   const isClonedVoice =
+    config.enableClonedTts &&
     isSafeClonedVoiceName(requestedVoice) &&
     ttsEngines.hasClonedProfile(requestedVoice);
   const voice = isClonedVoice
@@ -2799,7 +2802,9 @@ function renderNaturalConversationPage(
     "en-US-AvaNeural",
     "en-US-AriaNeural",
   ];
-  const clonedVoices = ttsEngines.listClonedProfiles();
+  const clonedVoices = config.enableClonedTts
+    ? ttsEngines.listClonedProfiles()
+    : [];
   const clonedVoiceSetJson = JSON.stringify(clonedVoices);
   const edgeFallbackVoice = ttsVoices.includes(config.ttsVoice)
     ? config.ttsVoice

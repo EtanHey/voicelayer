@@ -646,6 +646,9 @@ describe("VoiceReview natural conversation redesign", () => {
 
   it("groups available Theo cloned voices and keeps captions graceful without word timestamps", async () => {
     const app = createVoiceReviewApp({
+      config: {
+        enableClonedTts: true,
+      },
       ttsEngines: {
         hasClonedProfile: () => false,
         synthesizeCloned: async () => null,
