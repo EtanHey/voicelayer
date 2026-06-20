@@ -172,8 +172,10 @@ export async function synthesizeWithRetry(
         text,
         "--voice",
         voice,
-        "--rate",
-        rate,
+        // Pass rate as a single `--rate=<value>` token. Python argparse treats a
+        // negative value like "-25%" in the two-token form ("--rate", "-25%") as
+        // a stray option and rejects it; the `=` form keeps it bound to --rate.
+        `--rate=${rate}`,
         "--write-media",
         audioFile,
         "--write-metadata",

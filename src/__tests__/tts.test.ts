@@ -102,7 +102,7 @@ describe("tts module", () => {
     expect(edgeTtsCmd[voiceIdx + 1]).toContain("Jenny");
   });
 
-  it("speak() passes negative long-text rates to edge-tts", async () => {
+  it("speak() passes negative long-text rates as a single --rate= argv token", async () => {
     const { speak } = await import("../tts");
 
     await speak("This is a long sentence. ".repeat(40), { mode: "brief" });
@@ -112,9 +112,13 @@ describe("tts module", () => {
     );
     expect(synthCalls.length).toBeGreaterThan(1);
     for (const call of synthCalls) {
-      const rateIdx = call.cmd.indexOf("--rate");
-      expect(rateIdx).toBeGreaterThan(-1);
-      expect(call.cmd[rateIdx + 1]).toMatch(/^-\d+%$/);
+      // Regression guard: a negative rate (e.g. "-25%") MUST be passed as a
+      // single `--rate=-25%` token. The two-token form ("--rate", "-25%") makes
+      // Python argparse treat the value as a stray option and reject it.
+      expect(call.cmd).not.toContain("--rate");
+      const rateArg = call.cmd.find((arg) => arg.startsWith("--rate="));
+      expect(rateArg).toBeDefined();
+      expect(rateArg).toMatch(/^--rate=-\d+%$/);
     }
   });
 
