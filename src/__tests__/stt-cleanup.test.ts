@@ -247,6 +247,125 @@ describe("stt-cleanup", () => {
     expect(prompt).not.toContain("nanoclawed");
   });
 
+  it("caps the STT vocabulary prompt at the whisper initial-prompt budget", () => {
+    // Constitution DNV#12: never exceed ~224 whisper tokens (~900 chars) in the
+    // vocabulary/initial prompt. whisper silently truncates an oversized prompt
+    // AND an over-stuffed prompt degrades decode quality.
+    const commandsDir = mkdtempSync(
+      join(tmpdir(), "voicelayer-stt-prompt-cap-"),
+    );
+    try {
+      // Mock 60+ installed slash-commands plus a fat user vocabulary snapshot to
+      // force the assembled term list far past the budget.
+      for (let i = 0; i < 60; i += 1) {
+        symlinkSync(
+          "/dev/null",
+          join(commandsDir, `installed-command-number-${i}.md`),
+        );
+      }
+      const snapshotPath = join(commandsDir, "snapshot.json");
+      // A realistic curated user vocabulary (a handful of terms) plus the full
+      // builtin set plus 60 installed slash-commands still vastly exceeds the
+      // budget without the cap (~4400 chars in the real environment).
+      const userPromptTerms = ["Domica", "SongScript", "Mehayom", "TechGym"];
+      Bun.write(
+        snapshotPath,
+        JSON.stringify({ prompt_terms: userPromptTerms, aliases: [] }),
+      );
+
+      const env = {
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+        QA_VOICE_STT_COMMANDS_DIR: commandsDir,
+      } as const;
+
+      const prompt = getSTTVocabularyPrompt(env);
+
+      expect(prompt.length).toBeLessThanOrEqual(900);
+
+      // ~224 token budget: estimate via the conservative whitespace/char heuristic.
+      const estimatedTokens = Math.ceil(prompt.length / 4);
+      expect(estimatedTokens).toBeLessThanOrEqual(224);
+
+      // High-value proper nouns whisper mishears MUST survive the cap.
+      expect(prompt).toContain("orcClaude");
+      expect(prompt).toContain("voicelayerCodex");
+      expect(prompt).toContain("BrainLayer");
+      expect(prompt).toContain("VoiceLayer");
+      expect(prompt).toContain("Tailscale");
+
+      // Slash-command "/..." entries must NOT consume the scarce decode budget.
+      expect(prompt).not.toContain("/installed-command-number");
+      for (const term of prompt.split(", ")) {
+        expect(term.startsWith("/")).toBe(false);
+      }
+    } finally {
+      rmSync(commandsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prioritizes user prompt_terms when capping the vocabulary prompt", () => {
+    const commandsDir = mkdtempSync(
+      join(tmpdir(), "voicelayer-stt-prompt-cap-priority-"),
+    );
+    try {
+      const snapshotPath = join(commandsDir, "snapshot.json");
+      Bun.write(
+        snapshotPath,
+        JSON.stringify({
+          prompt_terms: ["Domica", "SongScript"],
+          aliases: [],
+        }),
+      );
+
+      const env = {
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+        QA_VOICE_STT_COMMANDS_DIR: commandsDir,
+      } as const;
+
+      const prompt = getSTTVocabularyPrompt(env);
+      expect(prompt.length).toBeLessThanOrEqual(900);
+      // User-curated terms have highest priority — always retained.
+      expect(prompt).toContain("Domica");
+      expect(prompt).toContain("SongScript");
+    } finally {
+      rmSync(commandsDir, { recursive: true, force: true });
+    }
+  });
+
+  it("never throws on empty or oversized vocabulary inputs", () => {
+    expect(() =>
+      getSTTVocabularyPrompt({
+        QA_VOICE_STT_VOCABULARY_PATH: "",
+        QA_VOICE_STT_COMMANDS_DIR: "",
+      }),
+    ).not.toThrow();
+
+    const commandsDir = mkdtempSync(
+      join(tmpdir(), "voicelayer-stt-prompt-cap-empty-"),
+    );
+    try {
+      const snapshotPath = join(commandsDir, "snapshot.json");
+      Bun.write(
+        snapshotPath,
+        JSON.stringify({
+          prompt_terms: Array.from(
+            { length: 500 },
+            (_unused, i) => `HugeTerm${i}`,
+          ),
+          aliases: [],
+        }),
+      );
+      const env = {
+        QA_VOICE_STT_VOCABULARY_PATH: snapshotPath,
+        QA_VOICE_STT_COMMANDS_DIR: commandsDir,
+      } as const;
+      expect(() => getSTTVocabularyPrompt(env)).not.toThrow();
+      expect(getSTTVocabularyPrompt(env).length).toBeLessThanOrEqual(900);
+    } finally {
+      rmSync(commandsDir, { recursive: true, force: true });
+    }
+  });
+
   it("loads prompt terms from the VoiceBar vocabulary snapshot", async () => {
     const snapshotPath = "/tmp/voicelayer-stt-vocabulary-prompt-test.json";
     await Bun.write(
@@ -543,6 +662,34 @@ describe("stt-cleanup", () => {
   it("does not rewrite ordinary kilos weight units as Qelos", () => {
     expect(cleanupTranscriptionText("ship 10 kilos of flour")).toBe(
       "Ship 10 kilos of flour",
+    );
+  });
+
+  it("differentiates the Qelos repo from the kilos measurement unit by context", () => {
+    // Repo/code context → Qelos (the repo). "kilos" alone stays a measurement,
+    // but "kilos <repo-noun>" is unambiguously the repo.
+    expect(cleanupTranscriptionText("check the kilos repo")).toBe(
+      "Check the Qelos repo",
+    );
+    expect(cleanupTranscriptionText("the kilos adapter needs work")).toBe(
+      "The Qelos adapter needs work",
+    );
+    expect(cleanupTranscriptionText("open the kilos dashboard")).toBe(
+      "Open the Qelos dashboard",
+    );
+    expect(cleanupTranscriptionText("rebase the kilos branch")).toBe(
+      "Rebase the Qelos branch",
+    );
+    // Bare phonetic mishears (non-words) → Qelos.
+    expect(cleanupTranscriptionText("deploy kelos now")).toBe(
+      "Deploy Qelos now",
+    );
+    // Measurement context is preserved (NOT rewritten to Qelos).
+    expect(cleanupTranscriptionText("ship 10 kilos of flour")).toBe(
+      "Ship 10 kilos of flour",
+    );
+    expect(cleanupTranscriptionText("it weighs five kilos")).toBe(
+      "It weighs 5 kilos",
     );
   });
 

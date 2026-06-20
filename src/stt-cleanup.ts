@@ -101,11 +101,29 @@ const BUILTIN_STT_ALIASES: Record<string, string> = {
   keylos: "Qelos",
   "kilos project": "Qelos project",
   "kilos programming project": "Qelos programming project",
+  // Context-aware: "kilos <repo-noun>" is the Qelos repo, not the weight unit.
+  // Bare "kilos" is intentionally NOT aliased so the measurement survives.
+  "kilos repo": "Qelos repo",
+  "kilos repository": "Qelos repository",
+  "kilos adapter": "Qelos adapter",
+  "kilos dashboard": "Qelos dashboard",
+  "kilos codebase": "Qelos codebase",
+  "kilos branch": "Qelos branch",
+  "kilos app": "Qelos app",
+  "kilos code": "Qelos code",
+  // Bare phonetic mishears (non-words) → Qelos, safe to map unconditionally.
+  kelos: "Qelos",
+  kaylos: "Qelos",
+  qaylos: "Qelos",
   "nano claw": "nanoClaw",
   "nano clawed": "nanoClaw",
   nanoclaw: "nanoClaw",
   nanoclawed: "nanoClaw",
   "apple container": "Apple Container",
+  tailscale: "Tailscale",
+  "tail scale": "Tailscale",
+  tailnet: "tailnet",
+  "tail net": "tailnet",
   docker: "Docker",
   telegram: "Telegram",
   "whats app": "WhatsApp",
@@ -208,7 +226,12 @@ function parseVocabularySnapshot(
   const aliases: Record<string, string> = {};
   if (Array.isArray(snapshot.aliases)) {
     for (const alias of snapshot.aliases) {
-      if (alias && typeof alias === "object" && "from" in alias && "to" in alias) {
+      if (
+        alias &&
+        typeof alias === "object" &&
+        "from" in alias &&
+        "to" in alias
+      ) {
         const { from, to } = alias as Partial<{ from: string; to: string }>;
         if (typeof from === "string" && typeof to === "string") {
           const trimmedFrom = from.trim();
@@ -236,10 +259,12 @@ function parseDictionaryEntries(values: unknown[]): STTDictionaryEntry[] {
     entries.push({
       canonical: canonical.trim(),
       variants: Array.isArray(variants)
-        ? variants.filter(
-            (variant): variant is string =>
-              typeof variant === "string" && variant.trim() !== "",
-          ).map((variant) => variant.trim())
+        ? variants
+            .filter(
+              (variant): variant is string =>
+                typeof variant === "string" && variant.trim() !== "",
+            )
+            .map((variant) => variant.trim())
         : [],
     });
   }
@@ -469,27 +494,135 @@ function loadVocabularySnapshot(
   }
 }
 
+// Whisper's initial-prompt budget is ~224 tokens / ~900 chars (Constitution
+// DNV#12). An oversized prompt is silently truncated AND degrades decode
+// quality. getSTTVocabularyPrompt is hard-capped here.
+const STT_VOCABULARY_PROMPT_MAX_CHARS = 900;
+const STT_VOCABULARY_PROMPT_MAX_TOKENS = 224;
+// Conservative whisper-tokenizer estimate (~4 chars/token) used to keep the
+// joined prompt under the token budget even when the char budget is generous.
+const STT_VOCABULARY_PROMPT_CHARS_PER_TOKEN = 4;
+
+// High-value PROPER NOUNS / system terms whisper mishears. These are
+// prioritized (kept first when over budget) ahead of the broader builtin
+// canonical set so the scarce decode-bias budget is spent where it matters:
+// agent names, product names, and Hebrew-script terms whisper cannot guess.
+const STT_VOCABULARY_PRIORITY_TERMS: string[] = [
+  // Agent names (lowercase-prefix camelCase, never internally spaced)
+  "orcClaude",
+  "voicelayerCodex",
+  "brainlayerClaude",
+  "brainlayerCodex",
+  "cmuxlayerCodex",
+  "nanoClaw",
+  "YashClaude",
+  "skillCreator",
+  "SkillCreatorClaude",
+  // Product / tool names
+  "BrainLayer",
+  "VoiceLayer",
+  "VoiceBar",
+  "BrainBar",
+  "Tailscale",
+  "tailnet",
+  "repoGolem",
+  "Golems",
+  "Qelos",
+  "cmux",
+  "Wispr Flow",
+  "Karabiner",
+  "CLAUDE.md",
+  // People names whisper mishears
+  "Meytal",
+  "MaiLinh",
+  // Hebrew-script preserved terms whisper cannot guess
+  "zikaron",
+  "golems-brain",
+  "~/.golems-brain/zikaron",
+  "עוסק פטור",
+  "רשות המסים",
+  "רחובות",
+];
+
+// Budget (chars) reserved for the load-bearing high-value proper nouns so a
+// runaway/huge user vocabulary snapshot can never starve the agent/product
+// names whisper mishears. User prompt_terms get first claim on the REMAINING
+// budget; the priority proper nouns are then guaranteed to fit.
+const STT_VOCABULARY_PRIORITY_RESERVE_CHARS = 450;
+
+// Deterministically fill the prompt with priority-ordered, deduplicated terms,
+// dropping the lowest-priority entries first when over the char/token budget.
+// `maxChars` lets a higher tier leave headroom for a guaranteed lower tier.
+function appendCappedVocabularyTerms(
+  state: { kept: string[]; seen: Set<string>; length: number },
+  terms: string[],
+  maxChars: number,
+): void {
+  for (const rawTerm of terms) {
+    const term = typeof rawTerm === "string" ? rawTerm.trim() : "";
+    if (!term) continue;
+    // Drop slash-command entries entirely — they remain cleanup aliases but
+    // must not consume the scarce decode-bias budget.
+    if (term.startsWith("/")) continue;
+    const key = term.toLowerCase();
+    if (state.seen.has(key)) continue;
+
+    const separatorLength = state.kept.length === 0 ? 0 : 2; // ", "
+    const projected = state.length + separatorLength + term.length;
+    if (projected > maxChars) {
+      // Skip oversized term but keep trying shorter lower-priority terms.
+      continue;
+    }
+    const projectedTokens = Math.ceil(
+      projected / STT_VOCABULARY_PROMPT_CHARS_PER_TOKEN,
+    );
+    if (projectedTokens > STT_VOCABULARY_PROMPT_MAX_TOKENS) {
+      continue;
+    }
+
+    state.seen.add(key);
+    state.kept.push(term);
+    state.length = projected;
+  }
+}
+
 export function getSTTVocabularyPrompt(
   env: STTCleanupEnv = process.env,
 ): string {
   const snapshot = loadVocabularySnapshot(env);
-  const slashCommands = collectSlashCommands(env, snapshot?.promptTerms ?? []);
-  const canonicalTerms = [
-    ...new Set([
-      ...(snapshot?.promptTerms ?? []),
-      ...slashCommands,
-      "zikaron",
-      "golems-brain",
-      "~/.golems-brain/zikaron",
-      "עוסק פטור",
-      "רשות המסים",
-      "רחובות",
-      ...Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
-        (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
-      ),
-    ]),
-  ];
-  return canonicalTerms.join(", ");
+  // The remaining builtin canonical VALUES (the seed set), minus the cleanup-
+  // only phrases. Lowest priority — dropped first when over budget.
+  const seedTerms = Object.values(ORDERED_BUILTIN_STT_ALIASES).filter(
+    (term) => !CLEANUP_ONLY_ALIAS_VALUES.has(term),
+  );
+
+  const state = { kept: [] as string[], seen: new Set<string>(), length: 0 };
+
+  // Tier 1 — user prompt_terms get first claim, but capped so they leave
+  // RESERVE headroom for the load-bearing proper nouns (Tier 2). Slash-command
+  // entries are dropped from the prompt entirely (they stay cleanup aliases).
+  appendCappedVocabularyTerms(
+    state,
+    snapshot?.promptTerms ?? [],
+    STT_VOCABULARY_PROMPT_MAX_CHARS - STT_VOCABULARY_PRIORITY_RESERVE_CHARS,
+  );
+  // Tier 2 — high-value proper nouns / system terms whisper mishears (agent
+  // names, product names, Hebrew-script preserved terms). Guaranteed to fit
+  // within the reserved headroom.
+  appendCappedVocabularyTerms(
+    state,
+    STT_VOCABULARY_PRIORITY_TERMS,
+    STT_VOCABULARY_PROMPT_MAX_CHARS,
+  );
+  // Tier 3 — remaining builtin canonical seed set, fills whatever budget is
+  // left, dropped first when over budget.
+  appendCappedVocabularyTerms(
+    state,
+    seedTerms,
+    STT_VOCABULARY_PROMPT_MAX_CHARS,
+  );
+
+  return state.kept.join(", ");
 }
 
 export function cleanupTranscriptionText(
