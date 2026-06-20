@@ -15,7 +15,9 @@ import {
   getTccGrantSteps,
   loadRememberedAgent,
   rememberAgent,
+  resolveSocatCommand,
   resolveAgentConfigPath,
+  runSetup,
   wireAgentMcpConfig,
   type AgentId,
 } from "../cli/setup";
@@ -66,8 +68,9 @@ describe("voicelayer setup wizard helpers", () => {
           { flush: true },
         );
 
-        const first = wireAgentMcpConfig(agent, home);
-        const second = wireAgentMcpConfig(agent, home);
+        const options = { socatExists: () => false };
+        const first = wireAgentMcpConfig(agent, home, options);
+        const second = wireAgentMcpConfig(agent, home, options);
         const data = JSON.parse(readFileSync(configPath, "utf8"));
 
         expect(first.changed).toBe(true);
@@ -107,8 +110,9 @@ describe("voicelayer setup wizard helpers", () => {
         { flush: true },
       );
 
-      const first = wireAgentMcpConfig("codex", home);
-      const second = wireAgentMcpConfig("codex", home);
+      const options = { socatExists: () => false };
+      const first = wireAgentMcpConfig("codex", home, options);
+      const second = wireAgentMcpConfig("codex", home, options);
       const body = readFileSync(configPath, "utf8");
 
       expect(first.changed).toBe(true);
@@ -125,10 +129,100 @@ describe("voicelayer setup wizard helpers", () => {
       expect(body).not.toContain('command = "voicelayer-mcp"');
     }));
 
-  test("chains build-app before hotkey install through the CLI wrapper", () => {
-    expect(getSetupCommandPlan("/pkg")).toEqual([
-      ["bash", "/pkg/src/cli/voicelayer.sh", "build-app"],
+  test("pins Homebrew socat when it exists", () => {
+    expect(
+      resolveSocatCommand((path) => path === "/opt/homebrew/bin/socat"),
+    ).toBe("/opt/homebrew/bin/socat");
+    expect(resolveSocatCommand(() => false)).toBe("socat");
+  });
+
+  test("pins Intel Homebrew socat when only /usr/local exists", () => {
+    expect(resolveSocatCommand((path) => path === "/usr/local/bin/socat")).toBe(
+      "/usr/local/bin/socat",
+    );
+  });
+
+  test("writes absolute socat path into MCP config when Homebrew socat exists", () =>
+    withTempHome((home) => {
+      const configPath = resolveAgentConfigPath("cursor", home);
+      const result = wireAgentMcpConfig("cursor", home, {
+        socatExists: (path) => path === "/opt/homebrew/bin/socat",
+      });
+      const data = JSON.parse(readFileSync(configPath, "utf8"));
+
+      expect(result.changed).toBe(true);
+      expect(data.mcpServers.voicelayer).toEqual({
+        command: "/opt/homebrew/bin/socat",
+        args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
+      });
+    }));
+
+  test("writes absolute socat path into Codex TOML when Homebrew socat exists", () =>
+    withTempHome((home) => {
+      const configPath = resolveAgentConfigPath("codex", home);
+      wireAgentMcpConfig("codex", home, {
+        socatExists: (path) => path === "/opt/homebrew/bin/socat",
+      });
+      const body = readFileSync(configPath, "utf8");
+
+      expect(body).toContain('command = "/opt/homebrew/bin/socat"');
+      expect(body).toContain(
+        'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
+      );
+    }));
+
+  test("skips build-app for cask-installed VoiceBar while preserving install steps", () => {
+    expect(
+      getSetupCommandPlan("/pkg", {
+        appBundleExists: () => true,
+        autostartInstallerExists: () => true,
+      }),
+    ).toEqual([
+      ["bash", "/pkg/src/cli/voicelayer.sh", "autostart", "install"],
       ["bash", "/pkg/src/cli/voicelayer.sh", "hotkey", "install"],
+    ]);
+  });
+
+  test("includes build-app when VoiceBar is absent", () => {
+    expect(
+      getSetupCommandPlan("/pkg", {
+        appBundleExists: () => false,
+        autostartInstallerExists: () => true,
+      }),
+    ).toEqual([
+      ["bash", "/pkg/src/cli/voicelayer.sh", "build-app"],
+      ["bash", "/pkg/src/cli/voicelayer.sh", "autostart", "install"],
+      ["bash", "/pkg/src/cli/voicelayer.sh", "hotkey", "install"],
+    ]);
+  });
+
+  test("continues setup commands when no agent CLI is detected", async () => {
+    const commands: string[][] = [];
+    const warnings: string[] = [];
+
+    await withTempHome(async (home) => {
+      await runSetup("/pkg", {
+        home,
+        detectAgentClis: () => [],
+        getCommandPlan: () => [
+          ["bash", "/pkg/src/cli/voicelayer.sh", "hotkey", "install"],
+        ],
+        runCommand: (command) => {
+          commands.push(command);
+          return Promise.resolve();
+        },
+        log: () => {},
+        warn: (message) => {
+          warnings.push(message);
+        },
+      });
+    });
+
+    expect(commands).toEqual([
+      ["bash", "/pkg/src/cli/voicelayer.sh", "hotkey", "install"],
+    ]);
+    expect(warnings).toEqual([
+      "[voicelayer] No supported agent CLI found in PATH; skipping MCP config wiring.",
     ]);
   });
 

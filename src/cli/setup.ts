@@ -20,6 +20,25 @@ export interface TccGrantStep {
   url: string;
 }
 
+export interface SocatOptions {
+  socatExists?: (path: string) => boolean;
+}
+
+export interface SetupCommandPlanOptions {
+  appBundlePath?: string;
+  appBundleExists?: (path: string) => boolean;
+  autostartInstallerExists?: (path: string) => boolean;
+}
+
+export interface SetupRunOptions {
+  home?: string;
+  detectAgentClis?: () => AgentCli[];
+  getCommandPlan?: (packageRoot: string) => string[][];
+  runCommand?: (command: string[]) => Promise<void>;
+  log?: (message?: string) => void;
+  warn?: (message: string) => void;
+}
+
 const AGENT_ORDER: readonly AgentCli[] = [
   { id: "claude", command: "claude" },
   { id: "codex", command: "codex" },
@@ -27,10 +46,14 @@ const AGENT_ORDER: readonly AgentCli[] = [
   { id: "gemini", command: "gemini" },
 ];
 
-const VOICELAYER_MCP_SERVER = {
-  command: "socat",
-  args: ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"],
-} as const;
+// Prefer an absolute socat so the MCP client resolves under launchd/agent
+// environments with a thin PATH; fall back to bare `socat` (PATH lookup).
+const SOCAT_CANDIDATES = [
+  "/opt/homebrew/bin/socat", // Apple Silicon Homebrew
+  "/usr/local/bin/socat", // Intel Homebrew
+] as const;
+const VOICEBAR_APP_PATH = "/Applications/VoiceBar.app";
+const MCP_ARGS = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] as const;
 
 function defaultHome(): string {
   const home = process.env.HOME;
@@ -41,10 +64,12 @@ function defaultHome(): string {
 }
 
 function commandExists(command: string): boolean {
-  return Bun.spawnSync(["which", command], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exitCode === 0;
+  return (
+    Bun.spawnSync(["which", command], {
+      stdout: "ignore",
+      stderr: "ignore",
+    }).exitCode === 0
+  );
 }
 
 export function detectAgentClis(
@@ -53,7 +78,23 @@ export function detectAgentClis(
   return AGENT_ORDER.filter((agent) => exists(agent.command));
 }
 
-export function resolveAgentConfigPath(agent: AgentId, home = defaultHome()): string {
+export function resolveSocatCommand(
+  exists: (path: string) => boolean = existsSync,
+): string {
+  return SOCAT_CANDIDATES.find(exists) ?? "socat";
+}
+
+function voiceLayerMcpServer(options: SocatOptions = {}) {
+  return {
+    command: resolveSocatCommand(options.socatExists),
+    args: MCP_ARGS,
+  };
+}
+
+export function resolveAgentConfigPath(
+  agent: AgentId,
+  home = defaultHome(),
+): string {
   switch (agent) {
     case "claude":
       return join(home, ".claude", ".mcp.json");
@@ -119,7 +160,11 @@ function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function wireJsonMcpConfig(agent: AgentId, home: string): WireResult {
+function wireJsonMcpConfig(
+  agent: AgentId,
+  home: string,
+  options: SocatOptions,
+): WireResult {
   const path = resolveAgentConfigPath(agent, home);
   const data = readJsonConfig(path);
   const servers =
@@ -128,7 +173,7 @@ function wireJsonMcpConfig(agent: AgentId, home: string): WireResult {
       : {};
   const nextServers = {
     ...servers,
-    voicelayer: VOICELAYER_MCP_SERVER,
+    voicelayer: voiceLayerMcpServer(options),
   };
   const nextData = {
     ...data,
@@ -144,10 +189,10 @@ function wireJsonMcpConfig(agent: AgentId, home: string): WireResult {
   return { agent, path, changed };
 }
 
-function canonicalCodexBlock(): string {
+function canonicalCodexBlock(options: SocatOptions = {}): string {
   return [
     "[mcp_servers.voicelayer]",
-    'command = "socat"',
+    `command = "${resolveSocatCommand(options.socatExists)}"`,
     'args = ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"]',
     "startup_timeout_sec = 20",
     "",
@@ -164,7 +209,10 @@ function stripTomlTable(body: string, tableName: string): string {
     const tableMatch = trimmed.match(/^\[([^\]]+)\]$/u);
     if (tableMatch) {
       const currentTable = tableMatch[1] ?? "";
-      if (currentTable === tableName || currentTable.startsWith(`${tableName}.`)) {
+      if (
+        currentTable === tableName ||
+        currentTable.startsWith(`${tableName}.`)
+      ) {
         skipping = true;
         continue;
       }
@@ -178,12 +226,12 @@ function stripTomlTable(body: string, tableName: string): string {
   return kept.join("\n").replace(/\s+$/u, "");
 }
 
-function wireCodexMcpConfig(home: string): WireResult {
+function wireCodexMcpConfig(home: string, options: SocatOptions): WireResult {
   const path = resolveAgentConfigPath("codex", home);
   const current = existsSync(path) ? readFileSync(path, "utf8") : "";
   const withoutVoiceLayer = stripTomlTable(current, "mcp_servers.voicelayer");
   const prefix = withoutVoiceLayer ? `${withoutVoiceLayer}\n\n` : "";
-  const next = `${prefix}${canonicalCodexBlock()}`;
+  const next = `${prefix}${canonicalCodexBlock(options)}`;
   const changed = current !== next;
 
   if (changed) {
@@ -194,20 +242,41 @@ function wireCodexMcpConfig(home: string): WireResult {
   return { agent: "codex", path, changed };
 }
 
-export function wireAgentMcpConfig(agent: AgentId, home = defaultHome()): WireResult {
+export function wireAgentMcpConfig(
+  agent: AgentId,
+  home = defaultHome(),
+  options: SocatOptions = {},
+): WireResult {
   ensureUserStateDirs(home);
   if (agent === "codex") {
-    return wireCodexMcpConfig(home);
+    return wireCodexMcpConfig(home, options);
   }
-  return wireJsonMcpConfig(agent, home);
+  return wireJsonMcpConfig(agent, home, options);
 }
 
-export function getSetupCommandPlan(packageRoot: string): string[][] {
+export function getSetupCommandPlan(
+  packageRoot: string,
+  options: SetupCommandPlanOptions = {},
+): string[][] {
   const cli = join(packageRoot, "src", "cli", "voicelayer.sh");
-  return [
-    ["bash", cli, "build-app"],
-    ["bash", cli, "hotkey", "install"],
-  ];
+  const appBundlePath = options.appBundlePath ?? VOICEBAR_APP_PATH;
+  const appBundleExists = options.appBundleExists ?? existsSync;
+  const autostartInstallerExists =
+    options.autostartInstallerExists ?? existsSync;
+  const commands: string[][] = [];
+
+  if (!appBundleExists(appBundlePath)) {
+    commands.push(["bash", cli, "build-app"]);
+  }
+  if (
+    autostartInstallerExists(
+      join(packageRoot, "scripts", "install-voicebar-autostart.sh"),
+    )
+  ) {
+    commands.push(["bash", cli, "autostart", "install"]);
+  }
+  commands.push(["bash", cli, "hotkey", "install"]);
+  return commands;
 }
 
 export function getTccGrantSteps(): TccGrantStep[] {
@@ -266,30 +335,41 @@ async function runCommand(command: string[]): Promise<void> {
   }
 }
 
-async function runSetup(packageRoot: string, home = defaultHome()): Promise<void> {
+export async function runSetup(
+  packageRoot: string,
+  options: SetupRunOptions = {},
+): Promise<void> {
+  const home = options.home ?? defaultHome();
+  const log = options.log ?? console.log;
+  const warn = options.warn ?? console.warn;
+  const runSetupCommand = options.runCommand ?? runCommand;
+  const commandPlan = options.getCommandPlan ?? getSetupCommandPlan;
+
   ensureUserStateDirs(home);
-  const detected = detectAgentClis();
+  const detected = options.detectAgentClis
+    ? options.detectAgentClis()
+    : detectAgentClis();
   if (detected.length === 0) {
-    throw new Error(
-      "No supported agent CLI found in PATH (claude, codex, cursor, gemini)",
+    warn(
+      "[voicelayer] No supported agent CLI found in PATH; skipping MCP config wiring.",
+    );
+  } else {
+    const agent = chooseAgent(detected, home);
+    rememberAgent(agent, home);
+    const wired = wireAgentMcpConfig(agent, home);
+    log(
+      `[voicelayer] Wired ${agent} MCP config: ${wired.path} (${wired.changed ? "updated" : "already current"})`,
     );
   }
 
-  const agent = chooseAgent(detected, home);
-  rememberAgent(agent, home);
-  const wired = wireAgentMcpConfig(agent, home);
-  console.log(
-    `[voicelayer] Wired ${agent} MCP config: ${wired.path} (${wired.changed ? "updated" : "already current"})`,
-  );
-
-  for (const command of getSetupCommandPlan(packageRoot)) {
-    await runCommand(command);
+  for (const command of commandPlan(packageRoot)) {
+    await runSetupCommand(command);
   }
 
-  console.log("");
-  console.log("Grant macOS permissions in this order:");
+  log("");
+  log("Grant macOS permissions in this order:");
   getTccGrantSteps().forEach((step, index) => {
-    console.log(`  ${index + 1}. ${step.name}: ${step.url}`);
+    log(`  ${index + 1}. ${step.name}: ${step.url}`);
   });
 }
 
