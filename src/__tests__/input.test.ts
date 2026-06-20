@@ -24,6 +24,7 @@ import {
   createWavBuffer,
   clearInput,
   evaluateNoSpeechGate,
+  evaluatePttSpeechGate,
   isChunkedSTTEnabled,
   isPttStopDrainComplete,
   retainLastCaptureForRecovery,
@@ -34,6 +35,7 @@ import {
   trimTrailingSilenceForSTT,
   terminateRecorderProcess,
 } from "../input";
+import { VAD_CHUNK_BYTES } from "../vad";
 import {
   clearCancelSignal,
   clearStopSignal,
@@ -849,6 +851,55 @@ describe("input module", () => {
       const gate = evaluateNoSpeechGate(pcmWithConstantSample(20, 700));
 
       expect(input.classifyCaptureFailure?.(gate)).toBeNull();
+    });
+  });
+
+  describe("PTT speech gate", () => {
+    function fixturePCM(name: string): Uint8Array {
+      const fixturePath = join(
+        import.meta.dir,
+        "..",
+        "..",
+        "flow-bar",
+        "Tests",
+        "VoiceBarTests",
+        "Fixtures",
+        name,
+      );
+      return new Uint8Array(readFileSync(fixturePath)).slice(44);
+    }
+
+    it("rejects high-noise captures that contain no detected speech", async () => {
+      const result = await evaluatePttSpeechGate(fixturePCM("high_noise.wav"));
+
+      expect(result.detected).toBe(false);
+      expect(result.speechChunks).toBe(0);
+      expect(result.totalChunks).toBeGreaterThan(0);
+    });
+
+    it("allows clean speech captures through the PTT speech gate", async () => {
+      const result = await evaluatePttSpeechGate(
+        fixturePCM("clean_speech.wav"),
+      );
+
+      expect(result.detected).toBe(true);
+      expect(result.speechChunks).toBeGreaterThanOrEqual(2);
+      expect(result.totalChunks).toBeGreaterThan(result.speechChunks);
+    });
+
+    it("requires more than a single isolated speech-positive chunk", async () => {
+      const probabilities = [0.91, 0.1, 0.1];
+      const pcm = new Uint8Array(VAD_CHUNK_BYTES * probabilities.length);
+
+      const result = await evaluatePttSpeechGate(pcm, {
+        reset: async () => {},
+        processChunk: async () => probabilities.shift() ?? 0,
+        isSpeechPredicate: (probability) => probability >= 0.5,
+      });
+
+      expect(result.detected).toBe(false);
+      expect(result.speechChunks).toBe(1);
+      expect(result.totalChunks).toBe(3);
     });
   });
 

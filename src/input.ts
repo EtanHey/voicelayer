@@ -104,6 +104,7 @@ const BITS_PER_SAMPLE = 16;
 // AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
 const MIN_TRANSCRIBE_DURATION_MS = 600;
 const MIN_TRANSCRIBE_DBFS = -55;
+const MIN_PTT_SPEECH_CHUNKS = 2;
 const MIN_LOW_ENERGY_TRANSCRIBE_DURATION_MS = 1500;
 const TRAILING_SILENCE_TRIM_WINDOW_MS = 250;
 const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
@@ -582,6 +583,19 @@ export interface CaptureFailure {
   message: string;
 }
 
+export interface PttSpeechGateResult {
+  detected: boolean;
+  speechChunks: number;
+  totalChunks: number;
+}
+
+interface PttSpeechGateOptions {
+  processChunk?: (chunk: Uint8Array) => Promise<number>;
+  reset?: () => Promise<void>;
+  isSpeechPredicate?: (probability: number) => boolean;
+  minSpeechChunks?: number;
+}
+
 export function evaluateNoSpeechGate(
   pcmData: Uint8Array,
   sampleRate = SAMPLE_RATE,
@@ -757,6 +771,44 @@ export function classifyCaptureFailure(
     };
   }
   return null;
+}
+
+export async function evaluatePttSpeechGate(
+  pcmData: Uint8Array,
+  options: PttSpeechGateOptions = {},
+): Promise<PttSpeechGateResult> {
+  const processChunk = options.processChunk ?? processVADChunk;
+  const reset = options.reset ?? resetVAD;
+  const isSpeechPredicate = options.isSpeechPredicate ?? isSpeech;
+  const minSpeechChunks = options.minSpeechChunks ?? MIN_PTT_SPEECH_CHUNKS;
+
+  if (pcmData.byteLength === 0) {
+    return { detected: false, speechChunks: 0, totalChunks: 0 };
+  }
+
+  await reset();
+
+  let speechChunks = 0;
+  let totalChunks = 0;
+  for (let offset = 0; offset < pcmData.byteLength; offset += VAD_CHUNK_BYTES) {
+    const chunk = new Uint8Array(VAD_CHUNK_BYTES);
+    chunk.set(
+      pcmData.subarray(
+        offset,
+        Math.min(offset + VAD_CHUNK_BYTES, pcmData.byteLength),
+      ),
+    );
+    const probability = await processChunk(chunk);
+    totalChunks++;
+    if (!isSpeechPredicate(probability)) continue;
+
+    speechChunks++;
+    if (speechChunks >= minSpeechChunks) {
+      return { detected: true, speechChunks, totalChunks };
+    }
+  }
+
+  return { detected: false, speechChunks, totalChunks };
 }
 
 function flattenChunks(chunks: Uint8Array[]): Uint8Array {
@@ -1755,6 +1807,25 @@ export async function waitForInput(
     }
     broadcast({ type: "state", state: "idle", source: "recording" });
     return null;
+  }
+
+  if (pressToTalk) {
+    try {
+      const pttSpeechGate = await evaluatePttSpeechGate(sttTrim.pcmData);
+      console.error(
+        `[voicelayer] PTT speech gate: detected=${pttSpeechGate.detected} ` +
+          `(speech-chunks=${pttSpeechGate.speechChunks}/${pttSpeechGate.totalChunks})`,
+      );
+      if (!pttSpeechGate.detected) {
+        clearCancelSignal();
+        broadcast({ type: "state", state: "idle", source: "recording" });
+        return null;
+      }
+    } catch (err) {
+      console.error(
+        `[voicelayer] PTT speech gate skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // Broadcast transcribing state to Voice Bar
