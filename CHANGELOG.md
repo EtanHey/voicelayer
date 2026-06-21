@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Voice-profile fail-closed gate: when a cloned voice is MANDATED (`requireClonedVoice: true` option, or the `QA_VOICE_TTS_REQUIRE_CLONE=1` global switch for a render/narration wrapper), `speak()` now raises `VoiceProfileUnavailableError` instead of silently downgrading to a preset/system TTS voice — both when the requested profile is not registered and when every cloned synthesis tier fails. The short-announcement edge-tts shortcut is also skipped under a mandate. Default behavior (no mandate) keeps the resilient fallback unchanged. Exposes `assertRegisteredClone(name)` for callers. Covers the "cloned voice not used / silent system-TTS fallback" regression.
 - Golden-WAV STT regression eval suite (`src/stt-golden-eval.ts` + `src/__tests__/stt-golden-eval*.test.ts`). Deterministic detectors (fabricated/non-overlapping append, dropped content, punctuation drop) with a CI-safe RED→GREEN unit gate, plus a live golden-WAV harness that builds known spoken scripts (`say` + `sox`) and runs them through the real whisper CLI backend + finalize pipeline across the single-shot and chunked paths, asserting punctuation present, no fabricated append, no large drop, and bounded decode time. Fixtures: sub-90s short-tail, >60s medium single-shot, 108s chunked (multi-chunk merge), and an opt-in 20-minute long recording (`QA_VOICE_GOLDEN_LONG=1`). Skips cleanly when whisper/`say`/`sox` are absent.
 
 ### Fixed

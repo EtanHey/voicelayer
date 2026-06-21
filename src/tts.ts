@@ -65,8 +65,7 @@ export function assertSpeakerClear(): void {
 
 export function isSpeakerOutputRefusedError(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    error.message === SPEAKER_OUTPUT_REFUSED_MESSAGE
+    error instanceof Error && error.message === SPEAKER_OUTPUT_REFUSED_MESSAGE
   );
 }
 
@@ -109,6 +108,50 @@ function loadVoiceProfiles(): Record<string, VoiceProfile> {
  *
  * Returns { voice, engine, warning?, fallbackVoice? }.
  */
+/**
+ * Raised when a MANDATED cloned voice cannot be produced — the profile is not
+ * registered (missing) or every cloned synthesis tier failed. The render/
+ * narration path treats this as BLOCKED rather than silently speaking in a
+ * preset/system voice.
+ */
+export class VoiceProfileUnavailableError extends Error {
+  constructor(
+    public readonly voice: string,
+    public readonly reason: "missing-profile" | "synthesis-failed",
+  ) {
+    super(
+      reason === "missing-profile"
+        ? `Voice "${voice}" is not a registered clone profile (~/.voicelayer/voices/${voice}/profile.yaml missing). Refusing to fall back to a preset/system voice.`
+        : `Cloned voice "${voice}" failed every synthesis tier. Refusing to fall back to a preset/system voice.`,
+    );
+    this.name = "VoiceProfileUnavailableError";
+  }
+}
+
+/** True when the caller mandates a cloned voice (option or global env switch). */
+export function requireClonedVoiceEnabled(
+  options?: { requireClonedVoice?: boolean },
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  if (options?.requireClonedVoice) return true;
+  const raw = env.QA_VOICE_TTS_REQUIRE_CLONE?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
+/**
+ * Fail-closed assertion that a voice name resolves to a registered clone
+ * profile. Throws VoiceProfileUnavailableError("missing-profile") otherwise.
+ * The profile predicate is injectable for testing.
+ */
+export function assertRegisteredClone(
+  name: string,
+  hasProfile: (n: string) => boolean = hasClonedProfile,
+): void {
+  if (!hasProfile(name)) {
+    throw new VoiceProfileUnavailableError(name, "missing-profile");
+  }
+}
+
 export function resolveVoice(name?: string): {
   voice: string;
   engine: "cloned" | "edge-tts";
@@ -1008,13 +1051,28 @@ export async function speak(
   // Resolve voice — determines engine (cloned vs edge-tts)
   const resolved = resolveVoice(options?.voice);
 
+  // Fail-closed gate: when a cloned voice is MANDATED, an unregistered profile
+  // must BLOCK rather than silently downgrade to a preset/system voice.
+  // resolved.engine === "cloned" iff resolveVoice's Tier 1 hasClonedProfile()
+  // matched, so this is the inline equivalent of assertRegisteredClone() (the
+  // standalone export callers can use to pre-validate a reference before speak).
+  const requireClone = requireClonedVoiceEnabled(options);
+  if (requireClone && resolved.engine !== "cloned") {
+    throw new VoiceProfileUnavailableError(
+      options?.voice || DEFAULT_VOICE,
+      "missing-profile",
+    );
+  }
+
   // Truncate for IPC — keep generous limit for teleprompter scrolling.
   // Voice Bar's ScrollView + FlowLayout handles long text fine.
   const speakingText = text.slice(0, 2000);
 
-  // Context-aware shortcut: short announcements use edge-tts for speed
+  // Context-aware shortcut: short announcements use edge-tts for speed.
+  // Skipped when a clone is mandated — a required clone must not be downgraded.
   if (
     resolved.engine === "cloned" &&
+    !requireClone &&
     options?.mode === "announce" &&
     text.length < 50
   ) {
@@ -1099,7 +1157,14 @@ export async function speak(
       return { warning: resolved.warning };
     }
 
-    // All cloned engines failed — fall back to edge-tts
+    // All cloned engines failed. Fail-closed when the clone is mandated;
+    // otherwise keep the resilient edge-tts fallback.
+    if (requireClone) {
+      throw new VoiceProfileUnavailableError(
+        resolved.voice,
+        "synthesis-failed",
+      );
+    }
     console.error(
       `[voicelayer] Cloned voice "${resolved.voice}" unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
     );
@@ -1236,7 +1301,10 @@ async function speakWithEdgeTTS(
 }
 
 export class VoiceLayerTextToSpeechBackend implements TextToSpeechBackend {
-  speak(text: string, options?: TextToSpeechOptions): Promise<TextToSpeechResult> {
+  speak(
+    text: string,
+    options?: TextToSpeechOptions,
+  ): Promise<TextToSpeechResult> {
     return speak(text, options);
   }
 }

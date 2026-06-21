@@ -31,6 +31,13 @@ export interface TextToSpeechOptions {
   voice?: string;
   waitForPlayback?: boolean;
   onPlaybackStart?: (startedAtMs: number) => void;
+  /**
+   * Fail-closed gate: when true, a requested cloned voice that is not a
+   * registered profile or that fails synthesis raises VoiceProfileUnavailableError
+   * instead of silently downgrading to a preset/system TTS voice. Used by the
+   * render/narration path; default (false) keeps the resilient fallback.
+   */
+  requireClonedVoice?: boolean;
 }
 
 export interface TextToSpeechResult {
@@ -38,7 +45,10 @@ export interface TextToSpeechResult {
 }
 
 export interface TextToSpeechBackend {
-  speak(text: string, options?: TextToSpeechOptions): Promise<TextToSpeechResult>;
+  speak(
+    text: string,
+    options?: TextToSpeechOptions,
+  ): Promise<TextToSpeechResult>;
 }
 
 export interface PlaybackMetadata {
