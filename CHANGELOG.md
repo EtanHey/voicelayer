@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Golden-WAV STT regression eval suite (`src/stt-golden-eval.ts` + `src/__tests__/stt-golden-eval*.test.ts`). Deterministic detectors (fabricated/non-overlapping append, dropped content, punctuation drop) with a CI-safe RED→GREEN unit gate, plus a live golden-WAV harness that builds known spoken scripts (`say` + `sox`) and runs them through the real whisper CLI backend + finalize pipeline across the single-shot and chunked paths, asserting punctuation present, no fabricated append, no large drop, and bounded decode time. Fixtures: sub-90s short-tail, >60s medium single-shot, 108s chunked (multi-chunk merge), and an opt-in 20-minute long recording (`QA_VOICE_GOLDEN_LONG=1`). Skips cleanly when whisper/`say`/`sox` are absent.
+
 ### Fixed
 - VoiceBar STT: restore punctuation-rich default transcriptions. A deterministic sentence-terminal punctuation stage (`restoreSentencePunctuation`) now runs in the default finalize path, so transcripts always end with `.`/`?` even when the optional LLM polish server is unavailable (regression: "back to zero punctuation, no commas, no periods"). Conservative and protected-token-safe — never touches slash-commands, @mentions, paths, or code identifiers; yes/no aux-pronoun openers ("do you …", "should I …") are detected as questions while imperatives ("do not …") stay statements. Covered by a deterministic unit RED→GREEN plus a golden-WAV live-outcome gate.
 
