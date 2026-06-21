@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- VoiceBar STT: restore punctuation-rich default transcriptions. A deterministic sentence-terminal punctuation stage (`restoreSentencePunctuation`) now runs in the default finalize path, so transcripts always end with `.`/`?` even when the optional LLM polish server is unavailable (regression: "back to zero punctuation, no commas, no periods"). Conservative and protected-token-safe — never touches slash-commands, @mentions, paths, or code identifiers; yes/no aux-pronoun openers ("do you …", "should I …") are detected as questions while imperatives ("do not …") stay statements. Covered by a deterministic unit RED→GREEN plus a golden-WAV live-outcome gate.
+
 ## [2.1.3] - 2026-06-19
 
 ### Fixed

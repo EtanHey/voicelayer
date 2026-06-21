@@ -428,7 +428,7 @@ describe("input recording durability", () => {
     const { retranscribeLastCapture } = await import("../input");
 
     await expect(retranscribeLastCapture()).resolves.toBe(
-      "Retained transcript",
+      "Retained transcript.",
     );
     expect(backendTranscribeCalls).toBe(1);
     expect(backendTranscribedDataSize).toBe(VAD_CHUNK_BYTES * 2);

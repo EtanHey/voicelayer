@@ -71,6 +71,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
+import { restoreSentencePunctuation } from "./stt-punctuation";
 import {
   correctTranscriptionText,
   getSTTCorrectorMode,
@@ -150,8 +151,17 @@ export function finalizeTranscriptionText(
   env: STTCorrectorEnv = process.env,
 ): string {
   const mode = getSTTCorrectorMode(env);
-  if (mode === "off") return cleanupTranscriptionText(text);
-  return correctTranscriptionText(text, { mode }).text;
+  // identity mode is the baseline-eval escape hatch: return raw text untouched,
+  // with no cleanup AND no punctuation restoration, so eval baselines stay pure.
+  if (mode === "identity") return correctTranscriptionText(text, { mode }).text;
+  const cleaned =
+    mode === "off"
+      ? cleanupTranscriptionText(text)
+      : correctTranscriptionText(text, { mode }).text;
+  // Deterministic terminal-punctuation floor — guarantees punctuation-rich
+  // output even when the optional LLM polish server is unavailable. See
+  // src/stt-punctuation.ts for the regression this closes.
+  return restoreSentencePunctuation(cleaned);
 }
 
 export async function finalizeTranscriptionTextForSurface(

@@ -1016,9 +1016,9 @@ describe("input module", () => {
 
   describe("STT corrector feature flag", () => {
     it("preserves existing cleanup when QA_VOICE_CORRECTOR is unset or off", () => {
-      expect(finalizeTranscriptionText("brain layer", {})).toBe("BrainLayer");
+      expect(finalizeTranscriptionText("brain layer", {})).toBe("BrainLayer.");
       expect(finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "off" })).toBe(
-        "BrainLayer",
+        "BrainLayer.",
       );
     });
 
@@ -1031,7 +1031,7 @@ describe("input module", () => {
     it("runs the explicit rules backend when enabled", () => {
       expect(
         finalizeTranscriptionText("brain layer", { QA_VOICE_CORRECTOR: "rules" }),
-      ).toBe("BrainLayer");
+      ).toBe("BrainLayer.");
     });
 
     it("routes polish only for VoiceBar dictation surfaces", async () => {
@@ -1053,7 +1053,7 @@ describe("input module", () => {
             for (const line of lines) {
               if (!line.trim()) continue;
               received.push(line);
-              socket.write(`${JSON.stringify({ text: "BrainLayer." })}\n`);
+              socket.write(`${JSON.stringify({ text: "Brain Layer." })}\n`);
             }
           },
           close() {},
@@ -1075,10 +1075,10 @@ describe("input module", () => {
 
         await expect(
           finalizeTranscriptionTextForSurface("brain layer", null, env),
-        ).resolves.toBe("BrainLayer");
+        ).resolves.toBe("BrainLayer.");
         await expect(
           finalizeTranscriptionTextForSurface("brain layer", "dictation", env),
-        ).resolves.toBe("BrainLayer.");
+        ).resolves.toBe("Brain Layer.");
         expect(received.length).toBe(1);
         for (let i = 0; i < 50 && !existsSync(logPath); i++) {
           await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1106,8 +1106,8 @@ describe("input module", () => {
             surface: "dictation",
             changed: true,
           });
-          expect(payload.cleaned_chars).toBe("BrainLayer".length);
-          expect(payload.final_chars).toBe("BrainLayer.".length);
+          expect(payload.cleaned_chars).toBe("BrainLayer.".length);
+          expect(payload.final_chars).toBe("Brain Layer.".length);
         } finally {
           db.close();
         }
