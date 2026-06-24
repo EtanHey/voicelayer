@@ -522,6 +522,63 @@ created: 2026-06-24
     }
   });
 
+  it("invalidates alias miss cache when accepted profiles are installed later", () => {
+    const homeDir = join("/tmp", `voicelayer-late-alias-${process.pid}`);
+    const voicesRoot = join(homeDir, ".voicelayer", "voices");
+    mkdirSync(voicesRoot, { recursive: true });
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          `
+import { mkdirSync, writeFileSync } from "fs";
+import { join } from "path";
+import { resolveVoice } from "./src/tts.ts";
+
+const voicesRoot = join(process.env.HOME, ".voicelayer", "voices");
+console.log(JSON.stringify(resolveVoice("theo")));
+mkdirSync(join(voicesRoot, "theo-c4s"), { recursive: true });
+writeFileSync(join(voicesRoot, "theo-c4s", "profile.yaml"), \`name: theo-c4s
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: true
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+\`);
+console.log(JSON.stringify(resolveVoice("theo")));
+`,
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.toString().trim().split("\n").map(JSON.parse);
+      expect(lines[0]).toMatchObject({
+        engine: "edge-tts",
+      });
+      expect(lines[1]).toMatchObject({
+        voice: "theo-c4s",
+        engine: "cloned",
+      });
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("warns loudly when a non-accepted cloned profile is used directly", () => {
     const homeDir = join("/tmp", `voicelayer-nonaccepted-${process.pid}`);
     const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4");

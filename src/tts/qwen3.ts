@@ -66,6 +66,7 @@ const VOICES_DIR = join(process.env.HOME || "~", ".voicelayer", "voices");
 /** Cache for loaded voice profiles. */
 const profileCache = new Map<string, VoiceProfile>();
 const profileMissCache = new Set<string>();
+let voicesInventorySignature: string | null = null;
 const collator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -299,10 +300,38 @@ function findLatestAcceptedProfileForAlias(alias: string): VoiceProfile | null {
   }
 }
 
+function getVoicesInventorySignature(): string {
+  try {
+    if (!existsSync(VOICES_DIR)) return "";
+    return readdirSync(VOICES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const profilePath = join(VOICES_DIR, entry.name, "profile.yaml");
+        try {
+          return `${entry.name}:${statSync(profilePath).mtimeMs}`;
+        } catch {
+          return `${entry.name}:missing`;
+        }
+      })
+      .sort()
+      .join("|");
+  } catch {
+    return "";
+  }
+}
+
+function refreshProfileMissCacheIfInventoryChanged(): void {
+  const signature = getVoicesInventorySignature();
+  if (voicesInventorySignature === signature) return;
+  voicesInventorySignature = signature;
+  profileMissCache.clear();
+}
+
 export function loadProfile(voiceName: string): VoiceProfile | null {
   // Reject path traversal attempts (../, /, \)
   const name = normalizeProfileToken(voiceName);
   const direct = loadProfileFromDirectory(name);
+  refreshProfileMissCacheIfInventoryChanged();
 
   const aliasProfile = profileMissCache.has(name)
     ? null
@@ -348,6 +377,7 @@ export function listClonedVoiceProfiles(): string[] {
 export function clearProfileCache(): void {
   profileCache.clear();
   profileMissCache.clear();
+  voicesInventorySignature = null;
 }
 
 /**
