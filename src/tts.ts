@@ -161,12 +161,12 @@ export function resolveVoice(name?: string): {
   const requestedName = name || DEFAULT_VOICE;
 
   // Tier 1: Check for cloned voice profile (profile.yaml)
-  if (hasClonedProfile(requestedName)) {
-    const profile = loadProfile(requestedName);
+  const clonedProfile = loadProfile(requestedName);
+  if (clonedProfile) {
     return {
-      voice: requestedName,
+      voice: clonedProfile.profile_id || clonedProfile.name || requestedName,
       engine: "cloned",
-      fallbackVoice: profile?.fallback || DEFAULT_VOICE,
+      fallbackVoice: clonedProfile.fallback || DEFAULT_VOICE,
     };
   }
 

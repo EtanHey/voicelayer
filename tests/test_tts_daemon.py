@@ -75,3 +75,52 @@ def test_synthesize_uses_mlx_audio_generate_audio_file_api(
         }
     ]
     assert Path(str(calls[0]["output_path"])).name.startswith("voicelayer-tts-")
+
+
+def test_synthesize_rejects_profile_model_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    fake_model = FakeModel()
+    calls: list[dict[str, object]] = []
+
+    def fake_generate_audio(**kwargs):
+        calls.append(kwargs)
+        output_dir = Path(str(kwargs["output_path"]))
+        file_prefix = str(kwargs["file_prefix"])
+        audio_format = str(kwargs["audio_format"])
+        (output_dir / f"{file_prefix}.{audio_format}").write_bytes(b"fake-mp3")
+
+    install_fake_mlx_audio(
+        monkeypatch,
+        fake_model,
+        generate_audio=fake_generate_audio,
+    )
+
+    secret_file = tmp_path / "daemon.secret"
+    secret_file.write_text("test-secret\n", encoding="utf-8")
+    secret_file.chmod(0o600)
+
+    voices_root = tmp_path / "voices"
+    sample = voices_root / "speaker" / "samples" / "clip.wav"
+    sample.parent.mkdir(parents=True)
+    sample.write_bytes(b"RIFF" + b"\x00" * 128)
+
+    app = create_app(
+        model_path=str(tmp_path / "models" / "qwen3-tts-4bit"),
+        auth_token_file=str(secret_file),
+        voices_root=str(voices_root),
+    )
+
+    payload = synthesize_payload(str(sample))
+    payload["model"] = str(tmp_path / "models" / "other-qwen3")
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/synthesize",
+            headers=synthesize_headers("test-secret"),
+            json=payload,
+        )
+
+    assert response.status_code == 409
+    assert "model mismatch" in response.text
+    assert calls == []
