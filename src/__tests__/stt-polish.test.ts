@@ -692,10 +692,16 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("dictation finalizer");
       expect(messages[0].content).toContain("well no");
       expect(messages[0].content).toContain("numbered markdown lists");
-      expect(messages[0].content).toContain("Input: First of all");
+      expect(messages[0].content).toContain("ANY ordinal sequence");
+      expect(messages[0].content).toContain("Input: So first of all");
+      expect(messages[0].content).toContain("third, I'm very frustrated");
+      expect(messages[0].content).toContain("did X");
+      expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
-      expect(messages[0].content).toContain("If unsure, return the input unchanged");
+      expect(messages[0].content).not.toContain(
+        "If unsure, return the input unchanged",
+      );
       expect(messages[1].content).toContain(
         "Also, do / what's new and output that as your summary",
       );
