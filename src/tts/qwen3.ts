@@ -351,9 +351,10 @@ function refreshProfileCachesIfInventoryChanged(): void {
 
 export function loadProfile(voiceName: string): VoiceProfile | null {
   // Reject path traversal attempts (../, /, \)
-  const name = normalizeProfileToken(voiceName);
+  const requestedName = voiceName.trim();
+  const name = normalizeProfileToken(requestedName);
   refreshProfileCachesIfInventoryChanged();
-  const direct = loadProfileFromDirectory(name);
+  const direct = loadProfileFromDirectory(requestedName);
 
   const aliasProfile = profileMissCache.has(name)
     ? null

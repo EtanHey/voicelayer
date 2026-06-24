@@ -625,6 +625,60 @@ created: 2026-06-24
     }
   });
 
+  it("preserves directory casing for direct cloned voice lookup and listing", () => {
+    const homeDir = join("/tmp", `voicelayer-case-profile-${process.pid}`);
+    const voiceDir = join(homeDir, ".voicelayer", "voices", "MyVoice");
+    mkdirSync(voiceDir, { recursive: true });
+    writeFileSync(
+      join(voiceDir, "profile.yaml"),
+      `name: MyVoice
+profile_id: MyVoice
+profile_version: v1
+accepted: true
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/MyVoice/ref.wav
+reference_text: mixed case
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+`,
+    );
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          `
+import { resolveVoice } from "./src/tts.ts";
+import { listClonedVoiceProfiles } from "./src/tts/qwen3.ts";
+
+console.log(JSON.stringify({
+  resolved: resolveVoice("MyVoice"),
+  profiles: listClonedVoiceProfiles(),
+}));
+`,
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout.toString());
+      expect(output.resolved).toMatchObject({
+        voice: "MyVoice",
+        engine: "cloned",
+      });
+      expect(output.profiles).toContain("MyVoice");
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("invalidates cached profile metadata after profile.yaml changes", () => {
     const homeDir = join("/tmp", `voicelayer-profile-refresh-${process.pid}`);
     const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4s");
