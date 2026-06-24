@@ -16,8 +16,11 @@ import {
 
 const FRESH: DeployProbe = {
   repoVersion: "2.1.6",
+  repoGitCommit: "4494685ddb2c6c4356bda0df59e92e5c850c5241",
   installedAppVersion: "2.1.6",
   installedPlistVersion: "2.1.6",
+  installedGitCommit: "4494685ddb2c6c4356bda0df59e92e5c850c5241",
+  installedBuildTimeUTC: "2026-06-25T00:00:02Z",
   appPresent: true,
   voiceBarRunning: true,
   daemonChildAlive: true,
@@ -93,6 +96,30 @@ describe("evaluateDeployFreshness — RED (artifact not delivered)", () => {
     expect(r.checks.find((c) => c.name === "app-plist-version")?.status).toBe(
       "fail",
     );
+  });
+
+  it("CATCHES a stale VoiceBar binary GitCommit stamp", () => {
+    const r = evaluateDeployFreshness({
+      ...FRESH,
+      installedGitCommit: "1111111111111111111111111111111111111111",
+    });
+    expect(r.ok).toBe(false);
+    const c = r.checks.find((c) => c.name === "app-git-commit");
+    expect(c?.status).toBe("fail");
+    expect(c?.detail).toContain("1111111");
+    expect(c?.detail).toContain("4494685");
+  });
+
+  it("CATCHES a missing VoiceBar BuildTimeUTC stamp", () => {
+    const r = evaluateDeployFreshness({
+      ...FRESH,
+      installedBuildTimeUTC: null,
+      installedBuildTimeMs: null,
+    });
+    expect(r.ok).toBe(false);
+    const c = r.checks.find((c) => c.name === "app-build-time-utc");
+    expect(c?.status).toBe("fail");
+    expect(c?.detail).toContain("BuildTimeUTC");
   });
 
   it("CATCHES a deployed-but-not-running VoiceBar", () => {
@@ -208,6 +235,8 @@ describe("deploy-check CLI source contract", () => {
     expect(cliSource).toContain("Bun.spawnSync([");
     expect(cliSource).toContain('"plutil"');
     expect(cliSource).toContain("CFBundleShortVersionString");
+    expect(cliSource).toContain("GitCommit");
+    expect(cliSource).toContain("BuildTimeUTC");
     expect(cliSource).toContain('"raw"');
     expect(cliSource).toContain('"-o"');
     expect(cliSource).toContain('"-"');
@@ -251,10 +280,24 @@ describe("deploy-check CLI source contract", () => {
     expect(cliSource).toContain("const applicable = applicability();");
     expect(cliSource).toContain("if (!applicable)");
     expect(cliSource.indexOf("if (!applicable)")).toBeLessThan(
-      cliSource.indexOf("readPlistVersion(APP_PATH)"),
+      cliSource.indexOf('readPlistString(APP_PATH, "CFBundleShortVersionString")'),
     );
     expect(cliSource.indexOf("if (!applicable)")).toBeLessThan(
       cliSource.indexOf("const rows = processRows();"),
     );
+  });
+
+  it("reads the current repo commit so the installed VoiceBar binary can be SHA-checked", () => {
+    const cliSource = readFileSync(
+      join(import.meta.dir, "..", "deploy-check-cli.ts"),
+      "utf8",
+    );
+
+    expect(cliSource).toContain("function readRepoGitCommit");
+    expect(cliSource).toContain('"git"');
+    expect(cliSource).toContain('"rev-parse"');
+    expect(cliSource).toContain('"HEAD"');
+    expect(cliSource).toContain("installedGitCommit");
+    expect(cliSource).toContain("installedBuildTimeUTC");
   });
 });
