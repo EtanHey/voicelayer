@@ -65,6 +65,18 @@ function normalizeChunkWords(text: string): string[] {
   return text.trim().split(/\s+/).filter(Boolean);
 }
 
+function normalizeProseQuoteSpacing(text: string): string {
+  let result = text.replace(
+    /([\p{L}\p{N}])"(?=\p{L}[^"]*")/gu,
+    "$1 \"",
+  );
+  result = result.replace(/"(?=\p{L})/gu, (match, offset) => {
+    const quoteCountBefore = result.slice(0, offset).match(/"/g)?.length ?? 0;
+    return quoteCountBefore % 2 === 1 ? `${match} ` : match;
+  });
+  return result;
+}
+
 // Sentence-ending punctuation stripped from token edges for overlap
 // comparison. Operator/symbol chars (+ - # * / = & | < > ~ ^ @ $ %) are
 // intentionally absent so code tokens like C++, C#, i++, x-- keep their
@@ -584,7 +596,7 @@ export function mergeChunkTranscripts(chunks: string[]): string {
     merged.push(...nextWords.slice(skipPrefix + overlap));
   }
 
-  return merged.join(" ").trim();
+  return normalizeProseQuoteSpacing(merged.join(" ").trim());
 }
 
 function hasChunkBoundaryOverlap(currentText: string, nextText: string): boolean {

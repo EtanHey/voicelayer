@@ -106,11 +106,14 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
 
 function buildPolishSystemPrompt(): string {
   return [
-    "You are a transcript fixer for local voice dictation.",
+    "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix only obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
-    "Use light punctuation: add periods or question marks when sentence boundaries are clear from the text, but do not over-polish.",
-    "Never summarize, paraphrase, translate, add content, delete meaningful content, change tone, or invent code identifiers.",
+    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Resolve explicit mid-sentence self-corrections only when the cue is clear: well no, no wait, sorry, I mean, or scratch that. Keep the corrected phrase and drop only the immediately superseded phrase.",
+    "Format explicit spoken lists into numbered markdown lists when the user says cues such as first of all, second of all, third of all, number one, number two, or number three.",
+    "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
+    "Remove low-value disfluencies only when they are clearly process speech, not semantic content.",
+    "Never summarize, translate, add content, change tone, or invent code identifiers.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "If unsure, return the input unchanged.",
     "Output only the corrected text.",
@@ -122,6 +125,12 @@ function buildPolishSystemPrompt(): string {
     "Output: Ask cmux whether BrainLayer is ready",
     "Input: תרים את ה handle socket command",
     "Output: תרים את ה-handleSocketCommand",
+    "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
+    "Output: Okay, let's do Claude deep research.",
+    "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
+    "Output: Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    "Input: Also, if I say the .at file. Thank you.",
+    "Output: Also, if I say the .at file. Thank you.",
     "Input: This is already good.",
     "Output: This is already good.",
     "Input: why did it do that i am confused",
@@ -273,7 +282,7 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
 
   const codeDotCount = countMatches(
     normalized,
-    /(?<=[\p{L}\p{N}])\.(?=[\p{L}\p{N}])/gu,
+    /(?:(?<=[\p{L}\p{N}])\.(?=[\p{L}\p{N}])|(?<!\S)\.(?=[\p{L}_]))/gu,
   );
   if (codeDotCount > 0) counts.set(".", codeDotCount);
 
@@ -432,41 +441,141 @@ function changedProtectedTokens(cleanedText: string, candidate: string): boolean
   );
 }
 
+function codeStyleIdentifierTokens(text: string): string[] {
+  return (
+    text
+      .normalize("NFKC")
+      .match(/[A-Za-z_$][A-Za-z0-9_$.-]*/g)
+      ?.filter((token) => /(?:[a-z][A-Z]|[A-Z][a-z]+[A-Z])/u.test(token)) ?? []
+  );
+}
+
+const KNOWN_CODE_IDENTIFIER_POLISH_ALLOWLIST = new Set([
+  "brainlayer",
+  "handlesocketcommand",
+]);
+
+function introducedCodeStyleIdentifier(
+  cleanedText: string,
+  candidate: string,
+): string | null {
+  const cleanedIdentifiers = new Set(
+    codeStyleIdentifierTokens(cleanedText).map((token) => token.toLowerCase()),
+  );
+  for (const token of codeStyleIdentifierTokens(candidate)) {
+    const normalizedToken = token.toLowerCase();
+    if (
+      !cleanedIdentifiers.has(normalizedToken) &&
+      !KNOWN_CODE_IDENTIFIER_POLISH_ALLOWLIST.has(normalizedToken)
+    ) {
+      return token;
+    }
+  }
+  return null;
+}
+
+const SELF_CORRECTION_SIMILARITY_FLOOR = 0.58;
+const SPOKEN_LIST_SIMILARITY_FLOOR = 0.45;
+
+// AIDEV-NOTE: Broadening these cues weakens length/similarity/negation guards
+// for dictation rewrites, so keep the list limited to explicit correction speech.
+const SELF_CORRECTION_CUE_PATTERN =
+  /\b(?:well\s+no|no\s+wait|sorry|i\s+mean|scratch\s+that)\b/iu;
+
+const SPOKEN_LIST_CUE_PATTERN =
+  /\b(?:first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
+
+function hasExplicitSelfCorrectionCue(text: string): boolean {
+  return SELF_CORRECTION_CUE_PATTERN.test(text);
+}
+
+function hasSpokenListCue(text: string): boolean {
+  return SPOKEN_LIST_CUE_PATTERN.test(text);
+}
+
+function hasNumberedMarkdownList(text: string): boolean {
+  return /(?:^|\n)\s*1\.\s+\S/u.test(text) && /(?:^|\n)\s*2\.\s+\S/u.test(text);
+}
+
+function isAllowedSelfCorrectionRewrite(
+  cleanedText: string,
+  candidate: string,
+): boolean {
+  if (!hasExplicitSelfCorrectionCue(cleanedText)) return false;
+  if (countWords(candidate) >= countWords(cleanedText)) return false;
+  return normalizedSimilarity(cleanedText, candidate) >= SELF_CORRECTION_SIMILARITY_FLOOR;
+}
+
+function isAllowedSpokenListRewrite(
+  cleanedText: string,
+  candidate: string,
+): boolean {
+  if (!hasSpokenListCue(cleanedText) || !hasNumberedMarkdownList(candidate)) {
+    return false;
+  }
+  return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
+}
+
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
 ): string | null {
   const candidate = polishedText.trim();
+  const allowedSelfCorrectionRewrite = isAllowedSelfCorrectionRewrite(
+    cleanedText,
+    candidate,
+  );
+  const allowedSpokenListRewrite = isAllowedSpokenListRewrite(
+    cleanedText,
+    candidate,
+  );
+  const allowsStructuredRewrite =
+    allowedSelfCorrectionRewrite || allowedSpokenListRewrite;
+  const isLowSimilaritySelfCorrectionRewrite =
+    hasExplicitSelfCorrectionCue(cleanedText) &&
+    countWords(candidate) < countWords(cleanedText) &&
+    !allowedSelfCorrectionRewrite &&
+    !allowedSpokenListRewrite;
   if (!candidate) return "empty polish response";
   if (/Raw Whisper text:|VoiceLayer cleaned text to fix:/i.test(candidate)) {
     return "polish response echoed the prompt";
   }
-  if (negationCount(cleanedText) !== negationCount(candidate)) {
+  if (isLowSimilaritySelfCorrectionRewrite) {
+    return "polish response self-correction rewrite changed too much text";
+  }
+  if (
+    negationCount(cleanedText) !== negationCount(candidate) &&
+    !allowedSelfCorrectionRewrite
+  ) {
     return "polish response changed negation";
   }
   if (removedProtectedCodePunctuation(cleanedText, candidate)) {
     return "polish response removed code punctuation";
   }
-  if (changedProtectedTokens(cleanedText, candidate)) {
+  const inventedIdentifier = introducedCodeStyleIdentifier(cleanedText, candidate);
+  if (inventedIdentifier) {
+    return `polish response invented code identifier: ${inventedIdentifier}`;
+  }
+  if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
     return "polish response changed protected tokens";
   }
 
   const cleanedChars = cleanedText.trim().length;
   const candidateChars = candidate.length;
-  if (cleanedChars >= 80) {
+  if (cleanedChars >= 80 && !allowsStructuredRewrite) {
     if (candidateChars < cleanedChars * 0.72) return "polish response dropped too much text";
     if (candidateChars > cleanedChars * 1.35) return "polish response added too much text";
   }
 
   const cleanedWords = countWords(cleanedText);
   const candidateWords = countWords(candidate);
-  if (cleanedWords >= 12) {
+  if (cleanedWords >= 12 && !allowsStructuredRewrite) {
     if (candidateWords < cleanedWords * 0.72) return "polish response dropped too many words";
     if (candidateWords > cleanedWords * 1.35) return "polish response added too many words";
     if (normalizedSimilarity(cleanedText, candidate) < 0.62) {
       return "polish response changed too much text";
     }
-  } else if (normalizedSimilarity(cleanedText, candidate) < 0.72) {
+  } else if (!allowsStructuredRewrite && normalizedSimilarity(cleanedText, candidate) < 0.72) {
     return "short polish response changed too much text";
   }
 

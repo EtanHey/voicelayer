@@ -250,4 +250,45 @@ describe("stt-polish-server", () => {
     expect(result).toEqual({ status: "timeout" });
     expect(signals).toEqual(["SIGTERM"]);
   });
+
+  it("logs startup timeout health details including binary pid readiness and stderr tail", async () => {
+    resetSTTPolishServerManagerForTests();
+    const events: Array<{ type: string; payload: Record<string, unknown> }> = [];
+
+    const result = await ensureSTTPolishServer({
+      env: { QA_VOICE_STT_POLISH: "on" },
+      findBinary: () => "/tmp/mlx_lm.server",
+      isEndpointReady: async () => false,
+      spawn: () => ({
+        pid: 789,
+        kill: () => {},
+        stderr: new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("loading qwen\n"));
+            controller.enqueue(new TextEncoder().encode("still warming mlx\n"));
+            controller.close();
+          },
+        }),
+        exited: new Promise(() => {}),
+      }),
+      appendEvent: (type, payload) => {
+        events.push({ type, payload });
+      },
+      sleep: async () => {
+        await Bun.sleep(0);
+      },
+      startupTimeoutMs: 1,
+    });
+
+    expect(result).toEqual({ status: "timeout" });
+    const timeoutEvent = events.find(
+      (event) => event.type === "transcription.polish_server_timeout",
+    );
+    expect(timeoutEvent?.payload).toMatchObject({
+      binary: "/tmp/mlx_lm.server",
+      pid: 789,
+      readiness_checks: expect.any(Number),
+      stderr_tail: expect.stringContaining("still warming mlx"),
+    });
+  });
 });

@@ -17,6 +17,10 @@ type ManagedPolishProcess = {
   stderr?: ReadableStream<Uint8Array> | null;
 };
 
+type StderrTail = {
+  text: string;
+};
+
 type SpawnPolishProcess = (
   args: string[],
   options: {
@@ -131,7 +135,14 @@ async function startAndWaitForPolishServer(
   ];
   appendEvent(
     "transcription.polish_server_starting",
-    { endpoint, model: DEFAULT_POLISH_MODEL, port: DEFAULT_POLISH_PORT },
+    {
+      endpoint,
+      model: DEFAULT_POLISH_MODEL,
+      host: DEFAULT_POLISH_HOST,
+      port: DEFAULT_POLISH_PORT,
+      binary,
+      timeout_ms: options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
+    },
     { topic: "voice.transcription" },
   );
   log(
@@ -140,18 +151,29 @@ async function startAndWaitForPolishServer(
 
   const proc = spawnPolishServer(args, options);
   polishProcess = proc;
-  drainPolishServerLogs(proc, log);
+  const stderrTail = drainPolishServerLogs(proc, log);
 
   const timeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
+  let readinessChecks = 0;
   while (Date.now() < deadline) {
+    readinessChecks++;
     if (
       (await isReady(endpoint, options)) &&
       isSpawnedPolishProcessServingPort(proc, options)
     ) {
       appendEvent(
         "transcription.polish_server_ready",
-        { endpoint, model: DEFAULT_POLISH_MODEL, port: DEFAULT_POLISH_PORT, pid: proc.pid },
+        {
+          endpoint,
+          model: DEFAULT_POLISH_MODEL,
+          host: DEFAULT_POLISH_HOST,
+          port: DEFAULT_POLISH_PORT,
+          binary,
+          pid: proc.pid,
+          readiness_checks: readinessChecks,
+          stderr_tail: stderrTail.text || null,
+        },
         { topic: "voice.transcription" },
       );
       return { status: "ready", pid: proc.pid };
@@ -164,8 +186,12 @@ async function startAndWaitForPolishServer(
     {
       endpoint,
       model: DEFAULT_POLISH_MODEL,
+      host: DEFAULT_POLISH_HOST,
       port: DEFAULT_POLISH_PORT,
+      binary,
       pid: proc.pid,
+      readiness_checks: readinessChecks,
+      stderr_tail: stderrTail.text || null,
       timeout_ms: timeoutMs,
     },
     { topic: "voice.transcription" },
@@ -316,8 +342,9 @@ function spawnPolishServer(
 function drainPolishServerLogs(
   proc: ManagedPolishProcess,
   log: (message: string) => void,
-): void {
-  if (!proc.stderr) return;
+): StderrTail {
+  const tail: StderrTail = { text: "" };
+  if (!proc.stderr) return tail;
   const reader = proc.stderr.getReader();
   void (async () => {
     try {
@@ -325,10 +352,14 @@ function drainPolishServerLogs(
         const { done, value } = await reader.read();
         if (done) break;
         const text = new TextDecoder().decode(value).trim();
-        if (text) log(`[voicelayer-polish] ${text}`);
+        if (text) {
+          tail.text = `${tail.text}\n${text}`.trim().slice(-2_000);
+          log(`[voicelayer-polish] ${text}`);
+        }
       }
     } catch {}
   })();
+  return tail;
 }
 
 function terminatePolishProcess(proc: ManagedPolishProcess): void {

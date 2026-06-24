@@ -301,7 +301,55 @@ describe("stt-polish", () => {
       status: "rejected",
       changed: false,
     });
-    expect(result.error).toContain("short polish response changed too much");
+    expect(result.error).toContain("invented code identifier");
+  });
+
+  it("rejects polish candidates that invent code-style identifiers", async () => {
+    server = createMockPolishServer(() => ({
+      text: "By the way, is BrainSearch or BrainInjecting helping?",
+    }));
+
+    const cleanedText = "By the way, is brain search or brain injecting helping?";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText: "By the way, is BrainSearch or BrainInjecting helping?",
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("invented code identifier");
+  });
+
+  it("allows known vocabulary code identifiers from dictation-finalizer examples", async () => {
+    server = createMockPolishServer(() => ({
+      text: "תרים את ה-handleSocketCommand",
+    }));
+
+    const cleanedText = "תרים את ה handle socket command";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "תרים את ה-handleSocketCommand",
+      status: "applied",
+      changed: true,
+    });
   });
 
   it("rejects polish candidates that remove negation from short dictation", async () => {
@@ -371,6 +419,79 @@ describe("stt-polish", () => {
 
     expect(result).toMatchObject({
       text: "Also, do /whats-new and output that as your summary.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows explicit self-correction cleanup in dictation finalizer mode", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay, let's do Claude deep research.",
+    }));
+
+    const cleanedText = "Okay, let's do Gemini deep, well no, Claude deep research.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Claude deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects low-similarity self-correction rewrites even with explicit cues", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Please run tests before merge.",
+    }));
+
+    const cleanedText =
+      "Please deploy to staging, well no, run tests before merge.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText: "Please run tests before merge.",
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("self-correction rewrite changed too much");
+  });
+
+  it("allows explicit spoken-list restructuring into numbered markdown", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    }));
+
+    const cleanedText =
+      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
       status: "applied",
       changed: true,
     });
@@ -544,8 +665,11 @@ describe("stt-polish", () => {
         content: string;
       }>;
       expect(messages[0].role).toBe("system");
-      expect(messages[0].content).toContain("missing sentence punctuation");
-      expect(messages[0].content).toContain("Why did it do that? I am confused.");
+      expect(messages[0].content).toContain("dictation finalizer");
+      expect(messages[0].content).toContain("well no");
+      expect(messages[0].content).toContain("numbered markdown lists");
+      expect(messages[0].content).toContain(".at");
+      expect(messages[0].content).toContain("Preserve Hebrew");
       expect(messages[0].content).toContain("If unsure, return the input unchanged");
       expect(messages[1].content).toContain(
         "Also, do / what's new and output that as your summary",
