@@ -679,6 +679,57 @@ console.log(JSON.stringify({
     }
   });
 
+  it("does not list invalid directories that only resolve through an alias", () => {
+    const homeDir = join("/tmp", `voicelayer-list-direct-${process.pid}`);
+    const voicesRoot = join(homeDir, ".voicelayer", "voices");
+    mkdirSync(join(voicesRoot, "theo"), { recursive: true });
+    mkdirSync(join(voicesRoot, "theo-c4s"), { recursive: true });
+    writeFileSync(
+      join(voicesRoot, "theo-c4s", "profile.yaml"),
+      `name: theo-c4s
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: true
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+`,
+    );
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          `
+import { listClonedVoiceProfiles } from "./src/tts/qwen3.ts";
+
+console.log(JSON.stringify(listClonedVoiceProfiles()));
+`,
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const profiles = JSON.parse(result.stdout.toString());
+      expect(profiles).toContain("theo-c4s");
+      expect(profiles).not.toContain("theo");
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("invalidates cached profile metadata after profile.yaml changes", () => {
     const homeDir = join("/tmp", `voicelayer-profile-refresh-${process.pid}`);
     const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4s");

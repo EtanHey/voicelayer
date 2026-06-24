@@ -392,10 +392,11 @@ export function hasClonedProfile(voiceName: string): boolean {
 export function listClonedVoiceProfiles(): string[] {
   try {
     if (!existsSync(VOICES_DIR)) return [];
+    refreshProfileCachesIfInventoryChanged();
     return readdirSync(VOICES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
+      .filter((entry) => loadProfileFromDirectory(entry.name) !== null)
       .map((entry) => entry.name)
-      .filter((name) => loadProfile(name) !== null)
       .sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
