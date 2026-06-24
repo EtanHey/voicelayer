@@ -447,6 +447,30 @@ describe("stt-polish", () => {
     });
   });
 
+  it("allows explicit self-correction cleanup when Whisper punctuates the cue", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay, let's do Claude Deep Research.",
+    }));
+
+    const cleanedText =
+      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Claude Deep Research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
   it("rejects low-similarity self-correction rewrites even with explicit cues", async () => {
     server = createMockPolishServer(() => ({
       text: "Please run tests before merge.",
@@ -668,6 +692,7 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("dictation finalizer");
       expect(messages[0].content).toContain("well no");
       expect(messages[0].content).toContain("numbered markdown lists");
+      expect(messages[0].content).toContain("Input: First of all");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
       expect(messages[0].content).toContain("If unsure, return the input unchanged");

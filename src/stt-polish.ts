@@ -109,7 +109,7 @@ function buildPolishSystemPrompt(): string {
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
     "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
-    "Resolve explicit mid-sentence self-corrections only when the cue is clear: well no, no wait, sorry, I mean, or scratch that. Keep the corrected phrase and drop only the immediately superseded phrase.",
+    "Resolve explicit mid-sentence self-corrections only when the cue is clear: well no, well, no, no wait, sorry, I mean, or scratch that. Keep the corrected phrase and drop only the immediately superseded phrase.",
     "Format explicit spoken lists into numbered markdown lists when the user says cues such as first of all, second of all, third of all, number one, number two, or number three.",
     "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
     "Remove low-value disfluencies only when they are clearly process speech, not semantic content.",
@@ -127,6 +127,10 @@ function buildPolishSystemPrompt(): string {
     "Output: תרים את ה-handleSocketCommand",
     "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
     "Output: Okay, let's do Claude deep research.",
+    "Input: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
+    "Output: Okay, let's do Claude Deep Research.",
+    "Input: First of all, I wanted to do x, y, and z, and then second of all, I wanted to talk to him, and third of all, I wanted to go home.",
+    "Output:\n1. I wanted to do x, y, and z.\n2. I wanted to talk to him.\n3. I wanted to go home.",
     "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
     "Output: Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
     "Input: Also, if I say the .at file. Thank you.",
@@ -480,7 +484,7 @@ const SPOKEN_LIST_SIMILARITY_FLOOR = 0.45;
 // AIDEV-NOTE: Broadening these cues weakens length/similarity/negation guards
 // for dictation rewrites, so keep the list limited to explicit correction speech.
 const SELF_CORRECTION_CUE_PATTERN =
-  /\b(?:well\s+no|no\s+wait|sorry|i\s+mean|scratch\s+that)\b/iu;
+  /\b(?:well[\s,]+no|no[\s,]+wait|sorry|i\s+mean|scratch\s+that)\b/iu;
 
 const SPOKEN_LIST_CUE_PATTERN =
   /\b(?:first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
