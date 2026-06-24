@@ -579,6 +579,123 @@ console.log(JSON.stringify(resolveVoice("theo")));
     }
   });
 
+  it("resolves canonical profile ids even when the voice folder has a different name", () => {
+    const homeDir = join("/tmp", `voicelayer-profile-id-${process.pid}`);
+    const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4s-dir");
+    mkdirSync(voiceDir, { recursive: true });
+    writeFileSync(
+      join(voiceDir, "profile.yaml"),
+      `name: theo-c4s-dir
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: true
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s-dir/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+`,
+    );
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          "import { resolveVoice } from './src/tts.ts'; console.log(JSON.stringify(resolveVoice('theo-c4s')));",
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout.toString())).toMatchObject({
+        voice: "theo-c4s",
+        engine: "cloned",
+        fallbackVoice: "en-US-AndrewNeural",
+      });
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("invalidates cached profile metadata after profile.yaml changes", () => {
+    const homeDir = join("/tmp", `voicelayer-profile-refresh-${process.pid}`);
+    const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4s");
+    mkdirSync(voiceDir, { recursive: true });
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          `
+import { writeFileSync, utimesSync } from "fs";
+import { join } from "path";
+import { resolveVoice } from "./src/tts.ts";
+
+const profilePath = join(process.env.HOME, ".voicelayer", "voices", "theo-c4s", "profile.yaml");
+writeFileSync(profilePath, \`name: theo-c4s
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: true
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+\`);
+console.log(JSON.stringify(resolveVoice("theo")));
+writeFileSync(profilePath, \`name: theo-c4s
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: false
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+\`);
+const future = new Date(Date.now() + 1000);
+utimesSync(profilePath, future, future);
+console.log(JSON.stringify(resolveVoice("theo")));
+`,
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      const lines = result.stdout.toString().trim().split("\n").map(JSON.parse);
+      expect(lines[0]).toMatchObject({
+        voice: "theo-c4s",
+        engine: "cloned",
+      });
+      expect(lines[1]).toMatchObject({
+        engine: "edge-tts",
+      });
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it("warns loudly when a non-accepted cloned profile is used directly", () => {
     const homeDir = join("/tmp", `voicelayer-nonaccepted-${process.pid}`);
     const voiceDir = join(homeDir, ".voicelayer", "voices", "theo-c4");

@@ -300,6 +300,27 @@ function findLatestAcceptedProfileForAlias(alias: string): VoiceProfile | null {
   }
 }
 
+function findProfileByIdentity(identity: string): VoiceProfile | null {
+  const normalizedIdentity = normalizeProfileToken(identity);
+  try {
+    if (!existsSync(VOICES_DIR)) return null;
+    return (
+      readdirSync(VOICES_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => loadProfileFromDirectory(entry.name))
+        .filter((profile): profile is VoiceProfile => profile !== null)
+        .find(
+          (profile) =>
+            normalizeProfileToken(
+              profileIdentity(profile, profile.directory_name || ""),
+            ) === normalizedIdentity,
+        ) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
 function getVoicesInventorySignature(): string {
   try {
     if (!existsSync(VOICES_DIR)) return "";
@@ -320,18 +341,19 @@ function getVoicesInventorySignature(): string {
   }
 }
 
-function refreshProfileMissCacheIfInventoryChanged(): void {
+function refreshProfileCachesIfInventoryChanged(): void {
   const signature = getVoicesInventorySignature();
   if (voicesInventorySignature === signature) return;
   voicesInventorySignature = signature;
+  profileCache.clear();
   profileMissCache.clear();
 }
 
 export function loadProfile(voiceName: string): VoiceProfile | null {
   // Reject path traversal attempts (../, /, \)
   const name = normalizeProfileToken(voiceName);
+  refreshProfileCachesIfInventoryChanged();
   const direct = loadProfileFromDirectory(name);
-  refreshProfileMissCacheIfInventoryChanged();
 
   const aliasProfile = profileMissCache.has(name)
     ? null
@@ -339,6 +361,14 @@ export function loadProfile(voiceName: string): VoiceProfile | null {
   if (aliasProfile) {
     profileCache.set(name, aliasProfile);
     return aliasProfile;
+  }
+  const identityProfile = profileMissCache.has(name)
+    ? null
+    : profileCache.get(name) || findProfileByIdentity(name);
+  if (identityProfile) {
+    profileCache.set(name, identityProfile);
+    warnOnProfileDrift(identityProfile, voiceName);
+    return identityProfile;
   }
   if (direct) {
     warnOnProfileDrift(direct, voiceName);
