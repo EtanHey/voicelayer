@@ -35,6 +35,7 @@ source: https://youtube.com/@t3dotgg
     expect(profile.name).toBe("theo");
     expect(profile.engine).toBe("qwen3-tts");
     expect(profile.model_path).toBe("~/.voicelayer/models/qwen3-tts-4bit");
+    expect(profile.model).toBe("~/.voicelayer/models/qwen3-tts-4bit");
     expect(profile.reference_clips).toHaveLength(3);
     expect(profile.reference_clips[0].path).toBe(
       "~/.voicelayer/voices/theo/samples/clip-003.wav",
@@ -247,7 +248,7 @@ describe("synthesizeCloned", () => {
 profile_id: pinned
 profile_version: v1
 engine: qwen3-tts
-model: ~/.voicelayer/models/qwen3-tts-4bit
+model_path: ~/.voicelayer/models/qwen3-tts-4bit
 reference_clip: ~/.voicelayer/voices/pinned/ref.wav
 reference_text: hello
 fallback: en-US-AndrewNeural
@@ -448,6 +449,72 @@ created: 2026-06-24
         voice: "theo-c4s",
         engine: "cloned",
         fallbackVoice: "en-US-AndrewNeural",
+      });
+      expect(result.stderr.toString()).not.toContain("VOICE PROFILE DRIFT");
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the latest accepted alias over a legacy direct profile directory", () => {
+    const homeDir = join("/tmp", `voicelayer-legacy-alias-${process.pid}`);
+    const voicesRoot = join(homeDir, ".voicelayer", "voices");
+    mkdirSync(join(voicesRoot, "theo"), { recursive: true });
+    mkdirSync(join(voicesRoot, "theo-c4s"), { recursive: true });
+    writeFileSync(
+      join(voicesRoot, "theo", "profile.yaml"),
+      `name: theo
+profile_id: theo
+profile_version: c3
+speaker: theo
+accepted: false
+superseded_by: theo-c4s
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo/ref.wav
+reference_text: legacy
+fallback: en-US-AndrewNeural
+created: 2026-06-01
+`,
+    );
+    writeFileSync(
+      join(voicesRoot, "theo-c4s", "profile.yaml"),
+      `name: theo-c4s
+profile_id: theo-c4s
+profile_version: c4s
+speaker: theo
+accepted: true
+aliases:
+  - theo
+engine: qwen3-tts
+reference_clip: ~/.voicelayer/voices/theo-c4s/ref.wav
+reference_text: bright
+fallback: en-US-AndrewNeural
+created: 2026-06-24
+`,
+    );
+
+    try {
+      const result = Bun.spawnSync({
+        cmd: [
+          "bun",
+          "-e",
+          "import { resolveVoice } from './src/tts.ts'; console.log(JSON.stringify(resolveVoice('theo')));",
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HOME: homeDir,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout.toString())).toMatchObject({
+        voice: "theo-c4s",
+        engine: "cloned",
       });
       expect(result.stderr.toString()).not.toContain("VOICE PROFILE DRIFT");
     } finally {

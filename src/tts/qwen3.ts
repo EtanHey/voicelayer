@@ -43,6 +43,7 @@ export interface ReferenceClip {
 export interface VoiceProfile {
   name: string;
   profile_id?: string;
+  directory_name?: string;
   profile_version?: string;
   speaker?: string;
   accepted?: boolean;
@@ -64,6 +65,7 @@ const VOICES_DIR = join(process.env.HOME || "~", ".voicelayer", "voices");
 
 /** Cache for loaded voice profiles. */
 const profileCache = new Map<string, VoiceProfile>();
+const profileMissCache = new Set<string>();
 const collator = new Intl.Collator(undefined, {
   numeric: true,
   sensitivity: "base",
@@ -196,6 +198,7 @@ export function parseProfileYaml(content: string): VoiceProfile {
   return {
     name: String(result.name || ""),
     profile_id: result.profile_id ? String(result.profile_id) : undefined,
+    directory_name: undefined,
     profile_version: result.profile_version
       ? String(result.profile_version)
       : undefined,
@@ -204,7 +207,11 @@ export function parseProfileYaml(content: string): VoiceProfile {
     aliases: Array.isArray(result.aliases)
       ? result.aliases.map(String).filter(Boolean)
       : undefined,
-    model: result.model ? String(result.model) : undefined,
+    model: result.model
+      ? String(result.model)
+      : result.model_path
+        ? String(result.model_path)
+        : undefined,
     engine: String(result.engine || "qwen3-tts"),
     model_path: String(result.model_path || ""),
     reference_clips: referenceClips,
@@ -241,6 +248,7 @@ function loadProfileFromDirectory(name: string): VoiceProfile | null {
     const profile = parseProfileYaml(content);
     if (!profile.name) profile.name = name;
     if (!profile.profile_id) profile.profile_id = profile.name || name;
+    profile.directory_name = name;
     profileCache.set(name, profile);
     profileCache.set(normalizeProfileToken(profileIdentity(profile, name)), profile);
     return profile;
@@ -293,18 +301,21 @@ function findLatestAcceptedProfileForAlias(alias: string): VoiceProfile | null {
 
 export function loadProfile(voiceName: string): VoiceProfile | null {
   // Reject path traversal attempts (../, /, \)
-  const name = voiceName.toLowerCase();
+  const name = normalizeProfileToken(voiceName);
   const direct = loadProfileFromDirectory(name);
-  if (direct) {
-    warnOnProfileDrift(direct, voiceName);
-    return direct;
-  }
 
-  const aliasProfile = findLatestAcceptedProfileForAlias(name);
+  const aliasProfile = profileMissCache.has(name)
+    ? null
+    : findLatestAcceptedProfileForAlias(name);
   if (aliasProfile) {
     profileCache.set(name, aliasProfile);
     return aliasProfile;
   }
+  if (direct) {
+    warnOnProfileDrift(direct, voiceName);
+    return direct;
+  }
+  profileMissCache.add(name);
   return null;
 }
 
@@ -336,6 +347,7 @@ export function listClonedVoiceProfiles(): string[] {
  */
 export function clearProfileCache(): void {
   profileCache.clear();
+  profileMissCache.clear();
 }
 
 /**

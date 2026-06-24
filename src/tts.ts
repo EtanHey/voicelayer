@@ -1087,12 +1087,13 @@ export async function speak(
   // Cloned voice → multi-engine synthesis cascade
   if (resolved.engine === "cloned") {
     const profile = loadProfile(resolved.voice);
+    const profileAssetVoice = profile?.directory_name || resolved.voice;
 
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
-    if (isXTTSAvailable(resolved.voice) && profile?.reference_clip) {
+    if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
       const wavPath = await synthesizeXTTS(
         text,
-        resolved.voice,
+        profileAssetVoice,
         profile.reference_clip,
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
