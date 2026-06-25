@@ -28,7 +28,11 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
             ]
         )
 
-        for (tab, tabName) in [(SettingsTab.dictionary, "dictionary"), (SettingsTab.general, "general")] {
+        for (tab, tabName) in [
+            (SettingsTab.dictionary, "dictionary"),
+            (SettingsTab.general, "general"),
+            (SettingsTab.history, "history"),
+        ] {
             for (appearance, appearanceName) in [
                 (NSAppearance(named: .aqua), "light"),
                 (NSAppearance(named: .darkAqua), "dark"),
@@ -60,8 +64,75 @@ final class SettingsDesignPassArtifactTests: XCTestCase {
             onAddPromptTerm: { _ in },
             onRemovePromptTerm: { _ in },
             isHotkeyRemapActive: { true },
+            initialHistoryPage: SettingsHistoryPage(
+                groups: Self.sampleHistoryGroups,
+                loadedEntryCount: Self.sampleHistoryGroups.reduce(0) { $0 + $1.entries.count },
+                hasMore: true
+            ),
+            onCopyHistoryTranscript: { _ in },
+            onPasteHistoryTranscript: { _ in },
+            onRetranscribeHistoryEntry: { _ in },
             initialTab: tab
         )
+    }
+
+    private static var sampleHistoryGroups: [SettingsHistoryDayGroup] {
+        [
+            SettingsHistoryDayGroup(
+                dayKey: "2026-06-25",
+                date: sampleDate(year: 2026, month: 6, day: 25),
+                entries: [
+                    SettingsHistoryEntry(
+                        id: "/tmp/2026-06-25T21-30-00-000Z-latest/audio.wav",
+                        dayKey: "2026-06-25",
+                        recordingID: "2026-06-25T21-30-00-000Z-latest",
+                        createdAt: sampleDate(year: 2026, month: 6, day: 25, hour: 21, minute: 30),
+                        transcript: "Latest clip visible at the top of the full History page.",
+                        audioPath: URL(fileURLWithPath: "/tmp/2026-06-25T21-30-00-000Z-latest/audio.wav")
+                    ),
+                    SettingsHistoryEntry(
+                        id: "/tmp/2026-06-25T07-05-00-000Z-first/audio.wav",
+                        dayKey: "2026-06-25",
+                        recordingID: "2026-06-25T07-05-00-000Z-first",
+                        createdAt: sampleDate(year: 2026, month: 6, day: 25, hour: 7, minute: 5),
+                        transcript: "Morning clip with the corrected Etan spelling.",
+                        audioPath: URL(fileURLWithPath: "/tmp/2026-06-25T07-05-00-000Z-first/audio.wav")
+                    ),
+                ]
+            ),
+            SettingsHistoryDayGroup(
+                dayKey: "2026-06-23",
+                date: sampleDate(year: 2026, month: 6, day: 23),
+                entries: [
+                    SettingsHistoryEntry(
+                        id: "/tmp/2026-06-23T18-45-00-000Z-old/audio.wav",
+                        dayKey: "2026-06-23",
+                        recordingID: "2026-06-23T18-45-00-000Z-old",
+                        createdAt: sampleDate(year: 2026, month: 6, day: 23, hour: 18, minute: 45),
+                        transcript: "Eitan was misheard in this older clip before the dictionary fix.",
+                        audioPath: URL(fileURLWithPath: "/tmp/2026-06-23T18-45-00-000Z-old/audio.wav")
+                    ),
+                ]
+            ),
+        ]
+    }
+
+    private static func sampleDate(
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int = 0,
+        minute: Int = 0
+    ) -> Date {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = hour
+        components.minute = minute
+        return components.date!
     }
 
     private func writePNG(

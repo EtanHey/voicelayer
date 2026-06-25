@@ -25,6 +25,8 @@ final class BarViewClickabilityTests: XCTestCase {
         }
 
         func handleReplay() {}
+
+        func handleRetranscribeHistoryEntry(recordingPath: String) {}
     }
 
     func testRecordingCancelAndStopControlsReceiveClicks() {

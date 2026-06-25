@@ -6,9 +6,11 @@ import {
   it,
   spyOn,
 } from "bun:test";
+import { createHash } from "crypto";
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -214,12 +216,15 @@ describe("input recording durability", () => {
   let tmpRoot: string;
   let retainedPath: string;
   let savedRetainedPath: string | undefined;
+  let savedRecordingsDir: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
+    savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
     process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedPath;
+    process.env.QA_VOICE_RECORDINGS_DIR = join(tmpRoot, "recordings");
     vadMode = "silence";
     onVadCall = null;
     backendMode = "ok";
@@ -279,6 +284,11 @@ describe("input recording durability", () => {
       delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     } else {
       process.env.QA_VOICE_RETAINED_RECORDING_PATH = savedRetainedPath;
+    }
+    if (savedRecordingsDir === undefined) {
+      delete process.env.QA_VOICE_RECORDINGS_DIR;
+    } else {
+      process.env.QA_VOICE_RECORDINGS_DIR = savedRecordingsDir;
     }
   });
 
@@ -447,5 +457,79 @@ describe("input recording durability", () => {
     );
     expect(readFileSync(retainedPath)).toEqual(Buffer.from(wav));
     expect(backendTranscribeCalls).toBe(0);
+  });
+
+  it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-abcd1234",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const audioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    writeFileSync(audioPath, makeWav(makePcmChunk()));
+    writeFileSync(transcriptPath, "Ethan confirmed the old transcript.");
+
+    const { retranscribeRecordingCapture } = await import("../input");
+
+    await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(backendTranscribeCalls).toBe(1);
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Retained transcript.");
+    expect(broadcasts).toContainEqual({
+      type: "transcription",
+      text: "Retained transcript.",
+      recording_path: audioPath,
+    });
+  });
+
+  it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-repair123",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const audioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    const metadataPath = join(archiveDir, "metadata.json");
+    const pcm = makePcmChunk();
+    writeFileSync(audioPath, makeWav(pcm));
+    rewriteWavHeaderDataSize(audioPath, pcm.byteLength - 2);
+    writeFileSync(transcriptPath, "Ethan confirmed the old transcript.");
+    writeFileSync(
+      metadataPath,
+      JSON.stringify(
+        {
+          transcription_status: "transcribed",
+          voicelayer_transcript_chars: 34,
+          audio_sha256: "stale-checksum",
+          backend: "old-stt",
+          language_mode: "english",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { retranscribeRecordingCapture } = await import("../input");
+
+    await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
+
+    const repairedAudio = readFileSync(audioPath);
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(readWavDataSize(audioPath)).toBe(pcm.byteLength);
+    expect(metadata.audio_sha256).toBe(
+      createHash("sha256").update(repairedAudio).digest("hex"),
+    );
+    expect(metadata.voicelayer_transcript_chars).toBe(
+      "Retained transcript.".length,
+    );
+    expect(metadata.backend).toBe("fake-stt");
+    expect(metadata.language_mode).toBe("auto");
   });
 });

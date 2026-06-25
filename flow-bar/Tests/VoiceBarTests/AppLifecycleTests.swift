@@ -394,7 +394,33 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(vUpRange.lowerBound, commandUpRange.lowerBound)
     }
 
+    func testSettingsWindowWiresHistoryAndVisibilityActions() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) }"))
+        XCTAssertFalse(source.contains("historyGroups: { SettingsHistoryArchive.load() }"))
+        XCTAssertTrue(source.contains("voiceState.copyTranscript(text)"))
+        XCTAssertTrue(source.contains("voiceState.repasteTranscript(text, source: \"settings_history\")"))
+        XCTAssertTrue(source.contains("voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)"))
+        XCTAssertTrue(source.contains("isVoiceBarHidden: { [weak self] in"))
+        XCTAssertTrue(source.contains("onHideVoiceBar: { [weak self] in"))
+        XCTAssertTrue(source.contains("snoozeForOneHour()"))
+        XCTAssertTrue(source.contains("onShowVoiceBar: { [weak self] in"))
+        XCTAssertTrue(source.contains("unsnoozeNow()"))
+    }
+
     func testDictionaryAddWindowIsStandaloneAndClosable() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertFalse(
+            source.contains("panel.beginSheet(sheet)"),
+            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
+        )
+        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
+        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
+    }
+
+    private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -405,13 +431,6 @@ final class AppLifecycleTests: XCTestCase {
             .appendingPathComponent("Sources")
             .appendingPathComponent("VoiceBar")
             .appendingPathComponent("VoiceBarApp.swift")
-        let source = try String(contentsOf: sourceURL)
-
-        XCTAssertFalse(
-            source.contains("panel.beginSheet(sheet)"),
-            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
-        )
-        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
-        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
+        return try String(contentsOf: sourceURL)
     }
 }
