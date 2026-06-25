@@ -393,4 +393,33 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(vDownRange.lowerBound, vUpRange.lowerBound)
         XCTAssertLessThan(vUpRange.lowerBound, commandUpRange.lowerBound)
     }
+
+    func testSettingsWindowWiresHistoryAndVisibilityActions() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) }"))
+        XCTAssertFalse(source.contains("historyGroups: { SettingsHistoryArchive.load() }"))
+        XCTAssertTrue(source.contains("voiceState.copyTranscript(text)"))
+        XCTAssertTrue(source.contains("voiceState.repasteTranscript(text, source: \"settings_history\")"))
+        XCTAssertTrue(source.contains("voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)"))
+        XCTAssertTrue(source.contains("isVoiceBarHidden: { [weak self] in"))
+        XCTAssertTrue(source.contains("onHideVoiceBar: { [weak self] in"))
+        XCTAssertTrue(source.contains("snoozeForOneHour()"))
+        XCTAssertTrue(source.contains("onShowVoiceBar: { [weak self] in"))
+        XCTAssertTrue(source.contains("unsnoozeNow()"))
+    }
+
+    private func voiceBarAppSource() throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("VoiceBar")
+            .appendingPathComponent("VoiceBarApp.swift")
+        return try String(contentsOf: sourceURL)
+    }
 }

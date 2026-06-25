@@ -59,6 +59,7 @@ describe("ack protocol", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
   let hasRetainedRecordingSpy: ReturnType<typeof spyOn>;
   let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
+  let retranscribeRecordingCaptureSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     cleanup();
@@ -97,6 +98,10 @@ describe("ack protocol", () => {
       input,
       "retranscribeLastCapture",
     ).mockResolvedValue("retranscribed note");
+    retranscribeRecordingCaptureSpy = spyOn(
+      input,
+      "retranscribeRecordingCapture",
+    ).mockResolvedValue("history retranscribed note");
     writeFileSync(TEST_REPLAY_FILE, "mp3");
   });
 
@@ -112,6 +117,7 @@ describe("ack protocol", () => {
     broadcastSpy.mockRestore();
     hasRetainedRecordingSpy.mockRestore();
     retranscribeLastCaptureSpy.mockRestore();
+    retranscribeRecordingCaptureSpy.mockRestore();
     cleanup();
   });
 
@@ -271,6 +277,59 @@ describe("ack protocol", () => {
       outcome: "noop",
       id: "retranscribe-empty",
       reason: "nothing to retranscribe",
+    });
+  });
+
+  it("returns accept ack for history-entry retranscribe and passes the archived audio path", () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    const audioPath =
+      "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_recording",
+      id: "history-retry-1",
+      audio_path: audioPath,
+    } as unknown as SocketCommand);
+
+    expect(retranscribeRecordingCaptureSpy).toHaveBeenCalledWith(audioPath);
+    expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_recording",
+      outcome: "accept",
+      id: "history-retry-1",
+    });
+  });
+
+  it("keeps archived retranscribe recovery idle scoped to recording source", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    retranscribeRecordingCaptureSpy.mockRejectedValueOnce(new Error("boom"));
+    const audioPath =
+      "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_recording",
+      id: "history-retry-fail",
+      audio_path: audioPath,
+    } as unknown as SocketCommand);
+    await Promise.resolve();
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_recording",
+      outcome: "accept",
+      id: "history-retry-fail",
+    });
+    expect(broadcastSpy).toHaveBeenCalledWith({
+      type: "state",
+      state: "idle",
+      source: "recording",
+    });
+    expect(broadcastSpy).not.toHaveBeenCalledWith({
+      type: "state",
+      state: "idle",
     });
   });
 

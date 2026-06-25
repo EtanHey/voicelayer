@@ -10,6 +10,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         func handleCancel() {}
         func handleStop() {}
         func handleReplay() {}
+        func handleRetranscribeHistoryEntry(recordingPath: String) {}
     }
 
     func testWritesImageRendererArtifactsForAllPrimaryVoiceModes() throws {

@@ -18,6 +18,7 @@ import {
   waitForInput,
   hasRetainedRecording,
   retranscribeLastCapture,
+  retranscribeRecordingCapture,
 } from "./input";
 import {
   bookVoiceSession,
@@ -133,6 +134,22 @@ export function handleSocketCommand(
           `[voicelayer] Retranscribe last capture failed: ${err instanceof Error ? err.message : String(err)}`,
         );
         broadcast({ type: "state", state: "idle" });
+      });
+      return buildAck(command, "accept");
+    }
+    case "retranscribe_recording": {
+      if (
+        recordingState === "recording" ||
+        recordingState === "transcribing" ||
+        isSpeaking
+      ) {
+        return buildAck(command, "reject", "busy");
+      }
+      retranscribeRecordingCapture(command.audio_path).catch((err) => {
+        console.error(
+          `[voicelayer] Retranscribe archived recording failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        broadcast({ type: "state", state: "idle", source: "recording" });
       });
       return buildAck(command, "accept");
     }

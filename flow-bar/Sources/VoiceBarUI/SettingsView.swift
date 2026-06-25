@@ -1,8 +1,10 @@
+import Foundation
 import SwiftUI
 
 public enum SettingsTab: Hashable {
     case general
     case audio
+    case history
     case dictionary
 }
 
@@ -37,12 +39,31 @@ public struct SettingsView: View {
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
     public let isMicrophonePermissionGranted: () -> Bool
+    public let isVoiceBarHidden: () -> Bool
+    public let onHideVoiceBar: () -> Void
+    public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
+    public let historyPage: @Sendable (Int) -> SettingsHistoryPage
+    public let onCopyHistoryTranscript: (String) -> Void
+    public let onPasteHistoryTranscript: (String) -> Void
+    public let onRetranscribeHistoryEntry: (String) -> Void
+    public let isHistoryRetranscribing: (String) -> Bool
+
+    private let latestHistoryAnchorID = "settings-history-latest-anchor"
+    private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
     @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
+    @State private var localVoiceBarHidden: Bool
+    @State private var historyDayGroups: [SettingsHistoryDayGroup]
+    @State private var historyLoadedEntryCount: Int
+    @State private var historyLoadedEntryLimit: Int
+    @State private var historyHasMore: Bool
+    @State private var isHistoryLoading = false
+    @State private var historyLoadGeneration = 0
+    @State private var historyRefreshTask: Task<Void, Never>?
     @State private var dictionarySearch = ""
     @State private var localEntries: [STTDictionaryEntry]
     @State private var editingCanonical: String?
@@ -75,9 +96,21 @@ public struct SettingsView: View {
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
+        isVoiceBarHidden: @escaping () -> Bool = { false },
+        onHideVoiceBar: @escaping () -> Void = {},
+        onShowVoiceBar: @escaping () -> Void = {},
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
             completion("Relay setup requested.")
         },
+        historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
+            SettingsHistoryArchive.loadPage(limit: limit)
+        },
+        historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
+        initialHistoryPage: SettingsHistoryPage? = nil,
+        onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
+        onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
+        onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
+        isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -97,13 +130,39 @@ public struct SettingsView: View {
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
+        self.isVoiceBarHidden = isVoiceBarHidden
+        self.onHideVoiceBar = onHideVoiceBar
+        self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
+        if let historyGroups {
+            self.historyPage = { limit in
+                let groups = Self.newestFirstHistoryGroups(historyGroups())
+                let limitedGroups = Self.limitHistoryGroups(groups, to: limit)
+                return SettingsHistoryPage(
+                    groups: limitedGroups,
+                    loadedEntryCount: limitedGroups.reduce(0) { $0 + $1.entries.count },
+                    hasMore: groups.reduce(0) { $0 + $1.entries.count } > limit
+                )
+            }
+        } else {
+            self.historyPage = historyPage
+        }
+        self.onCopyHistoryTranscript = onCopyHistoryTranscript
+        self.onPasteHistoryTranscript = onPasteHistoryTranscript
+        self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
+        self.isHistoryRetranscribing = isHistoryRetranscribing
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
+        _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
+        let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
+        _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
+        _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
+        _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
+        _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialVocabulary.entries)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
@@ -120,6 +179,9 @@ public struct SettingsView: View {
             audioTab
                 .tabItem { Label("Audio", systemImage: "mic.fill") }
                 .tag(SettingsTab.audio)
+            historyTab
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(SettingsTab.history)
             dictionaryTab
                 .tabItem { Label("Dictionary", systemImage: "text.book.closed") }
                 .tag(SettingsTab.dictionary)
@@ -128,6 +190,14 @@ public struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: vocabularyPreview()) { _, preview in
             reconcileLocalEntries(with: preview.entries)
+        }
+        .onChange(of: selectedTab) { _, tab in
+            if tab == .history {
+                requestHistoryReload()
+            }
+        }
+        .onDisappear {
+            historyRefreshTask?.cancel()
         }
     }
 
@@ -178,6 +248,8 @@ public struct SettingsView: View {
                         .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                 }
             }
+
+            visibilitySection
 
             Section("Gestures") {
                 LabeledContent("Single tap") {
@@ -232,6 +304,39 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    private var visibilitySection: some View {
+        Section("Visibility") {
+            LabeledContent("VoiceBar") {
+                statusBadge(localVoiceBarHidden ? "Hidden" : "Visible", isReady: !localVoiceBarHidden)
+            }
+
+            if localVoiceBarHidden {
+                Button {
+                    onShowVoiceBar()
+                    localVoiceBarHidden = isVoiceBarHidden()
+                } label: {
+                    Label("Show VoiceBar", systemImage: "eye")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Show VoiceBar")
+                .accessibilityLabel("Show VoiceBar")
+            } else {
+                Button {
+                    onHideVoiceBar()
+                    localVoiceBarHidden = isVoiceBarHidden()
+                } label: {
+                    Label("Hide for 1 hour", systemImage: "eye.slash")
+                }
+                .buttonStyle(.bordered)
+                .help("Hide VoiceBar for 1 hour")
+                .accessibilityLabel("Hide VoiceBar for 1 hour")
+            }
+        }
+        .onAppear {
+            localVoiceBarHidden = isVoiceBarHidden()
+        }
+    }
+
     // MARK: - Audio Tab
 
     private var audioTab: some View {
@@ -277,6 +382,212 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - History Tab
+
+    private var historyTab: some View {
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 0) {
+                historyToolbar(proxy: proxy)
+                Divider()
+
+                if historyDayGroups.isEmpty, isHistoryLoading {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading history...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if historyDayGroups.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("No transcript history yet")
+                            .font(.headline)
+                        Text("Completed recordings will appear here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            Color.clear
+                                .frame(height: 1)
+                                .id(latestHistoryAnchorID)
+
+                            ForEach(historyDayGroups) { group in
+                                historyDaySection(group)
+                            }
+
+                            if historyHasMore {
+                                Button {
+                                    loadOlderHistory()
+                                } label: {
+                                    if isHistoryLoading {
+                                        HStack(spacing: 6) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            Text("Loading older")
+                                        }
+                                    } else {
+                                        Label("Load older", systemImage: "chevron.down")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isHistoryLoading)
+                                .frame(maxWidth: .infinity)
+                                .help("Load older history")
+                                .accessibilityLabel("Load older history")
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .onAppear {
+                if historyDayGroups.isEmpty {
+                    requestHistoryReload(scrollProxy: proxy, animated: false)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+                requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            }
+        }
+    }
+
+    private func historyToolbar(proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("History")
+                    .font(.title3.weight(.semibold))
+                Text("\(historyLoadedEntryCount) transcripts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if isHistoryLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Button {
+                requestHistoryReload(scrollProxy: proxy)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh history")
+            .accessibilityLabel("Refresh history")
+
+            Button {
+                scrollToLatest(proxy)
+            } label: {
+                Image(systemName: "arrow.up.to.line")
+            }
+            .buttonStyle(.borderless)
+            .disabled(historyDayGroups.isEmpty)
+            .help("Jump to latest")
+            .accessibilityLabel("Jump to latest")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private func historyDaySection(_ group: SettingsHistoryDayGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(group.dayTitle())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(height: 1)
+            }
+
+            ForEach(group.entries) { entry in
+                historyEntryRow(entry)
+            }
+        }
+    }
+
+    private func historyEntryRow(_ entry: SettingsHistoryEntry) -> some View {
+        let isRetranscribing = isHistoryRetranscribing(entry.audioPath.path)
+
+        return HStack(alignment: .top, spacing: 12) {
+            Text(entry.timestamp())
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(entry.displayTranscript)
+                    .font(.body)
+                    .foregroundStyle(entry.hasTranscript ? .primary : .secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if isRetranscribing {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Re-transcribing...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                historyEntryActions(entry, isRetranscribing: isRetranscribing)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .opacity(isRetranscribing ? 0.62 : 1)
+        .disabled(isRetranscribing)
+    }
+
+    private func historyEntryActions(_ entry: SettingsHistoryEntry, isRetranscribing: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                onCopyHistoryTranscript(entry.transcript)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .disabled(!entry.hasTranscript || isRetranscribing)
+            .help("Copy transcript")
+            .accessibilityLabel("Copy transcript")
+
+            Button {
+                onPasteHistoryTranscript(entry.transcript)
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+            .disabled(!entry.hasTranscript || isRetranscribing)
+            .help("Paste transcript")
+            .accessibilityLabel("Paste transcript")
+
+            Button {
+                onRetranscribeHistoryEntry(entry.audioPath.path)
+            } label: {
+                Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(isRetranscribing)
+            .help("Re-transcribe stored audio")
+            .accessibilityLabel("Re-transcribe stored audio")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
     }
 
     // MARK: - Dictionary Tab
@@ -521,6 +832,121 @@ public struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func requestHistoryReload(
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        let limit = historyLoadedEntryLimit
+        loadHistory(
+            limit: limit,
+            scrollProxy: scrollProxy,
+            debounce: debounce,
+            scrollToLatest: shouldScrollToLatest,
+            animated: animated
+        )
+    }
+
+    private func loadOlderHistory() {
+        let nextLimit = historyLoadedEntryLimit + Self.historyPageSize
+        historyLoadedEntryLimit = nextLimit
+        loadHistory(limit: nextLimit, scrollToLatest: false)
+    }
+
+    private func loadHistory(
+        limit: Int,
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        historyLoadGeneration += 1
+        let generation = historyLoadGeneration
+        let loader = historyPage
+        isHistoryLoading = true
+        historyRefreshTask?.cancel()
+        historyRefreshTask = Task {
+            if debounce {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            guard !Task.isCancelled else { return }
+            let page = await Task.detached(priority: .utility) {
+                loader(limit)
+            }.value
+            await MainActor.run {
+                guard generation == historyLoadGeneration, !Task.isCancelled else { return }
+                applyHistoryPage(page)
+                isHistoryLoading = false
+                if shouldScrollToLatest, let scrollProxy {
+                    scrollToLatest(scrollProxy, animated: animated)
+                }
+            }
+        }
+    }
+
+    private func applyHistoryPage(_ page: SettingsHistoryPage) {
+        historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
+        historyLoadedEntryCount = page.loadedEntryCount
+        historyHasMore = page.hasMore
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard !historyDayGroups.isEmpty else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(latestHistoryAnchorID, anchor: .top)
+                }
+            } else {
+                proxy.scrollTo(latestHistoryAnchorID, anchor: .top)
+            }
+        }
+    }
+
+    private static func newestFirstHistoryGroups(
+        _ groups: [SettingsHistoryDayGroup]
+    ) -> [SettingsHistoryDayGroup] {
+        groups
+            .sorted { lhs, rhs in
+                if lhs.date == rhs.date {
+                    return lhs.dayKey > rhs.dayKey
+                }
+                return lhs.date > rhs.date
+            }
+            .map { group in
+                SettingsHistoryDayGroup(
+                    dayKey: group.dayKey,
+                    date: group.date,
+                    entries: group.entries.sorted { lhs, rhs in
+                        if lhs.createdAt == rhs.createdAt {
+                            return lhs.recordingID > rhs.recordingID
+                        }
+                        return lhs.createdAt > rhs.createdAt
+                    }
+                )
+            }
+    }
+
+    private static func limitHistoryGroups(
+        _ groups: [SettingsHistoryDayGroup],
+        to limit: Int
+    ) -> [SettingsHistoryDayGroup] {
+        var remaining = max(0, limit)
+        var limitedGroups: [SettingsHistoryDayGroup] = []
+        for group in newestFirstHistoryGroups(groups) where remaining > 0 {
+            let entries = Array(group.entries.prefix(remaining))
+            guard !entries.isEmpty else { continue }
+            limitedGroups.append(SettingsHistoryDayGroup(
+                dayKey: group.dayKey,
+                date: group.date,
+                entries: entries
+            ))
+            remaining -= entries.count
+        }
+        return limitedGroups
+    }
 
     private var hotkeyStatusText: String {
         if hotkeyEnabled { return "Active" }

@@ -5,6 +5,7 @@ public enum IntentCommand: String {
     case cancel
     case replay
     case retranscribeLast = "retranscribe_last"
+    case retranscribeRecording = "retranscribe_recording"
     case toggle
     case record
     case setWhisperEffort = "set_whisper_effort"
@@ -82,6 +83,7 @@ public protocol BarCommandRouting {
     func handleCancel()
     func handleStop()
     func handleReplay()
+    func handleRetranscribeHistoryEntry(recordingPath: String)
 }
 
 public enum HotkeyPermission: Equatable {

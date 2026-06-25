@@ -61,6 +61,20 @@ describe("socket-protocol", () => {
       expect(parsed.text).toBe("The user said this");
     });
 
+    it("serializes transcription events with archived recording audio path", () => {
+      const event: SocketEvent = {
+        type: "transcription",
+        text: "Etan confirmed the fix.",
+        recording_path:
+          "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav",
+      };
+      const result = serializeEvent(event);
+      const parsed = JSON.parse(result.trim());
+      expect(parsed.type).toBe("transcription");
+      expect(parsed.text).toBe("Etan confirmed the fix.");
+      expect(parsed.recording_path).toEndWith("/audio.wav");
+    });
+
     it("serializes transcription status event", () => {
       const event: SocketEvent = {
         type: "transcription_status",
@@ -219,6 +233,32 @@ describe("socket-protocol", () => {
     it("parses retranscribe-last command", () => {
       const result = parseCommand('{"cmd":"retranscribe_last"}');
       expect(result).toEqual({ cmd: "retranscribe_last" });
+    });
+
+    it("parses history-entry retranscribe command with archived audio path", () => {
+      const audioPath =
+        "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+
+      const result = parseCommand(
+        JSON.stringify({
+          cmd: "retranscribe_recording",
+          id: "history-retry-1",
+          audio_path: audioPath,
+        }),
+      );
+
+      expect(result).toEqual({
+        cmd: "retranscribe_recording",
+        id: "history-retry-1",
+        audio_path: audioPath,
+      });
+    });
+
+    it("rejects history-entry retranscribe commands without audio path", () => {
+      expect(parseCommand('{"cmd":"retranscribe_recording"}')).toBeNull();
+      expect(
+        parseCommand('{"cmd":"retranscribe_recording","audio_path":" "}'),
+      ).toBeNull();
     });
 
     it("parses health command", () => {

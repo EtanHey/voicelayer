@@ -33,6 +33,8 @@ final class VoiceStatePasteTests: XCTestCase {
                     "persisted older",
                 ]
             },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in },
             transcriptionVocabularyLoader: {
                 ["VoiceLayer", "Wispr Flow"]
             },
@@ -55,7 +57,9 @@ final class VoiceStatePasteTests: XCTestCase {
         var savedSnapshots: [[String]] = []
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
-            recentTranscriptionsSaver: { savedSnapshots.append($0) }
+            recentTranscriptionsSaver: { savedSnapshots.append($0) },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
         )
 
         state.handleEvent([
@@ -70,6 +74,8 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
             recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in },
             transcriptionVocabularyLoader: { [] },
             transcriptionVocabularyAliasLoader: { [] }
         )
@@ -89,6 +95,8 @@ final class VoiceStatePasteTests: XCTestCase {
         let state = VoiceState(
             recentTranscriptionsLoader: { ["already visible history"] },
             recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in },
             transcriptionVocabularyLoader: { vocabularyTerms },
             transcriptionVocabularyAliasLoader: { vocabularyAliases }
         )
@@ -1360,7 +1368,9 @@ final class VoiceStatePasteTests: XCTestCase {
     func testRecentTranscriptionsAreMostRecentFirst() {
         let state = VoiceState(
             recentTranscriptionsLoader: { [] },
-            recentTranscriptionsSaver: { _ in }
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
         )
 
         state.handleEvent([

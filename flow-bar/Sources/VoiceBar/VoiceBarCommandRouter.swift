@@ -76,6 +76,11 @@ class VoiceBarCommandRouter: BarCommandRouting {
         voiceState.replay()
     }
 
+    func handleRetranscribeHistoryEntry(recordingPath: String) {
+        guard voiceState.mode == .idle else { return }
+        voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
+    }
+
     func handleHotkeyHoldStart() {
         switch voiceState.mode {
         case .idle, .error:

@@ -247,6 +247,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         voiceState.onPanelLayoutChange = { [weak self] in
             self?.applyPanelLayout(animated: true)
         }
+        voiceState.onHistoryArchiveChange = {
+            NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
+        }
         voiceState.diagnosticLogger = { [weak self] event, details in
             self?.logDiagnostic(event: event, details: details)
         }
@@ -1361,9 +1364,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             isMicrophonePermissionGranted: { [weak self] in
                 self?.microphonePermissionGranted() ?? false
             },
+            isVoiceBarHidden: { [weak self] in
+                self?.isSnoozed ?? false
+            },
+            onHideVoiceBar: { [weak self] in
+                self?.snoozeForOneHour()
+            },
+            onShowVoiceBar: { [weak self] in
+                self?.unsnoozeNow()
+            },
             onRunRelaySetup: { [weak self] completion in
                 self?.runRelaySetupAsync(completion: completion)
                     ?? completion("Relay setup failed: VoiceBar is not available.")
+            },
+            historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) },
+            onCopyHistoryTranscript: { [weak self] text in
+                self?.voiceState.copyTranscript(text)
+            },
+            onPasteHistoryTranscript: { [weak self] text in
+                self?.voiceState.repasteTranscript(text, source: "settings_history")
+            },
+            onRetranscribeHistoryEntry: { [weak self] recordingPath in
+                self?.voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
+            },
+            isHistoryRetranscribing: { [weak self] recordingPath in
+                self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             }
         )
     }

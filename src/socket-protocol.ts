@@ -47,6 +47,8 @@ export interface TranscriptionEvent {
   text: string;
   /** true = partial/streaming result, false = final result. */
   partial?: boolean;
+  /** Archived VoiceBar recording audio used to produce this transcript. */
+  recording_path?: string;
 }
 
 export interface TranscriptionStatusEvent {
@@ -145,6 +147,7 @@ export type AckCommand =
   | "cancel"
   | "replay"
   | "retranscribe_last"
+  | "retranscribe_recording"
   | "toggle"
   | "record"
   | "command"
@@ -196,6 +199,11 @@ export interface ReplayCommand extends SocketCommandBase {
 
 export interface RetranscribeLastCommand extends SocketCommandBase {
   cmd: "retranscribe_last";
+}
+
+export interface RetranscribeRecordingCommand extends SocketCommandBase {
+  cmd: "retranscribe_recording";
+  audio_path: string;
 }
 
 export interface ToggleCommand extends SocketCommandBase {
@@ -266,6 +274,7 @@ export type SocketCommand =
   | CancelCommand
   | ReplayCommand
   | RetranscribeLastCommand
+  | RetranscribeRecordingCommand
   | ToggleCommand
   | RecordCommand
   | HealthCommand
@@ -325,6 +334,21 @@ export function parseCommand(line: string): SocketCommand | null {
           { cmd: "retranscribe_last" },
           id,
         );
+      case "retranscribe_recording": {
+        if (
+          typeof parsed.audio_path !== "string" ||
+          parsed.audio_path.trim().length === 0
+        ) {
+          return null;
+        }
+        return withCommandId<RetranscribeRecordingCommand>(
+          {
+            cmd: "retranscribe_recording",
+            audio_path: parsed.audio_path.trim(),
+          },
+          id,
+        );
+      }
       case "health":
         return withCommandId<HealthCommand>({ cmd: "health" }, id);
       case "command": {
