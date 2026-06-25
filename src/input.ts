@@ -33,6 +33,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   renameSync,
   rmSync,
   unlinkSync,
@@ -40,7 +41,7 @@ import {
   writeFileSync,
 } from "fs";
 import { homedir } from "os";
-import { dirname, join } from "path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import {
   hasStopSignal,
   clearStopSignal,
@@ -281,6 +282,51 @@ function recordingsArchiveRoot(): string {
     process.env.QA_VOICE_RECORDINGS_DIR ||
     join(homedir(), ".local", "share", "voicelayer", "recordings")
   );
+}
+
+function resolvedRecordingsArchiveRoot(): string {
+  const root = recordingsArchiveRoot();
+  try {
+    return realpathSync(root);
+  } catch {
+    return resolve(root);
+  }
+}
+
+function requireArchivedRecordingAudioPath(audioPath: string): string {
+  const trimmed = audioPath.trim();
+  if (!trimmed) {
+    throw new Error("Archived recording audio path is required.");
+  }
+
+  let resolvedAudioPath: string;
+  try {
+    resolvedAudioPath = realpathSync(trimmed);
+  } catch (err) {
+    throw new Error(
+      `Archived recording audio does not exist: ${trimmed} (${err instanceof Error ? err.message : String(err)}).`,
+    );
+  }
+
+  if (basename(resolvedAudioPath) !== "audio.wav") {
+    throw new Error(
+      `Archived recording path must point to an audio.wav file: ${trimmed}`,
+    );
+  }
+
+  const archiveRoot = resolvedRecordingsArchiveRoot();
+  const relativePath = relative(archiveRoot, resolvedAudioPath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error(
+      `Archived recording path must be inside ${archiveRoot}: ${trimmed}`,
+    );
+  }
+
+  return resolvedAudioPath;
 }
 
 function fsyncPath(path: string): void {
@@ -1928,9 +1974,10 @@ export async function waitForInput(
       return null;
     }
 
+    let archivedRecordingPath: string | null = null;
     if (text) {
       try {
-        archiveWaitForInputRecording({
+        archivedRecordingPath = archiveWaitForInputRecording({
           options,
           audioBytes: retainedWavData,
           transcript: text,
@@ -1949,7 +1996,13 @@ export async function waitForInput(
 
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
-      broadcast({ type: "transcription", text });
+      broadcast({
+        type: "transcription",
+        text,
+        ...(archivedRecordingPath
+          ? { recording_path: join(archivedRecordingPath, "audio.wav") }
+          : {}),
+      });
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
@@ -2018,6 +2071,97 @@ export class SoxMicCapture implements MicCapture {
 
 export function hasRetainedRecording(): boolean {
   return existsSync(retainedRecordingFilePath());
+}
+
+function updateArchivedTranscript(audioPath: string, text: string): void {
+  const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
+  atomicWriteFile(transcriptPath, text);
+
+  const metadataPath = join(dirname(audioPath), "metadata.json");
+  if (!existsSync(metadataPath)) return;
+
+  try {
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    metadata.transcription_status = "transcribed";
+    metadata.voicelayer_transcript_chars = text.length;
+    atomicWriteFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to update archived recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+export async function retranscribeRecordingCapture(
+  audioPath: string,
+): Promise<string | null> {
+  const eventAudioPath = audioPath.trim();
+  let wavPath: string;
+  try {
+    wavPath = requireArchivedRecordingAudioPath(audioPath);
+    requireValidRetainedWav(wavPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    broadcast({
+      type: "error",
+      message,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw err;
+  }
+
+  setRecordingState("transcribing");
+  broadcast({ type: "state", state: "transcribing" });
+  broadcast({
+    type: "transcription_status",
+    status: "warming",
+    message: "Loading speech model",
+  });
+
+  try {
+    const backend = await getBackend();
+    broadcast({
+      type: "transcription_status",
+      status: "transcribing",
+      message: "Transcribing",
+    });
+    console.error(
+      `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
+    );
+    const result = await backend.transcribe(wavPath);
+    const text = await finalizeTranscriptionTextForSurface(
+      result.text,
+      "dictation",
+    );
+    if (result.text.trim() && !text) {
+      console.error(
+        `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
+      );
+    }
+    console.error(`[voicelayer] Archived retranscription: ${text}`);
+
+    if (text) {
+      updateArchivedTranscript(wavPath, text);
+      broadcast({ type: "transcription", text, recording_path: eventAudioPath });
+    }
+    setRecordingState("idle");
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    return text || null;
+  } catch (err) {
+    setRecordingState("idle");
+    const detail = err instanceof Error ? err.message : String(err);
+    const retryableError = new Error(
+      `Could not retranscribe archived recording ${wavPath}. The audio was kept; retry after the speech backend is available. Backend error: ${detail}`,
+    );
+    broadcast({
+      type: "error",
+      message: retryableError.message,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw retryableError;
+  }
 }
 
 export async function retranscribeLastCapture(): Promise<string | null> {

@@ -9,6 +9,7 @@ import {
 import {
   closeSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -214,12 +215,15 @@ describe("input recording durability", () => {
   let tmpRoot: string;
   let retainedPath: string;
   let savedRetainedPath: string | undefined;
+  let savedRecordingsDir: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
+    savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
     process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedPath;
+    process.env.QA_VOICE_RECORDINGS_DIR = join(tmpRoot, "recordings");
     vadMode = "silence";
     onVadCall = null;
     backendMode = "ok";
@@ -279,6 +283,11 @@ describe("input recording durability", () => {
       delete process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     } else {
       process.env.QA_VOICE_RETAINED_RECORDING_PATH = savedRetainedPath;
+    }
+    if (savedRecordingsDir === undefined) {
+      delete process.env.QA_VOICE_RECORDINGS_DIR;
+    } else {
+      process.env.QA_VOICE_RECORDINGS_DIR = savedRecordingsDir;
     }
   });
 
@@ -447,5 +456,31 @@ describe("input recording durability", () => {
     );
     expect(readFileSync(retainedPath)).toEqual(Buffer.from(wav));
     expect(backendTranscribeCalls).toBe(0);
+  });
+
+  it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-abcd1234",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const audioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    writeFileSync(audioPath, makeWav(makePcmChunk()));
+    writeFileSync(transcriptPath, "Ethan confirmed the old transcript.");
+
+    const { retranscribeRecordingCapture } = await import("../input");
+
+    await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(backendTranscribeCalls).toBe(1);
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Retained transcript.");
+    expect(broadcasts).toContainEqual({
+      type: "transcription",
+      text: "Retained transcript.",
+      recording_path: audioPath,
+    });
   });
 });

@@ -152,6 +152,80 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.pendingIntent?.id, firstPendingIntent?.id)
     }
 
+    func testTranscriptionEventStoresArchivedRecordingPathForHistoryEntry() {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Etan confirmed the correction",
+            "recording_path": audioPath,
+        ])
+
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.text, "Etan confirmed the correction")
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
+        XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the correction"])
+    }
+
+    func testHistoryEntryRetranscribeSendsArchivedAudioPathAndUpdatesEntryWithoutPaste() throws {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.minimumTranscribingDisplayDuration = 0
+        var sentCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Ethan confirmed the old transcript",
+            "recording_path": audioPath,
+        ])
+
+        state.retranscribeHistoryEntry(recordingPath: audioPath)
+
+        XCTAssertEqual(sentCommand?["cmd"] as? String, "retranscribe_recording")
+        XCTAssertEqual(sentCommand?["audio_path"] as? String, audioPath)
+        let id = try XCTUnwrap(sentCommand?["id"] as? String)
+        XCTAssertEqual(state.pendingIntent?.command, .retranscribeRecording)
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_recording",
+            "outcome": "accept",
+            "id": id,
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Etan confirmed the corrected transcript",
+            "recording_path": audioPath,
+        ])
+
+        XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
+            "Etan confirmed the corrected transcript",
+        ])
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
+        XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the corrected transcript"])
+        XCTAssertEqual(pastedTexts, [])
+    }
+
     func testRecoveryErrorDoesNotPasteLaterFinalTranscription() {
         let state = VoiceState(recentTranscriptionsLoader: { [] })
         state.minimumTranscribingDisplayDuration = 0

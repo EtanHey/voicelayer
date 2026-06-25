@@ -179,7 +179,7 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
-        .onChange(of: state.recentTranscriptions.count) { _, count in
+        .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
                 isHistoryPresented = false
             }
@@ -196,7 +196,8 @@ public struct BarView: View {
 
     private func handleModeChange(_ newMode: VoiceMode) {
         errorDismissTask?.cancel()
-        if newMode != .idle {
+        if newMode != .idle,
+           !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
             isHistoryPresented = false
             isVocabularyPresented = false
         }
@@ -575,7 +576,7 @@ public struct BarView: View {
             if state.mode == .error {
                 pillButton(icon: "xmark") { state.dismissError() }
             }
-            if state.mode == .idle, !state.recentTranscriptions.isEmpty {
+            if state.mode == .idle, !state.recentTranscriptionEntries.isEmpty {
                 historyButton
             }
             if state.mode == .idle,
@@ -605,7 +606,7 @@ public struct BarView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(state.recentTranscriptions.enumerated()), id: \.offset) { index, item in
+                    ForEach(Array(state.recentTranscriptionEntries.enumerated()), id: \.offset) { index, item in
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .top, spacing: 8) {
                                 if index == 0 {
@@ -616,16 +617,21 @@ public struct BarView: View {
                                 Spacer(minLength: 0)
                                 HStack(spacing: 6) {
                                     historyActionButton(title: "Copy") {
-                                        state.copyTranscript(item)
+                                        state.copyTranscript(item.text)
                                         isHistoryPresented = false
                                     }
                                     historyActionButton(title: "Paste") {
-                                        state.repasteTranscript(item, source: "bar_history")
+                                        state.repasteTranscript(item.text, source: "bar_history")
                                         isHistoryPresented = false
+                                    }
+                                    if let recordingPath = item.recordingPath {
+                                        historyActionButton(title: "Re-transcribe") {
+                                            commandRouter.handleRetranscribeHistoryEntry(recordingPath: recordingPath)
+                                        }
                                     }
                                 }
                             }
-                            Text(item)
+                            Text(item.text)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.primary)
                                 .textSelection(.enabled)
@@ -634,7 +640,7 @@ public struct BarView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
 
-                        if index < state.recentTranscriptions.count - 1 {
+                        if index < state.recentTranscriptionEntries.count - 1 {
                             Divider()
                         }
                     }

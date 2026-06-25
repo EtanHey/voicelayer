@@ -60,6 +60,16 @@ public struct PasteboardSnapshot: Equatable {
     public var items: [[String: Data]]
 }
 
+public struct RecentTranscriptionEntry: Codable, Equatable {
+    public var text: String
+    public var recordingPath: String?
+
+    public init(text: String, recordingPath: String? = nil) {
+        self.text = text
+        self.recordingPath = recordingPath
+    }
+}
+
 private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
@@ -72,6 +82,7 @@ private enum VoicePasteOutcome: Equatable {
 public final class VoiceState {
     private static let maxRecentTranscriptions = 8
     private static let recentTranscriptionsDefaultsKey = "VoiceBar.recentTranscriptions"
+    private static let recentTranscriptionEntriesDefaultsKey = "VoiceBar.recentTranscriptionEntries.v1"
     private static let maxVocabularyTerms = 512
     private static let maxVocabularyAliases = 512
 
@@ -117,6 +128,14 @@ public final class VoiceState {
     public var canReplay: Bool = false
 
     /// Recent transcription history with the newest item first.
+    public var recentTranscriptionEntries: [RecentTranscriptionEntry] = [] {
+        didSet {
+            recentTranscriptions = recentTranscriptionEntries.map(\.text)
+            notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptionEntries.isEmpty)
+        }
+    }
+
+    /// Recent transcription text projection kept for older menu and hotkey paths.
     public var recentTranscriptions: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptions.isEmpty) }
     }
@@ -183,7 +202,12 @@ public final class VoiceState {
     private var pendingRecordingIdleAfterFinal = false
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
+    private var pendingHistoryRetranscriptionPath: String?
     private var canRecoverLateRecordStart = false
+
+    public var isHistoryRetranscriptionPending: Bool {
+        pendingHistoryRetranscriptionPath != nil
+    }
 
     /// Whether the current recording was initiated from the Voice Bar (vs MCP).
     /// When true, transcription result is auto-pasted at the cursor.
@@ -260,6 +284,7 @@ public final class VoiceState {
     }
 
     private let recentTranscriptionsSaver: ([String]) -> Void
+    private let recentTranscriptionEntriesSaver: ([RecentTranscriptionEntry]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
     private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
 
@@ -297,13 +322,24 @@ public final class VoiceState {
         recentTranscriptionsSaver: @escaping ([String]) -> Void = {
             VoiceState.saveRecentTranscriptions($0)
         },
+        recentTranscriptionEntriesLoader: @escaping () -> [RecentTranscriptionEntry] = {
+            VoiceState.loadRecentTranscriptionEntries()
+        },
+        recentTranscriptionEntriesSaver: @escaping ([RecentTranscriptionEntry]) -> Void = {
+            VoiceState.saveRecentTranscriptionEntries($0)
+        },
         transcriptionVocabularyLoader: @escaping () -> [String] = { [] },
         transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] }
     ) {
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
+        self.recentTranscriptionEntriesSaver = recentTranscriptionEntriesSaver
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
-        recentTranscriptions = Self.normalizeRecentTranscriptions(recentTranscriptionsLoader())
+        recentTranscriptionEntries = Self.normalizeRecentTranscriptionEntries(
+            recentTranscriptionEntriesLoader(),
+            fallbackTexts: recentTranscriptionsLoader()
+        )
+        recentTranscriptions = recentTranscriptionEntries.map(\.text)
         transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
             transcriptionVocabularyAliasLoader()
@@ -327,6 +363,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -360,6 +397,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -403,6 +441,19 @@ public final class VoiceState {
         )
     }
 
+    public func retranscribeHistoryEntry(recordingPath: String) {
+        let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPath.isEmpty else { return }
+        pendingHistoryRetranscriptionPath = trimmedPath
+        sendIntent(
+            command: .retranscribeRecording,
+            payload: [
+                "cmd": "retranscribe_recording",
+                "audio_path": trimmedPath,
+            ]
+        )
+    }
+
     public func snooze() {
         switch mode {
         case .recording, .transcribing:
@@ -421,6 +472,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = true
         transcribingStartedAt = nil
@@ -520,6 +572,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         clearRecordStartLateRecovery(clearPasteTarget: true)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -609,6 +662,7 @@ public final class VoiceState {
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
+                pendingHistoryRetranscriptionPath = nil
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
                 mode = .speaking
@@ -629,6 +683,7 @@ public final class VoiceState {
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
+                pendingHistoryRetranscriptionPath = nil
                 transcribingStartedAt = nil
                 transcribingStatusText = nil
                 errorMessage = nil
@@ -664,6 +719,8 @@ public final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
+                let recordingPath = (event["recording_path"] as? String)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
                     if isPartial {
@@ -678,10 +735,16 @@ public final class VoiceState {
                     return
                 }
 
-                if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(trimmed) {
+                if scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
+                    trimmed,
+                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                ) {
                     return
                 }
-                handleFinalTranscription(trimmed)
+                handleFinalTranscription(
+                    trimmed,
+                    recordingPath: recordingPath?.isEmpty == false ? recordingPath : nil
+                )
             }
 
         case "subtitle":
@@ -750,6 +813,7 @@ public final class VoiceState {
                 transcriptionTimeoutTask?.cancel()
                 recordStartAckTimeoutTask?.cancel()
                 pendingRecoveredTranscriptionPaste = false
+                pendingHistoryRetranscriptionPath = nil
             }
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
@@ -845,6 +909,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         transcribingStatusText = nil
@@ -912,16 +977,28 @@ public final class VoiceState {
         }
     }
 
-    private func rememberRecentTranscription(_ text: String) {
+    private func rememberRecentTranscription(_ text: String, recordingPath: String? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
-        recentTranscriptions.removeAll { $0 == trimmed }
-        recentTranscriptions.insert(trimmed, at: 0)
-        if recentTranscriptions.count > Self.maxRecentTranscriptions {
-            recentTranscriptions = Array(recentTranscriptions.prefix(Self.maxRecentTranscriptions))
+        let trimmedPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedPath = trimmedPath?.isEmpty == false ? trimmedPath : nil
+        let entry = RecentTranscriptionEntry(text: trimmed, recordingPath: normalizedPath)
+        if let normalizedPath,
+           let existingIndex = recentTranscriptionEntries.firstIndex(where: { $0.recordingPath == normalizedPath }) {
+            recentTranscriptionEntries[existingIndex] = entry
+        } else {
+            recentTranscriptionEntries.removeAll { existing in
+                existing.text == trimmed || (normalizedPath != nil && existing.recordingPath == normalizedPath)
+            }
+            recentTranscriptionEntries.insert(entry, at: 0)
         }
+        if recentTranscriptionEntries.count > Self.maxRecentTranscriptions {
+            recentTranscriptionEntries = Array(recentTranscriptionEntries.prefix(Self.maxRecentTranscriptions))
+        }
+        recentTranscriptions = recentTranscriptionEntries.map(\.text)
         recentTranscriptionsSaver(recentTranscriptions)
+        recentTranscriptionEntriesSaver(recentTranscriptionEntries)
     }
 
     private func refreshTranscriptionVocabulary() {
@@ -951,6 +1028,31 @@ public final class VoiceState {
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty, !unique.contains(trimmed) else { continue }
             unique.append(trimmed)
+            if unique.count == maxRecentTranscriptions {
+                break
+            }
+        }
+        return unique
+    }
+
+    private static func normalizeRecentTranscriptionEntries(
+        _ entries: [RecentTranscriptionEntry],
+        fallbackTexts: [String] = []
+    ) -> [RecentTranscriptionEntry] {
+        let sourceEntries = entries.isEmpty
+            ? normalizeRecentTranscriptions(fallbackTexts).map { RecentTranscriptionEntry(text: $0) }
+            : entries
+        var unique: [RecentTranscriptionEntry] = []
+        var seenKeys = Set<String>()
+        for entry in sourceEntries {
+            let text = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let path = entry.recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedPath = path?.isEmpty == false ? path : nil
+            let key = normalizedPath ?? text
+            guard !seenKeys.contains(key) else { continue }
+            seenKeys.insert(key)
+            unique.append(RecentTranscriptionEntry(text: text, recordingPath: normalizedPath))
             if unique.count == maxRecentTranscriptions {
                 break
             }
@@ -995,6 +1097,22 @@ public final class VoiceState {
 
     public static func saveRecentTranscriptions(_ items: [String]) {
         UserDefaults.standard.set(items, forKey: recentTranscriptionsDefaultsKey)
+    }
+
+    public static func loadRecentTranscriptionEntries() -> [RecentTranscriptionEntry] {
+        guard let data = UserDefaults.standard.data(forKey: recentTranscriptionEntriesDefaultsKey),
+              let decoded = try? JSONDecoder().decode([RecentTranscriptionEntry].self, from: data)
+        else {
+            return []
+        }
+        return normalizeRecentTranscriptionEntries(decoded)
+    }
+
+    public static func saveRecentTranscriptionEntries(_ items: [RecentTranscriptionEntry]) {
+        guard let data = try? JSONEncoder().encode(normalizeRecentTranscriptionEntries(items)) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: recentTranscriptionEntriesDefaultsKey)
     }
 
     private func startTranscriptionTimeout() {
@@ -1054,7 +1172,10 @@ public final class VoiceState {
         expandFromCollapse()
     }
 
-    private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(_ text: String) -> Bool {
+    private func scheduleFinalTranscriptionAfterMinimumDisplayIfNeeded(
+        _ text: String,
+        recordingPath: String?
+    ) -> Bool {
         guard mode == .transcribing, let transcribingStartedAt else { return false }
 
         let elapsed = currentDateProvider().timeIntervalSince(transcribingStartedAt)
@@ -1066,12 +1187,12 @@ public final class VoiceState {
             try? await Task.sleep(for: .seconds(remainingDisplayDuration))
             guard let self, !Task.isCancelled else { return }
             deferredFinalTranscriptionTask = nil
-            handleFinalTranscription(text)
+            handleFinalTranscription(text, recordingPath: recordingPath)
         }
         return true
     }
 
-    private func handleFinalTranscription(_ text: String) {
+    private func handleFinalTranscription(_ text: String, recordingPath: String? = nil) {
         transcriptionTimeoutTask?.cancel()
         deferredFinalTranscriptionTask?.cancel()
         deferredFinalTranscriptionTask = nil
@@ -1079,20 +1200,26 @@ public final class VoiceState {
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
-        rememberRecentTranscription(text)
+        rememberRecentTranscription(text, recordingPath: recordingPath)
         refreshTranscriptionVocabulary()
         logDiagnostic("transcription_final", details: [
             "textLength": String(text.count),
             "barInitiatedRecording": boolString(barInitiatedRecording),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+            "recordingPath": recordingPath ?? "nil",
         ])
 
-        let shouldAutoPaste = barInitiatedRecording
-        let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste
+        let wasHistoryRetranscription =
+            recordingPath != nil && recordingPath == pendingHistoryRetranscriptionPath
+        let shouldAutoPaste = barInitiatedRecording && !wasHistoryRetranscription
+        let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste && !wasHistoryRetranscription
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
+        if wasHistoryRetranscription {
+            pendingHistoryRetranscriptionPath = nil
+        }
         pendingIdleAfterAutoPasteCompletion =
             (shouldAutoPaste || shouldPasteRecoveredTranscription) && mode == .transcribing
 
@@ -1133,6 +1260,7 @@ public final class VoiceState {
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
+        pendingHistoryRetranscriptionPath = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -1409,6 +1537,7 @@ public final class VoiceState {
         if pendingIdleAfterAutoPasteCompletion {
             pendingIdleAfterAutoPasteCompletion = false
             pendingRecoveredTranscriptionPaste = false
+            pendingHistoryRetranscriptionPath = nil
             enterIdleState(clearQueue: false)
         }
     }
@@ -1560,6 +1689,12 @@ public final class VoiceState {
 
         if ack.command == .retranscribeLast, ack.outcome != .accept {
             pendingRecoveredTranscriptionPaste = false
+            showConfirmation(ack.reason ?? "Nothing to transcribe")
+            return
+        }
+
+        if ack.command == .retranscribeRecording, ack.outcome != .accept {
+            pendingHistoryRetranscriptionPath = nil
             showConfirmation(ack.reason ?? "Nothing to transcribe")
             return
         }
