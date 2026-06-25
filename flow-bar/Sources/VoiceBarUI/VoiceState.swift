@@ -480,12 +480,9 @@ public final class VoiceState {
     }
 
     public func captureSettingsHistoryPasteTarget() {
-        let front = frontmostAppProvider()
-        guard front?.bundleIdentifier != Bundle.main.bundleIdentifier else {
-            settingsHistoryPasteTargetApp = nil
-            settingsHistoryInsertionHandler = nil
-            return
-        }
+        guard let front = frontmostAppProvider(),
+              front.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return }
         settingsHistoryPasteTargetApp = front
         settingsHistoryInsertionHandler = dictationInsertionHandlerProvider()
     }

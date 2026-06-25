@@ -641,6 +641,45 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted)
     }
 
+    func testSettingsHistoryCapturePreservesExternalTargetWhenVoiceBarIsFrontmost() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let externalApp = FakeRunningApplication(
+            bundleIdentifier: "com.example.Editor",
+            processIdentifier: 4242
+        )
+        let voiceBarApp = FakeRunningApplication(
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            processIdentifier: 5252
+        )
+        var frontmostApp: NSRunningApplication? = externalApp
+        state.frontmostAppProvider = { frontmostApp }
+        var activatedApps: [NSRunningApplication] = []
+        state.targetAppActivator = { activatedApps.append($0) }
+        var insertionCaptureCount = 0
+        var insertedTexts: [String] = []
+        state.dictationInsertionHandlerProvider = {
+            insertionCaptureCount += 1
+            return { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.simulatedPasteHandler = {
+            XCTFail("settings history paste should use the preserved AX insertion target")
+            return false
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        frontmostApp = voiceBarApp
+        state.captureSettingsHistoryPasteTarget()
+        state.repasteTranscript("preserved settings history line", source: "settings_history")
+
+        XCTAssertEqual(insertionCaptureCount, 1)
+        XCTAssertEqual(activatedApps, [externalApp])
+        XCTAssertEqual(insertedTexts, ["preserved settings history line"])
+    }
+
     func testCopyTranscriptWritesRequestedHistoryItemToPasteboard() {
         let state = VoiceState()
 
