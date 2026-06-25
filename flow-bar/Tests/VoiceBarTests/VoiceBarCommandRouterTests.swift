@@ -45,6 +45,19 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertNotNil(commands.first?["id"] as? String)
     }
 
+    func testShowURLRunsShowVoiceBarHandler() throws {
+        let state = VoiceState()
+        var showCount = 0
+        let router = VoiceBarCommandRouter(
+            voiceState: state,
+            showVoiceBar: { showCount += 1 }
+        )
+
+        try router.handle(url: XCTUnwrap(URL(string: "voicebar://show")))
+
+        XCTAssertEqual(showCount, 1)
+    }
+
     func testToggleStopsRecordingWhenAlreadyRecording() throws {
         let state = VoiceState()
         state.mode = .recording
@@ -275,9 +288,9 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         state.mode = .recording
         var resetCount = 0
         var commands: [[String: Any]] = []
-        let router = VoiceBarCommandRouter(voiceState: state) {
+        let router = VoiceBarCommandRouter(voiceState: state, resetHotkeyState: {
             resetCount += 1
-        }
+        })
         state.sendCommand = { commands.append($0) }
 
         router.handleCancel()

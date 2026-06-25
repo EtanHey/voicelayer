@@ -4,10 +4,16 @@ import VoiceBarUI
 class VoiceBarCommandRouter: BarCommandRouting {
     private let voiceState: VoiceState
     private let resetHotkeyState: () -> Void
+    private let showVoiceBar: () -> Void
 
-    init(voiceState: VoiceState, resetHotkeyState: @escaping () -> Void = {}) {
+    init(
+        voiceState: VoiceState,
+        resetHotkeyState: @escaping () -> Void = {},
+        showVoiceBar: @escaping () -> Void = {}
+    ) {
         self.voiceState = voiceState
         self.resetHotkeyState = resetHotkeyState
+        self.showVoiceBar = showVoiceBar
     }
 
     func handle(url: URL) {
@@ -28,6 +34,8 @@ class VoiceBarCommandRouter: BarCommandRouting {
             handleStop()
         case "cancel":
             handleCancel()
+        case "show":
+            handleShowVoiceBar()
         default:
             NSLog("[VoiceBar] Unknown URL command: %@", command)
         }
@@ -74,6 +82,10 @@ class VoiceBarCommandRouter: BarCommandRouting {
     func handleReplay() {
         guard voiceState.mode == .idle else { return }
         voiceState.replay()
+    }
+
+    func handleShowVoiceBar() {
+        showVoiceBar()
     }
 
     func handleHotkeyHoldStart() {

@@ -36,23 +36,29 @@ public enum VoiceBarMenu {
     public static func quickActions(
         isSnoozed: Bool = false,
         openSettings: @escaping () -> Void,
+        showVoiceBar: @escaping () -> Void,
         snoozeToggle: @escaping () -> Void,
         transcribeLatestRecording: @escaping () -> Void,
         pasteLastTranscript: @escaping () -> Void,
         quit: @escaping () -> Void
     ) -> [VoiceBarMenuAction] {
-        [
+        var actions = [
             VoiceBarMenuAction(title: "Settings", perform: openSettings),
-            VoiceBarMenuAction(
-                title: isSnoozed ? "Show VoiceBar" : "Hide for 1 hour",
-                perform: snoozeToggle
-            ),
+            VoiceBarMenuAction(title: "Show VoiceBar", perform: showVoiceBar),
+        ]
+
+        if !isSnoozed {
+            actions.append(VoiceBarMenuAction(title: "Hide for 1 hour", perform: snoozeToggle))
+        }
+
+        actions.append(contentsOf: [
             VoiceBarMenuAction(
                 title: "Transcribe latest recording",
                 perform: transcribeLatestRecording
             ),
             VoiceBarMenuAction(title: "Paste last transcript", perform: pasteLastTranscript),
             VoiceBarMenuAction(title: "Quit VoiceBar", perform: quit),
-        ]
+        ])
+        return actions
     }
 }
