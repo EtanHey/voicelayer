@@ -226,6 +226,27 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(pastedTexts, [])
     }
 
+    func testHistoryEntryRetranscribeDebouncesWhilePending() {
+        let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
+        let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        var sentCommands: [[String: Any]] = []
+        state.sendCommand = { command in
+            sentCommands.append(command)
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: firstAudioPath)
+        state.retranscribeHistoryEntry(recordingPath: secondAudioPath)
+
+        XCTAssertEqual(sentCommands.count, 1)
+        XCTAssertEqual(sentCommands.first?["audio_path"] as? String, firstAudioPath)
+    }
+
     func testLateHistoryRetranscribeFinalDoesNotPasteIntoNewBarRecording() throws {
         let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(

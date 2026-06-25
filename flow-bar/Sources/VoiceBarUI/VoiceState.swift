@@ -443,6 +443,7 @@ public final class VoiceState {
     }
 
     public func retranscribeHistoryEntry(recordingPath: String) {
+        guard pendingHistoryRetranscriptionPath == nil else { return }
         let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
         pendingHistoryRetranscriptionPath = trimmedPath
