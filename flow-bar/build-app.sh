@@ -16,6 +16,7 @@ SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heym
 VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
+VOICEBAR_ENTITLEMENTS="${VOICEBAR_ENTITLEMENTS:-$BUNDLE_DIR/VoiceBar.entitlements}"
 VOICEBAR_NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-${VOICEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"
 VOICEBAR_NOTARY_APPLE_ID="${VOICEBAR_NOTARY_APPLE_ID:-}"
 VOICEBAR_NOTARY_PASSWORD="${VOICEBAR_NOTARY_PASSWORD:-}"
@@ -557,7 +558,12 @@ echo "  BuildTimeUTC=$BUILD_UTC"
 # Developer signing keeps TCC permissions stable across rebuilds. A clean TCC
 # re-grant is a macOS security click if ever needed; do not reset TCC here.
 echo "[build-app] Signing..."
-codesign --force --deep --options runtime --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+if [ ! -f "$VOICEBAR_ENTITLEMENTS" ]; then
+    echo "[build-app] ERROR: VoiceBar entitlements file missing: $VOICEBAR_ENTITLEMENTS" >&2
+    exit 1
+fi
+echo "[build-app] Entitlements: $VOICEBAR_ENTITLEMENTS"
+codesign --force --deep --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 
 echo "[build-app] Verifying signature..."
 if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then

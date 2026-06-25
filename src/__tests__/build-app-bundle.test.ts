@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 // Static contract tests for flow-bar/build-app.sh: every runtime asset that
@@ -16,6 +16,14 @@ const buildScript = readFileSync(
 );
 const packageJson = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+);
+const entitlementsPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "flow-bar",
+  "bundle",
+  "VoiceBar.entitlements",
 );
 
 describe("build-app.sh bundles runtime assets", () => {
@@ -58,6 +66,20 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).not.toContain("--timestamp=none");
   });
 
+  test("signs hardened-runtime VoiceBar with microphone entitlement", () => {
+    expect(existsSync(entitlementsPath)).toBe(true);
+    const entitlements = readFileSync(entitlementsPath, "utf-8");
+    expect(entitlements).toContain(
+      "com.apple.security.device.audio-input",
+    );
+    expect(entitlements).toContain("<true/>");
+    expect(buildScript).toContain("VOICEBAR_ENTITLEMENTS");
+    expect(buildScript).toContain("--entitlements");
+    expect(buildScript).toMatch(
+      /--entitlements "\$VOICEBAR_ENTITLEMENTS"/,
+    );
+  });
+
   test("stamps git provenance into the built VoiceBar Info.plist", () => {
     expect(buildScript).toContain("stamp_info_plist");
     expect(buildScript).toContain("GitCommit");
@@ -95,6 +117,7 @@ describe("VoiceBar Homebrew release script contract", () => {
     expect(releaseScript).toContain("--no-stop");
     expect(releaseScript).toContain("--no-relaunch");
     expect(releaseScript).toContain("VOICEBAR_RELEASE_ZIP");
+    expect(releaseScript).toContain("VOICEBAR_ENTITLEMENTS");
     expect(releaseScript).toContain("VOICEBAR_REQUIRE_NOTARIZATION=1");
     expect(releaseScript).toContain("VOICEBAR_NOTARY_PROFILE");
     expect(releaseScript).toContain("notary-layers");
