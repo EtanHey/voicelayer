@@ -172,6 +172,37 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the correction"])
     }
 
+    func testHistoryRetranscribeUpdatesOlderEntryInPlaceWithoutReordering() {
+        let latestPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-latest/audio.wav"
+        let olderPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-older/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: {
+                [
+                    RecentTranscriptionEntry(text: "Latest untouched transcript", recordingPath: latestPath),
+                    RecentTranscriptionEntry(text: "Ethan old transcript", recordingPath: olderPath),
+                ]
+            },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Etan corrected older transcript",
+            "recording_path": olderPath,
+        ])
+
+        XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
+            "Latest untouched transcript",
+            "Etan corrected older transcript",
+        ])
+        XCTAssertEqual(state.recentTranscriptionEntries.map(\.recordingPath), [
+            latestPath,
+            olderPath,
+        ])
+    }
+
     func testHistoryEntryRetranscribeSendsArchivedAudioPathAndUpdatesEntryWithoutPaste() throws {
         let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
         let state = VoiceState(
@@ -201,7 +232,7 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(sentCommand?["cmd"] as? String, "retranscribe_recording")
         XCTAssertEqual(sentCommand?["audio_path"] as? String, audioPath)
         let id = try XCTUnwrap(sentCommand?["id"] as? String)
-        XCTAssertEqual(state.pendingIntent?.command, .retranscribeRecording)
+        XCTAssertNil(state.pendingIntent)
         state.handleEvent([
             "type": "ack",
             "command": "retranscribe_recording",
@@ -224,6 +255,88 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
         XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the corrected transcript"])
         XCTAssertEqual(pastedTexts, [])
+    }
+
+    func testHistoryRetranscribeAckStillClearsAfterReplayOverwritesPendingIntent() throws {
+        let firstAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-first/audio.wav"
+        let secondAudioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-second/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        var sentCommands: [[String: Any]] = []
+        state.sendCommand = { command in
+            sentCommands.append(command)
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: firstAudioPath)
+        let historyID = try XCTUnwrap(sentCommands.first?["id"] as? String)
+        state.replay()
+        XCTAssertEqual(state.pendingIntent?.command, .replay)
+
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_recording",
+            "outcome": "reject",
+            "id": historyID,
+            "reason": "Missing archived recording",
+        ])
+        state.retranscribeHistoryEntry(recordingPath: secondAudioPath)
+
+        let historyCommands = sentCommands.filter { $0["cmd"] as? String == "retranscribe_recording" }
+        XCTAssertEqual(historyCommands.count, 2)
+        XCTAssertEqual(historyCommands.last?["audio_path"] as? String, secondAudioPath)
+        XCTAssertEqual(state.confirmationText, "Missing archived recording")
+    }
+
+    func testDeferredHistoryRetranscribeFinalSurvivesNewRecordingState() async throws {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.minimumTranscribingDisplayDuration = 0.05
+        var sentCommand: [String: Any]?
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Ethan confirmed the old transcript",
+            "recording_path": audioPath,
+        ])
+
+        state.retranscribeHistoryEntry(recordingPath: audioPath)
+        let historyID = try XCTUnwrap(sentCommand?["id"] as? String)
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_recording",
+            "outcome": "accept",
+            "id": historyID,
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Etan confirmed the corrected transcript",
+            "recording_path": audioPath,
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+        try? await Task.sleep(for: .milliseconds(90))
+
+        XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
+            "Etan confirmed the corrected transcript",
+        ])
+        XCTAssertEqual(state.recentTranscriptionEntries.first?.recordingPath, audioPath)
     }
 
     func testHistoryEntryRetranscribeDebouncesWhilePending() {
@@ -344,6 +457,41 @@ final class VoiceStateTests: XCTestCase {
         ])
 
         XCTAssertFalse(state.isHistoryRetranscriptionPending)
+    }
+
+    func testHistoryRetranscribeValidationErrorSurvivesImmediateRecordingIdle() throws {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-missing/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        var sentCommand: [String: Any]?
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: audioPath)
+        let historyID = try XCTUnwrap(sentCommand?["id"] as? String)
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_recording",
+            "outcome": "accept",
+            "id": historyID,
+        ])
+        state.handleEvent([
+            "type": "error",
+            "message": "Archived recording audio does not exist",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .error)
+        XCTAssertEqual(state.errorMessage, "Archived recording audio does not exist")
     }
 
     func testRecoveryErrorDoesNotPasteLaterFinalTranscription() {

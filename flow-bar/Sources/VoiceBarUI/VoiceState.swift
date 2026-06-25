@@ -196,6 +196,7 @@ public final class VoiceState {
     private var transcriptionTimeoutTask: Task<Void, Never>?
     private var recordingIdleCleanupTask: Task<Void, Never>?
     private var deferredFinalTranscriptionTask: Task<Void, Never>?
+    private var deferredFinalTranscriptionRecordingPath: String?
     private var recordStartAckTimeoutTask: Task<Void, Never>?
     private var recordStartLateRecoveryTask: Task<Void, Never>?
     private var transcribingStartedAt: Date?
@@ -203,6 +204,8 @@ public final class VoiceState {
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
     private var pendingHistoryRetranscriptionPath: String?
+    private var pendingHistoryRetranscriptionIntentID: String?
+    private var pendingHistoryRetranscriptionIntentPath: String?
     private var historyRetranscriptionPasteSuppressionPaths = Set<String>()
     private var canRecoverLateRecordStart = false
 
@@ -360,11 +363,11 @@ public final class VoiceState {
     public func dismissError() {
         pendingIntent = nil
         errorMessage = nil
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: true)
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -393,12 +396,12 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: true)
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -443,18 +446,21 @@ public final class VoiceState {
     }
 
     public func retranscribeHistoryEntry(recordingPath: String) {
-        guard pendingHistoryRetranscriptionPath == nil else { return }
+        guard pendingHistoryRetranscriptionPath == nil,
+              pendingHistoryRetranscriptionIntentID == nil
+        else { return }
         let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
+        let id = UUID().uuidString
         pendingHistoryRetranscriptionPath = trimmedPath
+        pendingHistoryRetranscriptionIntentID = id
+        pendingHistoryRetranscriptionIntentPath = trimmedPath
         historyRetranscriptionPasteSuppressionPaths.insert(trimmedPath)
-        sendIntent(
-            command: .retranscribeRecording,
-            payload: [
-                "cmd": "retranscribe_recording",
-                "audio_path": trimmedPath,
-            ]
-        )
+        sendCommand?([
+            "cmd": "retranscribe_recording",
+            "audio_path": trimmedPath,
+            "id": id,
+        ])
     }
 
     public func snooze() {
@@ -470,12 +476,12 @@ public final class VoiceState {
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: true)
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = true
         transcribingStartedAt = nil
@@ -571,7 +577,7 @@ public final class VoiceState {
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
@@ -657,16 +663,24 @@ public final class VoiceState {
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
                     barInitiatedTimeout?.cancel()
-                    if let pendingHistoryPath = pendingHistoryRetranscriptionPath,
+                    if pendingHistoryRetranscriptionPath != nil,
                        deferredFinalTranscriptionTask == nil {
-                        pendingHistoryRetranscriptionPath = nil
-                        historyRetranscriptionPasteSuppressionPaths.remove(pendingHistoryPath)
+                        clearHistoryRetranscriptionRequest(removeSuppression: true)
+                    } else if pendingHistoryRetranscriptionPath == nil,
+                              let intentPath = pendingHistoryRetranscriptionIntentPath,
+                              deferredFinalTranscriptionTask == nil {
+                        historyRetranscriptionPasteSuppressionPaths.remove(intentPath)
+                        pendingHistoryRetranscriptionIntentPath = nil
+                        pendingHistoryRetranscriptionIntentID = nil
                     }
                     scheduleRecordingIdleCleanupIfNeeded()
                 }
+                if idleSource == "recording", mode == .error, errorMessage != nil {
+                    return
+                }
                 enterIdleState(clearQueue: idleSource == "playback")
             case "speaking":
-                deferredFinalTranscriptionTask?.cancel()
+                cancelDeferredFinalTranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
@@ -680,7 +694,7 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
-                deferredFinalTranscriptionTask?.cancel()
+                cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 if pendingIntent?.command == .record {
                     recordStartAckTimeoutTask?.cancel()
                     pendingIntent = nil
@@ -821,7 +835,7 @@ public final class VoiceState {
                 transcriptionTimeoutTask?.cancel()
                 recordStartAckTimeoutTask?.cancel()
                 pendingRecoveredTranscriptionPaste = false
-                pendingHistoryRetranscriptionPath = nil
+                clearHistoryRetranscriptionRequest(removeSuppression: true)
             }
             // AIDEV-NOTE: NEVER reset barInitiatedRecording on error.
             // With multiple MCP clients, failing clients broadcast errors while
@@ -831,7 +845,7 @@ public final class VoiceState {
                 barInitiatedRecording = false
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
-                deferredFinalTranscriptionTask?.cancel()
+                cancelDeferredFinalTranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 clearRecordStartLateRecovery(clearPasteTarget: false)
@@ -911,13 +925,13 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         clearRecordStartLateRecovery(clearPasteTarget: false)
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: true)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
         transcribingStatusText = nil
@@ -1154,6 +1168,32 @@ public final class VoiceState {
         startCollapseTimer()
     }
 
+    private func cancelDeferredFinalTranscription() {
+        deferredFinalTranscriptionTask?.cancel()
+        deferredFinalTranscriptionTask = nil
+        deferredFinalTranscriptionRecordingPath = nil
+    }
+
+    private func cancelDeferredFinalTranscriptionUnlessHistoryRetranscription() {
+        guard let path = deferredFinalTranscriptionRecordingPath,
+              path == pendingHistoryRetranscriptionPath ||
+              historyRetranscriptionPasteSuppressionPaths.contains(path)
+        else {
+            cancelDeferredFinalTranscription()
+            return
+        }
+    }
+
+    private func clearHistoryRetranscriptionRequest(removeSuppression: Bool) {
+        let path = pendingHistoryRetranscriptionPath ?? pendingHistoryRetranscriptionIntentPath
+        if removeSuppression, let path {
+            historyRetranscriptionPasteSuppressionPaths.remove(path)
+        }
+        pendingHistoryRetranscriptionPath = nil
+        pendingHistoryRetranscriptionIntentID = nil
+        pendingHistoryRetranscriptionIntentPath = nil
+    }
+
     private func enterTranscribingMode() {
         let modeChanged = mode != .transcribing
         mode = .transcribing
@@ -1190,11 +1230,13 @@ public final class VoiceState {
         let remainingDisplayDuration = minimumTranscribingDisplayDuration - elapsed
         guard remainingDisplayDuration > 0 else { return false }
 
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
+        deferredFinalTranscriptionRecordingPath = recordingPath
         deferredFinalTranscriptionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(remainingDisplayDuration))
             guard let self, !Task.isCancelled else { return }
             deferredFinalTranscriptionTask = nil
+            deferredFinalTranscriptionRecordingPath = nil
             handleFinalTranscription(text, recordingPath: recordingPath)
         }
         return true
@@ -1202,8 +1244,7 @@ public final class VoiceState {
 
     private func handleFinalTranscription(_ text: String, recordingPath: String? = nil) {
         transcriptionTimeoutTask?.cancel()
-        deferredFinalTranscriptionTask?.cancel()
-        deferredFinalTranscriptionTask = nil
+        cancelDeferredFinalTranscription()
         transcribingStartedAt = nil
         transcribingStatusText = nil
         clearRecordStartLateRecovery(clearPasteTarget: false)
@@ -1231,6 +1272,10 @@ public final class VoiceState {
             historyRetranscriptionPasteSuppressionPaths.remove(recordingPath)
             if recordingPath == pendingHistoryRetranscriptionPath {
                 pendingHistoryRetranscriptionPath = nil
+            }
+            if recordingPath == pendingHistoryRetranscriptionIntentPath {
+                pendingHistoryRetranscriptionIntentID = nil
+                pendingHistoryRetranscriptionIntentPath = nil
             }
         }
         pendingIdleAfterAutoPasteCompletion =
@@ -1268,12 +1313,12 @@ public final class VoiceState {
         transcriptionTimeoutTask?.cancel()
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
-        deferredFinalTranscriptionTask?.cancel()
+        cancelDeferredFinalTranscription()
         recordStartAckTimeoutTask?.cancel()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: true)
         clearRecordStartLateRecovery(clearPasteTarget: false)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -1691,6 +1736,25 @@ public final class VoiceState {
 
         onAckEvent?(ack)
 
+        if ack.command == .retranscribeRecording,
+           ack.id == pendingHistoryRetranscriptionIntentID {
+            let path = pendingHistoryRetranscriptionIntentPath ?? pendingHistoryRetranscriptionPath
+            pendingHistoryRetranscriptionIntentID = nil
+            pendingHistoryRetranscriptionIntentPath = nil
+            if ack.outcome != .accept {
+                if let path {
+                    historyRetranscriptionPasteSuppressionPaths.remove(path)
+                    if pendingHistoryRetranscriptionPath == path {
+                        pendingHistoryRetranscriptionPath = nil
+                    }
+                } else {
+                    pendingHistoryRetranscriptionPath = nil
+                }
+                showConfirmation(ack.reason ?? "Nothing to transcribe")
+            }
+            return
+        }
+
         guard pendingIntent?.id == ack.id,
               pendingIntent?.command == ack.command
         else {
@@ -1707,10 +1771,7 @@ public final class VoiceState {
         }
 
         if ack.command == .retranscribeRecording, ack.outcome != .accept {
-            if let pendingHistoryPath = pendingHistoryRetranscriptionPath {
-                historyRetranscriptionPasteSuppressionPaths.remove(pendingHistoryPath)
-            }
-            pendingHistoryRetranscriptionPath = nil
+            clearHistoryRetranscriptionRequest(removeSuppression: true)
             showConfirmation(ack.reason ?? "Nothing to transcribe")
             return
         }
