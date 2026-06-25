@@ -203,6 +203,7 @@ public final class VoiceState {
     private var pendingIdleAfterAutoPasteCompletion = false
     private var pendingRecoveredTranscriptionPaste = false
     private var pendingHistoryRetranscriptionPath: String?
+    private var historyRetranscriptionPasteSuppressionPaths = Set<String>()
     private var canRecoverLateRecordStart = false
 
     public var isHistoryRetranscriptionPending: Bool {
@@ -445,6 +446,7 @@ public final class VoiceState {
         let trimmedPath = recordingPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedPath.isEmpty else { return }
         pendingHistoryRetranscriptionPath = trimmedPath
+        historyRetranscriptionPasteSuppressionPaths.insert(trimmedPath)
         sendIntent(
             command: .retranscribeRecording,
             payload: [
@@ -654,6 +656,11 @@ public final class VoiceState {
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
                     barInitiatedTimeout?.cancel()
+                    if let pendingHistoryPath = pendingHistoryRetranscriptionPath,
+                       deferredFinalTranscriptionTask == nil {
+                        pendingHistoryRetranscriptionPath = nil
+                        historyRetranscriptionPasteSuppressionPaths.remove(pendingHistoryPath)
+                    }
                     scheduleRecordingIdleCleanupIfNeeded()
                 }
                 enterIdleState(clearQueue: idleSource == "playback")
@@ -1210,15 +1217,20 @@ public final class VoiceState {
             "recordingPath": recordingPath ?? "nil",
         ])
 
-        let wasHistoryRetranscription =
-            recordingPath != nil && recordingPath == pendingHistoryRetranscriptionPath
+        let wasHistoryRetranscription = recordingPath.map { path in
+            path == pendingHistoryRetranscriptionPath ||
+                historyRetranscriptionPasteSuppressionPaths.contains(path)
+        } ?? false
         let shouldAutoPaste = barInitiatedRecording && !wasHistoryRetranscription
         let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste && !wasHistoryRetranscription
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
-        if wasHistoryRetranscription {
-            pendingHistoryRetranscriptionPath = nil
+        if wasHistoryRetranscription, let recordingPath {
+            historyRetranscriptionPasteSuppressionPaths.remove(recordingPath)
+            if recordingPath == pendingHistoryRetranscriptionPath {
+                pendingHistoryRetranscriptionPath = nil
+            }
         }
         pendingIdleAfterAutoPasteCompletion =
             (shouldAutoPaste || shouldPasteRecoveredTranscription) && mode == .transcribing
@@ -1694,6 +1706,9 @@ public final class VoiceState {
         }
 
         if ack.command == .retranscribeRecording, ack.outcome != .accept {
+            if let pendingHistoryPath = pendingHistoryRetranscriptionPath {
+                historyRetranscriptionPasteSuppressionPaths.remove(pendingHistoryPath)
+            }
             pendingHistoryRetranscriptionPath = nil
             showConfirmation(ack.reason ?? "Nothing to transcribe")
             return
