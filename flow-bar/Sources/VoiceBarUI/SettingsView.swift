@@ -3,6 +3,7 @@ import SwiftUI
 public enum SettingsTab: Hashable {
     case general
     case audio
+    case history
     case dictionary
 }
 

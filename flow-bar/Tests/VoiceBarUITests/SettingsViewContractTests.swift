@@ -51,6 +51,19 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onSelectPerformanceEffort"))
     }
 
+    func testSettingsIncludesFullHistoryTabWithEntryActions() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("case history"))
+        XCTAssertTrue(source.contains("Label(\"History\""))
+        XCTAssertTrue(source.contains("historyTab"))
+        XCTAssertTrue(source.contains("SettingsHistoryArchive.load"))
+        XCTAssertTrue(source.contains("onCopyHistoryTranscript"))
+        XCTAssertTrue(source.contains("onPasteHistoryTranscript"))
+        XCTAssertTrue(source.contains("onRetranscribeHistoryEntry"))
+        XCTAssertTrue(source.contains("ScrollViewReader"))
+    }
+
     func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
         let source = try settingsViewSource()
 
