@@ -302,6 +302,37 @@ describe("ack protocol", () => {
     });
   });
 
+  it("keeps archived retranscribe recovery idle scoped to recording source", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    retranscribeRecordingCaptureSpy.mockRejectedValueOnce(new Error("boom"));
+    const audioPath =
+      "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav";
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_recording",
+      id: "history-retry-fail",
+      audio_path: audioPath,
+    } as unknown as SocketCommand);
+    await Promise.resolve();
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_recording",
+      outcome: "accept",
+      id: "history-retry-fail",
+    });
+    expect(broadcastSpy).toHaveBeenCalledWith({
+      type: "state",
+      state: "idle",
+      source: "recording",
+    });
+    expect(broadcastSpy).not.toHaveBeenCalledWith({
+      type: "state",
+      state: "idle",
+    });
+  });
+
   it("returns accept ack for toggle under happy path", () => {
     const response = handleSocketCommand({
       cmd: "toggle",

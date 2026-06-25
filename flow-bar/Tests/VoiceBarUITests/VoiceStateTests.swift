@@ -459,6 +459,40 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertFalse(state.isHistoryRetranscriptionPending)
     }
 
+    func testHistoryRetranscribeUsesExtendedTranscriptionTimeout() async throws {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        state.transcriptionTimeout = .milliseconds(20)
+        state.barInitiatedTranscriptionTimeout = .seconds(30)
+        var sentCommand: [String: Any]?
+        state.sendCommand = { command in
+            sentCommand = command
+        }
+
+        state.retranscribeHistoryEntry(recordingPath: audioPath)
+        let retryId = try XCTUnwrap(sentCommand?["id"] as? String)
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_recording",
+            "outcome": "accept",
+            "id": retryId,
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+        try? await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertTrue(state.isHistoryRetranscriptionPending)
+        XCTAssertNil(state.errorMessage)
+    }
+
     func testHistoryRetranscribeValidationErrorSurvivesImmediateRecordingIdle() throws {
         let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-missing/audio.wav"
         let state = VoiceState(

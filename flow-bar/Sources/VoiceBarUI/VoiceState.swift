@@ -1139,7 +1139,8 @@ public final class VoiceState {
 
     private func startTranscriptionTimeout() {
         transcriptionTimeoutTask?.cancel()
-        let timeout = barInitiatedRecording ? barInitiatedTranscriptionTimeout : transcriptionTimeout
+        let usesExtendedTimeout = barInitiatedRecording || pendingHistoryRetranscriptionPath != nil
+        let timeout = usesExtendedTimeout ? barInitiatedTranscriptionTimeout : transcriptionTimeout
         transcriptionTimeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: timeout)
             guard let self, !Task.isCancelled, mode == .transcribing else { return }
