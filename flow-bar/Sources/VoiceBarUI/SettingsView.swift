@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 
 public enum SettingsTab: Hashable {
@@ -38,12 +39,23 @@ public struct SettingsView: View {
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
     public let isMicrophonePermissionGranted: () -> Bool
+    public let isVoiceBarHidden: () -> Bool
+    public let onHideVoiceBar: () -> Void
+    public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
+    public let historyGroups: () -> [SettingsHistoryDayGroup]
+    public let onCopyHistoryTranscript: (String) -> Void
+    public let onPasteHistoryTranscript: (String) -> Void
+    public let onRetranscribeHistoryEntry: (String) -> Void
+
+    private let latestHistoryAnchorID = "settings-history-latest-anchor"
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
     @State private var selectedAnchoredMode: VoiceBarAnchorMode
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
+    @State private var localVoiceBarHidden: Bool
+    @State private var historyDayGroups: [SettingsHistoryDayGroup]
     @State private var dictionarySearch = ""
     @State private var localEntries: [STTDictionaryEntry]
     @State private var editingCanonical: String?
@@ -76,9 +88,16 @@ public struct SettingsView: View {
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
+        isVoiceBarHidden: @escaping () -> Bool = { false },
+        onHideVoiceBar: @escaping () -> Void = {},
+        onShowVoiceBar: @escaping () -> Void = {},
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
             completion("Relay setup requested.")
         },
+        historyGroups: @escaping () -> [SettingsHistoryDayGroup] = { SettingsHistoryArchive.load() },
+        onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
+        onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
+        onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -98,13 +117,22 @@ public struct SettingsView: View {
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
+        self.isVoiceBarHidden = isVoiceBarHidden
+        self.onHideVoiceBar = onHideVoiceBar
+        self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
+        self.historyGroups = historyGroups
+        self.onCopyHistoryTranscript = onCopyHistoryTranscript
+        self.onPasteHistoryTranscript = onPasteHistoryTranscript
+        self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
+        _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
+        _historyDayGroups = State(initialValue: Self.chronologicallySortedHistoryGroups(historyGroups()))
         _localEntries = State(initialValue: initialVocabulary.entries)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
@@ -121,6 +149,9 @@ public struct SettingsView: View {
             audioTab
                 .tabItem { Label("Audio", systemImage: "mic.fill") }
                 .tag(SettingsTab.audio)
+            historyTab
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(SettingsTab.history)
             dictionaryTab
                 .tabItem { Label("Dictionary", systemImage: "text.book.closed") }
                 .tag(SettingsTab.dictionary)
@@ -129,6 +160,11 @@ public struct SettingsView: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: vocabularyPreview()) { _, preview in
             reconcileLocalEntries(with: preview.entries)
+        }
+        .onChange(of: selectedTab) { _, tab in
+            if tab == .history {
+                refreshHistoryGroups()
+            }
         }
     }
 
@@ -179,6 +215,8 @@ public struct SettingsView: View {
                         .foregroundStyle(isHotkeyRemapActive() ? Color.secondary : Color.red)
                 }
             }
+
+            visibilitySection
 
             Section("Gestures") {
                 LabeledContent("Single tap") {
@@ -233,6 +271,39 @@ public struct SettingsView: View {
         .formStyle(.grouped)
     }
 
+    private var visibilitySection: some View {
+        Section("Visibility") {
+            LabeledContent("VoiceBar") {
+                statusBadge(localVoiceBarHidden ? "Hidden" : "Visible", isReady: !localVoiceBarHidden)
+            }
+
+            if localVoiceBarHidden {
+                Button {
+                    onShowVoiceBar()
+                    localVoiceBarHidden = isVoiceBarHidden()
+                } label: {
+                    Label("Show VoiceBar", systemImage: "eye")
+                }
+                .buttonStyle(.borderedProminent)
+                .help("Show VoiceBar")
+                .accessibilityLabel("Show VoiceBar")
+            } else {
+                Button {
+                    onHideVoiceBar()
+                    localVoiceBarHidden = isVoiceBarHidden()
+                } label: {
+                    Label("Hide for 1 hour", systemImage: "eye.slash")
+                }
+                .buttonStyle(.bordered)
+                .help("Hide VoiceBar for 1 hour")
+                .accessibilityLabel("Hide VoiceBar for 1 hour")
+            }
+        }
+        .onAppear {
+            localVoiceBarHidden = isVoiceBarHidden()
+        }
+    }
+
     // MARK: - Audio Tab
 
     private var audioTab: some View {
@@ -278,6 +349,165 @@ public struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    // MARK: - History Tab
+
+    private var historyTab: some View {
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 0) {
+                historyToolbar(proxy: proxy)
+                Divider()
+
+                if historyDayGroups.isEmpty {
+                    Spacer(minLength: 0)
+                    VStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("No transcript history yet")
+                            .font(.headline)
+                        Text("Completed recordings will appear here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    Spacer(minLength: 0)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            ForEach(historyDayGroups) { group in
+                                historyDaySection(group)
+                            }
+
+                            Color.clear
+                                .frame(height: 1)
+                                .id(latestHistoryAnchorID)
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .onAppear {
+                refreshHistoryGroups()
+                scrollToLatest(proxy, animated: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+                refreshHistoryGroups()
+            }
+        }
+    }
+
+    private func historyToolbar(proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("History")
+                    .font(.title3.weight(.semibold))
+                Text("\(historyDayGroups.flatMap(\.entries).count) transcripts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                refreshHistoryGroups()
+                scrollToLatest(proxy)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh history")
+            .accessibilityLabel("Refresh history")
+
+            Button {
+                scrollToLatest(proxy)
+            } label: {
+                Image(systemName: "arrow.down.to.line")
+            }
+            .buttonStyle(.borderless)
+            .disabled(historyDayGroups.isEmpty)
+            .help("Jump to latest")
+            .accessibilityLabel("Jump to latest")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private func historyDaySection(_ group: SettingsHistoryDayGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(group.dayTitle())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(height: 1)
+            }
+
+            ForEach(group.entries) { entry in
+                historyEntryRow(entry)
+            }
+        }
+    }
+
+    private func historyEntryRow(_ entry: SettingsHistoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(entry.timestamp())
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(entry.displayTranscript)
+                    .font(.body)
+                    .foregroundStyle(entry.hasTranscript ? .primary : .secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                historyEntryActions(entry)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func historyEntryActions(_ entry: SettingsHistoryEntry) -> some View {
+        HStack(spacing: 8) {
+            Button {
+                onCopyHistoryTranscript(entry.transcript)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .disabled(!entry.hasTranscript)
+            .help("Copy transcript")
+            .accessibilityLabel("Copy transcript")
+
+            Button {
+                onPasteHistoryTranscript(entry.transcript)
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+            .disabled(!entry.hasTranscript)
+            .help("Paste transcript")
+            .accessibilityLabel("Paste transcript")
+
+            Button {
+                onRetranscribeHistoryEntry(entry.audioPath.path)
+            } label: {
+                Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .help("Re-transcribe stored audio")
+            .accessibilityLabel("Re-transcribe stored audio")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
     }
 
     // MARK: - Dictionary Tab
@@ -522,6 +752,47 @@ public struct SettingsView: View {
     }
 
     // MARK: - Helpers
+
+    private func refreshHistoryGroups() {
+        historyDayGroups = Self.chronologicallySortedHistoryGroups(historyGroups())
+    }
+
+    private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard !historyDayGroups.isEmpty else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(latestHistoryAnchorID, anchor: .bottom)
+                }
+            } else {
+                proxy.scrollTo(latestHistoryAnchorID, anchor: .bottom)
+            }
+        }
+    }
+
+    private static func chronologicallySortedHistoryGroups(
+        _ groups: [SettingsHistoryDayGroup]
+    ) -> [SettingsHistoryDayGroup] {
+        groups
+            .sorted { lhs, rhs in
+                if lhs.date == rhs.date {
+                    return lhs.dayKey < rhs.dayKey
+                }
+                return lhs.date < rhs.date
+            }
+            .map { group in
+                SettingsHistoryDayGroup(
+                    dayKey: group.dayKey,
+                    date: group.date,
+                    entries: group.entries.sorted { lhs, rhs in
+                        if lhs.createdAt == rhs.createdAt {
+                            return lhs.recordingID < rhs.recordingID
+                        }
+                        return lhs.createdAt < rhs.createdAt
+                    }
+                )
+            }
+    }
 
     private var hotkeyStatusText: String {
         if hotkeyEnabled { return "Active" }

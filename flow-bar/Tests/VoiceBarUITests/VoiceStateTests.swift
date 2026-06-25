@@ -172,6 +172,28 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.recentTranscriptions, ["Etan confirmed the correction"])
     }
 
+    func testTranscriptionEventWithRecordingPathNotifiesHistoryArchiveChange() {
+        let audioPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-abcd1234/audio.wav"
+        let state = VoiceState(
+            recentTranscriptionsLoader: { [] },
+            recentTranscriptionsSaver: { _ in },
+            recentTranscriptionEntriesLoader: { [] },
+            recentTranscriptionEntriesSaver: { _ in }
+        )
+        var historyArchiveChangeCount = 0
+        state.onHistoryArchiveChange = {
+            historyArchiveChangeCount += 1
+        }
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Etan confirmed the correction",
+            "recording_path": audioPath,
+        ])
+
+        XCTAssertEqual(historyArchiveChangeCount, 1)
+    }
+
     func testHistoryRetranscribeUpdatesOlderEntryInPlaceWithoutReordering() {
         let latestPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-latest/audio.wav"
         let olderPath = "/Users/etan/.local/share/voicelayer/recordings/2026-06-25/2026-06-25T10-11-12-000Z-older/audio.wav"

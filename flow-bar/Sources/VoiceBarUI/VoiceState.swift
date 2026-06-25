@@ -305,6 +305,7 @@ public final class VoiceState {
     /// Callback when voice mode changes — used to lock/unlock pill dragging.
     public var onModeChange: ((VoiceMode) -> Void)?
     public var onPanelLayoutChange: (() -> Void)?
+    public var onHistoryArchiveChange: (() -> Void)?
     public var onAckEvent: ((SocketAckEvent) -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
     public var controlLayerEventWriter: (String, [String: String]) -> Void = { event, details in
@@ -1251,6 +1252,9 @@ public final class VoiceState {
         clearRecordStartLateRecovery(clearPasteTarget: false)
         transcript = text
         rememberRecentTranscription(text, recordingPath: recordingPath)
+        if recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            onHistoryArchiveChange?()
+        }
         refreshTranscriptionVocabulary()
         logDiagnostic("transcription_final", details: [
             "textLength": String(text.count),

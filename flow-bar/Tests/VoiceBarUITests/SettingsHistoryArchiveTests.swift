@@ -49,11 +49,15 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         )
         XCTAssertEqual(groups[0].entries.map(\.transcript), ["Eitan was misheard in the old clip"])
         XCTAssertEqual(groups[1].entries.map(\.transcript), ["Morning clip", "Latest clip"])
-        XCTAssertEqual(
-            groups[1].entries.map { $0.timestamp(
+        let timestamps = groups[1].entries.map {
+            $0.timestamp(
                 locale: Locale(identifier: "en_US_POSIX"),
                 timeZone: TimeZone(secondsFromGMT: 0)!
-            ) },
+            )
+            .replacingOccurrences(of: "\u{202F}", with: " ")
+        }
+        XCTAssertEqual(
+            timestamps,
             [
                 "7:05 AM",
                 "9:30 PM",

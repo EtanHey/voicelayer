@@ -57,11 +57,26 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("case history"))
         XCTAssertTrue(source.contains("Label(\"History\""))
         XCTAssertTrue(source.contains("historyTab"))
+        XCTAssertTrue(source.contains("historyGroups"))
         XCTAssertTrue(source.contains("SettingsHistoryArchive.load"))
         XCTAssertTrue(source.contains("onCopyHistoryTranscript"))
         XCTAssertTrue(source.contains("onPasteHistoryTranscript"))
         XCTAssertTrue(source.contains("onRetranscribeHistoryEntry"))
         XCTAssertTrue(source.contains("ScrollViewReader"))
+        XCTAssertTrue(source.contains("latestHistoryAnchorID"))
+        XCTAssertTrue(source.contains("historyEntryActions"))
+        XCTAssertTrue(source.contains("voiceBarHistoryArchiveDidChange"))
+    }
+
+    func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("Section(\"Visibility\")"))
+        XCTAssertTrue(source.contains("isVoiceBarHidden"))
+        XCTAssertTrue(source.contains("onHideVoiceBar"))
+        XCTAssertTrue(source.contains("onShowVoiceBar"))
+        XCTAssertTrue(source.contains("Show VoiceBar"))
+        XCTAssertTrue(source.contains("Hide for 1 hour"))
     }
 
     func testGeneralTabShowsGranularPermissionAndRelayRows() throws {
