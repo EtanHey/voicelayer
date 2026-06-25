@@ -2077,19 +2077,39 @@ function updateArchivedTranscript(audioPath: string, text: string): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
 
+  updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    metadata.transcription_status = "transcribed";
+    metadata.voicelayer_transcript_chars = text.length;
+    metadata.audio_sha256 = archivedAudioSha256(audioPath);
+  });
+}
+
+function archivedAudioSha256(audioPath: string): string {
+  return createHash("sha256").update(readFileSync(audioPath)).digest("hex");
+}
+
+function updateArchivedRecordingMetadata(
+  audioPath: string,
+  applyUpdates: (metadata: Record<string, unknown>) => void,
+): void {
   const metadataPath = join(dirname(audioPath), "metadata.json");
   if (!existsSync(metadataPath)) return;
 
   try {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-    metadata.transcription_status = "transcribed";
-    metadata.voicelayer_transcript_chars = text.length;
+    applyUpdates(metadata);
     atomicWriteFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
   } catch (err) {
     console.error(
       `[voicelayer] Failed to update archived recording metadata: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+function refreshArchivedAudioChecksum(audioPath: string): void {
+  updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    metadata.audio_sha256 = archivedAudioSha256(audioPath);
+  });
 }
 
 export async function retranscribeRecordingCapture(
@@ -2100,6 +2120,7 @@ export async function retranscribeRecordingCapture(
   try {
     wavPath = requireArchivedRecordingAudioPath(audioPath);
     requireValidRetainedWav(wavPath);
+    refreshArchivedAudioChecksum(wavPath);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     broadcast({

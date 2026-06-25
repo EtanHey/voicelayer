@@ -6,6 +6,7 @@ import {
   it,
   spyOn,
 } from "bun:test";
+import { createHash } from "crypto";
 import {
   closeSync,
   existsSync,
@@ -482,5 +483,49 @@ describe("input recording durability", () => {
       text: "Retained transcript.",
       recording_path: audioPath,
     });
+  });
+
+  it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-repair123",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const audioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    const metadataPath = join(archiveDir, "metadata.json");
+    const pcm = makePcmChunk();
+    writeFileSync(audioPath, makeWav(pcm));
+    rewriteWavHeaderDataSize(audioPath, pcm.byteLength - 2);
+    writeFileSync(transcriptPath, "Ethan confirmed the old transcript.");
+    writeFileSync(
+      metadataPath,
+      JSON.stringify(
+        {
+          transcription_status: "transcribed",
+          voicelayer_transcript_chars: 34,
+          audio_sha256: "stale-checksum",
+        },
+        null,
+        2,
+      ),
+    );
+
+    const { retranscribeRecordingCapture } = await import("../input");
+
+    await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
+
+    const repairedAudio = readFileSync(audioPath);
+    const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    expect(readWavDataSize(audioPath)).toBe(pcm.byteLength);
+    expect(metadata.audio_sha256).toBe(
+      createHash("sha256").update(repairedAudio).digest("hex"),
+    );
+    expect(metadata.voicelayer_transcript_chars).toBe(
+      "Retained transcript.".length,
+    );
   });
 });
