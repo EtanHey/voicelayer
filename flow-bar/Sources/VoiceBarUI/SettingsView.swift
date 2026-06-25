@@ -43,12 +43,14 @@ public struct SettingsView: View {
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
-    public let historyGroups: () -> [SettingsHistoryDayGroup]
+    public let historyPage: @Sendable (Int) -> SettingsHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
+    public let isHistoryRetranscribing: (String) -> Bool
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
+    private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
     @State private var selectedAnchorMode: VoiceBarAnchorMode
@@ -56,6 +58,12 @@ public struct SettingsView: View {
     @State private var selectedPerformanceEffort: VoiceBarPerformanceEffort
     @State private var localVoiceBarHidden: Bool
     @State private var historyDayGroups: [SettingsHistoryDayGroup]
+    @State private var historyLoadedEntryCount: Int
+    @State private var historyLoadedEntryLimit: Int
+    @State private var historyHasMore: Bool
+    @State private var isHistoryLoading = false
+    @State private var historyLoadGeneration = 0
+    @State private var historyRefreshTask: Task<Void, Never>?
     @State private var dictionarySearch = ""
     @State private var localEntries: [STTDictionaryEntry]
     @State private var editingCanonical: String?
@@ -94,10 +102,15 @@ public struct SettingsView: View {
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
             completion("Relay setup requested.")
         },
-        historyGroups: @escaping () -> [SettingsHistoryDayGroup] = { SettingsHistoryArchive.load() },
+        historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
+            SettingsHistoryArchive.loadPage(limit: limit)
+        },
+        historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
+        initialHistoryPage: SettingsHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
+        isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         initialTab: SettingsTab = .general
     ) {
         self.hotkeyEnabled = hotkeyEnabled
@@ -121,10 +134,23 @@ public struct SettingsView: View {
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
-        self.historyGroups = historyGroups
+        if let historyGroups {
+            self.historyPage = { limit in
+                let groups = Self.newestFirstHistoryGroups(historyGroups())
+                let limitedGroups = Self.limitHistoryGroups(groups, to: limit)
+                return SettingsHistoryPage(
+                    groups: limitedGroups,
+                    loadedEntryCount: limitedGroups.reduce(0) { $0 + $1.entries.count },
+                    hasMore: groups.reduce(0) { $0 + $1.entries.count } > limit
+                )
+            }
+        } else {
+            self.historyPage = historyPage
+        }
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
+        self.isHistoryRetranscribing = isHistoryRetranscribing
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
@@ -132,7 +158,11 @@ public struct SettingsView: View {
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
-        _historyDayGroups = State(initialValue: Self.chronologicallySortedHistoryGroups(historyGroups()))
+        let initialHistoryLimit = max(Self.historyPageSize, initialHistoryPage?.loadedEntryCount ?? 0)
+        _historyDayGroups = State(initialValue: initialHistoryPage?.groups ?? [])
+        _historyLoadedEntryCount = State(initialValue: initialHistoryPage?.loadedEntryCount ?? 0)
+        _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
+        _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialVocabulary.entries)
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
@@ -163,8 +193,11 @@ public struct SettingsView: View {
         }
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
-                refreshHistoryGroups()
+                requestHistoryReload()
             }
+        }
+        .onDisappear {
+            historyRefreshTask?.cancel()
         }
     }
 
@@ -359,8 +392,16 @@ public struct SettingsView: View {
                 historyToolbar(proxy: proxy)
                 Divider()
 
-                if historyDayGroups.isEmpty {
-                    Spacer(minLength: 0)
+                if historyDayGroups.isEmpty, isHistoryLoading {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading history...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if historyDayGroups.isEmpty {
                     VStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
                             .font(.system(size: 28))
@@ -371,29 +412,50 @@ public struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity)
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
+                            Color.clear
+                                .frame(height: 1)
+                                .id(latestHistoryAnchorID)
+
                             ForEach(historyDayGroups) { group in
                                 historyDaySection(group)
                             }
 
-                            Color.clear
-                                .frame(height: 1)
-                                .id(latestHistoryAnchorID)
+                            if historyHasMore {
+                                Button {
+                                    loadOlderHistory()
+                                } label: {
+                                    if isHistoryLoading {
+                                        HStack(spacing: 6) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            Text("Loading older")
+                                        }
+                                    } else {
+                                        Label("Load older", systemImage: "chevron.down")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isHistoryLoading)
+                                .frame(maxWidth: .infinity)
+                                .help("Load older history")
+                                .accessibilityLabel("Load older history")
+                            }
                         }
                         .padding(18)
                     }
                 }
             }
             .onAppear {
-                refreshHistoryGroups()
-                scrollToLatest(proxy, animated: false)
+                if historyDayGroups.isEmpty {
+                    requestHistoryReload(scrollProxy: proxy, animated: false)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
-                refreshHistoryGroups()
+                requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
             }
         }
     }
@@ -403,14 +465,17 @@ public struct SettingsView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("History")
                     .font(.title3.weight(.semibold))
-                Text("\(historyDayGroups.flatMap(\.entries).count) transcripts")
+                Text("\(historyLoadedEntryCount) transcripts")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if isHistoryLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
             Button {
-                refreshHistoryGroups()
-                scrollToLatest(proxy)
+                requestHistoryReload(scrollProxy: proxy)
             } label: {
                 Image(systemName: "arrow.clockwise")
             }
@@ -421,7 +486,7 @@ public struct SettingsView: View {
             Button {
                 scrollToLatest(proxy)
             } label: {
-                Image(systemName: "arrow.down.to.line")
+                Image(systemName: "arrow.up.to.line")
             }
             .buttonStyle(.borderless)
             .disabled(historyDayGroups.isEmpty)
@@ -450,7 +515,9 @@ public struct SettingsView: View {
     }
 
     private func historyEntryRow(_ entry: SettingsHistoryEntry) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        let isRetranscribing = isHistoryRetranscribing(entry.audioPath.path)
+
+        return HStack(alignment: .top, spacing: 12) {
             Text(entry.timestamp())
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
@@ -465,7 +532,17 @@ public struct SettingsView: View {
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
 
-                historyEntryActions(entry)
+                if isRetranscribing {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Re-transcribing...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                historyEntryActions(entry, isRetranscribing: isRetranscribing)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -476,16 +553,18 @@ public struct SettingsView: View {
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .opacity(isRetranscribing ? 0.62 : 1)
+        .disabled(isRetranscribing)
     }
 
-    private func historyEntryActions(_ entry: SettingsHistoryEntry) -> some View {
+    private func historyEntryActions(_ entry: SettingsHistoryEntry, isRetranscribing: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
                 onCopyHistoryTranscript(entry.transcript)
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
-            .disabled(!entry.hasTranscript)
+            .disabled(!entry.hasTranscript || isRetranscribing)
             .help("Copy transcript")
             .accessibilityLabel("Copy transcript")
 
@@ -494,7 +573,7 @@ public struct SettingsView: View {
             } label: {
                 Label("Paste", systemImage: "doc.on.clipboard")
             }
-            .disabled(!entry.hasTranscript)
+            .disabled(!entry.hasTranscript || isRetranscribing)
             .help("Paste transcript")
             .accessibilityLabel("Paste transcript")
 
@@ -503,6 +582,7 @@ public struct SettingsView: View {
             } label: {
                 Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
             }
+            .disabled(isRetranscribing)
             .help("Re-transcribe stored audio")
             .accessibilityLabel("Re-transcribe stored audio")
         }
@@ -753,8 +833,63 @@ public struct SettingsView: View {
 
     // MARK: - Helpers
 
-    private func refreshHistoryGroups() {
-        historyDayGroups = Self.chronologicallySortedHistoryGroups(historyGroups())
+    private func requestHistoryReload(
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        let limit = historyLoadedEntryLimit
+        loadHistory(
+            limit: limit,
+            scrollProxy: scrollProxy,
+            debounce: debounce,
+            scrollToLatest: shouldScrollToLatest,
+            animated: animated
+        )
+    }
+
+    private func loadOlderHistory() {
+        let nextLimit = historyLoadedEntryLimit + Self.historyPageSize
+        historyLoadedEntryLimit = nextLimit
+        loadHistory(limit: nextLimit, scrollToLatest: false)
+    }
+
+    private func loadHistory(
+        limit: Int,
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        historyLoadGeneration += 1
+        let generation = historyLoadGeneration
+        let loader = historyPage
+        isHistoryLoading = true
+        historyRefreshTask?.cancel()
+        historyRefreshTask = Task {
+            if debounce {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            guard !Task.isCancelled else { return }
+            let page = await Task.detached(priority: .utility) {
+                loader(limit)
+            }.value
+            await MainActor.run {
+                guard generation == historyLoadGeneration, !Task.isCancelled else { return }
+                applyHistoryPage(page)
+                isHistoryLoading = false
+                if shouldScrollToLatest, let scrollProxy {
+                    scrollToLatest(scrollProxy, animated: animated)
+                }
+            }
+        }
+    }
+
+    private func applyHistoryPage(_ page: SettingsHistoryPage) {
+        historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
+        historyLoadedEntryCount = page.loadedEntryCount
+        historyHasMore = page.hasMore
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = true) {
@@ -762,23 +897,23 @@ public struct SettingsView: View {
         DispatchQueue.main.async {
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(latestHistoryAnchorID, anchor: .bottom)
+                    proxy.scrollTo(latestHistoryAnchorID, anchor: .top)
                 }
             } else {
-                proxy.scrollTo(latestHistoryAnchorID, anchor: .bottom)
+                proxy.scrollTo(latestHistoryAnchorID, anchor: .top)
             }
         }
     }
 
-    private static func chronologicallySortedHistoryGroups(
+    private static func newestFirstHistoryGroups(
         _ groups: [SettingsHistoryDayGroup]
     ) -> [SettingsHistoryDayGroup] {
         groups
             .sorted { lhs, rhs in
                 if lhs.date == rhs.date {
-                    return lhs.dayKey < rhs.dayKey
+                    return lhs.dayKey > rhs.dayKey
                 }
-                return lhs.date < rhs.date
+                return lhs.date > rhs.date
             }
             .map { group in
                 SettingsHistoryDayGroup(
@@ -786,12 +921,31 @@ public struct SettingsView: View {
                     date: group.date,
                     entries: group.entries.sorted { lhs, rhs in
                         if lhs.createdAt == rhs.createdAt {
-                            return lhs.recordingID < rhs.recordingID
+                            return lhs.recordingID > rhs.recordingID
                         }
-                        return lhs.createdAt < rhs.createdAt
+                        return lhs.createdAt > rhs.createdAt
                     }
                 )
             }
+    }
+
+    private static func limitHistoryGroups(
+        _ groups: [SettingsHistoryDayGroup],
+        to limit: Int
+    ) -> [SettingsHistoryDayGroup] {
+        var remaining = max(0, limit)
+        var limitedGroups: [SettingsHistoryDayGroup] = []
+        for group in newestFirstHistoryGroups(groups) where remaining > 0 {
+            let entries = Array(group.entries.prefix(remaining))
+            guard !entries.isEmpty else { continue }
+            limitedGroups.append(SettingsHistoryDayGroup(
+                dayKey: group.dayKey,
+                date: group.date,
+                entries: entries
+            ))
+            remaining -= entries.count
+        }
+        return limitedGroups
     }
 
     private var hotkeyStatusText: String {

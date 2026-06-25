@@ -249,10 +249,12 @@ final class VoiceStateTests: XCTestCase {
             "recording_path": audioPath,
         ])
 
+        XCTAssertNil(state.activeHistoryRetranscriptionPath)
         state.retranscribeHistoryEntry(recordingPath: audioPath)
 
         XCTAssertEqual(sentCommand?["cmd"] as? String, "retranscribe_recording")
         XCTAssertEqual(sentCommand?["audio_path"] as? String, audioPath)
+        XCTAssertEqual(state.activeHistoryRetranscriptionPath, audioPath)
         let id = try XCTUnwrap(sentCommand?["id"] as? String)
         XCTAssertNil(state.pendingIntent)
         state.handleEvent([
@@ -261,6 +263,7 @@ final class VoiceStateTests: XCTestCase {
             "outcome": "accept",
             "id": id,
         ])
+        XCTAssertEqual(state.activeHistoryRetranscriptionPath, audioPath)
         state.handleEvent([
             "type": "state",
             "state": "transcribing",
@@ -271,6 +274,7 @@ final class VoiceStateTests: XCTestCase {
             "recording_path": audioPath,
         ])
 
+        XCTAssertNil(state.activeHistoryRetranscriptionPath)
         XCTAssertEqual(state.recentTranscriptionEntries.map(\.text), [
             "Etan confirmed the corrected transcript",
         ])

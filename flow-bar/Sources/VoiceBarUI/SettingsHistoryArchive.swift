@@ -4,7 +4,7 @@ public extension Notification.Name {
     static let voiceBarHistoryArchiveDidChange = Notification.Name("VoiceBarHistoryArchiveDidChange")
 }
 
-public struct SettingsHistoryEntry: Identifiable, Equatable {
+public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let id: String
     public let dayKey: String
     public let recordingID: String
@@ -33,7 +33,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable {
     }
 }
 
-public struct SettingsHistoryDayGroup: Identifiable, Equatable {
+public struct SettingsHistoryDayGroup: Identifiable, Equatable, Sendable {
     public let id: String
     public let dayKey: String
     public let date: Date
@@ -58,7 +58,25 @@ public struct SettingsHistoryDayGroup: Identifiable, Equatable {
     }
 }
 
+public struct SettingsHistoryPage: Equatable, Sendable {
+    public let groups: [SettingsHistoryDayGroup]
+    public let loadedEntryCount: Int
+    public let hasMore: Bool
+
+    public init(
+        groups: [SettingsHistoryDayGroup],
+        loadedEntryCount: Int? = nil,
+        hasMore: Bool
+    ) {
+        self.groups = groups
+        self.loadedEntryCount = loadedEntryCount ?? groups.reduce(0) { $0 + $1.entries.count }
+        self.hasMore = hasMore
+    }
+}
+
 public enum SettingsHistoryArchive {
+    public static let defaultPageSize = 100
+
     public static var defaultRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".local")
@@ -68,21 +86,83 @@ public enum SettingsHistoryArchive {
     }
 
     public static func load(from root: URL = defaultRoot) -> [SettingsHistoryDayGroup] {
+        loadPage(from: root, limit: .max).groups
+    }
+
+    public static func loadPage(
+        from root: URL = defaultRoot,
+        limit: Int = defaultPageSize
+    ) -> SettingsHistoryPage {
         let fileManager = FileManager.default
         guard let dayURLs = try? fileManager.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey],
             options: [.skipsHiddenFiles]
         ) else {
-            return []
+            return SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
         }
 
-        return dayURLs
+        let boundedLimit = max(0, limit)
+        guard boundedLimit > 0 else {
+            return SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: !dayURLs.isEmpty)
+        }
+
+        let sortedDayURLs = dayURLs
             .filter(\.isDirectory)
-            .sorted { $0.lastPathComponent < $1.lastPathComponent }
-            .compactMap { dayURL in
-                loadDayGroup(from: dayURL)
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+
+        var groups: [SettingsHistoryDayGroup] = []
+        var loadedEntryCount = 0
+        var hasMore = false
+
+        for (dayIndex, dayURL) in sortedDayURLs.enumerated() {
+            let dayKey = dayURL.lastPathComponent
+            guard let dayDate = parseDayKey(dayKey),
+                  let entryURLs = try? fileManager.contentsOfDirectory(
+                      at: dayURL,
+                      includingPropertiesForKeys: [.isDirectoryKey],
+                      options: [.skipsHiddenFiles]
+                  )
+            else {
+                continue
             }
+
+            let candidates = entryURLs
+                .filter { $0.isDirectory && !$0.lastPathComponent.hasPrefix(".tmp-") }
+                .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            var entries: [SettingsHistoryEntry] = []
+            var shouldStopAfterDay = false
+
+            for (entryIndex, entryURL) in candidates.enumerated() {
+                guard let entry = loadEntry(from: entryURL, dayKey: dayKey, fallbackDate: dayDate) else {
+                    continue
+                }
+                entries.append(entry)
+                loadedEntryCount += 1
+                if loadedEntryCount == boundedLimit {
+                    hasMore = entryIndex < candidates.count - 1 || dayIndex < sortedDayURLs.count - 1
+                    shouldStopAfterDay = true
+                    break
+                }
+            }
+
+            if !entries.isEmpty {
+                groups.append(SettingsHistoryDayGroup(
+                    dayKey: dayKey,
+                    date: dayDate,
+                    entries: newestFirst(entries)
+                ))
+            }
+            if shouldStopAfterDay {
+                break
+            }
+        }
+
+        return SettingsHistoryPage(
+            groups: newestFirst(groups),
+            loadedEntryCount: loadedEntryCount,
+            hasMore: hasMore
+        )
     }
 
     private static func loadDayGroup(from dayURL: URL) -> SettingsHistoryDayGroup? {
@@ -100,12 +180,7 @@ public enum SettingsHistoryArchive {
         let entries = entryURLs
             .filter { $0.isDirectory && !$0.lastPathComponent.hasPrefix(".tmp-") }
             .compactMap { loadEntry(from: $0, dayKey: dayKey, fallbackDate: dayDate) }
-            .sorted { lhs, rhs in
-                if lhs.createdAt == rhs.createdAt {
-                    return lhs.recordingID < rhs.recordingID
-                }
-                return lhs.createdAt < rhs.createdAt
-            }
+            .sorted(by: isNewerEntry)
 
         guard !entries.isEmpty else { return nil }
         return SettingsHistoryDayGroup(dayKey: dayKey, date: dayDate, entries: entries)
@@ -170,6 +245,26 @@ public enum SettingsHistoryArchive {
         }
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.date(from: value)
+    }
+
+    private static func newestFirst(_ groups: [SettingsHistoryDayGroup]) -> [SettingsHistoryDayGroup] {
+        groups.sorted { lhs, rhs in
+            if lhs.date == rhs.date {
+                return lhs.dayKey > rhs.dayKey
+            }
+            return lhs.date > rhs.date
+        }
+    }
+
+    private static func newestFirst(_ entries: [SettingsHistoryEntry]) -> [SettingsHistoryEntry] {
+        entries.sorted(by: isNewerEntry)
+    }
+
+    private static func isNewerEntry(_ lhs: SettingsHistoryEntry, _ rhs: SettingsHistoryEntry) -> Bool {
+        if lhs.createdAt == rhs.createdAt {
+            return lhs.recordingID > rhs.recordingID
+        }
+        return lhs.createdAt > rhs.createdAt
     }
 }
 

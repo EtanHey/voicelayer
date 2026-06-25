@@ -17,7 +17,7 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         tempRoot = nil
     }
 
-    func testLoadsRecordingsGroupedByDiskDayOldestToNewest() throws {
+    func testLoadsRecordingsGroupedByDiskDayNewestToOldest() throws {
         try writeRecording(
             day: "2026-06-23",
             id: "2026-06-23T18-45-00-000Z-old",
@@ -39,17 +39,17 @@ final class SettingsHistoryArchiveTests: XCTestCase {
 
         let groups = SettingsHistoryArchive.load(from: tempRoot)
 
-        XCTAssertEqual(groups.map(\.dayKey), ["2026-06-23", "2026-06-25"])
+        XCTAssertEqual(groups.map(\.dayKey), ["2026-06-25", "2026-06-23"])
         XCTAssertEqual(
-            try groups[0].dayTitle(
+            try groups[1].dayTitle(
                 locale: Locale(identifier: "en_US_POSIX"),
                 timeZone: XCTUnwrap(TimeZone(secondsFromGMT: 0))
             ),
             "Jun 23, 2026"
         )
-        XCTAssertEqual(groups[0].entries.map(\.transcript), ["Eitan was misheard in the old clip"])
-        XCTAssertEqual(groups[1].entries.map(\.transcript), ["Morning clip", "Latest clip"])
-        let timestamps = groups[1].entries.map {
+        XCTAssertEqual(groups[0].entries.map(\.transcript), ["Latest clip", "Morning clip"])
+        XCTAssertEqual(groups[1].entries.map(\.transcript), ["Eitan was misheard in the old clip"])
+        let timestamps = groups[0].entries.map {
             $0.timestamp(
                 locale: Locale(identifier: "en_US_POSIX"),
                 timeZone: TimeZone(secondsFromGMT: 0)!
@@ -59,11 +59,44 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         XCTAssertEqual(
             timestamps,
             [
-                "7:05 AM",
                 "9:30 PM",
+                "7:05 AM",
             ]
         )
-        XCTAssertEqual(groups[0].entries[0].audioPath.lastPathComponent, "audio.wav")
+        XCTAssertEqual(groups[1].entries[0].audioPath.lastPathComponent, "audio.wav")
+    }
+
+    func testLoadPageBoundsMaterializedEntriesNewestFirstAndMarksOlderAvailable() throws {
+        for hour in 0 ..< 5 {
+            try writeRecording(
+                day: "2026-06-24",
+                id: "2026-06-24T0\(hour)-00-00-000Z-clip-\(hour)",
+                createdAt: "2026-06-24T0\(hour):00:00.000Z",
+                transcript: "Older clip \(hour)"
+            )
+        }
+        try writeRecording(
+            day: "2026-06-25",
+            id: "2026-06-25T07-05-00-000Z-first",
+            createdAt: "2026-06-25T07:05:00.000Z",
+            transcript: "Morning clip"
+        )
+        try writeRecording(
+            day: "2026-06-25",
+            id: "2026-06-25T21-30-00-000Z-latest",
+            createdAt: "2026-06-25T21:30:00.000Z",
+            transcript: "Latest clip"
+        )
+
+        let page = SettingsHistoryArchive.loadPage(from: tempRoot, limit: 3)
+
+        XCTAssertEqual(page.loadedEntryCount, 3)
+        XCTAssertTrue(page.hasMore)
+        XCTAssertEqual(page.groups.map(\.dayKey), ["2026-06-25", "2026-06-24"])
+        XCTAssertEqual(
+            page.groups.flatMap(\.entries).map(\.transcript),
+            ["Latest clip", "Morning clip", "Older clip 4"]
+        )
     }
 
     func testSkipsIncompleteAndTemporaryArchiveDirectories() throws {

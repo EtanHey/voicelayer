@@ -607,6 +607,10 @@ public struct BarView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(Array(state.recentTranscriptionEntries.enumerated()), id: \.offset) { index, item in
+                        let activeRetranscriptionPath = state.activeHistoryRetranscriptionPath
+                        let isRetranscribing = item.recordingPath != nil &&
+                            item.recordingPath == activeRetranscriptionPath
+
                         VStack(alignment: .leading, spacing: 4) {
                             HStack(alignment: .top, spacing: 8) {
                                 if index == 0 {
@@ -616,16 +620,16 @@ public struct BarView: View {
                                 }
                                 Spacer(minLength: 0)
                                 HStack(spacing: 6) {
-                                    historyActionButton(title: "Copy") {
+                                    historyActionButton(title: "Copy", isDisabled: isRetranscribing) {
                                         state.copyTranscript(item.text)
                                         isHistoryPresented = false
                                     }
-                                    historyActionButton(title: "Paste") {
+                                    historyActionButton(title: "Paste", isDisabled: isRetranscribing) {
                                         state.repasteTranscript(item.text, source: "bar_history")
                                         isHistoryPresented = false
                                     }
                                     if let recordingPath = item.recordingPath {
-                                        historyActionButton(title: "Re-transcribe") {
+                                        historyActionButton(title: "Re-transcribe", isDisabled: isRetranscribing) {
                                             commandRouter.handleRetranscribeHistoryEntry(recordingPath: recordingPath)
                                         }
                                     }
@@ -636,9 +640,20 @@ public struct BarView: View {
                                 .foregroundStyle(.primary)
                                 .textSelection(.enabled)
                                 .fixedSize(horizontal: false, vertical: true)
+
+                            if isRetranscribing {
+                                HStack(spacing: 6) {
+                                    ProcessingSpinner()
+                                    Text("Re-transcribing...")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.vertical, 8)
+                        .opacity(isRetranscribing ? 0.62 : 1)
+                        .disabled(isRetranscribing)
 
                         if index < state.recentTranscriptionEntries.count - 1 {
                             Divider()
@@ -735,7 +750,11 @@ public struct BarView: View {
         .padding(14)
     }
 
-    private func historyActionButton(title: String, action: @escaping () -> Void) -> some View {
+    private func historyActionButton(
+        title: String,
+        isDisabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
@@ -746,6 +765,7 @@ public struct BarView: View {
                 .clipShape(Capsule())
         }
         .buttonStyle(.plain)
+        .disabled(isDisabled)
     }
 
     private func pillButton(icon: String, action: @escaping () -> Void) -> some View {

@@ -1377,7 +1377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.runRelaySetupAsync(completion: completion)
                     ?? completion("Relay setup failed: VoiceBar is not available.")
             },
-            historyGroups: { SettingsHistoryArchive.load() },
+            historyPage: { limit in SettingsHistoryArchive.loadPage(limit: limit) },
             onCopyHistoryTranscript: { [weak self] text in
                 self?.voiceState.copyTranscript(text)
             },
@@ -1386,6 +1386,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onRetranscribeHistoryEntry: { [weak self] recordingPath in
                 self?.voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)
+            },
+            isHistoryRetranscribing: { [weak self] recordingPath in
+                self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             }
         )
     }
