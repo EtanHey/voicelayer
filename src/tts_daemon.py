@@ -194,6 +194,30 @@ def synthesize_mp3_bytes(
         return mp3_bytes
 
 
+def model_pin_matches(requested_model: str | None, loaded_model_path: str) -> bool:
+    """Return true when a profile-pinned model matches this daemon's loaded model."""
+    if not requested_model:
+        return True
+
+    raw_requested = requested_model.strip()
+    if not raw_requested:
+        return True
+
+    loaded = Path(loaded_model_path).expanduser()
+    requested = Path(raw_requested).expanduser()
+    loaded_candidates = {
+        str(loaded),
+        str(loaded.resolve(strict=False)),
+        loaded.name,
+    }
+    requested_candidates = {
+        raw_requested,
+        str(requested),
+        str(requested.resolve(strict=False)),
+    }
+    return not loaded_candidates.isdisjoint(requested_candidates)
+
+
 def create_app(
     model_path: str = str(DEFAULT_MODEL_PATH),
     host: str = "127.0.0.1",
@@ -261,6 +285,7 @@ def create_app(
         text: str
         reference_wav: str  # path to 24kHz mono 16-bit PCM WAV
         reference_text: str  # transcript of the reference audio
+        model: str | None = None  # profile-pinned model identity/path
 
     class SynthesizeResponse(BaseModel):
         audio_b64: str  # base64-encoded MP3
@@ -316,6 +341,17 @@ def create_app(
 
         if not req.text.strip():
             raise HTTPException(400, "text must not be empty")
+
+        if not model_pin_matches(req.model, model_path):
+            logger.error(
+                "Model mismatch: profile pinned %s but daemon loaded %s",
+                req.model,
+                model_path,
+            )
+            raise HTTPException(
+                409,
+                f"model mismatch: profile pinned {req.model!r} but daemon loaded {str(model_path)!r}",
+            )
 
         try:
             ref_path = validate_reference_wav_path(

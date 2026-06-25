@@ -161,12 +161,12 @@ export function resolveVoice(name?: string): {
   const requestedName = name || DEFAULT_VOICE;
 
   // Tier 1: Check for cloned voice profile (profile.yaml)
-  if (hasClonedProfile(requestedName)) {
-    const profile = loadProfile(requestedName);
+  const clonedProfile = loadProfile(requestedName);
+  if (clonedProfile) {
     return {
-      voice: requestedName,
+      voice: clonedProfile.profile_id || clonedProfile.name || requestedName,
       engine: "cloned",
-      fallbackVoice: profile?.fallback || DEFAULT_VOICE,
+      fallbackVoice: clonedProfile.fallback || DEFAULT_VOICE,
     };
   }
 
@@ -1087,12 +1087,13 @@ export async function speak(
   // Cloned voice → multi-engine synthesis cascade
   if (resolved.engine === "cloned") {
     const profile = loadProfile(resolved.voice);
+    const profileAssetVoice = profile?.directory_name || resolved.voice;
 
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
-    if (isXTTSAvailable(resolved.voice) && profile?.reference_clip) {
+    if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
       const wavPath = await synthesizeXTTS(
         text,
-        resolved.voice,
+        profileAssetVoice,
         profile.reference_clip,
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;

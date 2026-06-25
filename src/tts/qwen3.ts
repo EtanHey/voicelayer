@@ -42,20 +42,64 @@ export interface ReferenceClip {
 
 export interface VoiceProfile {
   name: string;
+  profile_id?: string;
+  directory_name?: string;
+  profile_version?: string;
+  speaker?: string;
+  accepted?: boolean;
+  aliases?: string[];
+  model?: string;
   engine: string; // "qwen3-tts"
   model_path: string; // ~/.voicelayer/models/qwen3-tts-4bit
   reference_clips: ReferenceClip[]; // 3 clips, ~18.5s total
   reference_clip: string; // primary single-clip fallback
+  reference_clip_sha?: string;
   reference_text?: string; // transcript of primary clip
   fallback: string; // edge-tts voice name for fallback
   created: string; // ISO date
   source?: string; // attribution URL
+  superseded_by?: string;
 }
 
 const VOICES_DIR = join(process.env.HOME || "~", ".voicelayer", "voices");
 
 /** Cache for loaded voice profiles. */
 const profileCache = new Map<string, VoiceProfile>();
+const profileMissCache = new Set<string>();
+let voicesInventorySignature: string | null = null;
+const collator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: "base",
+});
+
+function parseBoolean(value: unknown): boolean | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "1", "accepted"].includes(normalized)) return true;
+  if (["false", "no", "0", "rejected", "superseded"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function normalizeProfileToken(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function profileIdentity(profile: VoiceProfile, fallback: string): string {
+  return profile.profile_id || profile.name || fallback;
+}
+
+function warnOnProfileDrift(profile: VoiceProfile, requestedName: string): void {
+  if (profile.accepted !== false && !profile.superseded_by) return;
+  const id = profileIdentity(profile, requestedName);
+  const target = profile.superseded_by
+    ? ` superseded_by="${profile.superseded_by}"`
+    : "";
+  console.error(
+    `[voicelayer] VOICE PROFILE DRIFT: requested "${requestedName}" uses non-accepted cloned voice profile "${id}"${target}. Use the latest accepted speaker alias/profile instead.`,
+  );
+}
 
 /**
  * Parse a simple YAML file into a VoiceProfile.
@@ -70,14 +114,29 @@ export function parseProfileYaml(content: string): VoiceProfile {
   const referenceClips: ReferenceClip[] = [];
   let inReferenceClips = false;
   let currentClip: Partial<ReferenceClip> | null = null;
+  let arrayKey: string | null = null;
 
   for (const line of lines) {
     // Skip comments and empty lines
     if (line.trim().startsWith("#") || line.trim() === "") continue;
 
+    if (!inReferenceClips && arrayKey && line.match(/^\s+-\s+/)) {
+      const existing = result[arrayKey];
+      const values = Array.isArray(existing) ? existing : [];
+      values.push(
+        line
+          .replace(/^\s+-\s*/, "")
+          .trim()
+          .replace(/^["']|["']$/g, ""),
+      );
+      result[arrayKey] = values;
+      continue;
+    }
+
     // Check for reference_clips array
     if (line.match(/^reference_clips:\s*$/)) {
       inReferenceClips = true;
+      arrayKey = null;
       continue;
     }
 
@@ -115,12 +174,20 @@ export function parseProfileYaml(content: string): VoiceProfile {
     const match = line.match(/^(\w+):\s*(.+)$/);
     if (match) {
       const [, key, rawValue] = match;
+      arrayKey = null;
       // Strip quotes and comments
       const value = rawValue
         .replace(/\s*#.*$/, "")
         .trim()
         .replace(/^["']|["']$/g, "");
       result[key] = value;
+      continue;
+    }
+
+    const arrayMatch = line.match(/^(\w+):\s*$/);
+    if (arrayMatch) {
+      arrayKey = arrayMatch[1];
+      result[arrayKey] = [];
     }
   }
 
@@ -131,16 +198,35 @@ export function parseProfileYaml(content: string): VoiceProfile {
 
   return {
     name: String(result.name || ""),
+    profile_id: result.profile_id ? String(result.profile_id) : undefined,
+    directory_name: undefined,
+    profile_version: result.profile_version
+      ? String(result.profile_version)
+      : undefined,
+    speaker: result.speaker ? String(result.speaker) : undefined,
+    accepted: parseBoolean(result.accepted),
+    aliases: Array.isArray(result.aliases)
+      ? result.aliases.map(String).filter(Boolean)
+      : undefined,
+    model: result.model
+      ? String(result.model)
+      : result.model_path
+        ? String(result.model_path)
+        : undefined,
     engine: String(result.engine || "qwen3-tts"),
     model_path: String(result.model_path || ""),
     reference_clips: referenceClips,
     reference_clip: String(result.reference_clip || ""),
+    reference_clip_sha: result.reference_clip_sha
+      ? String(result.reference_clip_sha)
+      : undefined,
     reference_text: result.reference_text
       ? String(result.reference_text)
       : undefined,
     fallback: String(result.fallback || "en-US-JennyNeural"),
     created: String(result.created || new Date().toISOString().split("T")[0]),
     source: result.source ? String(result.source) : undefined,
+    superseded_by: result.superseded_by ? String(result.superseded_by) : undefined,
   };
 }
 
@@ -148,9 +234,7 @@ export function parseProfileYaml(content: string): VoiceProfile {
  * Load a voice profile from ~/.voicelayer/voices/{name}/profile.yaml.
  * Returns null if profile doesn't exist or is invalid.
  */
-export function loadProfile(voiceName: string): VoiceProfile | null {
-  // Reject path traversal attempts (../, /, \)
-  const name = voiceName.toLowerCase();
+function loadProfileFromDirectory(name: string): VoiceProfile | null {
   if (!name || name.includes("/") || name.includes("\\") || name.includes(".."))
     return null;
 
@@ -163,14 +247,136 @@ export function loadProfile(voiceName: string): VoiceProfile | null {
   try {
     const content = readFileSync(profilePath, "utf-8");
     const profile = parseProfileYaml(content);
+    if (!profile.name) profile.name = name;
+    if (!profile.profile_id) profile.profile_id = profile.name || name;
+    profile.directory_name = name;
     profileCache.set(name, profile);
+    profileCache.set(normalizeProfileToken(profileIdentity(profile, name)), profile);
     return profile;
   } catch (err) {
     console.error(
-      `[voicelayer] Failed to load voice profile "${voiceName}": ${err}`,
+      `[voicelayer] Failed to load voice profile "${name}": ${err}`,
     );
     return null;
   }
+}
+
+function profileMatchesAlias(profile: VoiceProfile, alias: string): boolean {
+  const normalizedAlias = normalizeProfileToken(alias);
+  if (profile.accepted !== true) return false;
+  if (profile.speaker && normalizeProfileToken(profile.speaker) === normalizedAlias) {
+    return true;
+  }
+  return (
+    profile.aliases?.some(
+      (candidate) => normalizeProfileToken(candidate) === normalizedAlias,
+    ) ?? false
+  );
+}
+
+function compareProfilesByFreshness(a: VoiceProfile, b: VoiceProfile): number {
+  const versionCompare = collator.compare(
+    a.profile_version || "",
+    b.profile_version || "",
+  );
+  if (versionCompare !== 0) return versionCompare;
+  const createdCompare = collator.compare(a.created || "", b.created || "");
+  if (createdCompare !== 0) return createdCompare;
+  return collator.compare(profileIdentity(a, ""), profileIdentity(b, ""));
+}
+
+function findLatestAcceptedProfileForAlias(alias: string): VoiceProfile | null {
+  try {
+    if (!existsSync(VOICES_DIR)) return null;
+    const matches = readdirSync(VOICES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => loadProfileFromDirectory(entry.name))
+      .filter((profile): profile is VoiceProfile => profile !== null)
+      .filter((profile) => profileMatchesAlias(profile, alias))
+      .sort(compareProfilesByFreshness);
+    return matches.at(-1) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function findProfileByIdentity(identity: string): VoiceProfile | null {
+  const normalizedIdentity = normalizeProfileToken(identity);
+  try {
+    if (!existsSync(VOICES_DIR)) return null;
+    return (
+      readdirSync(VOICES_DIR, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => loadProfileFromDirectory(entry.name))
+        .filter((profile): profile is VoiceProfile => profile !== null)
+        .find(
+          (profile) =>
+            normalizeProfileToken(
+              profileIdentity(profile, profile.directory_name || ""),
+            ) === normalizedIdentity,
+        ) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+
+function getVoicesInventorySignature(): string {
+  try {
+    if (!existsSync(VOICES_DIR)) return "";
+    return readdirSync(VOICES_DIR, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => {
+        const profilePath = join(VOICES_DIR, entry.name, "profile.yaml");
+        try {
+          return `${entry.name}:${statSync(profilePath).mtimeMs}`;
+        } catch {
+          return `${entry.name}:missing`;
+        }
+      })
+      .sort()
+      .join("|");
+  } catch {
+    return "";
+  }
+}
+
+function refreshProfileCachesIfInventoryChanged(): void {
+  const signature = getVoicesInventorySignature();
+  if (voicesInventorySignature === signature) return;
+  voicesInventorySignature = signature;
+  profileCache.clear();
+  profileMissCache.clear();
+}
+
+export function loadProfile(voiceName: string): VoiceProfile | null {
+  // Reject path traversal attempts (../, /, \)
+  const requestedName = voiceName.trim();
+  const name = normalizeProfileToken(requestedName);
+  refreshProfileCachesIfInventoryChanged();
+  const direct = loadProfileFromDirectory(requestedName);
+
+  const aliasProfile = profileMissCache.has(name)
+    ? null
+    : findLatestAcceptedProfileForAlias(name);
+  if (aliasProfile) {
+    profileCache.set(name, aliasProfile);
+    return aliasProfile;
+  }
+  const identityProfile = profileMissCache.has(name)
+    ? null
+    : profileCache.get(name) || findProfileByIdentity(name);
+  if (identityProfile) {
+    profileCache.set(name, identityProfile);
+    warnOnProfileDrift(identityProfile, voiceName);
+    return identityProfile;
+  }
+  if (direct) {
+    warnOnProfileDrift(direct, voiceName);
+    return direct;
+  }
+  profileMissCache.add(name);
+  return null;
 }
 
 /**
@@ -186,10 +392,11 @@ export function hasClonedProfile(voiceName: string): boolean {
 export function listClonedVoiceProfiles(): string[] {
   try {
     if (!existsSync(VOICES_DIR)) return [];
+    refreshProfileCachesIfInventoryChanged();
     return readdirSync(VOICES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
+      .filter((entry) => loadProfileFromDirectory(entry.name) !== null)
       .map((entry) => entry.name)
-      .filter((name) => loadProfile(name) !== null)
       .sort((a, b) => a.localeCompare(b));
   } catch {
     return [];
@@ -201,6 +408,8 @@ export function listClonedVoiceProfiles(): string[] {
  */
 export function clearProfileCache(): void {
   profileCache.clear();
+  profileMissCache.clear();
+  voicesInventorySignature = null;
 }
 
 /**
@@ -353,6 +562,7 @@ export async function synthesizeCloned(
         text,
         reference_wav: expandedPath,
         reference_text: refText,
+        ...(profile.model ? { model: profile.model } : {}),
       }),
       signal: controller.signal,
     });
