@@ -47,7 +47,7 @@ public enum VoiceBarAnchorMode: String, CaseIterable, Identifiable {
     public func placement(
         visibleFrame: CGRect,
         pillSize: CGSize,
-        bottomClearance: CGFloat = 24,
+        bottomClearance: CGFloat = 12,
         topOverlap: CGFloat = Theme.topAnchorNotchOverlap
     ) -> VoiceBarAnchorPlacement {
         switch self {

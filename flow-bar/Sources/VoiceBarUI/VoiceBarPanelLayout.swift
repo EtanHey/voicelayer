@@ -57,7 +57,7 @@ public struct VoiceBarPanelLayout: Equatable {
         queueItemCount: Int
     ) -> CGSize {
         if isCollapsed {
-            return CGSize(width: 30, height: 30)
+            return CGSize(width: 22, height: 22)
         }
 
         if let previewText {
