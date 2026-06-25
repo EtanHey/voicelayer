@@ -50,7 +50,7 @@ enum HotkeyInputSource {
     case legacySocket
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let voiceState = VoiceState(
         transcriptionVocabularyLoader: {
             STTVocabularySnapshotLoader.load().promptTerms
@@ -1249,25 +1249,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: rootView)
         let sheet = NSWindow(contentViewController: hosting)
         sheet.title = "Add to Dictionary"
-        sheet.styleMask = [.titled]
+        sheet.styleMask = [.titled, .closable]
         sheet.isReleasedWhenClosed = false
         sheet.setContentSize(NSSize(width: 380, height: 210))
+        sheet.delegate = self
         dictionarySheetWindow = sheet
 
-        if let panel {
-            panel.beginSheet(sheet)
-        } else {
-            sheet.center()
-            sheet.orderFront(nil)
-        }
+        sheet.center()
+        NSApp.activate(ignoringOtherApps: true)
+        sheet.makeKeyAndOrderFront(nil)
     }
 
     private func closeDictionarySheet() {
         guard let sheet = dictionarySheetWindow else { return }
+        dictionarySheetWindow = nil
+        sheet.delegate = nil
         if let parent = sheet.sheetParent {
             parent.endSheet(sheet)
         }
         sheet.close()
+        voiceState.endModalInteraction()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === dictionarySheetWindow
+        else { return }
         dictionarySheetWindow = nil
         voiceState.endModalInteraction()
     }

@@ -393,4 +393,25 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(vDownRange.lowerBound, vUpRange.lowerBound)
         XCTAssertLessThan(vUpRange.lowerBound, commandUpRange.lowerBound)
     }
+
+    func testDictionaryAddWindowIsStandaloneAndClosable() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("VoiceBar")
+            .appendingPathComponent("VoiceBarApp.swift")
+        let source = try String(contentsOf: sourceURL)
+
+        XCTAssertFalse(
+            source.contains("panel.beginSheet(sheet)"),
+            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
+        )
+        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
+        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
+    }
 }
