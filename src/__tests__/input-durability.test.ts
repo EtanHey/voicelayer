@@ -506,6 +506,8 @@ describe("input recording durability", () => {
           transcription_status: "transcribed",
           voicelayer_transcript_chars: 34,
           audio_sha256: "stale-checksum",
+          backend: "old-stt",
+          language_mode: "english",
         },
         null,
         2,
@@ -527,5 +529,7 @@ describe("input recording durability", () => {
     expect(metadata.voicelayer_transcript_chars).toBe(
       "Retained transcript.".length,
     );
+    expect(metadata.backend).toBe("fake-stt");
+    expect(metadata.language_mode).toBe("auto");
   });
 });

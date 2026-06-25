@@ -2073,11 +2073,17 @@ export function hasRetainedRecording(): boolean {
   return existsSync(retainedRecordingFilePath());
 }
 
-function updateArchivedTranscript(audioPath: string, text: string): void {
+function updateArchivedTranscript(
+  audioPath: string,
+  text: string,
+  transcription: { backend: string; languageMode: string },
+): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
 
   updateArchivedRecordingMetadata(audioPath, (metadata) => {
+    metadata.backend = transcription.backend;
+    metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
     metadata.voicelayer_transcript_chars = text.length;
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
@@ -2163,7 +2169,10 @@ export async function retranscribeRecordingCapture(
     console.error(`[voicelayer] Archived retranscription: ${text}`);
 
     if (text) {
-      updateArchivedTranscript(wavPath, text);
+      updateArchivedTranscript(wavPath, text, {
+        backend: backend.name,
+        languageMode: getLanguageModeFromEnv(),
+      });
       broadcast({ type: "transcription", text, recording_path: eventAudioPath });
     }
     setRecordingState("idle");
