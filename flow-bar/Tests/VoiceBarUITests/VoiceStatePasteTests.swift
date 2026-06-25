@@ -152,6 +152,39 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.mode, .idle)
     }
 
+    func testUnsnoozeClearsPasteFlowEnvelopeAndRequestsPanelRelayout() async {
+        let state = VoiceState()
+        state.snooze()
+        XCTAssertTrue(state.keepsPasteFlowEnvelope)
+        var relayoutCount = 0
+        state.onPanelLayoutChange = {
+            relayoutCount += 1
+        }
+
+        state.unsnooze()
+        try? await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(state.keepsPasteFlowEnvelope)
+        XCTAssertGreaterThanOrEqual(relayoutCount, 1)
+    }
+
+    func testModalInteractionSuppressesIdleCollapseAndRestoresExpandedState() async {
+        let state = VoiceState()
+        state.idleCollapseDelay = 0.01
+        state.mode = .idle
+
+        state.beginModalInteraction()
+        state.setHovering(false)
+        try? await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(state.isCollapsed)
+
+        state.isCollapsed = true
+        state.endModalInteraction()
+
+        XCTAssertFalse(state.isCollapsed)
+    }
+
     func testSnoozeClearsActiveRecordingAudioLevel() throws {
         let state = VoiceState()
         state.handleEvent([
@@ -595,6 +628,81 @@ final class VoiceStatePasteTests: XCTestCase {
 
         wait(for: [expectation], timeout: 1)
         XCTAssertEqual(state.confirmationText, "older history item")
+    }
+
+    func testSettingsHistoryRepasteUsesCapturedExternalTargetAndAXInsertion() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let capturedApp = NSRunningApplication.current
+        var frontmostApp: NSRunningApplication? = capturedApp
+        state.frontmostAppProvider = { frontmostApp }
+        var activatedApps: [NSRunningApplication] = []
+        state.targetAppActivator = { activatedApps.append($0) }
+        var insertionCaptureCount = 0
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            insertionCaptureCount += 1
+            return { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        frontmostApp = NSRunningApplication.current
+        state.repasteTranscript("settings history line", source: "settings_history")
+
+        XCTAssertEqual(insertionCaptureCount, 1)
+        XCTAssertEqual(activatedApps, [capturedApp])
+        XCTAssertEqual(insertedTexts, ["settings history line"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
+    }
+
+    func testSettingsHistoryCapturePreservesExternalTargetWhenVoiceBarIsFrontmost() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let externalApp = FakeRunningApplication(
+            bundleIdentifier: "com.example.Editor",
+            processIdentifier: 4242
+        )
+        let voiceBarApp = FakeRunningApplication(
+            bundleIdentifier: Bundle.main.bundleIdentifier,
+            processIdentifier: 5252
+        )
+        var frontmostApp: NSRunningApplication? = externalApp
+        state.frontmostAppProvider = { frontmostApp }
+        var activatedApps: [NSRunningApplication] = []
+        state.targetAppActivator = { activatedApps.append($0) }
+        var insertionCaptureCount = 0
+        var insertedTexts: [String] = []
+        state.dictationInsertionHandlerProvider = {
+            insertionCaptureCount += 1
+            return { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.simulatedPasteHandler = {
+            XCTFail("settings history paste should use the preserved AX insertion target")
+            return false
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        frontmostApp = voiceBarApp
+        state.captureSettingsHistoryPasteTarget()
+        state.repasteTranscript("preserved settings history line", source: "settings_history")
+
+        XCTAssertEqual(insertionCaptureCount, 1)
+        XCTAssertEqual(activatedApps, [externalApp])
+        XCTAssertEqual(insertedTexts, ["preserved settings history line"])
     }
 
     func testCopyTranscriptWritesRequestedHistoryItemToPasteboard() {

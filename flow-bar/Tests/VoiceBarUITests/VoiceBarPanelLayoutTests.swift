@@ -10,8 +10,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 40)
-        XCTAssertLessThanOrEqual(layout.panelSize.height, 40)
+        XCTAssertLessThanOrEqual(layout.panelSize.width, 30)
+        XCTAssertLessThanOrEqual(layout.panelSize.height, 30)
     }
 
     func testActiveHitRectStaysInsideSmallCollapsedPanel() {
@@ -135,16 +135,17 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
-    func testTranscribingPanelIsCompactProcessingWaveformOnly() {
+    func testTranscribingPanelShowsFallbackLabel() {
         let layout = VoiceBarPanelLayout.make(
             mode: .transcribing,
             isCollapsed: false,
             previewText: nil,
-            statusText: "",
+            statusText: "Transcribing...",
             padding: Theme.panelPadding
         )
 
-        XCTAssertLessThanOrEqual(layout.panelSize.width, 112)
+        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 212)
+        XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 

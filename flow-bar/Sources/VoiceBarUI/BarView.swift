@@ -113,8 +113,8 @@ public struct BarView: View {
             ZStack(alignment: .topTrailing) {
                 Circle()
                     .fill(Color.green) // VoiceBar is always alive — dot is always green
-                    .frame(width: 10, height: 10)
-                    .padding(8)
+                    .frame(width: 8, height: 8)
+                    .padding(7)
                     .background(Theme.pillBackground)
                     .clipShape(Capsule())
 

@@ -11,7 +11,6 @@ public enum Theme {
     public static let speakingColor = Color(hex: 0x4A90D9) // Blue
     public static let recordingColor = Color(hex: 0xE54D4D) // Red
     public static let idleColor = Color(hex: 0xAEAEB2) // Light gray (legible on dark bg)
-    public static let transcribingColor = Color(hex: 0xE5A84D) // Yellow/orange
     public static let errorColor = Color.red
 
     // MARK: - Pill background
@@ -150,7 +149,8 @@ public enum Theme {
         case .idle, .disconnected: idleColor
         case .speaking: speakingColor
         case .recording: recordingColor
-        case .transcribing: transcribingColor
+        // Transcribing intentionally stays blue to match speaking chrome.
+        case .transcribing: speakingColor
         case .error: errorColor
         }
     }

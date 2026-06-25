@@ -261,6 +261,8 @@ public final class VoiceState {
 
     /// Timer for idle collapse.
     private var collapseTimer: Task<Void, Never>?
+    private var modalInteractionDepth = 0
+    public var idleCollapseDelay: TimeInterval = Theme.collapseDelay
 
     /// Tracks the last user intent sent to the daemon until the matching ack returns.
     public var pendingIntent: PendingIntent?
@@ -300,6 +302,8 @@ public final class VoiceState {
 
     /// The most recent app we pasted into. Reused for Shift+F5 re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
+    private var settingsHistoryPasteTargetApp: NSRunningApplication?
+    private var settingsHistoryInsertionHandler: ((String) -> Bool)?
 
     /// Test seam for paste side effects. When set, bypasses system paste.
     public var pasteHandler: ((String) -> Bool)?
@@ -569,6 +573,8 @@ public final class VoiceState {
 
     public func unsnooze() {
         guard mode == .disconnected else { return }
+        keepsPasteFlowEnvelope = false
+        isCollapsed = false
         mode = .idle
         onModeChange?(.idle)
         startCollapseTimer()
@@ -589,12 +595,29 @@ public final class VoiceState {
     public func repasteTranscript(_ text: String, source: String = "unknown") {
         let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reusableText.isEmpty else { return }
+        let usesSettingsHistoryTarget = source == "settings_history"
         logDiagnostic("repaste_requested", details: [
             "transcriptLength": String(reusableText.count),
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
             "source": source,
         ])
-        pasteTranscript(reusableText, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+        pasteTranscript(
+            reusableText,
+            for: resolvedPasteTarget(
+                forRepaste: true,
+                useSettingsHistoryTarget: usesSettingsHistoryTarget
+            ),
+            plan: .repaste,
+            allowAXInsertion: usesSettingsHistoryTarget
+        )
+    }
+
+    public func captureSettingsHistoryPasteTarget() {
+        guard let front = frontmostAppProvider(),
+              front.bundleIdentifier != Bundle.main.bundleIdentifier
+        else { return }
+        settingsHistoryPasteTargetApp = front
+        settingsHistoryInsertionHandler = dictationInsertionHandlerProvider()
     }
 
     public func copyLastTranscript() {
@@ -1018,10 +1041,11 @@ public final class VoiceState {
     // MARK: - Idle collapse
 
     private func startCollapseTimer() {
+        guard modalInteractionDepth == 0 else { return }
         collapseTimer?.cancel()
         collapseTimer = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Theme.collapseDelay))
-            if !Task.isCancelled, mode == .idle, !isHovering {
+            try? await Task.sleep(for: .seconds(idleCollapseDelay))
+            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
                 withAnimation(.smooth(duration: 0.3)) {
                     isCollapsed = true
                 }
@@ -1047,6 +1071,18 @@ public final class VoiceState {
         if !hovering, mode == .idle {
             startCollapseTimer()
         }
+    }
+
+    public func beginModalInteraction() {
+        modalInteractionDepth += 1
+        collapseTimer?.cancel()
+        expandFromCollapse()
+    }
+
+    public func endModalInteraction() {
+        modalInteractionDepth = max(0, modalInteractionDepth - 1)
+        guard modalInteractionDepth == 0 else { return }
+        expandFromCollapse()
     }
 
     public func setHotkeyEnabled(_ enabled: Bool) {
@@ -1392,9 +1428,16 @@ public final class VoiceState {
 
     // MARK: - Paste transcription at cursor
 
-    private func resolvedPasteTarget(forRepaste repaste: Bool) -> NSRunningApplication? {
+    private func resolvedPasteTarget(
+        forRepaste repaste: Bool,
+        useSettingsHistoryTarget: Bool = false
+    ) -> NSRunningApplication? {
         let currentFront = frontmostAppProvider()
         let isSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
+
+        if useSettingsHistoryTarget {
+            return settingsHistoryPasteTargetApp ?? (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
+        }
 
         if repaste {
             return (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
@@ -1407,7 +1450,8 @@ public final class VoiceState {
     private func pasteTranscript(
         _ text: String,
         for targetApp: NSRunningApplication?,
-        plan: VoicePastePlan
+        plan: VoicePastePlan,
+        allowAXInsertion: Bool = false
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
@@ -1456,9 +1500,12 @@ public final class VoiceState {
                 }
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
+                let targetMatchesSettingsHistory = Self.sameApp(pasteTarget, settingsHistoryPasteTargetApp)
                 let capturedInsertionHandler =
                     plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget == nil
                         ? insertionHandler
+                        : allowAXInsertion && targetMatchesSettingsHistory
+                        ? settingsHistoryInsertionHandler
                         : nil
 
                 guard let pasteTarget else {
@@ -1494,7 +1541,7 @@ public final class VoiceState {
                     }
 
                     let freshInsertionHandler =
-                        plan == .autoPaste
+                        plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil)
                             ? dictationInsertionHandlerProvider()
                             : nil
                     if let freshInsertionHandler, freshInsertionHandler(text) {

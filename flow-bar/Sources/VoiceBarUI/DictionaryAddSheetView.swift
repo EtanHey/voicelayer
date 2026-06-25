@@ -45,6 +45,7 @@ public struct DictionaryAddSheetView: View {
                 Button("Cancel") {
                     onCancel()
                 }
+                .keyboardShortcut(.cancelAction)
                 Button("Add") {
                     onSave(currentDraft)
                 }

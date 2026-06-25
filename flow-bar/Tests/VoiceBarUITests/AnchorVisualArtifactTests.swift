@@ -24,7 +24,12 @@ final class AnchorVisualArtifactTests: XCTestCase {
             let controller = PillContextMenuController()
             controller.anchorModeProvider = { state.mode }
             let menu = controller.makeMenu()
-            let anchorMenu = try XCTUnwrap(menu.items.first { $0.title == "Anchor" }?.submenu)
+            let preferencesMenu = try XCTUnwrap(
+                menu.items.first { $0.title == "Preferences" }?.submenu
+            )
+            let anchorMenu = try XCTUnwrap(
+                preferencesMenu.items.first { $0.title == "Anchor" }?.submenu
+            )
 
             try writePNG(
                 AnchorMenuArtifactView(items: anchorMenu.items)

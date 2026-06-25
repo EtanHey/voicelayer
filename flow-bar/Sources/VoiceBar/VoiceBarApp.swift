@@ -50,7 +50,7 @@ enum HotkeyInputSource {
     case legacySocket
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let voiceState = VoiceState(
         transcriptionVocabularyLoader: {
             STTVocabularySnapshotLoader.load().promptTerms
@@ -61,9 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
-        resetHotkeyState: { [weak self] in
-            self?.resetHotkeyTracking()
-        }
+        resetHotkeyState: { [weak self] in self?.resetHotkeyTracking() },
+        showVoiceBar: { [weak self] in self?.unsnoozeNow() }
     )
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
@@ -1215,6 +1214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentAddToDictionarySheetFromSelection() {
+        voiceState.beginModalInteraction()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let selection = FrontmostSelectionReader.readCurrentSelection()
             DispatchQueue.main.async { [weak self] in
@@ -1252,32 +1252,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let hosting = NSHostingController(rootView: rootView)
         let sheet = NSWindow(contentViewController: hosting)
         sheet.title = "Add to Dictionary"
-        sheet.styleMask = [.titled]
+        sheet.styleMask = [.titled, .closable]
         sheet.isReleasedWhenClosed = false
         sheet.setContentSize(NSSize(width: 380, height: 210))
+        sheet.delegate = self
         dictionarySheetWindow = sheet
 
-        if let panel {
-            panel.beginSheet(sheet)
-        } else {
-            sheet.center()
-            sheet.orderFront(nil)
-        }
+        sheet.center()
+        NSApp.activate(ignoringOtherApps: true)
+        sheet.makeKeyAndOrderFront(nil)
     }
 
     private func closeDictionarySheet() {
         guard let sheet = dictionarySheetWindow else { return }
+        dictionarySheetWindow = nil
+        sheet.delegate = nil
         if let parent = sheet.sheetParent {
             parent.endSheet(sheet)
         }
         sheet.close()
+        voiceState.endModalInteraction()
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              window === dictionarySheetWindow
+        else { return }
         dictionarySheetWindow = nil
+        voiceState.endModalInteraction()
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {
         VoiceBarMenu.quickActions(
             isSnoozed: isSnoozed,
             openSettings: { [weak self] in self?.openSettingsWindow() },
+            showVoiceBar: { [weak self] in self?.commandRouter.handleShowVoiceBar() },
             snoozeToggle: { [weak self] in
                 guard let self else { return }
                 if isSnoozed { unsnoozeNow() } else { snoozeForOneHour() }
@@ -1295,6 +1304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openSettingsWindow() {
+        voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)

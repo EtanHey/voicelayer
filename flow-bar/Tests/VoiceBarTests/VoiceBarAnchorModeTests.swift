@@ -100,7 +100,7 @@ final class VoiceBarAnchorModeTests: XCTestCase {
         XCTAssertEqual(bottomPlacement.horizontalOffset, 0.5, accuracy: 0.001)
         XCTAssertEqual(
             try XCTUnwrap(bottomPlacement.verticalOffset),
-            (24 + (pillSize.height / 2)) / visibleFrame.height,
+            (12 + (pillSize.height / 2)) / visibleFrame.height,
             accuracy: 0.001
         )
         XCTAssertFalse(bottomPlacement.followsMouse)

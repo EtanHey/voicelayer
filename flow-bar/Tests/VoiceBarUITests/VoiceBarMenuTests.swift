@@ -5,6 +5,7 @@ final class VoiceBarMenuTests: XCTestCase {
     func testQuickActionMenuContainsRequestedItemsInOrder() {
         let actions = VoiceBarMenu.quickActions(
             openSettings: {},
+            showVoiceBar: {},
             snoozeToggle: {},
             transcribeLatestRecording: {},
             pasteLastTranscript: {},
@@ -13,6 +14,7 @@ final class VoiceBarMenuTests: XCTestCase {
 
         XCTAssertEqual(actions.map(\.title), [
             "Settings",
+            "Show VoiceBar",
             "Hide for 1 hour",
             "Transcribe latest recording",
             "Paste last transcript",
@@ -24,6 +26,7 @@ final class VoiceBarMenuTests: XCTestCase {
         var invoked: [String] = []
         let actions = VoiceBarMenu.quickActions(
             openSettings: { invoked.append("settings") },
+            showVoiceBar: { invoked.append("show") },
             snoozeToggle: { invoked.append("snooze") },
             transcribeLatestRecording: { invoked.append("recover") },
             pasteLastTranscript: { invoked.append("paste") },
@@ -32,32 +35,44 @@ final class VoiceBarMenuTests: XCTestCase {
 
         actions.forEach { $0.perform() }
 
-        XCTAssertEqual(invoked, ["settings", "snooze", "recover", "paste", "quit"])
+        XCTAssertEqual(invoked, ["settings", "show", "snooze", "recover", "paste", "quit"])
     }
 
-    func testSnoozeToggleShowsHideWhenNotSnoozed() {
+    func testMenuBarIncludesShowAndHideWhenNotSnoozed() {
         let actions = VoiceBarMenu.quickActions(
             isSnoozed: false,
             openSettings: {},
+            showVoiceBar: {},
             snoozeToggle: {},
             transcribeLatestRecording: {},
             pasteLastTranscript: {},
             quit: {}
         )
 
-        XCTAssertEqual(actions[1].title, "Hide for 1 hour")
+        XCTAssertEqual(actions.map(\.title).prefix(3), [
+            "Settings",
+            "Show VoiceBar",
+            "Hide for 1 hour",
+        ])
     }
 
-    func testSnoozeToggleShowsShowWhenSnoozed() {
+    func testMenuBarKeepsShowVoiceBarWhenSnoozedWithoutDuplicateToggle() {
         let actions = VoiceBarMenu.quickActions(
             isSnoozed: true,
             openSettings: {},
+            showVoiceBar: {},
             snoozeToggle: {},
             transcribeLatestRecording: {},
             pasteLastTranscript: {},
             quit: {}
         )
 
-        XCTAssertEqual(actions[1].title, "Show VoiceBar")
+        XCTAssertEqual(actions.map(\.title), [
+            "Settings",
+            "Show VoiceBar",
+            "Transcribe latest recording",
+            "Paste last transcript",
+            "Quit VoiceBar",
+        ])
     }
 }

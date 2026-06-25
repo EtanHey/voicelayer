@@ -43,6 +43,23 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(placement.followsMouse)
     }
 
+    func testBottomCenterSitsCloseToBottomEdge() throws {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let pillSize = CGSize(width: 190, height: 30)
+
+        let placement = VoiceBarPositionLockPolicy.effectivePlacement(
+            anchorMode: .bottomCenter,
+            savedHorizontalOffset: 0.2,
+            savedVerticalOffset: 0.3,
+            visibleFrame: visibleFrame,
+            pillSize: pillSize
+        )
+
+        let verticalOffset = try XCTUnwrap(placement.verticalOffset)
+        let panelOriginY = (visibleFrame.height * verticalOffset) - (pillSize.height / 2)
+        XCTAssertLessThanOrEqual(panelOriginY, 14)
+    }
+
     func testPanelDragDecisionRespectsLock() {
         let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 48)))
 

@@ -409,6 +409,17 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("unsnoozeNow()"))
     }
 
+    func testDictionaryAddWindowIsStandaloneAndClosable() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertFalse(
+            source.contains("panel.beginSheet(sheet)"),
+            "Add-to-Dictionary must not attach a large sheet to the tiny nonactivating pill panel"
+        )
+        XCTAssertTrue(source.contains("sheet.styleMask = [.titled, .closable]"))
+        XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

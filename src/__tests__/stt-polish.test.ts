@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import {
   getSTTPolishMode,
+  getSTTPolishTimeoutMs,
   polishTranscriptionText,
 } from "../stt-polish";
 
@@ -87,6 +88,10 @@ describe("stt-polish", () => {
 
   it("defaults to on for production dictation", () => {
     expect(getSTTPolishMode({})).toBe("on");
+  });
+
+  it("uses a short default request timeout so dead polish servers fall back fast", () => {
+    expect(getSTTPolishTimeoutMs({})).toBeLessThanOrEqual(1500);
   });
 
   it("can be explicitly disabled and preserves cleaned text", async () => {

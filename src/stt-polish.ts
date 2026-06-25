@@ -55,7 +55,7 @@ interface STTPolishSocketResponse {
   error?: unknown;
 }
 
-const DEFAULT_POLISH_TIMEOUT_MS = 5_000;
+const DEFAULT_POLISH_TIMEOUT_MS = 1_200;
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
