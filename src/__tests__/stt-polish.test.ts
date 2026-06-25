@@ -471,9 +471,79 @@ describe("stt-polish", () => {
     });
   });
 
-  it("rejects low-similarity self-correction rewrites even with explicit cues", async () => {
+  it("allows real correction-cue collapse that removes the rejected phrase and its no/not scaffolding", async () => {
     server = createMockPolishServer(() => ({
-      text: "Please run tests before merge.",
+      text: "Okay, let's do a Gemini deep research.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: "okay let's do a Claude well no not Claude let's do a Gemini deep research",
+      cleanedText:
+        "Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do a Gemini deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows punctuation polish for non-correction text that preserves existing negation meaning", async () => {
+    const polished =
+      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's no numbering and there's no corrections. The .at file seems to be one of the only things that's fixed; other than punctuation, it seems to work now pretty reliably.";
+    server = createMockPolishServer(() => ({ text: polished }));
+
+    const cleanedText =
+      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's 0 numbering and there's no corrections. The .at file seems to be 1 of the only things that's fixed other than punctuation as well seems to work now pretty reliably.";
+    const result = await polishTranscriptionText({
+      rawText:
+        "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's zero numbering and there's no corrections. The .at file seems to be one of the only things that's fixed other than punctuation as well seems to work now pretty reliably.",
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polished,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("collapses a real self-correction cue even when the polish model returns the candidate unchanged", async () => {
+    server = createMockPolishServer((request) => ({
+      text: String(request.cleaned_text),
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: "Okay, let's do a clawed deep, well, Gemini deep research.",
+      cleanedText: "Okay, let's do a Claude deep, well, Gemini deep research.",
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Gemini deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects self-correction rewrites that introduce new content even with explicit cues", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Please run tests before production release.",
     }));
 
     const cleanedText =
@@ -490,11 +560,11 @@ describe("stt-polish", () => {
 
     expect(result).toMatchObject({
       text: cleanedText,
-      polishedText: "Please run tests before merge.",
+      polishedText: "Please run tests before production release.",
       status: "rejected",
       changed: false,
     });
-    expect(result.error).toContain("self-correction rewrite changed too much");
+    expect(result.error).toContain("introduced new content");
   });
 
   it("allows explicit spoken-list restructuring into numbered markdown", async () => {
@@ -695,6 +765,8 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("ANY ordinal sequence");
       expect(messages[0].content).toContain("Input: So first of all");
       expect(messages[0].content).toContain("third, I'm very frustrated");
+      expect(messages[0].content).toContain("not Claude let's do a Gemini");
+      expect(messages[0].content).toContain("Claude deep, well, Gemini");
       expect(messages[0].content).toContain("did X");
       expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
