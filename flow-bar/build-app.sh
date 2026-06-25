@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build VoiceBar as a proper macOS .app bundle.
 #
-# Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch]
+# Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path VoiceBar.zip]
 #
 # Output: /Applications/VoiceBar.app by default
 
@@ -12,21 +12,33 @@ PACKAGE_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
-SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Apple Development: Etan Heyman (DXHB5E7P2D)}"
+SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heyman (PPN23G925Y)}"
 VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
+VOICEBAR_ENTITLEMENTS="${VOICEBAR_ENTITLEMENTS:-$BUNDLE_DIR/VoiceBar.entitlements}"
+VOICEBAR_NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-${VOICEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"
+VOICEBAR_NOTARY_APPLE_ID="${VOICEBAR_NOTARY_APPLE_ID:-}"
+VOICEBAR_NOTARY_PASSWORD="${VOICEBAR_NOTARY_PASSWORD:-}"
+VOICEBAR_NOTARY_TEAM_ID="${VOICEBAR_NOTARY_TEAM_ID:-PPN23G925Y}"
+VOICEBAR_NOTARY_KEY="${VOICEBAR_NOTARY_KEY:-}"
+VOICEBAR_NOTARY_KEY_ID="${VOICEBAR_NOTARY_KEY_ID:-}"
+VOICEBAR_NOTARY_ISSUER="${VOICEBAR_NOTARY_ISSUER:-}"
+VOICEBAR_REQUIRE_NOTARIZATION="${VOICEBAR_REQUIRE_NOTARIZATION:-0}"
+VOICEBAR_RELEASE_ZIP="${VOICEBAR_RELEASE_ZIP:-}"
+VOICEBAR_NOTARIZED=0
 STOP_RUNNING=1
 RELAUNCH_APP=1
 
 usage() {
     cat <<'EOF'
-Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch]
+Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path VoiceBar.zip]
 
 Options:
   --install-path PATH  Install the built app at PATH
   --no-stop           Do not stop running com.voicelayer.voicebar instances first
   --no-relaunch       Do not relaunch the installed app after signing
+  --zip-path PATH      Write a notarized Homebrew release zip at PATH
 EOF
 }
 
@@ -48,6 +60,14 @@ parse_build_app_args() {
             --no-relaunch)
                 RELAUNCH_APP=0
                 shift
+                ;;
+            --zip-path)
+                if [[ $# -lt 2 ]]; then
+                    echo "[build-app] ERROR: --zip-path requires a target path" >&2
+                    return 2
+                fi
+                VOICEBAR_RELEASE_ZIP="$2"
+                shift 2
                 ;;
             -h|--help)
                 usage
@@ -277,6 +297,153 @@ relaunch_voicebar_app() {
     wait_for_exactly_one_voicebar_instance
 }
 
+git_commit() {
+    git -C "$REPO_ROOT" rev-parse HEAD
+}
+
+git_describe() {
+    git -C "$REPO_ROOT" describe --tags --dirty --always 2>/dev/null || git -C "$REPO_ROOT" rev-parse --short HEAD
+}
+
+build_time_utc() {
+    TZ=UTC date '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+plist_set_string() {
+    local plist_path="$1"
+    local key="$2"
+    local value="$3"
+
+    if "$PLIST_BUDDY" -c "Print :$key" "$plist_path" >/dev/null 2>&1; then
+        "$PLIST_BUDDY" -c "Set :$key $value" "$plist_path"
+    else
+        "$PLIST_BUDDY" -c "Add :$key string $value" "$plist_path"
+    fi
+}
+
+stamp_info_plist() {
+    local plist_path="$1"
+    local commit_sha="$2"
+    local describe_ref="$3"
+    local build_utc="$4"
+
+    plist_set_string "$plist_path" "GitCommit" "$commit_sha"
+    plist_set_string "$plist_path" "GitDescribe" "$describe_ref"
+    plist_set_string "$plist_path" "BuildTimeUTC" "$build_utc"
+}
+
+notary_credentials_available() {
+    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
+        return 0
+    fi
+    if [ -n "$VOICEBAR_NOTARY_APPLE_ID" ] && [ -n "$VOICEBAR_NOTARY_PASSWORD" ] && [ -n "$VOICEBAR_NOTARY_TEAM_ID" ]; then
+        return 0
+    fi
+    if [ -n "$VOICEBAR_NOTARY_KEY" ] && [ -n "$VOICEBAR_NOTARY_KEY_ID" ] && [ -n "$VOICEBAR_NOTARY_ISSUER" ]; then
+        return 0
+    fi
+    return 1
+}
+
+notarytool_auth_args() {
+    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
+        printf '%s\0%s\0' "--keychain-profile" "$VOICEBAR_NOTARY_PROFILE"
+        return 0
+    fi
+    if [ -n "$VOICEBAR_NOTARY_APPLE_ID" ] && [ -n "$VOICEBAR_NOTARY_PASSWORD" ] && [ -n "$VOICEBAR_NOTARY_TEAM_ID" ]; then
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+            "--apple-id" "$VOICEBAR_NOTARY_APPLE_ID" \
+            "--password" "$VOICEBAR_NOTARY_PASSWORD" \
+            "--team-id" "$VOICEBAR_NOTARY_TEAM_ID"
+        return 0
+    fi
+    if [ -n "$VOICEBAR_NOTARY_KEY" ] && [ -n "$VOICEBAR_NOTARY_KEY_ID" ] && [ -n "$VOICEBAR_NOTARY_ISSUER" ]; then
+        printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
+            "--key" "$VOICEBAR_NOTARY_KEY" \
+            "--key-id" "$VOICEBAR_NOTARY_KEY_ID" \
+            "--issuer" "$VOICEBAR_NOTARY_ISSUER"
+        return 0
+    fi
+    return 1
+}
+
+verify_spctl_assessment() {
+    local phase="$1"
+    local required="${2:-0}"
+    if spctl -a -vvv -t install "$APP_DIR"; then
+        return 0
+    fi
+    if [ "$required" -eq 1 ]; then
+        echo "[build-app] ERROR: spctl assessment failed after $phase" >&2
+        return 1
+    fi
+    echo "[build-app] WARNING: spctl assessment failed after $phase; continuing because notarization is not required for this build." >&2
+    return 0
+}
+
+notarize_and_staple() {
+    if ! notary_credentials_available; then
+        if [ "$VOICEBAR_REQUIRE_NOTARIZATION" = "1" ] || [ -n "$VOICEBAR_RELEASE_ZIP" ]; then
+            echo "[build-app] ERROR: Homebrew release zip requires notarization, but notary credentials are not configured." >&2
+            echo "[build-app] Set one of:" >&2
+            echo "  VOICEBAR_NOTARY_PROFILE=<keychain-profile>" >&2
+            echo "  VOICEBAR_NOTARY_APPLE_ID=<apple-id> VOICEBAR_NOTARY_PASSWORD=<app-specific-password> VOICEBAR_NOTARY_TEAM_ID=<team-id>" >&2
+            echo "  VOICEBAR_NOTARY_KEY=<api-key.p8> VOICEBAR_NOTARY_KEY_ID=<key-id> VOICEBAR_NOTARY_ISSUER=<issuer-id>" >&2
+            return 1
+        fi
+        echo "[build-app] Notary credentials not configured; skipping notarytool submit."
+        echo "[build-app] Ready to submit with VOICEBAR_NOTARY_PROFILE=<keychain-profile> or Apple ID/API key env vars."
+        return 0
+    fi
+
+    local auth_args=()
+    while IFS= read -r -d '' arg; do
+        auth_args+=("$arg")
+    done < <(notarytool_auth_args)
+
+    local notary_zip_base
+    local notary_zip
+    local tmp_parent
+    tmp_parent="${TMPDIR:-/tmp}"
+    notary_zip_base="$(mktemp "${tmp_parent%/}/voicebar-notary.XXXXXX")"
+    notary_zip="$notary_zip_base.zip"
+    rm -f "$notary_zip_base"
+    ditto -c -k --keepParent "$APP_DIR" "$notary_zip"
+
+    echo "[build-app] Submitting for notarization..."
+    if xcrun notarytool submit "$notary_zip" "${auth_args[@]}" --wait; then
+        rm -f "$notary_zip"
+    else
+        local submit_status=$?
+        rm -f "$notary_zip"
+        return "$submit_status"
+    fi
+
+    echo "[build-app] Stapling notarization ticket..."
+    xcrun stapler staple "$APP_DIR"
+    xcrun stapler validate "$APP_DIR"
+    verify_spctl_assessment "notarization" 1
+    VOICEBAR_NOTARIZED=1
+}
+
+create_release_zip() {
+    if [ -z "$VOICEBAR_RELEASE_ZIP" ]; then
+        return 0
+    fi
+    if [ "$VOICEBAR_NOTARIZED" != "1" ]; then
+        echo "[build-app] ERROR: Homebrew release zip requires notarization before packaging." >&2
+        return 1
+    fi
+
+    mkdir -p "$(dirname "$VOICEBAR_RELEASE_ZIP")"
+    rm -f "$VOICEBAR_RELEASE_ZIP"
+    ditto -c -k --keepParent "$APP_DIR" "$VOICEBAR_RELEASE_ZIP"
+    echo "[build-app] Wrote notarized VoiceBar release zip: $VOICEBAR_RELEASE_ZIP"
+    if command -v shasum >/dev/null 2>&1; then
+        echo "[build-app] sha256: $(shasum -a 256 "$VOICEBAR_RELEASE_ZIP" | awk '{print $1}')"
+    fi
+}
+
 if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
     # shellcheck disable=SC2317 # The exit path is used only when executed, not sourced.
     return 0 2>/dev/null || exit 0
@@ -379,10 +546,24 @@ if [ -f "$BUNDLE_DIR/VoiceBar.icns" ]; then
     echo "[build-app] Icon installed."
 fi
 
+COMMIT_SHA="$(git_commit)"
+DESCRIBE_REF="$(git_describe)"
+BUILD_UTC="$(build_time_utc)"
+stamp_info_plist "$APP_DIR/Contents/Info.plist" "$COMMIT_SHA" "$DESCRIBE_REF" "$BUILD_UTC"
+echo "[build-app] Stamped Info.plist:"
+echo "  GitCommit=$COMMIT_SHA"
+echo "  GitDescribe=$DESCRIBE_REF"
+echo "  BuildTimeUTC=$BUILD_UTC"
+
 # Developer signing keeps TCC permissions stable across rebuilds. A clean TCC
 # re-grant is a macOS security click if ever needed; do not reset TCC here.
 echo "[build-app] Signing..."
-codesign --force --deep --sign "$SIGN_IDENTITY" --timestamp=none "$APP_DIR"
+if [ ! -f "$VOICEBAR_ENTITLEMENTS" ]; then
+    echo "[build-app] ERROR: VoiceBar entitlements file missing: $VOICEBAR_ENTITLEMENTS" >&2
+    exit 1
+fi
+echo "[build-app] Entitlements: $VOICEBAR_ENTITLEMENTS"
+codesign --force --deep --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 
 echo "[build-app] Verifying signature..."
 if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
@@ -390,6 +571,9 @@ if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTIT
     codesign -dv --verbose=4 "$APP_DIR" 2>&1
     exit 1
 fi
+verify_spctl_assessment "Developer ID signing"
+notarize_and_staple
+create_release_zip
 
 if [ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" = "1" ]; then
     echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."

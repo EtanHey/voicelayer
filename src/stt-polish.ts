@@ -106,13 +106,18 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
 
 function buildPolishSystemPrompt(): string {
   return [
-    "You are a transcript fixer for local voice dictation.",
+    "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix only obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
-    "Use light punctuation: add periods or question marks when sentence boundaries are clear from the text, but do not over-polish.",
-    "Never summarize, paraphrase, translate, add content, delete meaningful content, change tone, or invent code identifiers.",
+    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Be decisive. When one of the dictation-finalizer patterns below appears, apply it instead of leaving the text unchanged.",
+    "Format ANY ordinal sequence into numbered markdown lists. Ordinal cues include first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even with conversational framing such as so, okay, and then, or third without 'of all'.",
+    "Collapse ANY mid-sentence self-correction when the speaker replaces an earlier phrase with a later phrase. Explicit cues include well no, well, no, no wait, sorry, I mean, actually, rather, or scratch that. Also collapse semantic correction patterns such as 'did X ... no/actually Y', 'went to X ... no ... went to Y', or longer clause replacements. Keep the corrected later phrase and drop only the immediately superseded phrase.",
+    "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
+    "Remove low-value disfluencies only when they are clearly process speech or discarded correction scaffolding, not semantic content.",
+    "Never summarize, translate, add content, change tone, or invent code identifiers.",
+    "Do not delete wanted content: keep every clause that is not clearly superseded by a self-correction or converted into a numbered list item.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
-    "If unsure, return the input unchanged.",
+    "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
     "Output only the corrected text.",
     "",
     "Examples:",
@@ -122,6 +127,26 @@ function buildPolishSystemPrompt(): string {
     "Output: Ask cmux whether BrainLayer is ready",
     "Input: תרים את ה handle socket command",
     "Output: תרים את ה-handleSocketCommand",
+    "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
+    "Output: Okay, let's do Claude deep research.",
+    "Input: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
+    "Output: Okay, let's do Claude Deep Research.",
+    "Input: Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
+    "Output: Okay, let's do a Gemini deep research.",
+    "Input: Okay, let's do a Claude deep, well, Gemini deep research.",
+    "Output: Okay, let's do Gemini deep research.",
+    "Input: Okay, so I just went to the gym and, well, no, I just went to the supermarket and I now came back.",
+    "Output: Okay, so I just went to the supermarket and I now came back.",
+    "Input: I started a build, actually I started the test suite and then came back.",
+    "Output: I started the test suite and then came back.",
+    "Input: First of all, I wanted to do x, y, and z, and then second of all, I wanted to talk to him, and third of all, I wanted to go home.",
+    "Output:\n1. I wanted to do x, y, and z.\n2. I wanted to talk to him.\n3. I wanted to go home.",
+    "Input: So first of all, I came back home right now, and then second of all, you've been paused, third, I'm very frustrated.",
+    "Output:\n1. I came back home right now.\n2. You've been paused.\n3. I'm very frustrated.",
+    "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
+    "Output: Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    "Input: Also, if I say the .at file. Thank you.",
+    "Output: Also, if I say the .at file. Thank you.",
     "Input: This is already good.",
     "Output: This is already good.",
     "Input: why did it do that i am confused",
@@ -163,6 +188,13 @@ function extractPolishResponseText(payload: OpenAIChatCompletionResponse): strin
 
 function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function normalizeZeroQuantifierNegation(text: string): string {
+  return text.replace(
+    /(?<![\p{L}\p{N}_])(?:0|zero)\s+(?=[\p{L}])/giu,
+    "no ",
+  );
 }
 
 function normalizedSimilarityText(text: string): string {
@@ -250,7 +282,7 @@ const NEGATION_TOKENS = new Set([
 
 function negationCount(text: string): number {
   return (
-    text
+    normalizeZeroQuantifierNegation(text)
       .normalize("NFKC")
       .toLowerCase()
       .match(/[\p{L}\p{N}'’]+/gu)
@@ -273,7 +305,7 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
 
   const codeDotCount = countMatches(
     normalized,
-    /(?<=[\p{L}\p{N}])\.(?=[\p{L}\p{N}])/gu,
+    /(?:(?<=[\p{L}\p{N}])\.(?=[\p{L}\p{N}])|(?<!\S)\.(?=[\p{L}_]))/gu,
   );
   if (codeDotCount > 0) counts.set(".", codeDotCount);
 
@@ -371,7 +403,7 @@ function canJoinNumberWordTokens(
 }
 
 function protectedNumericTokens(text: string): string[] {
-  const normalized = text.normalize("NFKC");
+  const normalized = normalizeZeroQuantifierNegation(text).normalize("NFKC");
   const matches = Array.from(normalized.matchAll(PROTECTED_NUMERIC_TOKEN_PATTERN));
   const tokens: string[] = [];
 
@@ -432,41 +464,219 @@ function changedProtectedTokens(cleanedText: string, candidate: string): boolean
   );
 }
 
+function codeStyleIdentifierTokens(text: string): string[] {
+  return (
+    text
+      .normalize("NFKC")
+      .match(/[A-Za-z_$][A-Za-z0-9_$.-]*/g)
+      ?.filter((token) => /(?:[a-z][A-Z]|[A-Z][a-z]+[A-Z])/u.test(token)) ?? []
+  );
+}
+
+const KNOWN_CODE_IDENTIFIER_POLISH_ALLOWLIST = new Set([
+  "brainlayer",
+  "handlesocketcommand",
+]);
+
+function introducedCodeStyleIdentifier(
+  cleanedText: string,
+  candidate: string,
+): string | null {
+  const cleanedIdentifiers = new Set(
+    codeStyleIdentifierTokens(cleanedText).map((token) => token.toLowerCase()),
+  );
+  for (const token of codeStyleIdentifierTokens(candidate)) {
+    const normalizedToken = token.toLowerCase();
+    if (
+      !cleanedIdentifiers.has(normalizedToken) &&
+      !KNOWN_CODE_IDENTIFIER_POLISH_ALLOWLIST.has(normalizedToken)
+    ) {
+      return token;
+    }
+  }
+  return null;
+}
+
+const SELF_CORRECTION_SIMILARITY_FLOOR = 0.58;
+const SPOKEN_LIST_SIMILARITY_FLOOR = 0.45;
+
+// AIDEV-NOTE: Broadening these cues weakens length/similarity/negation guards
+// for dictation rewrites, so keep the list limited to explicit correction speech.
+const SELF_CORRECTION_CUE_PATTERN =
+  /\b(?:well[\s,]+no|no[\s,]+wait|sorry|i\s+mean|scratch\s+that)\b/iu;
+const LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN =
+  /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+a\s+)(?<old>[\p{L}\p{N}][\p{L}\p{N}\s'’-]*?)\s+well[\s,]+no[\s,]+not\s+\k<old>\s+let(?:'|’)s\s+do\s+a\s+(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
+const LETS_DO_WELL_REPLACEMENT_PATTERN =
+  /^(?<prefix>.*?\blet(?:'|’)s\s+do\s+)(?:a\s+)?(?<old>[^,.?!]+?)(?:,\s*)?\bwell\s*,\s*(?<replacement>[^.?!]+)(?<ending>[.?!]?)$/iu;
+
+const SPOKEN_LIST_CUE_PATTERN =
+  /\b(?:first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|number\s+(?:one|two|three|four|five)|firstly|secondly|thirdly)\b/iu;
+
+function hasExplicitSelfCorrectionCue(text: string): boolean {
+  return (
+    SELF_CORRECTION_CUE_PATTERN.test(text) ||
+    LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN.test(text) ||
+    LETS_DO_WELL_REPLACEMENT_PATTERN.test(text)
+  );
+}
+
+function hasSpokenListCue(text: string): boolean {
+  return SPOKEN_LIST_CUE_PATTERN.test(text);
+}
+
+function hasNumberedMarkdownList(text: string): boolean {
+  return /(?:^|\n)\s*1\.\s+\S/u.test(text) && /(?:^|\n)\s*2\.\s+\S/u.test(text);
+}
+
+function isAllowedSelfCorrectionRewrite(
+  cleanedText: string,
+  candidate: string,
+): boolean {
+  if (!hasExplicitSelfCorrectionCue(cleanedText)) return false;
+  if (countWords(candidate) >= countWords(cleanedText)) return false;
+  if (hasUngroundedContent(cleanedText, candidate)) return false;
+  return (
+    normalizedSimilarity(cleanedText, candidate) >=
+      SELF_CORRECTION_SIMILARITY_FLOOR ||
+    countWords(candidate) >= 4
+  );
+}
+
+function normalizeContentToken(token: string): string {
+  const lower = token.toLowerCase().replace(/’/g, "'");
+  return NUMBER_WORD_VALUES[lower] !== undefined
+    ? String(NUMBER_WORD_VALUES[lower])
+    : lower;
+}
+
+function contentTokens(text: string): string[] {
+  return (
+    normalizeZeroQuantifierNegation(text)
+      .normalize("NFKC")
+      .match(/[\p{L}\p{N}'’]+/gu)
+      ?.map(normalizeContentToken) ?? []
+  );
+}
+
+function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
+  const cleanedCounts = new Map<string, number>();
+  for (const token of contentTokens(cleanedText)) {
+    cleanedCounts.set(token, (cleanedCounts.get(token) ?? 0) + 1);
+  }
+
+  for (const token of contentTokens(candidate)) {
+    const available = cleanedCounts.get(token) ?? 0;
+    if (available <= 0) return true;
+    cleanedCounts.set(token, available - 1);
+  }
+
+  return false;
+}
+
+function withTerminalPunctuation(text: string, fallback: string): string {
+  const trimmed = text.trim().replace(/\s+([,.?!])/gu, "$1");
+  return /[.?!]$/u.test(trimmed) ? trimmed : `${trimmed}${fallback || "."}`;
+}
+
+function deterministicSelfCorrectionCandidate(cleanedText: string): string | null {
+  const repeatedNegated = cleanedText.match(
+    LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN,
+  );
+  if (repeatedNegated?.groups) {
+    return withTerminalPunctuation(
+      `${repeatedNegated.groups.prefix}${repeatedNegated.groups.replacement}`,
+      repeatedNegated.groups.ending ?? ".",
+    );
+  }
+
+  const wellReplacement = cleanedText.match(LETS_DO_WELL_REPLACEMENT_PATTERN);
+  if (wellReplacement?.groups) {
+    return withTerminalPunctuation(
+      `${wellReplacement.groups.prefix}${wellReplacement.groups.replacement}`,
+      wellReplacement.groups.ending ?? ".",
+    );
+  }
+
+  return null;
+}
+
+function isAllowedSpokenListRewrite(
+  cleanedText: string,
+  candidate: string,
+): boolean {
+  if (!hasSpokenListCue(cleanedText) || !hasNumberedMarkdownList(candidate)) {
+    return false;
+  }
+  return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
+}
+
 function validatePolishCandidate(
   cleanedText: string,
   polishedText: string,
 ): string | null {
   const candidate = polishedText.trim();
+  const allowedSelfCorrectionRewrite = isAllowedSelfCorrectionRewrite(
+    cleanedText,
+    candidate,
+  );
+  const allowedSpokenListRewrite = isAllowedSpokenListRewrite(
+    cleanedText,
+    candidate,
+  );
+  const allowsStructuredRewrite =
+    allowedSelfCorrectionRewrite || allowedSpokenListRewrite;
+  const isShorterSelfCorrectionCandidate =
+    hasExplicitSelfCorrectionCue(cleanedText) &&
+    countWords(candidate) < countWords(cleanedText);
+  const selfCorrectionHasUngroundedContent =
+    isShorterSelfCorrectionCandidate && hasUngroundedContent(cleanedText, candidate);
+  const isLowSimilaritySelfCorrectionRewrite =
+    isShorterSelfCorrectionCandidate &&
+    !allowedSelfCorrectionRewrite &&
+    !allowedSpokenListRewrite;
   if (!candidate) return "empty polish response";
   if (/Raw Whisper text:|VoiceLayer cleaned text to fix:/i.test(candidate)) {
     return "polish response echoed the prompt";
   }
-  if (negationCount(cleanedText) !== negationCount(candidate)) {
+  if (selfCorrectionHasUngroundedContent) {
+    return "polish response self-correction introduced new content";
+  }
+  if (isLowSimilaritySelfCorrectionRewrite) {
+    return "polish response self-correction rewrite changed too much text";
+  }
+  if (
+    negationCount(cleanedText) !== negationCount(candidate) &&
+    !allowedSelfCorrectionRewrite
+  ) {
     return "polish response changed negation";
   }
   if (removedProtectedCodePunctuation(cleanedText, candidate)) {
     return "polish response removed code punctuation";
   }
-  if (changedProtectedTokens(cleanedText, candidate)) {
+  const inventedIdentifier = introducedCodeStyleIdentifier(cleanedText, candidate);
+  if (inventedIdentifier) {
+    return `polish response invented code identifier: ${inventedIdentifier}`;
+  }
+  if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
     return "polish response changed protected tokens";
   }
 
   const cleanedChars = cleanedText.trim().length;
   const candidateChars = candidate.length;
-  if (cleanedChars >= 80) {
+  if (cleanedChars >= 80 && !allowsStructuredRewrite) {
     if (candidateChars < cleanedChars * 0.72) return "polish response dropped too much text";
     if (candidateChars > cleanedChars * 1.35) return "polish response added too much text";
   }
 
   const cleanedWords = countWords(cleanedText);
   const candidateWords = countWords(candidate);
-  if (cleanedWords >= 12) {
+  if (cleanedWords >= 12 && !allowsStructuredRewrite) {
     if (candidateWords < cleanedWords * 0.72) return "polish response dropped too many words";
     if (candidateWords > cleanedWords * 1.35) return "polish response added too many words";
     if (normalizedSimilarity(cleanedText, candidate) < 0.62) {
       return "polish response changed too much text";
     }
-  } else if (normalizedSimilarity(cleanedText, candidate) < 0.72) {
+  } else if (!allowsStructuredRewrite && normalizedSimilarity(cleanedText, candidate) < 0.72) {
     return "short polish response changed too much text";
   }
 
@@ -485,14 +695,20 @@ function applyPolishCandidate(
   ) => STTPolishResult,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
-  const rejectionReason = validatePolishCandidate(cleanedText, trimmedPolishedText);
+  const deterministicCandidate =
+    normalizedSimilarityText(cleanedText) ===
+    normalizedSimilarityText(trimmedPolishedText)
+      ? deterministicSelfCorrectionCandidate(cleanedText)
+      : null;
+  const candidateText = deterministicCandidate ?? trimmedPolishedText;
+  const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
   if (mode === "shadow") {
-    return buildResult(cleanedText, trimmedPolishedText, "shadowed", rejectionReason ?? undefined);
+    return buildResult(cleanedText, candidateText, "shadowed", rejectionReason ?? undefined);
   }
   if (rejectionReason) {
-    return buildResult(cleanedText, trimmedPolishedText, "rejected", rejectionReason);
+    return buildResult(cleanedText, candidateText, "rejected", rejectionReason);
   }
-  return buildResult(trimmedPolishedText, trimmedPolishedText, "applied");
+  return buildResult(candidateText, candidateText, "applied");
 }
 
 async function requestPolishOverHttp(

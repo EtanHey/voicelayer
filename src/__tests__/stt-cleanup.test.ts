@@ -178,6 +178,15 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("preserves leading-dot filename tokens as separate tokens", () => {
+    expect(
+      cleanupTranscriptionText("Also, if I say the .at file. Thank you."),
+    ).toBe("Also, if I say the .at file. Thank you.");
+    expect(cleanupTranscriptionText("Use the .env file next.")).toBe(
+      "Use the .env file next.",
+    );
+  });
+
   it("seeds Hebrew script preserved terms for tax and location dictation", () => {
     expect(cleanupTranscriptionText("Osek Patur")).toBe("עוסק פטור");
     expect(cleanupTranscriptionText("Reshut HaMisim")).toBe("רשות המסים");

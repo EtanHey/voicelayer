@@ -27,6 +27,8 @@
 export interface DeployProbe {
   /** Version from the repo's package.json (the just-merged source of truth). */
   repoVersion: string;
+  /** Current checkout commit when this check runs from a git worktree. */
+  repoGitCommit: string | null;
   /** Installed app path being evaluated. Defaults to `/Applications/VoiceBar.app`. */
   appPath?: string;
   /** Whether the configured VoiceBar.app bundle exists on this machine. */
@@ -35,7 +37,11 @@ export interface DeployProbe {
   installedAppVersion: string | null;
   /** Installed bundle's Info.plist CFBundleShortVersionString. */
   installedPlistVersion: string | null;
-  /** mtime of the installed bundle's copied package.json build provenance file. */
+  /** Installed bundle's Info.plist GitCommit stamp. */
+  installedGitCommit: string | null;
+  /** Installed bundle's Info.plist BuildTimeUTC stamp. */
+  installedBuildTimeUTC: string | null;
+  /** Parsed BuildTimeUTC timestamp for freshness checks. */
   installedBuildTimeMs: number | null;
   /** VoiceBar.app process is running. */
   voiceBarRunning: boolean;
@@ -136,7 +142,13 @@ export function evaluateDeployFreshness(probe: DeployProbe): DeployAssessment {
     ),
   );
 
-  // 4. The app must actually be running.
+  // 4. Info.plist GitCommit == current checkout SHA when the checker is run from git.
+  checks.push(gitCommitCheck(probe.repoGitCommit, probe.installedGitCommit));
+
+  // 5. Info.plist BuildTimeUTC must exist and parse; process freshness depends on it.
+  checks.push(buildTimeUtcCheck(probe.installedBuildTimeUTC, probe.installedBuildTimeMs));
+
+  // 6. The app must actually be running.
   checks.push(
     probe.voiceBarRunning
       ? {
@@ -153,7 +165,7 @@ export function evaluateDeployFreshness(probe: DeployProbe): DeployAssessment {
         },
   );
 
-  // 5. The running app must not predate the installed bundle on disk.
+  // 7. The running app must not predate the installed bundle on disk.
   checks.push(
     processFreshnessCheck(
       "voicebar-process-fresh",
@@ -164,7 +176,7 @@ export function evaluateDeployFreshness(probe: DeployProbe): DeployAssessment {
     ),
   );
 
-  // 6. The MCP daemon child (the audio path) must be alive.
+  // 8. The MCP daemon child (the audio path) must be alive.
   checks.push(
     probe.daemonChildAlive
       ? {
@@ -180,7 +192,7 @@ export function evaluateDeployFreshness(probe: DeployProbe): DeployAssessment {
         },
   );
 
-  // 7. The daemon child must also have restarted after the installed bundle.
+  // 9. The daemon child must also have restarted after the installed bundle.
   checks.push(
     processFreshnessCheck(
       "daemon-child-fresh",
@@ -191,7 +203,7 @@ export function evaluateDeployFreshness(probe: DeployProbe): DeployAssessment {
     ),
   );
 
-  const ok = checks.every((c) => c.status === "pass");
+  const ok = checks.every((c) => c.status !== "fail");
   return { ok, applicable: true, repoVersion: probe.repoVersion, checks };
 }
 
@@ -220,6 +232,65 @@ function versionCheck(
     name,
     status: "pass",
     detail: `${observedPrefix} ${installed} (matches repo).`,
+  };
+}
+
+function gitCommitCheck(
+  repoGitCommit: string | null,
+  installedGitCommit: string | null,
+): DeployCheckResult {
+  if (repoGitCommit == null) {
+    return {
+      name: "app-git-commit",
+      status: "skip",
+      detail:
+        "Current checkout commit is unavailable; package version and plist build time are still checked.",
+    };
+  }
+  if (installedGitCommit == null) {
+    return {
+      name: "app-git-commit",
+      status: "fail",
+      detail: `Could not read installed Info.plist GitCommit (expected ${repoGitCommit.slice(0, 7)}). Rebuild + reinstall VoiceBar.`,
+    };
+  }
+  if (installedGitCommit !== repoGitCommit) {
+    return {
+      name: "app-git-commit",
+      status: "fail",
+      detail: `Stale: installed Info.plist GitCommit is ${installedGitCommit.slice(0, 7)}, but repo HEAD is ${repoGitCommit.slice(0, 7)}. Rebuild + reinstall VoiceBar.`,
+    };
+  }
+  return {
+    name: "app-git-commit",
+    status: "pass",
+    detail: `installed Info.plist GitCommit ${installedGitCommit.slice(0, 7)} matches repo HEAD.`,
+  };
+}
+
+function buildTimeUtcCheck(
+  installedBuildTimeUTC: string | null,
+  installedBuildTimeMs: number | null,
+): DeployCheckResult {
+  if (installedBuildTimeUTC == null) {
+    return {
+      name: "app-build-time-utc",
+      status: "fail",
+      detail:
+        "Could not read installed Info.plist BuildTimeUTC. Rebuild with the provenance-stamping build script.",
+    };
+  }
+  if (installedBuildTimeMs == null) {
+    return {
+      name: "app-build-time-utc",
+      status: "fail",
+      detail: `Installed Info.plist BuildTimeUTC is not parseable: ${installedBuildTimeUTC}. Rebuild with an ISO UTC timestamp.`,
+    };
+  }
+  return {
+    name: "app-build-time-utc",
+    status: "pass",
+    detail: `installed Info.plist BuildTimeUTC ${installedBuildTimeUTC} is parseable.`,
   };
 }
 

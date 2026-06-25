@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { handleVoiceAsk, handleVoiceSpeak } from "../handlers";
 import * as input from "../input";
+import * as recordingState from "../recording-state";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import * as tts from "../tts";
@@ -12,6 +13,7 @@ describe("SoundLayer MCP compatibility regression", () => {
   let awaitPlaybackSpy: ReturnType<typeof spyOn>;
   let waitForInputSpy: ReturnType<typeof spyOn>;
   let isConnectedSpy: ReturnType<typeof spyOn>;
+  let recordingStateSpy: ReturnType<typeof spyOn>;
   let bookingSpy: ReturnType<typeof spyOn>;
   let bookSpy: ReturnType<typeof spyOn>;
   let clearInputSpy: ReturnType<typeof spyOn>;
@@ -27,6 +29,10 @@ describe("SoundLayer MCP compatibility regression", () => {
     );
     waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("answer");
     isConnectedSpy = spyOn(socketClient, "isConnected").mockReturnValue(true);
+    recordingStateSpy = spyOn(
+      recordingState,
+      "getEffectiveRecordingState",
+    ).mockReturnValue("idle");
     bookingSpy = spyOn(sessionBooking, "isVoiceBooked").mockReturnValue({
       booked: true,
       ownedByUs: true,
@@ -53,6 +59,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     awaitPlaybackSpy.mockRestore();
     waitForInputSpy.mockRestore();
     isConnectedSpy.mockRestore();
+    recordingStateSpy.mockRestore();
     bookingSpy.mockRestore();
     bookSpy.mockRestore();
     clearInputSpy.mockRestore();

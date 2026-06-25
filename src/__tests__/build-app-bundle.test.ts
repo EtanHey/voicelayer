@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 // Static contract tests for flow-bar/build-app.sh: every runtime asset that
@@ -16,6 +16,14 @@ const buildScript = readFileSync(
 );
 const packageJson = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+);
+const entitlementsPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "flow-bar",
+  "bundle",
+  "VoiceBar.entitlements",
 );
 
 describe("build-app.sh bundles runtime assets", () => {
@@ -42,5 +50,85 @@ describe("build-app.sh bundles runtime assets", () => {
 
   test("npm package includes bundle metadata needed by build-app", () => {
     expect(packageJson.files).toContain("flow-bar/bundle/");
+  });
+});
+
+describe("build-app.sh Developer ID release contract", () => {
+  test("uses the Developer ID Application identity with hardened runtime and a real timestamp", () => {
+    expect(buildScript).toContain(
+      "Developer ID Application: Etan Heyman (PPN23G925Y)",
+    );
+    expect(buildScript).not.toContain(
+      "Apple Development: Etan Heyman (DXHB5E7P2D)",
+    );
+    expect(buildScript).toContain("--options runtime");
+    expect(buildScript).toContain("--timestamp");
+    expect(buildScript).not.toContain("--timestamp=none");
+  });
+
+  test("signs hardened-runtime VoiceBar with microphone entitlement", () => {
+    expect(existsSync(entitlementsPath)).toBe(true);
+    const entitlements = readFileSync(entitlementsPath, "utf-8");
+    expect(entitlements).toContain(
+      "com.apple.security.device.audio-input",
+    );
+    expect(entitlements).toContain("<true/>");
+    expect(buildScript).toContain("VOICEBAR_ENTITLEMENTS");
+    expect(buildScript).toContain("--entitlements");
+    expect(buildScript).toMatch(
+      /--entitlements "\$VOICEBAR_ENTITLEMENTS"/,
+    );
+  });
+
+  test("stamps git provenance into the built VoiceBar Info.plist", () => {
+    expect(buildScript).toContain("stamp_info_plist");
+    expect(buildScript).toContain("GitCommit");
+    expect(buildScript).toContain("BuildTimeUTC");
+    expect(buildScript).toContain("git_commit");
+    expect(buildScript).toContain("build_time_utc");
+  });
+
+  test("submits a zip to notarytool and staples the accepted ticket", () => {
+    expect(buildScript).toContain("notarytool submit");
+    expect(buildScript).toContain("xcrun stapler staple");
+    expect(buildScript).toContain("xcrun stapler validate");
+    expect(buildScript).toContain("VOICEBAR_NOTARY_PROFILE");
+    expect(buildScript).toContain("VOICEBAR_NOTARY_KEYCHAIN_PROFILE");
+    expect(buildScript).toContain("--keychain-profile");
+    expect(buildScript).toMatch(/ditto -c -k --keepParent "\$APP_DIR"/);
+  });
+
+  test("requires notarization before producing a Homebrew release zip", () => {
+    expect(buildScript).toContain("VOICEBAR_RELEASE_ZIP");
+    expect(buildScript).toContain("VOICEBAR_REQUIRE_NOTARIZATION");
+    expect(buildScript).toContain("Homebrew release zip requires notarization");
+    expect(buildScript).toMatch(/ditto -c -k --keepParent "\$APP_DIR" "\$VOICEBAR_RELEASE_ZIP"/);
+  });
+});
+
+describe("VoiceBar Homebrew release script contract", () => {
+  const releaseScript = readFileSync(
+    join(import.meta.dir, "..", "..", "scripts", "release-voicebar.sh"),
+    "utf-8",
+  );
+
+  test("builds a notarized release zip from a non-resident install path", () => {
+    expect(releaseScript).toContain("--install-path");
+    expect(releaseScript).toContain("--no-stop");
+    expect(releaseScript).toContain("--no-relaunch");
+    expect(releaseScript).toContain("VOICEBAR_RELEASE_ZIP");
+    expect(releaseScript).toContain("VOICEBAR_ENTITLEMENTS");
+    expect(releaseScript).toContain("VOICEBAR_REQUIRE_NOTARIZATION=1");
+    expect(releaseScript).toContain("VOICEBAR_NOTARY_PROFILE");
+    expect(releaseScript).toContain("notary-layers");
+    expect(releaseScript).toContain("VoiceBar.zip");
+    expect(releaseScript).not.toContain("/Applications/VoiceBar.app");
+  });
+
+  test("prints the Homebrew cask bump inputs for EtanHey/homebrew-layers", () => {
+    expect(releaseScript).toContain("EtanHey/homebrew-layers");
+    expect(releaseScript).toContain("Casks/voicebar.rb");
+    expect(releaseScript).toContain("sha256");
+    expect(releaseScript).toContain("gh release upload");
   });
 });

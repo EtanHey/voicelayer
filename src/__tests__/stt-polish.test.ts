@@ -301,7 +301,55 @@ describe("stt-polish", () => {
       status: "rejected",
       changed: false,
     });
-    expect(result.error).toContain("short polish response changed too much");
+    expect(result.error).toContain("invented code identifier");
+  });
+
+  it("rejects polish candidates that invent code-style identifiers", async () => {
+    server = createMockPolishServer(() => ({
+      text: "By the way, is BrainSearch or BrainInjecting helping?",
+    }));
+
+    const cleanedText = "By the way, is brain search or brain injecting helping?";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText: "By the way, is BrainSearch or BrainInjecting helping?",
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("invented code identifier");
+  });
+
+  it("allows known vocabulary code identifiers from dictation-finalizer examples", async () => {
+    server = createMockPolishServer(() => ({
+      text: "תרים את ה-handleSocketCommand",
+    }));
+
+    const cleanedText = "תרים את ה handle socket command";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "תרים את ה-handleSocketCommand",
+      status: "applied",
+      changed: true,
+    });
   });
 
   it("rejects polish candidates that remove negation from short dictation", async () => {
@@ -371,6 +419,173 @@ describe("stt-polish", () => {
 
     expect(result).toMatchObject({
       text: "Also, do /whats-new and output that as your summary.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows explicit self-correction cleanup in dictation finalizer mode", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay, let's do Claude deep research.",
+    }));
+
+    const cleanedText = "Okay, let's do Gemini deep, well no, Claude deep research.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Claude deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows explicit self-correction cleanup when Whisper punctuates the cue", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay, let's do Claude Deep Research.",
+    }));
+
+    const cleanedText =
+      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Claude Deep Research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows real correction-cue collapse that removes the rejected phrase and its no/not scaffolding", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay, let's do a Gemini deep research.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: "okay let's do a Claude well no not Claude let's do a Gemini deep research",
+      cleanedText:
+        "Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do a Gemini deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows punctuation polish for non-correction text that preserves existing negation meaning", async () => {
+    const polished =
+      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's no numbering and there's no corrections. The .at file seems to be one of the only things that's fixed; other than punctuation, it seems to work now pretty reliably.";
+    server = createMockPolishServer(() => ({ text: polished }));
+
+    const cleanedText =
+      "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's 0 numbering and there's no corrections. The .at file seems to be 1 of the only things that's fixed other than punctuation as well seems to work now pretty reliably.";
+    const result = await polishTranscriptionText({
+      rawText:
+        "Yeah, it seems like quotes are not happening anymore, where in the past they did happen generally. There's zero numbering and there's no corrections. The .at file seems to be one of the only things that's fixed other than punctuation as well seems to work now pretty reliably.",
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polished,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("collapses a real self-correction cue even when the polish model returns the candidate unchanged", async () => {
+    server = createMockPolishServer((request) => ({
+      text: String(request.cleaned_text),
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: "Okay, let's do a clawed deep, well, Gemini deep research.",
+      cleanedText: "Okay, let's do a Claude deep, well, Gemini deep research.",
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay, let's do Gemini deep research.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects self-correction rewrites that introduce new content even with explicit cues", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Please run tests before production release.",
+    }));
+
+    const cleanedText =
+      "Please deploy to staging, well no, run tests before merge.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText: "Please run tests before production release.",
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("introduced new content");
+  });
+
+  it("allows explicit spoken-list restructuring into numbered markdown", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    }));
+
+    const cleanedText =
+      "Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
       status: "applied",
       changed: true,
     });
@@ -544,9 +759,21 @@ describe("stt-polish", () => {
         content: string;
       }>;
       expect(messages[0].role).toBe("system");
-      expect(messages[0].content).toContain("missing sentence punctuation");
-      expect(messages[0].content).toContain("Why did it do that? I am confused.");
-      expect(messages[0].content).toContain("If unsure, return the input unchanged");
+      expect(messages[0].content).toContain("dictation finalizer");
+      expect(messages[0].content).toContain("well no");
+      expect(messages[0].content).toContain("numbered markdown lists");
+      expect(messages[0].content).toContain("ANY ordinal sequence");
+      expect(messages[0].content).toContain("Input: So first of all");
+      expect(messages[0].content).toContain("third, I'm very frustrated");
+      expect(messages[0].content).toContain("not Claude let's do a Gemini");
+      expect(messages[0].content).toContain("Claude deep, well, Gemini");
+      expect(messages[0].content).toContain("did X");
+      expect(messages[0].content).toContain("I just went to the supermarket");
+      expect(messages[0].content).toContain(".at");
+      expect(messages[0].content).toContain("Preserve Hebrew");
+      expect(messages[0].content).not.toContain(
+        "If unsure, return the input unchanged",
+      );
       expect(messages[1].content).toContain(
         "Also, do / what's new and output that as your summary",
       );

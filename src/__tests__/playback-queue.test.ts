@@ -314,6 +314,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
 describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
+  let recordingStateSpy: ReturnType<typeof spyOn>;
   let playerMocks: MockPlayer[];
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
@@ -329,6 +330,10 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
+    recordingStateSpy = spyOn(
+      recordingState,
+      "getEffectiveRecordingState",
+    ).mockReturnValue("idle");
 
     // @ts-ignore
     Bun.spawnSync = (cmd: string[]) => {
@@ -376,6 +381,7 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
     } catch {}
 
     broadcastSpy.mockRestore();
+    recordingStateSpy.mockRestore();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
   });

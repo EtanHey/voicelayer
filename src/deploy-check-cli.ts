@@ -17,7 +17,7 @@
  *   VOICEBAR_APP_PATH=/path/VoiceBar.app bun run src/deploy-check-cli.ts
  *   VOICELAYER_DEPLOY_CHECK_APPLICABLE=0 ...   # force inconclusive (off-target)
  */
-import { existsSync, readFileSync, statSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import {
   evaluateDeployFreshness,
@@ -38,7 +38,7 @@ function readJsonVersion(path: string): string | null {
   }
 }
 
-function readPlistVersion(appPath: string): string | null {
+function readPlistString(appPath: string, key: string): string | null {
   const infoPlist = join(appPath, "Contents", "Info.plist");
   // Use plutil with the real file path. `defaults read` has .plist suffix
   // behavior that differs across macOS versions and can become ambiguous
@@ -46,7 +46,7 @@ function readPlistVersion(appPath: string): string | null {
   const out = Bun.spawnSync([
     "plutil",
     "-extract",
-    "CFBundleShortVersionString",
+    key,
     "raw",
     "-o",
     "-",
@@ -57,12 +57,17 @@ function readPlistVersion(appPath: string): string | null {
   return v.length > 0 ? v : null;
 }
 
-function readMtimeMs(path: string): number | null {
-  try {
-    return statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
+function parseBuildTimeMs(buildTimeUTC: string | null): number | null {
+  if (buildTimeUTC == null) return null;
+  const parsed = Date.parse(buildTimeUTC);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readRepoGitCommit(): string | null {
+  const out = Bun.spawnSync(["git", "-C", PACKAGE_ROOT, "rev-parse", "HEAD"]);
+  if (out.exitCode !== 0) return null;
+  const commit = out.stdout.toString().trim();
+  return /^[0-9a-f]{40}$/i.test(commit) ? commit : null;
 }
 
 interface ProcessRow {
@@ -141,14 +146,18 @@ function applicability(): boolean {
 function gatherProbe(): DeployProbe {
   const repoVersion =
     readJsonVersion(join(PACKAGE_ROOT, "package.json")) ?? "unknown";
+  const repoGitCommit = readRepoGitCommit();
   const applicable = applicability();
   if (!applicable) {
     return {
       repoVersion,
+      repoGitCommit,
       appPath: APP_PATH,
       appPresent: false,
       installedAppVersion: null,
       installedPlistVersion: null,
+      installedGitCommit: null,
+      installedBuildTimeUTC: null,
       installedBuildTimeMs: null,
       voiceBarRunning: false,
       voiceBarStartedAtMs: null,
@@ -165,6 +174,9 @@ function gatherProbe(): DeployProbe {
     "Resources",
     "package.json",
   );
+  const installedBuildTimeUTC = appPresent
+    ? readPlistString(APP_PATH, "BuildTimeUTC")
+    : null;
   const rows = processRows();
   const voiceBarPids = appProcessPids(APP_PATH, rows);
   const daemonChildPids = childProcessPids(
@@ -175,13 +187,18 @@ function gatherProbe(): DeployProbe {
 
   return {
     repoVersion,
+    repoGitCommit,
     appPath: APP_PATH,
     appPresent,
     installedAppVersion: appPresent
       ? readJsonVersion(installedPackagePath)
       : null,
-    installedPlistVersion: appPresent ? readPlistVersion(APP_PATH) : null,
-    installedBuildTimeMs: appPresent ? readMtimeMs(installedPackagePath) : null,
+    installedPlistVersion: appPresent
+      ? readPlistString(APP_PATH, "CFBundleShortVersionString")
+      : null,
+    installedGitCommit: appPresent ? readPlistString(APP_PATH, "GitCommit") : null,
+    installedBuildTimeUTC,
+    installedBuildTimeMs: parseBuildTimeMs(installedBuildTimeUTC),
     voiceBarRunning: voiceBarPids.length > 0,
     voiceBarStartedAtMs: oldestProcessStartTimeMs(voiceBarPids),
     daemonChildAlive: daemonChildPids.length > 0,

@@ -1186,6 +1186,15 @@ describe("STT backends", () => {
       ).toBe("hello world, and then continue");
     });
 
+    it("deduplicates quoted chunk overlap when quote spacing differs at the boundary", () => {
+      expect(
+        mergeChunkTranscripts([
+          'Would"distill whisper"work if it is English only',
+          '"distill whisper" work if it is English only, though',
+        ]),
+      ).toBe('Would "distill whisper" work if it is English only, though');
+    });
+
     it("does not collapse distinct operator-only tokens at chunk boundaries", () => {
       // Regression: `normalizeChunkWordForOverlap` previously stripped all
       // non-alphanumeric chars, so punctuation-only tokens like `==` and
