@@ -577,11 +577,11 @@ public final class VoiceState {
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
-        cancelDeferredFinalTranscription()
+        cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
         pendingRecoveredTranscriptionPaste = false
-        pendingHistoryRetranscriptionPath = nil
+        clearHistoryRetranscriptionRequest(removeSuppression: false)
         clearRecordStartLateRecovery(clearPasteTarget: true)
         keepsPasteFlowEnvelope = false
         transcribingStartedAt = nil
@@ -680,11 +680,11 @@ public final class VoiceState {
                 }
                 enterIdleState(clearQueue: idleSource == "playback")
             case "speaking":
-                cancelDeferredFinalTranscription()
+                cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
-                pendingHistoryRetranscriptionPath = nil
+                clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
                 mode = .speaking
@@ -705,7 +705,7 @@ public final class VoiceState {
                 pendingRecordingIdleAfterFinal = false
                 pendingIdleAfterAutoPasteCompletion = false
                 pendingRecoveredTranscriptionPaste = false
-                pendingHistoryRetranscriptionPath = nil
+                clearHistoryRetranscriptionRequest(removeSuppression: false)
                 transcribingStartedAt = nil
                 transcribingStatusText = nil
                 errorMessage = nil
