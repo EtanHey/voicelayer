@@ -64,6 +64,7 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).toContain("--options runtime");
     expect(buildScript).toContain("--timestamp");
     expect(buildScript).not.toContain("--timestamp=none");
+    expect(buildScript).not.toContain("--deep --options runtime");
   });
 
   test("signs hardened-runtime VoiceBar with microphone entitlement", () => {

@@ -60,7 +60,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
   test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {
     const stopIndex = buildScript.indexOf("stop_voicebar_instances");
     const buildIndex = buildScript.indexOf("swift build -c release");
-    const signIndex = buildScript.indexOf("codesign --force --deep");
+    const signIndex = buildScript.indexOf("codesign --force --options runtime");
     const relaunchIndex = buildScript.lastIndexOf("relaunch_voicebar_app");
 
     expect(buildScript).toContain('VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"');

@@ -563,7 +563,7 @@ if [ ! -f "$VOICEBAR_ENTITLEMENTS" ]; then
     exit 1
 fi
 echo "[build-app] Entitlements: $VOICEBAR_ENTITLEMENTS"
-codesign --force --deep --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
+codesign --force --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 
 echo "[build-app] Verifying signature..."
 if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
