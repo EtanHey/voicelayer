@@ -202,7 +202,10 @@ public enum VoiceBarPresentation {
         case .recording:
             recordingContent(hotkeyPhase: hotkeyPhase).statusText
         case .transcribing:
-            transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            {
+                let trimmed = transcribingStatusText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return trimmed.isEmpty ? "Transcribing..." : trimmed
+            }()
         case .error:
             errorStatusText(errorMessage)
         }

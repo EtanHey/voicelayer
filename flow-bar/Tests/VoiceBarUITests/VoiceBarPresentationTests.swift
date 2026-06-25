@@ -136,7 +136,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testLiveStatusTextHidesTranscribingLabelDuringTranscribing() {
+    func testLiveStatusTextUsesFallbackLabelDuringTranscribing() {
         XCTAssertEqual(
             VoiceBarPresentation.liveStatusText(
                 mode: .transcribing,
@@ -149,7 +149,24 @@ final class VoiceBarPresentationTests: XCTestCase {
                 commandModeState: nil,
                 activeClipMarker: nil
             ),
-            ""
+            "Transcribing..."
+        )
+    }
+
+    func testLiveStatusTextUsesFallbackLabelWhenTranscribingStatusIsWhitespace() {
+        XCTAssertEqual(
+            VoiceBarPresentation.liveStatusText(
+                mode: .transcribing,
+                transcript: "ignored",
+                confirmationText: nil,
+                hotkeyPhase: .idle,
+                hotkeyEnabled: true,
+                errorMessage: nil,
+                transcribingStatusText: "   \n",
+                commandModeState: nil,
+                activeClipMarker: nil
+            ),
+            "Transcribing..."
         )
     }
 
