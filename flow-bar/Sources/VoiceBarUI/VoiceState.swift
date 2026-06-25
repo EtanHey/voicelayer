@@ -438,6 +438,8 @@ public final class VoiceState {
 
     public func unsnooze() {
         guard mode == .disconnected else { return }
+        keepsPasteFlowEnvelope = false
+        isCollapsed = false
         mode = .idle
         onModeChange?(.idle)
         startCollapseTimer()

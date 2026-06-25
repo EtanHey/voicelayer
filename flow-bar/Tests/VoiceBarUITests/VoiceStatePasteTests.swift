@@ -144,6 +144,22 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.mode, .idle)
     }
 
+    func testUnsnoozeClearsPasteFlowEnvelopeAndRequestsPanelRelayout() async {
+        let state = VoiceState()
+        state.snooze()
+        XCTAssertTrue(state.keepsPasteFlowEnvelope)
+        var relayoutCount = 0
+        state.onPanelLayoutChange = {
+            relayoutCount += 1
+        }
+
+        state.unsnooze()
+        try? await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(state.keepsPasteFlowEnvelope)
+        XCTAssertGreaterThanOrEqual(relayoutCount, 1)
+    }
+
     func testSnoozeClearsActiveRecordingAudioLevel() throws {
         let state = VoiceState()
         state.handleEvent([
