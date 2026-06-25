@@ -160,6 +160,23 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(relayoutCount, 1)
     }
 
+    func testModalInteractionSuppressesIdleCollapseAndRestoresExpandedState() async {
+        let state = VoiceState()
+        state.idleCollapseDelay = 0.01
+        state.mode = .idle
+
+        state.beginModalInteraction()
+        state.setHovering(false)
+        try? await Task.sleep(for: .milliseconds(30))
+
+        XCTAssertFalse(state.isCollapsed)
+
+        state.isCollapsed = true
+        state.endModalInteraction()
+
+        XCTAssertFalse(state.isCollapsed)
+    }
+
     func testSnoozeClearsActiveRecordingAudioLevel() throws {
         let state = VoiceState()
         state.handleEvent([

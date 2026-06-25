@@ -1211,6 +1211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentAddToDictionarySheetFromSelection() {
+        voiceState.beginModalInteraction()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let selection = FrontmostSelectionReader.readCurrentSelection()
             DispatchQueue.main.async { [weak self] in
@@ -1268,6 +1269,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         sheet.close()
         dictionarySheetWindow = nil
+        voiceState.endModalInteraction()
     }
 
     func quickMenuActions() -> [VoiceBarMenuAction] {

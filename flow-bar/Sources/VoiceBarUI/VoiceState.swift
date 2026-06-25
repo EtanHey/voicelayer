@@ -168,6 +168,8 @@ public final class VoiceState {
 
     /// Timer for idle collapse.
     private var collapseTimer: Task<Void, Never>?
+    private var modalInteractionDepth = 0
+    public var idleCollapseDelay: TimeInterval = Theme.collapseDelay
 
     /// Tracks the last user intent sent to the daemon until the matching ack returns.
     public var pendingIntent: PendingIntent?
@@ -888,10 +890,11 @@ public final class VoiceState {
     // MARK: - Idle collapse
 
     private func startCollapseTimer() {
+        guard modalInteractionDepth == 0 else { return }
         collapseTimer?.cancel()
         collapseTimer = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(Theme.collapseDelay))
-            if !Task.isCancelled, mode == .idle, !isHovering {
+            try? await Task.sleep(for: .seconds(idleCollapseDelay))
+            if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
                 withAnimation(.smooth(duration: 0.3)) {
                     isCollapsed = true
                 }
@@ -917,6 +920,18 @@ public final class VoiceState {
         if !hovering, mode == .idle {
             startCollapseTimer()
         }
+    }
+
+    public func beginModalInteraction() {
+        modalInteractionDepth += 1
+        collapseTimer?.cancel()
+        expandFromCollapse()
+    }
+
+    public func endModalInteraction() {
+        modalInteractionDepth = max(0, modalInteractionDepth - 1)
+        guard modalInteractionDepth == 0 else { return }
+        expandFromCollapse()
     }
 
     public func setHotkeyEnabled(_ enabled: Bool) {
