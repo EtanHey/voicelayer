@@ -68,6 +68,48 @@ public final class PillContextMenuController: NSObject {
         historyItem.submenu = makeRecentTranscriptsSubmenu()
         menu.addItem(historyItem)
 
+        let pasteItem = NSMenuItem(
+            title: "Paste last transcript",
+            action: #selector(handlePasteLastTranscript),
+            keyEquivalent: ""
+        )
+        pasteItem.target = self
+        pasteItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        menu.addItem(pasteItem)
+
+        let copyItem = NSMenuItem(
+            title: "Copy last transcript",
+            action: #selector(handleCopyLastTranscript),
+            keyEquivalent: ""
+        )
+        copyItem.target = self
+        copyItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
+        menu.addItem(copyItem)
+
+        let toolsItem = NSMenuItem(title: "Transcription Tools", action: nil, keyEquivalent: "")
+        toolsItem.submenu = makeTranscriptionToolsSubmenu()
+        menu.addItem(toolsItem)
+
+        let preferencesItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: "")
+        preferencesItem.submenu = makePreferencesSubmenu()
+        menu.addItem(preferencesItem)
+
+        menu.addItem(.separator())
+
+        let quitItem = NSMenuItem(
+            title: "Quit VoiceBar",
+            action: #selector(handleQuit),
+            keyEquivalent: ""
+        )
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    public func makeTranscriptionToolsSubmenu() -> NSMenu {
+        let menu = NSMenu()
+
         let recoverItem = NSMenuItem(
             title: "Transcribe latest recording",
             action: #selector(handleTranscribeLatestRecording),
@@ -88,6 +130,12 @@ public final class PillContextMenuController: NSObject {
         vocabularyItem.submenu = makeTranscriptionVocabularySubmenu()
         menu.addItem(vocabularyItem)
 
+        return menu
+    }
+
+    public func makePreferencesSubmenu() -> NSMenu {
+        let menu = NSMenu()
+
         let anchorItem = NSMenuItem(title: "Anchor", action: nil, keyEquivalent: "")
         anchorItem.submenu = makeAnchorSubmenu()
         menu.addItem(anchorItem)
@@ -95,34 +143,6 @@ public final class PillContextMenuController: NSObject {
         let microphoneItem = NSMenuItem(title: "Microphone", action: nil, keyEquivalent: "")
         microphoneItem.submenu = makeMicrophoneSubmenu()
         menu.addItem(microphoneItem)
-
-        let pasteItem = NSMenuItem(
-            title: "Paste last transcript",
-            action: #selector(handlePasteLastTranscript),
-            keyEquivalent: ""
-        )
-        pasteItem.target = self
-        pasteItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
-        menu.addItem(pasteItem)
-
-        let copyItem = NSMenuItem(
-            title: "Copy last transcript",
-            action: #selector(handleCopyLastTranscript),
-            keyEquivalent: ""
-        )
-        copyItem.target = self
-        copyItem.isEnabled = Self.isPasteEnabled(transcript: transcriptProvider())
-        menu.addItem(copyItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(
-            title: "Quit VoiceBar",
-            action: #selector(handleQuit),
-            keyEquivalent: ""
-        )
-        quitItem.target = self
-        menu.addItem(quitItem)
 
         return menu
     }
