@@ -605,6 +605,42 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "older history item")
     }
 
+    func testSettingsHistoryRepasteUsesCapturedExternalTargetAndAXInsertion() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let capturedApp = NSRunningApplication.current
+        var frontmostApp: NSRunningApplication? = capturedApp
+        state.frontmostAppProvider = { frontmostApp }
+        var activatedApps: [NSRunningApplication] = []
+        state.targetAppActivator = { activatedApps.append($0) }
+        var insertionCaptureCount = 0
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteShortcutPosted = false
+        state.dictationInsertionHandlerProvider = {
+            insertionCaptureCount += 1
+            return { text in
+                insertedTexts.append(text)
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        frontmostApp = NSRunningApplication.current
+        state.repasteTranscript("settings history line", source: "settings_history")
+
+        XCTAssertEqual(insertionCaptureCount, 1)
+        XCTAssertEqual(activatedApps, [capturedApp])
+        XCTAssertEqual(insertedTexts, ["settings history line"])
+        XCTAssertEqual(clipboardWrites, [])
+        XCTAssertFalse(pasteShortcutPosted)
+    }
+
     func testCopyTranscriptWritesRequestedHistoryItemToPasteboard() {
         let state = VoiceState()
 

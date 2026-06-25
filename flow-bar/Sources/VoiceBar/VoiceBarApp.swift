@@ -61,9 +61,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     )
     lazy var commandRouter = VoiceBarCommandRouter(
         voiceState: voiceState,
-        resetHotkeyState: { [weak self] in
-            self?.resetHotkeyTracking()
-        }
+        resetHotkeyState: { [weak self] in self?.resetHotkeyTracking() },
+        showVoiceBar: { [weak self] in self?.unsnoozeNow() }
     )
     private lazy var audioLevelMonitor = AudioLevelMonitor { [weak self] level in
         self?.voiceState.setLocalRecordingLevel(level)
@@ -1275,6 +1274,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         VoiceBarMenu.quickActions(
             isSnoozed: isSnoozed,
             openSettings: { [weak self] in self?.openSettingsWindow() },
+            showVoiceBar: { [weak self] in self?.commandRouter.handleShowVoiceBar() },
             snoozeToggle: { [weak self] in
                 guard let self else { return }
                 if isSnoozed { unsnoozeNow() } else { snoozeForOneHour() }
@@ -1292,6 +1292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func openSettingsWindow() {
+        voiceState.captureSettingsHistoryPasteTarget()
         NSApp.activate(ignoringOtherApps: true)
         if let settingsWindow {
             settingsWindow.makeKeyAndOrderFront(nil)

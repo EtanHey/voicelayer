@@ -197,6 +197,8 @@ public final class VoiceState {
 
     /// The most recent app we pasted into. Reused for Shift+F5 re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
+    private var settingsHistoryPasteTargetApp: NSRunningApplication?
+    private var settingsHistoryInsertionHandler: ((String) -> Bool)?
 
     /// Test seam for paste side effects. When set, bypasses system paste.
     public var pasteHandler: ((String) -> Bool)?
@@ -460,12 +462,32 @@ public final class VoiceState {
     public func repasteTranscript(_ text: String, source: String = "unknown") {
         let reusableText = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !reusableText.isEmpty else { return }
+        let usesSettingsHistoryTarget = source == "settings_history"
         logDiagnostic("repaste_requested", details: [
             "transcriptLength": String(reusableText.count),
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
             "source": source,
         ])
-        pasteTranscript(reusableText, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+        pasteTranscript(
+            reusableText,
+            for: resolvedPasteTarget(
+                forRepaste: true,
+                useSettingsHistoryTarget: usesSettingsHistoryTarget
+            ),
+            plan: .repaste,
+            allowAXInsertion: usesSettingsHistoryTarget
+        )
+    }
+
+    public func captureSettingsHistoryPasteTarget() {
+        let front = frontmostAppProvider()
+        guard front?.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            settingsHistoryPasteTargetApp = nil
+            settingsHistoryInsertionHandler = nil
+            return
+        }
+        settingsHistoryPasteTargetApp = front
+        settingsHistoryInsertionHandler = dictationInsertionHandlerProvider()
     }
 
     public func copyLastTranscript() {
@@ -1155,9 +1177,16 @@ public final class VoiceState {
 
     // MARK: - Paste transcription at cursor
 
-    private func resolvedPasteTarget(forRepaste repaste: Bool) -> NSRunningApplication? {
+    private func resolvedPasteTarget(
+        forRepaste repaste: Bool,
+        useSettingsHistoryTarget: Bool = false
+    ) -> NSRunningApplication? {
         let currentFront = frontmostAppProvider()
         let isSelf = currentFront?.bundleIdentifier == Bundle.main.bundleIdentifier
+
+        if useSettingsHistoryTarget {
+            return settingsHistoryPasteTargetApp ?? (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
+        }
 
         if repaste {
             return (!isSelf ? currentFront : nil) ?? lastPasteTargetApp
@@ -1170,7 +1199,8 @@ public final class VoiceState {
     private func pasteTranscript(
         _ text: String,
         for targetApp: NSRunningApplication?,
-        plan: VoicePastePlan
+        plan: VoicePastePlan,
+        allowAXInsertion: Bool = false
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
@@ -1219,9 +1249,12 @@ public final class VoiceState {
                 }
                 let pasteTargetBundleID = pasteTarget?.bundleIdentifier ?? "nil"
                 let targetMatchesRecordStart = Self.sameApp(pasteTarget, recordStartTargetApp)
+                let targetMatchesSettingsHistory = Self.sameApp(pasteTarget, settingsHistoryPasteTargetApp)
                 let capturedInsertionHandler =
                     plan == .autoPaste && targetMatchesRecordStart && currentPasteTarget == nil
                         ? insertionHandler
+                        : allowAXInsertion && targetMatchesSettingsHistory
+                        ? settingsHistoryInsertionHandler
                         : nil
 
                 guard let pasteTarget else {
@@ -1257,7 +1290,7 @@ public final class VoiceState {
                     }
 
                     let freshInsertionHandler =
-                        plan == .autoPaste
+                        plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil)
                             ? dictationInsertionHandlerProvider()
                             : nil
                     if let freshInsertionHandler, freshInsertionHandler(text) {
