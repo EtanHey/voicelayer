@@ -55,7 +55,9 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain("VOICEBAR_CODESIGN_IDENTITY=");
-    expect(stdout).toContain("Developer ID Application: Etan Heyman (PPN23G925Y)");
+    expect(stdout).toContain(
+      "Developer\\ ID\\ Application:\\ Etan\\ Heyman\\ \\(PPN23G925Y\\)",
+    );
     expect(stdout).not.toContain("Apple Development");
   });
 

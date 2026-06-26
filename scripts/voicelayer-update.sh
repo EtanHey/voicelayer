@@ -19,7 +19,7 @@ DATA_SOURCE="${VOICELAYER_UPDATE_DATA_SOURCE:-}"
 DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-skip}"
 RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
-VOICEBAR_STABLE_CODESIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heyman (PPN23G925Y)}"
+VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
 BUILD_APP_ARGS=()
 
 usage() {
@@ -222,7 +222,7 @@ print_plan() {
     log "Steps:"
     log "  1. update package: $(package_update_label)"
     log "  2. install package dependencies when running from a git checkout"
-    log "  3. VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY bash flow-bar/build-app.sh ${BUILD_APP_ARGS[*]:-}"
+    log "  3. $(print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}")"
     log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
     log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
     if [[ "$DATA_MODE" != "skip" ]]; then

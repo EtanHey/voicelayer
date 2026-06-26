@@ -419,6 +419,24 @@ verify_developer_id_signature() {
         return 1
     fi
 
+    if ! printf '%s\n' "$details" | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature leaf authority is not the required Developer ID identity." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=Developer ID Certification Authority" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature is missing the Developer ID Certification Authority chain entry." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=Apple Root CA" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature is missing the Apple Root CA chain entry." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
     if printf '%s\n' "$details" | grep -F "Authority=Apple Development:" >/dev/null; then
         echo "[build-app] ERROR: VoiceBar was signed with Apple Development, which invalidates TCC grants on rebuild." >&2
         printf '%s\n' "$details" >&2
@@ -469,7 +487,9 @@ unregister_throwaway_bundle() {
     fi
 
     echo "[build-app] Unregistering throwaway VoiceBar bundle from LaunchServices: $APP_DIR"
-    "$registrar" -u "$APP_DIR" >/dev/null 2>&1 || true
+    if ! "$registrar" -u "$APP_DIR" >/dev/null 2>&1; then
+        echo "[build-app] WARNING: LaunchServices unregister failed for throwaway VoiceBar bundle: $APP_DIR" >&2
+    fi
 }
 
 notarize_and_staple() {
