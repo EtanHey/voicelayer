@@ -26,3 +26,9 @@ ls -dt "$HOME/Library/Application Support/VoiceBar/Backups/"VoiceBar.backup-*.ap
 voicelayer update            # git pull + bun install + rebuild + daemon refresh + model/data sync (see scripts/voicelayer-update.sh)
 voicelayer update --dry-run  # print the plan without executing
 ```
+
+## M1 Pro Homebrew Transfer
+
+For the Homebrew path that brings a second Mac onto the same VoiceLayer voices,
+vocabulary, daemon secret, and VoiceBar runtime line, use
+[`docs/m1-homebrew-voicebar-runbook.md`](m1-homebrew-voicebar-runbook.md).
