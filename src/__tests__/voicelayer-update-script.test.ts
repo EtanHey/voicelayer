@@ -49,6 +49,18 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("Personal data sync: skipped");
   });
 
+  test("update requires the stable Developer ID signing identity for resident rebuilds", () => {
+    const result = run(["bash", updateScript, "--dry-run"]);
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("VOICEBAR_CODESIGN_IDENTITY=");
+    expect(stdout).toContain(
+      "Developer\\ ID\\ Application:\\ Etan\\ Heyman\\ \\(PPN23G925Y\\)",
+    );
+    expect(stdout).not.toContain("Apple Development");
+  });
+
   test("dry-run passes VoiceBar stop and relaunch opt-outs to build-app", () => {
     const result = run([
       "bash",

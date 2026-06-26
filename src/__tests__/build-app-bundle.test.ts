@@ -67,6 +67,22 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).not.toContain("--deep --options runtime");
   });
 
+  test("fails loudly instead of allowing non-Developer-ID signing identities", () => {
+    expect(buildScript).toContain("VOICEBAR_REQUIRED_TEAM_ID");
+    expect(buildScript).toContain("VOICEBAR_REQUIRED_SIGNING_PREFIX");
+    expect(buildScript).toContain("validate_signing_identity");
+    expect(buildScript).toContain("security find-identity");
+    expect(buildScript).toContain("Refusing to sign VoiceBar with non-Developer-ID identity");
+    expect(buildScript).toContain("verify_developer_id_signature");
+  });
+
+  test("cleans throwaway VoiceBar bundles out of LaunchServices registration", () => {
+    expect(buildScript).toContain("unregister_throwaway_bundle");
+    expect(buildScript).toContain("lsregister");
+    expect(buildScript).toContain("-u \"$APP_DIR\"");
+    expect(buildScript).toContain("Skipping LaunchServices unregister for resident app");
+  });
+
   test("signs hardened-runtime VoiceBar with microphone entitlement", () => {
     expect(existsSync(entitlementsPath)).toBe(true);
     const entitlements = readFileSync(entitlementsPath, "utf-8");

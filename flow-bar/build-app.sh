@@ -12,6 +12,8 @@ PACKAGE_DIR="$SCRIPT_DIR"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 APP_DIR="/Applications/VoiceBar.app"
+VOICEBAR_REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
+VOICEBAR_REQUIRED_SIGNING_PREFIX="${VOICEBAR_REQUIRED_SIGNING_PREFIX:-Developer ID Application}"
 SIGN_IDENTITY="${VOICEBAR_CODESIGN_IDENTITY:-Developer ID Application: Etan Heyman (PPN23G925Y)}"
 VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/VoiceBar/Backups}"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
@@ -367,6 +369,87 @@ notarytool_auth_args() {
     return 1
 }
 
+validate_signing_identity() {
+    case "$SIGN_IDENTITY" in
+        "$VOICEBAR_REQUIRED_SIGNING_PREFIX:"*"($VOICEBAR_REQUIRED_TEAM_ID)") ;;
+        *)
+            echo "[build-app] ERROR: Refusing to sign VoiceBar with non-Developer-ID identity: $SIGN_IDENTITY" >&2
+            echo "[build-app] Required: $VOICEBAR_REQUIRED_SIGNING_PREFIX certificate for team $VOICEBAR_REQUIRED_TEAM_ID." >&2
+            return 1
+            ;;
+    esac
+
+    if ! command -v security >/dev/null 2>&1; then
+        echo "[build-app] ERROR: security(1) is required to verify the Developer ID signing identity." >&2
+        return 1
+    fi
+
+    if ! security find-identity -v -p codesigning 2>/dev/null | grep -F "$SIGN_IDENTITY" >/dev/null; then
+        echo "[build-app] ERROR: Developer ID signing identity is not available in the keychain: $SIGN_IDENTITY" >&2
+        security find-identity -v -p codesigning 2>/dev/null || true
+        return 1
+    fi
+}
+
+verify_developer_id_signature() {
+    local requirements
+    local details
+
+    if ! requirements="$(codesign -d -r- "$APP_DIR" 2>&1)"; then
+        echo "[build-app] ERROR: Could not read VoiceBar designated requirement." >&2
+        printf '%s\n' "$requirements" >&2
+        return 1
+    fi
+
+    if ! details="$(codesign -dvvv "$APP_DIR" 2>&1)"; then
+        echo "[build-app] ERROR: Could not read VoiceBar code signature details." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$requirements" | grep -F "$VOICEBAR_REQUIRED_TEAM_ID" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar designated requirement is not pinned to team $VOICEBAR_REQUIRED_TEAM_ID." >&2
+        printf '%s\n' "$requirements" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=$VOICEBAR_REQUIRED_SIGNING_PREFIX:" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature is missing a Developer ID Application authority." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature leaf authority is not the required Developer ID identity." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=Developer ID Certification Authority" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature is missing the Developer ID Certification Authority chain entry." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "Authority=Apple Root CA" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature is missing the Apple Root CA chain entry." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if printf '%s\n' "$details" | grep -F "Authority=Apple Development:" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar was signed with Apple Development, which invalidates TCC grants on rebuild." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+
+    if ! printf '%s\n' "$details" | grep -F "TeamIdentifier=$VOICEBAR_REQUIRED_TEAM_ID" >/dev/null; then
+        echo "[build-app] ERROR: VoiceBar signature TeamIdentifier is not $VOICEBAR_REQUIRED_TEAM_ID." >&2
+        printf '%s\n' "$details" >&2
+        return 1
+    fi
+}
+
 verify_spctl_assessment() {
     local phase="$1"
     local required="${2:-0}"
@@ -379,6 +462,34 @@ verify_spctl_assessment() {
     fi
     echo "[build-app] WARNING: spctl assessment failed after $phase; continuing because notarization is not required for this build." >&2
     return 0
+}
+
+lsregister_path() {
+    local path="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    if [ -x "$path" ]; then
+        printf '%s\n' "$path"
+        return 0
+    fi
+    command -v lsregister 2>/dev/null || true
+}
+
+unregister_throwaway_bundle() {
+    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+        echo "[build-app] Skipping LaunchServices unregister for resident app."
+        return 0
+    fi
+
+    local registrar
+    registrar="$(lsregister_path)"
+    if [ -z "$registrar" ]; then
+        echo "[build-app] WARNING: lsregister not found; cannot unregister throwaway VoiceBar bundle." >&2
+        return 0
+    fi
+
+    echo "[build-app] Unregistering throwaway VoiceBar bundle from LaunchServices: $APP_DIR"
+    if ! "$registrar" -u "$APP_DIR" >/dev/null 2>&1; then
+        echo "[build-app] WARNING: LaunchServices unregister failed for throwaway VoiceBar bundle: $APP_DIR" >&2
+    fi
 }
 
 notarize_and_staple() {
@@ -563,17 +674,15 @@ if [ ! -f "$VOICEBAR_ENTITLEMENTS" ]; then
     exit 1
 fi
 echo "[build-app] Entitlements: $VOICEBAR_ENTITLEMENTS"
+validate_signing_identity
 codesign --force --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS" --timestamp --sign "$SIGN_IDENTITY" "$APP_DIR"
 
 echo "[build-app] Verifying signature..."
-if ! codesign -dv --verbose=4 "$APP_DIR" 2>&1 | grep -F "Authority=$SIGN_IDENTITY" >/dev/null; then
-    echo "[build-app] ERROR: Installed app is not signed with $SIGN_IDENTITY"
-    codesign -dv --verbose=4 "$APP_DIR" 2>&1
-    exit 1
-fi
+verify_developer_id_signature
 verify_spctl_assessment "Developer ID signing"
 notarize_and_staple
 create_release_zip
+unregister_throwaway_bundle
 
 if [ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" = "1" ]; then
     echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."

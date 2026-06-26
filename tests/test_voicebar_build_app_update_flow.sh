@@ -73,9 +73,93 @@ test_update_delegates_relaunch_to_build_app() {
     fi
 }
 
+test_developer_id_signature_guard_rejects_apple_development() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    local bin_dir
+    bin_dir="$(mktemp -d)"
+    cat > "$bin_dir/codesign" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"-d -r-"* ]]; then
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Etan Heyman (DXHB5E7P2D)"\n' >&2
+elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
+    printf 'Authority=Apple Development: Etan Heyman (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
+else
+    exit 2
+fi
+SH
+    chmod 755 "$bin_dir/codesign"
+
+    local old_path="$PATH"
+    PATH="$bin_dir:$PATH"
+    if verify_developer_id_signature; then
+        PATH="$old_path"
+        rm -rf "$bin_dir"
+        fail "Developer ID guard must reject Apple Development signatures"
+    fi
+    PATH="$old_path"
+    rm -rf "$bin_dir"
+}
+
+test_developer_id_signature_guard_accepts_developer_id() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    local bin_dir
+    bin_dir="$(mktemp -d)"
+    cat > "$bin_dir/codesign" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"-d -r-"* ]]; then
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
+elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
+    printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=PPN23G925Y\n' >&2
+else
+    exit 2
+fi
+SH
+    chmod 755 "$bin_dir/codesign"
+
+    local old_path="$PATH"
+    PATH="$bin_dir:$PATH"
+    verify_developer_id_signature || {
+        PATH="$old_path"
+        rm -rf "$bin_dir"
+        fail "Developer ID guard must accept Developer ID Application signatures"
+    }
+    PATH="$old_path"
+    rm -rf "$bin_dir"
+}
+
+test_developer_id_signature_guard_rejects_partial_chain() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    local bin_dir
+    bin_dir="$(mktemp -d)"
+    cat > "$bin_dir/codesign" <<'SH'
+#!/usr/bin/env bash
+if [[ "$*" == *"-d -r-"* ]]; then
+    printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
+elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
+    printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nTeamIdentifier=PPN23G925Y\n' >&2
+else
+    exit 2
+fi
+SH
+    chmod 755 "$bin_dir/codesign"
+
+    local old_path="$PATH"
+    PATH="$bin_dir:$PATH"
+    if verify_developer_id_signature; then
+        PATH="$old_path"
+        rm -rf "$bin_dir"
+        fail "Developer ID guard must reject partial signature chains"
+    fi
+    PATH="$old_path"
+    rm -rf "$bin_dir"
+}
+
 test_parse_no_stop_and_no_relaunch_flags
 test_target_pid_discovery_is_root_bundle_plus_descendants_only
 test_no_broad_process_killers
 test_update_delegates_relaunch_to_build_app
+test_developer_id_signature_guard_rejects_apple_development
+test_developer_id_signature_guard_accepts_developer_id
+test_developer_id_signature_guard_rejects_partial_chain
 
 printf 'PASS: VoiceBar build/update flow shell tests\n'
