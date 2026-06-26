@@ -5,6 +5,7 @@ import { join } from "path";
 import {
   getSTTPolishHealthTimeoutMs,
   getSTTPolishMode,
+  getSTTPolishSocketTimeoutMs,
   getSTTPolishTimeoutMs,
   polishTranscriptionText,
 } from "../stt-polish";
@@ -94,6 +95,7 @@ describe("stt-polish", () => {
   it("uses a fast default health timeout and a generous request timeout", () => {
     expect(getSTTPolishHealthTimeoutMs({})).toBeLessThanOrEqual(800);
     expect(getSTTPolishTimeoutMs({})).toBeGreaterThanOrEqual(12_000);
+    expect(getSTTPolishSocketTimeoutMs({})).toBeLessThanOrEqual(1_500);
   });
 
   it("can be explicitly disabled and preserves cleaned text", async () => {
@@ -863,10 +865,53 @@ describe("stt-polish", () => {
       expect(performance.now() - startedAt).toBeLessThan(500);
       expect(result).toMatchObject({
         text: "BrainLayer",
-        status: "unavailable",
+        status: "failed",
         changed: false,
       });
       expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("preserves endpoint query parameters on the HTTP health probe", async () => {
+    let healthSearch = "";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          healthSearch = url.search;
+          return Response.json({ data: [] });
+        }
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "Why did it do that? I am confused.",
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: "why did it do that i am confused",
+        cleanedText: "why did it do that i am confused",
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions?api_key=test-key&route=local`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(healthSearch).toBe("?api_key=test-key&route=local");
+      expect(result).toMatchObject({
+        text: "Why did it do that? I am confused.",
+        status: "applied",
+      });
     } finally {
       server.stop(true);
     }

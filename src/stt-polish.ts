@@ -58,6 +58,7 @@ interface STTPolishSocketResponse {
 
 const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 700;
 const DEFAULT_POLISH_TIMEOUT_MS = 12_000;
+const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
@@ -108,6 +109,14 @@ export function getSTTPolishHealthTimeoutMs(
   const raw = Number(env.QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLISH_HEALTH_TIMEOUT_MS;
   return Math.min(Math.max(raw, 50), 5_000);
+}
+
+export function getSTTPolishSocketTimeoutMs(
+  env: STTPolishEnv = process.env,
+): number {
+  const raw = Number(env.QA_VOICE_STT_POLISH_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLISH_SOCKET_TIMEOUT_MS;
+  return Math.min(Math.max(raw, 50), 60_000);
 }
 
 function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
@@ -728,7 +737,6 @@ function getPolishHealthEndpoint(endpoint: string): string {
   if (url.pathname === originalPathname) {
     url.pathname = "/v1/models";
   }
-  url.search = "";
   url.hash = "";
   return url.toString();
 }
@@ -737,8 +745,6 @@ async function checkPolishEndpointHealth(
   endpoint: string,
   timeoutMs: number,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let healthEndpoint: string;
   try {
     healthEndpoint = getPolishHealthEndpoint(endpoint);
@@ -751,6 +757,8 @@ async function checkPolishEndpointHealth(
     };
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(healthEndpoint, {
       method: "GET",
@@ -989,7 +997,7 @@ export async function polishTranscriptionText(
       const result = buildResult(
         input.cleanedText,
         null,
-        "unavailable",
+        "failed",
         health.error,
       );
       writePolishLog(result, input.rawText, input.cleanedText, env);
@@ -1040,7 +1048,7 @@ export async function polishTranscriptionText(
         cleaned_text: input.cleanedText,
         surface,
       },
-      getSTTPolishTimeoutMs(env),
+      getSTTPolishSocketTimeoutMs(env),
     );
     const result = applyPolishCandidate(
       input.cleanedText,
