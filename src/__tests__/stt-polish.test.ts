@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  getSTTPolishHealthTimeoutMs,
   getSTTPolishMode,
   getSTTPolishTimeoutMs,
   polishTranscriptionText,
@@ -90,8 +91,9 @@ describe("stt-polish", () => {
     expect(getSTTPolishMode({})).toBe("on");
   });
 
-  it("uses a short default request timeout so dead polish servers fall back fast", () => {
-    expect(getSTTPolishTimeoutMs({})).toBeLessThanOrEqual(1500);
+  it("uses a fast default health timeout and a generous request timeout", () => {
+    expect(getSTTPolishHealthTimeoutMs({})).toBeLessThanOrEqual(800);
+    expect(getSTTPolishTimeoutMs({})).toBeGreaterThanOrEqual(12_000);
   });
 
   it("can be explicitly disabled and preserves cleaned text", async () => {
@@ -723,6 +725,10 @@ describe("stt-polish", () => {
     const server = Bun.serve({
       port: 0,
       fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
         requests.push((await request.json()) as Record<string, unknown>);
         return Response.json({
           choices: [
@@ -787,17 +793,101 @@ describe("stt-polish", () => {
     }
   });
 
+  it("waits for a reachable slow HTTP polish completion instead of falling back", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2_100));
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: "Why did it do that? I am confused.",
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    try {
+      const startedAt = performance.now();
+      const result = await polishTranscriptionText({
+        rawText: "why did it do that i am confused",
+        cleanedText: "why did it do that i am confused",
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(2_000);
+      expect(result).toMatchObject({
+        text: "Why did it do that? I am confused.",
+        status: "applied",
+        changed: true,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("skips an unreachable HTTP polish endpoint after a fast health probe", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const startedAt = performance.now();
+      const result = await polishTranscriptionText({
+        rawText: "brain layer",
+        cleanedText: "BrainLayer",
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(performance.now() - startedAt).toBeLessThan(500);
+      expect(result).toMatchObject({
+        text: "BrainLayer",
+        status: "unavailable",
+        changed: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("accepts the mlx_lm.server response shape where message is a string", async () => {
     const server = Bun.serve({
       port: 0,
-      fetch: () =>
-        Response.json({
+      fetch: (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        return Response.json({
           choices: [
             {
               message: "Also, do /whats-new and output that as your summary.",
             },
           ],
-        }),
+        });
+      },
     });
 
     try {
