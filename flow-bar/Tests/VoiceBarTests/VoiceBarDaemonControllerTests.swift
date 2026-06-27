@@ -5,7 +5,11 @@ import XCTest
 private let testBunPath = "/opt/homebrew/bin/bun"
 private let testRepoRoot = "/tmp/voicelayer"
 private let testRepoDaemonPath = "\(testRepoRoot)/src/mcp-server-daemon.ts"
+private let testHomebrewPackageRoot = "/opt/homebrew/opt/voicelayer/libexec/lib/node_modules/voicelayer-mcp"
+private let testHomebrewDaemonPath = "\(testHomebrewPackageRoot)/src/mcp-server-daemon.ts"
+private let testHomebrewPackageJSONPath = "\(testHomebrewPackageRoot)/package.json"
 private let testBundledDaemonPath = "/Applications/VoiceBar.app/Contents/Resources/src/mcp-server-daemon.ts"
+private let testInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonControllerTests: XCTestCase {
     func testDaemonControllerSkipsSpawnWhenDisableEnvSet() {
@@ -563,6 +567,59 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
     }
 
+    func testInstalledAppPrefersHomebrewPackageDaemonWhenAvailable() throws {
+        let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+
+        let configuration = try XCTUnwrap(
+            VoiceBarDaemonLaunchConfiguration.configuration(
+                for: executableURL,
+                fileExists: { path in
+                    path == testBunPath ||
+                        path == testHomebrewDaemonPath ||
+                        path == testBundledDaemonPath
+                },
+                fileData: { path in
+                    testVersionData[path]
+                }
+            )
+        )
+
+        XCTAssertEqual(configuration.launchPath, testBunPath)
+        XCTAssertEqual(configuration.arguments, [
+            "run",
+            testHomebrewDaemonPath,
+        ])
+        XCTAssertEqual(configuration.workingDirectory, testHomebrewPackageRoot)
+    }
+
+    func testInstalledAppFallsBackToBundledDaemonWhenHomebrewPackageVersionIsStale() throws {
+        let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+
+        let configuration = try XCTUnwrap(
+            VoiceBarDaemonLaunchConfiguration.configuration(
+                for: executableURL,
+                fileExists: { path in
+                    path == testBunPath ||
+                        path == testHomebrewDaemonPath ||
+                        path == testBundledDaemonPath
+                },
+                fileData: { path in
+                    if path == testHomebrewPackageJSONPath {
+                        return packageJSONData(version: "2.1.9")
+                    }
+                    return testVersionData[path]
+                }
+            )
+        )
+
+        XCTAssertEqual(configuration.launchPath, testBunPath)
+        XCTAssertEqual(configuration.arguments, [
+            "run",
+            testBundledDaemonPath,
+        ])
+        XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
+    }
+
     func testFreshSessionLivenessProbeUsesDaemonPidPath() {
         XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/voicelayer-mcp.pid")
         XCTAssertEqual(
@@ -669,6 +726,32 @@ private func testLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
         arguments: ["run", testRepoDaemonPath],
         workingDirectory: testRepoRoot
     )
+}
+
+private var testVersionData: [String: Data] {
+    [
+        testInstalledInfoPlistPath: infoPlistData(version: "2.1.10"),
+        testHomebrewPackageJSONPath: packageJSONData(version: "2.1.10"),
+    ]
+}
+
+private func packageJSONData(version: String) -> Data {
+    Data(#"{"name":"voicelayer-mcp","version":"\#(version)"}"#.utf8)
+}
+
+private func infoPlistData(version: String) -> Data {
+    Data("""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>CFBundleShortVersionString</key>
+      <string>\(version)</string>
+      <key>ReleaseVersion</key>
+      <string>\(version)</string>
+    </dict>
+    </plist>
+    """.utf8)
 }
 
 private func temporaryPIDFile() -> String {

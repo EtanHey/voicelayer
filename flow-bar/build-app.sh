@@ -28,6 +28,7 @@ VOICEBAR_NOTARY_KEY_ID="${VOICEBAR_NOTARY_KEY_ID:-}"
 VOICEBAR_NOTARY_ISSUER="${VOICEBAR_NOTARY_ISSUER:-}"
 VOICEBAR_REQUIRE_NOTARIZATION="${VOICEBAR_REQUIRE_NOTARIZATION:-0}"
 VOICEBAR_RELEASE_ZIP="${VOICEBAR_RELEASE_ZIP:-}"
+VOICEBAR_SOCKET_PATH="${QA_VOICE_SOCKET_PATH:-${VOICEBAR_SOCKET_PATH:-/tmp/voicelayer.sock}}"
 VOICEBAR_NOTARIZED=0
 STOP_RUNNING=1
 RELAUNCH_APP=1
@@ -189,6 +190,84 @@ voicebar_target_pids() {
     printf '%s\n%s\n' "$roots" "$descendants" | awk '/^[0-9]+$/ { print }' | sort -n -u
 }
 
+canonical_executable_path() {
+    local path="$1"
+    local dir
+    local base
+    local physical_dir
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    if physical_dir="$(cd "$dir" 2>/dev/null && pwd -P)"; then
+        printf '%s/%s\n' "$physical_dir" "$base"
+        return 0
+    fi
+    printf '%s\n' "$path"
+}
+
+voicebar_target_app_pids() {
+    if [[ -n "${VOICEBAR_TEST_TARGET_APP_PIDS:-}" ]]; then
+        printf '%s\n' "$VOICEBAR_TEST_TARGET_APP_PIDS" | awk '/^[0-9]+$/ { print }'
+        return 0
+    fi
+
+    local expected_executable="$APP_DIR/Contents/MacOS/VoiceBar"
+    local expected_resolved_executable
+    expected_resolved_executable="$(canonical_executable_path "$expected_executable")"
+    local line
+    local pid
+    local _ppid
+    local command
+    local executable
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
+        set -- $line
+        pid="${1:-}"
+        _ppid="${2:-}"
+        shift 2 || true
+        command="$*"
+        executable="${command%% *}"
+
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        if [[ "$executable" = "$expected_executable" || "$executable" = "$expected_resolved_executable" ]]; then
+            printf '%s\n' "$pid"
+        fi
+    done < <(voicebar_process_table)
+}
+
+voicebar_command_socket_ready() {
+    if [[ -n "${VOICEBAR_TEST_SOCKET_READY:-}" ]]; then
+        [[ "$VOICEBAR_TEST_SOCKET_READY" = "1" ]]
+        return
+    fi
+
+    [[ -S "$VOICEBAR_SOCKET_PATH" ]]
+}
+
+voicebar_relaunch_instance_status() {
+    local bundle_pids
+    local target_pids
+    local bundle_count
+    local target_count
+
+    bundle_pids="$(voicebar_bundle_pids | sort -n -u)"
+    target_pids="$(voicebar_target_app_pids | sort -n -u)"
+    bundle_count="$(printf '%s\n' "$bundle_pids" | count_lines)"
+    target_count="$(printf '%s\n' "$target_pids" | count_lines)"
+
+    if [[ "$bundle_count" -eq 1 && "$target_count" -eq 1 && "$bundle_pids" = "$target_pids" ]] && voicebar_command_socket_ready; then
+        printf '%s\n' "$target_pids"
+        return 0
+    fi
+
+    echo "[build-app] bundle-id PIDs: ${bundle_pids:-<none>}" >&2
+    echo "[build-app] target app PIDs for $APP_DIR: ${target_pids:-<none>}" >&2
+    if ! voicebar_command_socket_ready; then
+        echo "[build-app] VoiceBar command socket is not ready: $VOICEBAR_SOCKET_PATH" >&2
+    fi
+    return 1
+}
+
 live_pids_from_list() {
     local pid
     while IFS= read -r pid || [[ -n "$pid" ]]; do
@@ -274,22 +353,18 @@ count_lines() {
 wait_for_exactly_one_voicebar_instance() {
     local attempts="${VOICEBAR_LAUNCH_WAIT_ATTEMPTS:-50}"
     local pids
-    local count
     local _
 
     for _ in $(seq 1 "$attempts"); do
-        pids="$(voicebar_bundle_pids | sort -n -u)"
-        count="$(printf '%s\n' "$pids" | count_lines)"
-        if [[ "$count" -eq 1 ]]; then
+        if pids="$(voicebar_relaunch_instance_status 2>/dev/null)"; then
             echo "[build-app] Running VoiceBar instance: PID $pids"
             return 0
         fi
         sleep 0.2
     done
 
-    echo "[build-app] ERROR: expected exactly one $VOICEBAR_BUNDLE_ID instance after relaunch." >&2
-    echo "[build-app] Current matching PIDs:" >&2
-    voicebar_bundle_pids | sort -n -u >&2
+    echo "[build-app] ERROR: expected exactly one $VOICEBAR_BUNDLE_ID instance from $APP_DIR after relaunch." >&2
+    voicebar_relaunch_instance_status >/dev/null || true
     return 1
 }
 
@@ -311,6 +386,10 @@ build_time_utc() {
     TZ=UTC date '+%Y-%m-%dT%H:%M:%SZ'
 }
 
+package_version() {
+    (cd "$REPO_ROOT" && bun -e 'console.log(JSON.parse(await Bun.file("package.json").text()).version)')
+}
+
 plist_set_string() {
     local plist_path="$1"
     local key="$2"
@@ -325,10 +404,14 @@ plist_set_string() {
 
 stamp_info_plist() {
     local plist_path="$1"
-    local commit_sha="$2"
-    local describe_ref="$3"
-    local build_utc="$4"
+    local release_version="$2"
+    local commit_sha="$3"
+    local describe_ref="$4"
+    local build_utc="$5"
 
+    plist_set_string "$plist_path" "CFBundleShortVersionString" "$release_version"
+    plist_set_string "$plist_path" "CFBundleVersion" "$release_version"
+    plist_set_string "$plist_path" "ReleaseVersion" "$release_version"
     plist_set_string "$plist_path" "GitCommit" "$commit_sha"
     plist_set_string "$plist_path" "GitDescribe" "$describe_ref"
     plist_set_string "$plist_path" "BuildTimeUTC" "$build_utc"
@@ -370,8 +453,22 @@ notarytool_auth_args() {
 }
 
 validate_signing_identity() {
+    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ] && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
+        echo "[build-app] ERROR: Refusing Apple Development signing for resident /Applications/VoiceBar.app." >&2
+        echo "[build-app] This would change the app identity and can invalidate TCC grants." >&2
+        echo "[build-app] Set VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL=1 only for an intentional local dev-signed resident install." >&2
+        return 1
+    fi
+
     case "$SIGN_IDENTITY" in
         "$VOICEBAR_REQUIRED_SIGNING_PREFIX:"*"($VOICEBAR_REQUIRED_TEAM_ID)") ;;
+        Apple\ Development:*)
+            if [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
+                echo "[build-app] ERROR: Refusing to sign VoiceBar with non-Developer-ID identity: $SIGN_IDENTITY" >&2
+                echo "[build-app] Required: $VOICEBAR_REQUIRED_SIGNING_PREFIX certificate for team $VOICEBAR_REQUIRED_TEAM_ID." >&2
+                return 1
+            fi
+            ;;
         *)
             echo "[build-app] ERROR: Refusing to sign VoiceBar with non-Developer-ID identity: $SIGN_IDENTITY" >&2
             echo "[build-app] Required: $VOICEBAR_REQUIRED_SIGNING_PREFIX certificate for team $VOICEBAR_REQUIRED_TEAM_ID." >&2
@@ -407,6 +504,11 @@ verify_developer_id_signature() {
         return 1
     fi
 
+    if printf '%s\n' "$details" | grep -F "Authority=Apple Development:" >/dev/null && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" = "1" ]; then
+        echo "[build-app] WARNING: Allowing Apple Development-signed VoiceBar because VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL=1." >&2
+        return 0
+    fi
+
     if ! printf '%s\n' "$requirements" | grep -F "$VOICEBAR_REQUIRED_TEAM_ID" >/dev/null; then
         echo "[build-app] ERROR: VoiceBar designated requirement is not pinned to team $VOICEBAR_REQUIRED_TEAM_ID." >&2
         printf '%s\n' "$requirements" >&2
@@ -437,7 +539,7 @@ verify_developer_id_signature() {
         return 1
     fi
 
-    if printf '%s\n' "$details" | grep -F "Authority=Apple Development:" >/dev/null; then
+    if printf '%s\n' "$details" | grep -F "Authority=Apple Development:" >/dev/null && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
         echo "[build-app] ERROR: VoiceBar was signed with Apple Development, which invalidates TCC grants on rebuild." >&2
         printf '%s\n' "$details" >&2
         return 1
@@ -462,6 +564,20 @@ verify_spctl_assessment() {
     fi
     echo "[build-app] WARNING: spctl assessment failed after $phase; continuing because notarization is not required for this build." >&2
     return 0
+}
+
+strip_voicebar_security_xattrs() {
+    if ! command -v xattr >/dev/null 2>&1; then
+        echo "[build-app] WARNING: xattr not found; cannot strip quarantine/macl metadata from $APP_DIR." >&2
+        return 0
+    fi
+
+    local attr
+    for attr in com.apple.quarantine com.apple.macl; do
+        if ! xattr -dr "$attr" "$APP_DIR" 2>/dev/null; then
+            echo "[build-app] WARNING: Could not strip $attr from $APP_DIR." >&2
+        fi
+    done
 }
 
 lsregister_path() {
@@ -660,14 +776,17 @@ fi
 COMMIT_SHA="$(git_commit)"
 DESCRIBE_REF="$(git_describe)"
 BUILD_UTC="$(build_time_utc)"
-stamp_info_plist "$APP_DIR/Contents/Info.plist" "$COMMIT_SHA" "$DESCRIBE_REF" "$BUILD_UTC"
+RELEASE_VERSION="$(package_version)"
+stamp_info_plist "$APP_DIR/Contents/Info.plist" "$RELEASE_VERSION" "$COMMIT_SHA" "$DESCRIBE_REF" "$BUILD_UTC"
 echo "[build-app] Stamped Info.plist:"
+echo "  ReleaseVersion=$RELEASE_VERSION"
 echo "  GitCommit=$COMMIT_SHA"
 echo "  GitDescribe=$DESCRIBE_REF"
 echo "  BuildTimeUTC=$BUILD_UTC"
 
 # Developer signing keeps TCC permissions stable across rebuilds. A clean TCC
 # re-grant is a macOS security click if ever needed; do not reset TCC here.
+strip_voicebar_security_xattrs
 echo "[build-app] Signing..."
 if [ ! -f "$VOICEBAR_ENTITLEMENTS" ]; then
     echo "[build-app] ERROR: VoiceBar entitlements file missing: $VOICEBAR_ENTITLEMENTS" >&2

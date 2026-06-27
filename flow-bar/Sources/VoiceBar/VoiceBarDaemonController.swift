@@ -31,7 +31,8 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
 
     static func configuration(
         for executableURL: URL,
-        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        fileData: (String) -> Data? = { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
     ) -> VoiceBarDaemonLaunchConfiguration? {
         guard let bunPath = resolveBunPath(fileExists: fileExists) else {
             NSLog("[VoiceBar] Cannot find bun binary")
@@ -50,6 +51,19 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Resources")
+
+        if let homebrewPackageRoot = homebrewPackageRoot(
+            appVersion: installedAppVersion(for: executableURL, fileData: fileData),
+            fileExists: fileExists,
+            fileData: fileData
+        ) {
+            return VoiceBarDaemonLaunchConfiguration(
+                launchPath: bunPath,
+                arguments: ["run", "\(homebrewPackageRoot)/src/mcp-server-daemon.ts"],
+                workingDirectory: homebrewPackageRoot
+            )
+        }
+
         let bundledDaemon = resourcesDirectory
             .appendingPathComponent("src")
             .appendingPathComponent("mcp-server-daemon.ts")
@@ -61,6 +75,55 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             arguments: ["run", bundledDaemon],
             workingDirectory: resourcesDirectory.path
         )
+    }
+
+    private static func homebrewPackageRoot(
+        appVersion: String?,
+        fileExists: (String) -> Bool,
+        fileData: (String) -> Data?
+    ) -> String? {
+        guard let appVersion else { return nil }
+        let candidates = [
+            "/opt/homebrew/opt/voicelayer/libexec/lib/node_modules/voicelayer-mcp",
+            "/usr/local/opt/voicelayer/libexec/lib/node_modules/voicelayer-mcp",
+        ]
+        return candidates.first { candidate in
+            fileExists("\(candidate)/src/mcp-server-daemon.ts") &&
+                packageVersion(at: "\(candidate)/package.json", fileData: fileData) == appVersion
+        }
+    }
+
+    private static func installedAppVersion(
+        for executableURL: URL,
+        fileData: (String) -> Data?
+    ) -> String? {
+        let infoPlistPath = executableURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Info.plist")
+            .path
+        guard let data = fileData(infoPlistPath) else { return nil }
+        return plistStringValue(in: data, key: "ReleaseVersion") ??
+            plistStringValue(in: data, key: "CFBundleShortVersionString")
+    }
+
+    private static func plistStringValue(in data: Data, key: String) -> String? {
+        guard
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+            let dictionary = plist as? [String: Any]
+        else { return nil }
+        return dictionary[key] as? String
+    }
+
+    private static func packageVersion(
+        at packageJSONPath: String,
+        fileData: (String) -> Data?
+    ) -> String? {
+        guard
+            let data = fileData(packageJSONPath),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return json["version"] as? String
     }
 
     private static func repositoryRoot(
@@ -493,7 +556,7 @@ final class VoiceBarDaemonController {
     private func terminateOwnedChildForRespawn() {
         guard ownsLaunchedProcess, let process else {
             ownsLaunchedProcess = false
-            self.process = nil
+            process = nil
             return
         }
         if process.isRunning {

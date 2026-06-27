@@ -17,6 +17,9 @@ const buildScript = readFileSync(
 const packageJson = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
 );
+const serverJson = JSON.parse(
+  readFileSync(join(import.meta.dir, "..", "..", "server.json"), "utf-8"),
+);
 const entitlementsPath = join(
   import.meta.dir,
   "..",
@@ -25,6 +28,21 @@ const entitlementsPath = join(
   "bundle",
   "VoiceBar.entitlements",
 );
+const infoPlistPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "flow-bar",
+  "bundle",
+  "Info.plist",
+);
+
+function plistString(plist: string, key: string): string | undefined {
+  const match = plist.match(
+    new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`),
+  );
+  return match?.[1];
+}
 
 describe("build-app.sh bundles runtime assets", () => {
   test("bundles the Silero VAD model (regression: #241)", () => {
@@ -105,6 +123,35 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).toContain("build_time_utc");
   });
 
+  test("keeps the checked-in VoiceBar Info.plist version synced with package.json", () => {
+    const infoPlist = readFileSync(infoPlistPath, "utf-8");
+
+    expect(plistString(infoPlist, "CFBundleShortVersionString")).toBe(
+      packageJson.version,
+    );
+    expect(plistString(infoPlist, "CFBundleVersion")).toBe(
+      packageJson.version,
+    );
+  });
+
+  test("keeps MCP registry metadata versions synced with package.json", () => {
+    expect(serverJson.version).toBe(packageJson.version);
+    expect(serverJson.packages[0].version).toBe(packageJson.version);
+  });
+
+  test("stamps VoiceBar bundle versions from the canonical package version during build", () => {
+    expect(buildScript).toContain("package_version");
+    expect(buildScript).toContain("CFBundleShortVersionString");
+    expect(buildScript).toContain("CFBundleVersion");
+    expect(buildScript).toContain("ReleaseVersion");
+  });
+
+  test("uses the VoiceBar socket override path during relaunch verification", () => {
+    expect(buildScript).toContain(
+      'VOICEBAR_SOCKET_PATH="${QA_VOICE_SOCKET_PATH:-${VOICEBAR_SOCKET_PATH:-/tmp/voicelayer.sock}}"',
+    );
+  });
+
   test("submits a zip to notarytool and staples the accepted ticket", () => {
     expect(buildScript).toContain("notarytool submit");
     expect(buildScript).toContain("xcrun stapler staple");
@@ -147,5 +194,29 @@ describe("VoiceBar Homebrew release script contract", () => {
     expect(releaseScript).toContain("Casks/voicebar.rb");
     expect(releaseScript).toContain("sha256");
     expect(releaseScript).toContain("gh release upload");
+  });
+
+  test("runs release verification before printing the zip sha256", () => {
+    const verifyIndex = releaseScript.indexOf(
+      "scripts/verify-voicebar-release.sh",
+    );
+    const shaIndex = releaseScript.indexOf("shasum -a 256");
+
+    expect(verifyIndex).toBeGreaterThanOrEqual(0);
+    expect(shaIndex).toBeGreaterThan(verifyIndex);
+  });
+
+  test("documents coordinated Homebrew formula and cask bump inputs", () => {
+    expect(releaseScript).toContain("Formula/voicelayer.rb");
+    expect(releaseScript).toContain("Casks/voicebar.rb");
+    expect(releaseScript).toContain("formula and cask");
+  });
+
+  test("can build a new release artifact before the tap is bumped", () => {
+    expect(releaseScript).toContain("--skip-tap-check");
+    expect(releaseScript).toContain("SKIP_TAP_CHECK=1");
+    expect(releaseScript).toContain(
+      '[[ "$SKIP_TAP_CHECK" -eq 1 && -n "$TAP_ROOT" ]]',
+    );
   });
 });

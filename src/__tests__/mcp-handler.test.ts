@@ -7,8 +7,14 @@
  * Tests for MCP JSON-RPC handler logic in src/mcp-handler.ts.
  */
 import { describe, it, expect } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { handleMcpRequest } from "../mcp-handler";
 import { getToolDefinitions } from "../mcp-tools";
+
+const packageJson = JSON.parse(
+  readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+);
 
 describe("mcp-handler", () => {
   describe("initialize", () => {
@@ -33,6 +39,24 @@ describe("mcp-handler", () => {
       expect(response.result.capabilities).toEqual({ tools: {} });
       expect(response.result.serverInfo.name).toBe("voicelayer");
       expect(response.result.serverInfo.version).toBeDefined();
+    });
+
+    it("reports the canonical package version in serverInfo", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2024-11-05",
+          capabilities: {},
+          clientInfo: { name: "test-client", version: "1.0" },
+        },
+      });
+
+      expect(response?.result?.serverInfo).toEqual({
+        name: "voicelayer",
+        version: packageJson.version,
+      });
     });
 
     it("echoes the request id", async () => {

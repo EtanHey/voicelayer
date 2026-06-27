@@ -7,11 +7,21 @@
  * socket permissions, connection tracking, startup validation.
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { unlinkSync, existsSync, statSync, writeFileSync } from "fs";
+import {
+  unlinkSync,
+  existsSync,
+  statSync,
+  writeFileSync,
+  readFileSync,
+} from "fs";
+import { join } from "path";
 import { serializeMcpFrame, parseMcpFrames } from "../mcp-framing";
 
 const TEST_SOCKET = "/tmp/voicelayer-test-daemon.sock";
 const TEST_SOCKET_2 = "/tmp/voicelayer-test-daemon-2.sock";
+const packageJson = JSON.parse(
+  readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
+);
 
 // Helper: connect to socket and do MCP request-response
 async function mcpRequest(
@@ -172,6 +182,7 @@ describe("mcp-daemon", () => {
     expect(result.capabilities).toEqual({ tools: {} });
     const serverInfo = result.serverInfo as Record<string, unknown>;
     expect(serverInfo.name).toBe("voicelayer");
+    expect(serverInfo.version).toBe(packageJson.version);
   });
 
   it("handles MCP tools/list request", async () => {

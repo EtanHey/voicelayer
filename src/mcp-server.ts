@@ -17,6 +17,7 @@ import { STOP_FILE } from "./paths";
 import { connectToBar, disconnectFromBar, onCommand } from "./socket-client";
 import { getToolDefinitions } from "./mcp-tools";
 import { handleSocketCommand } from "./socket-handlers";
+import { PACKAGE_VERSION } from "./version";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
@@ -34,7 +35,7 @@ import {
 const server = new Server(
   {
     name: "voicelayer",
-    version: "2.1.3",
+    version: PACKAGE_VERSION,
   },
   {
     capabilities: { tools: {} },
@@ -126,7 +127,7 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(
-    "[voicelayer] MCP server v2.1.3 running — modes: announce, brief, consult, converse, replay, toggle",
+    `[voicelayer] MCP server v${PACKAGE_VERSION} running — modes: announce, brief, consult, converse, replay, toggle`,
   );
   console.error("[voicelayer] Connected to Voice Bar as client");
 }

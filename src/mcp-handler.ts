@@ -7,6 +7,7 @@
 
 import { getToolDefinitions } from "./mcp-tools";
 import { formatError } from "./format-response";
+import { PACKAGE_VERSION } from "./version";
 
 /** Known tool names from mcp-server.ts dispatch table. */
 const KNOWN_TOOLS = new Set([
@@ -73,7 +74,7 @@ export async function handleMcpRequest(
           capabilities: { tools: {} },
           serverInfo: {
             name: "voicelayer",
-            version: "2.1.3",
+            version: PACKAGE_VERSION,
           },
         },
       };

@@ -5,7 +5,11 @@ import XCTest
 private let launcherTestBunPath = "/opt/homebrew/bin/bun"
 private let launcherTestRepoRoot = "/tmp/voicelayer"
 private let launcherTestRepoDaemonPath = "\(launcherTestRepoRoot)/src/mcp-server-daemon.ts"
+private let launcherTestHomebrewPackageRoot = "/opt/homebrew/opt/voicelayer/libexec/lib/node_modules/voicelayer-mcp"
+private let launcherTestHomebrewDaemonPath = "\(launcherTestHomebrewPackageRoot)/src/mcp-server-daemon.ts"
+private let launcherTestHomebrewPackageJSONPath = "\(launcherTestHomebrewPackageRoot)/package.json"
 private let launcherTestBundledDaemonPath = "/Applications/VoiceBar.app/Contents/Resources/src/mcp-server-daemon.ts"
+private let launcherTestInstalledInfoPlistPath = "/Applications/VoiceBar.app/Contents/Info.plist"
 
 final class VoiceBarDaemonLauncherTests: XCTestCase {
     func testLauncherStartsDaemonProcessFromResolvedConfiguration() {
@@ -103,6 +107,59 @@ final class VoiceBarDaemonLauncherTests: XCTestCase {
         ])
         XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
     }
+
+    func testInstalledAppPrefersHomebrewPackageDaemonWhenAvailable() throws {
+        let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+
+        let configuration = try XCTUnwrap(
+            VoiceBarDaemonLaunchConfiguration.configuration(
+                for: executableURL,
+                fileExists: { path in
+                    path == launcherTestBunPath ||
+                        path == launcherTestHomebrewDaemonPath ||
+                        path == launcherTestBundledDaemonPath
+                },
+                fileData: { path in
+                    launcherTestVersionData[path]
+                }
+            )
+        )
+
+        XCTAssertEqual(configuration.launchPath, launcherTestBunPath)
+        XCTAssertEqual(configuration.arguments, [
+            "run",
+            launcherTestHomebrewDaemonPath,
+        ])
+        XCTAssertEqual(configuration.workingDirectory, launcherTestHomebrewPackageRoot)
+    }
+
+    func testInstalledAppFallsBackToBundledDaemonWhenHomebrewPackageVersionIsStale() throws {
+        let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
+
+        let configuration = try XCTUnwrap(
+            VoiceBarDaemonLaunchConfiguration.configuration(
+                for: executableURL,
+                fileExists: { path in
+                    path == launcherTestBunPath ||
+                        path == launcherTestHomebrewDaemonPath ||
+                        path == launcherTestBundledDaemonPath
+                },
+                fileData: { path in
+                    if path == launcherTestHomebrewPackageJSONPath {
+                        return launcherPackageJSONData(version: "2.1.9")
+                    }
+                    return launcherTestVersionData[path]
+                }
+            )
+        )
+
+        XCTAssertEqual(configuration.launchPath, launcherTestBunPath)
+        XCTAssertEqual(configuration.arguments, [
+            "run",
+            launcherTestBundledDaemonPath,
+        ])
+        XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
+    }
 }
 
 private func launcherTestLaunchConfiguration() -> VoiceBarDaemonLaunchConfiguration {
@@ -111,6 +168,32 @@ private func launcherTestLaunchConfiguration() -> VoiceBarDaemonLaunchConfigurat
         arguments: ["run", launcherTestRepoDaemonPath],
         workingDirectory: launcherTestRepoRoot
     )
+}
+
+private var launcherTestVersionData: [String: Data] {
+    [
+        launcherTestInstalledInfoPlistPath: launcherInfoPlistData(version: "2.1.10"),
+        launcherTestHomebrewPackageJSONPath: launcherPackageJSONData(version: "2.1.10"),
+    ]
+}
+
+private func launcherPackageJSONData(version: String) -> Data {
+    Data(#"{"name":"voicelayer-mcp","version":"\#(version)"}"#.utf8)
+}
+
+private func launcherInfoPlistData(version: String) -> Data {
+    Data("""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+      <key>CFBundleShortVersionString</key>
+      <string>\(version)</string>
+      <key>ReleaseVersion</key>
+      <string>\(version)</string>
+    </dict>
+    </plist>
+    """.utf8)
 }
 
 private final class ProcessSpy: Process, @unchecked Sendable {
