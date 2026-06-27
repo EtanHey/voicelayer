@@ -53,6 +53,114 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(sentCommand?["timeout_seconds"] as? Int, 3600)
     }
 
+    func testRecordingAudioLevelUsesSocketWhenLocalMeterReportsSilence() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.42,
+        ])
+        state.setLocalRecordingLevel(0)
+
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.42, accuracy: 0.0001)
+    }
+
+    func testRecordingAudioLevelKeepsLocalMeterWhenItIsStrongerThanSocket() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.25,
+        ])
+        state.setLocalRecordingLevel(0.63)
+
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.63, accuracy: 0.0001)
+    }
+
+    func testPressToTalkRecordAndFirstAudioDiagnosticsCarryTimingDeltas() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        var clockValues = [10.0, 10.125, 10.2]
+        state.recordingTimingClock = {
+            clockValues.removeFirst()
+        }
+        var diagnostics: [(event: String, details: [String: String])] = []
+        state.diagnosticLogger = { event, details in
+            diagnostics.append((event, details))
+        }
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.3,
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.4,
+        ])
+
+        let recordStart = try XCTUnwrap(diagnostics.first { $0.event == "record_start" })
+        XCTAssertEqual(recordStart.details["recordCommandUptimeMs"], "10000")
+        XCTAssertEqual(recordStart.details["pressToTalk"], "true")
+
+        let firstAudioDiagnostics = diagnostics.filter { $0.event == "recording_first_audio_level" }
+        XCTAssertEqual(firstAudioDiagnostics.count, 1)
+        let firstAudio = try XCTUnwrap(firstAudioDiagnostics.first)
+        XCTAssertEqual(firstAudio.details["firstAudioLevelUptimeMs"], "10200")
+        XCTAssertEqual(firstAudio.details["msSinceRecordCommand"], "200")
+        XCTAssertEqual(firstAudio.details["msSinceRecordingState"], "75")
+        XCTAssertEqual(firstAudio.details["socketRms"], "0.3000")
+    }
+
+    func testRepeatedRecordingStateDoesNotResetFirstAudioTimingBaseline() throws {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        var clockValues = [10.0, 10.125, 10.5, 10.7]
+        state.recordingTimingClock = {
+            clockValues.removeFirst()
+        }
+        var diagnostics: [(event: String, details: [String: String])] = []
+        state.diagnosticLogger = { event, details in
+            diagnostics.append((event, details))
+        }
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.3,
+        ])
+
+        let firstAudio = try XCTUnwrap(
+            diagnostics.first { $0.event == "recording_first_audio_level" }
+        )
+        XCTAssertEqual(firstAudio.details["firstAudioLevelUptimeMs"], "10500")
+        XCTAssertEqual(firstAudio.details["msSinceRecordCommand"], "500")
+        XCTAssertEqual(firstAudio.details["msSinceRecordingState"], "375")
+    }
+
     func testRetranscribeLastCaptureSendsRecoverCommand() {
         let state = VoiceState()
         var sentCommand: [String: Any]?

@@ -193,6 +193,12 @@ public final class VoiceState {
     public var audioLevel: Double?
     private var socketAudioLevel: Double?
     private var localRecordingLevel: Double?
+    private var recordCommandUptimeMs: Int?
+    private var recordingStateUptimeMs: Int?
+    private var didLogFirstRecordingAudioLevel = false
+    public var recordingTimingClock: () -> TimeInterval = {
+        ProcessInfo.processInfo.systemUptime
+    }
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
@@ -670,6 +676,10 @@ public final class VoiceState {
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
+        let commandUptimeMs = currentRecordingUptimeMs()
+        recordCommandUptimeMs = commandUptimeMs
+        recordingStateUptimeMs = nil
+        didLogFirstRecordingAudioLevel = false
         cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
@@ -693,6 +703,7 @@ public final class VoiceState {
             "pressToTalk": boolString(pressToTalk),
             "capturedTargetApp": frontmostAppOnRecordStart?.bundleIdentifier ?? "nil",
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
+            "recordCommandUptimeMs": String(commandUptimeMs),
         ])
         barInitiatedRecording = true
         if pressToTalk, isConnected {
@@ -796,6 +807,10 @@ public final class VoiceState {
                 transcribingStartedAt = nil
                 transcribingStatusText = nil
                 errorMessage = nil
+                if recordingStateUptimeMs == nil {
+                    recordingStateUptimeMs = currentRecordingUptimeMs()
+                    didLogFirstRecordingAudioLevel = false
+                }
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
@@ -896,8 +911,9 @@ public final class VoiceState {
 
         case "audio_level":
             if let rms = event["rms"] as? Double {
-                socketAudioLevel = rms
+                socketAudioLevel = Self.clampAudioLevel(rms)
                 refreshAudioLevel()
+                logFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
 
         case "command_mode":
@@ -1131,8 +1147,17 @@ public final class VoiceState {
     }
 
     private func refreshAudioLevel() {
-        if mode == .recording, let localRecordingLevel {
-            audioLevel = localRecordingLevel
+        if mode == .recording {
+            switch (localRecordingLevel, socketAudioLevel) {
+            case let (local?, socket?):
+                audioLevel = max(local, socket)
+            case let (local?, nil):
+                audioLevel = local
+            case let (nil, socket?):
+                audioLevel = socket
+            case (nil, nil):
+                audioLevel = nil
+            }
         } else {
             audioLevel = socketAudioLevel
         }
@@ -1142,6 +1167,13 @@ public final class VoiceState {
         socketAudioLevel = nil
         localRecordingLevel = nil
         audioLevel = nil
+        recordCommandUptimeMs = nil
+        recordingStateUptimeMs = nil
+        didLogFirstRecordingAudioLevel = false
+    }
+
+    private static func clampAudioLevel(_ level: Double) -> Double {
+        min(1, max(0, level))
     }
 
     private static func normalizeRecentTranscriptions(_ items: [String]) -> [String] {
@@ -1809,6 +1841,34 @@ public final class VoiceState {
         if Self.shouldMirrorDiagnosticToControlLayer(event) {
             controlLayerEventWriter(event, details)
         }
+    }
+
+    private func logFirstRecordingAudioLevelIfNeeded(socketRMS: Double?) {
+        guard mode == .recording,
+              !didLogFirstRecordingAudioLevel,
+              let socketRMS
+        else { return }
+        let firstAudioUptimeMs = currentRecordingUptimeMs()
+        didLogFirstRecordingAudioLevel = true
+        var details = [
+            "firstAudioLevelUptimeMs": String(firstAudioUptimeMs),
+            "socketRms": Self.formatAudioLevel(socketRMS),
+        ]
+        if let recordCommandUptimeMs {
+            details["msSinceRecordCommand"] = String(max(0, firstAudioUptimeMs - recordCommandUptimeMs))
+        }
+        if let recordingStateUptimeMs {
+            details["msSinceRecordingState"] = String(max(0, firstAudioUptimeMs - recordingStateUptimeMs))
+        }
+        logDiagnostic("recording_first_audio_level", details: details)
+    }
+
+    private func currentRecordingUptimeMs() -> Int {
+        Int((recordingTimingClock() * 1000).rounded())
+    }
+
+    private static func formatAudioLevel(_ level: Double) -> String {
+        String(format: "%.4f", level)
     }
 
     private static func shouldMirrorDiagnosticToControlLayer(_ event: String) -> Bool {

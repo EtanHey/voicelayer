@@ -114,6 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastHotkeyActivityAt: TimeInterval?
     private var lastHotkeyActivitySource: HotkeyInputSource?
     private var activeHotkeySource: HotkeyInputSource?
+    private var hotkeyKeyDownUptimeMs: Int?
     var externalStartCommandGraceDeadline: TimeInterval? =
         CFAbsoluteTimeGetCurrent() + launchExternalStartCommandGraceWindow
     /// Whether the hotkey system is enabled.
@@ -592,11 +593,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func configureHotkeyCallbacks() {
         // Hold start → push-to-talk recording
         gestureStateMachine.onPreviewPhaseChange = { [weak self] phase in
+            if phase == .pressing {
+                self?.logHotkeyTimingDiagnostic("hotkey_key_down")
+            }
             self?.voiceState.setHotkeyPhase(phase)
         }
 
         gestureStateMachine.onHoldStart = { [weak self] in
             guard let self else { return }
+            logHotkeyTimingDiagnostic("hotkey_hold_start")
             NSLog("[VoiceBar] Hotkey hold start — starting recording")
             holdStartTime = Date()
             handleHotkeyHoldStart()
@@ -722,6 +727,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             .joined(separator: " ")
 
         NSLog("[VoiceBar][diag] %@ %@", event, payload)
+    }
+
+    private func logHotkeyTimingDiagnostic(_ event: String) {
+        let uptimeMs = currentHotkeyUptimeMs()
+        if event == "hotkey_key_down" {
+            hotkeyKeyDownUptimeMs = uptimeMs
+        }
+        var details = [
+            "hotkeyEventUptimeMs": String(uptimeMs),
+            "source": hotkeyDiagnosticSource(),
+        ]
+        if event == "hotkey_hold_start", let hotkeyKeyDownUptimeMs {
+            details["msSinceHotkeyKeyDown"] = String(max(0, uptimeMs - hotkeyKeyDownUptimeMs))
+        }
+        voiceState.diagnosticLogger?(event, details)
+    }
+
+    private func currentHotkeyUptimeMs() -> Int {
+        Int((ProcessInfo.processInfo.systemUptime * 1000).rounded())
+    }
+
+    private func hotkeyDiagnosticSource() -> String {
+        switch activeHotkeySource {
+        case .native:
+            "native"
+        case .legacySocket:
+            "local_control"
+        case nil:
+            "unknown"
+        }
     }
 
     private func boolString(_ value: Bool) -> String {
@@ -1406,6 +1441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func resetHotkeyTracking() {
         gestureStateMachine.reset()
         activeHotkeySource = nil
+        hotkeyKeyDownUptimeMs = nil
         voiceState.setHotkeyPhase(.idle)
     }
 

@@ -443,6 +443,29 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertTrue(spyRouter.handledURLs.isEmpty)
     }
 
+    func testLocalControlHoldEmitsKeyDownAndHoldStartTimingDiagnostics() throws {
+        let app = AppDelegate()
+        var diagnostics: [(event: String, details: [String: String])] = []
+        app.voiceState.diagnosticLogger = { event, details in
+            diagnostics.append((event, details))
+        }
+        app.externalStartCommandGraceDeadline = nil
+        app.hotkeyEnabled = true
+        app.configureHotkeyCallbacksForTesting()
+
+        app.handleLocalControlCommand(.startRecording)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+        let keyDown = try XCTUnwrap(diagnostics.first { $0.event == "hotkey_key_down" })
+        XCTAssertNotNil(try Int(XCTUnwrap(keyDown.details["hotkeyEventUptimeMs"])))
+        XCTAssertEqual(keyDown.details["source"], "local_control")
+
+        let holdStart = try XCTUnwrap(diagnostics.first { $0.event == "hotkey_hold_start" })
+        XCTAssertNotNil(try Int(XCTUnwrap(holdStart.details["hotkeyEventUptimeMs"])))
+        XCTAssertGreaterThanOrEqual(try Int(XCTUnwrap(holdStart.details["msSinceHotkeyKeyDown"])) ?? -1, 0)
+        XCTAssertEqual(holdStart.details["source"], "local_control")
+    }
+
     func testLocalControlDoubleTapUsesHotkeyGestureCallbacksInsteadOfDirectURLs() {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()
