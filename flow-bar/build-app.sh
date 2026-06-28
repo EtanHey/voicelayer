@@ -19,17 +19,23 @@ VOICEBAR_BACKUP_DIR="${VOICEBAR_BACKUP_DIR:-$HOME/Library/Application Support/Vo
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 VOICEBAR_ENTITLEMENTS="${VOICEBAR_ENTITLEMENTS:-$BUNDLE_DIR/VoiceBar.entitlements}"
-VOICEBAR_NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-${VOICEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"
 VOICEBAR_NOTARY_APPLE_ID="${VOICEBAR_NOTARY_APPLE_ID:-}"
 VOICEBAR_NOTARY_PASSWORD="${VOICEBAR_NOTARY_PASSWORD:-}"
 VOICEBAR_NOTARY_TEAM_ID="${VOICEBAR_NOTARY_TEAM_ID:-PPN23G925Y}"
 VOICEBAR_NOTARY_KEY="${VOICEBAR_NOTARY_KEY:-}"
 VOICEBAR_NOTARY_KEY_ID="${VOICEBAR_NOTARY_KEY_ID:-}"
 VOICEBAR_NOTARY_ISSUER="${VOICEBAR_NOTARY_ISSUER:-}"
+VOICEBAR_NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-${VOICEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"
+if [ -z "$VOICEBAR_NOTARY_PROFILE" ] \
+    && { [ -z "$VOICEBAR_NOTARY_APPLE_ID" ] || [ -z "$VOICEBAR_NOTARY_PASSWORD" ] || [ -z "$VOICEBAR_NOTARY_TEAM_ID" ]; } \
+    && { [ -z "$VOICEBAR_NOTARY_KEY" ] || [ -z "$VOICEBAR_NOTARY_KEY_ID" ] || [ -z "$VOICEBAR_NOTARY_ISSUER" ]; }; then
+    VOICEBAR_NOTARY_PROFILE="notary-layers"
+fi
 VOICEBAR_REQUIRE_NOTARIZATION="${VOICEBAR_REQUIRE_NOTARIZATION:-0}"
 VOICEBAR_RELEASE_ZIP="${VOICEBAR_RELEASE_ZIP:-}"
 VOICEBAR_SOCKET_PATH="${QA_VOICE_SOCKET_PATH:-${VOICEBAR_SOCKET_PATH:-/tmp/voicelayer.sock}}"
 VOICEBAR_NOTARIZED=0
+VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK=""
 STOP_RUNNING=1
 RELAUNCH_APP=1
 
@@ -82,6 +88,12 @@ parse_build_app_args() {
                 return 2
                 ;;
         esac
+    done
+}
+
+normalize_app_dir_path() {
+    while [ "$APP_DIR" != "/" ] && [[ "$APP_DIR" == */ ]]; do
+        APP_DIR="${APP_DIR%/}"
     done
 }
 
@@ -418,23 +430,40 @@ stamp_info_plist() {
 }
 
 notary_credentials_available() {
-    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
-        return 0
-    fi
     if [ -n "$VOICEBAR_NOTARY_APPLE_ID" ] && [ -n "$VOICEBAR_NOTARY_PASSWORD" ] && [ -n "$VOICEBAR_NOTARY_TEAM_ID" ]; then
         return 0
     fi
     if [ -n "$VOICEBAR_NOTARY_KEY" ] && [ -n "$VOICEBAR_NOTARY_KEY_ID" ] && [ -n "$VOICEBAR_NOTARY_ISSUER" ]; then
         return 0
     fi
+    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
+        notary_profile_credentials_available
+        return
+    fi
     return 1
 }
 
-notarytool_auth_args() {
-    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
-        printf '%s\0%s\0' "--keychain-profile" "$VOICEBAR_NOTARY_PROFILE"
+notary_profile_credentials_available() {
+    if [ "${VOICEBAR_NOTARY_SKIP_PREFLIGHT:-0}" = "1" ]; then
         return 0
     fi
+    if [ -n "$VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK" ]; then
+        [ "$VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK" = "1" ]
+        return
+    fi
+    if ! command -v xcrun >/dev/null 2>&1; then
+        VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK=0
+        return 1
+    fi
+    if xcrun notarytool history --keychain-profile "$VOICEBAR_NOTARY_PROFILE" >/dev/null 2>&1; then
+        VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK=1
+    else
+        VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK=0
+    fi
+    [ "$VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK" = "1" ]
+}
+
+notarytool_auth_args() {
     if [ -n "$VOICEBAR_NOTARY_APPLE_ID" ] && [ -n "$VOICEBAR_NOTARY_PASSWORD" ] && [ -n "$VOICEBAR_NOTARY_TEAM_ID" ]; then
         printf '%s\0%s\0%s\0%s\0%s\0%s\0' \
             "--apple-id" "$VOICEBAR_NOTARY_APPLE_ID" \
@@ -447,6 +476,10 @@ notarytool_auth_args() {
             "--key" "$VOICEBAR_NOTARY_KEY" \
             "--key-id" "$VOICEBAR_NOTARY_KEY_ID" \
             "--issuer" "$VOICEBAR_NOTARY_ISSUER"
+        return 0
+    fi
+    if [ -n "$VOICEBAR_NOTARY_PROFILE" ]; then
+        printf '%s\0%s\0' "--keychain-profile" "$VOICEBAR_NOTARY_PROFILE"
         return 0
     fi
     return 1
@@ -618,8 +651,8 @@ notarize_and_staple() {
             echo "  VOICEBAR_NOTARY_KEY=<api-key.p8> VOICEBAR_NOTARY_KEY_ID=<key-id> VOICEBAR_NOTARY_ISSUER=<issuer-id>" >&2
             return 1
         fi
-        echo "[build-app] Notary credentials not configured; skipping notarytool submit."
-        echo "[build-app] Ready to submit with VOICEBAR_NOTARY_PROFILE=<keychain-profile> or Apple ID/API key env vars."
+        echo "[build-app] WARNING: Notary credentials not configured; this build will not be notarized or stapled." >&2
+        echo "[build-app] WARNING: Ready to submit with VOICEBAR_NOTARY_PROFILE=<keychain-profile> or Apple ID/API key env vars." >&2
         return 0
     fi
 
@@ -653,6 +686,27 @@ notarize_and_staple() {
     VOICEBAR_NOTARIZED=1
 }
 
+protect_notarized_resident_before_rebuild() {
+    if [ "$APP_DIR" != "/Applications/VoiceBar.app" ] || [ ! -d "$APP_DIR" ]; then
+        return 0
+    fi
+
+    if ! xcrun stapler validate "$APP_DIR" >/dev/null 2>&1; then
+        if ! notary_credentials_available; then
+            echo "[build-app] WARNING: Notary credentials not configured; resident rebuild will install an unnotarized app." >&2
+        fi
+        return 0
+    fi
+
+    if notary_credentials_available; then
+        return 0
+    fi
+
+    echo "[build-app] ERROR: Refusing to replace notarized /Applications/VoiceBar.app with an unnotarized local rebuild." >&2
+    echo "[build-app] Configure VOICEBAR_NOTARY_PROFILE=notary-layers or use Homebrew: brew reinstall --cask etanhey/layers/voicebar" >&2
+    return 1
+}
+
 create_release_zip() {
     if [ -z "$VOICEBAR_RELEASE_ZIP" ]; then
         return 0
@@ -677,6 +731,9 @@ if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
 fi
 
 parse_build_app_args "$@"
+normalize_app_dir_path
+
+protect_notarized_resident_before_rebuild
 
 if [[ "$STOP_RUNNING" -eq 1 ]]; then
     stop_voicebar_instances

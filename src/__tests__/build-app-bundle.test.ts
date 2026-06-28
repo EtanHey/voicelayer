@@ -162,6 +162,69 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).toMatch(/ditto -c -k --keepParent "\$APP_DIR"/);
   });
 
+  test("defaults resident rebuild notarization to notary-layers and guards stapled cask apps before clobbering", () => {
+    const profileInit = buildScript.indexOf(
+      'VOICEBAR_NOTARY_PROFILE="${VOICEBAR_NOTARY_PROFILE:-${VOICEBAR_NOTARY_KEYCHAIN_PROFILE:-}}"',
+    );
+    const defaultProfile = buildScript.indexOf(
+      'VOICEBAR_NOTARY_PROFILE="notary-layers"',
+      profileInit,
+    );
+    expect(profileInit).toBeGreaterThan(0);
+    expect(defaultProfile).toBeGreaterThan(profileInit);
+
+    const guardStart = buildScript.indexOf(
+      "protect_notarized_resident_before_rebuild() {",
+    );
+    const guardEnd = buildScript.indexOf(
+      "\n}\n\ncreate_release_zip",
+      guardStart,
+    );
+    const guardBody = buildScript.slice(guardStart, guardEnd);
+    expect(guardBody).toContain("xcrun stapler validate \"$APP_DIR\"");
+    expect(guardBody).toContain("notary_credentials_available");
+    expect(guardBody).toContain(
+      "Refusing to replace notarized /Applications/VoiceBar.app with an unnotarized local rebuild",
+    );
+
+    const parseCall = buildScript.indexOf('parse_build_app_args "$@"');
+    const normalizeCall = buildScript.indexOf(
+      "normalize_app_dir_path",
+      parseCall,
+    );
+    const guardCall = buildScript.indexOf(
+      "protect_notarized_resident_before_rebuild",
+      normalizeCall,
+    );
+    const stopCall = buildScript.indexOf(
+      'if [[ "$STOP_RUNNING" -eq 1 ]]',
+      guardCall,
+    );
+    expect(parseCall).toBeGreaterThan(0);
+    expect(normalizeCall).toBeGreaterThan(parseCall);
+    expect(guardCall).toBeGreaterThan(normalizeCall);
+    expect(stopCall).toBeGreaterThan(guardCall);
+  });
+
+  test("preflights the notary keychain profile before treating resident rebuild credentials as available", () => {
+    const preflightStart = buildScript.indexOf(
+      "notary_profile_credentials_available() {",
+    );
+    const preflightEnd = buildScript.indexOf(
+      "\n}\n\nnotarytool_auth_args",
+      preflightStart,
+    );
+    const preflightBody = buildScript.slice(preflightStart, preflightEnd);
+    const skipFlag = preflightBody.indexOf(
+      'if [ "${VOICEBAR_NOTARY_SKIP_PREFLIGHT:-0}" = "1" ]; then',
+    );
+    const notaryHistory = preflightBody.indexOf(
+      'xcrun notarytool history --keychain-profile "$VOICEBAR_NOTARY_PROFILE"',
+    );
+    expect(skipFlag).toBeGreaterThan(0);
+    expect(notaryHistory).toBeGreaterThan(skipFlag);
+  });
+
   test("requires notarization before producing a Homebrew release zip", () => {
     expect(buildScript).toContain("VOICEBAR_RELEASE_ZIP");
     expect(buildScript).toContain("VOICEBAR_REQUIRE_NOTARIZATION");

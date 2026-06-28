@@ -20,6 +20,7 @@ DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-skip}"
 RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
+VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
 BUILD_APP_ARGS=()
 
 usage() {
@@ -202,14 +203,56 @@ package_update_label() {
     esac
 }
 
+voicebar_cask_installed() {
+    case "${VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+
+    command -v brew >/dev/null 2>&1 && brew list --cask voicebar >/dev/null 2>&1
+}
+
+voicebar_app_update_mode() {
+    if voicebar_cask_installed; then
+        printf 'cask-reinstall\n'
+        return
+    fi
+
+    case "$(detect_install_type)" in
+        git-checkout)
+            printf 'local-build\n'
+            ;;
+        *)
+            printf 'cask-install\n'
+            ;;
+    esac
+}
+
+voicebar_app_update_label() {
+    case "$(voicebar_app_update_mode)" in
+        cask-reinstall)
+            printf 'brew reinstall --cask %s\n' "$VOICEBAR_CASK_TOKEN"
+            ;;
+        cask-install)
+            printf 'brew install --cask %s\n' "$VOICEBAR_CASK_TOKEN"
+            ;;
+        *)
+            print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
+            ;;
+    esac
+}
+
 print_plan() {
     local install_type
+    local app_update
     install_type="$(detect_install_type)"
+    app_update="$(voicebar_app_update_label)"
     log "VoiceLayer M1 update plan"
     log "DRY RUN: $([[ "$DRY_RUN" -eq 1 ]] && printf yes || printf no)"
     log "INSTALL TYPE: $install_type"
     log "PACKAGE ROOT: $PACKAGE_ROOT"
     log "PACKAGE UPDATE: $(package_update_label)"
+    log "VOICEBAR APP UPDATE: $app_update"
     if [[ "$DATA_MODE" != "skip" ]]; then
         log "DATA MODE: $DATA_MODE"
         log "DATA SOURCE: $DATA_SOURCE"
@@ -222,9 +265,16 @@ print_plan() {
     log "Steps:"
     log "  1. update package: $(package_update_label)"
     log "  2. install package dependencies when running from a git checkout"
-    log "  3. $(print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}")"
+    log "  3. + $app_update"
     log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
-    log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
+    case "$(voicebar_app_update_mode)" in
+        local-build)
+            log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
+            ;;
+        *)
+            log "  5. Homebrew installs the notarized VoiceBar cask artifact"
+            ;;
+    esac
     if [[ "$DATA_MODE" != "skip" ]]; then
         log "  6. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
@@ -297,6 +347,20 @@ update_package() {
     esac
 }
 
+update_voicebar_app() {
+    case "$(voicebar_app_update_mode)" in
+        cask-reinstall)
+            run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+            ;;
+        cask-install)
+            run_cmd brew install --cask "$VOICEBAR_CASK_TOKEN"
+            ;;
+        *)
+            run_cmd env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
+            ;;
+    esac
+}
+
 main() {
     parse_args "$@"
     validate_args
@@ -320,9 +384,16 @@ main() {
     if [[ "$DATA_MODE" != "skip" ]]; then
         ensure_command "$RSYNC_BIN"
     fi
+    case "$(voicebar_app_update_mode)" in
+        cask-reinstall|cask-install)
+            if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
+                ensure_command brew
+            fi
+            ;;
+    esac
 
     update_package
-    run_cmd env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
+    update_voicebar_app
     install_qwen3_model
     sync_personal_data
     log "VoiceLayer update complete."
