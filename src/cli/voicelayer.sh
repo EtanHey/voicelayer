@@ -77,6 +77,10 @@ case "${1:-}" in
         shift
         exec bash "$PACKAGE_ROOT/scripts/voicelayer-update.sh" "$@"
         ;;
+    doctor)
+        shift
+        exec bash "$PACKAGE_ROOT/scripts/voicelayer-dedupe-voicebar.sh" "$@"
+        ;;
     build-app)
         shift
         exec bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "$@"
@@ -153,6 +157,7 @@ case "${1:-}" in
         echo "  bar        Launch VoiceBar.app (floating pill widget)"
         echo "  vocab      Add, list, or remove STT vocabulary aliases"
         echo "  update     Update app, daemon, model, and personal VoiceLayer data"
+        echo "  doctor     Inventory/dedupe VoiceBar.app copies (dry-run by default)"
         echo "  autostart  Install or inspect the VoiceBar login LaunchAgent"
         echo "  hotkey     Install or inspect the F5/Dictation hotkey relay"
         echo "  bar-stop   Stop the Voice Bar if running"
@@ -166,6 +171,7 @@ case "${1:-}" in
         echo "  voicelayer bar"
         echo "  voicelayer vocab add --wrong 'domekin' --right 'Domica'"
         echo "  voicelayer update --dry-run"
+        echo "  voicelayer doctor"
         echo "  voicelayer autostart install"
         echo "  voicelayer hotkey install"
         echo ""

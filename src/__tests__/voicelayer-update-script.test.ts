@@ -20,6 +20,7 @@ function run(command: string[], env: Record<string, string> = {}) {
     stderr: "pipe",
     env: {
       ...process.env,
+      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0",
       ...env,
     },
   });
@@ -80,6 +81,37 @@ describe("voicelayer-update.sh", () => {
     );
   });
 
+  test("brew-cask-managed VoiceBar uses cask reinstall instead of a local rebuild", () => {
+    const result = run(["bash", updateScript, "--dry-run"], {
+      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      "VOICEBAR APP UPDATE: brew reinstall --cask etanhey/layers/voicebar",
+    );
+    expect(stdout).toContain(
+      "+ brew reinstall --cask etanhey/layers/voicebar",
+    );
+    expect(stdout).not.toContain("bash flow-bar/build-app.sh");
+  });
+
+  test("non-dry-run cask path skips build-app when commands are dry-run-stubbed", () => {
+    const result = run(["bash", updateScript], {
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      "+ brew reinstall --cask etanhey/layers/voicebar",
+    );
+    expect(stdout).not.toContain("+ env VOICEBAR_CODESIGN_IDENTITY=");
+    expect(stdout).not.toContain(`bash ${repoRoot}/flow-bar/build-app.sh`);
+  });
+
   test("non-dry-run updates can skip personal data sync", () => {
     const result = run(["bash", updateScript], {
       VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
@@ -126,6 +158,24 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).toContain("VoiceLayer M1 update plan");
+  });
+
+  test("CLI exposes `voicelayer doctor` as the dry-run VoiceBar dedupe tool", () => {
+    const body = readFileSync(cliScript, "utf8");
+    const dedupeScript = readFileSync(
+      join(repoRoot, "scripts", "voicelayer-dedupe-voicebar.sh"),
+      "utf8",
+    );
+
+    expect(body).toContain("doctor)");
+    expect(body).toContain(
+      'exec bash "$PACKAGE_ROOT/scripts/voicelayer-dedupe-voicebar.sh" "$@"',
+    );
+    expect(body).toContain("  doctor");
+    expect(dedupeScript).toContain("SAFE BY DEFAULT");
+    expect(dedupeScript).toContain("pass --apply");
+    expect(dedupeScript).toContain("BACKUP_DIR=");
+    expect(dedupeScript).not.toContain('rm -rf "$b"');
   });
 
   test("global Bun install path uses the actual global update command", () => {
