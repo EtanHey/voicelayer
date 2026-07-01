@@ -223,12 +223,11 @@ describe("CLI integration", () => {
     expect(packageJson.files).toContain("!scripts/__pycache__/**");
   });
 
-  it("hidutil helper strips only the stale VoiceBar F5->F18 shape and pushes Dictation", () => {
-    // Filter must be pair-based, not source-only: a user may have remapped
-    // physical F5 to something unrelated (CapsLock, etc.) and we must
-    // preserve that. Only the EXACT stale VoiceBar shape (F5 -> F18) gets
-    // removed. Dictation -> F18 is always pushed because VoiceBar's HID-layer
-    // promotion of the consumer key is required for VoiceBar to work.
+  it("hidutil helper emits BOTH F5->F18 and Dictation->F18, preserving unrelated mappings", () => {
+    // VoiceBar must remap BOTH the physical F5 and the Dictation consumer key to
+    // F18 so a bare F5 press survives reboots instead of falling through to
+    // macOS Dictation. Any prior VoiceBar F5 -> F18 entry is replaced (not
+    // duplicated), and mappings on OTHER keys (e.g. CapsLock -> Esc) survive.
     const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
       cwd: process.cwd(),
       env: {
@@ -242,7 +241,7 @@ describe("CLI integration", () => {
             HIDKeyboardModifierMappingDst: 456,
           },
           {
-            // Stale VoiceBar F5 -> F18 (Src=F5, Dst=F18) — must be removed.
+            // Stale VoiceBar F5 -> F18 (Src=F5, Dst=F18) — replaced, not duped.
             HIDKeyboardModifierMappingSrc: 30064771134,
             HIDKeyboardModifierMappingDst: 30064771181,
           },
@@ -260,17 +259,71 @@ describe("CLI integration", () => {
         HIDKeyboardModifierMappingDst: 456,
       },
       {
+        // F5 -> F18 restored (the reboot-survival fix).
+        HIDKeyboardModifierMappingSrc: 30064771134,
+        HIDKeyboardModifierMappingDst: 30064771181,
+      },
+      {
         HIDKeyboardModifierMappingSrc: 51539607759,
         HIDKeyboardModifierMappingDst: 30064771181,
       },
     ]);
+    // No duplicate Src entries.
+    const srcs = merged.UserKeyMapping.map(
+      (e: { HIDKeyboardModifierMappingSrc: number }) =>
+        e.HIDKeyboardModifierMappingSrc,
+    );
+    expect(new Set(srcs).size).toBe(srcs.length);
   }, 15_000);
 
-  it("hidutil helper preserves user-owned F5 remaps that aren't to F18", () => {
-    // Regression guard for Codex P2 on 84608d7: a source-only filter strips
-    // *all* user F5 mappings whenever the LaunchAgent runs, even unrelated
-    // remaps like F5 -> CapsLock. Only the exact VoiceBar shape (F5 -> F18)
-    // is owned by us; anything else must survive.
+  it("hidutil helper output has both Src keys -> F18 and ZERO null entries", () => {
+    // Core reboot-survival contract (brief 2026-07-01): the merged payload must
+    // contain BOTH F5 (30064771134) and Dictation (51539607759) mapped to F18
+    // (30064771181), and no entry may have a null Src or Dst — the old JXA merge
+    // regressed to `{Src: null, Dst: null}` which set UserKeyMapping to (null).
+    const F5_SRC = 30064771134;
+    const DICTATION_SRC = 51539607759;
+    const F18_DST = 30064771181;
+    const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        VOICELAYER_HIDUTIL_DRY_RUN: "1",
+        VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+        VOICELAYER_HIDUTIL_CURRENT_MAPPING: JSON.stringify([]),
+      },
+      encoding: "utf8",
+    });
+
+    expect(result.status).toBe(0);
+    const merged = JSON.parse(result.stdout);
+    const entries: Array<{
+      HIDKeyboardModifierMappingSrc: number;
+      HIDKeyboardModifierMappingDst: number;
+    }> = merged.UserKeyMapping;
+    // Zero null Src/Dst anywhere.
+    for (const e of entries) {
+      expect(e.HIDKeyboardModifierMappingSrc).not.toBeNull();
+      expect(e.HIDKeyboardModifierMappingDst).not.toBeNull();
+      expect(typeof e.HIDKeyboardModifierMappingSrc).toBe("number");
+      expect(typeof e.HIDKeyboardModifierMappingDst).toBe("number");
+    }
+    // Both source keys map to F18.
+    expect(entries).toContainEqual({
+      HIDKeyboardModifierMappingSrc: F5_SRC,
+      HIDKeyboardModifierMappingDst: F18_DST,
+    });
+    expect(entries).toContainEqual({
+      HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+      HIDKeyboardModifierMappingDst: F18_DST,
+    });
+  }, 15_000);
+
+  it("hidutil helper reclaims F5 for VoiceBar while non-F5 keys survive", () => {
+    // VoiceBar owns the physical F5 key: any prior F5 -> anything (e.g. a stray
+    // F5 -> CapsLock) is reclaimed as F5 -> F18 with no duplicate F5 Src, so a
+    // bare F5 always reaches VoiceBar after login. A mapping on a DIFFERENT key
+    // (CapsLock -> Esc) is untouched.
     const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
       cwd: process.cwd(),
       env: {
@@ -279,9 +332,14 @@ describe("CLI integration", () => {
         VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
         VOICELAYER_HIDUTIL_CURRENT_MAPPING: JSON.stringify([
           {
-            // User-owned F5 -> CapsLock (0x700000039 = 30064771129).
+            // Stray F5 -> CapsLock (0x700000039 = 30064771129) — reclaimed.
             HIDKeyboardModifierMappingSrc: 30064771134,
             HIDKeyboardModifierMappingDst: 30064771129,
+          },
+          {
+            // Unrelated CapsLock -> Esc — survives (Src is not F5/Dictation).
+            HIDKeyboardModifierMappingSrc: 30064771129,
+            HIDKeyboardModifierMappingDst: 30064771113,
           },
         ]),
       },
@@ -292,9 +350,14 @@ describe("CLI integration", () => {
     const merged = JSON.parse(result.stdout);
     expect(merged.UserKeyMapping).toEqual([
       {
-        // User's F5 -> CapsLock survives because Dst != F18.
+        // Unrelated CapsLock -> Esc survives.
+        HIDKeyboardModifierMappingSrc: 30064771129,
+        HIDKeyboardModifierMappingDst: 30064771113,
+      },
+      {
+        // F5 reclaimed for VoiceBar (single F5 Src entry).
         HIDKeyboardModifierMappingSrc: 30064771134,
-        HIDKeyboardModifierMappingDst: 30064771129,
+        HIDKeyboardModifierMappingDst: 30064771181,
       },
       {
         HIDKeyboardModifierMappingSrc: 51539607759,
@@ -320,12 +383,12 @@ describe("CLI integration", () => {
         VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
         VOICELAYER_HIDUTIL_CURRENT_MAPPING: JSON.stringify([
           {
+            // Unrelated string-valued mapping — survives and must be coerced.
             HIDKeyboardModifierMappingSrc: "12345",
             HIDKeyboardModifierMappingDst: "67890",
           },
           {
-            // String F5 src with Dst != F18 — survives the pair-shape filter
-            // (user-owned mapping). Must be coerced to numbers.
+            // String F5 src — reclaimed by VoiceBar as F5 -> F18 (not preserved).
             HIDKeyboardModifierMappingSrc: "30064771134",
             HIDKeyboardModifierMappingDst: "999",
           },
@@ -336,9 +399,9 @@ describe("CLI integration", () => {
 
     expect(result.status).toBe(0);
     const merged = JSON.parse(result.stdout);
-    // 3 entries: both preserved (coerced) + Dictation -> F18.
+    // 3 entries: unrelated preserved (coerced) + F5 -> F18 + Dictation -> F18.
     expect(merged.UserKeyMapping).toHaveLength(3);
-    // First preserved entry: string fixture must come out as numbers.
+    // Preserved unrelated entry: string fixture must come out as numbers.
     expect(merged.UserKeyMapping[0]).toEqual({
       HIDKeyboardModifierMappingSrc: 12345,
       HIDKeyboardModifierMappingDst: 67890,
@@ -349,10 +412,10 @@ describe("CLI integration", () => {
     expect(typeof merged.UserKeyMapping[0].HIDKeyboardModifierMappingDst).toBe(
       "number",
     );
-    // Second preserved entry: user-owned F5 -> 999, also coerced.
+    // F5 reclaimed as F5 -> F18 (numeric), replacing the stale F5 -> 999.
     expect(merged.UserKeyMapping[1]).toEqual({
       HIDKeyboardModifierMappingSrc: 30064771134,
-      HIDKeyboardModifierMappingDst: 999,
+      HIDKeyboardModifierMappingDst: 30064771181,
     });
     expect(typeof merged.UserKeyMapping[1].HIDKeyboardModifierMappingSrc).toBe(
       "number",

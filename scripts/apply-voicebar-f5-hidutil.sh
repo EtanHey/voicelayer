@@ -23,33 +23,31 @@ function run(argv) {
   const f5Src = Number(argv[1]);
   const dictationSrc = Number(argv[2]);
   const f18Dst = Number(argv[3]);
-  // Filter only the exact stale VoiceBar shapes (Src -> F18). A user may have
-  // their own F5 -> CapsLock or Dictation -> SomeOtherKey mapping that must
-  // survive across LaunchAgent runs — only entries that look like VoiceBar's
-  // output (F5 -> F18 or Dictation -> F18) are ours to strip.
-  const voiceBarStaleEntries = new Set([
-    `${f5Src}|${f18Dst}`,
-    `${dictationSrc}|${f18Dst}`,
-  ]);
+  // VoiceBar owns BOTH source keys it relays to F18: the physical F5
+  // (0x70000003E) and the Apple Dictation consumer key (0xC000000CF). Strip any
+  // existing mapping on either Src so the re-push below can't create a duplicate
+  // Src entry (idempotent). Filtering by Src — not by exact Src->F18 pair — also
+  // means a prior F5 -> anything is reclaimed for VoiceBar. Mappings on OTHER
+  // keys (CapsLock -> Esc, etc.) are untouched and survive across LaunchAgent
+  // runs.
+  const voiceBarOwnedSrc = new Set([f5Src, dictationSrc]);
   const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
   // hidutil/plutil can emit HID values as strings on some macOS versions;
   // normalize so `hidutil property --set` always sees numeric Src/Dst.
   const preserved = mappings
-    .filter((entry) => {
-      const src = Number(entry.HIDKeyboardModifierMappingSrc);
-      const dst = Number(entry.HIDKeyboardModifierMappingDst);
-      return !voiceBarStaleEntries.has(`${src}|${dst}`);
-    })
+    .filter((entry) => !voiceBarOwnedSrc.has(Number(entry.HIDKeyboardModifierMappingSrc)))
     .map((entry) => ({
       HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
       HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
     }));
 
-  // Only remap the Apple Dictation consumer key globally. The physical F5
-  // (0x70000003E) is NOT pushed: VoiceBar's CGEventTap already listens for
-  // keycode 96 directly, and rewriting F5 -> F18 at the HID layer would hide
-  // F5 from the OS for every app — breaking system chords like Cmd+F5
-  // (VoiceOver).
+  // Push BOTH remaps. F5 -> F18 is required so a bare F5 press survives reboots
+  // instead of falling through to macOS Dictation; Dictation -> F18 promotes the
+  // consumer key. Both land as numeric Src/Dst with no null entries.
+  preserved.push({
+    HIDKeyboardModifierMappingSrc: f5Src,
+    HIDKeyboardModifierMappingDst: f18Dst,
+  });
   preserved.push({
     HIDKeyboardModifierMappingSrc: dictationSrc,
     HIDKeyboardModifierMappingDst: f18Dst,
@@ -67,28 +65,26 @@ const current = JSON.parse(currentJson || "[]");
 const f5Src = Number(f5SrcArg);
 const dictationSrc = Number(dictationSrcArg);
 const f18Dst = Number(f18DstArg);
-// Filter only the exact stale VoiceBar shapes (Src -> F18) — see the
-// osascript path for the full rationale.
-const voiceBarStaleEntries = new Set([
-  `${f5Src}|${f18Dst}`,
-  `${dictationSrc}|${f18Dst}`,
-]);
+// VoiceBar owns BOTH source keys it relays to F18 (physical F5 + Dictation
+// consumer key). Strip any existing mapping on either Src so the re-push can't
+// dupe a Src (idempotent) — see the osascript path for the full rationale.
+const voiceBarOwnedSrc = new Set([f5Src, dictationSrc]);
 const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
 // hidutil/plutil can emit HID values as strings on some macOS versions;
 // normalize so `hidutil property --set` always sees numeric Src/Dst.
 const preserved = mappings
-  .filter((entry) => {
-    const src = Number(entry.HIDKeyboardModifierMappingSrc);
-    const dst = Number(entry.HIDKeyboardModifierMappingDst);
-    return !voiceBarStaleEntries.has(`${src}|${dst}`);
-  })
+  .filter((entry) => !voiceBarOwnedSrc.has(Number(entry.HIDKeyboardModifierMappingSrc)))
   .map((entry) => ({
     HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
     HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
   }));
 
-// Only remap the Apple Dictation consumer key globally (see osascript path
-// for full rationale).
+// Push BOTH remaps: F5 -> F18 (survives reboots, no Dictation fall-through) and
+// Dictation -> F18. Numeric Src/Dst, no null entries.
+preserved.push({
+  HIDKeyboardModifierMappingSrc: f5Src,
+  HIDKeyboardModifierMappingDst: f18Dst,
+});
 preserved.push({
   HIDKeyboardModifierMappingSrc: dictationSrc,
   HIDKeyboardModifierMappingDst: f18Dst,
