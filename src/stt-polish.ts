@@ -42,6 +42,7 @@ export interface STTPolishResult {
   status: STTPolishStatus;
   surface: STTPolishSurface;
   changed: boolean;
+  retried: boolean;
   latencyMs: number;
   error?: string;
 }
@@ -147,8 +148,8 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
   return env.QA_VOICE_STT_POLISH_LOG_PATH?.trim() || DEFAULT_POLISH_LOG_PATH;
 }
 
-function buildPolishSystemPrompt(): string {
-  return [
+function buildPolishSystemPrompt(retryNoop = false): string {
+  const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
     "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
@@ -197,7 +198,14 @@ function buildPolishSystemPrompt(): string {
     "Forbidden rewrite:",
     "Input: I think this might work.",
     "Output: This solution should work.",
-  ].join("\n");
+  ];
+  if (retryNoop) {
+    lines.push(
+      "",
+      "Retry instruction: the previous response copied the input unchanged. Add sentence punctuation and split obvious run-on questions without changing meaning.",
+    );
+  }
+  return lines.join("\n");
 }
 
 function buildPolishUserPrompt(rawText: string, cleanedText: string): string {
@@ -337,6 +345,16 @@ function negationCount(text: string): number {
 
 function countMatches(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0;
+}
+
+function shouldRetryNoopPolish(cleanedText: string): boolean {
+  const words = countWords(cleanedText);
+  if (words < 12) return false;
+
+  const trimmed = cleanedText.trim();
+  const withoutTerminal = trimmed.replace(/[.?!]+$/u, "");
+  const internalPunctuation = countMatches(withoutTerminal, /[.,;:?!]/gu);
+  return internalPunctuation / words <= 0.04;
 }
 
 function protectedCodePunctuationCounts(text: string): Map<string, number> {
@@ -735,7 +753,9 @@ function applyPolishCandidate(
     polishedText: string | null,
     status: STTPolishStatus,
     error?: string,
+    retried?: boolean,
   ) => STTPolishResult,
+  retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
   const deterministicCandidate =
@@ -746,12 +766,24 @@ function applyPolishCandidate(
   const candidateText = deterministicCandidate ?? trimmedPolishedText;
   const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
   if (mode === "shadow") {
-    return buildResult(cleanedText, candidateText, "shadowed", rejectionReason ?? undefined);
+    return buildResult(
+      cleanedText,
+      candidateText,
+      "shadowed",
+      rejectionReason ?? undefined,
+      retried,
+    );
   }
   if (rejectionReason) {
-    return buildResult(cleanedText, candidateText, "rejected", rejectionReason);
+    return buildResult(
+      cleanedText,
+      candidateText,
+      "rejected",
+      rejectionReason,
+      retried,
+    );
   }
-  return buildResult(candidateText, candidateText, "applied");
+  return buildResult(candidateText, candidateText, "applied", undefined, retried);
 }
 
 function getPolishHealthEndpoint(endpoint: string): string {
@@ -819,6 +851,7 @@ async function requestPolishOverHttp(
   cleanedText: string,
   env: STTPolishEnv,
   timeoutMs: number,
+  options: { retryNoop?: boolean } = {},
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -830,7 +863,10 @@ async function requestPolishOverHttp(
       body: JSON.stringify({
         model: getSTTPolishModel(env),
         messages: [
-          { role: "system", content: buildPolishSystemPrompt() },
+          {
+            role: "system",
+            content: buildPolishSystemPrompt(options.retryNoop === true),
+          },
           { role: "user", content: buildPolishUserPrompt(rawText, cleanedText) },
         ],
         temperature: 0,
@@ -898,6 +934,7 @@ async function requestPolishWarmupOverHttp(
         }`,
       );
     }
+    extractPolishResponseText(payload);
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
       throw new Error(`polish warmup timed out after ${timeoutMs}ms`);
@@ -1057,6 +1094,7 @@ function writePolishLog(
     polished_text: result.polishedText,
     final_text: result.text,
     changed: result.changed,
+    retried: result.retried,
     latency_ms: result.latencyMs,
     error: result.error,
   })}\n`;
@@ -1085,6 +1123,7 @@ export async function polishTranscriptionText(
     polishedText: string | null,
     status: STTPolishStatus,
     error?: string,
+    retried = false,
   ): STTPolishResult => ({
     inputText: input.cleanedText,
     text,
@@ -1093,6 +1132,7 @@ export async function polishTranscriptionText(
     status,
     surface,
     changed: text !== input.cleanedText,
+    retried,
     latencyMs: performance.now() - startedAt,
     error,
   });
@@ -1132,6 +1172,46 @@ export async function polishTranscriptionText(
         mode,
         buildResult,
       );
+      if (
+        result.status === "applied" &&
+        !result.changed &&
+        shouldRetryNoopPolish(input.cleanedText)
+      ) {
+        try {
+          const retryPolishedText = await requestPolishOverHttp(
+            endpoint,
+            input.rawText,
+            input.cleanedText,
+            env,
+            getSTTPolishTimeoutMs(env),
+            { retryNoop: true },
+          );
+          const retryResult = applyPolishCandidate(
+            input.cleanedText,
+            retryPolishedText,
+            mode,
+            buildResult,
+            true,
+          );
+          writePolishLog(retryResult, input.rawText, input.cleanedText, env);
+          return retryResult;
+        } catch (retryErr) {
+          const retryFailedResult = buildResult(
+            result.text,
+            result.polishedText,
+            result.status,
+            retryErr instanceof Error ? retryErr.message : String(retryErr),
+            true,
+          );
+          writePolishLog(
+            retryFailedResult,
+            input.rawText,
+            input.cleanedText,
+            env,
+          );
+          return retryFailedResult;
+        }
+      }
       writePolishLog(result, input.rawText, input.cleanedText, env);
       return result;
     } catch (err) {

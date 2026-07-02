@@ -187,6 +187,7 @@ export async function finalizeTranscriptionTextForSurface(
       status: polished.status,
       surface: polished.surface,
       changed: polished.changed,
+      retried: polished.retried,
       latency_ms: Math.round(polished.latencyMs),
       raw_chars: rawText.length,
       cleaned_chars: cleanedText.length,

@@ -1002,6 +1002,201 @@ describe("stt-polish", () => {
     expect(result.error).toContain("polish health check failed");
   });
 
+  it("returns failed status when warmup receives an invalid completion payload", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        return Response.json({ choices: [{ message: {} }] });
+      },
+    });
+
+    try {
+      const result = await warmPolishEndpointForTest()({
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      });
+
+      expect(result.status).toBe("failed");
+      expect(result.error).toContain("missing message content");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("retries once when HTTP polish no-ops on a long low-punctuation run-on", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const cleanedText =
+      "Did your skill weave lead finish did it do a full weave did you consume it what happened here on your watch.";
+    const polishedText =
+      "Did your skill weave lead finish? Did it do a full weave? Did you consume it? What happened here on your watch?";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: requests.length === 1 ? cleanedText : polishedText,
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(requests).toHaveLength(2);
+      expect(result).toMatchObject({
+        text: polishedText,
+        status: "applied",
+        changed: true,
+        retried: true,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("does not retry a short already-good no-op polish response", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const cleanedText = "Can I close you?";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [{ message: { content: cleanedText } }],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "applied",
+        changed: false,
+        retried: false,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("does not retry a long multi-sentence no-op polish response", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const cleanedText =
+      "Fixed the bug. Ran the tests. Opened the PR. Wrote the report. Notified the lead.";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [{ message: { content: cleanedText } }],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(requests).toHaveLength(1);
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "applied",
+        changed: false,
+        retried: false,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("does not retry more than once when HTTP polish keeps no-oping", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const cleanedText =
+      "Please check the branch run the tests open the pull request trigger review and tell me what happened.";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [{ message: { content: cleanedText } }],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(requests).toHaveLength(2);
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "applied",
+        changed: false,
+        retried: true,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("accepts the mlx_lm.server response shape where message is a string", async () => {
     const server = Bun.serve({
       port: 0,
