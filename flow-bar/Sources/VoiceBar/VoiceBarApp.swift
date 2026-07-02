@@ -26,19 +26,24 @@ private struct RelaySetupStatus {
     var launchAgentInstalled: Bool
     var launchAgentLoaded: Bool
     var dictationMappingActive: Bool
-    var staleF5MappingActive: Bool
+    /// VoiceBar's hidutil relay now owns BOTH source keys: the physical F5 and
+    /// the Dictation consumer key, each remapped to F18. F5 -> F18 is REQUIRED
+    /// (not stale) so a bare F5 press reaches VoiceBar instead of falling
+    /// through to macOS Dictation after a reboot. See
+    /// scripts/apply-voicebar-f5-hidutil.sh.
+    var f5MappingActive: Bool
 
     var isReady: Bool {
-        launchAgentInstalled && launchAgentLoaded && dictationMappingActive && !staleF5MappingActive
+        launchAgentInstalled && launchAgentLoaded && dictationMappingActive && f5MappingActive
     }
 
     var summary: String {
-        if isReady { return "Relay ready: LaunchAgent loaded and Dictation maps to F18." }
+        if isReady { return "Relay ready: LaunchAgent loaded, F5 + Dictation map to F18." }
         var missing: [String] = []
         if !launchAgentInstalled { missing.append("LaunchAgent plist missing") }
         if !launchAgentLoaded { missing.append("LaunchAgent not loaded") }
         if !dictationMappingActive { missing.append("Dictation to F18 mapping missing") }
-        if staleF5MappingActive { missing.append("stale F5 to F18 mapping still active") }
+        if !f5MappingActive { missing.append("F5 to F18 mapping missing") }
         return "Relay needs attention: \(missing.joined(separator: ", "))."
     }
 }
@@ -132,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         launchAgentInstalled: relayLaunchAgentInstalled(),
         launchAgentLoaded: false,
         dictationMappingActive: false,
-        staleF5MappingActive: false
+        f5MappingActive: false
     )
     private var relaySetupStatusRefreshInFlight = false
     private var relaySetupInFlight = false
@@ -1140,7 +1145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             launchAgentInstalled: relayLaunchAgentInstalled(),
             launchAgentLoaded: relayLaunchAgentLoaded(),
             dictationMappingActive: mappingStatus.dictationMappingActive,
-            staleF5MappingActive: mappingStatus.staleF5MappingActive
+            f5MappingActive: mappingStatus.f5MappingActive
         )
     }
 
@@ -1157,7 +1162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return result.exitCode == 0
     }
 
-    private func relayMappingStatus() -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
+    private func relayMappingStatus() -> (dictationMappingActive: Bool, f5MappingActive: Bool) {
         let result = Self.runProcess(
             executablePath: "/usr/bin/hidutil",
             arguments: ["property", "--get", "UserKeyMapping"]
@@ -1208,14 +1213,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    static func hidutilRelayMappingStatus(_ data: Data) -> (dictationMappingActive: Bool, staleF5MappingActive: Bool) {
+    static func hidutilRelayMappingStatus(_ data: Data) -> (dictationMappingActive: Bool, f5MappingActive: Bool) {
         (
             dictationMappingActive: hidutilMappingContains(
                 data,
                 source: dictationHIDMappingSource,
                 destination: f18HIDMappingDestination
             ),
-            staleF5MappingActive: hidutilMappingContains(
+            f5MappingActive: hidutilMappingContains(
                 data,
                 source: f5HIDMappingSource,
                 destination: f18HIDMappingDestination

@@ -129,14 +129,12 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
-    func testF5HidutilHelperMapsDictationToF18AndFiltersStaleF5() throws {
-        // Architecture: only the Apple Dictation consumer key (0xC000000CF)
-        // is remapped to F18 globally. The physical F5 (0x70000003E) is
-        // intentionally NOT pushed — VoiceBar's CGEventTap listens for keycode
-        // 96 directly. A global F5 -> F18 remap would hide F5 from the OS
-        // for every app, breaking system chords like Cmd+F5 (VoiceOver).
-        // F5_SRC_DEC stays in the filter set to clean up stale F5 -> F18
-        // entries from earlier VoiceBar installs.
+    func testF5HidutilHelperMapsBothF5AndDictationToF18() throws {
+        // Architecture: VoiceBar owns BOTH source keys. The physical F5
+        // (0x70000003E) AND the Apple Dictation consumer key (0xC000000CF) are
+        // remapped to F18 (0x70000006D). F5 -> F18 is REQUIRED so a bare F5
+        // press reaches VoiceBar (listening for F18) instead of falling through
+        // to macOS Dictation after a reboot.
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -149,7 +147,7 @@ final class AppLifecycleTests: XCTestCase {
         let helper = try String(contentsOf: helperURL)
         XCTAssertTrue(
             helper.contains("30064771134"),
-            "F5 source must remain referenced so the filter strips stale F5 -> F18 entries"
+            "F5 source must be remapped to F18"
         )
         XCTAssertTrue(
             helper.contains("51539607759"),
@@ -159,9 +157,14 @@ final class AppLifecycleTests: XCTestCase {
             helper.contains("30064771181"),
             "F18 destination must be present"
         )
-        XCTAssertTrue(
-            helper.contains("preserved.push"),
-            "helper must merge VoiceBar's Dictation entry with existing user mappings"
+        // Both the F5 and Dictation entries are appended after the preserved
+        // user mappings — two pushes total (osascript path shown; node path
+        // mirrors it).
+        let pushCount = helper.components(separatedBy: "preserved.push").count - 1
+        XCTAssertGreaterThanOrEqual(
+            pushCount,
+            2,
+            "helper must push BOTH F5 -> F18 and Dictation -> F18 entries"
         )
     }
 
@@ -196,7 +199,9 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
-    func testHidutilRelayMappingStatusFlagsStaleF5Relay() throws {
+    func testHidutilRelayMappingStatusDetectsBothF5AndDictationRelay() throws {
+        // Both F5 -> F18 and Dictation -> F18 present: the fully-configured
+        // relay. F5 -> F18 is the required (not stale) entry.
         let mapping: [String: Any] = [
             "UserKeyMapping": [
                 [
@@ -218,7 +223,31 @@ final class AppLifecycleTests: XCTestCase {
         let status = AppDelegate.hidutilRelayMappingStatus(data)
 
         XCTAssertTrue(status.dictationMappingActive)
-        XCTAssertTrue(status.staleF5MappingActive)
+        XCTAssertTrue(status.f5MappingActive)
+    }
+
+    func testHidutilRelayMappingStatusFlagsMissingF5Relay() throws {
+        // Dictation -> F18 present but F5 -> F18 missing: the post-reboot broken
+        // state the fix guards against. f5MappingActive must be false so the
+        // relay is reported as needing attention.
+        let mapping: [String: Any] = [
+            "UserKeyMapping": [
+                [
+                    "HIDKeyboardModifierMappingSrc": 51_539_607_759,
+                    "HIDKeyboardModifierMappingDst": 30_064_771_181,
+                ],
+            ],
+        ]
+        let data = try PropertyListSerialization.data(
+            fromPropertyList: mapping,
+            format: .xml,
+            options: 0
+        )
+
+        let status = AppDelegate.hidutilRelayMappingStatus(data)
+
+        XCTAssertTrue(status.dictationMappingActive)
+        XCTAssertFalse(status.f5MappingActive)
     }
 
     func testBundleMetadataUsesSingleVoiceBarAppName() throws {
