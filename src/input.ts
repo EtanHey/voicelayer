@@ -80,7 +80,9 @@ import {
 } from "./stt-corrector";
 import {
   polishTranscriptionText,
+  warmPolishEndpoint,
   type STTPolishEnv,
+  type STTPolishWarmupResult,
   type STTPolishSurface,
 } from "./stt-polish";
 import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
@@ -204,6 +206,41 @@ function polishSurfaceForWaitOptions(
   options: WaitForInputOptions,
 ): STTPolishSurface | null {
   return options.archiveSource === "voicebar" ? "dictation" : null;
+}
+
+export function warmPolishEndpointAtRecordingStart(options: {
+  env?: STTPolishEnv;
+  warm?: (env: STTPolishEnv) => Promise<STTPolishWarmupResult>;
+  appendEvent?: typeof appendControlLayerEvent;
+} = {}): void {
+  const env = options.env ?? process.env;
+  const warm = options.warm ?? warmPolishEndpoint;
+  const appendEvent = options.appendEvent ?? appendControlLayerEvent;
+
+  void warm(env).then(
+    (result) => {
+      appendEvent(
+        "transcription.polish.warmup",
+        {
+          status: result.status,
+          latency_ms: Math.round(result.latencyMs),
+          error: result.error ?? null,
+        },
+        { topic: "voice.transcription" },
+      );
+    },
+    (err) => {
+      appendEvent(
+        "transcription.polish.warmup",
+        {
+          status: "failed",
+          latency_ms: null,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        { topic: "voice.transcription" },
+      );
+    },
+  );
 }
 
 export interface NoSpeechGateResult {
@@ -1728,6 +1765,9 @@ export async function waitForInput(
     timeout_ms: timeoutMs,
     archive_source: options.archiveSource ?? null,
   });
+  if (polishSurfaceForWaitOptions(options)) {
+    warmPolishEndpointAtRecordingStart();
+  }
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;

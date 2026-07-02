@@ -9,6 +9,7 @@ import {
   getSTTPolishTimeoutMs,
   polishTranscriptionText,
 } from "../stt-polish";
+import * as sttPolish from "../stt-polish";
 
 let TEST_DIR = "";
 let TEST_SOCKET = "";
@@ -65,6 +66,23 @@ async function waitForFile(path: string): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   throw new Error(`Timed out waiting for ${path}`);
+}
+
+function warmPolishEndpointForTest() {
+  const warmPolishEndpoint = (
+    sttPolish as {
+      warmPolishEndpoint?: (env: Record<string, string | undefined>) => Promise<{
+        status: string;
+        latencyMs: number;
+        error?: string;
+      }>;
+    }
+  ).warmPolishEndpoint;
+  expect(typeof warmPolishEndpoint).toBe("function");
+  if (!warmPolishEndpoint) {
+    throw new Error("warmPolishEndpoint export missing");
+  }
+  return warmPolishEndpoint;
 }
 
 describe("stt-polish", () => {
@@ -915,6 +933,73 @@ describe("stt-polish", () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  it("warms the HTTP polish endpoint with a health probe and tiny completion", async () => {
+    const requests: Array<{ method: string; pathname: string; body?: Record<string, unknown> }> =
+      [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        const entry: { method: string; pathname: string; body?: Record<string, unknown> } = {
+          method: request.method,
+          pathname: url.pathname,
+        };
+        if (request.method !== "GET") {
+          entry.body = (await request.json()) as Record<string, unknown>;
+        }
+        requests.push(entry);
+
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        return Response.json({
+          choices: [{ message: { content: "." } }],
+        });
+      },
+    });
+
+    try {
+      const result = await warmPolishEndpointForTest()({
+        QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+      });
+
+      expect(result.status).toBe("warmed");
+      expect(result.latencyMs).toBeGreaterThanOrEqual(0);
+      expect(requests.map((request) => [request.method, request.pathname])).toEqual([
+        ["GET", "/v1/models"],
+        ["POST", "/v1/chat/completions"],
+      ]);
+      expect(requests[1].body).toMatchObject({
+        max_tokens: 1,
+        stream: false,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("skips polish warmup when disabled", async () => {
+    const result = await warmPolishEndpointForTest()({
+      VOICELAYER_STT_POLISH_WARMUP: "off",
+      QA_VOICE_STT_POLISH_ENDPOINT: "http://127.0.0.1:1/v1/chat/completions",
+    });
+
+    expect(result).toMatchObject({
+      status: "skipped",
+    });
+  });
+
+  it("returns failed status instead of throwing when warmup cannot reach the endpoint", async () => {
+    const result = await warmPolishEndpointForTest()({
+      QA_VOICE_STT_POLISH_ENDPOINT: "http://127.0.0.1:1/v1/chat/completions",
+      QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "20",
+      VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS: "20",
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("polish health check failed");
   });
 
   it("accepts the mlx_lm.server response shape where message is a string", async () => {

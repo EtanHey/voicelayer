@@ -23,6 +23,8 @@ export interface STTPolishEnv {
   QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_TIMEOUT_MS?: string;
   QA_VOICE_STT_POLISH_LOG_PATH?: string;
+  VOICELAYER_STT_POLISH_WARMUP?: string;
+  VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS?: string;
 }
 
 export interface STTPolishInput {
@@ -44,6 +46,14 @@ export interface STTPolishResult {
   error?: string;
 }
 
+export type STTPolishWarmupStatus = "skipped" | "warmed" | "failed";
+
+export interface STTPolishWarmupResult {
+  status: STTPolishWarmupStatus;
+  latencyMs: number;
+  error?: string;
+}
+
 interface STTPolishSocketRequest {
   id: string;
   raw_text: string;
@@ -58,6 +68,7 @@ interface STTPolishSocketResponse {
 
 const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 700;
 const DEFAULT_POLISH_TIMEOUT_MS = 12_000;
+const DEFAULT_POLISH_WARMUP_TIMEOUT_MS = 1_500;
 const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
@@ -108,6 +119,19 @@ export function getSTTPolishHealthTimeoutMs(
 ): number {
   const raw = Number(env.QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS);
   if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLISH_HEALTH_TIMEOUT_MS;
+  return Math.min(Math.max(raw, 50), 5_000);
+}
+
+function isSTTPolishWarmupEnabled(env: STTPolishEnv = process.env): boolean {
+  const raw = env.VOICELAYER_STT_POLISH_WARMUP?.trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "no" && raw !== "off";
+}
+
+function getSTTPolishWarmupTimeoutMs(
+  env: STTPolishEnv = process.env,
+): number {
+  const raw = Number(env.VOICELAYER_STT_POLISH_WARMUP_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_POLISH_WARMUP_TIMEOUT_MS;
   return Math.min(Math.max(raw, 50), 5_000);
 }
 
@@ -836,6 +860,96 @@ async function requestPolishOverHttp(
     throw err;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+async function requestPolishWarmupOverHttp(
+  endpoint: string,
+  env: STTPolishEnv,
+  timeoutMs: number,
+): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: getSTTPolishModel(env),
+        messages: [
+          { role: "system", content: "You are warming up for VoiceLayer dictation polish. Reply with one punctuation mark." },
+          { role: "user", content: "Warm up." },
+        ],
+        temperature: 0,
+        top_p: 1,
+        max_tokens: 1,
+        stream: false,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`polish warmup failed: ${response.status} ${response.statusText}`);
+    }
+    const payload = (await response.json()) as OpenAIChatCompletionResponse;
+    if (payload.error) {
+      throw new Error(
+        `polish warmup error: ${
+          typeof payload.error === "string" ? payload.error : JSON.stringify(payload.error)
+        }`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`polish warmup timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+export async function warmPolishEndpoint(
+  env: STTPolishEnv = process.env,
+): Promise<STTPolishWarmupResult> {
+  const startedAt = performance.now();
+  const buildResult = (
+    status: STTPolishWarmupStatus,
+    error?: string,
+  ): STTPolishWarmupResult => ({
+    status,
+    latencyMs: performance.now() - startedAt,
+    error,
+  });
+
+  if (!isSTTPolishWarmupEnabled(env)) {
+    return buildResult("skipped");
+  }
+
+  const endpoint = getSTTPolishEndpoint(env);
+  if (!endpoint) {
+    return buildResult("skipped", "polish HTTP endpoint unavailable");
+  }
+
+  const health = await checkPolishEndpointHealth(
+    endpoint,
+    getSTTPolishHealthTimeoutMs(env),
+  );
+  if (!health.ok) {
+    return buildResult("failed", health.error);
+  }
+
+  try {
+    await requestPolishWarmupOverHttp(
+      endpoint,
+      env,
+      getSTTPolishWarmupTimeoutMs(env),
+    );
+    return buildResult("warmed");
+  } catch (err) {
+    return buildResult(
+      "failed",
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }
 

@@ -35,6 +35,7 @@ import {
   trimTrailingSilenceForSTT,
   terminateRecorderProcess,
 } from "../input";
+import * as inputModule from "../input";
 import { VAD_CHUNK_BYTES } from "../vad";
 import {
   clearCancelSignal,
@@ -96,6 +97,68 @@ describe("input module", () => {
     } else {
       process.env.QA_VOICE_STT_VOCABULARY_PATH = savedVocabularyPath;
     }
+  });
+
+  it("starts polish warmup fire-and-forget and emits a control-layer event", async () => {
+    const warmPolishEndpointAtRecordingStart = (
+      inputModule as {
+        warmPolishEndpointAtRecordingStart?: (options: {
+          env: Record<string, string | undefined>;
+          warm: () => Promise<{ status: string; latencyMs: number; error?: string }>;
+          appendEvent: (
+            type: string,
+            payload: Record<string, unknown>,
+            options: { topic: string },
+          ) => void;
+        }) => void;
+      }
+    ).warmPolishEndpointAtRecordingStart;
+    expect(typeof warmPolishEndpointAtRecordingStart).toBe("function");
+    if (!warmPolishEndpointAtRecordingStart) {
+      throw new Error("warmPolishEndpointAtRecordingStart export missing");
+    }
+
+    const events: Array<{
+      type: string;
+      payload: Record<string, unknown>;
+      options: { topic: string };
+    }> = [];
+    let resolveWarmup:
+      | ((result: { status: string; latencyMs: number; error?: string }) => void)
+      | undefined;
+    const warmup = new Promise<{ status: string; latencyMs: number; error?: string }>(
+      (resolve) => {
+        resolveWarmup = resolve;
+      },
+    );
+
+    const startedAt = performance.now();
+    warmPolishEndpointAtRecordingStart({
+      env: {},
+      warm: () => warmup,
+      appendEvent: (type, payload, options) => {
+        events.push({ type, payload, options });
+      },
+    });
+
+    expect(performance.now() - startedAt).toBeLessThan(20);
+    expect(events).toEqual([]);
+
+    resolveWarmup?.({ status: "warmed", latencyMs: 12.4 });
+    await warmup;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(events).toEqual([
+      {
+        type: "transcription.polish.warmup",
+        payload: {
+          status: "warmed",
+          latency_ms: 12,
+          error: null,
+        },
+        options: { topic: "voice.transcription" },
+      },
+    ]);
   });
 
   describe("VoiceBar recording archive", () => {
