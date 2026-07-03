@@ -69,12 +69,26 @@ interface STTPolishSocketResponse {
   error?: unknown;
 }
 
-const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 700;
-const DEFAULT_POLISH_TIMEOUT_MS = 12_000;
+const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 1_200;
+const DEFAULT_POLISH_TIMEOUT_MS = 18_000;
 const DEFAULT_POLISH_WARMUP_TIMEOUT_MS = 1_500;
 const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
 const DEFAULT_POLISH_MAX_TOKENS = 512;
 const MAX_POLISH_COMPLETION_TOKENS = 4_096;
+const MAX_HTTP_NOOP_POLISH_ATTEMPTS = 3;
+const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
+const QUESTION_STARTER_WORDS =
+  "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
+const QUESTION_BOUNDARY_WORDS =
+  "(?:did|can|could|would|should|what|why|how|when|where|who)";
+const QUESTION_STARTER_PATTERN = new RegExp(
+  `^${QUESTION_STARTER_WORDS}\\b`,
+  "iu",
+);
+const QUESTION_BOUNDARY_PATTERN = new RegExp(
+  `\\s+(?=${QUESTION_BOUNDARY_WORDS}\\b)`,
+  "giu",
+);
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
@@ -398,6 +412,54 @@ function getSTTPolishMaxTokens(cleanedText: string): number {
     Math.max(DEFAULT_POLISH_MAX_TOKENS, wordBudget),
     MAX_POLISH_COMPLETION_TOKENS,
   );
+}
+
+function capitalizeRunOnSegmentStart(segment: string): string {
+  if (!QUESTION_STARTER_PATTERN.test(segment)) return segment;
+  return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
+}
+
+function chunkWordsForPunctuationFloor(text: string): string[] {
+  const words = text.match(/\S+/gu) ?? [];
+  const chunks: string[] = [];
+  for (let index = 0; index < words.length; index += 16) {
+    chunks.push(words.slice(index, index + 16).join(" "));
+  }
+  return chunks;
+}
+
+function deterministicRunOnPunctuationFloor(cleanedText: string): string {
+  const words = countWords(cleanedText);
+  if (
+    words < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
+    !shouldRetryNoopPolish(cleanedText)
+  ) {
+    return cleanedText;
+  }
+
+  const normalized = cleanedText
+    .trim()
+    .replace(/\s+/gu, " ")
+    .replace(/[.?!]+$/u, "");
+  const questionSegments = normalized
+    .split(QUESTION_BOUNDARY_PATTERN)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  const segments =
+    questionSegments.length > 1
+      ? questionSegments
+      : chunkWordsForPunctuationFloor(normalized);
+
+  return segments
+    .map((segment) => {
+      const normalizedSegment = segment.replace(/\s+([,.?!])/gu, "$1");
+      const sentence = capitalizeRunOnSegmentStart(normalizedSegment);
+      const fallback = QUESTION_STARTER_PATTERN.test(normalizedSegment)
+        ? "?"
+        : ".";
+      return withTerminalPunctuation(sentence, fallback);
+    })
+    .join(" ");
 }
 
 function protectedCodePunctuationCounts(text: string): Map<string, number> {
@@ -1204,7 +1266,7 @@ export async function polishTranscriptionText(
     );
     if (!health.ok) {
       const result = buildResult(
-        input.cleanedText,
+        deterministicRunOnPunctuationFloor(input.cleanedText),
         null,
         "failed",
         health.error,
@@ -1236,6 +1298,75 @@ export async function polishTranscriptionText(
             ? "rejected"
             : null;
       if (retryReason) {
+        if (retryReason === "noop") {
+          let latestResult = result;
+          for (
+            let attempt = 2;
+            attempt <= MAX_HTTP_NOOP_POLISH_ATTEMPTS;
+            attempt += 1
+          ) {
+            try {
+              const retryPolishedText = await requestPolishOverHttp(
+                endpoint,
+                input.rawText,
+                input.cleanedText,
+                env,
+                getSTTPolishTimeoutMs(env),
+                { retryReason },
+              );
+              latestResult = applyPolishCandidate(
+                input.cleanedText,
+                retryPolishedText,
+                mode,
+                buildResult,
+                true,
+              );
+              if (
+                latestResult.status !== "applied" ||
+                latestResult.changed ||
+                !shouldRetryNoopPolish(input.cleanedText)
+              ) {
+                writePolishLog(
+                  latestResult,
+                  input.rawText,
+                  input.cleanedText,
+                  env,
+                );
+                return latestResult;
+              }
+            } catch (retryErr) {
+              const retryFailedResult = buildResult(
+                deterministicRunOnPunctuationFloor(input.cleanedText),
+                latestResult.polishedText,
+                latestResult.status,
+                retryErr instanceof Error ? retryErr.message : String(retryErr),
+                true,
+              );
+              writePolishLog(
+                retryFailedResult,
+                input.rawText,
+                input.cleanedText,
+                env,
+              );
+              return retryFailedResult;
+            }
+          }
+          const flooredResult = buildResult(
+            deterministicRunOnPunctuationFloor(input.cleanedText),
+            latestResult.polishedText,
+            latestResult.status,
+            latestResult.error,
+            true,
+          );
+          writePolishLog(
+            flooredResult,
+            input.rawText,
+            input.cleanedText,
+            env,
+          );
+          return flooredResult;
+        }
+
         try {
           const retryPolishedText = await requestPolishOverHttp(
             endpoint,
@@ -1275,7 +1406,7 @@ export async function polishTranscriptionText(
       return result;
     } catch (err) {
       const result = buildResult(
-        input.cleanedText,
+        deterministicRunOnPunctuationFloor(input.cleanedText),
         null,
         "failed",
         err instanceof Error ? err.message : String(err),
@@ -1313,7 +1444,7 @@ export async function polishTranscriptionText(
     return result;
   } catch (err) {
     const result = buildResult(
-      input.cleanedText,
+      deterministicRunOnPunctuationFloor(input.cleanedText),
       null,
       "failed",
       err instanceof Error ? err.message : String(err),

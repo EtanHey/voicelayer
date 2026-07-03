@@ -110,9 +110,10 @@ describe("stt-polish", () => {
     expect(getSTTPolishMode({})).toBe("on");
   });
 
-  it("uses a fast default health timeout and a generous request timeout", () => {
-    expect(getSTTPolishHealthTimeoutMs({})).toBeLessThanOrEqual(800);
-    expect(getSTTPolishTimeoutMs({})).toBeGreaterThanOrEqual(12_000);
+  it("uses a patient default health timeout and a generous request timeout", () => {
+    expect(getSTTPolishHealthTimeoutMs({})).toBeGreaterThanOrEqual(1_200);
+    expect(getSTTPolishHealthTimeoutMs({})).toBeLessThanOrEqual(1_500);
+    expect(getSTTPolishTimeoutMs({})).toBeGreaterThanOrEqual(18_000);
     expect(getSTTPolishSocketTimeoutMs({})).toBeLessThanOrEqual(1_500);
   });
 
@@ -931,10 +932,11 @@ describe("stt-polish", () => {
         },
       });
 
-      expect(requests).toHaveLength(2);
+      expect(requests).toHaveLength(3);
       expect(requests[0].max_tokens).toBeGreaterThan(512);
       expect(requests[0].max_tokens).toBeLessThanOrEqual(4096);
       expect(requests[1].max_tokens).toBe(requests[0].max_tokens);
+      expect(requests[2].max_tokens).toBe(requests[0].max_tokens);
     } finally {
       server.stop(true);
     }
@@ -1016,6 +1018,41 @@ describe("stt-polish", () => {
       });
       expect(result.error).toContain("health");
       expect(result.reason).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("adds a deterministic punctuation floor when HTTP polish health times out on a long run-on", async () => {
+    const cleanedText =
+      "did your skill weave lead finish did it do a full weave did you consume it what happened here on your watch because i need the answer now";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: "Did your skill weave lead finish? Did it do a full weave? Did you consume it? What happened here on your watch because i need the answer now?",
+        status: "failed",
+        changed: true,
+      });
+      expect(result.error).toContain("health");
     } finally {
       server.stop(true);
     }
@@ -1285,10 +1322,10 @@ describe("stt-polish", () => {
     }
   });
 
-  it("does not retry more than once when HTTP polish keeps no-oping", async () => {
+  it("retries twice and adds a deterministic punctuation floor when HTTP polish keeps no-oping", async () => {
     const requests: Record<string, unknown>[] = [];
     const cleanedText =
-      "Please check the branch run the tests open the pull request trigger review and tell me what happened.";
+      "did your skill weave lead finish did it do a full weave did you consume it what happened here on your watch because i need the answer now";
     const server = Bun.serve({
       port: 0,
       fetch: async (request) => {
@@ -1314,11 +1351,11 @@ describe("stt-polish", () => {
         },
       });
 
-      expect(requests).toHaveLength(2);
+      expect(requests).toHaveLength(3);
       expect(result).toMatchObject({
-        text: cleanedText,
+        text: "Did your skill weave lead finish? Did it do a full weave? Did you consume it? What happened here on your watch because i need the answer now?",
         status: "applied",
-        changed: false,
+        changed: true,
         retried: true,
       });
     } finally {
