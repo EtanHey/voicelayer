@@ -790,6 +790,22 @@ cp -R "$REPO_ROOT/src" "$APP_DIR/Contents/Resources/"
 if [ -f "$REPO_ROOT/package.json" ]; then
     cp "$REPO_ROOT/package.json" "$APP_DIR/Contents/Resources/package.json"
 fi
+if [ -f "$REPO_ROOT/bun.lock" ]; then
+    cp "$REPO_ROOT/bun.lock" "$APP_DIR/Contents/Resources/bun.lock"
+fi
+
+if ! command -v bun >/dev/null 2>&1; then
+    echo "[build-app] ERROR: bun is required to bundle VoiceBar daemon dependencies." >&2
+    exit 1
+fi
+echo "[build-app] Bundling daemon production dependencies..."
+bun install --production --frozen-lockfile --cwd "$APP_DIR/Contents/Resources"
+if [ ! -d "$APP_DIR/Contents/Resources/node_modules/zod" ] \
+    || [ ! -d "$APP_DIR/Contents/Resources/node_modules/@modelcontextprotocol/sdk" ]; then
+    echo "[build-app] ERROR: bundled daemon dependencies are incomplete; expected node_modules/zod and node_modules/@modelcontextprotocol/sdk." >&2
+    exit 1
+fi
+echo "[build-app] Daemon dependencies bundled."
 
 # Bundle the Silero VAD model — recording fails at the first chunk without it
 # (vad.ts findModelPath resolves models/ relative to the bundled src). Omitting

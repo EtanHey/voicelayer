@@ -58,6 +58,14 @@ describe("build-app.sh bundles runtime assets", () => {
     );
   });
 
+  test("bundles daemon production dependencies beside the bundled src", () => {
+    expect(buildScript).toContain("node_modules/zod");
+    expect(buildScript).toContain("node_modules/@modelcontextprotocol");
+    expect(buildScript).toMatch(
+      /bun install --production --frozen-lockfile --cwd "\$APP_DIR\/Contents\/Resources"/,
+    );
+  });
+
   test("bundles every file required by the F5 hidutil installer", () => {
     expect(buildScript).toContain("scripts/install-voicebar-f5-hidutil.sh");
     expect(buildScript).toContain("scripts/apply-voicebar-f5-hidutil.sh");
