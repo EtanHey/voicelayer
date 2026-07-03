@@ -70,4 +70,30 @@ final class CommandModeAXHelperTests: XCTestCase {
             .appliedUnverified
         )
     }
+
+    func testLargeCmuxTerminalInsertionUsesSelectedTextStreamingPlan() {
+        let strategy = CommandModeAXHelper.insertionStrategy(
+            text: String(repeating: "large transcript chunk ", count: 300),
+            focusedValueLength: 120_000,
+            targetBundleIdentifier: "com.cmuxterm.app"
+        )
+
+        XCTAssertEqual(
+            strategy,
+            .selectedTextStreaming(maxChunkUTF16Length: 240, interChunkDelay: 0.012)
+        )
+    }
+
+    func testSelectedTextChunksPreserveTranscriptWithBoundedChunks() {
+        let transcript = String(repeating: "alpha beta gamma delta epsilon\n", count: 80)
+
+        let chunks = CommandModeAXHelper.selectedTextChunks(
+            for: transcript,
+            maxUTF16Length: 64
+        )
+
+        XCTAssertEqual(chunks.joined(), transcript)
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { ($0 as NSString).length <= 64 })
+    }
 }

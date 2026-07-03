@@ -14,7 +14,20 @@ enum AXWriteDisposition: Equatable {
     case appliedUnverified
 }
 
+enum AXInsertionStrategy: Equatable {
+    case valueRewrite
+    case selectedTextStreaming(maxChunkUTF16Length: Int, interChunkDelay: TimeInterval)
+}
+
 final class CommandModeAXHelper {
+    private static let terminalBundleIdentifiers = Set([
+        "com.cmuxterm.app",
+    ])
+    private static let selectedTextStreamingChunkMaxUTF16Length = 240
+    private static let selectedTextStreamingInterChunkDelay: TimeInterval = 0.012
+    private static let valueRewriteMaxTextUTF16Length = 2048
+    private static let valueRewriteMaxFocusedValueUTF16Length = 32768
+
     private let readSelection: () -> CommandModeSelectionSnapshot?
     private let writeValue: (String) -> Bool
     private let readBackValue: () -> String?
@@ -109,11 +122,40 @@ final class CommandModeAXHelper {
     }
 
     private static func insertText(_ text: String, into element: AXUIElement) -> Bool {
+        let targetBundleIdentifier = targetBundleIdentifier(for: element)
+        let earlyStrategy = insertionStrategy(
+            text: text,
+            focusedValueLength: 0,
+            targetBundleIdentifier: targetBundleIdentifier
+        )
+        if case let .selectedTextStreaming(maxChunkUTF16Length, interChunkDelay) = earlyStrategy {
+            return streamSelectedText(
+                text,
+                into: element,
+                maxChunkUTF16Length: maxChunkUTF16Length,
+                interChunkDelay: interChunkDelay
+            )
+        }
+
         guard let value = readAttributeString(element, attribute: kAXValueAttribute as CFString),
               let selectedRange = readSelectedRange(element),
               let swiftRange = Range(selectedRange, in: value)
         else {
             return false
+        }
+
+        let strategy = insertionStrategy(
+            text: text,
+            focusedValueLength: (value as NSString).length,
+            targetBundleIdentifier: targetBundleIdentifier
+        )
+        if case let .selectedTextStreaming(maxChunkUTF16Length, interChunkDelay) = strategy {
+            return streamSelectedText(
+                text,
+                into: element,
+                maxChunkUTF16Length: maxChunkUTF16Length,
+                interChunkDelay: interChunkDelay
+            )
         }
 
         let updatedValue = value.replacingCharacters(in: swiftRange, with: text)
@@ -135,6 +177,80 @@ final class CommandModeAXHelper {
         return true
     }
 
+    static func insertionStrategy(
+        text: String,
+        focusedValueLength: Int,
+        targetBundleIdentifier: String?
+    ) -> AXInsertionStrategy {
+        let textLength = (text as NSString).length
+        if let targetBundleIdentifier,
+           terminalBundleIdentifiers.contains(targetBundleIdentifier) {
+            return .selectedTextStreaming(
+                maxChunkUTF16Length: selectedTextStreamingChunkMaxUTF16Length,
+                interChunkDelay: selectedTextStreamingInterChunkDelay
+            )
+        }
+        if textLength > valueRewriteMaxTextUTF16Length ||
+            focusedValueLength > valueRewriteMaxFocusedValueUTF16Length {
+            return .selectedTextStreaming(
+                maxChunkUTF16Length: selectedTextStreamingChunkMaxUTF16Length,
+                interChunkDelay: selectedTextStreamingInterChunkDelay
+            )
+        }
+        return .valueRewrite
+    }
+
+    static func selectedTextChunks(
+        for text: String,
+        maxUTF16Length: Int
+    ) -> [String] {
+        guard !text.isEmpty else { return [] }
+        let maxLength = max(1, maxUTF16Length)
+        var chunks: [String] = []
+        var current = ""
+        var currentLength = 0
+
+        for character in text {
+            let characterString = String(character)
+            let characterLength = (characterString as NSString).length
+            if currentLength + characterLength > maxLength, !current.isEmpty {
+                chunks.append(current)
+                current = ""
+                currentLength = 0
+            }
+            current.append(character)
+            currentLength += characterLength
+        }
+
+        if !current.isEmpty {
+            chunks.append(current)
+        }
+        return chunks
+    }
+
+    private static func streamSelectedText(
+        _ text: String,
+        into element: AXUIElement,
+        maxChunkUTF16Length: Int,
+        interChunkDelay: TimeInterval
+    ) -> Bool {
+        let chunks = selectedTextChunks(for: text, maxUTF16Length: maxChunkUTF16Length)
+        guard !chunks.isEmpty else { return true }
+
+        for (index, chunk) in chunks.enumerated() {
+            let didWrite = AXUIElementSetAttributeValue(
+                element,
+                kAXSelectedTextAttribute as CFString,
+                chunk as CFTypeRef
+            ) == .success
+            guard didWrite else { return false }
+            if index < chunks.count - 1, interChunkDelay > 0 {
+                Thread.sleep(forTimeInterval: interChunkDelay)
+            }
+        }
+        return true
+    }
+
     static func assessAXWrite(
         expectedValue: String,
         didWrite: Bool,
@@ -150,6 +266,12 @@ final class CommandModeAXHelper {
         let status = AXUIElementCopyAttributeValue(element, attribute, &raw)
         guard status == .success else { return nil }
         return raw as? String
+    }
+
+    private static func targetBundleIdentifier(for element: AXUIElement) -> String? {
+        var pid = pid_t()
+        guard AXUIElementGetPid(element, &pid) == .success else { return nil }
+        return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
     }
 
     private static func readSelectedRange(_ element: AXUIElement) -> NSRange? {
