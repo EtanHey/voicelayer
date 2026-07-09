@@ -71,6 +71,8 @@ const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 700;
 const DEFAULT_POLISH_TIMEOUT_MS = 12_000;
 const DEFAULT_POLISH_WARMUP_TIMEOUT_MS = 1_500;
 const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
+const DEFAULT_POLISH_MAX_TOKENS = 512;
+const MAX_POLISH_COMPLETION_TOKENS = 4_096;
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
@@ -148,7 +150,9 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
   return env.QA_VOICE_STT_POLISH_LOG_PATH?.trim() || DEFAULT_POLISH_LOG_PATH;
 }
 
-function buildPolishSystemPrompt(retryNoop = false): string {
+type STTPolishRetryReason = "noop" | "rejected";
+
+function buildPolishSystemPrompt(retryReason?: STTPolishRetryReason): string {
   const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
@@ -199,10 +203,15 @@ function buildPolishSystemPrompt(retryNoop = false): string {
     "Input: I think this might work.",
     "Output: This solution should work.",
   ];
-  if (retryNoop) {
+  if (retryReason === "noop") {
     lines.push(
       "",
       "Retry instruction: the previous response copied the input unchanged. Add sentence punctuation and split obvious run-on questions without changing meaning.",
+    );
+  } else if (retryReason === "rejected") {
+    lines.push(
+      "",
+      "Retry instruction: the previous response was rejected. Return the full corrected text, not a summary or partial prefix. Preserve all content, only adding punctuation, sentence boundaries, casing, and safe dictation cleanup.",
     );
   }
   return lines.join("\n");
@@ -331,6 +340,21 @@ const NEGATION_TOKENS = new Set([
   "אין",
 ]);
 
+const POLISH_REJECTION_REASONS = {
+  SELF_CORRECTION_UNGROUNDED:
+    "polish response self-correction introduced new content",
+  PROTECTED_TOKENS_CHANGED: "polish response changed protected tokens",
+  DROPPED_TOO_MUCH_TEXT: "polish response dropped too much text",
+  DROPPED_TOO_MANY_WORDS: "polish response dropped too many words",
+} as const;
+
+const RETRYABLE_POLISH_REJECTION_REASONS = new Set<string>([
+  POLISH_REJECTION_REASONS.SELF_CORRECTION_UNGROUNDED,
+  POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED,
+  POLISH_REJECTION_REASONS.DROPPED_TOO_MUCH_TEXT,
+  POLISH_REJECTION_REASONS.DROPPED_TOO_MANY_WORDS,
+]);
+
 function negationCount(text: string): number {
   return (
     normalizeZeroQuantifierNegation(text)
@@ -355,6 +379,23 @@ function shouldRetryNoopPolish(cleanedText: string): boolean {
   const withoutTerminal = trimmed.replace(/[.?!]+$/u, "");
   const internalPunctuation = countMatches(withoutTerminal, /[.,;:?!]/gu);
   return internalPunctuation / words <= 0.04;
+}
+
+function shouldRetryRejectedPolish(
+  cleanedText: string,
+  result: STTPolishResult,
+): boolean {
+  if (result.status !== "rejected") return false;
+  if (!shouldRetryNoopPolish(cleanedText)) return false;
+  return RETRYABLE_POLISH_REJECTION_REASONS.has(result.error ?? "");
+}
+
+function getSTTPolishMaxTokens(cleanedText: string): number {
+  const wordBudget = Math.ceil(countWords(cleanedText) * 2.2);
+  return Math.min(
+    Math.max(DEFAULT_POLISH_MAX_TOKENS, wordBudget),
+    MAX_POLISH_COMPLETION_TOKENS,
+  );
 }
 
 function protectedCodePunctuationCounts(text: string): Map<string, number> {
@@ -530,7 +571,8 @@ function codeStyleIdentifierTokens(text: string): string[] {
     text
       .normalize("NFKC")
       .match(/[A-Za-z_$][A-Za-z0-9_$.-]*/g)
-      ?.filter((token) => /(?:[a-z][A-Z]|[A-Z][a-z]+[A-Z])/u.test(token)) ?? []
+      ?.map((token) => token.replace(/[.!?;:]+$/u, ""))
+      .filter((token) => /(?:[a-z][A-Z]|[A-Z][a-z]+[A-Z])/u.test(token)) ?? []
   );
 }
 
@@ -700,7 +742,7 @@ function validatePolishCandidate(
     return "polish response echoed the prompt";
   }
   if (selfCorrectionHasUngroundedContent) {
-    return "polish response self-correction introduced new content";
+    return POLISH_REJECTION_REASONS.SELF_CORRECTION_UNGROUNDED;
   }
   if (isLowSimilaritySelfCorrectionRewrite) {
     return "polish response self-correction rewrite changed too much text";
@@ -719,20 +761,24 @@ function validatePolishCandidate(
     return `polish response invented code identifier: ${inventedIdentifier}`;
   }
   if (changedProtectedTokens(cleanedText, candidate) && !allowedSpokenListRewrite) {
-    return "polish response changed protected tokens";
+    return POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED;
   }
 
   const cleanedChars = cleanedText.trim().length;
   const candidateChars = candidate.length;
   if (cleanedChars >= 80 && !allowsStructuredRewrite) {
-    if (candidateChars < cleanedChars * 0.72) return "polish response dropped too much text";
+    if (candidateChars < cleanedChars * 0.72) {
+      return POLISH_REJECTION_REASONS.DROPPED_TOO_MUCH_TEXT;
+    }
     if (candidateChars > cleanedChars * 1.35) return "polish response added too much text";
   }
 
   const cleanedWords = countWords(cleanedText);
   const candidateWords = countWords(candidate);
   if (cleanedWords >= 12 && !allowsStructuredRewrite) {
-    if (candidateWords < cleanedWords * 0.72) return "polish response dropped too many words";
+    if (candidateWords < cleanedWords * 0.72) {
+      return POLISH_REJECTION_REASONS.DROPPED_TOO_MANY_WORDS;
+    }
     if (candidateWords > cleanedWords * 1.35) return "polish response added too many words";
     if (normalizedSimilarity(cleanedText, candidate) < 0.62) {
       return "polish response changed too much text";
@@ -851,7 +897,7 @@ async function requestPolishOverHttp(
   cleanedText: string,
   env: STTPolishEnv,
   timeoutMs: number,
-  options: { retryNoop?: boolean } = {},
+  options: { retryReason?: STTPolishRetryReason } = {},
 ): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -865,13 +911,13 @@ async function requestPolishOverHttp(
         messages: [
           {
             role: "system",
-            content: buildPolishSystemPrompt(options.retryNoop === true),
+            content: buildPolishSystemPrompt(options.retryReason),
           },
           { role: "user", content: buildPolishUserPrompt(rawText, cleanedText) },
         ],
         temperature: 0,
         top_p: 1,
-        max_tokens: 512,
+        max_tokens: getSTTPolishMaxTokens(cleanedText),
         repetition_penalty: 0,
         stream: false,
         stop: ["\nRaw Whisper text:", "\nVoiceLayer cleaned text to fix:"],
@@ -1172,11 +1218,15 @@ export async function polishTranscriptionText(
         mode,
         buildResult,
       );
-      if (
+      const retryReason =
         result.status === "applied" &&
         !result.changed &&
         shouldRetryNoopPolish(input.cleanedText)
-      ) {
+          ? "noop"
+          : shouldRetryRejectedPolish(input.cleanedText, result)
+            ? "rejected"
+            : null;
+      if (retryReason) {
         try {
           const retryPolishedText = await requestPolishOverHttp(
             endpoint,
@@ -1184,7 +1234,7 @@ export async function polishTranscriptionText(
             input.cleanedText,
             env,
             getSTTPolishTimeoutMs(env),
-            { retryNoop: true },
+            { retryReason },
           );
           const retryResult = applyPolishCandidate(
             input.cleanedText,

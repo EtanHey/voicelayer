@@ -379,6 +379,32 @@ describe("stt-polish", () => {
     });
   });
 
+  it("allows known cleaned vocabulary identifiers when polish adds sentence punctuation", async () => {
+    const polished =
+      "Wait, what? Work with a cmuxlayerCodex. When you eval, only spawn cursors as dummies.";
+    server = createMockPolishServer(() => ({
+      text: polished,
+    }));
+
+    const cleanedText =
+      "Wait what work with a cmuxlayerCodex when you eval only spawn cursors as dummies.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polished,
+      status: "applied",
+      changed: true,
+    });
+  });
+
   it("rejects polish candidates that remove negation from short dictation", async () => {
     server = createMockPolishServer(() => ({
       text: "I want to look",
@@ -808,6 +834,107 @@ describe("stt-polish", () => {
       expect(messages[1].content).toContain(
         "Also, do / what's new and output that as your summary",
       );
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("retries rejected truncated HTTP polish for long punctuation-poor dictation", async () => {
+    const cleanedText =
+      "please compare the settings on the first mac with the settings on this mac and make sure the permissions line up before you change anything i want the accessibility entries the microphone entries the automation entries and the full disk access entries checked carefully because the two machines should mostly match and the only real difference should be how the brain layer data is separated for that project also look for stale duplicates and tell me which entries are safe to remove after you verify the app versions";
+    const polishedText =
+      "Please compare the settings on the first Mac with the settings on this Mac, and make sure the permissions line up before you change anything. I want the accessibility entries, the microphone entries, the automation entries, and the full disk access entries checked carefully, because the two machines should mostly match. The only real difference should be how the BrainLayer data is separated for that project. Also, look for stale duplicates and tell me which entries are safe to remove after you verify the app versions.";
+    const responses = [
+      "Please compare the settings on the first Mac with the settings on this Mac. I want the accessibility entries, the microphone entries, and",
+      polishedText,
+    ];
+    const requests: Record<string, unknown>[] = [];
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: responses.shift(),
+              },
+            },
+          ],
+        });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: polishedText,
+        status: "applied",
+        changed: true,
+        retried: true,
+      });
+      expect(requests).toHaveLength(2);
+      expect(requests[0].max_tokens).toBeGreaterThanOrEqual(512);
+      expect(requests[1].max_tokens).toBeGreaterThanOrEqual(512);
+      const retryMessages = requests[1].messages as Array<{
+        role: string;
+        content: string;
+      }>;
+      expect(retryMessages[0].content).toContain("previous response was rejected");
+      expect(retryMessages[0].content).toContain("full corrected text");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("scales HTTP polish completion budget above the floor for long dictation", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const cleanedText = Array.from(
+      { length: 260 },
+      (_, index) => `word${index}`,
+    ).join(" ");
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        requests.push((await request.json()) as Record<string, unknown>);
+        return Response.json({
+          choices: [{ message: { content: cleanedText } }],
+        });
+      },
+    });
+
+    try {
+      await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(requests).toHaveLength(2);
+      expect(requests[0].max_tokens).toBeGreaterThan(512);
+      expect(requests[0].max_tokens).toBeLessThanOrEqual(4096);
+      expect(requests[1].max_tokens).toBe(requests[0].max_tokens);
     } finally {
       server.stop(true);
     }
