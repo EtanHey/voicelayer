@@ -68,6 +68,26 @@ class VoiceBarCommandRouter: BarCommandRouting {
         voiceState.cancel()
     }
 
+    var shouldHandleEscape: Bool {
+        voiceState.mode == .recording ||
+            voiceState.mode == .transcribing ||
+            voiceState.mode == .speaking
+    }
+
+    /// One owned Escape interrupts either direction through existing commands.
+    /// Playback uses stop so the teleprompter remains visible until the daemon
+    /// confirms playback idle; recording uses cancel to discard the capture.
+    func handleEscape() {
+        switch voiceState.mode {
+        case .speaking:
+            voiceState.stop()
+        case .recording, .transcribing:
+            handleCancel()
+        default:
+            return
+        }
+    }
+
     func handleStop() {
         switch voiceState.mode {
         case .recording, .speaking:
