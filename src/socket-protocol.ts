@@ -49,12 +49,26 @@ export interface TranscriptionEvent {
   partial?: boolean;
   /** Archived VoiceBar recording audio used to produce this transcript. */
   recording_path?: string;
+  /** Whether the optional LLM polish layer produced the final candidate. */
+  polished?: boolean;
+  /** Why the cleaned fallback was used when polished is false. */
+  polish_reason?: string;
 }
 
 export interface TranscriptionStatusEvent {
   type: "transcription_status";
   status: "warming" | "transcribing";
   message: string;
+}
+
+export interface PolishDegradedEvent {
+  type: "polish_degraded";
+  reason: "missing-binary" | "launch-timeout" | "launch-failed";
+  hint: string;
+}
+
+export interface PolishReadyEvent {
+  type: "polish_ready";
 }
 
 export interface AudioLevelEvent {
@@ -171,6 +185,8 @@ export type SocketEvent =
   | SpeechEvent
   | TranscriptionEvent
   | TranscriptionStatusEvent
+  | PolishDegradedEvent
+  | PolishReadyEvent
   | AudioLevelEvent
   | ErrorEvent
   | SubtitleEvent

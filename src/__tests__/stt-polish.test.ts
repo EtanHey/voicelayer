@@ -1012,8 +1012,10 @@ describe("stt-polish", () => {
         text: "BrainLayer",
         status: "failed",
         changed: false,
+        polished: false,
       });
       expect(result.error).toContain("health");
+      expect(result.reason).toContain("health");
     } finally {
       server.stop(true);
     }

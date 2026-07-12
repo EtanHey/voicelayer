@@ -55,6 +55,11 @@ public struct ClipMarkerState: Equatable {
     public var status: String
 }
 
+public struct STTPolishDegradation: Equatable {
+    public var reason: String
+    public var hint: String
+}
+
 public struct PasteboardSnapshot: Equatable {
     public var changeCount: Int
     public var items: [[String: Data]]
@@ -167,9 +172,14 @@ public final class VoiceState {
 
     public var statusText: String = ""
     public var transcript: String = ""
+    public private(set) var lastTranscriptionPolished: Bool?
+    public private(set) var lastTranscriptionPolishReason: String?
     public var speechDetected: Bool = false
     public var isConnected: Bool = false
     public var errorMessage: String?
+    public private(set) var polishDegradation: STTPolishDegradation?
+    public private(set) var polishMenuSignalPending = false
+    private var dismissedPolishDegradation: STTPolishDegradation?
     public var transcribingStatusText: String? {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue != transcribingStatusText) }
     }
@@ -392,6 +402,7 @@ public final class VoiceState {
     public var onPanelLayoutChange: (() -> Void)?
     public var onHistoryArchiveChange: (() -> Void)?
     public var onAckEvent: ((SocketAckEvent) -> Void)?
+    public var onPolishStatusChange: (() -> Void)?
     public var diagnosticLogger: ((String, [String: String]) -> Void)?
     public var controlLayerEventWriter: (String, [String: String]) -> Void = { event, details in
         ControlLayerJournal.append(type: "voicebar.\(event)", payload: details)
@@ -736,6 +747,20 @@ public final class VoiceState {
 
     // MARK: - State updates from socket events
 
+    public func acknowledgePolishMenuSignal() {
+        guard polishMenuSignalPending else { return }
+        polishMenuSignalPending = false
+        onPolishStatusChange?()
+    }
+
+    public func dismissPolishDegradation() {
+        guard let degradation = polishDegradation else { return }
+        dismissedPolishDegradation = degradation
+        polishDegradation = nil
+        polishMenuSignalPending = false
+        onPolishStatusChange?()
+    }
+
     public func handleEvent(_ event: [String: Any]) {
         guard let type = event["type"] as? String else { return }
 
@@ -835,6 +860,26 @@ public final class VoiceState {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             transcribingStatusText = message?.isEmpty == false ? message : nil
 
+        case "polish_degraded":
+            guard let reason = event["reason"] as? String,
+                  let hint = event["hint"] as? String
+            else { return }
+            let degradation = STTPolishDegradation(reason: reason, hint: hint)
+            guard degradation != polishDegradation,
+                  degradation != dismissedPolishDegradation
+            else { return }
+            polishDegradation = degradation
+            polishMenuSignalPending = true
+            onPolishStatusChange?()
+
+        case "polish_ready":
+            guard polishDegradation != nil || dismissedPolishDegradation != nil || polishMenuSignalPending
+            else { return }
+            polishDegradation = nil
+            dismissedPolishDegradation = nil
+            polishMenuSignalPending = false
+            onPolishStatusChange?()
+
         case "speech":
             if let detected = event["detected"] as? Bool {
                 speechDetected = detected
@@ -843,6 +888,10 @@ public final class VoiceState {
         case "transcription":
             if let text = event["text"] as? String {
                 let isPartial = (event["partial"] as? Bool) == true
+                if !isPartial {
+                    lastTranscriptionPolished = event["polished"] as? Bool
+                    lastTranscriptionPolishReason = event["polish_reason"] as? String
+                }
                 let recordingPath = (event["recording_path"] as? String)?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

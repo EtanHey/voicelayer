@@ -44,6 +44,8 @@ export interface STTPolishResult {
   changed: boolean;
   retried: boolean;
   latencyMs: number;
+  polished: boolean;
+  reason?: string;
   error?: string;
 }
 
@@ -1142,6 +1144,8 @@ function writePolishLog(
     changed: result.changed,
     retried: result.retried,
     latency_ms: result.latencyMs,
+    polished: result.polished,
+    reason: result.reason,
     error: result.error,
   })}\n`;
 
@@ -1170,18 +1174,23 @@ export async function polishTranscriptionText(
     status: STTPolishStatus,
     error?: string,
     retried = false,
-  ): STTPolishResult => ({
-    inputText: input.cleanedText,
-    text,
-    polishedText,
-    mode,
-    status,
-    surface,
-    changed: text !== input.cleanedText,
-    retried,
-    latencyMs: performance.now() - startedAt,
-    error,
-  });
+  ): STTPolishResult => {
+    const polished = status === "applied";
+    return {
+      inputText: input.cleanedText,
+      text,
+      polishedText,
+      mode,
+      status,
+      surface,
+      changed: text !== input.cleanedText,
+      retried,
+      latencyMs: performance.now() - startedAt,
+      polished,
+      reason: polished ? undefined : error ?? status,
+      error,
+    };
+  };
 
   if (mode === "off" || !input.cleanedText.trim()) {
     return buildResult(input.cleanedText, null, "skipped");
