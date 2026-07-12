@@ -24,6 +24,33 @@ describe("edge-tts argparse exit-2 regression", () => {
     Bun.spawn = originalSpawn;
   });
 
+  it("checkEdgeTTSHealth(forceFresh) bypasses a stale cache", async () => {
+    const { checkEdgeTTSHealth, resetHealthCache } =
+      await import("../tts-health");
+    resetHealthCache();
+
+    let importable = true;
+    // @ts-ignore — health probe reflects the mutable `importable`
+    Bun.spawnSync = (cmd: string[]) => {
+      if (Array.isArray(cmd) && cmd.includes("import edge_tts; print('ok')")) {
+        return {
+          exitCode: importable ? 0 : 1,
+          stdout: Buffer.from(importable ? "ok" : ""),
+          stderr: new Uint8Array(0),
+        };
+      }
+      return originalSpawnSync(cmd);
+    };
+
+    // Prime the cache as "importable".
+    expect(checkEdgeTTSHealth()).toBe(true);
+    // edge-tts is uninstalled underneath us; the cache would still say true.
+    importable = false;
+    expect(checkEdgeTTSHealth()).toBe(true); // stale cached value
+    // forceFresh re-probes and sees the real state — the diagnosis path uses this.
+    expect(checkEdgeTTSHealth(true)).toBe(false);
+  });
+
   it("buildEdgeTTSArgs passes --text and --voice in =-bound form", async () => {
     const { buildEdgeTTSArgs } = await import("../tts-health");
     const args = buildEdgeTTSArgs(

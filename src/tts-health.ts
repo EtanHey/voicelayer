@@ -81,10 +81,15 @@ export function getPython3Path(): string {
 /**
  * Check if edge-tts Python module is installed and importable.
  * Caches result for 60 seconds to avoid repeated subprocess spawns.
+ *
+ * Pass `forceFresh` to bypass the cache — used on the exhausted-retries
+ * diagnosis path so the install-vs-runtime verdict can't be mislabeled by a
+ * stale "importable" cached right before an uninstall (reviewer LOW note, #332).
  */
-export function checkEdgeTTSHealth(): boolean {
+export function checkEdgeTTSHealth(forceFresh = false): boolean {
   const now = Date.now();
   if (
+    !forceFresh &&
     healthCacheResult !== null &&
     now - healthCacheTime < HEALTH_CACHE_TTL_MS
   ) {
@@ -275,7 +280,7 @@ export async function synthesizeWithRetry(
   // `lastError` (e.g. "exit code 2") is always included so the real failure is
   // diagnosable, and the resolved interpreter path is surfaced so PATH
   // divergence in daemon mode is visible.
-  const importable = checkEdgeTTSHealth();
+  const importable = checkEdgeTTSHealth(/* forceFresh */ true);
   const base = `edge-tts synthesis failed after ${maxRetries + 1} attempts (${lastError}) using ${resolvedPython3}.`;
   const hint = importable
     ? ` edge-tts IS importable by that interpreter, so this is a runtime/network error from the edge-tts service, not a missing install.`
