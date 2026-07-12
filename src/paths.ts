@@ -23,8 +23,16 @@ import { join } from "path";
 
 const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
-const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
-const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+// AIDEV-NOTE: R-013 requires dev/agent instances to isolate their sockets from
+// live dictation; canonical VOICELAYER_* names win over legacy QA_VOICE_* aliases.
+const SOCKET_OVERRIDE_ENVS = [
+  "VOICELAYER_SOCKET_PATH",
+  "QA_VOICE_SOCKET_PATH",
+] as const;
+const MCP_SOCKET_OVERRIDE_ENVS = [
+  "VOICELAYER_MCP_SOCKET_PATH",
+  "QA_VOICE_MCP_SOCKET_PATH",
+] as const;
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
@@ -51,6 +59,29 @@ function readOverride(
 ): string {
   const value = env[name]?.trim();
   return value ? value : fallback;
+}
+
+function readOverrideAliased(
+  names: readonly string[],
+  fallback: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return fallback;
+}
+
+function firstOverrideValue(
+  names: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (value) return value;
+  }
+  return null;
 }
 
 /**
@@ -147,13 +178,17 @@ export function isVoicelayerDisabled(options?: {
  * production VoiceBar and race record/stop commands.
  */
 export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(SOCKET_OVERRIDE_ENV, tmpPath("voicelayer.sock"), env);
+  return readOverrideAliased(
+    SOCKET_OVERRIDE_ENVS,
+    tmpPath("voicelayer.sock"),
+    env,
+  );
 }
 
 export function isDefaultVoiceBarSocketPath(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return !env[SOCKET_OVERRIDE_ENV]?.trim();
+  return firstOverrideValue(SOCKET_OVERRIDE_ENVS, env) === null;
 }
 
 export const SOCKET_PATH = getVoiceBarSocketPath();
@@ -164,20 +199,23 @@ export const SOCKET_PATH = getVoiceBarSocketPath();
  * Separate from SOCKET_PATH so Voice Bar can keep serving on voicelayer.sock.
  */
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
-  return readOverride(MCP_SOCKET_OVERRIDE_ENV, tmpPath("voicelayer-mcp.sock"), env);
+  return readOverrideAliased(
+    MCP_SOCKET_OVERRIDE_ENVS,
+    tmpPath("voicelayer-mcp.sock"),
+    env,
+  );
 }
 
 export function getMcpSocketOverridePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string | null {
-  const value = env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
-  return value ? value : null;
+  return firstOverrideValue(MCP_SOCKET_OVERRIDE_ENVS, env);
 }
 
 export function isDefaultMcpSocketPath(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return !env[MCP_SOCKET_OVERRIDE_ENV]?.trim();
+  return firstOverrideValue(MCP_SOCKET_OVERRIDE_ENVS, env) === null;
 }
 
 export const MCP_SOCKET_PATH = getMcpSocketPath();
