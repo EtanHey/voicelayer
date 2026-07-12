@@ -29,6 +29,7 @@ import {
   isVoicelayerDisabled,
 } from "./paths";
 import {
+  broadcast,
   connectToBar,
   disconnectFromBar,
   isConnected,
@@ -50,8 +51,13 @@ import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
 import {
   ensureSTTPolishServer,
+  onSTTPolishServerStatus,
   stopSTTPolishServer,
 } from "./stt-polish-server";
+import {
+  createSTTPolishStatusReporter,
+  ensureAndReportSTTPolishServer,
+} from "./stt-polish-daemon-status";
 import {
   appendControlLayerEvent,
   startControlLayerHeartbeat,
@@ -203,22 +209,34 @@ async function main() {
       `[voicelayer-daemon]   ${err instanceof Error ? err.message : String(err)}`,
     );
   }
-  void ensureSTTPolishServer().catch((err: unknown) => {
-    console.error(
-      `[voicelayer-daemon] STT polish server startup failed: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    appendControlLayerEvent(
-      "transcription.polish_server_failed",
-      { error: err instanceof Error ? err.message : String(err) },
-      { topic: "voice.transcription" },
-    );
-  });
-
   // Connect to Voice Bar for UI state
+  const polishStatusReporter = createSTTPolishStatusReporter(broadcast);
+  const unsubscribePolishStatus = onSTTPolishServerStatus((status) => {
+    polishStatusReporter.report(status);
+  });
   onCommand(handleSocketCommand);
   connectToBar(undefined, {
     role: "mcp-daemon",
     acceptsCommands: isDefaultVoiceBarSocketPath() && isDefaultMcpSocketPath(),
+    onConnected: () => polishStatusReporter.replay(),
+  });
+  void ensureAndReportSTTPolishServer({
+    ensure: async () => {
+      try {
+        return await ensureSTTPolishServer();
+      } catch (err: unknown) {
+        console.error(
+          `[voicelayer-daemon] STT polish server startup failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        appendControlLayerEvent(
+          "transcription.polish_server_failed",
+          { error: err instanceof Error ? err.message : String(err) },
+          { topic: "voice.transcription" },
+        );
+        throw err;
+      }
+    },
+    reporter: polishStatusReporter,
   });
 
   // Start MCP daemon (includes orphan socket cleanup and chmod 600)
@@ -289,6 +307,7 @@ async function main() {
     });
     stopControlLayerHeartbeat();
     stopLogRotation();
+    unsubscribePolishStatus();
     stopSTTPolishServer();
     daemon.stop();
     disconnectFromBar();

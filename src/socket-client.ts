@@ -37,6 +37,7 @@ let connectionOptions: VoiceBarConnectionOptions = {};
 export interface VoiceBarConnectionOptions {
   role?: "mcp-server" | "mcp-daemon" | "standalone-daemon" | "test";
   acceptsCommands?: boolean;
+  onConnected?: () => void;
 }
 
 // --- Command handler callback ---
@@ -135,6 +136,7 @@ function startConnection(): void {
         reconnectDelay = 1000; // Reset backoff on successful connect
         startKeepalive();
         writeClientHello(socket as any);
+        connectionOptions.onConnected?.();
         console.error(`[socket-client] Connected to VoiceBar at ${targetPath}`);
       },
 

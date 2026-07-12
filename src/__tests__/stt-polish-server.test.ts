@@ -1,10 +1,64 @@
 import { describe, expect, it } from "bun:test";
 import {
   ensureSTTPolishServer,
+  onSTTPolishServerStatus,
+  recoverDefaultSTTPolishServerAfterFailure,
   resetSTTPolishServerManagerForTests,
 } from "../stt-polish-server";
 
 describe("stt-polish-server", () => {
+  it("publishes later status transitions so daemon UI state can clear", async () => {
+    resetSTTPolishServerManagerForTests();
+    const statuses: string[] = [];
+    const unsubscribe = onSTTPolishServerStatus((status) => {
+      statuses.push(status.status);
+    });
+
+    try {
+      await ensureSTTPolishServer({
+        env: { QA_VOICE_STT_POLISH: "on" },
+        findBinary: () => null,
+        isEndpointReady: async () => false,
+        appendEvent: () => {},
+      });
+      await ensureSTTPolishServer({
+        env: { QA_VOICE_STT_POLISH: "on" },
+        isEndpointReady: async () => true,
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(statuses).toEqual(["missing-binary", "already-ready"]);
+  });
+
+  it("publishes a runtime recovery launch failure to daemon UI listeners", async () => {
+    resetSTTPolishServerManagerForTests();
+    const statuses: string[] = [];
+    const unsubscribe = onSTTPolishServerStatus((status) => {
+      statuses.push(status.status);
+    });
+
+    try {
+      recoverDefaultSTTPolishServerAfterFailure(
+        { QA_VOICE_STT_POLISH: "on" },
+        {
+          findBinary: () => {
+            throw new Error("runtime spawn failed");
+          },
+          isEndpointReady: async () => false,
+        },
+      );
+      for (let attempts = 0; attempts < 20 && statuses.length === 0; attempts++) {
+        await Bun.sleep(0);
+      }
+    } finally {
+      unsubscribe();
+    }
+
+    expect(statuses).toEqual(["launch-failed"]);
+  });
+
   it("does not manage a server when polish is explicitly off", async () => {
     const spawnCalls: string[][] = [];
 

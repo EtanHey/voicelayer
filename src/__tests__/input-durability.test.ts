@@ -478,11 +478,18 @@ describe("input recording durability", () => {
     );
     expect(backendTranscribeCalls).toBe(1);
     expect(readFileSync(transcriptPath, "utf8")).toBe("Retained transcript.");
-    expect(broadcasts).toContainEqual({
+    const transcriptionEvent = broadcasts.find(
+      (event) => event.type === "transcription",
+    );
+    expect(transcriptionEvent).toMatchObject({
       type: "transcription",
       text: "Retained transcript.",
       recording_path: audioPath,
     });
+    expect(typeof transcriptionEvent?.polished).toBe("boolean");
+    if (transcriptionEvent?.polished === false) {
+      expect(typeof transcriptionEvent.polish_reason).toBe("string");
+    }
   });
 
   it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {

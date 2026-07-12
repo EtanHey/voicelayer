@@ -197,6 +197,21 @@ describe("socket-client", () => {
     expect(hello.accepts_commands).toBe(true);
   });
 
+  it("notifies the daemon after each VoiceBar connection so persistent status can replay", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+
+    const { connectToBar } = await import("../socket-client");
+    let connections = 0;
+    connectToBar(TEST_SOCKET, {
+      role: "mcp-daemon",
+      onConnected: () => {
+        connections++;
+      },
+    });
+
+    expect(await waitFor(() => connections === 1)).toBe(true);
+  });
+
   it("onCommand receives parsed commands from the server", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
 

@@ -75,6 +75,21 @@ describe("socket-protocol", () => {
       expect(parsed.recording_path).toEndWith("/audio.wav");
     });
 
+    it("serializes explicit unpolished transcription honesty metadata", () => {
+      const event: SocketEvent = {
+        type: "transcription",
+        text: "Raw fallback text.",
+        polished: false,
+        polish_reason: "polish health check failed: connection refused",
+      };
+
+      const parsed = JSON.parse(serializeEvent(event).trim());
+      expect(parsed).toMatchObject({
+        polished: false,
+        polish_reason: "polish health check failed: connection refused",
+      });
+    });
+
     it("serializes transcription status event", () => {
       const event: SocketEvent = {
         type: "transcription_status",
