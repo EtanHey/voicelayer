@@ -81,10 +81,15 @@ export function getPython3Path(): string {
 /**
  * Check if edge-tts Python module is installed and importable.
  * Caches result for 60 seconds to avoid repeated subprocess spawns.
+ *
+ * Pass `forceFresh` to bypass the cache — used on the exhausted-retries
+ * diagnosis path so the install-vs-runtime verdict can't be mislabeled by a
+ * stale "importable" cached right before an uninstall (reviewer LOW note, #332).
  */
-export function checkEdgeTTSHealth(): boolean {
+export function checkEdgeTTSHealth(forceFresh = false): boolean {
   const now = Date.now();
   if (
+    !forceFresh &&
     healthCacheResult !== null &&
     now - healthCacheTime < HEALTH_CACHE_TTL_MS
   ) {
@@ -120,6 +125,45 @@ interface SynthesizeResult {
   wordBoundaries?: WordBoundary[];
   durationMs?: number;
   error?: string;
+}
+
+/**
+ * Build the argv for the edge-tts word-timing script.
+ *
+ * AIDEV-NOTE: All caller-controlled values (--text, --voice, --rate) MUST be
+ * passed in `--flag=value` form, never the two-token `--flag value` form.
+ * Python argparse treats a two-token value that begins with `-` and is not a
+ * negative number — e.g. text "-hello", "-h", or a lone "--word" — as a stray
+ * option and aborts with exit code 2 ("expected one argument"). Because the
+ * exit is deterministic, both the original attempt and the retry hit it, and the
+ * failure surfaced as the misleading "edge-tts failed after 2 attempts (exit
+ * code 2). Is edge-tts installed?" — even though edge-tts was installed and fine.
+ * The `=` form binds the value to the flag unconditionally (argparse splits on
+ * the first `=`), so any text — including one starting with a dash — passes
+ * through verbatim. This was the root cause of intermittent voice_speak/voice_ask
+ * failures (the intermittency was just which utterances happened to start with a
+ * dash-led single token).
+ */
+export function buildEdgeTTSArgs(
+  python3: string,
+  scriptPath: string,
+  text: string,
+  voice: string,
+  rate: string,
+  audioFile: string,
+  metadataFile: string,
+): string[] {
+  return [
+    python3,
+    scriptPath,
+    `--text=${text}`,
+    `--voice=${voice}`,
+    `--rate=${rate}`,
+    // write paths are absolute (start with "/"), never dash-led, but keep the
+    // =-form for consistency so no argument can ever be re-interpreted as a flag.
+    `--write-media=${audioFile}`,
+    `--write-metadata=${metadataFile}`,
+  ];
 }
 
 function parseWordBoundaries(metadataFile: string): WordBoundary[] {
@@ -165,22 +209,17 @@ export async function synthesizeWithRetry(
     }
 
     try {
-      const synth = Bun.spawn([
-        resolvedPython3,
-        scriptPath,
-        "--text",
-        text,
-        "--voice",
-        voice,
-        // Pass rate as a single `--rate=<value>` token. Python argparse treats a
-        // negative value like "-25%" in the two-token form ("--rate", "-25%") as
-        // a stray option and rejects it; the `=` form keeps it bound to --rate.
-        `--rate=${rate}`,
-        "--write-media",
-        audioFile,
-        "--write-metadata",
-        metadataFile,
-      ]);
+      const synth = Bun.spawn(
+        buildEdgeTTSArgs(
+          resolvedPython3,
+          scriptPath,
+          text,
+          voice,
+          rate,
+          audioFile,
+          metadataFile,
+        ),
+      );
 
       // Hard timeout per attempt — prevents hanging on network stalls
       const exitCode = await Promise.race([
@@ -232,9 +271,24 @@ export async function synthesizeWithRetry(
     unlinkSync(metadataFile);
   } catch {}
 
+  // AIDEV-NOTE: Fail LOUD but ACCURATE. The old message hard-coded
+  // "Is edge-tts installed?" for every failure, which was actively misleading:
+  // exit code 2 was almost always an argument-encoding bug (now fixed via the
+  // =-form args in buildEdgeTTSArgs), and other failures are runtime/network
+  // errors from Microsoft's edge-tts endpoint. Only point at a missing install
+  // when the health check actually reports the module is unimportable.
+  // `lastError` (e.g. "exit code 2") is always included so the real failure is
+  // diagnosable, and the resolved interpreter path is surfaced so PATH
+  // divergence in daemon mode is visible.
+  const importable = checkEdgeTTSHealth(/* forceFresh */ true);
+  const base = `edge-tts synthesis failed after ${maxRetries + 1} attempts (${lastError}) using ${resolvedPython3}.`;
+  const hint = importable
+    ? ` edge-tts IS importable by that interpreter, so this is a runtime/network error from the edge-tts service, not a missing install.`
+    : ` edge-tts is NOT importable by that interpreter — install it: ${resolvedPython3} -m pip install edge-tts`;
+
   return {
     success: false,
     attempts: maxRetries + 1,
-    error: `edge-tts failed after ${maxRetries + 1} attempts (${lastError}). Is edge-tts installed? Run: pip3 install edge-tts`,
+    error: base + hint,
   };
 }

@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as handlers from "../handlers";
 import * as input from "../input";
@@ -51,13 +44,19 @@ describe("speaker output recording gate", () => {
     // @ts-ignore — test seam for external audio commands.
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
       spawnCalls.push([...(Array.isArray(cmd) ? cmd : [String(cmd)])]);
-      const mediaIdx = cmd.indexOf("--write-media");
-      if (mediaIdx >= 0 && cmd[mediaIdx + 1]) {
-        writeFileSync(cmd[mediaIdx + 1], "fake mp3");
+      // edge-tts args use the `--flag=value` form (buildEdgeTTSArgs); extract by
+      // prefix, not the two-token indexOf shape.
+      const argValue = (flag: string): string | undefined => {
+        const hit = cmd.find((c) => c.startsWith(`${flag}=`));
+        return hit ? hit.slice(flag.length + 1) : undefined;
+      };
+      const mediaPath = argValue("--write-media");
+      if (mediaPath) {
+        writeFileSync(mediaPath, "fake mp3");
       }
-      const metadataIdx = cmd.indexOf("--write-metadata");
-      if (metadataIdx >= 0 && cmd[metadataIdx + 1]) {
-        writeFileSync(cmd[metadataIdx + 1], "");
+      const metadataPath = argValue("--write-metadata");
+      if (metadataPath) {
+        writeFileSync(metadataPath, "");
       }
       return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
     };
@@ -107,12 +106,14 @@ describe("speaker output recording gate", () => {
     const waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue(
       "answer",
     );
-    const awaitPlaybackSpy = spyOn(tts, "awaitCurrentPlayback").mockResolvedValue(
-      undefined,
-    );
-    const ensureBarSpy = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(
-      () => {},
-    );
+    const awaitPlaybackSpy = spyOn(
+      tts,
+      "awaitCurrentPlayback",
+    ).mockResolvedValue(undefined);
+    const ensureBarSpy = spyOn(
+      launcher,
+      "ensureVoiceBarRunning",
+    ).mockImplementation(() => {});
     const isConnectedSpy = spyOn(socketClient, "isConnected").mockReturnValue(
       true,
     );
@@ -133,9 +134,10 @@ describe("speaker output recording gate", () => {
     const clearInputSpy = spyOn(input, "clearInput").mockImplementation(
       () => {},
     );
-    const clearStopSpy = spyOn(sessionBooking, "clearStopSignal").mockImplementation(
-      () => {},
-    );
+    const clearStopSpy = spyOn(
+      sessionBooking,
+      "clearStopSignal",
+    ).mockImplementation(() => {});
 
     try {
       const result = await handlers.handleVoiceAsk({
@@ -198,9 +200,11 @@ describe("speaker output recording gate", () => {
       voice: "jenny",
       timestamp: Date.now(),
     });
-    const playSpy = spyOn(tts, "playAudioNonBlocking").mockImplementation(() => {
-      throw new Error(SPEAKER_REFUSED);
-    });
+    const playSpy = spyOn(tts, "playAudioNonBlocking").mockImplementation(
+      () => {
+        throw new Error(SPEAKER_REFUSED);
+      },
+    );
 
     try {
       const result = await handlers.handleReplay({ index: 0 });
@@ -220,23 +224,29 @@ describe("speaker output recording gate", () => {
     // @ts-ignore — flip recording state after synthesis writes the file.
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
       spawnCalls.push([...(Array.isArray(cmd) ? cmd : [String(cmd)])]);
-      const mediaIdx = cmd.indexOf("--write-media");
-      if (mediaIdx >= 0 && cmd[mediaIdx + 1]) {
-        synthesizedFile = cmd[mediaIdx + 1];
+      // edge-tts args use the `--flag=value` form (buildEdgeTTSArgs); extract by
+      // prefix, not the two-token indexOf shape.
+      const argValue = (flag: string): string | undefined => {
+        const hit = cmd.find((c) => c.startsWith(`${flag}=`));
+        return hit ? hit.slice(flag.length + 1) : undefined;
+      };
+      const mediaPath = argValue("--write-media");
+      if (mediaPath) {
+        synthesizedFile = mediaPath;
         writeFileSync(synthesizedFile, "fake mp3");
         writeRecordingState("recording");
       }
-      const metadataIdx = cmd.indexOf("--write-metadata");
-      if (metadataIdx >= 0 && cmd[metadataIdx + 1]) {
-        writeFileSync(cmd[metadataIdx + 1], "");
+      const metadataPath = argValue("--write-metadata");
+      if (metadataPath) {
+        writeFileSync(metadataPath, "");
       }
       return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
     };
 
     try {
-      await expect(tts.speak("recording starts after synthesis")).rejects.toThrow(
-        SPEAKER_REFUSED,
-      );
+      await expect(
+        tts.speak("recording starts after synthesis"),
+      ).rejects.toThrow(SPEAKER_REFUSED);
 
       expect(synthesizedFile).not.toBeNull();
       expect(existsSync(synthesizedFile!)).toBe(false);
