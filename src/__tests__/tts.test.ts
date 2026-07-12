@@ -22,14 +22,20 @@ describe("tts module", () => {
     Bun.spawn = (cmd: string[], opts?: unknown) => {
       spawnCalls.push({ cmd: [...cmd] });
       if (Array.isArray(cmd) && cmd[0].includes("python3")) {
-        const mediaIdx = cmd.indexOf("--write-media");
-        if (mediaIdx >= 0 && cmd[mediaIdx + 1]) {
-          writeFileSync(cmd[mediaIdx + 1], "fake mp3");
+        // edge-tts args use the `--flag=value` form (see buildEdgeTTSArgs),
+        // so extract values by prefix rather than the two-token indexOf shape.
+        const argValue = (flag: string): string | undefined => {
+          const hit = cmd.find((c) => c.startsWith(`${flag}=`));
+          return hit ? hit.slice(flag.length + 1) : undefined;
+        };
+        const mediaPath = argValue("--write-media");
+        if (mediaPath) {
+          writeFileSync(mediaPath, "fake mp3");
         }
-        const metadataIdx = cmd.indexOf("--write-metadata");
-        if (metadataIdx >= 0 && cmd[metadataIdx + 1]) {
+        const metadataPath = argValue("--write-metadata");
+        if (metadataPath) {
           writeFileSync(
-            cmd[metadataIdx + 1],
+            metadataPath,
             [
               '{"offset":0,"duration":1000000,"text":"Hello"}',
               '{"offset":1200000,"duration":900000,"text":"world"}',
@@ -86,7 +92,9 @@ describe("tts module", () => {
     expect(
       spawnCalls[0].cmd.some((c: string) => c.includes("edge-tts-words")),
     ).toBe(true);
-    expect(spawnCalls[0].cmd).toContain("Hello test");
+    // Text is passed in =-bound form (--text=<value>) so a dash-leading
+    // utterance can't be misparsed by argparse (exit-2 regression guard).
+    expect(spawnCalls[0].cmd).toContain("--text=Hello test");
     expect(spawnCalls[1].cmd[0]).toBe(expectedPlayer);
   });
 
@@ -96,10 +104,14 @@ describe("tts module", () => {
     await speak("Voice test");
 
     const edgeTtsCmd = spawnCalls[0].cmd;
-    const voiceIdx = edgeTtsCmd.indexOf("--voice");
-    expect(voiceIdx).toBeGreaterThan(-1);
+    // Voice is passed in =-bound form (--voice=<value>); no bare --voice token.
+    expect(edgeTtsCmd).not.toContain("--voice");
+    const voiceArg = edgeTtsCmd.find((arg: string) =>
+      arg.startsWith("--voice="),
+    );
+    expect(voiceArg).toBeDefined();
     // Default voice should be JennyNeural
-    expect(edgeTtsCmd[voiceIdx + 1]).toContain("Jenny");
+    expect(voiceArg).toContain("Jenny");
   });
 
   it("speak() passes negative long-text rates as a single --rate= argv token", async () => {
