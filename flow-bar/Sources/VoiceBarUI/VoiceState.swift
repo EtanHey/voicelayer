@@ -212,6 +212,17 @@ public final class VoiceState {
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    public private(set) var isTeleprompterDismissed = false
+
+    public func dismissTeleprompter() {
+        guard mode == .speaking else { return }
+        isTeleprompterDismissed = true
+    }
+
+    public func showTeleprompter() {
+        guard mode == .speaking else { return }
+        isTeleprompterDismissed = false
+    }
 
     /// Whether the last completed action was TTS playback (replay is valid).
     /// Set true when speaking state arrives, false when recording starts.
@@ -811,6 +822,7 @@ public final class VoiceState {
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
                 mode = .speaking
+                isTeleprompterDismissed = false
                 statusText = event["text"] as? String ?? ""
                 canReplay = true
                 hotkeyPhase = .idle
@@ -1341,6 +1353,7 @@ public final class VoiceState {
         transcribingStatusText = nil
         resetAudioLevels()
         wordBoundaries = []
+        isTeleprompterDismissed = false
         if clearQueue {
             queueDepth = 0
             queueItems = []

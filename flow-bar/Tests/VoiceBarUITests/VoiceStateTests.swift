@@ -899,4 +899,23 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.mode, .transcribing)
         XCTAssertEqual(modes, [.recording, .transcribing])
     }
+
+    func testTeleprompterDismissAndReshowIsSeparateFromPlaybackStop() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Etan runs supabase",
+        ])
+
+        state.dismissTeleprompter()
+        state.stop()
+
+        XCTAssertTrue(state.isTeleprompterDismissed)
+        XCTAssertEqual(state.mode, .speaking)
+
+        state.showTeleprompter()
+        XCTAssertFalse(state.isTeleprompterDismissed)
+        XCTAssertEqual(state.statusText, "Etan runs supabase")
+    }
 }

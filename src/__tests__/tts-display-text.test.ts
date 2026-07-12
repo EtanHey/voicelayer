@@ -13,6 +13,7 @@ import * as socketClient from "../socket-client";
 
 const TEST_DISABLED_FILE = `/tmp/voicelayer-display-text-${process.pid}-disabled`;
 const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-display-text-${process.pid}-recording.json`;
+const TEST_PRONUNCIATION_FILE = `/tmp/voicelayer-display-text-${process.pid}-pronunciation.yaml`;
 
 const pronunciations: Record<string, string> = {
   Etan: "Eh tahn",
@@ -26,16 +27,6 @@ mock.module("../paths", () => ({
   TTS_DISABLED_FILE: TEST_DISABLED_FILE,
 }));
 
-mock.module("../pronunciation", () => ({
-  applyPronunciation(text: string): string {
-    let spoken = text;
-    for (const [term, replacement] of Object.entries(pronunciations)) {
-      spoken = spoken.replace(new RegExp(`\\b${term}\\b`, "gi"), replacement);
-    }
-    return spoken;
-  },
-}));
-
 interface SpawnCall {
   cmd: string[];
 }
@@ -44,13 +35,20 @@ describe("TTS display text stays separate from pronunciation text", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
   let originalRecordingStatePath: string | undefined;
+  let originalPronunciationPath: string | undefined;
   let spawnCalls: SpawnCall[];
   let broadcasts: any[];
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    originalPronunciationPath = process.env.QA_VOICE_PRONUNCIATION_PATH;
     process.env.QA_VOICE_RECORDING_STATE_PATH = TEST_RECORDING_STATE_FILE;
+    process.env.QA_VOICE_PRONUNCIATION_PATH = TEST_PRONUNCIATION_FILE;
+    writeFileSync(
+      process.env.QA_VOICE_PRONUNCIATION_PATH,
+      `tech:\n${Object.entries(pronunciations).map(([term, replacement]) => `  ${term}: "${replacement}"`).join("\n")}\n`,
+    );
     writeFileSync(
       TEST_RECORDING_STATE_FILE,
       JSON.stringify({
@@ -125,12 +123,13 @@ describe("TTS display text stays separate from pronunciation text", () => {
       await awaitCurrentPlayback();
     } catch {}
 
-    broadcastSpy.mockRestore();
+    broadcastSpy?.mockRestore();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
     for (const path of [
       TEST_DISABLED_FILE,
       TEST_RECORDING_STATE_FILE,
+      TEST_PRONUNCIATION_FILE,
       "/tmp/voicelayer-history.json",
     ]) {
       try {
@@ -141,6 +140,11 @@ describe("TTS display text stays separate from pronunciation text", () => {
       delete process.env.QA_VOICE_RECORDING_STATE_PATH;
     } else {
       process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
+    }
+    if (originalPronunciationPath === undefined) {
+      delete process.env.QA_VOICE_PRONUNCIATION_PATH;
+    } else {
+      process.env.QA_VOICE_PRONUNCIATION_PATH = originalPronunciationPath;
     }
   });
 
@@ -186,6 +190,33 @@ describe("TTS display text stays separate from pronunciation text", () => {
     expect(subtitle?.words).toEqual([
       { offset_ms: 0, duration_ms: 220, text: "Etan" },
     ]);
+  });
+
+  it("broadcasts original tokens on the real subtitle render surface", async () => {
+    const { speak } = await import("../tts");
+
+    await speak("Etan runs supabase cmuxlayer golems and BrainLayer");
+
+    const synthesis = spawnCalls.find((call) => call.cmd[0].includes("python3"));
+    expect(synthesis?.cmd).toContain(
+      "--text=Eh tahn runs Soopa base cmuxlayer Go lems and Brain Layer",
+    );
+    const subtitle = broadcasts.find((event) => event.type === "subtitle");
+    expect(subtitle?.words.map((word: { text: string }) => word.text)).toEqual([
+      "Etan",
+      "runs",
+      "supabase",
+      "cmuxlayer",
+      "golems",
+      "and",
+      "BrainLayer",
+    ]);
+    const speaking = broadcasts.find(
+      (event) => event.type === "state" && event.state === "speaking",
+    );
+    expect(speaking?.text).toBe(
+      "Etan runs supabase cmuxlayer golems and BrainLayer",
+    );
   });
 
   it("falls back to the original text when engine boundaries cannot map cleanly", async () => {

@@ -292,7 +292,9 @@ final class SocketServer {
 
     // MARK: - Send to command client
 
-    /// Send a command (JSON + newline) to the single command-owning daemon.
+    /// Send normal commands to the command-owning daemon. Stop/cancel also go
+    /// to legacy direct MCP clients because a long-lived session may own the
+    /// active playback process.
     func sendCommandToOwner(command: [String: Any]) {
         queue.async { [weak self] in
             guard let self else { return }
@@ -307,7 +309,16 @@ final class SocketServer {
                 .map(\.key)
                 .sorted()
 
-            guard let targetFD = commandFDs.first else {
+            let commandName = command["cmd"] as? String
+            let isInterrupt = commandName == "stop" || commandName == "cancel"
+            let legacyPlaybackFDs = isInterrupt
+                ? clients.filter { $0.value.role == "mcp-server" }.map(\.key)
+                : []
+            let targetFDs = Array(Set(
+                isInterrupt ? commandFDs + legacyPlaybackFDs : Array(commandFDs.prefix(1))
+            )).sorted()
+
+            guard !targetFDs.isEmpty else {
                 NSLog(
                     "[VoiceBar] No command client registered; dropping command %@",
                     jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -316,48 +327,52 @@ final class SocketServer {
                 return
             }
 
-            if commandFDs.count > 1 {
-                NSLog("[VoiceBar] Multiple command clients registered (%d); using fd %d", commandFDs.count, targetFD)
+            if isInterrupt, targetFDs.count > 1 {
+                NSLog("[VoiceBar] Broadcasting interrupt to %d playback-capable clients", targetFDs.count)
             }
 
             var deadFDs: [Int32] = []
-            var totalWritten = 0
-            var transientRetryCount = 0
-            var deliveryFailed = false
-            while totalWritten < bytes.count {
-                switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
-                case let .wrote(count):
-                    totalWritten += count
-                    transientRetryCount = 0
-                case .retry:
-                    transientRetryCount += 1
-                    if transientRetryCount >= 3 {
-                        NSLog(
-                            "[VoiceBar] Socket write stalled (fd: %d) after %d retries",
-                            targetFD,
-                            transientRetryCount
-                        )
+            var deliveredCount = 0
+            for targetFD in targetFDs {
+                var totalWritten = 0
+                var transientRetryCount = 0
+                var deliveryFailed = false
+                while totalWritten < bytes.count {
+                    switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
+                    case let .wrote(count):
+                        totalWritten += count
+                        transientRetryCount = 0
+                    case .retry:
+                        transientRetryCount += 1
+                        if transientRetryCount >= 3 {
+                            NSLog(
+                                "[VoiceBar] Socket write stalled (fd: %d) after %d retries",
+                                targetFD,
+                                transientRetryCount
+                            )
+                            deadFDs.append(targetFD)
+                            deliveryFailed = true
+                            totalWritten = bytes.count
+                        }
+                    case let .peerClosed(errnoCode):
+                        NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
+                        deadFDs.append(targetFD)
+                        deliveryFailed = true
+                        totalWritten = bytes.count
+                    case let .failed(errnoCode):
+                        NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
                         deadFDs.append(targetFD)
                         deliveryFailed = true
                         totalWritten = bytes.count
                     }
-                case let .peerClosed(errnoCode):
-                    NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
-                    deadFDs.append(targetFD)
-                    deliveryFailed = true
-                    totalWritten = bytes.count
-                case let .failed(errnoCode):
-                    NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
-                    deadFDs.append(targetFD)
-                    deliveryFailed = true
-                    totalWritten = bytes.count
                 }
+                if !deliveryFailed { deliveredCount += 1 }
             }
             // Clean up clients that failed on write
             for fd in deadFDs {
                 clients[fd]?.source.cancel()
             }
-            if deliveryFailed {
+            if deliveredCount == 0 {
                 notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is reconnecting")
             }
         }

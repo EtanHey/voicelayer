@@ -89,6 +89,17 @@ public enum TeleprompterContentModel {
         text: String,
         wordBoundaries: [TeleprompterBoundary]
     ) -> [TeleprompterWord] {
+        let textWords = text
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { word in
+                TeleprompterWord(
+                    id: 0,
+                    text: String(word),
+                    offsetMs: nil,
+                    durationMs: nil
+                )
+            }
+            .flatMap(splitDisplayToken)
         let boundaryWords = wordBoundaries
             .map { boundary in
                 TeleprompterWord(
@@ -100,21 +111,22 @@ public enum TeleprompterContentModel {
             }
             .filter { !$0.text.isEmpty }
 
+        if !textWords.isEmpty, textWords.count == boundaryWords.count {
+            return assignStableIDs(to: zip(textWords, boundaryWords).map { display, boundary in
+                TeleprompterWord(
+                    id: 0,
+                    text: display.text,
+                    offsetMs: boundary.offsetMs,
+                    durationMs: boundary.durationMs
+                )
+            })
+        }
+        if !textWords.isEmpty {
+            return assignStableIDs(to: textWords)
+        }
         if !boundaryWords.isEmpty {
             return assignStableIDs(to: boundaryWords.flatMap(splitDisplayToken))
         }
-
-        let textWords = text
-            .split(separator: " ")
-            .map { word in
-                TeleprompterWord(
-                    id: 0,
-                    text: String(word),
-                    offsetMs: nil,
-                    durationMs: nil
-                )
-            }
-            .flatMap(splitDisplayToken)
         return assignStableIDs(to: textWords)
     }
 
@@ -150,6 +162,17 @@ public enum TeleprompterContentModel {
             start = end
         }
         return chunks
+    }
+}
+
+public enum TeleprompterScrollPosition: Equatable {
+    case top
+    case center
+}
+
+public enum TeleprompterScrollPolicy {
+    public static func position(for wordIndex: Int) -> TeleprompterScrollPosition {
+        wordIndex == 0 ? .top : .center
     }
 }
 
@@ -333,12 +356,16 @@ public struct TeleprompterView: View {
     ) {
         guard teleprompterWords.indices.contains(currentIndex) else { return }
 
-        if animated {
+        let anchor: UnitPoint = switch TeleprompterScrollPolicy.position(for: currentIndex) {
+        case .top: .top
+        case .center: .center
+        }
+        if animated, currentIndex > 0 {
             withAnimation(Self.scrollAnimation) {
-                proxy.scrollTo(currentIndex, anchor: .center)
+                proxy.scrollTo(currentIndex, anchor: anchor)
             }
         } else {
-            proxy.scrollTo(currentIndex, anchor: .center)
+            proxy.scrollTo(currentIndex, anchor: anchor)
         }
     }
 

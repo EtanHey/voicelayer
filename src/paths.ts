@@ -218,6 +218,17 @@ export function isDefaultMcpSocketPath(
   return firstOverrideValue(MCP_SOCKET_OVERRIDE_ENVS, env) === null;
 }
 
+/**
+ * A daemon may own VoiceBar commands when both socket sides use the same
+ * environment: either both defaults or a fully isolated pair. A one-sided
+ * override could bridge an isolated process into the resident stack.
+ */
+export function shouldAcceptVoiceBarCommands(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isDefaultVoiceBarSocketPath(env) === isDefaultMcpSocketPath(env);
+}
+
 export const MCP_SOCKET_PATH = getMcpSocketPath();
 
 /**

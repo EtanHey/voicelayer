@@ -27,6 +27,7 @@ import {
   isDefaultMcpSocketPath,
   isDefaultVoiceBarSocketPath,
   isVoicelayerDisabled,
+  shouldAcceptVoiceBarCommands,
 } from "./paths";
 import {
   broadcast,
@@ -217,7 +218,7 @@ async function main() {
   onCommand(handleSocketCommand);
   connectToBar(undefined, {
     role: "mcp-daemon",
-    acceptsCommands: isDefaultVoiceBarSocketPath() && isDefaultMcpSocketPath(),
+    acceptsCommands: shouldAcceptVoiceBarCommands(),
     onConnected: () => polishStatusReporter.replay(),
   });
   void ensureAndReportSTTPolishServer({
