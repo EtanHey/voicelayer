@@ -32,6 +32,7 @@ type SpawnPolishProcess = (
 
 export type STTPolishServerStatus =
   | { status: "disabled" | "external" | "missing-binary" | "timeout" }
+  | { status: "launch-failed"; error: string }
   | { status: "already-ready" | "ready" | "starting"; pid?: number };
 
 export interface EnsureSTTPolishServerOptions {
@@ -59,6 +60,21 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
 let polishProcess: ManagedPolishProcess | null = null;
 let polishLaunch: Promise<STTPolishServerStatus> | null = null;
+const polishStatusListeners = new Set<(status: STTPolishServerStatus) => void>();
+
+export function onSTTPolishServerStatus(
+  listener: (status: STTPolishServerStatus) => void,
+): () => void {
+  polishStatusListeners.add(listener);
+  return () => polishStatusListeners.delete(listener);
+}
+
+function publishSTTPolishServerStatus(
+  status: STTPolishServerStatus,
+): STTPolishServerStatus {
+  for (const listener of polishStatusListeners) listener(status);
+  return status;
+}
 
 export function resetSTTPolishServerManagerForTests(): void {
   polishLaunch = null;
@@ -79,29 +95,39 @@ export async function ensureSTTPolishServer(
 ): Promise<STTPolishServerStatus> {
   const env = options.env ?? process.env;
   const endpoint = getSTTPolishEndpoint(env);
-  if (getSTTPolishMode(env) === "off") return { status: "disabled" };
-  if (endpoint !== DEFAULT_POLISH_ENDPOINT) return { status: "external" };
-
-  if (!options.forceRestart && await isReady(endpoint, options)) {
-    return { status: "already-ready", pid: polishProcess?.pid };
+  if (getSTTPolishMode(env) === "off") {
+    return publishSTTPolishServerStatus({ status: "disabled" });
+  }
+  if (endpoint !== DEFAULT_POLISH_ENDPOINT) {
+    return publishSTTPolishServerStatus({ status: "external" });
   }
 
-  if (polishLaunch) return polishLaunch;
+  if (!options.forceRestart && await isReady(endpoint, options)) {
+    return publishSTTPolishServerStatus({
+      status: "already-ready",
+      pid: polishProcess?.pid,
+    });
+  }
+
+  if (polishLaunch) return polishLaunch.then(publishSTTPolishServerStatus);
   polishLaunch = startAndWaitForPolishServer(endpoint, options).finally(() => {
     polishLaunch = null;
   });
-  return polishLaunch;
+  return polishLaunch.then(publishSTTPolishServerStatus);
 }
 
 export function recoverDefaultSTTPolishServerAfterFailure(
   env: STTPolishEnv = process.env,
+  options: Omit<EnsureSTTPolishServerOptions, "env" | "forceRestart"> = {},
 ): void {
   if (getSTTPolishMode(env) === "off") return;
   if (getSTTPolishEndpoint(env) !== DEFAULT_POLISH_ENDPOINT) return;
-  void ensureSTTPolishServer({ env, forceRestart: true }).catch((error: unknown) => {
+  void ensureSTTPolishServer({ ...options, env, forceRestart: true }).catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : String(error);
     console.error(
-      `[voicelayer] STT polish server recovery failed: ${error instanceof Error ? error.message : String(error)}`,
+      `[voicelayer] STT polish server recovery failed: ${detail}`,
     );
+    publishSTTPolishServerStatus({ status: "launch-failed", error: detail });
   });
 }
 
@@ -111,7 +137,9 @@ async function startAndWaitForPolishServer(
 ): Promise<STTPolishServerStatus> {
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
   const log = options.log ?? console.error;
-  const binary = options.findBinary?.() ?? findPolishServerBinary();
+  const binary = options.findBinary
+    ? options.findBinary()
+    : findPolishServerBinary();
 
   if (!binary) {
     appendEvent(

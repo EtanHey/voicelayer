@@ -255,6 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.onHistoryArchiveChange = {
             NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
         }
+        voiceState.onPolishStatusChange = { [weak self] in
+            self?.refreshSettingsWindowAnchorState()
+        }
         voiceState.diagnosticLogger = { [weak self] event, details in
             self?.logDiagnostic(event: event, details: details)
         }
@@ -1381,6 +1384,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             availableDevices: { MicrophoneDeviceManager.availableInputDevices() },
             selectedDeviceID: { MicrophoneDeviceManager.selectedInputDeviceID() },
             onSelectDevice: { MicrophoneDeviceManager.selectInputDevice(id: $0) },
+            polishDegradation: { [weak self] in self?.voiceState.polishDegradation },
+            onDismissPolishDegradation: { [weak self] in
+                self?.voiceState.dismissPolishDegradation()
+            },
             anchorMode: { [weak self] in self?.currentAnchorMode() ?? .follow },
             onSelectAnchorMode: { [weak self] in self?.selectAnchorMode($0) },
             performanceEffort: { [weak self] in self?.currentPerformanceEffort() ?? .accurate },
@@ -1562,8 +1569,14 @@ struct VoiceBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("VoiceBar", systemImage: "waveform.circle.fill") {
+        MenuBarExtra {
             VStack(alignment: .leading, spacing: 6) {
+                if let degradation = appDelegate.voiceState.polishDegradation {
+                    Label(degradation.hint, systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(.caption, weight: .medium))
+                        .foregroundStyle(.orange)
+                    Divider()
+                }
                 HStack(spacing: 6) {
                     Circle()
                         .fill(appDelegate.voiceState.isConnected ? .green : .red)
@@ -1591,6 +1604,16 @@ struct VoiceBarApp: App {
                 }
             }
             .padding(8)
+            .onAppear {
+                appDelegate.voiceState.acknowledgePolishMenuSignal()
+            }
+        } label: {
+            Label(
+                "VoiceBar",
+                systemImage: appDelegate.voiceState.polishMenuSignalPending
+                    ? "exclamationmark.triangle.fill"
+                    : "waveform.circle.fill"
+            )
         }
         .commands {
             CommandGroup(replacing: .appSettings) {

@@ -27,6 +27,8 @@ public struct SettingsView: View {
     public let availableDevices: () -> [MicrophoneDevice]
     public let selectedDeviceID: () -> String?
     public let onSelectDevice: (String) -> Void
+    public let polishDegradation: () -> STTPolishDegradation?
+    public let onDismissPolishDegradation: () -> Void
     public let anchorMode: () -> VoiceBarAnchorMode
     public let onSelectAnchorMode: (VoiceBarAnchorMode) -> Void
     public let performanceEffort: () -> VoiceBarPerformanceEffort
@@ -82,6 +84,8 @@ public struct SettingsView: View {
         availableDevices: @escaping () -> [MicrophoneDevice],
         selectedDeviceID: @escaping () -> String?,
         onSelectDevice: @escaping (String) -> Void,
+        polishDegradation: @escaping () -> STTPolishDegradation? = { nil },
+        onDismissPolishDegradation: @escaping () -> Void = {},
         anchorMode: @escaping () -> VoiceBarAnchorMode = { .follow },
         onSelectAnchorMode: @escaping (VoiceBarAnchorMode) -> Void = { _ in },
         performanceEffort: @escaping () -> VoiceBarPerformanceEffort = { .accurate },
@@ -118,6 +122,8 @@ public struct SettingsView: View {
         self.availableDevices = availableDevices
         self.selectedDeviceID = selectedDeviceID
         self.onSelectDevice = onSelectDevice
+        self.polishDegradation = polishDegradation
+        self.onDismissPolishDegradation = onDismissPolishDegradation
         self.anchorMode = anchorMode
         self.onSelectAnchorMode = onSelectAnchorMode
         self.performanceEffort = performanceEffort
@@ -362,6 +368,28 @@ public struct SettingsView: View {
             }
 
             Section("Performance") {
+                if let degradation = polishDegradation() {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                            .accessibilityHidden(true)
+                        Text(degradation.hint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                        Button {
+                            onDismissPolishDegradation()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Dismiss STT polish warning")
+                        .accessibilityLabel("Dismiss STT polish warning")
+                    }
+                    .accessibilityElement(children: .combine)
+                }
                 Picker("Effort", selection: Binding(
                     get: { selectedPerformanceEffort },
                     set: { effort in

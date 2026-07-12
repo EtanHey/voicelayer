@@ -2,6 +2,81 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testPolishDegradationPersistsAndSignalsMenuOnlyOnce() throws {
+        let state = VoiceState()
+
+        state.handleEvent([
+            "type": "polish_degraded",
+            "reason": "missing-binary",
+            "hint": "Install mlx-lm",
+        ])
+        state.handleEvent([
+            "type": "polish_degraded",
+            "reason": "missing-binary",
+            "hint": "Install mlx-lm",
+        ])
+
+        let degradation = try XCTUnwrap(state.polishDegradation)
+        XCTAssertEqual(degradation.reason, "missing-binary")
+        XCTAssertEqual(degradation.hint, "Install mlx-lm")
+        XCTAssertTrue(state.polishMenuSignalPending)
+
+        state.acknowledgePolishMenuSignal()
+
+        XCTAssertFalse(state.polishMenuSignalPending)
+        XCTAssertNotNil(state.polishDegradation)
+    }
+
+    func testDismissedPolishDegradationStaysDismissedWhenStatusReplays() {
+        let state = VoiceState()
+        let event: [String: Any] = [
+            "type": "polish_degraded",
+            "reason": "missing-binary",
+            "hint": "Install mlx-lm",
+        ]
+
+        state.handleEvent(event)
+        state.dismissPolishDegradation()
+        state.handleEvent(event)
+
+        XCTAssertNil(state.polishDegradation)
+        XCTAssertFalse(state.polishMenuSignalPending)
+    }
+
+    func testPolishReadyClearsDegradationAndAllowsFutureSignal() {
+        let state = VoiceState()
+        let degraded: [String: Any] = [
+            "type": "polish_degraded",
+            "reason": "missing-binary",
+            "hint": "Install mlx-lm",
+        ]
+
+        state.handleEvent(degraded)
+        state.handleEvent(["type": "polish_ready"])
+
+        XCTAssertNil(state.polishDegradation)
+        XCTAssertFalse(state.polishMenuSignalPending)
+
+        state.handleEvent(degraded)
+        XCTAssertNotNil(state.polishDegradation)
+        XCTAssertTrue(state.polishMenuSignalPending)
+    }
+
+    func testFinalTranscriptionRetainsUnpolishedHonestyMetadata() {
+        let state = VoiceState(recentTranscriptionsLoader: { [] })
+        state.minimumTranscribingDisplayDuration = 0
+
+        state.handleEvent([
+            "type": "transcription",
+            "text": "Raw fallback text.",
+            "polished": false,
+            "polish_reason": "connection refused",
+        ])
+
+        XCTAssertEqual(state.lastTranscriptionPolished, false)
+        XCTAssertEqual(state.lastTranscriptionPolishReason, "connection refused")
+    }
+
     func testRecordIntentDoesNotTransitionLocally() {
         let state = VoiceState()
         var sentCommand: [String: Any]?

@@ -172,8 +172,22 @@ export async function finalizeTranscriptionTextForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = process.env,
 ): Promise<string> {
+  return (await finalizeTranscriptionResultForSurface(rawText, surface, env)).text;
+}
+
+export interface FinalizedTranscriptionResult {
+  text: string;
+  polished?: boolean;
+  polishReason?: string;
+}
+
+export async function finalizeTranscriptionResultForSurface(
+  rawText: string,
+  surface: STTPolishSurface | null,
+  env: STTFinalizeEnv = process.env,
+): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
-  if (!surface) return cleanedText;
+  if (!surface) return { text: cleanedText };
   const polished = await polishTranscriptionText({
     rawText,
     cleanedText,
@@ -193,6 +207,8 @@ export async function finalizeTranscriptionTextForSurface(
       cleaned_chars: cleanedText.length,
       polished_chars: polished.polishedText?.length ?? null,
       final_chars: polished.text.length,
+      polished: polished.polished,
+      reason: polished.reason ?? null,
       error: polished.error ?? null,
     },
     { topic: "voice.transcription" },
@@ -200,7 +216,21 @@ export async function finalizeTranscriptionTextForSurface(
   if (polished.status === "failed") {
     recoverDefaultSTTPolishServerAfterFailure(env);
   }
-  return polished.text;
+  return {
+    text: polished.text,
+    polished: polished.polished,
+    ...(polished.reason ? { polishReason: polished.reason } : {}),
+  };
+}
+
+function transcriptionPolishMetadata(
+  result: FinalizedTranscriptionResult,
+): Pick<import("./socket-protocol").TranscriptionEvent, "polished" | "polish_reason"> {
+  if (result.polished === undefined) return {};
+  return {
+    polished: result.polished,
+    ...(result.polishReason ? { polish_reason: result.polishReason } : {}),
+  };
 }
 
 function polishSurfaceForWaitOptions(
@@ -1961,7 +1991,7 @@ export async function waitForInput(
     console.error(
       `[voicelayer] Transcribing with ${backend.name}${useChunkedTranscription ? " (chunked)" : ""}...`,
     );
-    let text = "";
+    let finalized: FinalizedTranscriptionResult;
 
     if (useChunkedTranscription) {
       chunkedSession.finalize();
@@ -1983,22 +2013,23 @@ export async function waitForInput(
           } catch {}
         }
       });
-      text = await finalizeTranscriptionTextForSurface(
+      finalized = await finalizeTranscriptionResultForSurface(
         rawText,
         polishSurfaceForWaitOptions(options),
       );
     } else {
       const result = await backend.transcribe(wavPath);
-      text = await finalizeTranscriptionTextForSurface(
+      finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
       );
-      if (result.text.trim() && !text) {
+      if (result.text.trim() && !finalized.text) {
         console.error(
           `[voicelayer] Suppressed non-meaningful transcription: ${JSON.stringify(result.text)}`,
         );
       }
     }
+    const text = finalized.text;
     console.error(`[voicelayer] Transcription: ${text}`);
 
     retainLastCaptureForRecovery(
@@ -2040,6 +2071,7 @@ export async function waitForInput(
       broadcast({
         type: "transcription",
         text,
+        ...transcriptionPolishMetadata(finalized),
         ...(archivedRecordingPath
           ? { recording_path: join(archivedRecordingPath, "audio.wav") }
           : {}),
@@ -2198,10 +2230,11 @@ export async function retranscribeRecordingCapture(
       `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
     );
     const result = await backend.transcribe(wavPath);
-    const text = await finalizeTranscriptionTextForSurface(
+    const finalized = await finalizeTranscriptionResultForSurface(
       result.text,
       "dictation",
     );
+    const text = finalized.text;
     if (result.text.trim() && !text) {
       console.error(
         `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
@@ -2214,7 +2247,12 @@ export async function retranscribeRecordingCapture(
         backend: backend.name,
         languageMode: getLanguageModeFromEnv(),
       });
-      broadcast({ type: "transcription", text, recording_path: eventAudioPath });
+      broadcast({
+        type: "transcription",
+        text,
+        recording_path: eventAudioPath,
+        ...transcriptionPolishMetadata(finalized),
+      });
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
@@ -2270,10 +2308,11 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     });
     console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
     const result = await backend.transcribe(wavPath);
-    const text = await finalizeTranscriptionTextForSurface(
+    const finalized = await finalizeTranscriptionResultForSurface(
       result.text,
       retainedPolishSurface,
     );
+    const text = finalized.text;
     if (result.text.trim() && !text) {
       console.error(
         `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
@@ -2282,7 +2321,11 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     console.error(`[voicelayer] Retranscription: ${text}`);
 
     if (text) {
-      broadcast({ type: "transcription", text });
+      broadcast({
+        type: "transcription",
+        text,
+        ...transcriptionPolishMetadata(finalized),
+      });
     }
     setRecordingState("idle");
     broadcast({ type: "state", state: "idle", source: "recording" });
