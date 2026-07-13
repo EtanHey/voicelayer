@@ -12,7 +12,7 @@
 
 ## Approved design
 
-Use a small versioned JSON sidecar derived from `retainedRecordingFilePath()`. Whenever VoiceLayer retains a capture, atomically persist a valid non-null surface; if the capture has no surface, remove stale sidecar metadata. `retranscribeLastCapture()` resolves its surface from the sidecar and falls back to `dictation` when the file is absent, malformed, or contains an unsupported value. It never passes `null` to the finalizer.
+Use a small versioned JSON sidecar derived from `retainedRecordingFilePath()`. Whenever VoiceLayer retains a capture, atomically persist a valid non-null surface plus the retained WAV's SHA-256; if the capture has no surface, remove stale sidecar metadata. `retranscribeLastCapture()` accepts the sidecar only when its hash matches the current WAV and falls back to `dictation` when the file is absent, malformed, stale, or contains an unsupported value. It never passes `null` to the finalizer.
 
 Keep `retranscribeRecordingCapture()` on `dictation`, because archived recordings are VoiceBar dictations and that path is already non-null. Do not change finalization semantics for live recordings, non-meaningful output suppression, or retry/error handling.
 

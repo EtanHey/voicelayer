@@ -29,7 +29,7 @@
 - Test: `src/__tests__/input-durability.test.ts`
 
 1. Add a retained-recording metadata path derived from the retained WAV path.
-2. Atomically write a versioned sidecar for valid surfaces and delete stale sidecar state when the surface is null.
+2. Atomically write a versioned sidecar for valid surfaces, bind it to the WAV with SHA-256, and delete stale sidecar state when the surface is null.
 3. Add a defensive reader that accepts only `dictation` or `voice_ask` and otherwise returns the `dictation` fallback.
 4. Make `retranscribeLastCapture()` use the resolved non-null surface.
 5. Run the focused tests and confirm they pass.

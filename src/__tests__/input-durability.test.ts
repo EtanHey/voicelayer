@@ -25,6 +25,7 @@ import { clearCancelSignal, clearStopSignal } from "../session-booking";
 import { STOP_FILE } from "../paths";
 import * as socketClient from "../socket-client";
 import * as stt from "../stt";
+import * as sttPolish from "../stt-polish";
 import * as vad from "../vad";
 
 const VAD_CHUNK_SAMPLES = 512;
@@ -41,6 +42,8 @@ let vadProcessSpy: ReturnType<typeof spyOn> | undefined;
 let vadResetSpy: ReturnType<typeof spyOn> | undefined;
 let getBackendSpy: ReturnType<typeof spyOn> | undefined;
 let broadcastSpy: ReturnType<typeof spyOn> | undefined;
+let polishSpy: ReturnType<typeof spyOn> | undefined;
+let polishSurfaces: string[] = [];
 
 const originalSpawn = Bun.spawn;
 const originalSpawnSync = Bun.spawnSync;
@@ -217,14 +220,20 @@ describe("input recording durability", () => {
   let retainedPath: string;
   let savedRetainedPath: string | undefined;
   let savedRecordingsDir: string | undefined;
+  let savedRecordingStatePath: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
     retainedPath = join(tmpRoot, "last-recording.wav");
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
+    savedRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
     process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedPath;
     process.env.QA_VOICE_RECORDINGS_DIR = join(tmpRoot, "recordings");
+    process.env.QA_VOICE_RECORDING_STATE_PATH = join(
+      tmpRoot,
+      "recording-state.json",
+    );
     vadMode = "silence";
     onVadCall = null;
     backendMode = "ok";
@@ -232,6 +241,7 @@ describe("input recording durability", () => {
     backendTranscribedDataSize = undefined;
     backendTranscribedFileBytes = undefined;
     broadcasts = [];
+    polishSurfaces = [];
     vadProcessSpy = spyOn(vad, "processVADChunk").mockImplementation(
       async () => {
         onVadCall?.();
@@ -266,6 +276,25 @@ describe("input recording durability", () => {
         broadcasts.push(message);
       },
     );
+    polishSpy = spyOn(sttPolish, "polishTranscriptionText").mockImplementation(
+      async (input) => {
+        const surface = input.surface ?? "dictation";
+        polishSurfaces.push(surface);
+        return {
+          inputText: input.cleanedText,
+          text: input.cleanedText,
+          polishedText: null,
+          mode: "on",
+          status: "skipped",
+          surface,
+          changed: false,
+          retried: false,
+          latencyMs: 0,
+          polished: false,
+          reason: "test-double",
+        };
+      },
+    );
     clearStopSignal();
     clearCancelSignal();
   });
@@ -275,6 +304,7 @@ describe("input recording durability", () => {
     vadResetSpy?.mockRestore();
     getBackendSpy?.mockRestore();
     broadcastSpy?.mockRestore();
+    polishSpy?.mockRestore();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
     clearStopSignal();
@@ -289,6 +319,11 @@ describe("input recording durability", () => {
       delete process.env.QA_VOICE_RECORDINGS_DIR;
     } else {
       process.env.QA_VOICE_RECORDINGS_DIR = savedRecordingsDir;
+    }
+    if (savedRecordingStatePath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
     }
   });
 
@@ -426,6 +461,75 @@ describe("input recording durability", () => {
     ).toBe(true);
   });
 
+  it("polishes a retained capture with dictation when a fresh daemon has no persisted surface", async () => {
+    writeFileSync(retainedPath, makeWav(makePcmChunk()));
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(polishSurfaces).toEqual(["dictation"]);
+  });
+
+  it("persists and restores the retained capture's original polish surface", async () => {
+    const metadataPath = `${retainedPath}.metadata.json`;
+    const { retainLastCaptureForRecovery, retranscribeLastCapture } =
+      await import("../input");
+
+    retainLastCaptureForRecovery(makeWav(makePcmChunk()), "voice_ask");
+
+    expect(JSON.parse(readFileSync(metadataPath, "utf8"))).toMatchObject({
+      schema_version: 1,
+      polish_surface: "voice_ask",
+    });
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(polishSurfaces).toEqual(["voice_ask"]);
+  });
+
+  it("preserves the previous retained surface when replacing the WAV fails", async () => {
+    const metadataPath = `${retainedPath}.metadata.json`;
+    const originalWav = makeWav(makePcmChunk(400));
+    const { retainLastCaptureForRecovery, retranscribeLastCapture } =
+      await import("../input");
+    retainLastCaptureForRecovery(originalWav, "voice_ask");
+    const renameSpy = spyOn(fsModule, "renameSync").mockImplementationOnce(
+      () => {
+        throw new Error("simulated disk failure");
+      },
+    );
+
+    try {
+      expect(() =>
+        retainLastCaptureForRecovery(makeWav(makePcmChunk(800)), "dictation"),
+      ).toThrow("simulated disk failure");
+    } finally {
+      renameSpy.mockRestore();
+    }
+
+    expect(readFileSync(retainedPath)).toEqual(Buffer.from(originalWav));
+    expect(JSON.parse(readFileSync(metadataPath, "utf8"))).toMatchObject({
+      polish_surface: "voice_ask",
+    });
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(polishSurfaces).toEqual(["voice_ask"]);
+  });
+
+  it("falls back to dictation when retained metadata belongs to different audio", async () => {
+    const { retainLastCaptureForRecovery, retranscribeLastCapture } =
+      await import("../input");
+    retainLastCaptureForRecovery(makeWav(makePcmChunk(400)), "voice_ask");
+    writeFileSync(retainedPath, makeWav(makePcmChunk(800)));
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(polishSurfaces).toEqual(["dictation"]);
+  });
+
   it("repairs a stale retained WAV header to include fsynced trailing PCM before retranscribing", async () => {
     const retainedPcm = Buffer.concat([
       Buffer.from(makePcmChunk(400)),
@@ -490,6 +594,7 @@ describe("input recording durability", () => {
     if (transcriptionEvent?.polished === false) {
       expect(typeof transcriptionEvent.polish_reason).toBe("string");
     }
+    expect(polishSurfaces).toEqual(["dictation"]);
   });
 
   it("refreshes archived metadata audio checksum after retranscribe repairs a stale WAV header", async () => {

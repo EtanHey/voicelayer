@@ -52,6 +52,7 @@ import { getBackend } from "./stt";
 import {
   recordingFilePath,
   retainedRecordingFilePath,
+  retainedRecordingMetadataFilePath,
   MIC_DISABLED_FILE,
 } from "./paths";
 import {
@@ -132,16 +133,86 @@ const PRE_ROLL_CHUNKS = Math.ceil(
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
-let retainedPolishSurface: STTPolishSurface | null = null;
 // Re-export for backward compat (used by stt.ts Wispr Flow volume data only)
 export { calculateRMS };
+
+interface RetainedRecordingMetadata {
+  schema_version: 1;
+  polish_surface: STTPolishSurface;
+  audio_sha256: string;
+}
+
+function clearRetainedRecordingMetadata(): void {
+  const metadataPath = retainedRecordingMetadataFilePath();
+  try {
+    if (existsSync(metadataPath)) unlinkSync(metadataPath);
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to clear retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function persistRetainedPolishSurface(
+  surface: STTPolishSurface | null,
+  wavData: Uint8Array,
+): void {
+  if (!surface) return;
+  const metadata: RetainedRecordingMetadata = {
+    schema_version: 1,
+    polish_surface: surface,
+    audio_sha256: createHash("sha256").update(wavData).digest("hex"),
+  };
+  try {
+    atomicWriteFile(
+      retainedRecordingMetadataFilePath(),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to persist retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function retainedPolishSurfaceForRetranscription(): STTPolishSurface {
+  const metadataPath = retainedRecordingMetadataFilePath();
+  if (!existsSync(metadataPath)) return "dictation";
+
+  try {
+    const metadata: unknown = JSON.parse(readFileSync(metadataPath, "utf8"));
+    if (
+      metadata &&
+      typeof metadata === "object" &&
+      "schema_version" in metadata &&
+      "polish_surface" in metadata &&
+      "audio_sha256" in metadata &&
+      metadata.schema_version === 1 &&
+      (metadata.polish_surface === "dictation" ||
+        metadata.polish_surface === "voice_ask") &&
+      metadata.audio_sha256 ===
+        createHash("sha256")
+          .update(readFileSync(retainedRecordingFilePath()))
+          .digest("hex")
+    ) {
+      return metadata.polish_surface;
+    }
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to read retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return "dictation";
+}
 
 export function retainLastCaptureForRecovery(
   wavData: Uint8Array,
   polishSurface: STTPolishSurface | null,
 ): void {
   atomicWriteFile(retainedRecordingFilePath(), wavData);
-  retainedPolishSurface = polishSurface;
+  clearRetainedRecordingMetadata();
+  persistRetainedPolishSurface(polishSurface, wavData);
 }
 
 export function isChunkedSTTEnabled(): boolean {
@@ -971,7 +1042,6 @@ class IncrementalRecoveryWavWriter {
         shouldFsync,
       );
       this.chunksSinceFsync = shouldFsync ? 0 : this.chunksSinceFsync + 1;
-      retainedPolishSurface = this.polishSurface;
     } catch {
       this.flushSnapshot(allChunks);
     }
@@ -2310,7 +2380,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     const result = await backend.transcribe(wavPath);
     const finalized = await finalizeTranscriptionResultForSurface(
       result.text,
-      retainedPolishSurface,
+      retainedPolishSurfaceForRetranscription(),
     );
     const text = finalized.text;
     if (result.text.trim() && !text) {
