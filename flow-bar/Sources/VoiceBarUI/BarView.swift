@@ -10,18 +10,18 @@ import AppKit
 import SwiftUI
 
 public enum VoiceBarContentTransitionPolicy {
-    public static func insertionUsesCrossFade(for mode: VoiceMode) -> Bool {
-        mode != .idle
+    public static func insertionUsesCrossFade(from source: VoiceMode, to destination: VoiceMode) -> Bool {
+        !(source == .speaking && destination == .idle)
     }
 
     public static func removalUsesCrossFade(for mode: VoiceMode) -> Bool {
         mode != .speaking
     }
 
-    public static func transition(for mode: VoiceMode) -> AnyTransition {
+    public static func transition(from source: VoiceMode, to destination: VoiceMode) -> AnyTransition {
         let crossFade = AnyTransition.opacity.animation(.easeInOut(duration: 0.2))
-        let insertion = insertionUsesCrossFade(for: mode) ? crossFade : .identity
-        let removal = removalUsesCrossFade(for: mode) ? crossFade : .identity
+        let insertion = insertionUsesCrossFade(from: source, to: destination) ? crossFade : .identity
+        let removal = removalUsesCrossFade(for: destination) ? crossFade : .identity
         return .asymmetric(insertion: insertion, removal: removal)
     }
 }
@@ -386,7 +386,12 @@ public struct BarView: View {
         // partial animations when SwiftUI tries to morph between different
         // view hierarchies (e.g., PulsingDot → TeleprompterView).
         .id(state.mode)
-        .transition(VoiceBarContentTransitionPolicy.transition(for: state.mode))
+        .transition(
+            VoiceBarContentTransitionPolicy.transition(
+                from: state.previousMode,
+                to: state.mode
+            )
+        )
     }
 
     private var queueVisualization: some View {

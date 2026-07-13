@@ -63,12 +63,27 @@ final class TeleprompterContentModelTests: XCTestCase {
     }
 
     func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {
-        XCTAssertFalse(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .idle))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .speaking))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .recording))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .transcribing))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .error))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .disconnected))
+        XCTAssertFalse(
+            VoiceBarContentTransitionPolicy.insertionUsesCrossFade(from: .speaking, to: .idle)
+        )
+        for sourceMode in VoiceMode.allCases where sourceMode != .speaking {
+            XCTAssertTrue(
+                VoiceBarContentTransitionPolicy.insertionUsesCrossFade(
+                    from: sourceMode,
+                    to: .idle
+                ),
+                "\(sourceMode) → idle must retain the normal cross-fade"
+            )
+        }
+        for destinationMode in VoiceMode.allCases where destinationMode != .idle {
+            XCTAssertTrue(
+                VoiceBarContentTransitionPolicy.insertionUsesCrossFade(
+                    from: .speaking,
+                    to: destinationMode
+                ),
+                "Only speaking → idle may bypass insertion cross-fade"
+            )
+        }
 
         XCTAssertFalse(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .speaking))
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .idle))
@@ -76,6 +91,14 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .transcribing))
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .error))
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .disconnected))
+    }
+
+    func testVoiceStateRetainsTheSourceModeForDestinationTransitionPolicy() {
+        let state = VoiceState()
+        state.mode = .transcribing
+        state.mode = .idle
+
+        XCTAssertEqual(state.previousMode, .transcribing)
     }
 
     func testFiltersEmptyBoundaryTokensBeforeDrivingHighlighting() {
