@@ -1235,6 +1235,41 @@ describe("stt-polish", () => {
     }
   });
 
+  it("recognizes proper-name subjects at auxiliary question boundaries", async () => {
+    const cleanedText =
+      "did you see the deployment today did Alice restart the server after lunch did Bob verify the service afterward";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: "Did you see the deployment today? Did Alice restart the server after lunch? Did Bob verify the service afterward?",
+        status: "failed",
+        changed: true,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("removes a trailing comma before adding fallback question punctuation", async () => {
     const cleanedText =
       "did your skill weave lead finish, did it do a full weave did you consume it what happened here on your watch because i need the answer right now";

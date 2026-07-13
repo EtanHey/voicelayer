@@ -107,7 +107,7 @@ const WH_QUESTION_STARTERS = new Set([
   "where",
   "who",
 ]);
-const QUESTION_SUBJECT_WORDS = new Set([
+const EMBEDDED_AUX_PREDECESSORS = new Set([
   "i",
   "you",
   "he",
@@ -127,6 +127,25 @@ const QUESTION_SUBJECT_WORDS = new Set([
   "her",
   "anyone",
   "someone",
+]);
+const NON_SUBJECT_CONNECTORS = new Set([
+  "and",
+  "or",
+  "but",
+  "because",
+  "so",
+  "then",
+  "to",
+  "for",
+  "of",
+  "with",
+  "about",
+  "after",
+  "before",
+  "while",
+  "if",
+  "than",
+  "as",
 ]);
 const EMBEDDED_WH_PREDECESSORS = new Set([
   "and",
@@ -496,9 +515,10 @@ function questionBoundaryIndices(text: string): number[] {
     if (
       AUXILIARY_QUESTION_STARTERS.has(starter) &&
       (!nextWord ||
-        !QUESTION_SUBJECT_WORDS.has(nextWord) ||
+        NON_SUBJECT_CONNECTORS.has(nextWord) ||
         (previousWord !== undefined &&
-          WH_QUESTION_STARTERS.has(previousWord)))
+          (WH_QUESTION_STARTERS.has(previousWord) ||
+            EMBEDDED_AUX_PREDECESSORS.has(previousWord))))
     ) {
       continue;
     }
