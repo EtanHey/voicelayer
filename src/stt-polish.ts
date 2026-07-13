@@ -492,9 +492,11 @@ function questionBoundaryIndices(text: string): number[] {
     if (!starter) continue;
 
     const prefix = text.slice(0, match.index).trimEnd();
-    const previousWord = prefix
-      .match(/([\p{L}\p{N}'’-]+)$/u)?.[1]
-      ?.toLocaleLowerCase();
+    const previousWordRaw = prefix.match(/([\p{L}\p{N}'’-]+)$/u)?.[1];
+    const previousWord = previousWordRaw?.toLocaleLowerCase();
+    const previousWordIsProperName = previousWordRaw
+      ? /^\p{Lu}[\p{L}'’-]*$/u.test(previousWordRaw)
+      : false;
     const suffix = text
       .slice(match.index + match[0].length + starter.length)
       .trimStart();
@@ -510,7 +512,8 @@ function questionBoundaryIndices(text: string): number[] {
         (!QUESTION_SUBJECT_WORDS.has(nextWord) && !nextWordIsProperName) ||
         (previousWord !== undefined &&
           (WH_QUESTION_STARTERS.has(previousWord) ||
-            QUESTION_SUBJECT_WORDS.has(previousWord))))
+            QUESTION_SUBJECT_WORDS.has(previousWord) ||
+            previousWordIsProperName)))
     ) {
       continue;
     }
