@@ -1058,6 +1058,77 @@ describe("stt-polish", () => {
     }
   });
 
+  it("does not force-split a statement-phrased run-on when HTTP polish is unavailable", async () => {
+    const cleanedText =
+      "we finished the pull request and deployed it to staging after every required test passed so the team can review everything tomorrow morning";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "failed",
+        changed: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("preserves a statement-phrased right tag question when HTTP polish is unavailable", async () => {
+    const cleanedText =
+      "we finished the pull request and deployed it to staging after every required test passed and the team reviewed all the logs right?";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "failed",
+        changed: false,
+      });
+      expect(result.text.endsWith("right?")).toBe(true);
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("preserves endpoint query parameters on the HTTP health probe", async () => {
     let healthSearch = "";
     const server = Bun.serve({

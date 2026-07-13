@@ -77,6 +77,7 @@ const DEFAULT_POLISH_MAX_TOKENS = 512;
 const MAX_POLISH_COMPLETION_TOKENS = 4_096;
 const MAX_HTTP_NOOP_POLISH_ATTEMPTS = 3;
 const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
+const MIN_QUESTION_BOUNDARY_TRANSITIONS = 2;
 const QUESTION_STARTER_WORDS =
   "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
 const QUESTION_BOUNDARY_WORDS =
@@ -419,38 +420,28 @@ function capitalizeRunOnSegmentStart(segment: string): string {
   return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
 }
 
-function chunkWordsForPunctuationFloor(text: string): string[] {
-  const words = text.match(/\S+/gu) ?? [];
-  const chunks: string[] = [];
-  for (let index = 0; index < words.length; index += 16) {
-    chunks.push(words.slice(index, index + 16).join(" "));
-  }
-  return chunks;
-}
-
 function deterministicRunOnPunctuationFloor(cleanedText: string): string {
   const words = countWords(cleanedText);
+  const compactText = cleanedText.trim().replace(/\s+/gu, " ");
+  const questionBoundaryTransitions = Array.from(
+    compactText.matchAll(QUESTION_BOUNDARY_PATTERN),
+  ).length;
   if (
     words < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
-    !shouldRetryNoopPolish(cleanedText)
+    !shouldRetryNoopPolish(cleanedText) ||
+    !QUESTION_STARTER_PATTERN.test(compactText) ||
+    questionBoundaryTransitions < MIN_QUESTION_BOUNDARY_TRANSITIONS
   ) {
     return cleanedText;
   }
 
-  const normalized = cleanedText
-    .trim()
-    .replace(/\s+/gu, " ")
-    .replace(/[.?!]+$/u, "");
+  const normalized = compactText.replace(/[.?!]+$/u, "");
   const questionSegments = normalized
     .split(QUESTION_BOUNDARY_PATTERN)
     .map((segment) => segment.trim())
     .filter(Boolean);
-  const segments =
-    questionSegments.length > 1
-      ? questionSegments
-      : chunkWordsForPunctuationFloor(normalized);
 
-  return segments
+  return questionSegments
     .map((segment) => {
       const normalizedSegment = segment.replace(/\s+([,.?!])/gu, "$1");
       const sentence = capitalizeRunOnSegmentStart(normalizedSegment);
