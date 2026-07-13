@@ -10,13 +10,18 @@ VERIFY_DIR="$REPO_ROOT/.verified"
 MCP_SOCKET_PATH="${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}"
 VOICEBAR_LAUNCHD_LABEL="com.voicelayer.voicebar"
 FORCE=0
+VERIFY_MODE="${VOICELAYER_VERIFY_MODE:-interactive}"
+CORPUS_COUNT="${VOICELAYER_VERIFY_CORPUS_COUNT:-10}"
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/voicelayer-verify.sh [--force]
+Usage: scripts/voicelayer-verify.sh [--force] [--corpus [N]]
 
 Rebuilds VoiceBar.app and requires a real F5 dictation/paste smoke test when
 the current branch touches VoiceLayer daemon/socket/MCP surfaces.
+
+--corpus [N] boots an isolated daemon, replays N newest usable recordings
+(default: 10), runs the interaction-event leg, and requires no human input.
 USAGE
 }
 
@@ -25,6 +30,15 @@ while [ "$#" -gt 0 ]; do
     --force)
       FORCE=1
       shift
+      ;;
+    --corpus)
+      VERIFY_MODE="corpus"
+      if [ "${2:-}" != "" ] && [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+        CORPUS_COUNT="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     -h|--help)
       usage
@@ -37,6 +51,15 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$VERIFY_MODE" != "interactive" ] && [ "$VERIFY_MODE" != "corpus" ]; then
+  printf '[voicelayer-verify] unknown VOICELAYER_VERIFY_MODE: %s\n' "$VERIFY_MODE" >&2
+  exit 2
+fi
+if [ "$VERIFY_MODE" = "corpus" ] && ! [[ "$CORPUS_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  printf '[voicelayer-verify] corpus count must be a positive integer: %s\n' "$CORPUS_COUNT" >&2
+  exit 2
+fi
 
 cd "$REPO_ROOT"
 
@@ -234,6 +257,64 @@ fi
 
 printf '[voicelayer-verify] daemon/socket/MCP verification required for:\n'
 printf '%s' "$daemon_files" | sed 's/^/[voicelayer-verify]   - /'
+
+if [ "$VERIFY_MODE" = "corpus" ]; then
+  corpus_root="${VOICELAYER_VERIFY_CORPUS_ROOT:-${HOME:-}/.local/share/voicelayer/recordings}"
+  corpus_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/voicelayer-corpus-verify.XXXXXX")"
+  artifact="$VERIFY_DIR/verified-runtime-${safe_branch}-${short_sha}.txt"
+  rm -f "$artifact"
+  # shellcheck disable=SC2329 # Invoked indirectly by the trap below.
+  cleanup_corpus_verify() {
+    rm -rf "$corpus_work_dir"
+  }
+  trap cleanup_corpus_verify EXIT INT TERM
+
+  export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
+  export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"
+  export QA_VOICE_SOCKET_PATH="$VOICELAYER_SOCKET_PATH"
+  export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
+
+  printf '[voicelayer-verify] corpus mode: %s deterministic specimen(s)\n' "$CORPUS_COUNT"
+  printf '[voicelayer-verify] isolated VoiceBar socket: %s\n' "$VOICELAYER_SOCKET_PATH"
+  printf '[voicelayer-verify] isolated MCP socket: %s\n' "$VOICELAYER_MCP_SOCKET_PATH"
+
+  if [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ]; then
+    "$VOICELAYER_VERIFY_CORPUS_RUNNER" "$CORPUS_COUNT" "$corpus_root"
+  else
+    bun run "$REPO_ROOT/src/corpus-replay-verify.ts" \
+      --count "$CORPUS_COUNT" \
+      --corpus-root "$corpus_root" \
+      --work-dir "$corpus_work_dir" \
+      --repo-root "$REPO_ROOT"
+  fi
+
+  if [ -n "${VOICELAYER_VERIFY_INTERACTION_RUNNER:-}" ]; then
+    "$VOICELAYER_VERIFY_INTERACTION_RUNNER"
+  else
+    printf '[voicelayer-verify] running isolated F18/Escape/stop-button interaction leg...\n'
+    swift test --package-path "$REPO_ROOT/flow-bar" --filter CorpusReplayInteractionTests
+  fi
+
+  mkdir -p "$VERIFY_DIR"
+  tmp_artifact="${artifact}.tmp.$$"
+  {
+    printf 'Verified-Runtime: %s\n' "$sha"
+    printf 'timestamp: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'branch: %s\n' "$branch"
+    printf 'sha: %s\n' "$sha"
+    printf 'short_sha: %s\n' "$short_sha"
+    printf 'tester: %s\n' "$tester"
+    printf 'verification_mode: corpus\n'
+    printf 'corpus_count: %s\n' "$CORPUS_COUNT"
+    printf 'daemon_files:\n'
+    printf '%s' "$daemon_files" | sed 's/^/- /'
+  } >"$tmp_artifact"
+  mv "$tmp_artifact" "$artifact"
+
+  printf '[voicelayer-verify] wrote runtime artifact: %s\n' "$artifact"
+  printf 'Verified-Runtime: %s\n' "$sha"
+  exit 0
+fi
 
 running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then

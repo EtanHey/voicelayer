@@ -130,6 +130,95 @@ describe("voicelayer-verify.sh", () => {
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   });
 
+  test("runs corpus and interaction verification without human input on isolated sockets", async () => {
+    run(["git", "checkout", "-b", "feature/corpus-gate"]);
+    const changed = join(tempRoot, "changed.txt");
+    const corpusRoot = join(tempRoot, "corpus");
+    const runnerLog = join(tempRoot, "runner.log");
+    const corpusRunner = join(tempRoot, "corpus-runner.sh");
+    const interactionRunner = join(tempRoot, "interaction-runner.sh");
+    mkdirSync(corpusRoot, { recursive: true });
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(
+      corpusRunner,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'test "$VOICELAYER_SOCKET_PATH" != "/tmp/voicelayer.sock"',
+        'test "$VOICELAYER_MCP_SOCKET_PATH" != "/tmp/voicelayer-mcp.sock"',
+        'test "$VOICELAYER_SOCKET_PATH" = "$QA_VOICE_SOCKET_PATH"',
+        'test "$VOICELAYER_MCP_SOCKET_PATH" = "$QA_VOICE_MCP_SOCKET_PATH"',
+        'printf "corpus:%s:%s:%s\\n" "$1" "$2" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      interactionRunner,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'printf "interaction:%s\\n" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = run(["bash", scriptPath, "--corpus", "2"], {
+      env: {
+        RUNNER_LOG: runnerLog,
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_ROOT: corpusRoot,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: corpusRunner,
+        VOICELAYER_VERIFY_INTERACTION_RUNNER: interactionRunner,
+        VOICELAYER_VERIFY_TESTER: "Corpus Unit Test",
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).not.toContain("Press F5");
+    expect(existsSync(join(tempRoot, "build.log"))).toBe(false);
+    const runnerOutput = await Bun.file(runnerLog).text();
+    expect(runnerOutput).toContain(`corpus:2:${corpusRoot}:`);
+    expect(runnerOutput).toContain("interaction:");
+
+    const artifacts = readdirSync(join(tempRoot, ".verified"));
+    expect(artifacts).toHaveLength(1);
+    const body = await Bun.file(join(tempRoot, ".verified", artifacts[0])).text();
+    expect(body).toContain("Verified-Runtime:");
+    expect(body).toContain("tester: Corpus Unit Test");
+    expect(body).toContain("verification_mode: corpus");
+    expect(body).toContain("corpus_count: 2");
+  });
+
+  test("removes a stale corpus artifact before a failed verification attempt", () => {
+    run(["git", "checkout", "-b", "feature/corpus-stale"]);
+    const changed = join(tempRoot, "changed.txt");
+    const failingRunner = join(tempRoot, "failing-runner.sh");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(failingRunner, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o755 });
+    const shortSha = text(run(["git", "rev-parse", "--short", "HEAD"]).stdout).trim();
+    const artifact = join(
+      tempRoot,
+      ".verified",
+      `verified-runtime-feature-corpus-stale-${shortSha}.txt`,
+    );
+    mkdirSync(join(tempRoot, ".verified"), { recursive: true });
+    writeFileSync(artifact, "Verified-Runtime: stale\n");
+
+    const result = run(["bash", scriptPath, "--corpus", "2"], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: failingRunner,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(existsSync(artifact)).toBe(false);
+  });
+
   test("skips verification when changed files do not touch daemon surfaces", () => {
     const changed = join(tempRoot, "changed.txt");
     writeFileSync(changed, "README.md\nscripts/speak.sh\n");

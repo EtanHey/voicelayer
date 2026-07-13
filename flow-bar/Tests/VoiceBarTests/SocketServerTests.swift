@@ -274,6 +274,134 @@ final class SocketServerTests: XCTestCase {
     }
 }
 
+/// Runtime interaction leg invoked by scripts/voicelayer-verify.sh --corpus.
+/// These tests use a unique Unix socket, production event dispatch, and real
+/// AppKit mouse events. They never bind the resident /tmp/voicelayer.sock.
+final class CorpusReplayInteractionTests: XCTestCase {
+    @MainActor
+    func testF18ThenEscapeDrivesRecordingToIdleThroughIsolatedNDJSON() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+
+        let f18Event = try XCTUnwrap(CGEvent(
+            keyboardEventSource: CGEventSource(stateID: .privateState),
+            virtualKey: 79,
+            keyDown: true
+        ))
+        let f18 = hotkeyAction(
+            type: f18Event.type,
+            keycode: f18Event.getIntegerValueField(.keyboardEventKeycode),
+            flags: f18Event.flags,
+            autorepeat: 0,
+            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+            useModifierMode: false
+        )
+        dispatchHotkeyAction(
+            f18,
+            onKeyDown: { router.handleHotkeyHoldStart() },
+            onCancel: { router.handleEscape() }
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .recording, timeout: 1))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"record""#))
+
+        try writeLine(#"{"type":"state","state":"recording","mode":"ptt"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .recording, timeout: 1))
+
+        let escapeEvent = try XCTUnwrap(CGEvent(
+            keyboardEventSource: CGEventSource(stateID: .privateState),
+            virtualKey: 53,
+            keyDown: true
+        ))
+        let escape = hotkeyAction(
+            type: escapeEvent.type,
+            keycode: escapeEvent.getIntegerValueField(.keyboardEventKeycode),
+            flags: escapeEvent.flags,
+            autorepeat: 0,
+            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+            useModifierMode: false,
+            cancellationIsActive: router.shouldHandleEscape
+        )
+        var escapeDispatchCount = 0
+        dispatchHotkeyAction(escape, onKeyDown: {}, onCancel: {
+            router.handleEscape()
+            escapeDispatchCount += 1
+        })
+        XCTAssertTrue(waitForCondition(timeout: 1) { escapeDispatchCount == 1 })
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"cancel""#))
+
+        try writeLine(#"{"type":"ack","command":"cancel","outcome":"accept"}"#, to: fixture.commandClient)
+        try writeLine(#"{"type":"state","state":"idle","source":"recording"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+
+    @MainActor
+    func testStopButtonSendsStopAndReturnsToIdleThroughIsolatedNDJSON() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Corpus interaction verification"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+
+        let stopLine = try clickSpeakingStop(host, in: window, playbackClient: fixture.legacyClient)
+        XCTAssertTrue(stopLine.contains(#""cmd":"stop""#))
+        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+
+    @MainActor
+    func testTranscriptionPasteAndSubtitleSurfacesFireOnIsolatedNDJSON() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        fixture.state.minimumTranscribingDisplayDuration = 0
+        var pastedText = ""
+        fixture.state.pasteHandler = { text in
+            pastedText = text
+            return true
+        }
+
+        fixture.state.record(pressToTalk: true)
+        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        try writeLine(#"{"type":"state","state":"recording","mode":"ptt"}"#, to: fixture.legacyClient)
+        try writeLine(#"{"type":"state","state":"transcribing"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .transcribing, timeout: 1))
+        try writeLine(
+            #"{"type":"subtitle","words":[{"text":"Corpus","offset_ms":0,"duration_ms":300}]}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForCondition(timeout: 1) { fixture.state.wordBoundaries.map(\.text) == ["Corpus"] })
+        try writeLine(
+            #"{"type":"transcription","text":"Corpus replay passed.","polished":true}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForCondition(timeout: 1) { pastedText == "Corpus replay passed." })
+        XCTAssertEqual(fixture.state.transcript, "Corpus replay passed.")
+        try writeLine(#"{"type":"state","state":"idle","source":"recording"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+}
+
 private struct ConnectedServerFixture {
     let directory: URL
     let state: VoiceState
@@ -304,7 +432,9 @@ private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
     let commandClient = try connectUnixSocket(path: socketURL.path)
     try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: legacyClient)
     try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
-    Thread.sleep(forTimeInterval: 0.1)
+    guard waitForConnectionStatus(state, connected: true, timeout: 1) else {
+        throw NSError(domain: "SocketServerTests", code: 4)
+    }
     return ConnectedServerFixture(
         directory: directory,
         state: state,
@@ -361,7 +491,23 @@ private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
     return FileManager.default.fileExists(atPath: path)
 }
 
-private func connectUnixSocket(path: String) throws -> Int32 {
+private func connectUnixSocket(path: String, timeout: TimeInterval = 1) throws -> Int32 {
+    let deadline = Date().addingTimeInterval(timeout)
+    var lastReadinessError: NSError?
+    repeat {
+        do {
+            return try connectUnixSocketOnce(path: path)
+        } catch let error as NSError
+            where error.domain == NSPOSIXErrorDomain &&
+            (error.code == Int(ECONNREFUSED) || error.code == Int(ENOENT)) {
+            lastReadinessError = error
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    } while Date() < deadline
+    throw lastReadinessError ?? NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT))
+}
+
+private func connectUnixSocketOnce(path: String) throws -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else {
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
