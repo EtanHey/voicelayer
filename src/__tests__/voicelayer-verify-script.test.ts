@@ -325,6 +325,36 @@ describe("voicelayer-verify.sh", () => {
     expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   });
 
+  test("refuses runner overrides through a linked worktree of the verifier repository", () => {
+    const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
+    const linkedWorktree = `${tempRoot}-linked`;
+    const changed = join(tempRoot, "changed.txt");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    mkdirSync(join(tempRoot, "scripts"), { recursive: true });
+    copyFileSync(scriptPath, localScript);
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(runner, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    run(["git", "worktree", "add", "-b", "feature/linked-guard", linkedWorktree]);
+
+    try {
+      const result = run(["bash", localScript, "--corpus", "1"], {
+        env: {
+          VOICELAYER_VERIFY_REPO_ROOT: linkedWorktree,
+          VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+          VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+        },
+        cwd: linkedWorktree,
+      });
+
+      expect(result.exitCode).not.toBe(0);
+      expect(text(result.stderr)).toContain("test-only");
+      expect(existsSync(join(linkedWorktree, ".verified"))).toBe(false);
+    } finally {
+      run(["git", "worktree", "remove", "--force", linkedWorktree]);
+      rmSync(linkedWorktree, { recursive: true, force: true });
+    }
+  });
+
   test("skips verification when changed files do not touch daemon surfaces", () => {
     const changed = join(tempRoot, "changed.txt");
     writeFileSync(changed, "README.md\nscripts/speak.sh\n");

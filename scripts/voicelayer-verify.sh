@@ -64,8 +64,8 @@ if [ "$VERIFY_MODE" = "corpus" ] && ! [[ "$CORPUS_COUNT" =~ ^[1-9][0-9]*$ ]]; th
 fi
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd -P)"
-DEFAULT_GIT_DIR="$(git -C "$DEFAULT_REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)"
-VERIFY_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)"
+DEFAULT_GIT_DIR="$(git -C "$DEFAULT_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+VERIFY_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 if [ "$VERIFY_MODE" = "corpus" ] && {
   [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ] ||
     { [ -n "$DEFAULT_GIT_DIR" ] && [ "$VERIFY_GIT_DIR" = "$DEFAULT_GIT_DIR" ]; };

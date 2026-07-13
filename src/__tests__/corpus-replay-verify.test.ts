@@ -12,6 +12,7 @@ import {
   assertIsolatedVerifyPaths,
   buildCorpusDaemonEnvironment,
   readCorpusManifest,
+  repoRootFromModuleUrl,
   runSwiftRuntimeInteractionLeg,
   selectCorpusSpecimens,
   signalDetachedProcessGroup,
@@ -226,6 +227,30 @@ describe("corpus replay verification", () => {
 
     writeFileSync(manifest, "duplicate-id\nduplicate-id\n");
     expect(() => readCorpusManifest(manifest)).toThrow("duplicate specimen ids");
+  });
+
+  test("rejects duplicate recording metadata ids instead of selecting by scan order", () => {
+    const root = makeTempRoot();
+    writeSpecimen(root, "2026-07-12", "duplicate-id", "First duplicate transcript.");
+    writeSpecimen(root, "2026-07-13", "other-directory", "Second duplicate transcript.");
+    writeFileSync(
+      join(root, "2026-07-13", "other-directory", "metadata.json"),
+      JSON.stringify({
+        id: "duplicate-id",
+        duration_ms: 2_000,
+        sample_rate: 16_000,
+      }),
+    );
+
+    expect(() => selectCorpusSpecimens(root, 1, ["duplicate-id"])).toThrow(
+      "duplicate specimen ids",
+    );
+  });
+
+  test("decodes percent-escaped characters in the default repository path", () => {
+    expect(
+      repoRootFromModuleUrl("file:///tmp/Voice%20Layer/src/corpus-replay-verify.ts"),
+    ).toBe("/tmp/Voice Layer");
   });
 
   test("requires a fully isolated socket pair and refuses either live default", () => {

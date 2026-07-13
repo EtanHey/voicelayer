@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from "fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
+import { fileURLToPath } from "url";
 
 const LIVE_VOICEBAR_SOCKET = "/tmp/voicelayer.sock";
 const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
@@ -243,7 +244,13 @@ export function selectCorpusSpecimens(
         `requested ${count} pinned corpus specimens but manifest contains ${pinnedIds.length}`,
       );
     }
-    const specimenById = new Map(specimens.map((specimen) => [specimen.id, specimen]));
+    const specimenById = new Map<string, CorpusSpecimen>();
+    for (const specimen of specimens) {
+      if (specimenById.has(specimen.id)) {
+        throw new Error(`corpus contains duplicate specimen ids: ${specimen.id}`);
+      }
+      specimenById.set(specimen.id, specimen);
+    }
     const selectedIds = pinnedIds.slice(0, count);
     if (new Set(selectedIds).size !== selectedIds.length) {
       throw new Error("pinned corpus manifest contains duplicate specimen ids");
@@ -830,6 +837,10 @@ async function runCorpusReplay(options: {
   }
 }
 
+export function repoRootFromModuleUrl(moduleUrl: string | URL): string {
+  return dirname(dirname(fileURLToPath(moduleUrl)));
+}
+
 function parseCli(argv: string[]) {
   let count = 10;
   let corpusRoot = join(
@@ -841,7 +852,7 @@ function parseCli(argv: string[]) {
   );
   let manifestPath = "";
   let workDir = "";
-  let repoRoot = dirname(dirname(new URL(import.meta.url).pathname));
+  let repoRoot = repoRootFromModuleUrl(import.meta.url);
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index];
     if (value === "--count") count = Number(argv[++index]);
