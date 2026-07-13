@@ -80,16 +80,63 @@ const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
 const MIN_QUESTION_BOUNDARY_TRANSITIONS = 2;
 const QUESTION_STARTER_WORDS =
   "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
-const QUESTION_BOUNDARY_WORDS =
-  "(?:did|can|could|would|should|what|why|how|when|where|who)";
 const QUESTION_STARTER_PATTERN = new RegExp(
   `^${QUESTION_STARTER_WORDS}\\b`,
   "iu",
 );
 const QUESTION_BOUNDARY_PATTERN = new RegExp(
-  `\\s+(?=${QUESTION_BOUNDARY_WORDS}\\b)`,
+  `\\s+(?=(${QUESTION_STARTER_WORDS})\\b)`,
   "giu",
 );
+const AUXILIARY_QUESTION_STARTERS = new Set([
+  "did",
+  "do",
+  "does",
+  "is",
+  "are",
+  "can",
+  "could",
+  "would",
+  "should",
+]);
+const QUESTION_SUBJECT_WORDS = new Set([
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "this",
+  "that",
+  "there",
+  "the",
+  "your",
+  "my",
+  "our",
+  "their",
+  "his",
+  "her",
+  "anyone",
+  "someone",
+]);
+const EMBEDDED_WH_PREDECESSORS = new Set([
+  "and",
+  "or",
+  "me",
+  "tell",
+  "show",
+  "explain",
+  "know",
+  "understand",
+  "wonder",
+  "remember",
+  "decide",
+  "see",
+  "that",
+  "because",
+  "about",
+]);
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
@@ -420,26 +467,71 @@ function capitalizeRunOnSegmentStart(segment: string): string {
   return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
 }
 
+function questionBoundaryIndices(text: string): number[] {
+  const indices: number[] = [];
+  for (const match of text.matchAll(QUESTION_BOUNDARY_PATTERN)) {
+    if (match.index === undefined) continue;
+    const starter = match[1]?.toLocaleLowerCase();
+    if (!starter) continue;
+
+    const prefix = text.slice(0, match.index).trimEnd();
+    const previousWord = prefix
+      .match(/([\p{L}\p{N}'’-]+)$/u)?.[1]
+      ?.toLocaleLowerCase();
+    const suffix = text
+      .slice(match.index + match[0].length + starter.length)
+      .trimStart();
+    const nextWord = suffix
+      .match(/^([\p{L}\p{N}'’-]+)/u)?.[1]
+      ?.toLocaleLowerCase();
+
+    if (
+      AUXILIARY_QUESTION_STARTERS.has(starter) &&
+      (!nextWord || !QUESTION_SUBJECT_WORDS.has(nextWord))
+    ) {
+      continue;
+    }
+    if (
+      !AUXILIARY_QUESTION_STARTERS.has(starter) &&
+      previousWord &&
+      EMBEDDED_WH_PREDECESSORS.has(previousWord)
+    ) {
+      continue;
+    }
+    indices.push(match.index);
+  }
+  return indices;
+}
+
+function splitAtQuestionBoundaries(text: string, indices: number[]): string[] {
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (const boundaryIndex of indices) {
+    segments.push(text.slice(segmentStart, boundaryIndex).trim());
+    segmentStart = boundaryIndex;
+  }
+  segments.push(text.slice(segmentStart).trim());
+  return segments.filter(Boolean);
+}
+
 function deterministicRunOnPunctuationFloor(cleanedText: string): string {
   const words = countWords(cleanedText);
   const compactText = cleanedText.trim().replace(/\s+/gu, " ");
-  const questionBoundaryTransitions = Array.from(
-    compactText.matchAll(QUESTION_BOUNDARY_PATTERN),
-  ).length;
+  const boundaryIndices = questionBoundaryIndices(compactText);
   if (
     words < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
     !shouldRetryNoopPolish(cleanedText) ||
     !QUESTION_STARTER_PATTERN.test(compactText) ||
-    questionBoundaryTransitions < MIN_QUESTION_BOUNDARY_TRANSITIONS
+    boundaryIndices.length < MIN_QUESTION_BOUNDARY_TRANSITIONS
   ) {
     return cleanedText;
   }
 
   const normalized = compactText.replace(/[.?!]+$/u, "");
-  const questionSegments = normalized
-    .split(QUESTION_BOUNDARY_PATTERN)
-    .map((segment) => segment.trim())
-    .filter(Boolean);
+  const questionSegments = splitAtQuestionBoundaries(
+    normalized,
+    boundaryIndices,
+  );
 
   return questionSegments
     .map((segment) => {
@@ -1245,6 +1337,11 @@ export async function polishTranscriptionText(
     };
   };
 
+  const punctuationFloorFallbackText = (): string =>
+    mode === "shadow"
+      ? input.cleanedText
+      : deterministicRunOnPunctuationFloor(input.cleanedText);
+
   if (mode === "off" || !input.cleanedText.trim()) {
     return buildResult(input.cleanedText, null, "skipped");
   }
@@ -1257,7 +1354,7 @@ export async function polishTranscriptionText(
     );
     if (!health.ok) {
       const result = buildResult(
-        deterministicRunOnPunctuationFloor(input.cleanedText),
+        punctuationFloorFallbackText(),
         null,
         "failed",
         health.error,
@@ -1327,9 +1424,9 @@ export async function polishTranscriptionText(
               }
             } catch (retryErr) {
               const retryFailedResult = buildResult(
-                deterministicRunOnPunctuationFloor(input.cleanedText),
+                punctuationFloorFallbackText(),
                 latestResult.polishedText,
-                latestResult.status,
+                "failed",
                 retryErr instanceof Error ? retryErr.message : String(retryErr),
                 true,
               );
@@ -1343,7 +1440,7 @@ export async function polishTranscriptionText(
             }
           }
           const flooredResult = buildResult(
-            deterministicRunOnPunctuationFloor(input.cleanedText),
+            punctuationFloorFallbackText(),
             latestResult.polishedText,
             latestResult.status,
             latestResult.error,
@@ -1397,7 +1494,7 @@ export async function polishTranscriptionText(
       return result;
     } catch (err) {
       const result = buildResult(
-        deterministicRunOnPunctuationFloor(input.cleanedText),
+        punctuationFloorFallbackText(),
         null,
         "failed",
         err instanceof Error ? err.message : String(err),
@@ -1435,7 +1532,7 @@ export async function polishTranscriptionText(
     return result;
   } catch (err) {
     const result = buildResult(
-      deterministicRunOnPunctuationFloor(input.cleanedText),
+      punctuationFloorFallbackText(),
       null,
       "failed",
       err instanceof Error ? err.message : String(err),

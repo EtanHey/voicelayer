@@ -1058,6 +1058,43 @@ describe("stt-polish", () => {
     }
   });
 
+  it("keeps shadow mode output unchanged when HTTP polish health fails on a question run-on", async () => {
+    const cleanedText =
+      "did your skill weave lead finish did it do a full weave did you consume it what happened here on your watch because i need the answer now";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "shadow",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: cleanedText,
+        mode: "shadow",
+        status: "failed",
+        changed: false,
+        polished: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
   it("does not force-split a statement-phrased run-on when HTTP polish is unavailable", async () => {
     const cleanedText =
       "we finished the pull request and deployed it to staging after every required test passed so the team can review everything tomorrow morning";
@@ -1086,6 +1123,76 @@ describe("stt-polish", () => {
         text: cleanedText,
         status: "failed",
         changed: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("does not fragment embedded question clauses when HTTP polish is unavailable", async () => {
+    const cleanedText =
+      "can you tell me what you did and how you did it because i need to know now for the report tomorrow";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "failed",
+        changed: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("recognizes auxiliary question boundaries when HTTP polish is unavailable", async () => {
+    const cleanedText =
+      "did you finish the pull request do you know whether tests passed is it ready for the whole team to review right now";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: "Did you finish the pull request? Do you know whether tests passed? Is it ready for the whole team to review right now?",
+        status: "failed",
+        changed: true,
       });
       expect(result.error).toContain("health");
     } finally {
@@ -1429,6 +1536,52 @@ describe("stt-polish", () => {
         changed: true,
         retried: true,
       });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("marks a failed HTTP no-op retry fallback as failed", async () => {
+    let completionRequests = 0;
+    const cleanedText =
+      "did your skill weave lead finish did it do a full weave did you consume it what happened here on your watch because i need the answer now";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const url = new URL(request.url);
+        if (url.pathname === "/v1/models") {
+          return Response.json({ data: [] });
+        }
+        completionRequests += 1;
+        if (completionRequests === 1) {
+          return Response.json({
+            choices: [{ message: { content: cleanedText } }],
+          });
+        }
+        return new Response("retry unavailable", { status: 503 });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(completionRequests).toBe(2);
+      expect(result).toMatchObject({
+        text: "Did your skill weave lead finish? Did it do a full weave? Did you consume it? What happened here on your watch because i need the answer now?",
+        status: "failed",
+        changed: true,
+        retried: true,
+        polished: false,
+      });
+      expect(result.error).toContain("503");
     } finally {
       server.stop(true);
     }
