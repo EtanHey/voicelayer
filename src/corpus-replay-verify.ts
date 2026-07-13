@@ -587,6 +587,7 @@ export function buildCorpusDaemonEnvironment(options: {
     VOICELAYER_SOCKET_PATH: options.voiceBarSocketPath,
     VOICELAYER_MCP_SOCKET_PATH: options.mcpSocketPath,
     VOICELAYER_CONTROL_LAYER_BASE: join(options.workDir, "control-layer"),
+    QA_VOICE_STT_POLISH_LOG_PATH: join(options.workDir, "polish-shadow.jsonl"),
     QA_VOICE_SOCKET_PATH: options.voiceBarSocketPath,
     QA_VOICE_MCP_SOCKET_PATH: options.mcpSocketPath,
     QA_VOICE_MCP_PID_PATH: join(options.workDir, "mcp.pid"),

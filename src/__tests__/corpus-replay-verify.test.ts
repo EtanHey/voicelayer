@@ -350,7 +350,7 @@ describe("corpus replay verification", () => {
     ).toThrow("inside the verify work directory");
   });
 
-  test("isolates corpus daemon journal writes inside the verify work directory", () => {
+  test("isolates corpus daemon journal and polish writes inside the verify work directory", () => {
     const workDir = makeTempRoot();
     const environment = buildCorpusDaemonEnvironment({
       workDir,
@@ -363,12 +363,16 @@ describe("corpus replay verification", () => {
         HOME: "/real/user/home",
         PATH: "/usr/bin:/bin",
         VOICELAYER_CONTROL_LAYER_BASE: "/real/user/journal",
+        QA_VOICE_STT_POLISH_LOG_PATH: "/real/user/polish-shadow.jsonl",
       },
     });
 
     expect(environment.HOME).toBe("/real/user/home");
     expect(environment.VOICELAYER_CONTROL_LAYER_BASE).toBe(
       join(workDir, "control-layer"),
+    );
+    expect(environment.QA_VOICE_STT_POLISH_LOG_PATH).toBe(
+      join(workDir, "polish-shadow.jsonl"),
     );
   });
 
