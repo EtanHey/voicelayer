@@ -351,6 +351,32 @@ describe("corpus replay verification", () => {
     expect(signals).toEqual(["SIGTERM"]);
   });
 
+  test("terminates the interaction process group when its exit watcher rejects", async () => {
+    const signals: string[] = [];
+    const watcherError = new Error("process group remained alive");
+    let releaseGracePeriod!: () => void;
+    const gracePeriod = new Promise<void>((resolve) => {
+      releaseGracePeriod = resolve;
+    });
+
+    const result = waitForInteractionRunner(
+      {
+        exited: Promise.reject(watcherError),
+        kill(signal) {
+          signals.push(signal);
+        },
+      },
+      1_000,
+      () => gracePeriod,
+    );
+    await Bun.sleep(0);
+    expect(signals).toEqual(["SIGTERM"]);
+
+    releaseGracePeriod();
+    await expect(result).rejects.toBe(watcherError);
+    expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
   test("interaction timeout terminates the runner's full process group", async () => {
     const root = makeTempRoot();
     const workDir = join(root, "verify-work");

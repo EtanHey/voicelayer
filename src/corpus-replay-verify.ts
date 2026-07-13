@@ -318,17 +318,30 @@ export async function terminateVerifyDaemon(
     : new Promise<void>((resolveGracePeriod) => {
         graceTimer = setTimeout(resolveGracePeriod, 10_000);
       });
-  const exitedGracefully = await Promise.race([
-    daemon.exited.then(() => true),
-    gracePeriod.then(() => false),
+  const exitOutcome = daemon.exited.then(
+    () => "exited" as const,
+    () => "rejected" as const,
+  );
+  const terminationOutcome = await Promise.race([
+    exitOutcome,
+    gracePeriod.then(() => "grace-expired" as const),
   ]);
-  if (graceTimer) clearTimeout(graceTimer);
-  if (!exitedGracefully) {
-    try {
-      daemon.kill("SIGKILL");
-    } catch {}
+  if (terminationOutcome === "exited") {
+    if (graceTimer) clearTimeout(graceTimer);
+    return;
   }
-  await daemon.exited;
+  if (terminationOutcome === "rejected") {
+    await gracePeriod;
+  }
+  try {
+    daemon.kill("SIGKILL");
+  } catch {}
+  try {
+    await daemon.exited;
+  } catch {
+    // The exit watcher may be the reason teardown was requested. The caller
+    // retains and reports that original error after the process group is killed.
+  }
 }
 
 function createVerifyBarServer(socketPath: string): VerifyBarServer {
@@ -511,12 +524,19 @@ export async function waitForInteractionRunner(
 ): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const outcome = await Promise.race([
-    runner.exited.then((exitCode) => ({ kind: "exit" as const, exitCode })),
+    runner.exited.then(
+      (exitCode) => ({ kind: "exit" as const, exitCode }),
+      (error: unknown) => ({ kind: "exit-error" as const, error }),
+    ),
     new Promise<{ kind: "timeout" }>((resolveTimeout) => {
       timeout = setTimeout(() => resolveTimeout({ kind: "timeout" }), timeoutMs);
     }),
   ]);
   if (timeout) clearTimeout(timeout);
+  if (outcome.kind === "exit-error") {
+    await terminateVerifyDaemon(runner, waitForTerminationGracePeriod);
+    throw outcome.error;
+  }
   if (outcome.kind === "timeout") {
     await terminateVerifyDaemon(runner, waitForTerminationGracePeriod);
     throw new Error(`runtime interaction leg timed out after ${timeoutMs}ms`);
