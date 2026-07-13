@@ -129,7 +129,9 @@ export function assertCorpusReplayResult(input: {
 }): void {
   if (input.polished !== true) {
     throw new Error(
-      `${input.specimenId}: transcription did not report polished=true`,
+      `${input.specimenId}: transcription did not report polished=true ` +
+        `(status ${JSON.stringify(input.polishStatus || "missing")}, ` +
+        `reason ${JSON.stringify(input.polishReason || "missing")})`,
     );
   }
   if (input.polishStatus !== "applied") {

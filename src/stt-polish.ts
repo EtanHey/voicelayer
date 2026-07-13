@@ -649,6 +649,7 @@ function isAllowedSelfCorrectionRewrite(
 
 function normalizeContentToken(token: string): string {
   const lower = token.toLowerCase().replace(/’/g, "'");
+  if (lower === "a" || lower === "an") return "a";
   return NUMBER_WORD_VALUES[lower] !== undefined
     ? String(NUMBER_WORD_VALUES[lower])
     : lower;

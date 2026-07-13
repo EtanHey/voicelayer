@@ -64,3 +64,4 @@
 - Fallback red-team: runner overrides, dirty-tree certification, and an unbounded Swift subprocess were valid findings and are fixed with regression tests.
 - Independent Codex: dirty-tree certification, one-sided transcript similarity, recorder orphaning, and missing production-handoff coverage were valid findings and are fixed with regression tests plus an actual isolated daemon/Swift run.
 - Subtitle-only assertion: **not applicable to this STT leg** — the actual paste surface is asserted; `subtitle`/`wordBoundaries` is emitted by the separate TTS playback queue and belongs to the non-blocking Phase 2 visual/TTS work.
+- First committed 10-specimen acceptance run failed closed on a real polish rejection. Diagnosis found a grounding false-positive for grammatical `a`→`an` agreement inside a correction-cue sentence; canonicalizing indefinite articles fixed the exact regression, and the same six-specimen prefix then passed with `polish_status=applied` throughout.
