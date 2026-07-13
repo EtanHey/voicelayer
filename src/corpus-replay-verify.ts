@@ -22,6 +22,12 @@ const MIN_REFERENCE_OVERLAP = 0.45;
 const MIN_VOCABULARY_JACCARD = 0.25;
 const DEFAULT_INTERACTION_TIMEOUT_MS = 300_000;
 const DEFAULT_INTERACTION_TERMINATION_GRACE_MS = 10_000;
+const HANDLED_POLISH_STATUSES = new Set([
+  "applied",
+  "rejected",
+  "shadowed",
+  "skipped",
+]);
 
 export interface CorpusSpecimen {
   id: string;
@@ -128,14 +134,7 @@ export function assertCorpusReplayResult(input: {
   polishStatus: string;
   polishReason?: string;
 }): void {
-  if (input.polished !== true) {
-    throw new Error(
-      `${input.specimenId}: transcription did not report polished=true ` +
-        `(status ${JSON.stringify(input.polishStatus || "missing")}, ` +
-        `reason ${JSON.stringify(input.polishReason || "missing")})`,
-    );
-  }
-  if (input.polishStatus !== "applied") {
+  if (!HANDLED_POLISH_STATUSES.has(input.polishStatus)) {
     throw new Error(
       `${input.specimenId}: polish path did not complete ` +
         `(status ${JSON.stringify(input.polishStatus || "missing")})`,
@@ -147,6 +146,14 @@ export function assertCorpusReplayResult(input: {
   }
   if (/^1[.)]?$/u.test(actual) || /^1\.\s*$/u.test(actual)) {
     throw new Error(`${input.specimenId}: degenerate polished output ${JSON.stringify(actual)}`);
+  }
+  if (input.polishStatus !== "applied") return;
+  if (input.polished !== true) {
+    throw new Error(
+      `${input.specimenId}: transcription did not report polished=true ` +
+        `(status ${JSON.stringify(input.polishStatus)}, ` +
+        `reason ${JSON.stringify(input.polishReason || "missing")})`,
+    );
   }
   if (!hasPunctuationFloor(actual)) {
     throw new Error(`${input.specimenId}: punctuation floor was not applied`);
@@ -209,6 +216,7 @@ function readSpecimen(directory: string): CorpusSpecimen | null {
 export function selectCorpusSpecimens(
   root: string,
   count: number,
+  pinnedIds?: readonly string[],
 ): CorpusSpecimen[] {
   if (!Number.isInteger(count) || count <= 0) {
     throw new Error(`corpus count must be a positive integer, got ${count}`);
@@ -228,14 +236,52 @@ export function selectCorpusSpecimens(
     }
   }
 
-  specimens.sort((left, right) => right.directory.localeCompare(left.directory));
-  const selected = specimens.slice(0, count);
+  let selected: CorpusSpecimen[];
+  if (pinnedIds) {
+    if (pinnedIds.length < count) {
+      throw new Error(
+        `requested ${count} pinned corpus specimens but manifest contains ${pinnedIds.length}`,
+      );
+    }
+    const specimenById = new Map(specimens.map((specimen) => [specimen.id, specimen]));
+    const selectedIds = pinnedIds.slice(0, count);
+    if (new Set(selectedIds).size !== selectedIds.length) {
+      throw new Error("pinned corpus manifest contains duplicate specimen ids");
+    }
+    selected = selectedIds.map((id) => {
+      const specimen = specimenById.get(id);
+      if (!specimen) {
+        throw new Error(`pinned corpus specimen is missing or unusable: ${id}`);
+      }
+      return specimen;
+    });
+  } else {
+    specimens.sort((left, right) => right.directory.localeCompare(left.directory));
+    selected = specimens.slice(0, count);
+  }
   if (selected.length !== count) {
     throw new Error(
       `requested ${count} corpus specimens but found ${selected.length} usable recordings`,
     );
   }
   return selected;
+}
+
+export function readCorpusManifest(manifestPath: string): string[] {
+  if (!existsSync(manifestPath)) {
+    throw new Error(`corpus manifest does not exist: ${manifestPath}`);
+  }
+  const ids = readFileSync(manifestPath, "utf8")
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  if (ids.length === 0) {
+    throw new Error(`corpus manifest contains no specimen ids: ${manifestPath}`);
+  }
+  if (new Set(ids).size !== ids.length) {
+    throw new Error(`corpus manifest contains duplicate specimen ids: ${manifestPath}`);
+  }
+  return ids;
 }
 
 interface VerifyBarServer {
@@ -639,6 +685,7 @@ export async function runSwiftRuntimeInteractionLeg(options: {
 async function runCorpusReplay(options: {
   count: number;
   corpusRoot: string;
+  manifestPath?: string;
   workDir: string;
   repoRoot: string;
 }): Promise<void> {
@@ -652,7 +699,17 @@ async function runCorpusReplay(options: {
 
   mkdirSync(options.workDir, { recursive: true });
   const stagedRoot = join(options.workDir, "recordings");
-  const selected = selectCorpusSpecimens(options.corpusRoot, options.count);
+  const pinnedIds = options.manifestPath
+    ? readCorpusManifest(options.manifestPath)
+    : undefined;
+  const selected = selectCorpusSpecimens(
+    options.corpusRoot,
+    options.count,
+    pinnedIds,
+  );
+  if (options.manifestPath) {
+    console.log(`[corpus-replay] pinned manifest: ${options.manifestPath}`);
+  }
   const staged = selected.map((item) =>
     stageSpecimen(item, options.corpusRoot, stagedRoot),
   );
@@ -782,18 +839,26 @@ function parseCli(argv: string[]) {
     "voicelayer",
     "recordings",
   );
+  let manifestPath = "";
   let workDir = "";
   let repoRoot = dirname(dirname(new URL(import.meta.url).pathname));
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index];
     if (value === "--count") count = Number(argv[++index]);
     else if (value === "--corpus-root") corpusRoot = argv[++index] ?? "";
+    else if (value === "--manifest") manifestPath = argv[++index] ?? "";
     else if (value === "--work-dir") workDir = argv[++index] ?? "";
     else if (value === "--repo-root") repoRoot = argv[++index] ?? "";
     else throw new Error(`unknown corpus replay argument: ${value}`);
   }
   if (!workDir) throw new Error("--work-dir is required");
-  return { count, corpusRoot, workDir, repoRoot };
+  return {
+    count,
+    corpusRoot,
+    manifestPath: manifestPath || undefined,
+    workDir,
+    repoRoot,
+  };
 }
 
 if (import.meta.main) {

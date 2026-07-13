@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  realpathSync,
   readdirSync,
   rmSync,
   symlinkSync,
@@ -176,7 +177,7 @@ describe("voicelayer-verify.sh", () => {
         'test "$VOICELAYER_SOCKET_PATH" = "$QA_VOICE_SOCKET_PATH"',
         'test "$VOICELAYER_MCP_SOCKET_PATH" = "$QA_VOICE_MCP_SOCKET_PATH"',
         'test "$VOICELAYER_SOCKET_PATH" = "$VOICELAYER_VERIFY_WORK_DIR/voicebar.sock"',
-        'printf "corpus:%s:%s:%s\\n" "$1" "$2" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        'printf "corpus:%s:%s:%s:%s\\n" "$1" "$2" "$3" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
         'CORPUS_RUNNER_ACTIVE=1 "$VOICELAYER_VERIFY_INTERACTION_RUNNER"',
         "",
       ].join("\n"),
@@ -210,7 +211,12 @@ describe("voicelayer-verify.sh", () => {
     expect(text(result.stdout)).not.toContain("Press F5");
     expect(existsSync(join(tempRoot, "build.log"))).toBe(false);
     const runnerOutput = await Bun.file(runnerLog).text();
-    expect(runnerOutput).toContain(`corpus:2:${corpusRoot}:`);
+    const corpusManifest = join(
+      realpathSync(tempRoot),
+      "scripts",
+      "corpus-replay-manifest.txt",
+    );
+    expect(runnerOutput).toContain(`corpus:2:${corpusRoot}:${corpusManifest}:`);
     expect(runnerOutput).toContain("interaction:");
 
     const artifacts = readdirSync(join(tempRoot, ".verified"));
@@ -220,6 +226,7 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("tester: Corpus Unit Test");
     expect(body).toContain("verification_mode: corpus");
     expect(body).toContain("corpus_count: 2");
+    expect(body).toContain(`corpus_manifest: ${corpusManifest}`);
   });
 
   test("removes a stale corpus artifact before a failed verification attempt", () => {

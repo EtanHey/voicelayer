@@ -20,8 +20,10 @@ Usage: scripts/voicelayer-verify.sh [--force] [--corpus [N]]
 Rebuilds VoiceBar.app and requires a real F5 dictation/paste smoke test when
 the current branch touches VoiceLayer daemon/socket/MCP surfaces.
 
---corpus [N] boots an isolated daemon, replays N newest usable recordings
-(default: 10), runs the interaction-event leg, and requires no human input.
+--corpus [N] boots an isolated daemon, replays the first N recordings from the
+pinned scripts/corpus-replay-manifest.txt set (default: 10), runs the
+interaction-event leg, and requires no human input. Override the frozen set with
+VOICELAYER_VERIFY_CORPUS_MANIFEST when intentionally certifying another corpus.
 USAGE
 }
 
@@ -288,6 +290,7 @@ printf '%s' "$daemon_files" | sed 's/^/[voicelayer-verify]   - /'
 
 if [ "$VERIFY_MODE" = "corpus" ]; then
   corpus_root="${VOICELAYER_VERIFY_CORPUS_ROOT:-${HOME:-}/.local/share/voicelayer/recordings}"
+  corpus_manifest="${VOICELAYER_VERIFY_CORPUS_MANIFEST:-$REPO_ROOT/scripts/corpus-replay-manifest.txt}"
   corpus_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/voicelayer-corpus-verify.XXXXXX")"
   artifact="$VERIFY_DIR/verified-runtime-${safe_branch}-${short_sha}.txt"
   rm -f "$artifact"
@@ -306,15 +309,17 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   assert_corpus_tree_clean
 
   printf '[voicelayer-verify] corpus mode: %s deterministic specimen(s)\n' "$CORPUS_COUNT"
+  printf '[voicelayer-verify] pinned corpus manifest: %s\n' "$corpus_manifest"
   printf '[voicelayer-verify] isolated VoiceBar socket: %s\n' "$VOICELAYER_SOCKET_PATH"
   printf '[voicelayer-verify] isolated MCP socket: %s\n' "$VOICELAYER_MCP_SOCKET_PATH"
 
   if [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ]; then
-    "$VOICELAYER_VERIFY_CORPUS_RUNNER" "$CORPUS_COUNT" "$corpus_root"
+    "$VOICELAYER_VERIFY_CORPUS_RUNNER" "$CORPUS_COUNT" "$corpus_root" "$corpus_manifest"
   else
     bun run "$REPO_ROOT/src/corpus-replay-verify.ts" \
       --count "$CORPUS_COUNT" \
       --corpus-root "$corpus_root" \
+      --manifest "$corpus_manifest" \
       --work-dir "$corpus_work_dir" \
       --repo-root "$REPO_ROOT"
   fi
@@ -332,6 +337,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'tester: %s\n' "$tester"
     printf 'verification_mode: corpus\n'
     printf 'corpus_count: %s\n' "$CORPUS_COUNT"
+    printf 'corpus_manifest: %s\n' "$corpus_manifest"
     printf 'daemon_files:\n'
     printf '%s' "$daemon_files" | sed 's/^/- /'
   } >"$tmp_artifact"

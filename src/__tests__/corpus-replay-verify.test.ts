@@ -11,6 +11,7 @@ import {
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
   buildCorpusDaemonEnvironment,
+  readCorpusManifest,
   runSwiftRuntimeInteractionLeg,
   selectCorpusSpecimens,
   signalDetachedProcessGroup,
@@ -119,21 +120,26 @@ describe("corpus replay verification", () => {
     ).toThrow("vocabulary similarity");
   });
 
-  test("requires evidence that polish was applied", () => {
+  test("accepts handled polish outcomes and rejects broken pipeline statuses", () => {
     const base = {
       specimenId: "polish-evidence",
       reference: "the corpus verifier exercised the polish layer",
       actual: "The corpus verifier exercised the polish layer.",
-      polished: true,
+      polished: false,
     };
 
+    for (const polishStatus of ["rejected", "shadowed", "skipped"]) {
+      expect(() =>
+        assertCorpusReplayResult({
+          ...base,
+          polishStatus,
+          polishReason: "protected-token guard preserved the fallback",
+        }),
+      ).not.toThrow();
+    }
     expect(() =>
-      assertCorpusReplayResult({
-        ...base,
-        polishStatus: "rejected",
-        polishReason: "polish response removed code punctuation",
-      }),
-    ).toThrow("polish path did not complete");
+      assertCorpusReplayResult({ ...base, polishStatus: "applied" }),
+    ).toThrow("polished=true");
     expect(() => assertCorpusReplayResult({ ...base, polishStatus: "failed" })).toThrow(
       "polish path did not complete",
     );
@@ -145,7 +151,7 @@ describe("corpus replay verification", () => {
     );
   });
 
-  test("refuses a cleaned fallback that was not actually polished", () => {
+  test("accepts a non-degenerate cleaned fallback rejected by a safety guard", () => {
     expect(() =>
       assertCorpusReplayResult({
         specimenId: "fallback",
@@ -155,10 +161,24 @@ describe("corpus replay verification", () => {
         polishStatus: "rejected",
         polishReason: "polish response removed protected punctuation",
       }),
-    ).toThrow("polished=true");
+    ).not.toThrow();
   });
 
-  test("selects the newest deterministic valid specimens and skips unusable recordings", () => {
+  test("rejects empty or degenerate output for every handled polish outcome", () => {
+    for (const actual of ["", "1.", "1)"]) {
+      expect(() =>
+        assertCorpusReplayResult({
+          specimenId: "broken-output",
+          reference: "the corpus verifier exercised the polish layer",
+          actual,
+          polished: false,
+          polishStatus: "rejected",
+        }),
+      ).toThrow(/empty|degenerate/);
+    }
+  });
+
+  test("selects a pinned corpus manifest in declared order and skips moving newest entries", () => {
     const root = makeTempRoot();
     writeSpecimen(root, "2026-07-11", "2026-07-11T09-00-00Z-old", "Old enough transcript.");
     writeSpecimen(root, "2026-07-12", "2026-07-12T09-00-00Z-short", "No.", 200);
@@ -174,13 +194,38 @@ describe("corpus replay verification", () => {
       "2026-07-13T11-00-00Z-new",
       "This is the newest transcript.",
     );
+    writeSpecimen(
+      root,
+      "2026-07-14",
+      "2026-07-14T11-00-00Z-later",
+      "This later recording must not change the pinned selection.",
+    );
 
-    const selected = selectCorpusSpecimens(root, 2);
+    const selected = selectCorpusSpecimens(root, 2, [
+      "2026-07-12T10-00-00Z-middle",
+      "2026-07-13T11-00-00Z-new",
+    ]);
 
     expect(selected.map((item) => item.id)).toEqual([
-      "2026-07-13T11-00-00Z-new",
       "2026-07-12T10-00-00Z-middle",
+      "2026-07-13T11-00-00Z-new",
     ]);
+    expect(() =>
+      selectCorpusSpecimens(root, 2, [
+        "2026-07-12T10-00-00Z-middle",
+        "missing-pinned-recording",
+      ]),
+    ).toThrow("missing-pinned-recording");
+  });
+
+  test("reads a documented corpus manifest and rejects duplicate ids", () => {
+    const root = makeTempRoot();
+    const manifest = join(root, "corpus-manifest.txt");
+    writeFileSync(manifest, "# frozen set\nfirst-id\n\nsecond-id\n");
+    expect(readCorpusManifest(manifest)).toEqual(["first-id", "second-id"]);
+
+    writeFileSync(manifest, "duplicate-id\nduplicate-id\n");
+    expect(() => readCorpusManifest(manifest)).toThrow("duplicate specimen ids");
   });
 
   test("requires a fully isolated socket pair and refuses either live default", () => {
@@ -398,6 +443,68 @@ describe("corpus replay verification", () => {
     releaseGracePeriod();
     await expect(result).rejects.toBe(watcherError);
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  test("reaps a TERM-ignoring child when the detached interaction leader exits first", async () => {
+    const root = makeTempRoot();
+    const runner = join(root, "leader-exits-first.sh");
+    const childPidPath = join(root, "leader-child.pid");
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        "nohup /bin/sh -c 'trap \"\" TERM HUP; exec /bin/sleep 300' >/dev/null 2>&1 &",
+        'printf "%s" "$!" > "$VERIFY_CHILD_PID"',
+        "exit 0",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const leader = Bun.spawn([runner], {
+      detached: true,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      env: { ...process.env, VERIFY_CHILD_PID: childPidPath },
+    });
+    const interactionRunner = {
+      exited: waitForDetachedProcessGroupExit(leader, 100),
+      kill(signal: "SIGTERM" | "SIGKILL") {
+        signalDetachedProcessGroup(leader, signal);
+      },
+    };
+    let childPid = 0;
+    let childSurvived = false;
+    try {
+      const receiptDeadline = Date.now() + 1_000;
+      while (!(await Bun.file(childPidPath).exists()) && Date.now() < receiptDeadline) {
+        await Bun.sleep(10);
+      }
+      childPid = Number((await Bun.file(childPidPath).text()).trim());
+      await expect(
+        waitForInteractionRunner(interactionRunner, 5_000, () => Bun.sleep(100)),
+      ).rejects.toThrow("process group");
+      const exitDeadline = Date.now() + 1_000;
+      do {
+        try {
+          process.kill(childPid, 0);
+          childSurvived = true;
+        } catch {
+          childSurvived = false;
+        }
+        if (childSurvived) await Bun.sleep(25);
+      } while (childSurvived && Date.now() < exitDeadline);
+    } finally {
+      if (childSurvived && childPid > 1) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+    }
+
+    expect(childPid).toBeGreaterThan(1);
+    expect(childSurvived).toBe(false);
   });
 
   test("interaction timeout terminates the runner's full process group", async () => {

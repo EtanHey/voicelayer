@@ -8,6 +8,15 @@
 
 **Tech Stack:** Bun/TypeScript, Bash, Swift/XCTest/AppKit, Unix-domain NDJSON sockets.
 
+> **Round-2 acceptance amendment (2026-07-13):** Independent review showed that
+> requiring only `polished=true`/`applied` misclassified a correctly firing
+> protected-token guard as a certification failure. The implemented gate accepts
+> `applied`, `rejected`, `shadowed`, and `skipped` as handled outcomes while still
+> rejecting empty/degenerate output and broken statuses. Certification also uses
+> the checked-in pinned manifest documented in `docs/corpus-replay-verification.md`
+> instead of a moving newest-N selection. This amendment supersedes Task 1's
+> original applied-only criterion.
+
 ---
 
 ### Task 1: Require a genuinely polished corpus result

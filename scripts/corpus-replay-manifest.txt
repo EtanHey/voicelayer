@@ -1,0 +1,17 @@
+# VoiceLayer runtime-certification corpus, frozen 2026-07-13 for PR #339.
+#
+# Selection rule: --corpus N replays the first N IDs below in this exact order.
+# These were the ten newest usable recordings when the set was frozen. Keeping
+# the IDs checked in prevents later VoiceBar recordings from changing the gate.
+# The fourth specimen intentionally exercises a protected-token polish rejection;
+# that guarded fallback is a valid handled pipeline outcome.
+2026-07-13T20-04-35-878Z-0b32b75e
+2026-07-13T20-04-21-485Z-8ce5fe19
+2026-07-13T20-03-42-566Z-06b796ed
+2026-07-13T20-03-13-164Z-491c0c0a
+2026-07-13T19-27-15-404Z-3b8a72f8
+2026-07-13T19-07-49-129Z-2426b57a
+2026-07-13T19-07-42-500Z-a4dc7700
+2026-07-13T19-07-26-523Z-8d5a7bcc
+2026-07-13T19-07-08-774Z-8fa2c3dd
+2026-07-13T19-06-31-693Z-8c111c2f
