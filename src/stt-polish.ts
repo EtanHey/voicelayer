@@ -99,6 +99,14 @@ const AUXILIARY_QUESTION_STARTERS = new Set([
   "would",
   "should",
 ]);
+const WH_QUESTION_STARTERS = new Set([
+  "what",
+  "why",
+  "how",
+  "when",
+  "where",
+  "who",
+]);
 const QUESTION_SUBJECT_WORDS = new Set([
   "i",
   "you",
@@ -487,7 +495,10 @@ function questionBoundaryIndices(text: string): number[] {
 
     if (
       AUXILIARY_QUESTION_STARTERS.has(starter) &&
-      (!nextWord || !QUESTION_SUBJECT_WORDS.has(nextWord))
+      (!nextWord ||
+        !QUESTION_SUBJECT_WORDS.has(nextWord) ||
+        (previousWord !== undefined &&
+          WH_QUESTION_STARTERS.has(previousWord)))
     ) {
       continue;
     }
@@ -535,7 +546,9 @@ function deterministicRunOnPunctuationFloor(cleanedText: string): string {
 
   return questionSegments
     .map((segment) => {
-      const normalizedSegment = segment.replace(/\s+([,.?!])/gu, "$1");
+      const normalizedSegment = segment
+        .replace(/\s+([,.?!])/gu, "$1")
+        .replace(/,+$/u, "");
       const sentence = capitalizeRunOnSegmentStart(normalizedSegment);
       const fallback = QUESTION_STARTER_PATTERN.test(normalizedSegment)
         ? "?"
