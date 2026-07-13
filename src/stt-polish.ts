@@ -107,7 +107,7 @@ const WH_QUESTION_STARTERS = new Set([
   "where",
   "who",
 ]);
-const EMBEDDED_AUX_PREDECESSORS = new Set([
+const QUESTION_SUBJECT_WORDS = new Set([
   "i",
   "you",
   "he",
@@ -127,25 +127,15 @@ const EMBEDDED_AUX_PREDECESSORS = new Set([
   "her",
   "anyone",
   "someone",
-]);
-const NON_SUBJECT_CONNECTORS = new Set([
-  "and",
-  "or",
-  "but",
-  "because",
-  "so",
-  "then",
-  "to",
-  "for",
-  "of",
-  "with",
-  "about",
-  "after",
-  "before",
-  "while",
-  "if",
-  "than",
-  "as",
+  "a",
+  "an",
+  "these",
+  "those",
+  "each",
+  "every",
+  "any",
+  "some",
+  "no",
 ]);
 const EMBEDDED_WH_PREDECESSORS = new Set([
   "and",
@@ -508,17 +498,19 @@ function questionBoundaryIndices(text: string): number[] {
     const suffix = text
       .slice(match.index + match[0].length + starter.length)
       .trimStart();
-    const nextWord = suffix
-      .match(/^([\p{L}\p{N}'’-]+)/u)?.[1]
-      ?.toLocaleLowerCase();
+    const nextWordRaw = suffix.match(/^([\p{L}\p{N}'’-]+)/u)?.[1];
+    const nextWord = nextWordRaw?.toLocaleLowerCase();
+    const nextWordIsProperName = nextWordRaw
+      ? /^\p{Lu}[\p{L}'’-]*$/u.test(nextWordRaw)
+      : false;
 
     if (
       AUXILIARY_QUESTION_STARTERS.has(starter) &&
       (!nextWord ||
-        NON_SUBJECT_CONNECTORS.has(nextWord) ||
+        (!QUESTION_SUBJECT_WORDS.has(nextWord) && !nextWordIsProperName) ||
         (previousWord !== undefined &&
           (WH_QUESTION_STARTERS.has(previousWord) ||
-            EMBEDDED_AUX_PREDECESSORS.has(previousWord))))
+            QUESTION_SUBJECT_WORDS.has(previousWord))))
     ) {
       continue;
     }
