@@ -14,6 +14,7 @@ import {
   selectCorpusSpecimens,
   signalDetachedProcessGroup,
   terminateVerifyDaemon,
+  waitForDetachedProcessGroupExit,
   waitForInteractionRunner,
   runDaemonInteractionLeg,
 } from "../corpus-replay-verify";
@@ -198,13 +199,17 @@ describe("corpus replay verification", () => {
         workDir,
       }),
     ).toThrow("live VoiceBar socket");
-    expect(() =>
+    const privateTmpVoiceBarPath = () =>
       assertIsolatedVerifyPaths({
         voiceBarSocketPath: "/private/tmp/voicelayer.sock",
         mcpSocketPath: join(workDir, "mcp.sock"),
         workDir,
-      }),
-    ).toThrow("live VoiceBar socket");
+      });
+    if (process.platform === "darwin") {
+      expect(privateTmpVoiceBarPath).toThrow("live VoiceBar socket");
+    } else {
+      expect(privateTmpVoiceBarPath).toThrow("inside the verify work directory");
+    }
     expect(() =>
       assertIsolatedVerifyPaths({
         voiceBarSocketPath: join(workDir, "voicebar.sock"),
@@ -212,13 +217,17 @@ describe("corpus replay verification", () => {
         workDir,
       }),
     ).toThrow("live MCP socket");
-    expect(() =>
+    const privateTmpMcpPath = () =>
       assertIsolatedVerifyPaths({
         voiceBarSocketPath: join(workDir, "voicebar.sock"),
         mcpSocketPath: "/private/tmp/voicelayer-mcp.sock",
         workDir,
-      }),
-    ).toThrow("live MCP socket");
+      });
+    if (process.platform === "darwin") {
+      expect(privateTmpMcpPath).toThrow("live MCP socket");
+    } else {
+      expect(privateTmpMcpPath).toThrow("inside the verify work directory");
+    }
     expect(() =>
       assertIsolatedVerifyPaths({
         voiceBarSocketPath: join(workDir, "shared.sock"),
@@ -302,6 +311,24 @@ describe("corpus replay verification", () => {
     expect(directSignals).toEqual([]);
   });
 
+  test("bounds the wait for a detached process group to disappear", async () => {
+    let checks = 0;
+    await expect(
+      waitForDetachedProcessGroupExit(
+        {
+          pid: 4242,
+          exited: Promise.resolve(137),
+          kill() {},
+        },
+        10,
+        () => {
+          checks++;
+          return checks < 4;
+        },
+      ),
+    ).rejects.toThrow("process group 4242 still present after 10ms");
+  });
+
   test("times out and terminates a hung Swift interaction runner", async () => {
     const signals: string[] = [];
     let resolveExit!: (code: number) => void;
@@ -322,6 +349,91 @@ describe("corpus replay verification", () => {
       ),
     ).rejects.toThrow("timed out");
     expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  test("interaction timeout terminates the runner's full process group", async () => {
+    const root = makeTempRoot();
+    const workDir = join(root, "verify-work");
+    const runner = join(root, "interaction-runner.ts");
+    const childPidPath = join(root, "interaction-child.pid");
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      runner,
+      [
+        "#!/usr/bin/env bun",
+        'import { writeFileSync } from "fs";',
+        'const child = Bun.spawn(["/bin/sh", "-c", \'trap "" TERM; exec /bin/sleep 300\'], {',
+        '  stdin: "ignore",',
+        '  stdout: "ignore",',
+        '  stderr: "ignore",',
+        "});",
+        'writeFileSync(process.env.VERIFY_CHILD_PID!, String(child.pid));',
+        "await child.exited;",
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const previousRunner = process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+    const previousTimeout = process.env.VOICELAYER_VERIFY_INTERACTION_TIMEOUT_MS;
+    const previousGrace =
+      process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS;
+    const previousChildPidPath = process.env.VERIFY_CHILD_PID;
+    process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER = runner;
+    process.env.VOICELAYER_VERIFY_INTERACTION_TIMEOUT_MS = "1000";
+    process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS = "100";
+    process.env.VERIFY_CHILD_PID = childPidPath;
+    let childPid = 0;
+    let childSurvived = false;
+    try {
+      await expect(
+        runSwiftRuntimeInteractionLeg({
+          repoRoot: root,
+          workDir,
+          voiceBarSocketPath: join(workDir, "voicebar.sock"),
+          audioFixture: join(workDir, "audio.wav"),
+        }),
+      ).rejects.toThrow("runtime interaction leg timed out after 1000ms");
+      childPid = Number((await Bun.file(childPidPath).text()).trim());
+      const deadline = Date.now() + 1000;
+      do {
+        try {
+          process.kill(childPid, 0);
+          childSurvived = true;
+        } catch {
+          childSurvived = false;
+        }
+        if (childSurvived) await Bun.sleep(25);
+      } while (childSurvived && Date.now() < deadline);
+    } finally {
+      if (childSurvived && childPid > 1) {
+        try {
+          process.kill(childPid, "SIGKILL");
+        } catch {}
+      }
+      if (previousRunner === undefined) {
+        delete process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+      } else {
+        process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER = previousRunner;
+      }
+      if (previousTimeout === undefined) {
+        delete process.env.VOICELAYER_VERIFY_INTERACTION_TIMEOUT_MS;
+      } else {
+        process.env.VOICELAYER_VERIFY_INTERACTION_TIMEOUT_MS = previousTimeout;
+      }
+      if (previousGrace === undefined) {
+        delete process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS;
+      } else {
+        process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS = previousGrace;
+      }
+      if (previousChildPidPath === undefined) {
+        delete process.env.VERIFY_CHILD_PID;
+      } else {
+        process.env.VERIFY_CHILD_PID = previousChildPidPath;
+      }
+    }
+
+    expect(childPid).toBeGreaterThan(1);
+    expect(childSurvived).toBe(false);
   });
 
   test("production Swift handoff propagates the isolated runtime environment", async () => {

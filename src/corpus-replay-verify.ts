@@ -21,6 +21,7 @@ const MIN_REFERENCE_WORDS = 3;
 const MIN_REFERENCE_OVERLAP = 0.45;
 const MIN_VOCABULARY_JACCARD = 0.25;
 const DEFAULT_INTERACTION_TIMEOUT_MS = 300_000;
+const DEFAULT_INTERACTION_TERMINATION_GRACE_MS = 10_000;
 
 export interface CorpusSpecimen {
   id: string;
@@ -270,6 +271,40 @@ export function signalDetachedProcessGroup(
   }
 }
 
+function detachedProcessGroupExists(pid: number): boolean {
+  if (process.platform === "win32" || !Number.isInteger(pid) || pid <= 1) {
+    return false;
+  }
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    const code =
+      typeof error === "object" && error !== null && "code" in error
+        ? String(error.code)
+        : "";
+    return code !== "ESRCH";
+  }
+}
+
+export async function waitForDetachedProcessGroupExit(
+  processHandle: DetachedProcessHandle & { exited: Promise<number> },
+  maxWaitMs = 30_000,
+  processGroupExists: (pid: number) => boolean = detachedProcessGroupExists,
+): Promise<number> {
+  const exitCode = await processHandle.exited;
+  const deadline = Date.now() + maxWaitMs;
+  while (processGroupExists(processHandle.pid)) {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `detached process group ${processHandle.pid} still present after ${maxWaitMs}ms`,
+      );
+    }
+    await Bun.sleep(25);
+  }
+  return exitCode;
+}
+
 export async function terminateVerifyDaemon(
   daemon: VerifyDaemonProcess,
   waitForGracePeriod?: () => Promise<unknown>,
@@ -472,6 +507,7 @@ function createVerifyRecorderShim(workDir: string): string {
 export async function waitForInteractionRunner(
   runner: VerifyDaemonProcess,
   timeoutMs = DEFAULT_INTERACTION_TIMEOUT_MS,
+  waitForTerminationGracePeriod?: () => Promise<unknown>,
 ): Promise<void> {
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const outcome = await Promise.race([
@@ -482,7 +518,7 @@ export async function waitForInteractionRunner(
   ]);
   if (timeout) clearTimeout(timeout);
   if (outcome.kind === "timeout") {
-    await terminateVerifyDaemon(runner);
+    await terminateVerifyDaemon(runner, waitForTerminationGracePeriod);
     throw new Error(`runtime interaction leg timed out after ${timeoutMs}ms`);
   }
   if (outcome.exitCode !== 0) {
@@ -512,6 +548,7 @@ export async function runSwiftRuntimeInteractionLeg(options: {
   );
   const processHandle = Bun.spawn(command, {
     cwd: options.repoRoot,
+    detached: true,
     stdin: "ignore",
     stdout: "inherit",
     stderr: "inherit",
@@ -531,7 +568,25 @@ export async function runSwiftRuntimeInteractionLeg(options: {
     Number.isFinite(configuredTimeout) && configuredTimeout > 0
       ? configuredTimeout
       : DEFAULT_INTERACTION_TIMEOUT_MS;
-  await waitForInteractionRunner(processHandle, timeoutMs);
+  const configuredTerminationGrace = Number(
+    process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS ??
+      DEFAULT_INTERACTION_TERMINATION_GRACE_MS,
+  );
+  const terminationGraceMs =
+    Number.isFinite(configuredTerminationGrace) && configuredTerminationGrace >= 0
+      ? configuredTerminationGrace
+      : DEFAULT_INTERACTION_TERMINATION_GRACE_MS;
+  const interactionRunner: VerifyDaemonProcess = {
+    exited: waitForDetachedProcessGroupExit(processHandle),
+    kill(signal) {
+      signalDetachedProcessGroup(processHandle, signal);
+    },
+  };
+  await waitForInteractionRunner(
+    interactionRunner,
+    timeoutMs,
+    () => Bun.sleep(terminationGraceMs),
+  );
 }
 
 async function runCorpusReplay(options: {
