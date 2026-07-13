@@ -517,6 +517,33 @@ function createVerifyRecorderShim(workDir: string): string {
   return binDirectory;
 }
 
+export function buildCorpusDaemonEnvironment(options: {
+  workDir: string;
+  voiceBarSocketPath: string;
+  mcpSocketPath: string;
+  stagedRoot: string;
+  audioFixture: string;
+  recorderBinDirectory: string;
+  baseEnvironment?: NodeJS.ProcessEnv;
+}): NodeJS.ProcessEnv {
+  const baseEnvironment = options.baseEnvironment ?? process.env;
+  return {
+    ...baseEnvironment,
+    VOICELAYER_ALLOW_ORPHAN_DAEMON: "1",
+    VOICELAYER_SOCKET_PATH: options.voiceBarSocketPath,
+    VOICELAYER_MCP_SOCKET_PATH: options.mcpSocketPath,
+    VOICELAYER_CONTROL_LAYER_BASE: join(options.workDir, "control-layer"),
+    QA_VOICE_SOCKET_PATH: options.voiceBarSocketPath,
+    QA_VOICE_MCP_SOCKET_PATH: options.mcpSocketPath,
+    QA_VOICE_MCP_PID_PATH: join(options.workDir, "mcp.pid"),
+    QA_VOICE_RECORDING_STATE_PATH: join(options.workDir, "recording-state.json"),
+    QA_VOICE_RETAINED_RECORDING_PATH: join(options.workDir, "retained.wav"),
+    QA_VOICE_RECORDINGS_DIR: options.stagedRoot,
+    VOICELAYER_VERIFY_AUDIO_FIXTURE: options.audioFixture,
+    PATH: `${options.recorderBinDirectory}:${baseEnvironment.PATH ?? "/usr/bin:/bin"}`,
+  };
+}
+
 export async function waitForInteractionRunner(
   runner: VerifyDaemonProcess,
   timeoutMs = DEFAULT_INTERACTION_TIMEOUT_MS,
@@ -639,20 +666,14 @@ async function runCorpusReplay(options: {
       detached: true,
       stdout: "pipe",
       stderr: "pipe",
-      env: {
-        ...process.env,
-        VOICELAYER_ALLOW_ORPHAN_DAEMON: "1",
-        VOICELAYER_SOCKET_PATH: voiceBarSocketPath,
-        VOICELAYER_MCP_SOCKET_PATH: mcpSocketPath,
-        QA_VOICE_SOCKET_PATH: voiceBarSocketPath,
-        QA_VOICE_MCP_SOCKET_PATH: mcpSocketPath,
-        QA_VOICE_MCP_PID_PATH: join(options.workDir, "mcp.pid"),
-        QA_VOICE_RECORDING_STATE_PATH: join(options.workDir, "recording-state.json"),
-        QA_VOICE_RETAINED_RECORDING_PATH: join(options.workDir, "retained.wav"),
-        QA_VOICE_RECORDINGS_DIR: stagedRoot,
-        VOICELAYER_VERIFY_AUDIO_FIXTURE: staged[0].audioPath,
-        PATH: `${recorderBinDirectory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
-      },
+      env: buildCorpusDaemonEnvironment({
+        workDir: options.workDir,
+        voiceBarSocketPath,
+        mcpSocketPath,
+        stagedRoot,
+        audioFixture: staged[0].audioPath,
+        recorderBinDirectory,
+      }),
     },
   );
   const daemon: VerifyDaemonProcess = {

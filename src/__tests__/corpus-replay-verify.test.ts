@@ -10,6 +10,7 @@ import { join } from "path";
 import {
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
+  buildCorpusDaemonEnvironment,
   runSwiftRuntimeInteractionLeg,
   selectCorpusSpecimens,
   signalDetachedProcessGroup,
@@ -242,6 +243,28 @@ describe("corpus replay verification", () => {
         workDir,
       }),
     ).toThrow("inside the verify work directory");
+  });
+
+  test("isolates corpus daemon journal writes inside the verify work directory", () => {
+    const workDir = makeTempRoot();
+    const environment = buildCorpusDaemonEnvironment({
+      workDir,
+      voiceBarSocketPath: join(workDir, "voicebar.sock"),
+      mcpSocketPath: join(workDir, "mcp.sock"),
+      stagedRoot: join(workDir, "recordings"),
+      audioFixture: join(workDir, "audio.wav"),
+      recorderBinDirectory: join(workDir, "bin"),
+      baseEnvironment: {
+        HOME: "/real/user/home",
+        PATH: "/usr/bin:/bin",
+        VOICELAYER_CONTROL_LAYER_BASE: "/real/user/journal",
+      },
+    });
+
+    expect(environment.HOME).toBe("/real/user/home");
+    expect(environment.VOICELAYER_CONTROL_LAYER_BASE).toBe(
+      join(workDir, "control-layer"),
+    );
   });
 
   test("escalates isolated daemon teardown to SIGKILL after the grace period", async () => {
