@@ -677,7 +677,10 @@ export async function runSwiftRuntimeInteractionLeg(options: {
       ? configuredTerminationGrace
       : DEFAULT_INTERACTION_TERMINATION_GRACE_MS;
   const interactionRunner: VerifyDaemonProcess = {
-    exited: waitForDetachedProcessGroupExit(processHandle),
+    exited: waitForDetachedProcessGroupExit(
+      processHandle,
+      Math.max(terminationGraceMs, 1),
+    ),
     kill(signal) {
       signalDetachedProcessGroup(processHandle, signal);
     },

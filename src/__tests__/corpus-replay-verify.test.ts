@@ -565,6 +565,7 @@ describe("corpus replay verification", () => {
     process.env.VERIFY_CHILD_PID = childPidPath;
     let childPid = 0;
     let childSurvived = false;
+    const startedAt = Date.now();
     try {
       await expect(
         runSwiftRuntimeInteractionLeg({
@@ -615,6 +616,7 @@ describe("corpus replay verification", () => {
 
     expect(childPid).toBeGreaterThan(1);
     expect(childSurvived).toBe(false);
+    expect(Date.now() - startedAt).toBeLessThan(2_500);
   });
 
   test("production Swift handoff propagates the isolated runtime environment", async () => {
