@@ -165,6 +165,19 @@ describe("corpus replay verification", () => {
     ).not.toThrow();
   });
 
+  test("rejects an unrelated fallback even when the polish outcome was handled", () => {
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "unrelated-fallback",
+        reference: "the corpus verifier exercised the polish layer",
+        actual: "Completely unrelated words from another recording.",
+        polished: false,
+        polishStatus: "rejected",
+        polishReason: "protected-token guard preserved the fallback",
+      }),
+    ).toThrow("reference overlap");
+  });
+
   test("rejects empty or degenerate output for every handled polish outcome", () => {
     for (const actual of ["", "1.", "1)"]) {
       expect(() =>

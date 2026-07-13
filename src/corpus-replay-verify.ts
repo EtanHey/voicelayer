@@ -148,16 +148,17 @@ export function assertCorpusReplayResult(input: {
   if (/^1[.)]?$/u.test(actual) || /^1\.\s*$/u.test(actual)) {
     throw new Error(`${input.specimenId}: degenerate polished output ${JSON.stringify(actual)}`);
   }
-  if (input.polishStatus !== "applied") return;
-  if (input.polished !== true) {
-    throw new Error(
-      `${input.specimenId}: transcription did not report polished=true ` +
-        `(status ${JSON.stringify(input.polishStatus)}, ` +
-        `reason ${JSON.stringify(input.polishReason || "missing")})`,
-    );
-  }
-  if (!hasPunctuationFloor(actual)) {
-    throw new Error(`${input.specimenId}: punctuation floor was not applied`);
+  if (input.polishStatus === "applied") {
+    if (input.polished !== true) {
+      throw new Error(
+        `${input.specimenId}: transcription did not report polished=true ` +
+          `(status ${JSON.stringify(input.polishStatus)}, ` +
+          `reason ${JSON.stringify(input.polishReason || "missing")})`,
+      );
+    }
+    if (!hasPunctuationFloor(actual)) {
+      throw new Error(`${input.specimenId}: punctuation floor was not applied`);
+    }
   }
   const similarity = wordSimilarity(input.reference, actual);
   if (similarity.referenceOverlap < MIN_REFERENCE_OVERLAP) {
