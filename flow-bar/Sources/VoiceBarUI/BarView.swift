@@ -14,14 +14,16 @@ public enum VoiceBarContentTransitionPolicy {
         !(source == .speaking && destination == .idle)
     }
 
-    public static func removalUsesCrossFade(for mode: VoiceMode) -> Bool {
+    public static func removalUsesCrossFade(forContentMode mode: VoiceMode) -> Bool {
         mode != .speaking
     }
 
-    public static func transition(from source: VoiceMode, to destination: VoiceMode) -> AnyTransition {
+    public static func transition(for contentMode: VoiceMode, insertedFrom source: VoiceMode) -> AnyTransition {
         let crossFade = AnyTransition.opacity.animation(.easeInOut(duration: 0.2))
-        let insertion = insertionUsesCrossFade(from: source, to: destination) ? crossFade : .identity
-        let removal = removalUsesCrossFade(for: destination) ? crossFade : .identity
+        let insertion = insertionUsesCrossFade(from: source, to: contentMode) ? crossFade : .identity
+        // SwiftUI stores this transition with the inserted content view, so its
+        // later removal policy must be based on that view's own mode.
+        let removal = removalUsesCrossFade(forContentMode: contentMode) ? crossFade : .identity
         return .asymmetric(insertion: insertion, removal: removal)
     }
 }
@@ -388,8 +390,8 @@ public struct BarView: View {
         .id(state.mode)
         .transition(
             VoiceBarContentTransitionPolicy.transition(
-                from: state.previousMode,
-                to: state.mode
+                for: state.mode,
+                insertedFrom: state.previousMode
             )
         )
     }

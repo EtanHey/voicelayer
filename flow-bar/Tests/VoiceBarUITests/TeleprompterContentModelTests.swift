@@ -85,12 +85,14 @@ final class TeleprompterContentModelTests: XCTestCase {
             )
         }
 
-        XCTAssertFalse(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .speaking))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .idle))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .recording))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .transcribing))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .error))
-        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .disconnected))
+        XCTAssertFalse(
+            VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .speaking)
+        )
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .idle))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .recording))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .transcribing))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .error))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .disconnected))
     }
 
     func testVoiceStateRetainsTheSourceModeForDestinationTransitionPolicy() {
