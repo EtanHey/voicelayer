@@ -274,82 +274,84 @@ final class SocketServerTests: XCTestCase {
     }
 }
 
-/// Runtime interaction leg invoked by scripts/voicelayer-verify.sh --corpus.
-/// These tests use a unique Unix socket, production event dispatch, and real
-/// AppKit mouse events. They never bind the resident /tmp/voicelayer.sock.
-final class CorpusReplayInteractionTests: XCTestCase {
+/// Runtime-only leg. The Bun corpus harness owns the daemon lifecycle, then
+/// releases its temporary VoiceBar server so this test can bind the exact same
+/// isolated socket and exercise production input/UI event dispatch against the
+/// still-running daemon.
+final class CorpusReplayRuntimeInteractionTests: XCTestCase {
     @MainActor
-    func testF18ThenEscapeDrivesRecordingToIdleThroughIsolatedNDJSON() throws {
-        let fixture = try makeConnectedServerFixture()
-        defer { fixture.cleanup() }
-        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
-        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+    func testF18EscapeAndStopButtonDriveSpawnedDaemonNDJSON() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let rawSocketPath = environment["VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH"],
+              !rawSocketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawWorkDirectory = environment["VOICELAYER_VERIFY_WORK_DIR"],
+              !rawWorkDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let audioFixture = environment["VOICELAYER_VERIFY_AUDIO_FIXTURE"],
+              FileManager.default.fileExists(atPath: audioFixture)
+        else {
+            throw XCTSkip("corpus runtime interaction environment is not configured")
+        }
 
-        let f18Event = try XCTUnwrap(CGEvent(
-            keyboardEventSource: CGEventSource(stateID: .privateState),
-            virtualKey: 79,
-            keyDown: true
-        ))
-        let f18 = hotkeyAction(
-            type: f18Event.type,
-            keycode: f18Event.getIntegerValueField(.keyboardEventKeycode),
-            flags: f18Event.flags,
-            autorepeat: 0,
-            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-            useModifierMode: false
-        )
-        dispatchHotkeyAction(
-            f18,
-            onKeyDown: { router.handleHotkeyHoldStart() },
-            onCancel: { router.handleEscape() }
-        )
-        XCTAssertTrue(waitForMode(fixture.state, mode: .recording, timeout: 1))
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"record""#))
+        let socketPath = URL(fileURLWithPath: rawSocketPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let workDirectory = URL(fileURLWithPath: rawWorkDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let expectedSocketPath = URL(fileURLWithPath: workDirectory, isDirectory: true)
+            .appendingPathComponent("voicebar.sock")
+            .path
+        guard socketPath == expectedSocketPath else {
+            XCTFail("runtime VoiceBar socket is outside the verifier work directory")
+            return
+        }
 
-        try writeLine(#"{"type":"state","state":"recording","mode":"ptt"}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitForMode(fixture.state, mode: .recording, timeout: 1))
+        let state = VoiceState()
+        state.minimumTranscribingDisplayDuration = 0
+        state.barInitiatedTranscriptionTimeout = .seconds(240)
+        let server = SocketServer(state: state, socketPath: rawSocketPath)
+        state.sendCommand = { server.sendCommandToOwner(command: $0) }
+        server.start()
+        defer { server.stop() }
 
-        let escapeEvent = try XCTUnwrap(CGEvent(
-            keyboardEventSource: CGEventSource(stateID: .privateState),
-            virtualKey: 53,
-            keyDown: true
-        ))
-        let escape = hotkeyAction(
-            type: escapeEvent.type,
-            keycode: escapeEvent.getIntegerValueField(.keyboardEventKeycode),
-            flags: escapeEvent.flags,
-            autorepeat: 0,
-            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-            useModifierMode: false,
-            cancellationIsActive: router.shouldHandleEscape
-        )
-        var escapeDispatchCount = 0
-        dispatchHotkeyAction(escape, onKeyDown: {}, onCancel: {
-            router.handleEscape()
-            escapeDispatchCount += 1
-        })
-        XCTAssertTrue(waitForCondition(timeout: 1) { escapeDispatchCount == 1 })
-        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"cancel""#))
+        guard waitForSocket(at: rawSocketPath, timeout: 10) else {
+            XCTFail("runtime VoiceBar socket was not created")
+            return
+        }
+        let reconnectTimeout = Double(
+            environment["VOICELAYER_VERIFY_DAEMON_RECONNECT_TIMEOUT"] ?? "30"
+        ) ?? 30
+        guard waitForConnectionStatus(state, connected: true, timeout: reconnectTimeout) else {
+            XCTFail("spawned daemon did not reconnect to the runtime VoiceBar socket")
+            return
+        }
 
-        try writeLine(#"{"type":"ack","command":"cancel","outcome":"accept"}"#, to: fixture.commandClient)
-        try writeLine(#"{"type":"state","state":"idle","source":"recording"}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
-    }
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var recordingTransitions = 0
+        var idleTransitions = 0
+        state.onModeChange = { mode in
+            if mode == .recording { recordingTransitions += 1 }
+            if mode == .idle { idleTransitions += 1 }
+        }
 
-    @MainActor
-    func testStopButtonSendsStopAndReturnsToIdleThroughIsolatedNDJSON() throws {
-        let fixture = try makeConnectedServerFixture()
-        defer { fixture.cleanup() }
-        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        dispatchRuntimeKey(virtualKey: 79, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
 
-        try writeLine(
-            #"{"type":"state","state":"speaking","text":"Corpus interaction verification"}"#,
-            to: fixture.legacyClient
-        )
-        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+        dispatchRuntimeKey(virtualKey: 53, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { idleTransitions >= 2 })
 
-        let router = VoiceBarCommandRouter(voiceState: fixture.state)
-        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        var pastedText = ""
+        state.pasteHandler = { text in
+            pastedText = text
+            return true
+        }
+        recordingTransitions = 0
+        dispatchRuntimeKey(virtualKey: 79, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
+
+        let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
@@ -362,43 +364,13 @@ final class CorpusReplayInteractionTests: XCTestCase {
         defer { window.close() }
         host.layoutSubtreeIfNeeded()
 
-        let stopLine = try clickSpeakingStop(host, in: window, playbackClient: fixture.legacyClient)
-        XCTAssertTrue(stopLine.contains(#""cmd":"stop""#))
-        _ = try readLine(from: fixture.commandClient, timeout: 1)
-        try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
-    }
-
-    @MainActor
-    func testTranscriptionPasteAndSubtitleSurfacesFireOnIsolatedNDJSON() throws {
-        let fixture = try makeConnectedServerFixture()
-        defer { fixture.cleanup() }
-        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
-        fixture.state.minimumTranscribingDisplayDuration = 0
-        var pastedText = ""
-        fixture.state.pasteHandler = { text in
-            pastedText = text
-            return true
-        }
-
-        fixture.state.record(pressToTalk: true)
-        _ = try readLine(from: fixture.commandClient, timeout: 1)
-        try writeLine(#"{"type":"state","state":"recording","mode":"ptt"}"#, to: fixture.legacyClient)
-        try writeLine(#"{"type":"state","state":"transcribing"}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitForMode(fixture.state, mode: .transcribing, timeout: 1))
-        try writeLine(
-            #"{"type":"subtitle","words":[{"text":"Corpus","offset_ms":0,"duration_ms":300}]}"#,
-            to: fixture.legacyClient
-        )
-        XCTAssertTrue(waitForCondition(timeout: 1) { fixture.state.wordBoundaries.map(\.text) == ["Corpus"] })
-        try writeLine(
-            #"{"type":"transcription","text":"Corpus replay passed.","polished":true}"#,
-            to: fixture.legacyClient
-        )
-        XCTAssertTrue(waitForCondition(timeout: 1) { pastedText == "Corpus replay passed." })
-        XCTAssertEqual(fixture.state.transcript, "Corpus replay passed.")
-        try writeLine(#"{"type":"state","state":"idle","source":"recording"}"#, to: fixture.legacyClient)
-        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+        try clickRecordingStop(host, in: window, state: state)
+        // This is the STT half of the mission's paste/subtitle surface: subtitle
+        // word boundaries are emitted by the separate TTS playback queue.
+        XCTAssertTrue(waitForCondition(timeout: 240) { !pastedText.isEmpty })
+        XCTAssertEqual(state.transcript, pastedText)
+        XCTAssertEqual(state.lastTranscriptionPolished, true)
+        XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
     }
 }
 
@@ -445,6 +417,32 @@ private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
 }
 
 @MainActor
+private func dispatchRuntimeKey(virtualKey: CGKeyCode, router: VoiceBarCommandRouter) {
+    guard let event = CGEvent(
+        keyboardEventSource: CGEventSource(stateID: .privateState),
+        virtualKey: virtualKey,
+        keyDown: true
+    ) else {
+        XCTFail("could not construct runtime key event")
+        return
+    }
+    let action = hotkeyAction(
+        type: event.type,
+        keycode: event.getIntegerValueField(.keyboardEventKeycode),
+        flags: event.flags,
+        autorepeat: 0,
+        targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+        useModifierMode: false,
+        cancellationIsActive: router.shouldHandleEscape
+    )
+    dispatchHotkeyAction(
+        action,
+        onKeyDown: { router.handleHotkeyHoldStart() },
+        onCancel: { router.handleEscape() }
+    )
+}
+
+@MainActor
 private func click(_ host: NSView, at point: NSPoint, in window: NSWindow) throws {
     guard host.hitTest(point) != nil else {
         throw NSError(domain: "SocketServerTests", code: 2)
@@ -478,6 +476,23 @@ private func clickSpeakingStop(
         x -= 3
     }
     throw NSError(domain: "SocketServerTests", code: 3)
+}
+
+@MainActor
+private func clickRecordingStop(
+    _ host: NSView,
+    in window: NSWindow,
+    state: VoiceState
+) throws {
+    var x = host.bounds.maxX - 10
+    while x >= host.bounds.midX {
+        try click(host, at: NSPoint(x: x, y: host.bounds.midY), in: window)
+        if waitForCondition(timeout: 0.15, condition: { state.mode == .transcribing }) {
+            return
+        }
+        x -= 3
+    }
+    throw NSError(domain: "SocketServerTests", code: 5)
 }
 
 private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {

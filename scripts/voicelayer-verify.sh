@@ -3,8 +3,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 REPO_ROOT="${VOICELAYER_VERIFY_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_DIR="$REPO_ROOT/.verified"
 MCP_SOCKET_PATH="${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}"
@@ -61,6 +61,20 @@ if [ "$VERIFY_MODE" = "corpus" ] && ! [[ "$CORPUS_COUNT" =~ ^[1-9][0-9]*$ ]]; th
   exit 2
 fi
 
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd -P)"
+DEFAULT_GIT_DIR="$(git -C "$DEFAULT_REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)"
+VERIFY_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --absolute-git-dir 2>/dev/null || true)"
+if [ "$VERIFY_MODE" = "corpus" ] && {
+  [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ] ||
+    { [ -n "$DEFAULT_GIT_DIR" ] && [ "$VERIFY_GIT_DIR" = "$DEFAULT_GIT_DIR" ]; };
+} && {
+  [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ] ||
+    [ -n "${VOICELAYER_VERIFY_INTERACTION_RUNNER:-}" ];
+}; then
+  printf '[voicelayer-verify] runner overrides are test-only and cannot certify this repository.\n' >&2
+  exit 2
+fi
+
 cd "$REPO_ROOT"
 
 daemon_path_matches() {
@@ -111,6 +125,20 @@ changed_files() {
     git diff --name-only "$merge_base...HEAD"
   else
     git diff --name-only "$base_ref...HEAD"
+  fi
+}
+
+assert_corpus_tree_clean() {
+  local status
+  status="$(git status --porcelain --untracked-files=all)"
+  if [ -n "$status" ]; then
+    printf '[voicelayer-verify] corpus certification refuses a dirty worktree:\n' >&2
+    printf '%s\n' "$status" | sed 's/^/[voicelayer-verify]   /' >&2
+    return 1
+  fi
+  if [ "$(git rev-parse HEAD)" != "$sha" ]; then
+    printf '[voicelayer-verify] HEAD changed during corpus verification; no artifact written.\n' >&2
+    return 1
   fi
 }
 
@@ -271,8 +299,11 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
 
   export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
   export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"
+  export VOICELAYER_VERIFY_WORK_DIR="$corpus_work_dir"
   export QA_VOICE_SOCKET_PATH="$VOICELAYER_SOCKET_PATH"
   export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
+
+  assert_corpus_tree_clean
 
   printf '[voicelayer-verify] corpus mode: %s deterministic specimen(s)\n' "$CORPUS_COUNT"
   printf '[voicelayer-verify] isolated VoiceBar socket: %s\n' "$VOICELAYER_SOCKET_PATH"
@@ -288,12 +319,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --repo-root "$REPO_ROOT"
   fi
 
-  if [ -n "${VOICELAYER_VERIFY_INTERACTION_RUNNER:-}" ]; then
-    "$VOICELAYER_VERIFY_INTERACTION_RUNNER"
-  else
-    printf '[voicelayer-verify] running isolated F18/Escape/stop-button interaction leg...\n'
-    swift test --package-path "$REPO_ROOT/flow-bar" --filter CorpusReplayInteractionTests
-  fi
+  assert_corpus_tree_clean
 
   mkdir -p "$VERIFY_DIR"
   tmp_artifact="${artifact}.tmp.$$"

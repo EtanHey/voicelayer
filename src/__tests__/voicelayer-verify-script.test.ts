@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readdirSync } from "fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -44,6 +53,24 @@ function initFakeRepo() {
   run(["git", "config", "user.email", "test@example.com"]);
   run(["git", "config", "user.name", "Test User"]);
   writeFileSync(join(tempRoot, "README.md"), "fake\n");
+  writeFileSync(
+    join(tempRoot, ".gitignore"),
+    [
+      ".verified/",
+      "build.log",
+      "changed.txt",
+      "fake-bin/",
+      "corpus/",
+      "runner.log",
+      "*-runner.sh",
+      "pgrep-state",
+      "open-calls",
+      "fake-bash-env",
+      "repo-alias",
+      "scripts/",
+      "",
+    ].join("\n"),
+  );
   run(["git", "add", "."]);
   run(["git", "commit", "-m", "initial"]);
 }
@@ -148,7 +175,9 @@ describe("voicelayer-verify.sh", () => {
         'test "$VOICELAYER_MCP_SOCKET_PATH" != "/tmp/voicelayer-mcp.sock"',
         'test "$VOICELAYER_SOCKET_PATH" = "$QA_VOICE_SOCKET_PATH"',
         'test "$VOICELAYER_MCP_SOCKET_PATH" = "$QA_VOICE_MCP_SOCKET_PATH"',
+        'test "$VOICELAYER_SOCKET_PATH" = "$VOICELAYER_VERIFY_WORK_DIR/voicebar.sock"',
         'printf "corpus:%s:%s:%s\\n" "$1" "$2" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        'CORPUS_RUNNER_ACTIVE=1 "$VOICELAYER_VERIFY_INTERACTION_RUNNER"',
         "",
       ].join("\n"),
       { mode: 0o755 },
@@ -158,6 +187,7 @@ describe("voicelayer-verify.sh", () => {
       [
         "#!/usr/bin/env bash",
         "set -euo pipefail",
+        'test "${CORPUS_RUNNER_ACTIVE:-}" = "1"',
         'printf "interaction:%s\\n" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
         "",
       ].join("\n"),
@@ -217,6 +247,75 @@ describe("voicelayer-verify.sh", () => {
 
     expect(result.exitCode).not.toBe(0);
     expect(existsSync(artifact)).toBe(false);
+  });
+
+  test("refuses to certify a dirty worktree in corpus mode", () => {
+    const changed = join(tempRoot, "changed.txt");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    mkdirSync(join(tempRoot, "src"), { recursive: true });
+    writeFileSync(join(tempRoot, "src", "mcp-server-daemon.ts"), "clean\n");
+    run(["git", "add", "src/mcp-server-daemon.ts"]);
+    run(["git", "commit", "-m", "add daemon"]);
+    writeFileSync(join(tempRoot, "src", "mcp-server-daemon.ts"), "dirty\n");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(runner, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const result = run(["bash", scriptPath, "--corpus", "1"], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain("dirty worktree");
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
+  });
+
+  test("refuses test runner overrides in the verifier's own repository", () => {
+    const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
+    const changed = join(tempRoot, "changed.txt");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    mkdirSync(join(tempRoot, "scripts"), { recursive: true });
+    copyFileSync(scriptPath, localScript);
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(runner, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const result = run(["bash", localScript, "--corpus", "1"], {
+      env: {
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain("test-only");
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
+  });
+
+  test("refuses runner overrides through a symlink to the verifier worktree", () => {
+    const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
+    const repoAlias = join(tempRoot, "repo-alias");
+    const changed = join(tempRoot, "changed.txt");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    mkdirSync(join(tempRoot, "scripts"), { recursive: true });
+    copyFileSync(scriptPath, localScript);
+    symlinkSync(tempRoot, repoAlias, "dir");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(runner, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const result = run(["bash", localScript, "--corpus", "1"], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: repoAlias,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain("test-only");
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   });
 
   test("skips verification when changed files do not touch daemon surfaces", () => {

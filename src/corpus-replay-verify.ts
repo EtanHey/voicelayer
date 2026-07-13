@@ -19,6 +19,8 @@ const LIVE_MCP_SOCKET = "/tmp/voicelayer-mcp.sock";
 const MIN_SPECIMEN_DURATION_MS = 500;
 const MIN_REFERENCE_WORDS = 3;
 const MIN_REFERENCE_OVERLAP = 0.45;
+const MIN_VOCABULARY_JACCARD = 0.25;
+const DEFAULT_INTERACTION_TIMEOUT_MS = 300_000;
 
 export interface CorpusSpecimen {
   id: string;
@@ -95,15 +97,22 @@ function normalizedWords(text: string): string[] {
     .match(/[\p{L}\p{N}_./+-]+/gu) ?? [];
 }
 
-function wordOverlap(reference: string, actual: string): number {
+function wordSimilarity(reference: string, actual: string): {
+  referenceOverlap: number;
+  jaccard: number;
+} {
   const expected = new Set(normalizedWords(reference));
   const observed = new Set(normalizedWords(actual));
-  if (expected.size === 0) return 0;
+  if (expected.size === 0) return { referenceOverlap: 0, jaccard: 0 };
   let shared = 0;
   for (const word of expected) {
     if (observed.has(word)) shared++;
   }
-  return shared / expected.size;
+  const unionSize = expected.size + observed.size - shared;
+  return {
+    referenceOverlap: shared / expected.size,
+    jaccard: unionSize > 0 ? shared / unionSize : 0,
+  };
 }
 
 function hasPunctuationFloor(text: string): boolean {
@@ -114,23 +123,20 @@ export function assertCorpusReplayResult(input: {
   specimenId: string;
   reference: string;
   actual: string;
+  polished: boolean;
   polishStatus: string;
   polishReason?: string;
 }): void {
-  if (input.polishStatus !== "applied" && input.polishStatus !== "rejected") {
+  if (input.polished !== true) {
+    throw new Error(
+      `${input.specimenId}: transcription did not report polished=true`,
+    );
+  }
+  if (input.polishStatus !== "applied") {
     throw new Error(
       `${input.specimenId}: polish path did not complete ` +
         `(status ${JSON.stringify(input.polishStatus || "missing")})`,
     );
-  }
-  if (input.polishStatus === "rejected") {
-    const polishReason = input.polishReason?.trim() ?? "";
-    if (!polishReason) {
-      throw new Error(`${input.specimenId}: rejected polish result has no reason`);
-    }
-    if (polishReason.toLocaleLowerCase().includes("empty polish response")) {
-      throw new Error(`${input.specimenId}: polish server returned an empty polish candidate`);
-    }
   }
   const actual = input.actual.trim();
   if (!actual) {
@@ -142,11 +148,17 @@ export function assertCorpusReplayResult(input: {
   if (!hasPunctuationFloor(actual)) {
     throw new Error(`${input.specimenId}: punctuation floor was not applied`);
   }
-  const overlap = wordOverlap(input.reference, actual);
-  if (overlap < MIN_REFERENCE_OVERLAP) {
+  const similarity = wordSimilarity(input.reference, actual);
+  if (similarity.referenceOverlap < MIN_REFERENCE_OVERLAP) {
     throw new Error(
-      `${input.specimenId}: reference overlap ${overlap.toFixed(2)} is below ` +
+      `${input.specimenId}: reference overlap ${similarity.referenceOverlap.toFixed(2)} is below ` +
         MIN_REFERENCE_OVERLAP.toFixed(2),
+    );
+  }
+  if (similarity.jaccard < MIN_VOCABULARY_JACCARD) {
+    throw new Error(
+      `${input.specimenId}: vocabulary similarity ${similarity.jaccard.toFixed(2)} is below ` +
+        MIN_VOCABULARY_JACCARD.toFixed(2),
     );
   }
 }
@@ -234,17 +246,46 @@ interface VerifyDaemonProcess {
   kill: (signal: "SIGTERM" | "SIGKILL") => unknown;
 }
 
+interface DetachedProcessHandle {
+  pid: number;
+  kill: (signal: "SIGTERM" | "SIGKILL") => unknown;
+}
+
+export function signalDetachedProcessGroup(
+  processHandle: DetachedProcessHandle,
+  signal: "SIGTERM" | "SIGKILL",
+  signalProcess: (pid: number, signal: "SIGTERM" | "SIGKILL") => unknown =
+    process.kill,
+): void {
+  if (!Number.isInteger(processHandle.pid) || processHandle.pid <= 1) {
+    processHandle.kill(signal);
+    return;
+  }
+  try {
+    signalProcess(-processHandle.pid, signal);
+  } catch {
+    processHandle.kill(signal);
+  }
+}
+
 export async function terminateVerifyDaemon(
   daemon: VerifyDaemonProcess,
-  waitForGracePeriod: () => Promise<unknown> = () => Bun.sleep(10_000),
+  waitForGracePeriod?: () => Promise<unknown>,
 ): Promise<void> {
   try {
     daemon.kill("SIGTERM");
   } catch {}
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const gracePeriod = waitForGracePeriod
+    ? waitForGracePeriod()
+    : new Promise<void>((resolveGracePeriod) => {
+        graceTimer = setTimeout(resolveGracePeriod, 10_000);
+      });
   const exitedGracefully = await Promise.race([
     daemon.exited.then(() => true),
-    waitForGracePeriod().then(() => false),
+    gracePeriod.then(() => false),
   ]);
+  if (graceTimer) clearTimeout(graceTimer);
   if (!exitedGracefully) {
     try {
       daemon.kill("SIGKILL");
@@ -256,6 +297,7 @@ export async function terminateVerifyDaemon(
 function createVerifyBarServer(socketPath: string): VerifyBarServer {
   const events: Record<string, unknown>[] = [];
   const clients = new Set<{ write: (payload: string) => number }>();
+  let stopped = false;
   try {
     unlinkSync(socketPath);
   } catch {}
@@ -300,6 +342,8 @@ function createVerifyBarServer(socketPath: string): VerifyBarServer {
       for (const client of clients) client.write(payload);
     },
     stop() {
+      if (stopped) return;
+      stopped = true;
       server.stop(true);
       try {
         unlinkSync(socketPath);
@@ -412,6 +456,8 @@ function createVerifyRecorderShim(workDir: string): string {
     [
       "#!/bin/sh",
       'if [ "${1:-}" = "-n" ]; then exit 0; fi',
+      ': "${VOICELAYER_VERIFY_AUDIO_FIXTURE:?missing corpus audio fixture}"',
+      '/usr/bin/tail -c +45 "$VOICELAYER_VERIFY_AUDIO_FIXTURE"',
       "exec /bin/sleep 300",
       "",
     ].join("\n"),
@@ -419,6 +465,71 @@ function createVerifyRecorderShim(workDir: string): string {
   );
   chmodSync(recorderPath, 0o755);
   return binDirectory;
+}
+
+export async function waitForInteractionRunner(
+  runner: VerifyDaemonProcess,
+  timeoutMs = DEFAULT_INTERACTION_TIMEOUT_MS,
+): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([
+    runner.exited.then((exitCode) => ({ kind: "exit" as const, exitCode })),
+    new Promise<{ kind: "timeout" }>((resolveTimeout) => {
+      timeout = setTimeout(() => resolveTimeout({ kind: "timeout" }), timeoutMs);
+    }),
+  ]);
+  if (timeout) clearTimeout(timeout);
+  if (outcome.kind === "timeout") {
+    await terminateVerifyDaemon(runner);
+    throw new Error(`runtime interaction leg timed out after ${timeoutMs}ms`);
+  }
+  if (outcome.exitCode !== 0) {
+    throw new Error(`runtime interaction leg exited with status ${outcome.exitCode}`);
+  }
+}
+
+export async function runSwiftRuntimeInteractionLeg(options: {
+  repoRoot: string;
+  workDir: string;
+  voiceBarSocketPath: string;
+  audioFixture: string;
+}): Promise<void> {
+  const customRunner = process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER?.trim();
+  const command = customRunner
+    ? [customRunner]
+    : [
+        "swift",
+        "test",
+        "--package-path",
+        join(options.repoRoot, "flow-bar"),
+        "--filter",
+        "CorpusReplayRuntimeInteractionTests/testF18EscapeAndStopButtonDriveSpawnedDaemonNDJSON",
+      ];
+  console.log(
+    "[corpus-replay] running isolated F18/Escape/stop-button interaction leg",
+  );
+  const processHandle = Bun.spawn(command, {
+    cwd: options.repoRoot,
+    stdin: "ignore",
+    stdout: "inherit",
+    stderr: "inherit",
+    env: {
+      ...process.env,
+      CORPUS_RUNNER_ACTIVE: "1",
+      VOICELAYER_VERIFY_WORK_DIR: options.workDir,
+      VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH: options.voiceBarSocketPath,
+      VOICELAYER_VERIFY_AUDIO_FIXTURE: options.audioFixture,
+    },
+  });
+  const configuredTimeout = Number(
+    process.env.VOICELAYER_VERIFY_INTERACTION_TIMEOUT_MS ??
+      DEFAULT_INTERACTION_TIMEOUT_MS,
+  );
+  const timeoutMs =
+    Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : DEFAULT_INTERACTION_TIMEOUT_MS;
+  await waitForInteractionRunner(processHandle, timeoutMs);
 }
 
 async function runCorpusReplay(options: {
@@ -437,17 +548,18 @@ async function runCorpusReplay(options: {
 
   mkdirSync(options.workDir, { recursive: true });
   const stagedRoot = join(options.workDir, "recordings");
-  const recorderBinDirectory = createVerifyRecorderShim(options.workDir);
   const selected = selectCorpusSpecimens(options.corpusRoot, options.count);
   const staged = selected.map((item) =>
     stageSpecimen(item, options.corpusRoot, stagedRoot),
   );
+  const recorderBinDirectory = createVerifyRecorderShim(options.workDir);
   const bar = createVerifyBarServer(voiceBarSocketPath);
   const daemonLogPath = join(options.workDir, "daemon.log");
-  const daemon = Bun.spawn(
+  const daemonProcess = Bun.spawn(
     ["bun", "run", join(options.repoRoot, "src", "mcp-server-daemon.ts")],
     {
       cwd: options.repoRoot,
+      detached: true,
       stdout: "pipe",
       stderr: "pipe",
       env: {
@@ -461,13 +573,20 @@ async function runCorpusReplay(options: {
         QA_VOICE_RECORDING_STATE_PATH: join(options.workDir, "recording-state.json"),
         QA_VOICE_RETAINED_RECORDING_PATH: join(options.workDir, "retained.wav"),
         QA_VOICE_RECORDINGS_DIR: stagedRoot,
+        VOICELAYER_VERIFY_AUDIO_FIXTURE: staged[0].audioPath,
         PATH: `${recorderBinDirectory}:${process.env.PATH ?? "/usr/bin:/bin"}`,
       },
     },
   );
+  const daemon: VerifyDaemonProcess = {
+    exited: daemonProcess.exited,
+    kill(signal) {
+      signalDetachedProcessGroup(daemonProcess, signal);
+    },
+  };
   const daemonOutput = Promise.all([
-    new Response(daemon.stdout).text(),
-    new Response(daemon.stderr).text(),
+    new Response(daemonProcess.stdout).text(),
+    new Response(daemonProcess.stderr).text(),
   ]).then(([stdout, stderr]) => Bun.write(daemonLogPath, `${stdout}${stderr}`));
 
   try {
@@ -521,6 +640,7 @@ async function runCorpusReplay(options: {
         specimenId: specimen.id,
         reference: selected[index].transcript,
         actual: typeof transcription.text === "string" ? transcription.text : "",
+        polished: transcription.polished === true,
         polishStatus:
           typeof transcription.polish_status === "string"
             ? transcription.polish_status
@@ -535,9 +655,15 @@ async function runCorpusReplay(options: {
           `${specimen.id}: ${String(transcription.polish_status)}`,
       );
     }
-    await runDaemonInteractionLeg(bar);
+    bar.stop();
+    await runSwiftRuntimeInteractionLeg({
+      repoRoot: options.repoRoot,
+      workDir: options.workDir,
+      voiceBarSocketPath,
+      audioFixture: staged[0].audioPath,
+    });
     console.log(
-      `[corpus-replay] verified ${staged.length} corpus specimens on isolated sockets`,
+      `[corpus-replay] verified ${staged.length} corpus specimens and runtime interactions on isolated sockets`,
     );
   } finally {
     await terminateVerifyDaemon(daemon);

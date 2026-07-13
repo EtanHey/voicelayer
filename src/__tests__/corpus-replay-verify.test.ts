@@ -10,8 +10,11 @@ import { join } from "path";
 import {
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
+  runSwiftRuntimeInteractionLeg,
   selectCorpusSpecimens,
+  signalDetachedProcessGroup,
   terminateVerifyDaemon,
+  waitForInteractionRunner,
   runDaemonInteractionLeg,
 } from "../corpus-replay-verify";
 
@@ -53,6 +56,7 @@ describe("corpus replay verification", () => {
         specimenId: "sample-1",
         reference: "why did it do that i am confused",
         actual: "Why did it do that? I am confused.",
+        polished: true,
         polishStatus: "applied",
       }),
     ).not.toThrow();
@@ -66,6 +70,7 @@ describe("corpus replay verification", () => {
         specimenId: "empty",
         reference,
         actual: "",
+        polished: true,
         polishStatus: "applied",
       }),
     ).toThrow("empty polished output");
@@ -74,6 +79,7 @@ describe("corpus replay verification", () => {
         specimenId: "degenerate",
         reference,
         actual: "1.",
+        polished: true,
         polishStatus: "applied",
       }),
     ).toThrow("degenerate polished output");
@@ -82,6 +88,7 @@ describe("corpus replay verification", () => {
         specimenId: "punctuation",
         reference,
         actual: "the runtime verifier checks the isolated daemon socket",
+        polished: true,
         polishStatus: "applied",
       }),
     ).toThrow("punctuation floor");
@@ -90,16 +97,32 @@ describe("corpus replay verification", () => {
         specimenId: "mismatch",
         reference,
         actual: "Completely different words appeared in this sentence.",
+        polished: true,
         polishStatus: "applied",
       }),
     ).toThrow("reference overlap");
   });
 
-  test("requires evidence that polish ran while allowing safety-rejected rewrites", () => {
+  test("rejects replay output padded with unrelated hallucinated vocabulary", () => {
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "hallucinated-tail",
+        reference: "the runtime verifier checks the isolated daemon socket safely",
+        actual:
+          "The runtime verifier checks unrelated purple elephants while calendars " +
+          "negotiate loudly beneath fictional oceans and impossible mountains forever.",
+        polished: true,
+        polishStatus: "applied",
+      }),
+    ).toThrow("vocabulary similarity");
+  });
+
+  test("requires evidence that polish was applied", () => {
     const base = {
       specimenId: "polish-evidence",
       reference: "the corpus verifier exercised the polish layer",
       actual: "The corpus verifier exercised the polish layer.",
+      polished: true,
     };
 
     expect(() =>
@@ -108,14 +131,7 @@ describe("corpus replay verification", () => {
         polishStatus: "rejected",
         polishReason: "polish response removed code punctuation",
       }),
-    ).not.toThrow();
-    expect(() =>
-      assertCorpusReplayResult({
-        ...base,
-        polishStatus: "rejected",
-        polishReason: "empty polish response",
-      }),
-    ).toThrow("empty polish candidate");
+    ).toThrow("polish path did not complete");
     expect(() => assertCorpusReplayResult({ ...base, polishStatus: "failed" })).toThrow(
       "polish path did not complete",
     );
@@ -125,6 +141,19 @@ describe("corpus replay verification", () => {
     expect(() => assertCorpusReplayResult({ ...base, polishStatus: "" })).toThrow(
       "polish path did not complete",
     );
+  });
+
+  test("refuses a cleaned fallback that was not actually polished", () => {
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "fallback",
+        reference: "the corpus verifier exercised the polish layer",
+        actual: "The corpus verifier exercised the polish layer.",
+        polished: false,
+        polishStatus: "rejected",
+        polishReason: "polish response removed protected punctuation",
+      }),
+    ).toThrow("polished=true");
   });
 
   test("selects the newest deterministic valid specimens and skips unusable recordings", () => {
@@ -225,6 +254,120 @@ describe("corpus replay verification", () => {
     );
 
     expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+
+  test("clears the daemon grace timer after prompt exit", async () => {
+    const originalSetTimeout = globalThis.setTimeout;
+    const originalClearTimeout = globalThis.clearTimeout;
+    let cleared = false;
+    globalThis.setTimeout = ((callback: () => void, timeoutMs: number) => {
+      expect(timeoutMs).toBe(10_000);
+      return 4242;
+    }) as typeof setTimeout;
+    globalThis.clearTimeout = ((timer: ReturnType<typeof setTimeout>) => {
+      expect(timer).toBe(4242);
+      cleared = true;
+    }) as typeof clearTimeout;
+    try {
+      await terminateVerifyDaemon({
+        exited: Promise.resolve(0),
+        kill() {},
+      });
+    } finally {
+      globalThis.setTimeout = originalSetTimeout;
+      globalThis.clearTimeout = originalClearTimeout;
+    }
+
+    expect(cleared).toBe(true);
+  });
+
+  test("signals the detached daemon process group so recorder children are terminated", () => {
+    const groupSignals: Array<[number, string]> = [];
+    const directSignals: string[] = [];
+    signalDetachedProcessGroup(
+      {
+        pid: 4242,
+        kill(signal) {
+          directSignals.push(signal);
+        },
+      },
+      "SIGTERM",
+      (pid, signal) => {
+        groupSignals.push([pid, signal]);
+        return true;
+      },
+    );
+
+    expect(groupSignals).toEqual([[-4242, "SIGTERM"]]);
+    expect(directSignals).toEqual([]);
+  });
+
+  test("times out and terminates a hung Swift interaction runner", async () => {
+    const signals: string[] = [];
+    let resolveExit!: (code: number) => void;
+    const exited = new Promise<number>((resolve) => {
+      resolveExit = resolve;
+    });
+
+    await expect(
+      waitForInteractionRunner(
+        {
+          exited,
+          kill(signal) {
+            signals.push(signal);
+            resolveExit(143);
+          },
+        },
+        1,
+      ),
+    ).rejects.toThrow("timed out");
+    expect(signals).toEqual(["SIGTERM"]);
+  });
+
+  test("production Swift handoff propagates the isolated runtime environment", async () => {
+    const root = makeTempRoot();
+    const workDir = join(root, "verify-work");
+    const runner = join(root, "interaction-runner.sh");
+    const receipt = join(root, "interaction-env.txt");
+    mkdirSync(workDir, { recursive: true });
+    writeFileSync(
+      runner,
+      [
+        "#!/bin/sh",
+        "set -eu",
+        ': "${CORPUS_RUNNER_ACTIVE:?}"',
+        ': "${VOICELAYER_VERIFY_WORK_DIR:?}"',
+        ': "${VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH:?}"',
+        ': "${VOICELAYER_VERIFY_AUDIO_FIXTURE:?}"',
+        'printf "%s\\n%s\\n%s\\n" "$VOICELAYER_VERIFY_WORK_DIR" "$VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH" "$VOICELAYER_VERIFY_AUDIO_FIXTURE" > "$VERIFY_RECEIPT"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const previousRunner = process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+    const previousReceipt = process.env.VERIFY_RECEIPT;
+    process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER = runner;
+    process.env.VERIFY_RECEIPT = receipt;
+    try {
+      await runSwiftRuntimeInteractionLeg({
+        repoRoot: root,
+        workDir,
+        voiceBarSocketPath: join(workDir, "voicebar.sock"),
+        audioFixture: join(workDir, "audio.wav"),
+      });
+    } finally {
+      if (previousRunner === undefined) {
+        delete process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+      } else {
+        process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER = previousRunner;
+      }
+      if (previousReceipt === undefined) delete process.env.VERIFY_RECEIPT;
+      else process.env.VERIFY_RECEIPT = previousReceipt;
+    }
+
+    expect(await Bun.file(receipt).text()).toBe(
+      `${workDir}\n${join(workDir, "voicebar.sock")}\n${join(workDir, "audio.wav")}\n`,
+    );
   });
 
   test("drives record/cancel and record/stop transitions on the daemon NDJSON stream", async () => {
