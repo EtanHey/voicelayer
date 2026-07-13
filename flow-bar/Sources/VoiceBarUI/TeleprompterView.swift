@@ -174,6 +174,29 @@ public enum TeleprompterScrollPolicy {
     public static func position(for wordIndex: Int) -> TeleprompterScrollPosition {
         wordIndex == 0 ? .top : .center
     }
+
+    /// Replacing the brief must replace the ScrollView identity too. Otherwise
+    /// SwiftUI can paint the previous brief's mid-stream offset for one frame
+    /// before the onChange reset reaches word zero.
+    public static func contentIdentity(for text: String) -> String {
+        text
+    }
+}
+
+public enum TeleprompterVisibilityPolicy {
+    /// Hide/show is presentation-only: the mounted view owns the playback
+    /// timeline, so removing it would restart highlighting from word zero.
+    public static func keepsTimelineMounted(hasText: Bool) -> Bool {
+        hasText
+    }
+
+    public static func timelineOpacity(isDismissed: Bool) -> Double {
+        isDismissed ? 0 : 1
+    }
+
+    public static func hiddenLabelOpacity(isDismissed: Bool) -> Double {
+        isDismissed ? 1 : 0
+    }
 }
 
 public struct TeleprompterView: View {
@@ -223,10 +246,11 @@ public struct TeleprompterView: View {
                     alignment: .center
                 )
             }
+            .id(TeleprompterScrollPolicy.contentIdentity(for: text))
             .clipped()
             .onAppear {
-                startAnimating()
                 scrollToCurrentWord(with: proxy, animated: false)
+                startAnimating()
             }
             .onDisappear { stopAnimating() }
             .onChange(of: text) { _, _ in

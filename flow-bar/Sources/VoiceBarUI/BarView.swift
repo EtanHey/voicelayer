@@ -9,6 +9,18 @@
 import AppKit
 import SwiftUI
 
+public enum VoiceBarContentTransitionPolicy {
+    public static func removalUsesCrossFade(for mode: VoiceMode) -> Bool {
+        mode != .speaking
+    }
+
+    public static func transition(for mode: VoiceMode) -> AnyTransition {
+        let crossFade = AnyTransition.opacity.animation(.easeInOut(duration: 0.2))
+        let removal = removalUsesCrossFade(for: mode) ? crossFade : .identity
+        return .asymmetric(insertion: crossFade, removal: removal)
+    }
+}
+
 // MARK: - Pulsing recording dot
 
 public struct PulsingDot: View {
@@ -301,20 +313,35 @@ public struct BarView: View {
                 } else {
                     // Shimmer waveform + teleprompter during speaking
                     WaveformView(mode: .idle, audioLevel: state.audioLevel)
-                    if !state.statusText.isEmpty, !state.isTeleprompterDismissed {
-                        TeleprompterView(
-                            text: state.statusText,
-                            wordBoundaries: state.wordBoundaries
-                        )
+                    if TeleprompterVisibilityPolicy.keepsTimelineMounted(
+                        hasText: !state.statusText.isEmpty
+                    ) {
+                        ZStack(alignment: .leading) {
+                            TeleprompterView(
+                                text: state.statusText,
+                                wordBoundaries: state.wordBoundaries
+                            )
+                            .opacity(
+                                TeleprompterVisibilityPolicy.timelineOpacity(
+                                    isDismissed: state.isTeleprompterDismissed
+                                )
+                            )
+                            .accessibilityHidden(state.isTeleprompterDismissed)
+
+                            Text("Teleprompter hidden")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .opacity(
+                                    TeleprompterVisibilityPolicy.hiddenLabelOpacity(
+                                        isDismissed: state.isTeleprompterDismissed
+                                    )
+                                )
+                                .accessibilityHidden(!state.isTeleprompterDismissed)
+                        }
                         .frame(
                             width: Theme.teleprompterViewportWidth,
                             height: Theme.teleprompterViewportHeight
                         )
-                    } else if state.isTeleprompterDismissed {
-                        Text("Teleprompter hidden")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                            .frame(width: Theme.teleprompterViewportWidth, alignment: .leading)
                     } else {
                         statusLabel
                     }
@@ -354,7 +381,7 @@ public struct BarView: View {
         // partial animations when SwiftUI tries to morph between different
         // view hierarchies (e.g., PulsingDot → TeleprompterView).
         .id(state.mode)
-        .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+        .transition(VoiceBarContentTransitionPolicy.transition(for: state.mode))
     }
 
     private var queueVisualization: some View {

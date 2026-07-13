@@ -110,13 +110,13 @@ public enum Theme {
 
     /// Speaking mode keeps a fixed teleprompter viewport so long text scrolls
     /// inside the pill instead of stretching the capsule.
-    public static let teleprompterViewportWidth: CGFloat = 280
+    public static let teleprompterViewportWidth: CGFloat = 254
     public static let teleprompterViewportHeight: CGFloat = 78
-    public static let teleprompterWrapWidth: CGFloat = 272
+    public static let teleprompterWrapWidth: CGFloat = 246
     public static let teleprompterContentInset: CGFloat = 4
 
     public static let speakingTeleprompterChromeWidth: CGFloat =
-        14 + 14 + 6 + 46 + pillActionButtonSize + (8 * 3)
+        14 + 14 + 6 + 46 + (pillActionButtonSize * 2) + pillActionButtonSpacing + (8 * 3)
     public static let speakingTeleprompterAvailableWidth: CGFloat =
         pillSpeakingQueueWidth - speakingTeleprompterChromeWidth
 

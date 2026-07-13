@@ -47,6 +47,30 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
     }
 
+    func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
+        XCTAssertNotEqual(
+            TeleprompterScrollPolicy.contentIdentity(for: "first brief"),
+            TeleprompterScrollPolicy.contentIdentity(for: "replacement brief")
+        )
+    }
+
+    func testDismissingTeleprompterKeepsTimelineMountedButVisuallyHidden() {
+        XCTAssertTrue(TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: true))
+        XCTAssertEqual(TeleprompterVisibilityPolicy.timelineOpacity(isDismissed: true), 0)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.timelineOpacity(isDismissed: false), 1)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: true), 1)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: false), 0)
+    }
+
+    func testSpeakingContentIsRemovedImmediatelyWhileOtherModesKeepTheirCrossFade() {
+        XCTAssertFalse(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .speaking))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .idle))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .recording))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .transcribing))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .error))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .disconnected))
+    }
+
     func testFiltersEmptyBoundaryTokensBeforeDrivingHighlighting() {
         let words = TeleprompterContentModel.words(
             text: "Hello world",
