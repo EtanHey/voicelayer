@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "fs";
@@ -28,6 +29,27 @@ function makeTempRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "voicelayer-corpus-verify-test-"));
   tempRoots.push(root);
   return root;
+}
+
+function linuxProcessStatIsRunning(stat: string): boolean {
+  const commandEnd = stat.lastIndexOf(")");
+  if (commandEnd < 0) return true;
+  const state = stat.slice(commandEnd + 2).split(/\s/u, 1)[0];
+  return state !== "Z" && state !== "X" && state !== "x";
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+  if (process.platform !== "linux") return true;
+  try {
+    return linuxProcessStatIsRunning(readFileSync(`/proc/${pid}/stat`, "utf8"));
+  } catch {
+    return false;
+  }
 }
 
 function writeSpecimen(
@@ -513,7 +535,7 @@ describe("corpus replay verification", () => {
       },
     };
     let childPid = 0;
-    let childSurvived = false;
+    let childRunning = false;
     try {
       const receiptDeadline = Date.now() + 1_000;
       while (!(await Bun.file(childPidPath).exists()) && Date.now() < receiptDeadline) {
@@ -525,16 +547,11 @@ describe("corpus replay verification", () => {
       ).rejects.toThrow("process group");
       const exitDeadline = Date.now() + 1_000;
       do {
-        try {
-          process.kill(childPid, 0);
-          childSurvived = true;
-        } catch {
-          childSurvived = false;
-        }
-        if (childSurvived) await Bun.sleep(25);
-      } while (childSurvived && Date.now() < exitDeadline);
+        childRunning = isProcessRunning(childPid);
+        if (childRunning) await Bun.sleep(25);
+      } while (childRunning && Date.now() < exitDeadline);
     } finally {
-      if (childSurvived && childPid > 1) {
+      if (childRunning && childPid > 1) {
         try {
           process.kill(childPid, "SIGKILL");
         } catch {}
@@ -542,7 +559,12 @@ describe("corpus replay verification", () => {
     }
 
     expect(childPid).toBeGreaterThan(1);
-    expect(childSurvived).toBe(false);
+    expect(childRunning).toBe(false);
+  });
+
+  test("treats an unreaped Linux zombie as not running", () => {
+    expect(linuxProcessStatIsRunning("4242 (sleep) Z 1 4242 4242 0")).toBe(false);
+    expect(linuxProcessStatIsRunning("4242 (sleep) S 1 4242 4242 0")).toBe(true);
   });
 
   test("interaction timeout terminates the runner's full process group", async () => {
@@ -577,7 +599,7 @@ describe("corpus replay verification", () => {
     process.env.VOICELAYER_VERIFY_INTERACTION_TERMINATION_GRACE_MS = "100";
     process.env.VERIFY_CHILD_PID = childPidPath;
     let childPid = 0;
-    let childSurvived = false;
+    let childRunning = false;
     const startedAt = Date.now();
     try {
       await expect(
@@ -591,16 +613,11 @@ describe("corpus replay verification", () => {
       childPid = Number((await Bun.file(childPidPath).text()).trim());
       const deadline = Date.now() + 1000;
       do {
-        try {
-          process.kill(childPid, 0);
-          childSurvived = true;
-        } catch {
-          childSurvived = false;
-        }
-        if (childSurvived) await Bun.sleep(25);
-      } while (childSurvived && Date.now() < deadline);
+        childRunning = isProcessRunning(childPid);
+        if (childRunning) await Bun.sleep(25);
+      } while (childRunning && Date.now() < deadline);
     } finally {
-      if (childSurvived && childPid > 1) {
+      if (childRunning && childPid > 1) {
         try {
           process.kill(childPid, "SIGKILL");
         } catch {}
@@ -628,7 +645,7 @@ describe("corpus replay verification", () => {
     }
 
     expect(childPid).toBeGreaterThan(1);
-    expect(childSurvived).toBe(false);
+    expect(childRunning).toBe(false);
     expect(Date.now() - startedAt).toBeLessThan(2_500);
   });
 
