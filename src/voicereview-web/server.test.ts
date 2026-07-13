@@ -2063,11 +2063,20 @@ describe("VoiceReview web server helpers", () => {
         env: { PATH: process.env.PATH || "" },
         signal: abort.signal,
       });
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (await readFile(readyPath, "utf8").catch(() => "")) break;
-        await new Promise((resolve) => setTimeout(resolve, 5));
+      const readyDeadline = Date.now() + 2_000;
+      let ready = false;
+      while (Date.now() < readyDeadline) {
+        const readyText = await readFile(readyPath, "utf8").catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+          throw error;
+        });
+        if (readyText === "ready") {
+          ready = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      expect(await readFile(readyPath, "utf8")).toBe("ready");
+      expect(ready).toBe(true);
       abort.abort();
 
       try {

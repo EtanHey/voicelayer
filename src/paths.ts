@@ -131,6 +131,13 @@ export function retainedRecordingFilePath(
   );
 }
 
+/** Polish-surface metadata bound to the retained WAV. */
+export function retainedRecordingMetadataFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return `${retainedRecordingFilePath(env)}.metadata.json`;
+}
+
 /** Ring buffer history file — JSON array of last 20 TTS entries. */
 export const TTS_HISTORY_FILE = tmpPath("voicelayer-history.json");
 
