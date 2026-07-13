@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import Vision
 @testable import VoiceBarUI
 import XCTest
 
@@ -14,8 +15,54 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
     }
 
     private let pillSize = CGSize(width: Theme.panelWidth, height: Theme.teleprompterViewportHeight + 8)
+    private var transitionCanvasSize: CGSize {
+        CGSize(width: pillSize.width + 20, height: pillSize.height)
+    }
+
+    func testArtifactRegenerationRequiresExplicitOptIn() {
+        XCTAssertFalse(VisualArtifactTestPolicy.isRegenerationEnabled(environment: [:]))
+        XCTAssertTrue(
+            VisualArtifactTestPolicy.isRegenerationEnabled(
+                environment: [VisualArtifactTestPolicy.environmentVariable: "1"]
+            )
+        )
+    }
+
+    func testEscapeTransitionFrameShowsIdleContentWithoutOutgoingTeleprompter() async throws {
+        let state = speakingState(
+            text: "Outgoing teleprompter words must be gone before the idle controls appear"
+        )
+        let host = escapeTransitionHost(state: state)
+        try await settle(for: .milliseconds(350), host: host)
+
+        state.mode = .idle
+        state.statusText = ""
+        try await settle(for: .milliseconds(50), host: host)
+
+        let bitmap = try XCTUnwrap(renderBitmap(host, size: host.frame.size))
+        let recognizedText = try recognizedText(in: bitmap).lowercased()
+
+        XCTAssertTrue(
+            recognizedText.contains(VoiceBarPresentation.readyHotkeyHint.lowercased()),
+            "The 50 ms frame must visibly contain the incoming idle bar; OCR found: \(recognizedText)"
+        )
+        let outgoingTokens = [
+            "outgoing", "teleprompter", "words", "gone", "before", "controls", "appear",
+        ]
+        let overlappingTokens = outgoingTokens.filter(recognizedText.contains)
+        XCTAssertTrue(
+            overlappingTokens.isEmpty,
+            "Outgoing teleprompter text must not be composited over the incoming idle bar; " +
+                "OCR still found: \(overlappingTokens)"
+        )
+        XCTAssertTrue(
+            hasTransparentHorizontalClearance(bitmap),
+            "The transition capsule must be fully contained by the receipt canvas"
+        )
+    }
 
     func testWritesSecondWaveTeleprompterArtifacts() async throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("ux-second-wave-teleprompter")
@@ -36,7 +83,7 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
         let state = speakingState(
             text: "Outgoing teleprompter words must be gone before the idle controls appear"
         )
-        let host = pillHost(state: state)
+        let host = escapeTransitionHost(state: state)
         try await settle(for: .milliseconds(350), host: host)
 
         state.mode = .idle
@@ -153,6 +200,25 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
         return host
     }
 
+    private func escapeTransitionHost(state: VoiceState) -> NSHostingView<AnyView> {
+        let host = NSHostingView(
+            rootView: AnyView(
+                ZStack {
+                    BarView(state: state, commandRouter: ArtifactCommandRouter())
+                        .frame(width: pillSize.width, height: pillSize.height)
+                }
+                .frame(
+                    width: transitionCanvasSize.width,
+                    height: transitionCanvasSize.height,
+                    alignment: .leading
+                )
+            )
+        )
+        host.frame = NSRect(origin: .zero, size: transitionCanvasSize)
+        host.layoutSubtreeIfNeeded()
+        return host
+    }
+
     private func settle(
         for duration: Duration,
         host: NSHostingView<AnyView>
@@ -177,15 +243,10 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
         named name: String,
         in directory: URL
     ) throws {
-        host.frame = NSRect(origin: .zero, size: size)
-        host.layoutSubtreeIfNeeded()
-
-        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+        guard let bitmap = renderBitmap(host, size: size) else {
             XCTFail("Could not create bitmap for \(name)")
             return
         }
-        bitmap.size = size
-        host.cacheDisplay(in: host.bounds, to: bitmap)
 
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
             XCTFail("Could not encode PNG for \(name)")
@@ -199,6 +260,54 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
             try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0,
             0
         )
+    }
+
+    private func renderBitmap(
+        _ host: NSHostingView<some View>,
+        size: CGSize
+    ) -> NSBitmapImageRep? {
+        host.frame = NSRect(origin: .zero, size: size)
+        host.layoutSubtreeIfNeeded()
+
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            return nil
+        }
+        bitmap.size = size
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        return bitmap
+    }
+
+    private func recognizedText(in bitmap: NSBitmapImageRep) throws -> String {
+        guard let image = bitmap.cgImage else {
+            return ""
+        }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? [])
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: " ")
+    }
+
+    private func hasTransparentHorizontalClearance(
+        _ bitmap: NSBitmapImageRep,
+        minimumPixels: Int = 8
+    ) -> Bool {
+        guard bitmap.pixelsWide >= minimumPixels * 2 else {
+            return false
+        }
+        let edgeRanges = [
+            0 ..< minimumPixels,
+            (bitmap.pixelsWide - minimumPixels) ..< bitmap.pixelsWide,
+        ]
+        return edgeRanges.allSatisfy { range in
+            range.allSatisfy { x in
+                (0 ..< bitmap.pixelsHigh).allSatisfy { y in
+                    (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) < 0.01
+                }
+            }
+        }
     }
 
     private func repoRoot() -> URL {

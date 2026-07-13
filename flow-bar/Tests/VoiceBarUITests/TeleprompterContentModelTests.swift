@@ -62,7 +62,14 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: false), 0)
     }
 
-    func testSpeakingContentIsRemovedImmediatelyWhileOtherModesKeepTheirCrossFade() {
+    func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {
+        XCTAssertFalse(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .idle))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .speaking))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .recording))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .transcribing))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .error))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.insertionUsesCrossFade(for: .disconnected))
+
         XCTAssertFalse(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .speaking))
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .idle))
         XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(for: .recording))

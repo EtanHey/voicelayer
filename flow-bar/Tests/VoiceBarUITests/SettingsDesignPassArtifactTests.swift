@@ -9,6 +9,7 @@ import XCTest
 @MainActor
 final class SettingsDesignPassArtifactTests: XCTestCase {
     func testWritesSettingsArtifactsInLightAndDark() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("design")
