@@ -152,6 +152,54 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
     }
 
+    func testEscapeCancelsRecordingAndReturnsToIdle() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.mode = .recording
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleEscape()
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
+    }
+
+    func testEscapeStopsPlaybackAndReturnsToIdle() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.mode = .speaking
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleEscape()
+
+        // Keep the teleprompter visible until playback actually confirms idle.
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
+
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+
+        XCTAssertEqual(state.mode, .idle)
+    }
+
+    func testEscapeIsIgnoredWhileVoiceBarIsIdle() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleEscape()
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertTrue(commands.isEmpty)
+    }
+
     func testToggleCancelsActiveTranscription() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)

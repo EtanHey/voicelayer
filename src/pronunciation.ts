@@ -15,11 +15,17 @@
 import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 
-const PRONUNCIATION_FILE = join(
-  process.env.HOME || "~",
-  ".voicelayer",
-  "pronunciation.yaml",
-);
+const PRONUNCIATION_OVERRIDE_ENV = "QA_VOICE_PRONUNCIATION_PATH";
+
+export function pronunciationFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return env[PRONUNCIATION_OVERRIDE_ENV]?.trim() || join(
+    env.HOME || "~",
+    ".voicelayer",
+    "pronunciation.yaml",
+  );
+}
 
 interface PronunciationEntry {
   pattern: RegExp;
@@ -28,6 +34,7 @@ interface PronunciationEntry {
 
 let cachedEntries: PronunciationEntry[] | null = null;
 let cachedMtime: number = 0;
+let cachedPath: string | null = null;
 
 /**
  * Parse a simple YAML pronunciation dictionary.
@@ -94,22 +101,24 @@ function escapeRegex(str: string): string {
  * Re-reads file only when mtime changes.
  */
 function loadEntries(): PronunciationEntry[] {
-  if (!existsSync(PRONUNCIATION_FILE)) {
+  const path = pronunciationFilePath();
+  if (!existsSync(path)) {
     return [];
   }
 
   try {
-    const stat = statSync(PRONUNCIATION_FILE);
+    const stat = statSync(path);
     const mtime = stat.mtimeMs;
 
-    if (cachedEntries && mtime === cachedMtime) {
+    if (cachedEntries && path === cachedPath && mtime === cachedMtime) {
       return cachedEntries;
     }
 
-    const content = readFileSync(PRONUNCIATION_FILE, "utf-8");
+    const content = readFileSync(path, "utf-8");
     const dict = parseYaml(content);
     cachedEntries = buildEntries(dict);
     cachedMtime = mtime;
+    cachedPath = path;
 
     return cachedEntries;
   } catch {

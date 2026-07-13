@@ -2,9 +2,9 @@
 import XCTest
 
 final class TeleprompterContentModelTests: XCTestCase {
-    func testUsesBoundaryWordsWhenAvailable() {
+    func testUsesDisplayTextWhilePreservingMatchingBoundaryTimings() {
         let words = TeleprompterContentModel.words(
-            text: "fallback text should not be used",
+            text: "This matches speech",
             wordBoundaries: [
                 TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "This"),
                 TeleprompterBoundary(offsetMs: 120, durationMs: 110, text: "matches"),
@@ -16,9 +16,40 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(words.map(\.offsetMs), [0, 120, 250])
     }
 
+    func testPhoneticBoundaryTokensNeverReplaceOriginalDisplayText() {
+        let words = TeleprompterContentModel.words(
+            text: "Etan runs supabase cmuxlayer golems and BrainLayer",
+            wordBoundaries: [
+                TeleprompterBoundary(offsetMs: 0, durationMs: 80, text: "Eh"),
+                TeleprompterBoundary(offsetMs: 90, durationMs: 110, text: "tahn"),
+                TeleprompterBoundary(offsetMs: 220, durationMs: 100, text: "runs"),
+                TeleprompterBoundary(offsetMs: 340, durationMs: 90, text: "Soopa"),
+                TeleprompterBoundary(offsetMs: 440, durationMs: 100, text: "base"),
+                TeleprompterBoundary(offsetMs: 560, durationMs: 120, text: "cmuxlayer"),
+                TeleprompterBoundary(offsetMs: 700, durationMs: 80, text: "Go"),
+                TeleprompterBoundary(offsetMs: 790, durationMs: 90, text: "lems"),
+                TeleprompterBoundary(offsetMs: 900, durationMs: 70, text: "and"),
+                TeleprompterBoundary(offsetMs: 990, durationMs: 100, text: "Brain"),
+                TeleprompterBoundary(offsetMs: 1100, durationMs: 110, text: "Layer"),
+            ]
+        )
+
+        XCTAssertEqual(
+            words.map(\.text),
+            ["Etan", "runs", "supabase", "cmuxlayer", "golems", "and", "BrainLayer"]
+        )
+        XCTAssertFalse(words.map(\.text).contains("Eh"))
+        XCTAssertFalse(words.map(\.text).contains("Soopa"))
+    }
+
+    func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
+        XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
+        XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
+    }
+
     func testFiltersEmptyBoundaryTokensBeforeDrivingHighlighting() {
         let words = TeleprompterContentModel.words(
-            text: "fallback text",
+            text: "Hello world",
             wordBoundaries: [
                 TeleprompterBoundary(offsetMs: 0, durationMs: 100, text: "Hello"),
                 TeleprompterBoundary(offsetMs: 120, durationMs: 110, text: " "),

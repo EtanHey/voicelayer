@@ -413,6 +413,69 @@ export function mergeWordBoundaryChunks(
   return merged;
 }
 
+/**
+ * Re-label engine word timings with the text shown in VoiceBar.
+ *
+ * Pronunciation substitutions can expand one display token into several spoken
+ * tokens (for example, "Etan" -> "Eh tahn"). In that case the original token
+ * owns the complete timing span of its spoken replacement.
+ */
+export function alignWordBoundariesToDisplayText(
+  displayText: string,
+  spokenText: string,
+  wordBoundaries: WordBoundary[],
+): WordBoundary[] {
+  if (displayText === spokenText || wordBoundaries.length === 0) {
+    return wordBoundaries;
+  }
+
+  const displayTokens = displayText.match(/\S+/gu) ?? [];
+  const spokenTokens = spokenText.match(/\S+/gu) ?? [];
+  if (displayTokens.length === 0) return wordBoundaries;
+
+  const collapseToDisplayText = (): WordBoundary[] => {
+    const first = wordBoundaries[0];
+    const last = wordBoundaries[wordBoundaries.length - 1];
+    return [{
+      offset_ms: first.offset_ms,
+      duration_ms: last.offset_ms + last.duration_ms - first.offset_ms,
+      text: displayText,
+    }];
+  };
+  if (spokenTokens.length !== wordBoundaries.length) {
+    return collapseToDisplayText();
+  }
+
+  const aligned: WordBoundary[] = [];
+  let boundaryIndex = 0;
+
+  for (const displayToken of displayTokens) {
+    const replacementTokenCount =
+      applyPronunciation(displayToken).match(/\S+/gu)?.length ?? 1;
+    const replacementBoundaries = wordBoundaries.slice(
+      boundaryIndex,
+      boundaryIndex + replacementTokenCount,
+    );
+    if (replacementBoundaries.length !== replacementTokenCount) {
+      return collapseToDisplayText();
+    }
+
+    const first = replacementBoundaries[0];
+    const last = replacementBoundaries[replacementBoundaries.length - 1];
+    aligned.push({
+      offset_ms: first.offset_ms,
+      duration_ms:
+        last.offset_ms + last.duration_ms - first.offset_ms,
+      text: displayToken,
+    });
+    boundaryIndex += replacementTokenCount;
+  }
+
+  return boundaryIndex === wordBoundaries.length
+    ? aligned
+    : collapseToDisplayText();
+}
+
 // --- Ring Buffer ---
 
 export interface TTSHistoryEntry {
@@ -1039,8 +1102,12 @@ export async function speak(
   // SSML injection defense — strip tags before any TTS engine
   text = sanitizeTtsText(text);
 
+  // VoiceBar must show the caller's text, while engines receive the phonetic
+  // form. Keep these values separate for the remainder of the pipeline.
+  const displayText = text;
+
   // Apply pronunciation corrections before any TTS engine
-  text = applyPronunciation(text);
+  const spokenText = applyPronunciation(displayText);
 
   // Check if TTS is disabled
   if (isTTSDisabled()) {
@@ -1066,7 +1133,7 @@ export async function speak(
 
   // Truncate for IPC — keep generous limit for teleprompter scrolling.
   // Voice Bar's ScrollView + FlowLayout handles long text fine.
-  const speakingText = text.slice(0, 2000);
+  const speakingText = displayText.slice(0, 2000);
 
   // Context-aware shortcut: short announcements use edge-tts for speed.
   // Skipped when a clone is mandated — a required clone must not be downgraded.
@@ -1074,13 +1141,14 @@ export async function speak(
     resolved.engine === "cloned" &&
     !requireClone &&
     options?.mode === "announce" &&
-    text.length < 50
+    spokenText.length < 50
   ) {
     return speakWithEdgeTTS(
-      text,
+      spokenText,
       resolved.fallbackVoice || DEFAULT_VOICE,
       options,
       resolved.warning,
+      displayText,
     );
   }
 
@@ -1092,7 +1160,7 @@ export async function speak(
     // Tier 0: XTTS-v2 fine-tuned (best quality -- captures cadence + timbre)
     if (isXTTSAvailable(profileAssetVoice) && profile?.reference_clip) {
       const wavPath = await synthesizeXTTS(
-        text,
+        spokenText,
         profileAssetVoice,
         profile.reference_clip,
       );
@@ -1100,7 +1168,7 @@ export async function speak(
       if (mp3Path) {
         await playClonedAudio(
           mp3Path,
-          text,
+          displayText,
           `xtts:${resolved.voice}`,
           speakingText,
           resolved.voice,
@@ -1121,7 +1189,7 @@ export async function speak(
       profile.reference_text
     ) {
       const wavPath = await synthesizeF5TTS(
-        text,
+        spokenText,
         profile.reference_clip,
         profile.reference_text,
       );
@@ -1129,7 +1197,7 @@ export async function speak(
       if (mp3Path) {
         await playClonedAudio(
           mp3Path,
-          text,
+          displayText,
           `f5tts:${resolved.voice}`,
           speakingText,
           resolved.voice,
@@ -1143,13 +1211,13 @@ export async function speak(
     }
 
     // Tier 1b: Qwen3-TTS daemon (HTTP-based zero-shot)
-    const audioBuffer = await synthesizeCloned(text, resolved.voice);
+    const audioBuffer = await synthesizeCloned(spokenText, resolved.voice);
     if (audioBuffer) {
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
       await playClonedAudio(
         ttsFile,
-        text,
+        displayText,
         `cloned:${resolved.voice}`,
         speakingText,
         resolved.voice,
@@ -1170,14 +1238,22 @@ export async function speak(
       `[voicelayer] Cloned voice "${resolved.voice}" unavailable — falling back to edge-tts (${resolved.fallbackVoice})`,
     );
     return speakWithEdgeTTS(
-      text,
+      spokenText,
       resolved.fallbackVoice || DEFAULT_VOICE,
       options,
+      undefined,
+      displayText,
     );
   }
 
   // Tier 2: Preset/default → edge-tts
-  return speakWithEdgeTTS(text, resolved.voice, options, resolved.warning);
+  return speakWithEdgeTTS(
+    spokenText,
+    resolved.voice,
+    options,
+    resolved.warning,
+    displayText,
+  );
 }
 
 /**
@@ -1185,7 +1261,7 @@ export async function speak(
  * Extracted from speak() to allow fallback from cloned voice failure.
  */
 async function speakWithEdgeTTS(
-  text: string,
+  spokenText: string,
   voice: string,
   options?: {
     rate?: string;
@@ -1194,6 +1270,7 @@ async function speakWithEdgeTTS(
     onPlaybackStart?: (startedAtMs: number) => void;
   },
   warning?: string,
+  displayText: string = spokenText,
 ): Promise<{ warning?: string }> {
   // Determine rate: explicit > mode default > env default
   let rate =
@@ -1202,7 +1279,7 @@ async function speakWithEdgeTTS(
     DEFAULT_RATE;
 
   // Auto-slow for long text
-  rate = adjustRateForLength(rate, text.length);
+  rate = adjustRateForLength(rate, spokenText.length);
 
   const ttsFile = ttsFilePath(process.pid, ttsCounter++);
   const scriptPath = new URL("../scripts/edge-tts-words.py", import.meta.url)
@@ -1211,7 +1288,7 @@ async function speakWithEdgeTTS(
   let wordBoundaries: WordBoundary[] = [];
 
   try {
-    const textChunks = chunkTextForTTS(text);
+    const textChunks = chunkTextForTTS(spokenText);
 
     if (textChunks.length === 1) {
       const synthesized = await synthesizeEdgeChunk(
@@ -1266,13 +1343,19 @@ async function speakWithEdgeTTS(
     } catch {}
   }
 
+  wordBoundaries = alignWordBoundariesToDisplayText(
+    displayText,
+    spokenText,
+    wordBoundaries,
+  );
+
   // Pass metadata to queue — broadcasting happens when audio actually starts
   let proc: PlaybackHandle;
   try {
     assertSpeakerClear();
-    addToHistory(text, ttsFile, voice);
+    addToHistory(displayText, ttsFile, voice);
     proc = playAudioNonBlocking(ttsFile, {
-      text: text.slice(0, 2000),
+      text: displayText.slice(0, 2000),
       voice,
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),

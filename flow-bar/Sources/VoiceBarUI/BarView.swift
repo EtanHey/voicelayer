@@ -301,7 +301,7 @@ public struct BarView: View {
                 } else {
                     // Shimmer waveform + teleprompter during speaking
                     WaveformView(mode: .idle, audioLevel: state.audioLevel)
-                    if !state.statusText.isEmpty {
+                    if !state.statusText.isEmpty, !state.isTeleprompterDismissed {
                         TeleprompterView(
                             text: state.statusText,
                             wordBoundaries: state.wordBoundaries
@@ -310,6 +310,11 @@ public struct BarView: View {
                             width: Theme.teleprompterViewportWidth,
                             height: Theme.teleprompterViewportHeight
                         )
+                    } else if state.isTeleprompterDismissed {
+                        Text("Teleprompter hidden")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                            .frame(width: Theme.teleprompterViewportWidth, alignment: .leading)
                     } else {
                         statusLabel
                     }
@@ -571,6 +576,13 @@ public struct BarView: View {
                 pillButton(icon: "xmark") { commandRouter.handleCancel() }
             }
             if state.mode == .speaking {
+                pillButton(icon: state.isTeleprompterDismissed ? "eye" : "eye.slash") {
+                    if state.isTeleprompterDismissed {
+                        state.showTeleprompter()
+                    } else {
+                        state.dismissTeleprompter()
+                    }
+                }
                 pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }
             if state.mode == .error {

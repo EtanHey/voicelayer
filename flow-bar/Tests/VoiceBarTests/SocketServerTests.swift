@@ -1,9 +1,12 @@
+import AppKit
 import Darwin
+import SwiftUI
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class SocketServerTests: XCTestCase {
+    private var windows: [NSWindow] = []
     deinit {}
 
     func testUnstartedServerDeinitDoesNotUnlinkSocketPathItDoesNotOwn() throws {
@@ -125,6 +128,91 @@ final class SocketServerTests: XCTestCase {
         XCTAssertNil(try readLine(from: passiveClient, timeout: 0.2))
     }
 
+    func testStopInterruptReachesLegacyPlaybackClientAndCommandOwner() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+
+        fixture.server.sendCommandToOwner(command: ["cmd": "stop"])
+
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+    }
+
+    @MainActor
+    func testRealSpeakingStopButtonInterruptsPlaybackOwnerThroughSocketThenReachesIdle() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Etan runs supabase cmuxlayer golems and BrainLayer"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        windows.append(window)
+        host.layoutSubtreeIfNeeded()
+
+        let legacyStop = try clickSpeakingStop(
+            host,
+            in: window,
+            playbackClient: fixture.legacyClient
+        )
+
+        XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
+        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+
+    @MainActor
+    func testF18AndEscapeEventsDriveProductionDispatcherToPlaybackStopAndIdle() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        var f18DownCount = 0
+
+        let f18 = hotkeyAction(
+            type: .keyDown,
+            keycode: 79,
+            flags: [],
+            autorepeat: 0,
+            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+            useModifierMode: false
+        )
+        dispatchHotkeyAction(f18, onKeyDown: { f18DownCount += 1 }, onCancel: { router.handleEscape() })
+        XCTAssertTrue(waitForCondition(timeout: 1) { f18DownCount == 1 })
+
+        try writeLine(#"{"type":"state","state":"speaking","text":"Etan"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+        let escape = hotkeyAction(
+            type: .keyDown,
+            keycode: 53,
+            flags: [],
+            autorepeat: 0,
+            targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+            useModifierMode: false,
+            cancellationIsActive: router.shouldHandleEscape
+        )
+        dispatchHotkeyAction(escape, onKeyDown: {}, onCancel: { router.handleEscape() })
+        XCTAssertTrue(waitForCondition(timeout: 1) {
+            fixture.state.mode == .speaking
+        })
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+
+        XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
+        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+
     func testPassiveClientDoesNotMarkVoiceBarConnectedUntilCommandOwnerRegisters() throws {
         let directory = URL(fileURLWithPath: "/tmp")
             .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
@@ -184,6 +272,82 @@ final class SocketServerTests: XCTestCase {
         XCTAssertEqual(state.hotkeyPhase, .idle)
         XCTAssertEqual(state.errorMessage, "VoiceLayer is starting")
     }
+}
+
+private struct ConnectedServerFixture {
+    let directory: URL
+    let state: VoiceState
+    let server: SocketServer
+    let legacyClient: Int32
+    let commandClient: Int32
+
+    func cleanup() {
+        close(legacyClient)
+        close(commandClient)
+        server.stop()
+        try? FileManager.default.removeItem(at: directory)
+    }
+}
+
+private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
+    let directory = URL(fileURLWithPath: "/tmp")
+        .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let socketURL = directory.appendingPathComponent("voicelayer.sock")
+    let state = VoiceState()
+    let server = SocketServer(state: state, socketPath: socketURL.path)
+    server.start()
+    guard waitForSocket(at: socketURL.path) else {
+        throw NSError(domain: "SocketServerTests", code: 1)
+    }
+    let legacyClient = try connectUnixSocket(path: socketURL.path)
+    let commandClient = try connectUnixSocket(path: socketURL.path)
+    try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: legacyClient)
+    try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
+    Thread.sleep(forTimeInterval: 0.1)
+    return ConnectedServerFixture(
+        directory: directory,
+        state: state,
+        server: server,
+        legacyClient: legacyClient,
+        commandClient: commandClient
+    )
+}
+
+@MainActor
+private func click(_ host: NSView, at point: NSPoint, in window: NSWindow) throws {
+    guard host.hitTest(point) != nil else {
+        throw NSError(domain: "SocketServerTests", code: 2)
+    }
+    let timestamp = ProcessInfo.processInfo.systemUptime
+    let down = try XCTUnwrap(NSEvent.mouseEvent(
+        with: .leftMouseDown, location: point, modifierFlags: [], timestamp: timestamp,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 0
+    ))
+    let up = try XCTUnwrap(NSEvent.mouseEvent(
+        with: .leftMouseUp, location: point, modifierFlags: [], timestamp: timestamp + 0.01,
+        windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0
+    ))
+    window.sendEvent(down)
+    window.sendEvent(up)
+}
+
+@MainActor
+private func clickSpeakingStop(
+    _ host: NSView,
+    in window: NSWindow,
+    playbackClient: Int32
+) throws -> String {
+    var x = host.bounds.maxX - 10
+    while x >= host.bounds.midX {
+        try click(host, at: NSPoint(x: x, y: host.bounds.midY), in: window)
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        if let line = try readLine(from: playbackClient, timeout: 0.02) {
+            return line
+        }
+        x -= 3
+    }
+    throw NSError(domain: "SocketServerTests", code: 3)
 }
 
 private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
@@ -273,6 +437,15 @@ private func waitForMode(_ state: VoiceState, mode: VoiceMode, timeout: TimeInte
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
     }
     return state.mode == mode
+}
+
+private func waitForCondition(timeout: TimeInterval, condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+    }
+    return condition()
 }
 
 private func readLine(from fd: Int32, timeout: TimeInterval) throws -> String? {

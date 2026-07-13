@@ -56,7 +56,7 @@ private func describeFlags(_ flags: CGEventFlags) -> String {
 /// - F5 held past threshold: starts push-to-talk recording
 /// - F5 double-tap: starts a locked recording
 final class GestureStateMachine {
-    enum State: Sendable, Equatable {
+    enum State: Equatable {
         case idle
         case pressing
         case holding
@@ -339,6 +339,29 @@ func shouldConsumeHotkeyEvent(
         targetKeycodes.contains(keycode)
     case .ignore:
         false
+    }
+}
+
+func dispatchHotkeyAction(
+    _ action: HotkeyAction,
+    onKeyDown: @escaping () -> Void,
+    onKeyUp: @escaping () -> Void = {},
+    onCancel: @escaping () -> Void,
+    onPasteLastTranscript: @escaping () -> Void = {}
+) {
+    switch action {
+    case .keyDown:
+        DispatchQueue.main.async(execute: onKeyDown)
+    case .keyUp:
+        DispatchQueue.main.async(execute: onKeyUp)
+    case .cancel:
+        DispatchQueue.main.async(execute: onCancel)
+    case .sendEnter:
+        postReturnKeyPress()
+    case .pasteLastTranscript:
+        DispatchQueue.main.async(execute: onPasteLastTranscript)
+    case .ignore, .consume:
+        break
     }
 }
 
@@ -686,38 +709,13 @@ private func hotkeyCallback(
         NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
         return nil
     }
-    switch action {
-    case .ignore:
-        break
-    case .keyDown:
-        DispatchQueue.main.async {
-            if isMouseHotkeyEvent {
-                ctx.onMouseDown()
-            } else {
-                ctx.onKeyDown()
-            }
-        }
-    case .keyUp:
-        DispatchQueue.main.async {
-            if isMouseHotkeyEvent {
-                ctx.onMouseUp()
-            } else {
-                ctx.onKeyUp()
-            }
-        }
-    case .cancel:
-        DispatchQueue.main.async {
-            ctx.onCancel()
-        }
-    case .consume:
-        break
-    case .sendEnter:
-        postReturnKeyPress()
-    case .pasteLastTranscript:
-        DispatchQueue.main.async {
-            ctx.onPasteLastTranscript()
-        }
-    }
+    dispatchHotkeyAction(
+        action,
+        onKeyDown: { isMouseHotkeyEvent ? ctx.onMouseDown() : ctx.onKeyDown() },
+        onKeyUp: { isMouseHotkeyEvent ? ctx.onMouseUp() : ctx.onKeyUp() },
+        onCancel: ctx.onCancel,
+        onPasteLastTranscript: ctx.onPasteLastTranscript
+    )
 
     if shouldConsumeHotkeyEvent(
         hotkeyAction: action,

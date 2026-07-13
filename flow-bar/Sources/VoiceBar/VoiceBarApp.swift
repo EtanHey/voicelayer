@@ -562,14 +562,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         manager.onCancel = { [weak self] in
             self?.noteHotkeyActivity(from: .native)
-            self?.commandRouter.handleCancel()
+            self?.commandRouter.handleEscape()
         }
         manager.onPasteLastTranscript = { [weak self] in
             self?.voiceState.repasteLastTranscript(source: "shift_f5")
         }
         manager.shouldHandleEscape = { [weak self] in
-            guard let mode = self?.voiceState.mode else { return false }
-            return mode == .recording || mode == .transcribing || mode == .speaking
+            self?.commandRouter.shouldHandleEscape ?? false
         }
         if manager.start() {
             hotkeyManager = manager

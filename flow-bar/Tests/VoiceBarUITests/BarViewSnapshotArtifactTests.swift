@@ -72,7 +72,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         }
     }
 
-    func testWritesLongSpeakingTeleprompterArtifact() throws {
+    func testWritesPronunciationDisplayTeleprompterArtifact() throws {
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("phase1")
@@ -88,7 +88,19 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         state.isConnected = true
         state.hotkeyEnabled = true
         state.isCollapsed = false
-        state.statusText = "This is a longer VoiceBar spoken teleprompter line with SupercalifragilisticexpialidociousShouldNotClip at the edge"
+        state.statusText = "Etan runs supabase cmuxlayer golems and BrainLayer on version 2.1"
+        state.wordBoundaries = [
+            (0, 220, "Etan"),
+            (240, 180, "runs"),
+            (440, 300, "supabase"),
+            (760, 280, "cmuxlayer"),
+            (1060, 240, "golems"),
+            (1320, 140, "and"),
+            (1480, 320, "BrainLayer"),
+            (1820, 120, "on"),
+            (1960, 200, "version"),
+            (2180, 180, "2.1"),
+        ]
 
         let layout = VoiceBarPanelLayout.make(
             mode: state.mode,
@@ -116,7 +128,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             return
         }
 
-        let outputURL = outputDirectory.appendingPathComponent("speaking-long-teleprompter.png")
+        let outputURL = outputDirectory.appendingPathComponent("speaking-pronunciation-display.png")
         try data.write(to: outputURL, options: .atomic)
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertGreaterThan(try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0, 0)

@@ -104,4 +104,22 @@ describe("VOICELAYER_SOCKET_PATH dev-socket isolation", () => {
       } as NodeJS.ProcessEnv),
     ).toBe(false);
   });
+
+  it("lets a daemon own commands when both sockets are isolated together", () => {
+    expect(paths.shouldAcceptVoiceBarCommands({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(paths.shouldAcceptVoiceBarCommands({
+      VOICELAYER_SOCKET_PATH: DEV,
+      VOICELAYER_MCP_SOCKET_PATH: MCP_DEV,
+    } as NodeJS.ProcessEnv)).toBe(true);
+    expect(paths.shouldAcceptVoiceBarCommands({
+      QA_VOICE_SOCKET_PATH: DEV,
+      QA_VOICE_MCP_SOCKET_PATH: MCP_DEV,
+    } as NodeJS.ProcessEnv)).toBe(true);
+    expect(paths.shouldAcceptVoiceBarCommands({
+      VOICELAYER_SOCKET_PATH: DEV,
+    } as NodeJS.ProcessEnv)).toBe(false);
+    expect(paths.shouldAcceptVoiceBarCommands({
+      VOICELAYER_MCP_SOCKET_PATH: MCP_DEV,
+    } as NodeJS.ProcessEnv)).toBe(false);
+  });
 });
