@@ -80,6 +80,7 @@ const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
 const SINGLE_NARRATIVE_PUNCTUATION_FLOOR_MIN_WORDS = 40;
 const MIN_QUESTION_BOUNDARY_TRANSITIONS = 2;
 const MIN_REJECTED_CANDIDATE_PROJECTION_OVERLAP = 0.8;
+const MAX_PUNCTUATION_PROJECTION_ALIGNMENT_CELLS = 1_000_000;
 const QUESTION_STARTER_WORDS =
   "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
 const QUESTION_STARTER_PATTERN = new RegExp(
@@ -498,15 +499,60 @@ function punctuationProjectionTokens(text: string): PunctuationProjectionToken[]
   return tokens;
 }
 
-function firstIndexAfter(indices: number[], minimum: number): number | null {
-  let low = 0;
-  let high = indices.length;
-  while (low < high) {
-    const middle = Math.floor((low + high) / 2);
-    if (indices[middle] < minimum) low = middle + 1;
-    else high = middle;
+function alignPunctuationProjectionTokens(
+  cleanedTokens: PunctuationProjectionToken[],
+  candidateTokens: PunctuationProjectionToken[],
+): Array<{ cleanedIndex: number; candidateIndex: number }> {
+  const cellCount = (cleanedTokens.length + 1) * (candidateTokens.length + 1);
+  if (cellCount > MAX_PUNCTUATION_PROJECTION_ALIGNMENT_CELLS) {
+    return [];
   }
-  return low < indices.length ? indices[low] : null;
+
+  const lengths = Array.from(
+    { length: cleanedTokens.length + 1 },
+    () => new Uint32Array(candidateTokens.length + 1),
+  );
+  for (let cleanedIndex = 1; cleanedIndex <= cleanedTokens.length; cleanedIndex++) {
+    for (
+      let candidateIndex = 1;
+      candidateIndex <= candidateTokens.length;
+      candidateIndex++
+    ) {
+      lengths[cleanedIndex][candidateIndex] =
+        cleanedTokens[cleanedIndex - 1].value ===
+        candidateTokens[candidateIndex - 1].value
+          ? lengths[cleanedIndex - 1][candidateIndex - 1] + 1
+          : Math.max(
+              lengths[cleanedIndex - 1][candidateIndex],
+              lengths[cleanedIndex][candidateIndex - 1],
+            );
+    }
+  }
+
+  const aligned: Array<{ cleanedIndex: number; candidateIndex: number }> = [];
+  let cleanedIndex = cleanedTokens.length;
+  let candidateIndex = candidateTokens.length;
+  while (cleanedIndex > 0 && candidateIndex > 0) {
+    if (
+      cleanedTokens[cleanedIndex - 1].value ===
+      candidateTokens[candidateIndex - 1].value
+    ) {
+      aligned.push({
+        cleanedIndex: cleanedIndex - 1,
+        candidateIndex: candidateIndex - 1,
+      });
+      cleanedIndex--;
+      candidateIndex--;
+    } else if (
+      lengths[cleanedIndex - 1][candidateIndex] >
+      lengths[cleanedIndex][candidateIndex - 1]
+    ) {
+      cleanedIndex--;
+    } else {
+      candidateIndex--;
+    }
+  }
+  return aligned.reverse();
 }
 
 function projectRejectedCandidatePunctuation(
@@ -526,23 +572,10 @@ function projectRejectedCandidatePunctuation(
     return cleanedText;
   }
 
-  const cleanedIndicesByValue = new Map<string, number[]>();
-  cleanedTokens.forEach((token, index) => {
-    const indices = cleanedIndicesByValue.get(token.value) ?? [];
-    indices.push(index);
-    cleanedIndicesByValue.set(token.value, indices);
-  });
-
-  const aligned: Array<{ cleanedIndex: number; candidateIndex: number }> = [];
-  let nextCleanedIndex = 0;
-  candidateTokens.forEach((candidateToken, candidateIndex) => {
-    const indices = cleanedIndicesByValue.get(candidateToken.value);
-    if (!indices) return;
-    const cleanedIndex = firstIndexAfter(indices, nextCleanedIndex);
-    if (cleanedIndex === null) return;
-    aligned.push({ cleanedIndex, candidateIndex });
-    nextCleanedIndex = cleanedIndex + 1;
-  });
+  const aligned = alignPunctuationProjectionTokens(
+    cleanedTokens,
+    candidateTokens,
+  );
 
   const overlap =
     aligned.length / Math.max(cleanedTokens.length, candidateTokens.length);
@@ -968,7 +1001,9 @@ function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
 
 function withTerminalPunctuation(text: string, fallback: string): string {
   const trimmed = text.trim().replace(/\s+([,.?!])/gu, "$1");
-  return /[.?!]$/u.test(trimmed) ? trimmed : `${trimmed}${fallback || "."}`;
+  return /[.?!](?:["')\]]*)$/u.test(trimmed)
+    ? trimmed
+    : `${trimmed}${fallback || "."}`;
 }
 
 function deterministicSelfCorrectionCandidate(cleanedText: string): string | null {

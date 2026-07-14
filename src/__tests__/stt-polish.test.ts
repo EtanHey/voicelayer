@@ -346,6 +346,58 @@ describe("stt-polish", () => {
     expect(result.error).toContain("protected tokens");
   });
 
+  it("uses surrounding sequence to align punctuation after repeated words", async () => {
+    const cleanedText =
+      "please review the complete recording carefully with the team and mark this point while we discuss details and mark this point then continue with /weave and finish the final report for tomorrow morning without changing any other instruction and send the summary to the lead after all required checks finish";
+    const candidate =
+      "Please review the complete recording carefully with the team and mark this point. Then continue with /wave and finish the final report for tomorrow morning without changing any other instruction and send the summary to the lead after all required checks finish.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text:
+        "please review the complete recording carefully with the team and mark this point while we discuss details and mark this point. then continue with /weave and finish the final report for tomorrow morning without changing any other instruction and send the summary to the lead after all required checks finish.",
+      status: "rejected",
+      changed: true,
+    });
+    expect(result.text).not.toContain("mark this point. while we discuss");
+  });
+
+  it("recognizes projected terminal punctuation before a closing quote", async () => {
+    const cleanedText =
+      'the lead said "please compare the complete recording with /weave and keep every original instruction exactly as spoken before you send the final summary tonight"';
+    const candidate =
+      'The lead said, "Please compare the complete recording with /wave and keep every original instruction exactly as spoken before you send the final summary tonight."';
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text:
+        'the lead said, "please compare the complete recording with /weave and keep every original instruction exactly as spoken before you send the final summary tonight."',
+      status: "rejected",
+      changed: true,
+    });
+    expect(result.text.endsWith('".')).toBe(false);
+  });
+
   it("rejects same-length long rewrites in on mode", async () => {
     server = createMockPolishServer(() => ({
       text: "After merge, the app is faster, cleaner, safer, simpler, stable, ready, reviewed, documented, tested, and deployable without me reading the pull request again today safely.",
