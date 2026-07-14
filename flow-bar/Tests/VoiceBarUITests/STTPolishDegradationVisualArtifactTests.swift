@@ -6,6 +6,7 @@ import XCTest
 @MainActor
 final class STTPolishDegradationVisualArtifactTests: XCTestCase {
     func testWritesDegradedAudioSettingsArtifact() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("design")

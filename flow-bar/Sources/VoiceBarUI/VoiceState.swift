@@ -166,8 +166,12 @@ public final class VoiceState {
     private static let maxVocabularyAliases = 512
 
     /// UI-bound properties -- all mutations must happen on the main thread.
+    public private(set) var previousMode: VoiceMode = .idle
     public var mode: VoiceMode = .idle {
-        didSet { notifyPanelLayoutChangedIfNeeded(oldValue != mode) }
+        didSet {
+            previousMode = oldValue
+            notifyPanelLayoutChangedIfNeeded(oldValue != mode)
+        }
     }
 
     public var statusText: String = ""

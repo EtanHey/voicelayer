@@ -9,6 +9,25 @@
 import AppKit
 import SwiftUI
 
+public enum VoiceBarContentTransitionPolicy {
+    public static func insertionUsesCrossFade(from source: VoiceMode, to destination: VoiceMode) -> Bool {
+        !(source == .speaking && destination == .idle)
+    }
+
+    public static func removalUsesCrossFade(forContentMode mode: VoiceMode) -> Bool {
+        mode != .speaking
+    }
+
+    public static func transition(for contentMode: VoiceMode, insertedFrom source: VoiceMode) -> AnyTransition {
+        let crossFade = AnyTransition.opacity.animation(.easeInOut(duration: 0.2))
+        let insertion = insertionUsesCrossFade(from: source, to: contentMode) ? crossFade : .identity
+        // SwiftUI stores this transition with the inserted content view, so its
+        // later removal policy must be based on that view's own mode.
+        let removal = removalUsesCrossFade(forContentMode: contentMode) ? crossFade : .identity
+        return .asymmetric(insertion: insertion, removal: removal)
+    }
+}
+
 // MARK: - Pulsing recording dot
 
 public struct PulsingDot: View {
@@ -301,20 +320,35 @@ public struct BarView: View {
                 } else {
                     // Shimmer waveform + teleprompter during speaking
                     WaveformView(mode: .idle, audioLevel: state.audioLevel)
-                    if !state.statusText.isEmpty, !state.isTeleprompterDismissed {
-                        TeleprompterView(
-                            text: state.statusText,
-                            wordBoundaries: state.wordBoundaries
-                        )
+                    if TeleprompterVisibilityPolicy.keepsTimelineMounted(
+                        hasText: !state.statusText.isEmpty
+                    ) {
+                        ZStack(alignment: .leading) {
+                            TeleprompterView(
+                                text: state.statusText,
+                                wordBoundaries: state.wordBoundaries
+                            )
+                            .opacity(
+                                TeleprompterVisibilityPolicy.timelineOpacity(
+                                    isDismissed: state.isTeleprompterDismissed
+                                )
+                            )
+                            .accessibilityHidden(state.isTeleprompterDismissed)
+
+                            Text("Teleprompter hidden")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.72))
+                                .opacity(
+                                    TeleprompterVisibilityPolicy.hiddenLabelOpacity(
+                                        isDismissed: state.isTeleprompterDismissed
+                                    )
+                                )
+                                .accessibilityHidden(!state.isTeleprompterDismissed)
+                        }
                         .frame(
                             width: Theme.teleprompterViewportWidth,
                             height: Theme.teleprompterViewportHeight
                         )
-                    } else if state.isTeleprompterDismissed {
-                        Text("Teleprompter hidden")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                            .frame(width: Theme.teleprompterViewportWidth, alignment: .leading)
                     } else {
                         statusLabel
                     }
@@ -354,7 +388,12 @@ public struct BarView: View {
         // partial animations when SwiftUI tries to morph between different
         // view hierarchies (e.g., PulsingDot → TeleprompterView).
         .id(state.mode)
-        .transition(.opacity.animation(.easeInOut(duration: 0.2)))
+        .transition(
+            VoiceBarContentTransitionPolicy.transition(
+                for: state.mode,
+                insertedFrom: state.previousMode
+            )
+        )
     }
 
     private var queueVisualization: some View {

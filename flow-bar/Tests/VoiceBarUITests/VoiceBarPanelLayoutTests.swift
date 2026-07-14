@@ -219,6 +219,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
 
         XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(Theme.speakingTeleprompterAvailableWidth, 254, accuracy: 0.001)
         XCTAssertLessThanOrEqual(Theme.teleprompterViewportWidth, Theme.speakingTeleprompterAvailableWidth)
     }
 

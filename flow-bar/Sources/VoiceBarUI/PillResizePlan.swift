@@ -54,12 +54,16 @@ public struct PillResizePlan {
     ) -> PillResizePlan {
         let newWidth = max(pillSize.width + padding * 2, 50)
         let newHeight = max(pillSize.height + padding * 2, 30)
-        let minX = visibleFrame.origin.x + (visibleFrame.width * horizontalOffset) - (newWidth / 2)
-        let minY = if let verticalOffset {
+        let proposedMinX = visibleFrame.origin.x + (visibleFrame.width * horizontalOffset) - (newWidth / 2)
+        let proposedMinY = if let verticalOffset {
             visibleFrame.origin.y + (visibleFrame.height * verticalOffset) - (newHeight / 2)
         } else {
             visibleFrame.maxY - topPadding - newHeight
         }
+        let maximumMinX = max(visibleFrame.minX, visibleFrame.maxX - newWidth)
+        let maximumMinY = max(visibleFrame.minY, visibleFrame.maxY - newHeight)
+        let minX = min(max(proposedMinX, visibleFrame.minX), maximumMinX)
+        let minY = min(max(proposedMinY, visibleFrame.minY), maximumMinY)
         let newFrame = frame(
             minX: minX,
             minY: minY,

@@ -14,6 +14,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
     }
 
     func testWritesImageRendererArtifactsForAllPrimaryVoiceModes() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("phase1")
@@ -73,6 +74,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
     }
 
     func testWritesPronunciationDisplayTeleprompterArtifact() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("phase1")
