@@ -47,6 +47,62 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
     }
 
+    func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
+        XCTAssertNotEqual(
+            TeleprompterScrollPolicy.contentIdentity(for: "first brief"),
+            TeleprompterScrollPolicy.contentIdentity(for: "replacement brief")
+        )
+    }
+
+    func testDismissingTeleprompterKeepsTimelineMountedButVisuallyHidden() {
+        XCTAssertTrue(TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: true))
+        XCTAssertEqual(TeleprompterVisibilityPolicy.timelineOpacity(isDismissed: true), 0)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.timelineOpacity(isDismissed: false), 1)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: true), 1)
+        XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: false), 0)
+    }
+
+    func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {
+        XCTAssertFalse(
+            VoiceBarContentTransitionPolicy.insertionUsesCrossFade(from: .speaking, to: .idle)
+        )
+        for sourceMode in VoiceMode.allCases where sourceMode != .speaking {
+            XCTAssertTrue(
+                VoiceBarContentTransitionPolicy.insertionUsesCrossFade(
+                    from: sourceMode,
+                    to: .idle
+                ),
+                "\(sourceMode) → idle must retain the normal cross-fade"
+            )
+        }
+        for destinationMode in VoiceMode.allCases where destinationMode != .idle {
+            XCTAssertTrue(
+                VoiceBarContentTransitionPolicy.insertionUsesCrossFade(
+                    from: .speaking,
+                    to: destinationMode
+                ),
+                "Only speaking → idle may bypass insertion cross-fade"
+            )
+        }
+
+        XCTAssertFalse(
+            VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .speaking)
+        )
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .idle))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .recording))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .transcribing))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .error))
+        XCTAssertTrue(VoiceBarContentTransitionPolicy.removalUsesCrossFade(forContentMode: .disconnected))
+    }
+
+    func testVoiceStateRetainsTheSourceModeForDestinationTransitionPolicy() {
+        let state = VoiceState()
+        state.mode = .transcribing
+        state.mode = .idle
+
+        XCTAssertEqual(state.previousMode, .transcribing)
+    }
+
     func testFiltersEmptyBoundaryTokensBeforeDrivingHighlighting() {
         let words = TeleprompterContentModel.words(
             text: "Hello world",

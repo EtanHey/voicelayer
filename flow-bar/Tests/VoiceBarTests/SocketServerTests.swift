@@ -274,6 +274,106 @@ final class SocketServerTests: XCTestCase {
     }
 }
 
+/// Runtime-only leg. The Bun corpus harness owns the daemon lifecycle, then
+/// releases its temporary VoiceBar server so this test can bind the exact same
+/// isolated socket and exercise production input/UI event dispatch against the
+/// still-running daemon.
+final class CorpusReplayRuntimeInteractionTests: XCTestCase {
+    @MainActor
+    func testF18EscapeAndStopButtonDriveSpawnedDaemonNDJSON() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let rawSocketPath = environment["VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH"],
+              !rawSocketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawWorkDirectory = environment["VOICELAYER_VERIFY_WORK_DIR"],
+              !rawWorkDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let audioFixture = environment["VOICELAYER_VERIFY_AUDIO_FIXTURE"],
+              FileManager.default.fileExists(atPath: audioFixture)
+        else {
+            throw XCTSkip("corpus runtime interaction environment is not configured")
+        }
+
+        let socketPath = URL(fileURLWithPath: rawSocketPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let workDirectory = URL(fileURLWithPath: rawWorkDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let expectedSocketPath = URL(fileURLWithPath: workDirectory, isDirectory: true)
+            .appendingPathComponent("voicebar.sock")
+            .path
+        guard socketPath == expectedSocketPath else {
+            XCTFail("runtime VoiceBar socket is outside the verifier work directory")
+            return
+        }
+
+        let state = VoiceState()
+        state.minimumTranscribingDisplayDuration = 0
+        state.barInitiatedTranscriptionTimeout = .seconds(240)
+        let server = SocketServer(state: state, socketPath: rawSocketPath)
+        state.sendCommand = { server.sendCommandToOwner(command: $0) }
+        server.start()
+        defer { server.stop() }
+
+        guard waitForSocket(at: rawSocketPath, timeout: 10) else {
+            XCTFail("runtime VoiceBar socket was not created")
+            return
+        }
+        let reconnectTimeout = Double(
+            environment["VOICELAYER_VERIFY_DAEMON_RECONNECT_TIMEOUT"] ?? "30"
+        ) ?? 30
+        guard waitForConnectionStatus(state, connected: true, timeout: reconnectTimeout) else {
+            XCTFail("spawned daemon did not reconnect to the runtime VoiceBar socket")
+            return
+        }
+
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var recordingTransitions = 0
+        var idleTransitions = 0
+        state.onModeChange = { mode in
+            if mode == .recording { recordingTransitions += 1 }
+            if mode == .idle { idleTransitions += 1 }
+        }
+
+        dispatchRuntimeKey(virtualKey: 79, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
+
+        dispatchRuntimeKey(virtualKey: 53, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { idleTransitions >= 2 })
+
+        var pastedText = ""
+        state.pasteHandler = { text in
+            pastedText = text
+            return true
+        }
+        recordingTransitions = 0
+        dispatchRuntimeKey(virtualKey: 79, router: router)
+        XCTAssertTrue(waitForCondition(timeout: 15) { recordingTransitions >= 2 })
+
+        let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { window.close() }
+        host.layoutSubtreeIfNeeded()
+
+        try clickRecordingStop(host, in: window, state: state)
+        // This is the STT half of the mission's paste/subtitle surface: subtitle
+        // word boundaries are emitted by the separate TTS playback queue.
+        XCTAssertTrue(waitForCondition(timeout: 240) { !pastedText.isEmpty })
+        XCTAssertEqual(state.transcript, pastedText)
+        XCTAssertEqual(state.lastTranscriptionPolished, true)
+        XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
+    }
+}
+
 private struct ConnectedServerFixture {
     let directory: URL
     let state: VoiceState
@@ -304,13 +404,41 @@ private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
     let commandClient = try connectUnixSocket(path: socketURL.path)
     try writeLine(#"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#, to: legacyClient)
     try writeLine(#"{"type":"client_hello","role":"mcp-daemon","pid":222,"accepts_commands":true}"#, to: commandClient)
-    Thread.sleep(forTimeInterval: 0.1)
+    guard waitForConnectionStatus(state, connected: true, timeout: 1) else {
+        throw NSError(domain: "SocketServerTests", code: 4)
+    }
     return ConnectedServerFixture(
         directory: directory,
         state: state,
         server: server,
         legacyClient: legacyClient,
         commandClient: commandClient
+    )
+}
+
+@MainActor
+private func dispatchRuntimeKey(virtualKey: CGKeyCode, router: VoiceBarCommandRouter) {
+    guard let event = CGEvent(
+        keyboardEventSource: CGEventSource(stateID: .privateState),
+        virtualKey: virtualKey,
+        keyDown: true
+    ) else {
+        XCTFail("could not construct runtime key event")
+        return
+    }
+    let action = hotkeyAction(
+        type: event.type,
+        keycode: event.getIntegerValueField(.keyboardEventKeycode),
+        flags: event.flags,
+        autorepeat: 0,
+        targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+        useModifierMode: false,
+        cancellationIsActive: router.shouldHandleEscape
+    )
+    dispatchHotkeyAction(
+        action,
+        onKeyDown: { router.handleHotkeyHoldStart() },
+        onCancel: { router.handleEscape() }
     )
 }
 
@@ -350,6 +478,23 @@ private func clickSpeakingStop(
     throw NSError(domain: "SocketServerTests", code: 3)
 }
 
+@MainActor
+private func clickRecordingStop(
+    _ host: NSView,
+    in window: NSWindow,
+    state: VoiceState
+) throws {
+    var x = host.bounds.maxX - 10
+    while x >= host.bounds.midX {
+        try click(host, at: NSPoint(x: x, y: host.bounds.midY), in: window)
+        if waitForCondition(timeout: 0.15, condition: { state.mode == .transcribing }) {
+            return
+        }
+        x -= 3
+    }
+    throw NSError(domain: "SocketServerTests", code: 5)
+}
+
 private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
@@ -361,7 +506,23 @@ private func waitForSocket(at path: String, timeout: TimeInterval = 1) -> Bool {
     return FileManager.default.fileExists(atPath: path)
 }
 
-private func connectUnixSocket(path: String) throws -> Int32 {
+private func connectUnixSocket(path: String, timeout: TimeInterval = 1) throws -> Int32 {
+    let deadline = Date().addingTimeInterval(timeout)
+    var lastReadinessError: NSError?
+    repeat {
+        do {
+            return try connectUnixSocketOnce(path: path)
+        } catch let error as NSError
+            where error.domain == NSPOSIXErrorDomain &&
+            (error.code == Int(ECONNREFUSED) || error.code == Int(ENOENT)) {
+            lastReadinessError = error
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    } while Date() < deadline
+    throw lastReadinessError ?? NSError(domain: NSPOSIXErrorDomain, code: Int(ETIMEDOUT))
+}
+
+private func connectUnixSocketOnce(path: String) throws -> Int32 {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else {
         throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))

@@ -40,7 +40,7 @@ final class PillResizePlanTests: XCTestCase {
         let anchoredFrame = CGRect(x: 300, y: 24, width: 136, height: 38)
         var frame = anchoredFrame
 
-        for _ in 0..<5 {
+        for _ in 0 ..< 5 {
             frame = PillResizePlan.make(
                 oldFrame: frame,
                 pillSize: CGSize(width: 220, height: 54),
@@ -77,7 +77,55 @@ final class PillResizePlanTests: XCTestCase {
         )
 
         XCTAssertEqual(plan.frame.midX, 800, accuracy: 0.001)
-        XCTAssertEqual(plan.frame.midY, 14, accuracy: 0.001)
+        XCTAssertEqual(plan.frame.minY, visibleFrame.minY, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(plan.frame.minY, visibleFrame.minY)
+        XCTAssertLessThanOrEqual(plan.frame.maxY, visibleFrame.maxY)
+    }
+
+    func testNearBottomSavedPositionClampsExpandedTeleprompterInsideVisibleFrame() {
+        let visibleFrame = CGRect(x: 0, y: 80, width: 1000, height: 700)
+
+        let plan = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0.5,
+            verticalOffset: 0,
+            topPadding: 12,
+            pillSize: CGSize(width: 420, height: 86),
+            from: .idle,
+            to: .speaking,
+            padding: 0
+        )
+
+        XCTAssertEqual(plan.frame.minY, visibleFrame.minY, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(plan.frame.maxY, visibleFrame.maxY)
+    }
+
+    func testExpandedTeleprompterClampsOnDisplayWithNegativeHorizontalOrigin() {
+        let visibleFrame = CGRect(x: -1440, y: 25, width: 1440, height: 900)
+
+        let leftPlan = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 0,
+            verticalOffset: 0.5,
+            topPadding: 12,
+            pillSize: CGSize(width: 420, height: 86),
+            from: .idle,
+            to: .speaking,
+            padding: 0
+        )
+        let rightPlan = PillResizePlan.makeAnchored(
+            visibleFrame: visibleFrame,
+            horizontalOffset: 1,
+            verticalOffset: 0.5,
+            topPadding: 12,
+            pillSize: CGSize(width: 420, height: 86),
+            from: .idle,
+            to: .speaking,
+            padding: 0
+        )
+
+        XCTAssertEqual(leftPlan.frame.minX, visibleFrame.minX, accuracy: 0.001)
+        XCTAssertEqual(rightPlan.frame.maxX, visibleFrame.maxX, accuracy: 0.001)
     }
 
     func testDefaultAnchorUsesTopCenterAndGrowsDownward() {

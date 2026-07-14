@@ -6,6 +6,7 @@ import XCTest
 @MainActor
 final class AnchorVisualArtifactTests: XCTestCase {
     func testWritesAnchorMenuAndSettingsStateArtifacts() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()
             .appendingPathComponent("docs.local")
             .appendingPathComponent("voicebar-dictionary-anchor")

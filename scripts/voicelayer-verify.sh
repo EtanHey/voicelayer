@@ -3,20 +3,27 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+DEFAULT_REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 REPO_ROOT="${VOICELAYER_VERIFY_REPO_ROOT:-$DEFAULT_REPO_ROOT}"
 VERIFY_DIR="$REPO_ROOT/.verified"
 MCP_SOCKET_PATH="${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}"
 VOICEBAR_LAUNCHD_LABEL="com.voicelayer.voicebar"
 FORCE=0
+VERIFY_MODE="${VOICELAYER_VERIFY_MODE:-interactive}"
+CORPUS_COUNT="${VOICELAYER_VERIFY_CORPUS_COUNT:-10}"
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/voicelayer-verify.sh [--force]
+Usage: scripts/voicelayer-verify.sh [--force] [--corpus [N]]
 
 Rebuilds VoiceBar.app and requires a real F5 dictation/paste smoke test when
 the current branch touches VoiceLayer daemon/socket/MCP surfaces.
+
+--corpus [N] boots an isolated daemon, replays the first N recordings from the
+pinned scripts/corpus-replay-manifest.txt set (default: 10), runs the
+interaction-event leg, and requires no human input. Override the frozen set with
+VOICELAYER_VERIFY_CORPUS_MANIFEST when intentionally certifying another corpus.
 USAGE
 }
 
@@ -25,6 +32,15 @@ while [ "$#" -gt 0 ]; do
     --force)
       FORCE=1
       shift
+      ;;
+    --corpus)
+      VERIFY_MODE="corpus"
+      if [ "${2:-}" != "" ] && [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+        CORPUS_COUNT="$2"
+        shift 2
+      else
+        shift
+      fi
       ;;
     -h|--help)
       usage
@@ -37,6 +53,29 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$VERIFY_MODE" != "interactive" ] && [ "$VERIFY_MODE" != "corpus" ]; then
+  printf '[voicelayer-verify] unknown VOICELAYER_VERIFY_MODE: %s\n' "$VERIFY_MODE" >&2
+  exit 2
+fi
+if [ "$VERIFY_MODE" = "corpus" ] && ! [[ "$CORPUS_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  printf '[voicelayer-verify] corpus count must be a positive integer: %s\n' "$CORPUS_COUNT" >&2
+  exit 2
+fi
+
+REPO_ROOT="$(cd "$REPO_ROOT" && pwd -P)"
+DEFAULT_GIT_DIR="$(git -C "$DEFAULT_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+VERIFY_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+if [ "$VERIFY_MODE" = "corpus" ] && {
+  [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ] ||
+    { [ -n "$DEFAULT_GIT_DIR" ] && [ "$VERIFY_GIT_DIR" = "$DEFAULT_GIT_DIR" ]; };
+} && {
+  [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ] ||
+    [ -n "${VOICELAYER_VERIFY_INTERACTION_RUNNER:-}" ];
+}; then
+  printf '[voicelayer-verify] runner overrides are test-only and cannot certify this repository.\n' >&2
+  exit 2
+fi
 
 cd "$REPO_ROOT"
 
@@ -88,6 +127,20 @@ changed_files() {
     git diff --name-only "$merge_base...HEAD"
   else
     git diff --name-only "$base_ref...HEAD"
+  fi
+}
+
+assert_corpus_tree_clean() {
+  local status
+  status="$(git status --porcelain --untracked-files=all)"
+  if [ -n "$status" ]; then
+    printf '[voicelayer-verify] corpus certification refuses a dirty worktree:\n' >&2
+    printf '%s\n' "$status" | sed 's/^/[voicelayer-verify]   /' >&2
+    return 1
+  fi
+  if [ "$(git rev-parse HEAD)" != "$sha" ]; then
+    printf '[voicelayer-verify] HEAD changed during corpus verification; no artifact written.\n' >&2
+    return 1
   fi
 }
 
@@ -234,6 +287,66 @@ fi
 
 printf '[voicelayer-verify] daemon/socket/MCP verification required for:\n'
 printf '%s' "$daemon_files" | sed 's/^/[voicelayer-verify]   - /'
+
+if [ "$VERIFY_MODE" = "corpus" ]; then
+  corpus_root="${VOICELAYER_VERIFY_CORPUS_ROOT:-${HOME:-}/.local/share/voicelayer/recordings}"
+  corpus_manifest="${VOICELAYER_VERIFY_CORPUS_MANIFEST:-$REPO_ROOT/scripts/corpus-replay-manifest.txt}"
+  corpus_work_dir="$(mktemp -d "${TMPDIR:-/tmp}/voicelayer-corpus-verify.XXXXXX")"
+  artifact="$VERIFY_DIR/verified-runtime-${safe_branch}-${short_sha}.txt"
+  rm -f "$artifact"
+  # shellcheck disable=SC2329 # Invoked indirectly by the trap below.
+  cleanup_corpus_verify() {
+    rm -rf "$corpus_work_dir"
+  }
+  trap cleanup_corpus_verify EXIT INT TERM
+
+  export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
+  export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"
+  export VOICELAYER_VERIFY_WORK_DIR="$corpus_work_dir"
+  export QA_VOICE_SOCKET_PATH="$VOICELAYER_SOCKET_PATH"
+  export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
+
+  assert_corpus_tree_clean
+
+  printf '[voicelayer-verify] corpus mode: %s deterministic specimen(s)\n' "$CORPUS_COUNT"
+  printf '[voicelayer-verify] pinned corpus manifest: %s\n' "$corpus_manifest"
+  printf '[voicelayer-verify] isolated VoiceBar socket: %s\n' "$VOICELAYER_SOCKET_PATH"
+  printf '[voicelayer-verify] isolated MCP socket: %s\n' "$VOICELAYER_MCP_SOCKET_PATH"
+
+  if [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ]; then
+    "$VOICELAYER_VERIFY_CORPUS_RUNNER" "$CORPUS_COUNT" "$corpus_root" "$corpus_manifest"
+  else
+    bun run "$REPO_ROOT/src/corpus-replay-verify.ts" \
+      --count "$CORPUS_COUNT" \
+      --corpus-root "$corpus_root" \
+      --manifest "$corpus_manifest" \
+      --work-dir "$corpus_work_dir" \
+      --repo-root "$REPO_ROOT"
+  fi
+
+  assert_corpus_tree_clean
+
+  mkdir -p "$VERIFY_DIR"
+  tmp_artifact="${artifact}.tmp.$$"
+  {
+    printf 'Verified-Runtime: %s\n' "$sha"
+    printf 'timestamp: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    printf 'branch: %s\n' "$branch"
+    printf 'sha: %s\n' "$sha"
+    printf 'short_sha: %s\n' "$short_sha"
+    printf 'tester: %s\n' "$tester"
+    printf 'verification_mode: corpus\n'
+    printf 'corpus_count: %s\n' "$CORPUS_COUNT"
+    printf 'corpus_manifest: %s\n' "$corpus_manifest"
+    printf 'daemon_files:\n'
+    printf '%s' "$daemon_files" | sed 's/^/- /'
+  } >"$tmp_artifact"
+  mv "$tmp_artifact" "$artifact"
+
+  printf '[voicelayer-verify] wrote runtime artifact: %s\n' "$artifact"
+  printf 'Verified-Runtime: %s\n' "$sha"
+  exit 0
+fi
 
 running_pids="$(pgrep -x VoiceBar 2>/dev/null || true)"
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then

@@ -591,6 +591,7 @@ describe("input recording durability", () => {
       recording_path: audioPath,
     });
     expect(typeof transcriptionEvent?.polished).toBe("boolean");
+    expect(typeof transcriptionEvent?.polish_status).toBe("string");
     if (transcriptionEvent?.polished === false) {
       expect(typeof transcriptionEvent.polish_reason).toBe("string");
     }

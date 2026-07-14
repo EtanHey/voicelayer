@@ -80,12 +80,14 @@ describe("socket-protocol", () => {
         type: "transcription",
         text: "Raw fallback text.",
         polished: false,
+        polish_status: "failed",
         polish_reason: "polish health check failed: connection refused",
       };
 
       const parsed = JSON.parse(serializeEvent(event).trim());
       expect(parsed).toMatchObject({
         polished: false,
+        polish_status: "failed",
         polish_reason: "polish health check failed: connection refused",
       });
     });
