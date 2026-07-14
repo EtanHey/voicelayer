@@ -69,12 +69,91 @@ interface STTPolishSocketResponse {
   error?: unknown;
 }
 
-const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 700;
-const DEFAULT_POLISH_TIMEOUT_MS = 12_000;
+const DEFAULT_POLISH_HEALTH_TIMEOUT_MS = 1_200;
+const DEFAULT_POLISH_TIMEOUT_MS = 18_000;
 const DEFAULT_POLISH_WARMUP_TIMEOUT_MS = 1_500;
 const DEFAULT_POLISH_SOCKET_TIMEOUT_MS = 1_200;
 const DEFAULT_POLISH_MAX_TOKENS = 512;
 const MAX_POLISH_COMPLETION_TOKENS = 4_096;
+const MAX_HTTP_NOOP_POLISH_ATTEMPTS = 3;
+const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
+const MIN_QUESTION_BOUNDARY_TRANSITIONS = 2;
+const QUESTION_STARTER_WORDS =
+  "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
+const QUESTION_STARTER_PATTERN = new RegExp(
+  `^${QUESTION_STARTER_WORDS}\\b`,
+  "iu",
+);
+const QUESTION_BOUNDARY_PATTERN = new RegExp(
+  `\\s+(?=(${QUESTION_STARTER_WORDS})\\b)`,
+  "giu",
+);
+const AUXILIARY_QUESTION_STARTERS = new Set([
+  "did",
+  "do",
+  "does",
+  "is",
+  "are",
+  "can",
+  "could",
+  "would",
+  "should",
+]);
+const WH_QUESTION_STARTERS = new Set([
+  "what",
+  "why",
+  "how",
+  "when",
+  "where",
+  "who",
+]);
+const QUESTION_SUBJECT_WORDS = new Set([
+  "i",
+  "you",
+  "he",
+  "she",
+  "it",
+  "we",
+  "they",
+  "this",
+  "that",
+  "there",
+  "the",
+  "your",
+  "my",
+  "our",
+  "their",
+  "his",
+  "her",
+  "anyone",
+  "someone",
+  "a",
+  "an",
+  "these",
+  "those",
+  "each",
+  "every",
+  "any",
+  "some",
+  "no",
+]);
+const EMBEDDED_WH_PREDECESSORS = new Set([
+  "and",
+  "or",
+  "me",
+  "tell",
+  "show",
+  "explain",
+  "know",
+  "understand",
+  "wonder",
+  "remember",
+  "decide",
+  "see",
+  "that",
+  "because",
+  "about",
+]);
 export const DEFAULT_POLISH_MODEL = "mlx-community/Qwen3-4B-Instruct-2507-4bit";
 export const DEFAULT_POLISH_ENDPOINT = "http://127.0.0.1:8080/v1/chat/completions";
 const DEFAULT_POLISH_SOCKET = join(homedir(), ".voicelayer", "polish.sock");
@@ -398,6 +477,100 @@ function getSTTPolishMaxTokens(cleanedText: string): number {
     Math.max(DEFAULT_POLISH_MAX_TOKENS, wordBudget),
     MAX_POLISH_COMPLETION_TOKENS,
   );
+}
+
+function capitalizeRunOnSegmentStart(segment: string): string {
+  if (!QUESTION_STARTER_PATTERN.test(segment)) return segment;
+  return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
+}
+
+function questionBoundaryIndices(text: string): number[] {
+  const indices: number[] = [];
+  for (const match of text.matchAll(QUESTION_BOUNDARY_PATTERN)) {
+    if (match.index === undefined) continue;
+    const starter = match[1]?.toLocaleLowerCase();
+    if (!starter) continue;
+
+    const prefix = text.slice(0, match.index).trimEnd();
+    const previousWordRaw = prefix.match(/([\p{L}\p{N}'’-]+)$/u)?.[1];
+    const previousWord = previousWordRaw?.toLocaleLowerCase();
+    const previousWordIsProperName = previousWordRaw
+      ? /^\p{Lu}[\p{L}'’-]*$/u.test(previousWordRaw)
+      : false;
+    const suffix = text
+      .slice(match.index + match[0].length + starter.length)
+      .trimStart();
+    const nextWordRaw = suffix.match(/^([\p{L}\p{N}'’-]+)/u)?.[1];
+    const nextWord = nextWordRaw?.toLocaleLowerCase();
+    const nextWordIsProperName = nextWordRaw
+      ? /^\p{Lu}[\p{L}'’-]*$/u.test(nextWordRaw)
+      : false;
+
+    if (
+      AUXILIARY_QUESTION_STARTERS.has(starter) &&
+      (!nextWord ||
+        (!QUESTION_SUBJECT_WORDS.has(nextWord) && !nextWordIsProperName) ||
+        (previousWord !== undefined &&
+          (WH_QUESTION_STARTERS.has(previousWord) ||
+            QUESTION_SUBJECT_WORDS.has(previousWord) ||
+            previousWordIsProperName)))
+    ) {
+      continue;
+    }
+    if (
+      !AUXILIARY_QUESTION_STARTERS.has(starter) &&
+      previousWord &&
+      EMBEDDED_WH_PREDECESSORS.has(previousWord)
+    ) {
+      continue;
+    }
+    indices.push(match.index);
+  }
+  return indices;
+}
+
+function splitAtQuestionBoundaries(text: string, indices: number[]): string[] {
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (const boundaryIndex of indices) {
+    segments.push(text.slice(segmentStart, boundaryIndex).trim());
+    segmentStart = boundaryIndex;
+  }
+  segments.push(text.slice(segmentStart).trim());
+  return segments.filter(Boolean);
+}
+
+function deterministicRunOnPunctuationFloor(cleanedText: string): string {
+  const words = countWords(cleanedText);
+  const compactText = cleanedText.trim().replace(/\s+/gu, " ");
+  const boundaryIndices = questionBoundaryIndices(compactText);
+  if (
+    words < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
+    !shouldRetryNoopPolish(cleanedText) ||
+    !QUESTION_STARTER_PATTERN.test(compactText) ||
+    boundaryIndices.length < MIN_QUESTION_BOUNDARY_TRANSITIONS
+  ) {
+    return cleanedText;
+  }
+
+  const normalized = compactText.replace(/[.?!]+$/u, "");
+  const questionSegments = splitAtQuestionBoundaries(
+    normalized,
+    boundaryIndices,
+  );
+
+  return questionSegments
+    .map((segment) => {
+      const normalizedSegment = segment
+        .replace(/\s+([,.?!])/gu, "$1")
+        .replace(/,+$/u, "");
+      const sentence = capitalizeRunOnSegmentStart(normalizedSegment);
+      const fallback = QUESTION_STARTER_PATTERN.test(normalizedSegment)
+        ? "?"
+        : ".";
+      return withTerminalPunctuation(sentence, fallback);
+    })
+    .join(" ");
 }
 
 function protectedCodePunctuationCounts(text: string): Map<string, number> {
@@ -1192,6 +1365,11 @@ export async function polishTranscriptionText(
     };
   };
 
+  const punctuationFloorFallbackText = (): string =>
+    mode === "shadow"
+      ? input.cleanedText
+      : deterministicRunOnPunctuationFloor(input.cleanedText);
+
   if (mode === "off" || !input.cleanedText.trim()) {
     return buildResult(input.cleanedText, null, "skipped");
   }
@@ -1204,7 +1382,7 @@ export async function polishTranscriptionText(
     );
     if (!health.ok) {
       const result = buildResult(
-        input.cleanedText,
+        punctuationFloorFallbackText(),
         null,
         "failed",
         health.error,
@@ -1236,6 +1414,75 @@ export async function polishTranscriptionText(
             ? "rejected"
             : null;
       if (retryReason) {
+        if (retryReason === "noop") {
+          let latestResult = result;
+          for (
+            let attempt = 2;
+            attempt <= MAX_HTTP_NOOP_POLISH_ATTEMPTS;
+            attempt += 1
+          ) {
+            try {
+              const retryPolishedText = await requestPolishOverHttp(
+                endpoint,
+                input.rawText,
+                input.cleanedText,
+                env,
+                getSTTPolishTimeoutMs(env),
+                { retryReason },
+              );
+              latestResult = applyPolishCandidate(
+                input.cleanedText,
+                retryPolishedText,
+                mode,
+                buildResult,
+                true,
+              );
+              if (
+                latestResult.status !== "applied" ||
+                latestResult.changed ||
+                !shouldRetryNoopPolish(input.cleanedText)
+              ) {
+                writePolishLog(
+                  latestResult,
+                  input.rawText,
+                  input.cleanedText,
+                  env,
+                );
+                return latestResult;
+              }
+            } catch (retryErr) {
+              const retryFailedResult = buildResult(
+                punctuationFloorFallbackText(),
+                latestResult.polishedText,
+                "failed",
+                retryErr instanceof Error ? retryErr.message : String(retryErr),
+                true,
+              );
+              writePolishLog(
+                retryFailedResult,
+                input.rawText,
+                input.cleanedText,
+                env,
+              );
+              return retryFailedResult;
+            }
+          }
+          const flooredResult = buildResult(
+            punctuationFloorFallbackText(),
+            latestResult.polishedText,
+            latestResult.status,
+            latestResult.error,
+            true,
+          );
+          writePolishLog(
+            flooredResult,
+            input.rawText,
+            input.cleanedText,
+            env,
+          );
+          return flooredResult;
+        }
+
         try {
           const retryPolishedText = await requestPolishOverHttp(
             endpoint,
@@ -1275,7 +1522,7 @@ export async function polishTranscriptionText(
       return result;
     } catch (err) {
       const result = buildResult(
-        input.cleanedText,
+        punctuationFloorFallbackText(),
         null,
         "failed",
         err instanceof Error ? err.message : String(err),
@@ -1313,7 +1560,7 @@ export async function polishTranscriptionText(
     return result;
   } catch (err) {
     const result = buildResult(
-      input.cleanedText,
+      punctuationFloorFallbackText(),
       null,
       "failed",
       err instanceof Error ? err.message : String(err),
