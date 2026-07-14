@@ -187,6 +187,27 @@ describe("corpus replay verification", () => {
     ).not.toThrow();
   });
 
+  test("rejects a long unpunctuated fallback rejected by a safety guard", () => {
+    const reference =
+      "so i was thinking about the whole voice layer pipeline and how the polish " +
+      "step is supposed to add punctuation but sometimes it just does not and then " +
+      "you end up with this giant wall of text that has no periods no commas nothing " +
+      "and it is really hard to read especially when the dictation is long like this " +
+      "one where i just keep talking and talking without ever stopping to breathe or " +
+      "add any kind of structure to what i am saying which is exactly the failure mode";
+
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "punct-flicker-long-narrative",
+        reference,
+        actual: reference,
+        polished: false,
+        polishStatus: "rejected",
+        polishReason: "polish response self-correction introduced new content",
+      }),
+    ).toThrow("punctuation floor");
+  });
+
   test("rejects an unrelated fallback even when the polish outcome was handled", () => {
     expect(() =>
       assertCorpusReplayResult({

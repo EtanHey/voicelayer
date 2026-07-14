@@ -234,6 +234,64 @@ describe("stt-polish", () => {
     expect(result.error).toContain("timed out");
   });
 
+  it("floors every active on-mode non-applied fallback status", async () => {
+    const cleanedText =
+      "so i was thinking about the whole voice layer pipeline and how the polish " +
+      "step is supposed to add punctuation but sometimes it just does not and then " +
+      "you end up with this giant wall of text that has no periods no commas nothing " +
+      "and it is really hard to read especially when the dictation is long like this " +
+      "one where i just keep talking and talking without ever stopping to breathe or " +
+      "add any kind of structure to what i am saying which is exactly the failure mode";
+    server = createMockPolishServer(() => ({
+      text: `Raw Whisper text: ${cleanedText}`,
+    }));
+    const rejected = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+    server.stop();
+    server = null;
+
+    const unavailable = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: `${TEST_SOCKET}.missing`,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    TEST_SOCKET = join(TEST_DIR, "timeout.sock");
+    server = createMockPolishServer(() => null);
+    const failed = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_TIMEOUT_MS: "10",
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    const results = [rejected, unavailable, failed];
+    expect(results.map((result) => result.status)).toEqual([
+      "rejected",
+      "unavailable",
+      "failed",
+    ]);
+    for (const result of results) {
+      expect(result.text.endsWith(".")).toBe(true);
+      expect(result.polished).toBe(false);
+    }
+  });
+
   it("rejects polish candidates that drop substantial content in on mode", async () => {
     server = createMockPolishServer(() => ({
       text: "BrainLayer will be responsive.",
@@ -258,6 +316,34 @@ describe("stt-polish", () => {
       changed: false,
     });
     expect(result.error).toContain("dropped");
+  });
+
+  it("projects punctuation from a high-overlap rejected candidate without adopting drifted words", async () => {
+    const cleanedText =
+      "please compare the settings on this mac with /weave before you change anything then check the microphone permissions and the automation entries carefully because the two machines should match";
+    const candidate =
+      "Please compare the settings on this Mac with /wave before you change anything. Then check the microphone permissions and the automation entries carefully, because the two machines should match.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text:
+        "please compare the settings on this mac with /weave before you change anything. then check the microphone permissions and the automation entries carefully, because the two machines should match.",
+      polishedText: candidate,
+      status: "rejected",
+      changed: true,
+    });
+    expect(result.text).not.toContain("/wave");
+    expect(result.error).toContain("protected tokens");
   });
 
   it("rejects same-length long rewrites in on mode", async () => {
@@ -1151,6 +1237,46 @@ describe("stt-polish", () => {
         text: cleanedText,
         status: "failed",
         changed: false,
+      });
+      expect(result.error).toContain("health");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("adds a terminal punctuation floor to a long single-narrative fallback", async () => {
+    const cleanedText =
+      "so i was thinking about the whole voice layer pipeline and how the polish " +
+      "step is supposed to add punctuation but sometimes it just does not and then " +
+      "you end up with this giant wall of text that has no periods no commas nothing " +
+      "and it is really hard to read especially when the dictation is long like this " +
+      "one where i just keep talking and talking without ever stopping to breathe or " +
+      "add any kind of structure to what i am saying which is exactly the failure mode";
+    const server = Bun.serve({
+      port: 0,
+      fetch: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        return Response.json({ data: [] });
+      },
+    });
+
+    try {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_ENDPOINT: `http://127.0.0.1:${server.port}/v1/chat/completions`,
+          QA_VOICE_STT_POLISH_HEALTH_TIMEOUT_MS: "100",
+          QA_VOICE_STT_POLISH_TIMEOUT_MS: "3000",
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: `${cleanedText}.`,
+        status: "failed",
+        changed: true,
       });
       expect(result.error).toContain("health");
     } finally {
