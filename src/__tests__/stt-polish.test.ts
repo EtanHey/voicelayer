@@ -525,6 +525,34 @@ describe("stt-polish", () => {
     });
   });
 
+  it("allows grammatical article agreement in punctuation polish containing a correction cue", async () => {
+    const polished =
+      "I don't see, oh okay, now I see: codex lead austerity — should that one " +
+      "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
+      "do you need me to make a codex effort ultra for you or not? Shit, look at this bs bs.";
+    server = createMockPolishServer(() => ({ text: polished }));
+
+    const cleanedText =
+      "I don't see oh okay now I see codex lead austerity should that 1 be pushed " +
+      "to a ultra ultra effort maybe also I don't think you answered do you need me " +
+      "to make you or sorry to make a codex effort ultra for you or not shit look at this bs bs.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polished,
+      status: "applied",
+      polished: true,
+    });
+  });
+
   it("allows real correction-cue collapse that removes the rejected phrase and its no/not scaffolding", async () => {
     server = createMockPolishServer(() => ({
       text: "Okay, let's do a Gemini deep research.",

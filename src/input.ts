@@ -85,6 +85,7 @@ import {
   type STTPolishEnv,
   type STTPolishWarmupResult,
   type STTPolishSurface,
+  type STTPolishStatus,
 } from "./stt-polish";
 import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
 import { resolveBinary } from "./resolve-binary";
@@ -249,6 +250,7 @@ export async function finalizeTranscriptionTextForSurface(
 export interface FinalizedTranscriptionResult {
   text: string;
   polished?: boolean;
+  polishStatus?: STTPolishStatus;
   polishReason?: string;
 }
 
@@ -290,16 +292,21 @@ export async function finalizeTranscriptionResultForSurface(
   return {
     text: polished.text,
     polished: polished.polished,
+    polishStatus: polished.status,
     ...(polished.reason ? { polishReason: polished.reason } : {}),
   };
 }
 
 function transcriptionPolishMetadata(
   result: FinalizedTranscriptionResult,
-): Pick<import("./socket-protocol").TranscriptionEvent, "polished" | "polish_reason"> {
+): Pick<
+  import("./socket-protocol").TranscriptionEvent,
+  "polished" | "polish_status" | "polish_reason"
+> {
   if (result.polished === undefined) return {};
   return {
     polished: result.polished,
+    ...(result.polishStatus ? { polish_status: result.polishStatus } : {}),
     ...(result.polishReason ? { polish_reason: result.polishReason } : {}),
   };
 }
