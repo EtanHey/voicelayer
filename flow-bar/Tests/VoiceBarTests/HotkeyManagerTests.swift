@@ -212,7 +212,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF5ReleaseTriggersKeyUpToUnwindHoldInNonModifierMode() {
+    func testShiftF5ReleaseAfterRepasteDoesNotTriggerRecordingReleaseInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
@@ -222,11 +222,11 @@ final class HotkeyManagerTests: XCTestCase {
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: false
             ),
-            .keyUp
+            .ignore
         )
     }
 
-    func testShiftF5ReleaseTriggersKeyUpToUnwindHoldInModifierMode() {
+    func testShiftF5ReleaseAfterRepasteDoesNotTriggerRecordingReleaseInModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
@@ -235,6 +235,36 @@ final class HotkeyManagerTests: XCTestCase {
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: true
+            ),
+            .ignore
+        )
+    }
+
+    func testShiftF5KeyDownDuringActiveHoldDoesNotRepastePreviousTranscript() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
+            ),
+            .consume
+        )
+    }
+
+    func testShiftF5ReleaseDuringActiveHoldStillUnwindsRecording() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
             ),
             .keyUp
         )
