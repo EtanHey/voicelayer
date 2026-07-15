@@ -26,6 +26,39 @@ interface STTVocabularySnapshot {
 type CanonicalTermPattern = [string, RegExp, string];
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
+  // Constitution-gated Phase-0 aliases mined from the retranscription corpus.
+  // Keep this block longest-first so the intended phrase wins even before the
+  // runtime sort below. `tailscale` is omitted because it already exists.
+  "if they eyes bg large": "Ivrit AI's BG Large",
+  "narration layer": "NarrationLayer",
+  "clawed desktop": "Claude Desktop",
+  "bearing layer": "BrainLayer",
+  "notebook l m": "NotebookLM",
+  "claw desktop": "Claude Desktop",
+  "notebook lm": "NotebookLM",
+  "notebook-lm": "NotebookLM",
+  "gwen engine": "Qwen engine",
+  "claw dot md": "CLAUDE.md",
+  "brain lair": "BrainLayer",
+  "brain lear": "BrainLayer",
+  "quen 3 tts": "Qwen3 TTS",
+  "qwen 3 tts": "Qwen3 TTS",
+  "chroma db": "ChromaDB",
+  "comfy ui": "ComfyUI",
+  carpathy: "Karpathy",
+  esculite: "SQLite",
+  orkclaud: "orcClaude",
+  "sq lite": "SQLite",
+  "claw.md": "CLAUDE.md",
+  "quen 3": "Qwen3",
+  "qwen 3": "Qwen3",
+  sagitt: "Sagit",
+  olama: "Ollama",
+  "fts 5": "FTS5",
+  cmuxs: "cmux",
+  bnaya: "Benaya",
+  fts5: "FTS5",
+  rrf: "RRF",
   "narration layer codex": "narrationlayerCodex",
   "brain layer codex": "brainlayerCodex",
   "voice layer codex": "voicelayerCodex",
@@ -163,6 +196,26 @@ const ORDERED_BUILTIN_STT_ALIASES =
 const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "still expect VoiceLayer to keep",
   "real tail of the sentence",
+  // Phase-0 was mined and approved as a cleanup-alias batch, not as an
+  // expansion of the tightly capped Whisper decode prompt. Keeping the new
+  // canonical values out of the seed tier prevents them from evicting existing
+  // prompt terms such as Docker while the aliases still apply at cleanup time.
+  "Ivrit AI's BG Large",
+  "NarrationLayer",
+  "Claude Desktop",
+  "NotebookLM",
+  "Qwen engine",
+  "Qwen3 TTS",
+  "ChromaDB",
+  "ComfyUI",
+  "Karpathy",
+  "SQLite",
+  "Qwen3",
+  "Sagit",
+  "Ollama",
+  "FTS5",
+  "Benaya",
+  "RRF",
 ]);
 const DUPLICATED_FUNCTION_WORD_PATTERN =
   /\b(the|an|and|to|of|a|i)\b(?:\s+\1\b)+/giu;

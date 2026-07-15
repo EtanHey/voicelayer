@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 import {
   classifyCorrectionContext,
@@ -75,6 +77,26 @@ describe("stt-corrector", () => {
 
   it("suppresses non-speech hallucinations in rules mode", () => {
     expect(correctTranscriptionText("thank you", { mode: "rules" }).text).toBe("");
+  });
+
+  it("preserves every Phase-0 should_change:false tripwire", () => {
+    const fixturePath = join(
+      import.meta.dir,
+      "../../eval/fixtures/stt-phase0-mined.jsonl",
+    );
+    const rows = readFileSync(fixturePath, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.should_change === false);
+
+    expect(rows).toHaveLength(52);
+    for (const row of rows) {
+      expect(
+        correctTranscriptionText(row.input_text, { mode: "rules" }).text,
+        row.id,
+      ).toBe(row.target_text);
+    }
   });
 
   it("keeps warm p95 latency under the 5ms budget", () => {
