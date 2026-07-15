@@ -10,8 +10,13 @@ Status: SKIPPED — local `coderabbit review --agent` emitted no findings before
 ## Finding dispositions
 
 - CRITICAL: none.
-- HIGH: none.
+- HIGH: GitHub Codex reported that `CGEvent.post` queues Cmd+V and returns before the target app is guaranteed to read the pasteboard. This is technically valid: the production `simulatePaste()` has no target-consumption acknowledgement, so synchronous restoration can make a slow fallback paste read the prior clipboard. Reintroducing a fixed delayed restore is rejected in this worker lane because it violates the binding immediate-restore requirement and repeats the previously burned PR #287 regression that leaked the transcript to a fast manual Cmd+V. Satisfying both guarantees would require changing the mandated mechanism or adding target acknowledgement; disposition is **explicit lead decision required**, with the immediate restore left intact.
 - MEDIUM: none.
 - LOW: none.
 
-PR-level CodeRabbit, Codex, and Cursor/Bugbot reviews remain required after push.
+## PR-level review status
+
+- CodeRabbit: review quota reached; no PR findings emitted.
+- Cursor/Bugbot: usage limit reached; no PR findings emitted.
+- Codex: one HIGH/P1 fallback-delivery race, disposition above.
+- Macroscope correctness check: passed.
