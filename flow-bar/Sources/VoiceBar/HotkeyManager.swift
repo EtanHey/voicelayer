@@ -425,6 +425,19 @@ func hotkeyAction(
         }
     }
 
+    let exactShiftOnly = flags.contains(.maskShift)
+        && !flags.contains(.maskCommand)
+        && !flags.contains(.maskAlternate)
+        && !flags.contains(.maskControl)
+    if exactShiftOnly, type == .keyUp {
+        if gestureIsActive {
+            NSLog("[HotkeyManager] Letting Shift+F5 keyUp unwind the active gesture for keycode %lld", keycode)
+            return .keyUp
+        }
+        NSLog("[HotkeyManager] Ignoring Shift+F5 release after re-paste for keycode %lld", keycode)
+        return .ignore
+    }
+
     if type == .keyUp {
         NSLog(
             "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",
@@ -434,10 +447,6 @@ func hotkeyAction(
         return .keyUp
     }
 
-    let exactShiftOnly = flags.contains(.maskShift)
-        && !flags.contains(.maskCommand)
-        && !flags.contains(.maskAlternate)
-        && !flags.contains(.maskControl)
     if exactShiftOnly {
         guard type == .keyDown else {
             NSLog(
@@ -454,6 +463,10 @@ func hotkeyAction(
             }
             NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
             return .ignore
+        }
+        guard !gestureIsActive else {
+            NSLog("[HotkeyManager] Consuming Shift+F5 keyDown during an active gesture for keycode %lld", keycode)
+            return .consume
         }
         NSLog(
             "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",

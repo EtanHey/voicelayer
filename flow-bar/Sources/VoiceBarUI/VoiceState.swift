@@ -1742,7 +1742,7 @@ public final class VoiceState {
                         return
                     }
                     let pasted = simulatedPasteHandler()
-                    scheduleClipboardRestoreIfNeeded(
+                    restoreClipboardIfNeeded(
                         from: pasteboardSnapshot,
                         expectedChangeCount: changeCountAfterWrite
                     )
@@ -1886,19 +1886,6 @@ public final class VoiceState {
         }
 
         return lhs.processIdentifier == rhs.processIdentifier
-    }
-
-    private func scheduleClipboardRestoreIfNeeded(
-        from snapshot: PasteboardSnapshot?,
-        expectedChangeCount: Int
-    ) {
-        guard snapshot != nil else { return }
-        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
-            self?.restoreClipboardIfNeeded(
-                from: snapshot,
-                expectedChangeCount: expectedChangeCount
-            )
-        }
     }
 
     private func restoreClipboardIfNeeded(
