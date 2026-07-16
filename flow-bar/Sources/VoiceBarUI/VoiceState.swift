@@ -401,6 +401,7 @@ public final class VoiceState {
     private let recentTranscriptionEntriesSaver: ([RecentTranscriptionEntry]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
     private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
+    private let keepsExpandedInDevState: Bool
 
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
@@ -445,12 +446,14 @@ public final class VoiceState {
             VoiceState.saveRecentTranscriptionEntries($0)
         },
         transcriptionVocabularyLoader: @escaping () -> [String] = { [] },
-        transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] }
+        transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] },
+        keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded()
     ) {
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
         self.recentTranscriptionEntriesSaver = recentTranscriptionEntriesSaver
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
+        self.keepsExpandedInDevState = keepsExpandedInDevState
         recentTranscriptionEntries = Self.normalizeRecentTranscriptionEntries(
             recentTranscriptionEntriesLoader(),
             fallbackTexts: recentTranscriptionsLoader()
@@ -1124,6 +1127,10 @@ public final class VoiceState {
     private func startCollapseTimer() {
         guard modalInteractionDepth == 0 else { return }
         collapseTimer?.cancel()
+        guard !keepsExpandedInDevState else {
+            isCollapsed = false
+            return
+        }
         collapseTimer = Task { @MainActor in
             try? await Task.sleep(for: .seconds(idleCollapseDelay))
             if !Task.isCancelled, mode == .idle, !isHovering, modalInteractionDepth == 0 {
