@@ -1,9 +1,11 @@
-import { afterEach, beforeEach, describe, it, expect } from "bun:test";
+import { afterEach, beforeEach, describe, it, expect, spyOn } from "bun:test";
 import { Database } from "bun:sqlite";
 import { createHash } from "crypto";
+import * as crypto from "crypto";
 import ts from "typescript";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -335,6 +337,158 @@ describe("input module", () => {
 
       expect(archivedPath).toBeNull();
       expect(readdirSync(archiveRoot!)).toHaveLength(0);
+    });
+
+    it("creates one paired archive folder for a completed voice_ask round", () => {
+      const agentAudio = Buffer.from([0x49, 0x44, 0x33, 1, 2, 3, 4]);
+      const userAudio = createWavBuffer(new Uint8Array([5, 6, 7, 8]));
+
+      const archivedPath = archiveWaitForInputRecording({
+        options: {
+          archiveSource: "voice_ask",
+          voiceAskArtifacts: {
+            agentAudioBytes: agentAudio,
+            agentAudioFormat: "mp3",
+            agentTranscript: "What changed?",
+            agentTtsEngine: "qwen3-tts",
+            agentTtsVoice: "etan-clone",
+            createdAt: new Date("2026-07-16T19:20:21.123Z"),
+          },
+        },
+        audioBytes: userAudio,
+        transcript: "The archive now keeps both sides.",
+        silenceMode: "thoughtful",
+        pressToTalk: false,
+        durationMs: 1_200,
+        transcribedDurationMs: 1_000,
+        backend: "whisper.cpp",
+      });
+
+      expect(archivedPath).toBeTruthy();
+      const dayDir = join(archiveRoot!, "2026-07-16");
+      const archiveIds = readdirSync(dayDir);
+      expect(archiveIds).toHaveLength(1);
+      expect(archivedPath).toBe(join(dayDir, archiveIds[0]));
+      expect(readdirSync(archivedPath!).sort()).toEqual([
+        "agent-audio.mp3",
+        "agent-transcript.txt",
+        "audio.wav",
+        "metadata.json",
+        "voicelayer-transcript.txt",
+      ]);
+      expect(readFileSync(join(archivedPath!, "agent-audio.mp3"))).toEqual(
+        agentAudio,
+      );
+      expect(
+        readFileSync(join(archivedPath!, "agent-transcript.txt"), "utf8"),
+      ).toBe("What changed?");
+      expect(readFileSync(join(archivedPath!, "audio.wav"))).toEqual(
+        Buffer.from(userAudio),
+      );
+      expect(
+        readFileSync(join(archivedPath!, "voicelayer-transcript.txt"), "utf8"),
+      ).toBe("The archive now keeps both sides.");
+
+      const metadata = JSON.parse(
+        readFileSync(join(archivedPath!, "metadata.json"), "utf8"),
+      );
+      expect(metadata).toMatchObject({
+        id: archiveIds[0],
+        created_at: "2026-07-16T19:20:21.123Z",
+        source: "voice_ask",
+        mode: "vad",
+        silence_mode: "thoughtful",
+        duration_ms: 1_200,
+        raw_duration_ms: 1_200,
+        transcribed_duration_ms: 1_000,
+        backend: "whisper.cpp",
+        agent_tts_engine: "qwen3-tts",
+        agent_tts_voice: "etan-clone",
+        transcription_status: "transcribed",
+        agent_transcript_chars: "What changed?".length,
+        user_transcript_chars: "The archive now keeps both sides.".length,
+        agent_audio_sha256: createHash("sha256").update(agentAudio).digest("hex"),
+        user_audio_sha256: createHash("sha256").update(userAudio).digest("hex"),
+        schema_version: 2,
+      });
+    });
+
+    it("does not remove a voice_ask staging folder owned by another invocation", () => {
+      const createdAt = new Date("2026-07-16T19:20:21.123Z");
+      const idSuffix = "a1b2c3d4";
+      const dayDir = join(archiveRoot!, "2026-07-16");
+      const stagingDir = join(
+        dayDir,
+        `.tmp-2026-07-16T19-20-21-123Z-${idSuffix}`,
+      );
+      const sentinelPath = join(stagingDir, "owned-by-other-invocation");
+      mkdirSync(stagingDir, { recursive: true });
+      writeFileSync(sentinelPath, "keep");
+      const randomBytesSpy = spyOn(crypto, "randomBytes").mockReturnValue(
+        Buffer.from(idSuffix, "hex") as never,
+      );
+
+      try {
+        expect(() =>
+          archiveWaitForInputRecording({
+            options: {
+              archiveSource: "voice_ask",
+              voiceAskArtifacts: {
+                agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+                agentAudioFormat: "mp3",
+                agentTranscript: "Collision question",
+                agentTtsEngine: "edge-tts",
+                agentTtsVoice: "en-US-JennyNeural",
+                createdAt,
+              },
+            },
+            audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+            transcript: "Collision answer",
+            silenceMode: "standard",
+            pressToTalk: false,
+            durationMs: 900,
+            backend: "whisper.cpp",
+          }),
+        ).toThrow();
+        expect(readFileSync(sentinelPath, "utf8")).toBe("keep");
+      } finally {
+        randomBytesSpy.mockRestore();
+      }
+    });
+
+    it("rejects voice_ask archive requests without immutable prompt audio", () => {
+      expect(() =>
+        archiveWaitForInputRecording({
+          options: { archiveSource: "voice_ask" },
+          audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+          transcript: "User answer",
+          silenceMode: "standard",
+          pressToTalk: false,
+          durationMs: 900,
+          backend: "whisper.cpp",
+        }),
+      ).toThrow("requires immutable agent audio and transcript artifacts");
+    });
+
+    it("rejects voice_ask archives without actual-used TTS engine and voice", () => {
+      expect(() =>
+        archiveWaitForInputRecording({
+          options: {
+            archiveSource: "voice_ask",
+            voiceAskArtifacts: {
+              agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+              agentAudioFormat: "mp3",
+              agentTranscript: "Question without a receipt",
+            },
+          },
+          audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+          transcript: "User answer",
+          silenceMode: "standard",
+          pressToTalk: false,
+          durationMs: 900,
+          backend: "whisper.cpp",
+        }),
+      ).toThrow("actual-used TTS engine and voice");
     });
 
     it("consumes a late cancel signal before publishing or archiving transcription", () => {

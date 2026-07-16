@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeSync,
   writeFileSync,
@@ -393,6 +394,60 @@ describe("input recording durability", () => {
     }
   });
 
+  it("terminates an in-flight recorder when its abort signal fires", async () => {
+    const recorder = installFakeRecorder([], true);
+    const { getRecordingState, recordToBuffer } = await import("../input");
+    const controller = new AbortController();
+    const recording = recordToBuffer(
+      1_000,
+      "quick",
+      false,
+      undefined,
+      controller.signal,
+    );
+
+    await recorder.waitForSpawn();
+    controller.abort(new Error("outer voice_ask timeout"));
+
+    await expect(recording).rejects.toThrow("outer voice_ask timeout");
+    expect(getRecordingState()).toBe("idle");
+    expect(broadcasts.some((event) => event.type === "transcription")).toBe(
+      false,
+    );
+  });
+
+  it("restores idle when abort fires while VAD reset is still pending", async () => {
+    installFakeRecorder([], true);
+    let releaseReset!: () => void;
+    let resetStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resetStarted = resolve;
+    });
+    vadResetSpy!.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseReset = resolve;
+          resetStarted();
+        }),
+    );
+    const { getRecordingState, recordToBuffer } = await import("../input");
+    const controller = new AbortController();
+    const recording = recordToBuffer(
+      1_000,
+      "quick",
+      false,
+      undefined,
+      controller.signal,
+    );
+
+    await started;
+    controller.abort(new Error("abort during VAD reset"));
+    releaseReset();
+
+    await expect(recording).rejects.toThrow("abort during VAD reset");
+    expect(getRecordingState()).toBe("idle");
+  });
+
   it("keeps a valid retained WAV when recording throws after capturing audio", async () => {
     vadMode = "throw";
     installFakeRecorder([makePcmChunk()], false);
@@ -561,6 +616,92 @@ describe("input recording durability", () => {
     );
     expect(readFileSync(retainedPath)).toEqual(Buffer.from(wav));
     expect(backendTranscribeCalls).toBe(0);
+  });
+
+  it("runs production waitForInput through STT into an indefinite paired voice_ask archive", async () => {
+    vadProcessSpy.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 4, 5, 6]);
+
+    const response = await waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: agentAudio,
+        agentAudioFormat: "mp3",
+        agentTranscript: "Production-path question",
+        agentTtsEngine: "f5-tts-mlx",
+        agentTtsVoice: "etan-f5",
+        createdAt: new Date("2026-07-16T20:30:00.000Z"),
+      },
+    });
+
+    expect(response).toBe("Retained transcript.");
+    const dayDir = join(tmpRoot, "recordings", "2026-07-16");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    const archiveDir = join(dayDir, archiveIds[0]);
+    expect(readdirSync(archiveDir).sort()).toEqual([
+      "agent-audio.mp3",
+      "agent-transcript.txt",
+      "audio.wav",
+      "metadata.json",
+      "voicelayer-transcript.txt",
+    ]);
+    expect(readFileSync(join(archiveDir, "agent-audio.mp3"))).toEqual(
+      Buffer.from(agentAudio),
+    );
+    expect(
+      readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8"),
+    ).toBe("Retained transcript.");
+    const metadata = JSON.parse(
+      readFileSync(join(archiveDir, "metadata.json"), "utf8"),
+    );
+    expect(metadata).toMatchObject({
+      source: "voice_ask",
+      retention_policy: "indefinite",
+      transcription_status: "transcribed",
+      agent_tts_engine: "f5-tts-mlx",
+      agent_tts_voice: "etan-f5",
+    });
+    expect(
+      broadcasts.some(
+        (event) =>
+          event.type === "transcription" &&
+          event.recording_path === join(archiveDir, "audio.wav"),
+      ),
+    ).toBe(true);
+  });
+
+  it("labels paired archive failures as archive failures after successful STT", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const archiveRootFile = join(tmpRoot, "archive-root-is-a-file");
+    writeFileSync(archiveRootFile, "not a directory");
+    process.env.QA_VOICE_RECORDINGS_DIR = archiveRootFile;
+    const { waitForInput } = await import("../input");
+
+    await expect(
+      waitForInput(2_000, "standard", true, {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+          agentAudioFormat: "mp3",
+          agentTranscript: "Archive failure question",
+          agentTtsEngine: "edge-tts",
+          agentTtsVoice: "en-US-JennyNeural",
+        },
+      }),
+    ).rejects.toThrow("voice_ask archive failed");
+
+    const errorEvent = broadcasts.find((event) => event.type === "error");
+    expect(errorEvent?.message).toStartWith("voice_ask archive failed:");
   });
 
   it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {
