@@ -350,6 +350,8 @@ describe("input module", () => {
             agentAudioBytes: agentAudio,
             agentAudioFormat: "mp3",
             agentTranscript: "What changed?",
+            agentTtsEngine: "qwen3-tts",
+            agentTtsVoice: "etan-clone",
             createdAt: new Date("2026-07-16T19:20:21.123Z"),
           },
         },
@@ -400,6 +402,8 @@ describe("input module", () => {
         raw_duration_ms: 1_200,
         transcribed_duration_ms: 1_000,
         backend: "whisper.cpp",
+        agent_tts_engine: "qwen3-tts",
+        agent_tts_voice: "etan-clone",
         transcription_status: "transcribed",
         agent_transcript_chars: "What changed?".length,
         user_transcript_chars: "The archive now keeps both sides.".length,
@@ -433,6 +437,8 @@ describe("input module", () => {
                 agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
                 agentAudioFormat: "mp3",
                 agentTranscript: "Collision question",
+                agentTtsEngine: "edge-tts",
+                agentTtsVoice: "en-US-JennyNeural",
                 createdAt,
               },
             },
@@ -462,6 +468,27 @@ describe("input module", () => {
           backend: "whisper.cpp",
         }),
       ).toThrow("requires immutable agent audio and transcript artifacts");
+    });
+
+    it("rejects voice_ask archives without actual-used TTS engine and voice", () => {
+      expect(() =>
+        archiveWaitForInputRecording({
+          options: {
+            archiveSource: "voice_ask",
+            voiceAskArtifacts: {
+              agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+              agentAudioFormat: "mp3",
+              agentTranscript: "Question without a receipt",
+            },
+          },
+          audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+          transcript: "User answer",
+          silenceMode: "standard",
+          pressToTalk: false,
+          durationMs: 900,
+          backend: "whisper.cpp",
+        }),
+      ).toThrow("actual-used TTS engine and voice");
     });
 
     it("consumes a late cancel signal before publishing or archiving transcription", () => {

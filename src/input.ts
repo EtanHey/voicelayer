@@ -73,6 +73,7 @@ import {
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
+import type { TextToSpeechEngine } from "./soundlayer";
 import { restoreSentencePunctuation } from "./stt-punctuation";
 import {
   correctTranscriptionText,
@@ -392,6 +393,8 @@ export interface WaitForInputOptions {
     agentAudioBytes: Uint8Array;
     agentAudioFormat: "mp3";
     agentTranscript: string;
+    agentTtsEngine: TextToSpeechEngine;
+    agentTtsVoice: string;
     createdAt?: Date;
   };
   signal?: AbortSignal;
@@ -460,6 +463,8 @@ interface VoiceAskRecordingMetadata {
   sample_rate: number;
   channels: number;
   backend: string;
+  agent_tts_engine: TextToSpeechEngine;
+  agent_tts_voice: string;
   language_mode: string;
   transcription_status: "transcribed";
   retention_policy: "indefinite";
@@ -842,6 +847,11 @@ export function archiveWaitForInputRecording(
       "voice_ask archive requires immutable agent audio and transcript artifacts",
     );
   }
+  if (!artifacts.agentTtsEngine || !artifacts.agentTtsVoice.trim()) {
+    throw new Error(
+      "voice_ask archive requires actual-used TTS engine and voice",
+    );
+  }
 
   const createdAt = artifacts.createdAt ?? new Date();
   const createdAtIso = createdAt.toISOString();
@@ -866,6 +876,8 @@ export function archiveWaitForInputRecording(
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
     backend: input.backend,
+    agent_tts_engine: artifacts.agentTtsEngine,
+    agent_tts_voice: artifacts.agentTtsVoice,
     language_mode: getLanguageModeFromEnv(),
     transcription_status: "transcribed",
     retention_policy: "indefinite",

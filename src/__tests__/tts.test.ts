@@ -100,6 +100,11 @@ describe("tts module", () => {
     expect(Buffer.from(result.audioArtifact!.bytes)).toEqual(
       Buffer.from("fake mp3"),
     );
+    const actualVoice = spawnCalls[0].cmd
+      .find((arg: string) => arg.startsWith("--voice="))!
+      .slice("--voice=".length);
+    expect(result.engine).toBe("edge-tts");
+    expect(result.voice).toBe(actualVoice);
   });
 
   it("returns the sanitized display transcript paired with synthesized audio", async () => {

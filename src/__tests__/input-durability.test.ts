@@ -633,6 +633,8 @@ describe("input recording durability", () => {
         agentAudioBytes: agentAudio,
         agentAudioFormat: "mp3",
         agentTranscript: "Production-path question",
+        agentTtsEngine: "f5-tts-mlx",
+        agentTtsVoice: "etan-f5",
         createdAt: new Date("2026-07-16T20:30:00.000Z"),
       },
     });
@@ -662,6 +664,8 @@ describe("input recording durability", () => {
       source: "voice_ask",
       retention_policy: "indefinite",
       transcription_status: "transcribed",
+      agent_tts_engine: "f5-tts-mlx",
+      agent_tts_voice: "etan-f5",
     });
     expect(
       broadcasts.some(
@@ -690,6 +694,8 @@ describe("input recording durability", () => {
           agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
           agentAudioFormat: "mp3",
           agentTranscript: "Archive failure question",
+          agentTtsEngine: "edge-tts",
+          agentTtsVoice: "en-US-JennyNeural",
         },
       }),
     ).rejects.toThrow("voice_ask archive failed");

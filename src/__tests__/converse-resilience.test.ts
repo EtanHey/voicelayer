@@ -25,6 +25,8 @@ import { handleConverse } from "../handlers";
 
 const capturedPrompt = () => ({
   displayText: "test question",
+  engine: "edge-tts",
+  voice: "en-US-JennyNeural",
   audioArtifact: {
     bytes: new Uint8Array([0x49, 0x44, 0x33]),
     format: "mp3" as const,

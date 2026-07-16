@@ -100,6 +100,8 @@ describe("SoundLayer MCP compatibility regression", () => {
       calls.push("speak");
       return {
         displayText: "What changed safely?",
+        engine: "edge-tts",
+        voice: "en-US-AndrewNeural",
         audioArtifact: {
           bytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
           format: "mp3",
@@ -135,6 +137,8 @@ describe("SoundLayer MCP compatibility regression", () => {
         agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
         agentAudioFormat: "mp3",
         agentTranscript: "What changed safely?",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-AndrewNeural",
       },
     });
   });
@@ -151,6 +155,22 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(waitForInputSpy).not.toHaveBeenCalled();
   });
 
+  it("refuses voice_ask before recording when actual-used TTS metadata is missing", async () => {
+    speakSpy.mockResolvedValue({
+      displayText: "Receipt-less question",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33]),
+        format: "mp3",
+      },
+    });
+
+    const result = await handleVoiceAsk({ message: "Receipt-less question" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("engine/voice");
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+
   it("publishes one paired folder through the voice_ask handler archive boundary", async () => {
     const archiveRoot = mkdtempSync(join(tmpdir(), "voiceask-round-test-"));
     const savedArchiveRoot = process.env.QA_VOICE_RECORDINGS_DIR;
@@ -158,6 +178,8 @@ describe("SoundLayer MCP compatibility regression", () => {
     const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 7, 8, 9]);
     speakSpy.mockResolvedValue({
       displayText: "Paired question without markup",
+      engine: "qwen3-tts",
+      voice: "etan-clone",
       audioArtifact: { bytes: agentAudio, format: "mp3" },
     });
     waitForInputSpy.mockImplementation(
