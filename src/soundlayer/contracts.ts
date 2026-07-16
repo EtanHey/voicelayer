@@ -44,6 +44,8 @@ export interface TextToSpeechOptions {
 
 export interface TextToSpeechResult {
   warning?: string;
+  /** Sanitized human-readable text paired with the synthesized audio. */
+  displayText?: string;
   audioArtifact?: {
     bytes: Uint8Array;
     format: "mp3";

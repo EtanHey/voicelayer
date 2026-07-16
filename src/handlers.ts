@@ -303,9 +303,9 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       voice: voiceName,
       captureAudioArtifact: true,
     });
-    if (!speech.audioArtifact) {
+    if (!speech.audioArtifact || !speech.displayText?.trim()) {
       throw new Error(
-        "voice_ask could not retain synthesized prompt audio; recording was not started",
+        "voice_ask could not retain synthesized prompt audio/transcript; recording was not started",
       );
     }
 
@@ -320,7 +320,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
         voiceAskArtifacts: {
           agentAudioBytes: speech.audioArtifact.bytes,
           agentAudioFormat: speech.audioArtifact.format,
-          agentTranscript: validated.message,
+          agentTranscript: speech.displayText,
         },
         signal: inputAbortController.signal,
       },

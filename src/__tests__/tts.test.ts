@@ -102,6 +102,18 @@ describe("tts module", () => {
     );
   });
 
+  it("returns the sanitized display transcript paired with synthesized audio", async () => {
+    const { speak } = await import("../tts");
+
+    const result = await speak("<speak>Hello\u0000 archive</speak>", {
+      captureAudioArtifact: true,
+    });
+
+    expect(result.displayText).toBe("Hello archive");
+    expect(spawnCalls[0].cmd).toContain("--text=Hello archive");
+    expect(result.audioArtifact?.format).toBe("mp3");
+  });
+
   it("speak() uses configured voice and rate", async () => {
     const { speak } = await import("../tts");
 

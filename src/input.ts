@@ -441,6 +441,13 @@ interface VoiceBarRecordingMetadata {
   schema_version: number;
 }
 
+const VOICE_ASK_ARTIFACT_NAMES = {
+  agent_audio: "agent-audio.mp3",
+  agent_transcript: "agent-transcript.txt",
+  user_audio: "audio.wav",
+  user_transcript: "voicelayer-transcript.txt",
+} as const;
+
 interface VoiceAskRecordingMetadata {
   id: string;
   created_at: string;
@@ -462,12 +469,7 @@ interface VoiceAskRecordingMetadata {
   audio_sha256: string;
   agent_audio_sha256: string;
   user_audio_sha256: string;
-  artifacts: {
-    agent_audio: "agent-audio.mp3";
-    agent_transcript: "agent-transcript.txt";
-    user_audio: "audio.wav";
-    user_transcript: "voicelayer-transcript.txt";
-  };
+  artifacts: typeof VOICE_ASK_ARTIFACT_NAMES;
   app_version: null;
   schema_version: 2;
 }
@@ -875,12 +877,7 @@ export function archiveWaitForInputRecording(
       .update(agentAudioBytes)
       .digest("hex"),
     user_audio_sha256: userAudioSha256,
-    artifacts: {
-      agent_audio: "agent-audio.mp3",
-      agent_transcript: "agent-transcript.txt",
-      user_audio: "audio.wav",
-      user_transcript: "voicelayer-transcript.txt",
-    },
+    artifacts: VOICE_ASK_ARTIFACT_NAMES,
     app_version: null,
     schema_version: 2,
   };
@@ -891,14 +888,20 @@ export function archiveWaitForInputRecording(
     fsyncPath(archiveRoot);
     mkdirSync(stagingDir, { mode: 0o700 });
     stagingCreated = true;
-    atomicWriteFile(join(stagingDir, "agent-audio.mp3"), agentAudioBytes);
     atomicWriteFile(
-      join(stagingDir, "agent-transcript.txt"),
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_audio),
+      agentAudioBytes,
+    );
+    atomicWriteFile(
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.agent_transcript),
       artifacts.agentTranscript,
     );
-    atomicWriteFile(join(stagingDir, "audio.wav"), input.audioBytes);
     atomicWriteFile(
-      join(stagingDir, "voicelayer-transcript.txt"),
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.user_audio),
+      input.audioBytes,
+    );
+    atomicWriteFile(
+      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.user_transcript),
       input.transcript,
     );
     atomicWriteFile(
@@ -1659,6 +1662,7 @@ export async function recordToBuffer(
       throw err;
     }
   }
+  if (signal?.aborted) setRecordingState("idle");
   throwIfWaitForInputAborted(signal);
 
   // Clear any leftover stop/cancel signals from previous recording
@@ -2336,9 +2340,12 @@ export async function waitForInput(
     if (options.signal?.aborted) {
       throw err;
     }
+    const errorMessage = err instanceof Error ? err.message : String(err);
     broadcast({
       type: "error",
-      message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,
+      message: errorMessage.startsWith("voice_ask archive failed:")
+        ? errorMessage
+        : `Transcription failed: ${errorMessage}`,
       recoverable: true,
     });
     broadcast({ type: "state", state: "idle", source: "recording" });

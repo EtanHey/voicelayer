@@ -24,6 +24,7 @@ import * as socketClient from "../socket-client";
 import { handleConverse } from "../handlers";
 
 const capturedPrompt = () => ({
+  displayText: "test question",
   audioArtifact: {
     bytes: new Uint8Array([0x49, 0x44, 0x33]),
     format: "mp3" as const,

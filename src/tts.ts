@@ -1189,7 +1189,7 @@ export async function speak(
           resolved.voice,
           options,
         );
-        return { warning: resolved.warning, audioArtifact };
+        return { warning: resolved.warning, displayText, audioArtifact };
       }
       console.error(
         `[voicelayer] XTTS inference failed for "${resolved.voice}" -- trying F5-TTS`,
@@ -1218,7 +1218,7 @@ export async function speak(
           resolved.voice,
           options,
         );
-        return { warning: resolved.warning, audioArtifact };
+        return { warning: resolved.warning, displayText, audioArtifact };
       }
       console.error(
         `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" -- trying Qwen3 daemon`,
@@ -1238,7 +1238,7 @@ export async function speak(
         resolved.voice,
         options,
       );
-      return { warning: resolved.warning, audioArtifact };
+      return { warning: resolved.warning, displayText, audioArtifact };
     }
 
     // All cloned engines failed. Fail-closed when the clone is mandated;
@@ -1402,7 +1402,7 @@ async function speakWithEdgeTTS(
     await proc.exited;
   }
 
-  return { warning, audioArtifact };
+  return { warning, displayText, audioArtifact };
 }
 
 export class VoiceLayerTextToSpeechBackend implements TextToSpeechBackend {

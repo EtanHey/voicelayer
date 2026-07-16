@@ -99,6 +99,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     speakSpy.mockImplementation(async () => {
       calls.push("speak");
       return {
+        displayText: "What changed safely?",
         audioArtifact: {
           bytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
           format: "mp3",
@@ -133,7 +134,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       voiceAskArtifacts: {
         agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
         agentAudioFormat: "mp3",
-        agentTranscript: "What changed?",
+        agentTranscript: "What changed safely?",
       },
     });
   });
@@ -156,6 +157,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
     const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 7, 8, 9]);
     speakSpy.mockResolvedValue({
+      displayText: "Paired question without markup",
       audioArtifact: { bytes: agentAudio, format: "mp3" },
     });
     waitForInputSpy.mockImplementation(
@@ -196,7 +198,7 @@ describe("SoundLayer MCP compatibility regression", () => {
         Buffer.from(agentAudio),
       );
       expect(readFileSync(join(folder, "agent-transcript.txt"), "utf8")).toBe(
-        "Paired question",
+        "Paired question without markup",
       );
       expect(
         readFileSync(join(folder, "voicelayer-transcript.txt"), "utf8"),

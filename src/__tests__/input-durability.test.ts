@@ -416,6 +416,37 @@ describe("input recording durability", () => {
     );
   });
 
+  it("restores idle when abort fires while VAD reset is still pending", async () => {
+    let releaseReset!: () => void;
+    let resetStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resetStarted = resolve;
+    });
+    vadResetSpy!.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseReset = resolve;
+          resetStarted();
+        }),
+    );
+    const { getRecordingState, recordToBuffer } = await import("../input");
+    const controller = new AbortController();
+    const recording = recordToBuffer(
+      1_000,
+      "quick",
+      false,
+      undefined,
+      controller.signal,
+    );
+
+    await started;
+    controller.abort(new Error("abort during VAD reset"));
+    releaseReset();
+
+    await expect(recording).rejects.toThrow("abort during VAD reset");
+    expect(getRecordingState()).toBe("idle");
+  });
+
   it("keeps a valid retained WAV when recording throws after capturing audio", async () => {
     vadMode = "throw";
     installFakeRecorder([makePcmChunk()], false);
@@ -638,6 +669,32 @@ describe("input recording durability", () => {
           event.recording_path === join(archiveDir, "audio.wav"),
       ),
     ).toBe(true);
+  });
+
+  it("labels paired archive failures as archive failures after successful STT", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const archiveRootFile = join(tmpRoot, "archive-root-is-a-file");
+    writeFileSync(archiveRootFile, "not a directory");
+    process.env.QA_VOICE_RECORDINGS_DIR = archiveRootFile;
+    const { waitForInput } = await import("../input");
+
+    await expect(
+      waitForInput(2_000, "standard", true, {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+          agentAudioFormat: "mp3",
+          agentTranscript: "Archive failure question",
+        },
+      }),
+    ).rejects.toThrow("voice_ask archive failed");
+
+    const errorEvent = broadcasts.find((event) => event.type === "error");
+    expect(errorEvent?.message).toStartWith("voice_ask archive failed:");
   });
 
   it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {
