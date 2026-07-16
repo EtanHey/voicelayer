@@ -81,7 +81,7 @@ describe("tts module", () => {
   it("speak() calls edge-tts then audio player (non-blocking)", async () => {
     const { speak } = await import("../tts");
 
-    await speak("Hello test");
+    const result = await speak("Hello test", { captureAudioArtifact: true });
 
     // On macOS: afplay, on Linux with no players: mpg123 fallback
     const expectedPlayer = platform() === "darwin" ? "afplay" : "mpg123";
@@ -96,6 +96,10 @@ describe("tts module", () => {
     // utterance can't be misparsed by argparse (exit-2 regression guard).
     expect(spawnCalls[0].cmd).toContain("--text=Hello test");
     expect(spawnCalls[1].cmd[0]).toBe(expectedPlayer);
+    expect(result.audioArtifact?.format).toBe("mp3");
+    expect(Buffer.from(result.audioArtifact!.bytes)).toEqual(
+      Buffer.from("fake mp3"),
+    );
   });
 
   it("speak() uses configured voice and rate", async () => {

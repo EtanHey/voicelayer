@@ -387,7 +387,25 @@ export interface VoiceBarUntranscribedRecordingArchiveInput
 }
 
 export interface WaitForInputOptions {
-  archiveSource?: "voicebar";
+  archiveSource?: "voicebar" | "voice_ask";
+  voiceAskArtifacts?: {
+    agentAudioBytes: Uint8Array;
+    agentAudioFormat: "mp3";
+    agentTranscript: string;
+    createdAt?: Date;
+  };
+  signal?: AbortSignal;
+}
+
+function waitForInputAbortError(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const error = new Error("voice input aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfWaitForInputAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw waitForInputAbortError(signal);
 }
 
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
@@ -421,6 +439,37 @@ interface VoiceBarRecordingMetadata {
   audio_sha256: string;
   app_version: string | null;
   schema_version: number;
+}
+
+interface VoiceAskRecordingMetadata {
+  id: string;
+  created_at: string;
+  source: "voice_ask";
+  mode: "vad" | "ptt";
+  silence_mode: SilenceMode;
+  duration_ms: number;
+  raw_duration_ms: number;
+  transcribed_duration_ms: number;
+  sample_rate: number;
+  channels: number;
+  backend: string;
+  language_mode: string;
+  transcription_status: "transcribed";
+  retention_policy: "indefinite";
+  voicelayer_transcript_chars: number;
+  agent_transcript_chars: number;
+  user_transcript_chars: number;
+  audio_sha256: string;
+  agent_audio_sha256: string;
+  user_audio_sha256: string;
+  artifacts: {
+    agent_audio: "agent-audio.mp3";
+    agent_transcript: "agent-transcript.txt";
+    user_audio: "audio.wav";
+    user_transcript: "voicelayer-transcript.txt";
+  };
+  app_version: null;
+  schema_version: 2;
 }
 
 function recordingsArchiveRoot(): string {
@@ -764,20 +813,110 @@ function writeVoiceBarRecordingArchive(
 export function archiveWaitForInputRecording(
   input: WaitForInputArchiveInput,
 ): string | null {
-  if (input.options.archiveSource !== "voicebar") {
-    return null;
+  throwIfWaitForInputAborted(input.options.signal);
+  if (input.options.archiveSource === "voicebar") {
+    return archiveVoiceBarRecording({
+      audioBytes: input.audioBytes,
+      transcript: input.transcript,
+      source: input.options.archiveSource,
+      silenceMode: input.silenceMode,
+      pressToTalk: input.pressToTalk,
+      durationMs: input.durationMs,
+      transcribedDurationMs: input.transcribedDurationMs,
+      backend: input.backend,
+    });
   }
 
-  return archiveVoiceBarRecording({
-    audioBytes: input.audioBytes,
-    transcript: input.transcript,
-    source: input.options.archiveSource,
-    silenceMode: input.silenceMode,
-    pressToTalk: input.pressToTalk,
-    durationMs: input.durationMs,
-    transcribedDurationMs: input.transcribedDurationMs,
+  if (input.options.archiveSource !== "voice_ask") return null;
+  if (!input.transcript?.trim()) return null;
+  const artifacts = input.options.voiceAskArtifacts;
+  if (
+    !artifacts ||
+    artifacts.agentAudioFormat !== "mp3" ||
+    artifacts.agentAudioBytes.byteLength === 0 ||
+    !artifacts.agentTranscript.trim()
+  ) {
+    throw new Error(
+      "voice_ask archive requires immutable agent audio and transcript artifacts",
+    );
+  }
+
+  const createdAt = artifacts.createdAt ?? new Date();
+  const createdAtIso = createdAt.toISOString();
+  const id = archiveId(createdAt);
+  const archiveRoot = recordingsArchiveRoot();
+  const dayDir = join(archiveRoot, createdAtIso.slice(0, 10));
+  const stagingDir = join(dayDir, `.tmp-${id}`);
+  const finalDir = join(dayDir, id);
+  const agentAudioBytes = artifacts.agentAudioBytes;
+  const userAudioSha256 = createHash("sha256")
+    .update(input.audioBytes)
+    .digest("hex");
+  const metadata: VoiceAskRecordingMetadata = {
+    id,
+    created_at: createdAtIso,
+    source: "voice_ask",
+    mode: input.pressToTalk ? "ptt" : "vad",
+    silence_mode: input.silenceMode,
+    duration_ms: input.durationMs,
+    raw_duration_ms: input.durationMs,
+    transcribed_duration_ms: input.transcribedDurationMs ?? input.durationMs,
+    sample_rate: SAMPLE_RATE,
+    channels: CHANNELS,
     backend: input.backend,
-  });
+    language_mode: getLanguageModeFromEnv(),
+    transcription_status: "transcribed",
+    retention_policy: "indefinite",
+    voicelayer_transcript_chars: input.transcript.length,
+    agent_transcript_chars: artifacts.agentTranscript.length,
+    user_transcript_chars: input.transcript.length,
+    audio_sha256: userAudioSha256,
+    agent_audio_sha256: createHash("sha256")
+      .update(agentAudioBytes)
+      .digest("hex"),
+    user_audio_sha256: userAudioSha256,
+    artifacts: {
+      agent_audio: "agent-audio.mp3",
+      agent_transcript: "agent-transcript.txt",
+      user_audio: "audio.wav",
+      user_transcript: "voicelayer-transcript.txt",
+    },
+    app_version: null,
+    schema_version: 2,
+  };
+
+  let stagingCreated = false;
+  try {
+    mkdirSync(dayDir, { recursive: true, mode: 0o700 });
+    fsyncPath(archiveRoot);
+    mkdirSync(stagingDir, { mode: 0o700 });
+    stagingCreated = true;
+    atomicWriteFile(join(stagingDir, "agent-audio.mp3"), agentAudioBytes);
+    atomicWriteFile(
+      join(stagingDir, "agent-transcript.txt"),
+      artifacts.agentTranscript,
+    );
+    atomicWriteFile(join(stagingDir, "audio.wav"), input.audioBytes);
+    atomicWriteFile(
+      join(stagingDir, "voicelayer-transcript.txt"),
+      input.transcript,
+    );
+    atomicWriteFile(
+      join(stagingDir, "metadata.json"),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+    renameSync(stagingDir, finalDir);
+    fsyncPath(dayDir);
+  } catch (err) {
+    if (stagingCreated) {
+      try {
+        rmSync(stagingDir, { recursive: true, force: true });
+      } catch {}
+    }
+    throw err;
+  }
+
+  return finalDir;
 }
 
 export interface CaptureFailure {
@@ -1447,7 +1586,9 @@ export async function recordToBuffer(
   silenceMode: SilenceMode = "standard",
   pressToTalk: boolean = false,
   chunkedSession?: ChunkedRecordingSession,
+  signal?: AbortSignal,
 ): Promise<Uint8Array | null> {
+  throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
   if (isMicDisabled()) {
     console.error(
@@ -1518,6 +1659,7 @@ export async function recordToBuffer(
       throw err;
     }
   }
+  throwIfWaitForInputAborted(signal);
 
   // Clear any leftover stop/cancel signals from previous recording
   clearStopSignal();
@@ -1535,6 +1677,7 @@ export async function recordToBuffer(
     let resolved = false;
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
+    let abortHandler: (() => void) | undefined;
     let pttStopRequestedAtMs: number | null = null;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
 
@@ -1564,6 +1707,9 @@ export async function recordToBuffer(
       setRecordingState("idle");
       clearTimeout(timer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
+      if (abortHandler && signal) {
+        signal.removeEventListener("abort", abortHandler);
+      }
 
       if (recorder) {
         void terminateRecorderProcess(recorder).catch((err) => {
@@ -1614,6 +1760,14 @@ export async function recordToBuffer(
 
     // Timeout handler
     const timer = setTimeout(() => finish(), timeoutMs);
+    if (signal) {
+      abortHandler = () => finish(waitForInputAbortError(signal));
+      if (signal.aborted) {
+        abortHandler();
+        return;
+      }
+      signal.addEventListener("abort", abortHandler, { once: true });
+    }
     stopSignalPoll = setInterval(() => {
       if (pressToTalk && finishIfPttStopDrainComplete()) return;
       if (!hasStopSignal()) return;
@@ -1861,6 +2015,7 @@ export async function waitForInput(
   pressToTalk: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
+  throwIfWaitForInputAborted(options.signal);
   const currentRecordingState = getEffectiveRecordingState();
   if (currentRecordingState !== "idle") {
     throw new Error(
@@ -1888,6 +2043,7 @@ export async function waitForInput(
       silenceMode,
       pressToTalk,
       chunkedSession,
+      options.signal,
     );
   } catch (err) {
     appendControlLayerEvent("capture.recording_failed", {
@@ -1897,6 +2053,7 @@ export async function waitForInput(
       press_to_talk: pressToTalk,
       archive_source: options.archiveSource ?? null,
     });
+    if (options.signal?.aborted) throw err;
     // H4 fix: broadcast error + idle so Voice Bar doesn't get stuck
     broadcast({
       type: "error",
@@ -1911,6 +2068,7 @@ export async function waitForInput(
     }
     throw err;
   }
+  throwIfWaitForInputAborted(options.signal);
   if (!pcmData) {
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
@@ -2016,6 +2174,7 @@ export async function waitForInput(
   if (pressToTalk) {
     try {
       const pttSpeechGate = await evaluatePttSpeechGate(sttTrim.pcmData);
+      throwIfWaitForInputAborted(options.signal);
       console.error(
         `[voicelayer] PTT speech gate: detected=${pttSpeechGate.detected} ` +
           `(speech-chunks=${pttSpeechGate.speechChunks}/${pttSpeechGate.totalChunks})`,
@@ -2026,12 +2185,14 @@ export async function waitForInput(
         return null;
       }
     } catch (err) {
+      if (options.signal?.aborted) throw err;
       console.error(
         `[voicelayer] PTT speech gate skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
 
+  throwIfWaitForInputAborted(options.signal);
   // Broadcast transcribing state to Voice Bar
   setRecordingState("transcribing");
   broadcast({ type: "state", state: "transcribing" });
@@ -2060,6 +2221,7 @@ export async function waitForInput(
 
     // Transcribe with selected backend
     const backend = await getBackend();
+    throwIfWaitForInputAborted(options.signal);
     broadcast({
       type: "transcription_status",
       status: "transcribing",
@@ -2079,10 +2241,12 @@ export async function waitForInput(
           Date.now() + Math.random(),
         );
         try {
+          throwIfWaitForInputAborted(options.signal);
           writeFileSync(chunkPath, createWavBuffer(chunk));
           const result = await backend.transcribe(chunkPath, {
             promptOverride: prompt,
           });
+          throwIfWaitForInputAborted(options.signal);
           return result.text;
         } finally {
           try {
@@ -2090,12 +2254,14 @@ export async function waitForInput(
           } catch {}
         }
       });
+      throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
         polishSurfaceForWaitOptions(options),
       );
     } else {
       const result = await backend.transcribe(wavPath);
+      throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
@@ -2106,6 +2272,7 @@ export async function waitForInput(
         );
       }
     }
+    throwIfWaitForInputAborted(options.signal);
     const text = finalized.text;
     console.error(`[voicelayer] Transcription: ${text}`);
 
@@ -2123,6 +2290,7 @@ export async function waitForInput(
       return null;
     }
 
+    throwIfWaitForInputAborted(options.signal);
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
@@ -2137,12 +2305,17 @@ export async function waitForInput(
           backend: backend.name,
         });
       } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
         console.error(
-          `[voicelayer] Failed to archive recording: ${err instanceof Error ? err.message : String(err)}`,
+          `[voicelayer] Failed to archive recording: ${detail}`,
         );
+        if (options.archiveSource === "voice_ask") {
+          throw new Error(`voice_ask archive failed: ${detail}`);
+        }
       }
     }
 
+    throwIfWaitForInputAborted(options.signal);
     // Broadcast transcription result + idle state to Voice Bar
     if (text) {
       broadcast({
@@ -2160,6 +2333,9 @@ export async function waitForInput(
     return text || null;
   } catch (err) {
     setRecordingState("idle");
+    if (options.signal?.aborted) {
+      throw err;
+    }
     broadcast({
       type: "error",
       message: `Transcription failed: ${err instanceof Error ? err.message : String(err)}`,

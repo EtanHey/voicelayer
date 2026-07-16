@@ -193,6 +193,7 @@ function readSpecimen(directory: string): CorpusSpecimen | null {
   }
   try {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    if (metadata.source !== "voicebar") return null;
     const transcript = readFileSync(transcriptPath, "utf8").trim();
     const durationMs = Number(metadata.duration_ms);
     if (

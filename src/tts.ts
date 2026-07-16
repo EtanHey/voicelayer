@@ -538,6 +538,14 @@ function addToHistory(text: string, audioFile: string, voice: string): void {
   ringIndex++;
 }
 
+function captureAudioArtifact(
+  audioFile: string,
+  enabled: boolean | undefined,
+): TextToSpeechResult["audioArtifact"] {
+  if (!enabled) return undefined;
+  return { bytes: readFileSync(audioFile), format: "mp3" };
+}
+
 /** Get a history entry by recency index (0 = most recent). */
 export function getHistoryEntry(index: number = 0): TTSHistoryEntry | null {
   const entries = loadHistory();
@@ -588,11 +596,17 @@ async function playClonedAudio(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    captureAudioArtifact?: boolean;
   },
-): Promise<void> {
+): Promise<TextToSpeechResult["audioArtifact"]> {
   let proc: PlaybackHandle;
+  let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
     assertSpeakerClear();
+    audioArtifact = captureAudioArtifact(
+      ttsFile,
+      options?.captureAudioArtifact,
+    );
     addToHistory(text, ttsFile, voiceLabel);
     const durationMs = probeAudioDurationMs(ttsFile) ?? undefined;
     proc = playAudioNonBlocking(ttsFile, {
@@ -614,6 +628,7 @@ async function playClonedAudio(
     } catch {}
   });
   if (options?.waitForPlayback) await proc.exited;
+  return audioArtifact;
 }
 
 /**
@@ -1166,7 +1181,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
-        await playClonedAudio(
+        const audioArtifact = await playClonedAudio(
           mp3Path,
           displayText,
           `xtts:${resolved.voice}`,
@@ -1174,7 +1189,7 @@ export async function speak(
           resolved.voice,
           options,
         );
-        return { warning: resolved.warning };
+        return { warning: resolved.warning, audioArtifact };
       }
       console.error(
         `[voicelayer] XTTS inference failed for "${resolved.voice}" -- trying F5-TTS`,
@@ -1195,7 +1210,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
-        await playClonedAudio(
+        const audioArtifact = await playClonedAudio(
           mp3Path,
           displayText,
           `f5tts:${resolved.voice}`,
@@ -1203,7 +1218,7 @@ export async function speak(
           resolved.voice,
           options,
         );
-        return { warning: resolved.warning };
+        return { warning: resolved.warning, audioArtifact };
       }
       console.error(
         `[voicelayer] F5-TTS synthesis failed for "${resolved.voice}" -- trying Qwen3 daemon`,
@@ -1215,7 +1230,7 @@ export async function speak(
     if (audioBuffer) {
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
-      await playClonedAudio(
+      const audioArtifact = await playClonedAudio(
         ttsFile,
         displayText,
         `cloned:${resolved.voice}`,
@@ -1223,7 +1238,7 @@ export async function speak(
         resolved.voice,
         options,
       );
-      return { warning: resolved.warning };
+      return { warning: resolved.warning, audioArtifact };
     }
 
     // All cloned engines failed. Fail-closed when the clone is mandated;
@@ -1268,10 +1283,11 @@ async function speakWithEdgeTTS(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    captureAudioArtifact?: boolean;
   },
   warning?: string,
   displayText: string = spokenText,
-): Promise<{ warning?: string }> {
+): Promise<TextToSpeechResult> {
   // Determine rate: explicit > mode default > env default
   let rate =
     options?.rate ??
@@ -1351,8 +1367,13 @@ async function speakWithEdgeTTS(
 
   // Pass metadata to queue — broadcasting happens when audio actually starts
   let proc: PlaybackHandle;
+  let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
     assertSpeakerClear();
+    audioArtifact = captureAudioArtifact(
+      ttsFile,
+      options?.captureAudioArtifact,
+    );
     addToHistory(displayText, ttsFile, voice);
     proc = playAudioNonBlocking(ttsFile, {
       text: displayText.slice(0, 2000),
@@ -1381,7 +1402,7 @@ async function speakWithEdgeTTS(
     await proc.exited;
   }
 
-  return { warning };
+  return { warning, audioArtifact };
 }
 
 export class VoiceLayerTextToSpeechBackend implements TextToSpeechBackend {

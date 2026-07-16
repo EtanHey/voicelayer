@@ -8,12 +8,27 @@
  * 4. Log warning when VoiceBar is disconnected (non-blocking)
  */
 
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import {
+  describe,
+  it,
+  expect,
+  beforeEach,
+  afterEach,
+  spyOn,
+  jest,
+} from "bun:test";
 import * as tts from "../tts";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleConverse } from "../handlers";
+
+const capturedPrompt = () => ({
+  audioArtifact: {
+    bytes: new Uint8Array([0x49, 0x44, 0x33]),
+    format: "mp3" as const,
+  },
+});
 
 describe("handleConverse resilience — P0-2", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
@@ -88,7 +103,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("returns error result when waitForInput() throws", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("sox not found"),
     );
@@ -103,7 +118,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("broadcasts idle when waitForInput() fails", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("recording failed"),
     );
@@ -120,7 +135,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("does not broadcast idle when waitForInput() refuses an existing recording", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("Recording already in progress (state: recording)"),
     );
@@ -143,7 +158,7 @@ describe("handleConverse resilience — P0-2", () => {
       false,
     );
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockResolvedValue("hello");
 
     // Should complete normally, just with a warning
@@ -165,5 +180,43 @@ describe("handleConverse resilience — P0-2", () => {
 
     isConnectedSpy.mockRestore();
     errorSpy.mockRestore();
+  });
+
+  it("aborts the in-flight input pipeline when the outer timeout wins", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      let capturedSignal: AbortSignal | undefined;
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pressToTalk, options) => {
+          capturedSignal = (options as { signal?: AbortSignal } | undefined)
+            ?.signal;
+          return new Promise(() => {});
+        },
+      );
+
+      const pending = handleConverse({
+        message: "test question",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal?.aborted).toBe(false);
+
+      jest.advanceTimersByTime(20_000);
+      const result = await pending;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Hard timeout");
+      expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
   });
 });

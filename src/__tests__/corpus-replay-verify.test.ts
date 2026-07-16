@@ -58,13 +58,14 @@ function writeSpecimen(
   id: string,
   transcript: string,
   durationMs = 2_000,
+  source: "voicebar" | "voice_ask" = "voicebar",
 ) {
   const directory = join(root, day, id);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "audio.wav"), "RIFF-test-audio");
   writeFileSync(
     join(directory, "metadata.json"),
-    JSON.stringify({ id, duration_ms: durationMs, sample_rate: 16_000 }),
+    JSON.stringify({ id, duration_ms: durationMs, sample_rate: 16_000, source }),
   );
   writeFileSync(join(directory, "voicelayer-transcript.txt"), transcript);
 }
@@ -275,6 +276,28 @@ describe("corpus replay verification", () => {
     ).toThrow("missing-pinned-recording");
   });
 
+  test("excludes paired voice_ask rounds from the VoiceBar corpus", () => {
+    const root = makeTempRoot();
+    writeSpecimen(
+      root,
+      "2026-07-13",
+      "voicebar-round",
+      "This VoiceBar recording remains eligible.",
+    );
+    writeSpecimen(
+      root,
+      "2026-07-14",
+      "voice-ask-round",
+      "This newer voice ask reply must not enter the corpus.",
+      2_000,
+      "voice_ask",
+    );
+
+    expect(selectCorpusSpecimens(root, 1).map((item) => item.id)).toEqual([
+      "voicebar-round",
+    ]);
+  });
+
   test("reads a documented corpus manifest and rejects duplicate ids", () => {
     const root = makeTempRoot();
     const manifest = join(root, "corpus-manifest.txt");
@@ -295,6 +318,7 @@ describe("corpus replay verification", () => {
         id: "duplicate-id",
         duration_ms: 2_000,
         sample_rate: 16_000,
+        source: "voicebar",
       }),
     );
 
