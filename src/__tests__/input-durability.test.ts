@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeSync,
   writeFileSync,
@@ -561,6 +562,60 @@ describe("input recording durability", () => {
     );
     expect(readFileSync(retainedPath)).toEqual(Buffer.from(wav));
     expect(backendTranscribeCalls).toBe(0);
+  });
+
+  it("runs production waitForInput through STT into an indefinite paired voice_ask archive", async () => {
+    vadProcessSpy.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 4, 5, 6]);
+
+    const response = await waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: agentAudio,
+        agentAudioFormat: "mp3",
+        agentTranscript: "Production-path question",
+        createdAt: new Date("2026-07-16T20:30:00.000Z"),
+      },
+    });
+
+    expect(response).toBe("Retained transcript.");
+    const dayDir = join(tmpRoot, "recordings", "2026-07-16");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    const archiveDir = join(dayDir, archiveIds[0]);
+    expect(readdirSync(archiveDir).sort()).toEqual([
+      "agent-audio.mp3",
+      "agent-transcript.txt",
+      "audio.wav",
+      "metadata.json",
+      "voicelayer-transcript.txt",
+    ]);
+    expect(readFileSync(join(archiveDir, "agent-audio.mp3"))).toEqual(
+      Buffer.from(agentAudio),
+    );
+    expect(
+      readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8"),
+    ).toBe("Retained transcript.");
+    const metadata = JSON.parse(
+      readFileSync(join(archiveDir, "metadata.json"), "utf8"),
+    );
+    expect(metadata).toMatchObject({
+      source: "voice_ask",
+      retention_policy: "indefinite",
+      transcription_status: "transcribed",
+    });
+    expect(
+      broadcasts.some(
+        (event) =>
+          event.type === "transcription" &&
+          event.recording_path === join(archiveDir, "audio.wav"),
+      ),
+    ).toBe(true);
   });
 
   it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {

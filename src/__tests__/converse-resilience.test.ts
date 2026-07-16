@@ -15,6 +15,13 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleConverse } from "../handlers";
 
+const capturedPrompt = () => ({
+  audioArtifact: {
+    bytes: new Uint8Array([0x49, 0x44, 0x33]),
+    format: "mp3" as const,
+  },
+});
+
 describe("handleConverse resilience — P0-2", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
   let broadcasts: unknown[];
@@ -88,7 +95,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("returns error result when waitForInput() throws", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("sox not found"),
     );
@@ -103,7 +110,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("broadcasts idle when waitForInput() fails", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("recording failed"),
     );
@@ -120,7 +127,7 @@ describe("handleConverse resilience — P0-2", () => {
   });
 
   it("does not broadcast idle when waitForInput() refuses an existing recording", async () => {
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockRejectedValue(
       new Error("Recording already in progress (state: recording)"),
     );
@@ -143,7 +150,7 @@ describe("handleConverse resilience — P0-2", () => {
       false,
     );
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
-    speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
     waitSpy = spyOn(input, "waitForInput").mockResolvedValue("hello");
 
     // Should complete normally, just with a warning

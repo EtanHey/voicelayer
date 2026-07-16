@@ -296,11 +296,17 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
 
     // Speak the question aloud — BLOCKING for converse
     const voiceName = validated.voice;
-    await speak(validated.message, {
+    const speech = await speak(validated.message, {
       mode: "converse",
       waitForPlayback: true,
       voice: voiceName,
+      captureAudioArtifact: true,
     });
+    if (!speech.audioArtifact) {
+      throw new Error(
+        "voice_ask could not retain synthesized prompt audio; recording was not started",
+      );
+    }
 
     // Record mic audio, then transcribe with selected STT backend
     const pressToTalk = validated.press_to_talk ?? false;
@@ -308,6 +314,14 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       timeoutSeconds * 1000,
       silenceMode,
       pressToTalk,
+      {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: speech.audioArtifact.bytes,
+          agentAudioFormat: speech.audioArtifact.format,
+          agentTranscript: validated.message,
+        },
+      },
     );
 
     if (response === null) {

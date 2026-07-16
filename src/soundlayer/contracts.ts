@@ -38,10 +38,16 @@ export interface TextToSpeechOptions {
    * render/narration path; default (false) keeps the resilient fallback.
    */
   requireClonedVoice?: boolean;
+  /** Return an immutable copy of the synthesized audio for paired archives. */
+  captureAudioArtifact?: boolean;
 }
 
 export interface TextToSpeechResult {
   warning?: string;
+  audioArtifact?: {
+    bytes: Uint8Array;
+    format: "mp3";
+  };
 }
 
 export interface TextToSpeechBackend {

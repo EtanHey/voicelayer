@@ -6,6 +6,14 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
 describe("SoundLayer MCP compatibility regression", () => {
   let ensureBarSpy: ReturnType<typeof spyOn>;
@@ -90,7 +98,12 @@ describe("SoundLayer MCP compatibility regression", () => {
     });
     speakSpy.mockImplementation(async () => {
       calls.push("speak");
-      return {};
+      return {
+        audioArtifact: {
+          bytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
+          format: "mp3",
+        },
+      };
     });
     waitForInputSpy.mockImplementation(async () => {
       calls.push("waitForInput");
@@ -112,7 +125,88 @@ describe("SoundLayer MCP compatibility regression", () => {
       mode: "converse",
       waitForPlayback: true,
       voice: undefined,
+      captureAudioArtifact: true,
     });
-    expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true);
+    expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "What changed?",
+      },
+    });
+  });
+
+  it("refuses voice_ask before recording when prompt audio cannot be retained", async () => {
+    speakSpy.mockResolvedValue({});
+
+    const result = await handleVoiceAsk({ message: "Can you hear this?" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(
+      "could not retain synthesized prompt audio",
+    );
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+
+  it("publishes one paired folder through the voice_ask handler archive boundary", async () => {
+    const archiveRoot = mkdtempSync(join(tmpdir(), "voiceask-round-test-"));
+    const savedArchiveRoot = process.env.QA_VOICE_RECORDINGS_DIR;
+    process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
+    const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 7, 8, 9]);
+    speakSpy.mockResolvedValue({
+      audioArtifact: { bytes: agentAudio, format: "mp3" },
+    });
+    waitForInputSpy.mockImplementation(
+      async (timeoutMs, silenceMode, pressToTalk, options) => {
+        input.archiveWaitForInputRecording({
+          options: options!,
+          audioBytes: input.createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+          transcript: "Paired answer",
+          silenceMode: silenceMode!,
+          pressToTalk: pressToTalk!,
+          durationMs: timeoutMs / 10,
+          backend: "fake-stt",
+        });
+        return "Paired answer";
+      },
+    );
+
+    try {
+      const result = await handleVoiceAsk({
+        message: "Paired question",
+        timeout_seconds: 5,
+      });
+
+      expect(result.isError).toBeUndefined();
+      const dayDirs = readdirSync(archiveRoot);
+      expect(dayDirs).toHaveLength(1);
+      const archiveIds = readdirSync(join(archiveRoot, dayDirs[0]));
+      expect(archiveIds).toHaveLength(1);
+      const folder = join(archiveRoot, dayDirs[0], archiveIds[0]);
+      expect(readdirSync(folder).sort()).toEqual([
+        "agent-audio.mp3",
+        "agent-transcript.txt",
+        "audio.wav",
+        "metadata.json",
+        "voicelayer-transcript.txt",
+      ]);
+      expect(readFileSync(join(folder, "agent-audio.mp3"))).toEqual(
+        Buffer.from(agentAudio),
+      );
+      expect(readFileSync(join(folder, "agent-transcript.txt"), "utf8")).toBe(
+        "Paired question",
+      );
+      expect(
+        readFileSync(join(folder, "voicelayer-transcript.txt"), "utf8"),
+      ).toBe("Paired answer");
+    } finally {
+      if (savedArchiveRoot === undefined) {
+        delete process.env.QA_VOICE_RECORDINGS_DIR;
+      } else {
+        process.env.QA_VOICE_RECORDINGS_DIR = savedArchiveRoot;
+      }
+      rmSync(archiveRoot, { recursive: true, force: true });
+    }
   });
 });
