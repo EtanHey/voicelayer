@@ -417,6 +417,7 @@ describe("input recording durability", () => {
   });
 
   it("restores idle when abort fires while VAD reset is still pending", async () => {
+    installFakeRecorder([], true);
     let releaseReset!: () => void;
     let resetStarted!: () => void;
     const started = new Promise<void>((resolve) => {
