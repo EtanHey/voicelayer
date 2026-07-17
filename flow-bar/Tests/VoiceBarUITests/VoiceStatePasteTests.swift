@@ -666,6 +666,111 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertFalse(pasteShortcutPosted)
     }
 
+    func testSettingsHistoryAXInsertionRejectsSecondPasteUntilAsyncCompletion() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let capturedApp = NSRunningApplication.current
+        state.frontmostAppProvider = { capturedApp }
+        state.targetAppActivator = { _ in }
+        var insertedTexts: [String] = []
+        var pendingCompletion: (() -> Void)?
+        state.asyncDictationInsertionHandlerProvider = {
+            { text, completion in
+                insertedTexts.append(text)
+                pendingCompletion = completion
+                return true
+            }
+        }
+        state.simulatedPasteHandler = {
+            XCTFail("an in-flight AX insertion must not fall back to Cmd+V")
+            return false
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        state.repasteTranscript("first transcript", source: "settings_history")
+        state.repasteTranscript("same-target clipboard transcript")
+        state.repasteTranscript("second transcript", source: "settings_history")
+
+        XCTAssertEqual(insertedTexts, ["first transcript"])
+        XCTAssertEqual(state.confirmationText, "Text insertion already in progress")
+
+        pendingCompletion?()
+
+        XCTAssertEqual(state.confirmationText, "first transcript")
+
+        state.repasteTranscript("third transcript", source: "settings_history")
+
+        XCTAssertEqual(insertedTexts, ["first transcript", "third transcript"])
+    }
+
+    func testAXInsertionWatchdogReleasesPasteFlowWhenCompletionNeverArrives() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        state.axInsertionCompletionTimeout = 0.01
+        let capturedApp = NSRunningApplication.current
+        state.frontmostAppProvider = { capturedApp }
+        state.targetAppActivator = { _ in }
+        var insertedTexts: [String] = []
+        state.asyncDictationInsertionHandlerProvider = {
+            { text, completion in
+                insertedTexts.append(text)
+                if text == "retry transcript" {
+                    completion()
+                }
+                return true
+            }
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        state.repasteTranscript("stalled transcript", source: "settings_history")
+
+        let watchdogFired = expectation(description: "AX insertion watchdog fired")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            XCTAssertEqual(state.confirmationText, "Text insertion timed out")
+
+            state.repasteTranscript("retry transcript", source: "settings_history")
+
+            XCTAssertEqual(insertedTexts, ["stalled transcript", "retry transcript"])
+            XCTAssertEqual(state.confirmationText, "retry transcript")
+            watchdogFired.fulfill()
+        }
+        wait(for: [watchdogFired], timeout: 1)
+    }
+
+    func testNonAXRepasteToAnotherTargetContinuesDuringAXInsertion() {
+        let state = VoiceState()
+        state.pasteScheduler = { _, block in block() }
+        let capturedApp = NSRunningApplication.current
+        let otherApp = FakeRunningApplication(
+            bundleIdentifier: "com.example.OtherEditor",
+            processIdentifier: 6262
+        )
+        var frontmostApp: NSRunningApplication? = capturedApp
+        state.frontmostAppProvider = { frontmostApp }
+        state.targetAppActivator = { _ in }
+        state.asyncDictationInsertionHandlerProvider = {
+            { _, _ in true }
+        }
+        var pasteboardString: String?
+        state.pasteboardSnapshotter = { nil }
+        state.pasteboardWriter = { pasteboardString = $0 }
+        state.pasteboardStringProvider = { pasteboardString }
+        var pasteShortcutCount = 0
+        state.simulatedPasteHandler = {
+            pasteShortcutCount += 1
+            return true
+        }
+
+        state.captureSettingsHistoryPasteTarget()
+        state.repasteTranscript("streaming transcript", source: "settings_history")
+        frontmostApp = otherApp
+        state.repasteTranscript("clipboard transcript")
+
+        XCTAssertEqual(pasteShortcutCount, 1)
+        XCTAssertEqual(pasteboardString, "clipboard transcript")
+        XCTAssertEqual(state.confirmationText, "clipboard transcript")
+    }
+
     func testSettingsHistoryCapturePreservesExternalTargetWhenVoiceBarIsFrontmost() {
         let state = VoiceState()
         state.pasteScheduler = { _, block in block() }

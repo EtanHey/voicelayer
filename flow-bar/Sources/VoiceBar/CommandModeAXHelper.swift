@@ -91,10 +91,12 @@ final class CommandModeAXHelper {
         return .axVerified("Applied to selection")
     }
 
-    static func captureFocusedInsertionHandler() -> ((String) -> Bool)? {
+    static func captureFocusedInsertionHandler() -> AsyncDictationInsertionHandler? {
         guard AXIsProcessTrusted(), let element = focusedElement() else { return nil }
-        return { text in
-            insertText(text, into: element)
+        return { text, completion in
+            insertText(text, into: element) {
+                DispatchQueue.main.async(execute: completion)
+            }
         }
     }
 
@@ -134,7 +136,11 @@ final class CommandModeAXHelper {
         ) == .success
     }
 
-    private static func insertText(_ text: String, into element: AXUIElement) -> Bool {
+    private static func insertText(
+        _ text: String,
+        into element: AXUIElement,
+        completion: @escaping () -> Void
+    ) -> Bool {
         let targetBundleIdentifier = targetBundleIdentifier(for: element)
         let earlyStrategy = insertionStrategy(
             text: text,
@@ -146,7 +152,8 @@ final class CommandModeAXHelper {
                 text,
                 into: element,
                 maxChunkUTF16Length: maxChunkUTF16Length,
-                interChunkDelay: interChunkDelay
+                interChunkDelay: interChunkDelay,
+                completion: completion
             )
         }
 
@@ -167,7 +174,8 @@ final class CommandModeAXHelper {
                 text,
                 into: element,
                 maxChunkUTF16Length: maxChunkUTF16Length,
-                interChunkDelay: interChunkDelay
+                interChunkDelay: interChunkDelay,
+                completion: completion
             )
         }
 
@@ -187,6 +195,7 @@ final class CommandModeAXHelper {
 
         let insertionLocation = selectedRange.location + (text as NSString).length
         _ = writeSelectedRange(NSRange(location: insertionLocation, length: 0), to: element)
+        completion()
         return true
     }
 
@@ -245,7 +254,8 @@ final class CommandModeAXHelper {
         _ text: String,
         into element: AXUIElement,
         maxChunkUTF16Length: Int,
-        interChunkDelay: TimeInterval
+        interChunkDelay: TimeInterval,
+        completion: @escaping () -> Void
     ) -> Bool {
         beginSelectedTextStreaming(
             for: text,
@@ -271,6 +281,9 @@ final class CommandModeAXHelper {
                         writtenChunkCount,
                         totalChunkCount
                     )
+                }
+                if disposition.suppressesWholeTranscriptFallback {
+                    completion()
                 }
             }
         )
