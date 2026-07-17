@@ -285,6 +285,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   // Outer timeout guard — prevents the entire converse flow from hanging
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
+  const inputAbortController = new AbortController();
   const converseFlow = async (): Promise<McpResult> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
@@ -296,11 +297,22 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
 
     // Speak the question aloud — BLOCKING for converse
     const voiceName = validated.voice;
-    await speak(validated.message, {
+    const speech = await speak(validated.message, {
       mode: "converse",
       waitForPlayback: true,
       voice: voiceName,
+      captureAudioArtifact: true,
     });
+    if (
+      !speech.audioArtifact ||
+      !speech.displayText?.trim() ||
+      !speech.engine ||
+      !speech.voice?.trim()
+    ) {
+      throw new Error(
+        "voice_ask could not retain synthesized prompt audio/transcript and actual-used engine/voice; recording was not started",
+      );
+    }
 
     // Record mic audio, then transcribe with selected STT backend
     const pressToTalk = validated.press_to_talk ?? false;
@@ -308,6 +320,17 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       timeoutSeconds * 1000,
       silenceMode,
       pressToTalk,
+      {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: speech.audioArtifact.bytes,
+          agentAudioFormat: speech.audioArtifact.format,
+          agentTranscript: speech.displayText,
+          agentTtsEngine: speech.engine,
+          agentTtsVoice: speech.voice,
+        },
+        signal: inputAbortController.signal,
+      },
     );
 
     if (response === null) {
@@ -323,13 +346,19 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       console.error(
         `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
       );
+      const timeoutResult = textResult(
+        `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +
+          "The voice pipeline may be stuck. Try again.",
+        true,
+      );
       // P0-2: broadcast idle so VoiceBar doesn't get stuck
       broadcast({ type: "state", state: "idle", source: "recording" });
-      resolve(
-        textResult(
-          `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +
-            "The voice pipeline may be stuck. Try again.",
-          true,
+      // Settle the public timeout result before aborting the deeper pipeline so
+      // a synchronous abort rejection cannot replace the intended response.
+      resolve(timeoutResult);
+      inputAbortController.abort(
+        new Error(
+          `voice_ask input aborted after hard timeout (${outerTimeoutMs}ms)`,
         ),
       );
     }, outerTimeoutMs);
