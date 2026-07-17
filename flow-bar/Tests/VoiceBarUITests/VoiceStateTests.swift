@@ -227,6 +227,41 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.63, accuracy: 0.0001)
     }
 
+    func testRecordingWaveformKeepsSocketRMSWhenLocalMeterIsRoomTone() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.42,
+        ])
+        state.setLocalRecordingLevel(AudioLevelMonitor.normalizeAveragePower(-50))
+
+        XCTAssertEqual(state.recordingWaveformLevel, 0.42, accuracy: 0.0001)
+    }
+
+    func testRecordingWaveformUsesAdaptedLocalMeterWhenItIsStronger() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.25,
+        ])
+        let loudLocalLevel = AudioLevelMonitor.normalizeAveragePower(-20)
+        state.setLocalRecordingLevel(loudLocalLevel)
+
+        XCTAssertEqual(
+            state.recordingWaveformLevel,
+            WaveformMetrics.recordingLevel(from: loudLocalLevel),
+            accuracy: 0.0001
+        )
+    }
+
     func testPressToTalkRecordAndFirstAudioDiagnosticsCarryTimingDeltas() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)

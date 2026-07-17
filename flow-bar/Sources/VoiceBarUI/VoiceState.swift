@@ -634,6 +634,12 @@ public final class VoiceState {
         return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
     }
 
+    public var recordingWaveformLevel: Double {
+        guard mode == .recording else { return 0 }
+        let localLevel = WaveformMetrics.recordingLevel(from: localRecordingLevel)
+        return max(localLevel, socketAudioLevel ?? 0)
+    }
+
     /// Paste the most recent transcript into the current target app again.
     public func repasteLastTranscript(source: String = "unknown") {
         repasteTranscript(latestReusableTranscript, source: source)
