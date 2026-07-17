@@ -8,6 +8,7 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
+import type { PlaybackAmplitudeEnvelope } from "./playback-amplitude";
 
 // --- Events: VoiceLayer → Voice Bar ---
 
@@ -24,6 +25,8 @@ export interface StateEvent {
   text?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
+  /** Fixed-window RMS truth for the audio file that just started playing. */
+  playback_amplitude?: PlaybackAmplitudeEnvelope;
   /** Present when state is "recording" — the recording mode. */
   mode?: "vad" | "ptt";
   /** Present when state is "recording" with VAD — the silence mode. */

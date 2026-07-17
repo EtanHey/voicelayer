@@ -24,6 +24,13 @@ interface MockPlayer {
   resolveExit: () => void;
 }
 
+function pcm16(samples: number[]): Uint8Array {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  samples.forEach((sample, index) => view.setInt16(index * 2, sample, true));
+  return bytes;
+}
+
 const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-playback-queue-state-${process.pid}.json`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
@@ -53,6 +60,8 @@ describe("playback queue — P0-1 sequential playback", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
   let originalRecordingStatePath: string | undefined;
+  let decodeSucceeds: boolean;
+  let speakingSpawnCounts: number[];
 
   beforeEach(async () => {
     originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
@@ -67,9 +76,14 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     broadcasts = [];
     playerMocks = [];
+    decodeSucceeds = true;
+    speakingSpawnCounts = [];
 
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       (event: unknown) => {
+        if ((event as any).type === "state" && (event as any).state === "speaking") {
+          speakingSpawnCounts.push(playerMocks.length);
+        }
         broadcasts.push(JSON.parse(JSON.stringify(event)));
       },
     );
@@ -87,6 +101,17 @@ describe("playback queue — P0-1 sequential playback", () => {
         return {
           exitCode: 0,
           stdout: Buffer.from("1.0\n"),
+          stderr: new Uint8Array(0),
+        };
+      }
+      if (Array.isArray(cmd) && cmd[0] === "ffmpeg") {
+        const samples = [
+          ...Array(50).fill(1000),
+          ...Array(50).fill(8000),
+        ];
+        return {
+          exitCode: decodeSucceeds ? 0 : 1,
+          stdout: decodeSucceeds ? pcm16(samples) : new Uint8Array(0),
           stderr: new Uint8Array(0),
         };
       }
@@ -182,6 +207,15 @@ describe("playback queue — P0-1 sequential playback", () => {
     );
     expect(speakingEvents.length).toBe(1);
     expect((speakingEvents[0] as any).text).toBe("First message");
+    expect(speakingSpawnCounts[0]).toBe(1);
+    expect((speakingEvents[0] as any).playback_amplitude).toEqual({
+      source: "decoded-rms",
+      sample_interval_ms: 50,
+      samples: expect.arrayContaining([expect.any(Number), expect.any(Number)]),
+    });
+    expect((speakingEvents[0] as any).playback_amplitude.samples[1]).toBeGreaterThan(
+      (speakingEvents[0] as any).playback_amplitude.samples[0],
+    );
 
     // Finish first playback → second should start and broadcast
     playerMocks[0].resolveExit();
@@ -192,9 +226,35 @@ describe("playback queue — P0-1 sequential playback", () => {
     );
     expect(allSpeaking.length).toBe(2);
     expect((allSpeaking[1] as any).text).toBe("Second message");
+    expect(speakingSpawnCounts[1]).toBe(2);
 
     // Cleanup
     playerMocks[1].resolveExit();
+    await Bun.sleep(50);
+  });
+
+  it("publishes an explicit flat fallback when cached audio cannot be decoded", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    decodeSucceeds = false;
+
+    playAudioNonBlocking("/tmp/pq-replay-corrupt.mp3", {
+      text: "Cached replay",
+      voice: "TestVoice",
+      preStartIdle: true,
+    });
+    await Bun.sleep(50);
+
+    const speaking = broadcasts.find(
+      (event: any) => event.type === "state" && event.state === "speaking",
+    ) as any;
+    expect(speaking.playback_amplitude).toEqual({
+      source: "unavailable",
+      sample_interval_ms: 50,
+      samples: [],
+    });
+    expect(speakingSpawnCounts).toEqual([1]);
+
+    playerMocks[0].resolveExit();
     await Bun.sleep(50);
   });
 

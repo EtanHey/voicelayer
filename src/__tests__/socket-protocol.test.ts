@@ -30,6 +30,28 @@ describe("socket-protocol", () => {
       expect(parsed.voice).toBe("jenny");
     });
 
+    it("serializes truthful playback amplitude with speaking state", () => {
+      const event: SocketEvent = {
+        type: "state",
+        state: "speaking",
+        text: "Amplitude truth",
+        voice: "jenny",
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: [0, 0.25, 0.75],
+        },
+      };
+
+      expect(JSON.parse(serializeEvent(event).trim())).toMatchObject({
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: [0, 0.25, 0.75],
+        },
+      });
+    });
+
     it("serializes state recording event with mode", () => {
       const event: SocketEvent = {
         type: "state",

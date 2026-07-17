@@ -51,6 +51,10 @@ import { applyPronunciation } from "./pronunciation";
 import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { getEffectiveRecordingState } from "./recording-state";
+import {
+  extractPlaybackAmplitudeEnvelope,
+  type PlaybackAmplitudeEnvelope,
+} from "./playback-amplitude";
 
 const DEFAULT_VOICE = process.env.QA_VOICE_TTS_VOICE || "en-US-JennyNeural";
 const DEFAULT_RATE = process.env.QA_VOICE_TTS_RATE || "+0%";
@@ -645,6 +649,7 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
 interface PlaybackJob {
   audioFile: string;
   metadata?: PlaybackMetadata;
+  playbackAmplitude?: PlaybackAmplitudeEnvelope;
   priority: PlaybackPriority;
   enqueuedAt: number;
   expiresAt: number;
@@ -722,6 +727,9 @@ class PlaybackQueueManager {
     const job: PlaybackJob = {
       audioFile,
       metadata,
+      playbackAmplitude: metadata
+        ? extractPlaybackAmplitudeEnvelope(audioFile)
+        : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -828,15 +836,6 @@ class PlaybackQueueManager {
           status: "marked",
         });
       }
-      if (next.metadata) {
-        broadcast({
-          type: "state",
-          state: "speaking",
-          text: next.metadata.text,
-          voice: next.metadata.voice,
-        });
-      }
-
       try {
         assertSpeakerClear();
       } catch (err) {
@@ -861,6 +860,15 @@ class PlaybackQueueManager {
       }
 
       this.current = { job: next, proc, startedAt: Date.now() };
+      if (next.metadata) {
+        broadcast({
+          type: "state",
+          state: "speaking",
+          text: next.metadata.text,
+          voice: next.metadata.voice,
+          playback_amplitude: next.playbackAmplitude,
+        });
+      }
       next.metadata?.onStarted?.(this.current.startedAt);
       this.startProgressTimer();
       this.emitQueueSnapshot();
