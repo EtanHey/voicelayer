@@ -32,7 +32,8 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
     static func configuration(
         for executableURL: URL,
         fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
-        fileData: (String) -> Data? = { try? Data(contentsOf: URL(fileURLWithPath: $0)) }
+        fileData: (String) -> Data? = { try? Data(contentsOf: URL(fileURLWithPath: $0)) },
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> VoiceBarDaemonLaunchConfiguration? {
         guard let bunPath = resolveBunPath(fileExists: fileExists) else {
             NSLog("[VoiceBar] Cannot find bun binary")
@@ -52,7 +53,12 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .deletingLastPathComponent()
             .appendingPathComponent("Resources")
 
-        if let homebrewPackageRoot = homebrewPackageRoot(
+        let isolatedQAMode = environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
+            environment["QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+
+        if !isolatedQAMode, let homebrewPackageRoot = homebrewPackageRoot(
             appVersion: installedAppVersion(for: executableURL, fileData: fileData),
             fileExists: fileExists,
             fileData: fileData

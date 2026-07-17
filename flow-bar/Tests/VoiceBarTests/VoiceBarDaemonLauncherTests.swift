@@ -133,6 +133,34 @@ final class VoiceBarDaemonLauncherTests: XCTestCase {
         XCTAssertEqual(configuration.workingDirectory, launcherTestHomebrewPackageRoot)
     }
 
+    func testIsolatedQABuildPrefersBundledDaemonWhenHomebrewVersionMatches() throws {
+        let executableURL = URL(fileURLWithPath: "/tmp/VoiceBar-dev.app/Contents/MacOS/VoiceBar")
+
+        let configuration = try XCTUnwrap(
+            VoiceBarDaemonLaunchConfiguration.configuration(
+                for: executableURL,
+                fileExists: { path in
+                    path == launcherTestBunPath ||
+                        path == launcherTestHomebrewDaemonPath ||
+                        path == "/tmp/VoiceBar-dev.app/Contents/Resources/src/mcp-server-daemon.ts"
+                },
+                fileData: { path in
+                    if path == "/tmp/VoiceBar-dev.app/Contents/Info.plist" {
+                        return launcherInfoPlistData(version: "2.1.10")
+                    }
+                    return launcherTestVersionData[path]
+                },
+                environment: ["VOICEBAR_QA_PRESERVE_OVERRIDES": "1"]
+            )
+        )
+
+        XCTAssertEqual(configuration.arguments, [
+            "run",
+            "/tmp/VoiceBar-dev.app/Contents/Resources/src/mcp-server-daemon.ts",
+        ])
+        XCTAssertEqual(configuration.workingDirectory, "/tmp/VoiceBar-dev.app/Contents/Resources")
+    }
+
     func testInstalledAppFallsBackToBundledDaemonWhenHomebrewPackageVersionIsStale() throws {
         let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
 
