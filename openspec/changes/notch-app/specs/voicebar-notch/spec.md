@@ -86,3 +86,48 @@ Display text SHALL always show the original script; pronunciation respells/SSML/
 
 - **WHEN** the pronunciation dictionary respells a token for the TTS engine (e.g. a name)
 - **THEN** the teleprompter displays the original spelling, never the respell
+
+### Requirement: Operator-approved unified notch shell
+
+On a display with a physical camera housing, VoiceBar SHALL render one top-centered notch presentation whose opaque hardware core remains fixed, pure black, 185 points wide by 32 points high on the verified target display, and free of backdrop blur. Runtime placement SHALL derive the physical housing edges from the display's safe-area and auxiliary-top-area geometry; 185 points is the reference/fallback contract, not a reason to ignore measured housing edges.
+
+Idle SHALL add no visible pixels beyond the physical housing. Idle hover or keyboard focus SHALL open content-fit glass wings sideways with a 36-point leading Mic wing and 64-point trailing History/Dictionary wing. Recording SHALL use a 72-point leading timer/status wing and 152-point trailing live-waveform/control wing. A live or retained teleprompter SHALL use 76/88-point top wings and one centered 465-point-wide, 196-point-tall lower glass surface below the 32-point top row, for a total height of 228 points. The lower body SHALL extend equally 140 points around the reference core and SHALL NOT contain an inset frame or second material layer.
+
+Every wing SHALL use the same material recipe and a mirrored 16-point black-to-glass fade at the core seam. Teleprompter wing content SHALL begin after the 16-point fade plus an 8-point clear gap and retain 8 points at the outer edge, yielding 44/56-point content-safe slots. Compact outer-edge treatment SHALL be part of the material wing, not a transparent border-only shell. The core SHALL never move, scale, blur, or sample the backdrop.
+
+Opening motion SHALL reveal wings before the lower body, delay the lower body by 50 ms, and reveal content last. Closing SHALL remove content over 120 ms before retracting the body and wings. Reduced Motion SHALL preserve the ordering with short opacity transitions and without near-zero axis scaling.
+
+#### Scenario: Idle hover opens only the launcher wings
+
+- **WHEN** VoiceBar is operationally idle with no retained teleprompter and the physical core receives pointer hover or keyboard focus
+- **THEN** the core remains fixed at the measured housing edges
+- **AND** Mic appears in the 36-point leading wing while History and Dictionary appear in the 64-point trailing wing
+- **AND** no lower surface opens
+
+#### Scenario: Recording consumes the truthful W2 waveform seam
+
+- **WHEN** VoiceBar enters recording
+- **THEN** the 72/152-point recording wings open around the unchanged core
+- **AND** the trailing waveform remains driven by the merged `VoiceState.audioLevel -> WaveformView` contract
+- **AND** the mock's first recording-control slot maps to the existing VAD-only HOLD control (and remains absent for PTT), while stop and cancel retain their existing behavior and accessibility
+- **AND** the visual port does not introduce a new recording-pause protocol
+
+#### Scenario: Teleprompter is one centered surface
+
+- **WHEN** a live or retained teleprompter envelope is presented
+- **THEN** the 349-point top bar and centered 465-point lower body render as one glass surface with one outer edge
+- **AND** the fixed core is centered over equal 140-point lower-body extents
+- **AND** no inset card, double tint, or second lower-surface layer is visible
+
+#### Scenario: Transparent window corners remain pass-through
+
+- **WHEN** the teleprompter window spans the 465-point body width while its top bar is only 349 points wide
+- **THEN** hit testing accepts the visible top bar and lower body
+- **AND** the transparent top corners do not consume menu-bar pointer events
+
+#### Scenario: Native implementation respects the W2 sequencing gate
+
+- **WHEN** the approved native-port plan exists but W2's combined waveform repair + P0 head has not merged
+- **THEN** no native Swift implementation file is created or modified for this shell
+- **AND WHEN** W2 merges
+- **THEN** implementation begins from the resulting new main and preserves W2's waveform producer/render-truth behavior

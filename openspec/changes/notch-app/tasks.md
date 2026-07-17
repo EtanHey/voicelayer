@@ -17,3 +17,14 @@
 - [ ] 2.5 TTFA telemetry (queue/synth/transfer) + generating-state for dead-air — baseline 11–56s in hand
 - [ ] 2.6 Two-channel display split in the live teleprompter — RED fixture: respelled name renders in display
 - [ ] 2.7 Pace-correct sync fix (not offset-shift) — fixtures frames 0045/0048/0078 + silencedetect onsets
+
+## 3. Operator-approved unified-glass native port
+
+- [x] 3.1 React mock approved by Etan (“perfect”); approved geometry/material/motion contract frozen as the native pixel target
+- [x] 3.2 Paper-only Swift architecture and TDD implementation plan written, including new-type boundaries and explicit W2 shared-file touch/no-touch map
+- [ ] 3.3 Sequencing gate — W2 combined waveform repair + P0 head committed, reviewed, and merged; W1 branches from the resulting new main before any native edit
+- [ ] 3.4 New pure native contracts — visual-state reducer, exact 185/285/409/465×228-point geometry, corrected 36/64 · 72/152 · 76/88-point wing extents, 16-point fade, content-safe insets, motion hierarchy
+- [ ] 3.5 New shell primitives — safe-area/auxiliary-top-area-derived physical-notch placement with the 185-point fallback, one teleprompter shape, shared glass/fallback material, fixed black core, ordered motion, and shape-aware hit regions
+- [ ] 3.6 Rebase integration — adapt `VoiceBarPresentation`, `VoiceBarPanelLayout`, `BarView`, `FloatingPanel`, and `VoiceBarApp` over W2 while leaving `VoiceState`/`WaveformView`/`TeleprompterView` behavior unchanged
+- [ ] 3.7 Native verification — full suites plus isolated actual-notch Light/Dark/Reduced-Motion receipts against the “perfect” mock and DynamicLake cleanliness bar
+- [ ] 3.8 Release gate — no resident swap until isolated proof passes; then Etan F5-batch comparison against `resident-stable-20260717`

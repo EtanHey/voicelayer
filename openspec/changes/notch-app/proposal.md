@@ -16,6 +16,7 @@ Requirements base = the measured voice-QA gap ledger (L1 §8.9–8.13 + GAPS B12
 - Bottom-start jump-scroll + answer-tail spoiler-flash + snap-to-top fixture family fixed (§8.9).
 - Default-voice latency instrumented (TTFA: queue/synth/transfer) THEN fixed; dead-air gets a generating/thinking state (§8.13 + B15).
 - Two-channel display law (§2) and live-teleprompter pace-correct sync (§8.8) apply in full.
+- Operator-approved unified-glass native shell — fixed measured hardware core, content-fit side wings for hover/recording, one centered frameless teleprompter surface, shared material/fade/motion contracts, and shape-aware interaction around the physical notch. The approved React mock is the pixel authority; the native port starts only after W2's combined waveform head merges.
 
 ## Non-Goals (unchanged from L1 §10)
 
@@ -26,5 +27,5 @@ Requirements base = the measured voice-QA gap ledger (L1 §8.9–8.13 + GAPS B12
 ## Impact
 
 - Affected specs: `voicebar-notch` (new capability).
-- Affected code: `flow-bar/Sources/VoiceBarUI/`, `flow-bar/Sources/VoiceBar/`, and the TypeScript socket/input layer under `src/`.
+- Affected code: new notch presentation/material/geometry types under `flow-bar/Sources/VoiceBarUI/`; thin integration touches in `BarView.swift`, `VoiceBarPresentation.swift`, `VoiceBarPanelLayout.swift`, `FloatingPanel.swift`, and `VoiceBarApp.swift`; and the TypeScript socket/input layer under `src/` for the independently tracked non-visual rows.
 - Verification contract binds: F5 self-verify law (A4), corpus replay, engine disclosure, mic-state rule (L1 §7), two-channel original-display text, and isolated-app visual receipts.
