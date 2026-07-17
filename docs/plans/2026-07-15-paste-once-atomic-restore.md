@@ -2,9 +2,9 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Prevent release/active-gesture repastes and restore the user's clipboard synchronously after fallback Cmd+V returns.
+**Goal:** Prevent release/active-gesture repastes and restore the user's clipboard after the existing bounded fallback delay.
 
-**Architecture:** Keep VoiceBar's complete-transcript AX-first, clipboard-plus-Cmd+V-second pipeline intact. Make the hotkey classifier distinguish explicit idle Shift+F5 repaste from active recording gestures, and replace only the delayed restore scheduling with the existing guarded restore call.
+**Architecture:** Keep VoiceBar's complete-transcript AX-first, clipboard-plus-Cmd+V-second pipeline intact. Make the hotkey classifier distinguish explicit idle Shift+F5 repaste from active recording gestures, and retain the existing delayed, change-count-guarded clipboard restoration. The VoiceLayer lead selected this bounded-delay behavior on 2026-07-17 because immediate restoration races asynchronous target consumption.
 
 **Tech Stack:** Swift 5.9, AppKit/CoreGraphics, Swift Package Manager, XCTest, Bun.
 
@@ -48,35 +48,35 @@ Keep all non-Shift hotkey behavior unchanged.
 
 Run the same filtered Swift test command. Expected: all `HotkeyManagerTests` pass.
 
-### Task 2: Establish atomic clipboard restoration
+### Task 2: Preserve bounded, guarded clipboard restoration
 
 **Files:**
 - Test: `flow-bar/Tests/VoiceBarUITests/VoiceStatePasteTests.swift:1270-1387`
 - Modify: `flow-bar/Sources/VoiceBarUI/VoiceState.swift:343-350`
 - Modify: `flow-bar/Sources/VoiceBarUI/VoiceState.swift:1673-1778`
 
-**Step 1: Verify the failing test already present in the inherited WIP**
+**Step 1: Restore the bounded-delay test and verify RED against the inherited immediate implementation**
 
 Run:
 
 ```bash
-cd flow-bar && swift test --filter VoiceStatePasteTests/testAutoPasteRestoresClipboardImmediatelyAfterFallbackPasteReturns
+cd flow-bar && swift test --filter VoiceStatePasteTests/testAutoPasteRestoresClipboardAfterFallbackPasteDelay
 ```
 
-Expected: the test fails because a third delayed restore block is scheduled and the pasteboard still contains the transcript after the synthetic paste block returns.
+Expected: the test fails while the branch still restores immediately instead of scheduling the production delay.
 
-**Step 2: Implement synchronous guarded restoration**
+**Step 2: Restore bounded guarded restoration**
 
-Replace the delayed restore scheduling immediately after `simulatedPasteHandler()` with:
+After `simulatedPasteHandler()`, retain:
 
 ```swift
-restoreClipboardIfNeeded(
+scheduleClipboardRestoreIfNeeded(
     from: pasteboardSnapshot,
     expectedChangeCount: changeCountAfterWrite
 )
 ```
 
-Delete only `pasteboardRestoreDelay` and `scheduleClipboardRestoreIfNeeded`. Retain `restoreClipboardIfNeeded` and its change-count guard verbatim.
+Retain `pasteboardRestoreDelay = 0.5`, `scheduleClipboardRestoreIfNeeded`, `restoreClipboardIfNeeded`, and the change-count guard.
 
 **Step 3: Verify GREEN and clipboard-race preservation**
 
@@ -86,7 +86,7 @@ Run:
 cd flow-bar && swift test --filter VoiceStatePasteTests
 ```
 
-Expected: all paste tests pass, including the case where user clipboard content changes during the synthetic paste.
+Expected: all paste tests pass, including delayed restoration and the case where user clipboard content changes before the restore callback.
 
 ### Task 3: Verify mechanism preservation and regressions
 
