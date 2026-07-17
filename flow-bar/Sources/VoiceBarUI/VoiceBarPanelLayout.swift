@@ -74,7 +74,7 @@ public struct VoiceBarPanelLayout: Equatable {
             )
         }
 
-        let height = mode == .speaking || showsTeleprompter
+        let height = showsTeleprompter
             ? Theme.teleprompterViewportHeight
             : Theme.pillCompactHeight
         let width = if showsTeleprompter {

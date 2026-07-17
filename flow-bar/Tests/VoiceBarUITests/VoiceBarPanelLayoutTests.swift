@@ -220,6 +220,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             previewText: nil,
             statusText: "Speaking...",
             queueItemCount: 2,
+            showsTeleprompter: true,
             padding: Theme.panelPadding
         )
 
@@ -234,12 +235,29 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             previewText: nil,
             statusText: "A long spoken sentence should wrap inside the teleprompter instead of clipping.",
             queueItemCount: 1,
+            showsTeleprompter: true,
             padding: Theme.panelPadding
         )
 
         XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(Theme.speakingTeleprompterAvailableWidth, 254, accuracy: 0.001)
         XCTAssertLessThanOrEqual(Theme.teleprompterViewportWidth, Theme.speakingTeleprompterAvailableWidth)
+    }
+
+    func testHiddenSpeakingTeleprompterUsesCompactHeight() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .speaking,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "Speaking...",
+            showsTeleprompter: false,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(
+            layout.panelSize.height,
+            Theme.pillCompactHeight + (Theme.panelPadding * 2)
+        )
     }
 
     func testIdleReadbackTeleprompterExpandsPanelForFiveAccessoryButtons() {
