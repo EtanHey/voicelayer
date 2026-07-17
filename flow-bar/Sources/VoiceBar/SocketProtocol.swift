@@ -11,7 +11,8 @@ enum SocketPlaybackAmplitudeParser {
               let source = PlaybackAmplitudeSource(rawValue: sourceValue),
               let interval = integer(payload["sample_interval_ms"]),
               interval > 0,
-              let rawSamples = payload["samples"] as? [Any]
+              let rawSamples = payload["samples"] as? [Any],
+              rawSamples.count <= PlaybackAmplitudeEnvelope.maximumSampleCount
         else { return nil }
 
         let samples = rawSamples.compactMap(number)

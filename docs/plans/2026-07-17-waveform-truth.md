@@ -186,8 +186,8 @@ XCTAssertEqual(envelope.level(elapsedMilliseconds: 500), 0)
 ```
 
 Add executable-target protocol tests that parse a speaking dictionary, reject
-nonpositive intervals/non-numeric samples, clamp numeric samples, and preserve
-`source: unavailable` with an empty list.
+nonpositive intervals/non-numeric samples or more than 24,000 samples, clamp
+numeric samples, and preserve `source: unavailable` with an empty list.
 
 Add state tests that inject an envelope and clock into a speaking event, advance
 the clock, assert the selected level changes, then send playback idle and assert

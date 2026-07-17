@@ -74,4 +74,16 @@ final class SocketProtocolTests: XCTestCase {
             ],
         ]))
     }
+
+    func testRejectsPlaybackAmplitudeBeyondProtocolSampleBound() {
+        XCTAssertNil(SocketPlaybackAmplitudeParser.parse(event: [
+            "type": "state",
+            "state": "speaking",
+            "playback_amplitude": [
+                "source": "decoded-rms",
+                "sample_interval_ms": 50,
+                "samples": Array(repeating: 0.5, count: 24001),
+            ],
+        ]))
+    }
 }

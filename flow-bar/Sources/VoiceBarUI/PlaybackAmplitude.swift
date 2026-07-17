@@ -6,6 +6,8 @@ public enum PlaybackAmplitudeSource: String, Equatable {
 }
 
 public struct PlaybackAmplitudeEnvelope: Equatable {
+    public static let maximumSampleCount = 24000
+
     public let source: PlaybackAmplitudeSource
     public let sampleIntervalMilliseconds: Int
     public let samples: [Double]

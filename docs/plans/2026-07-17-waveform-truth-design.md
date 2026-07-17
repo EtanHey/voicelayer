@@ -73,6 +73,8 @@ The speaking state event gains an optional `playback_amplitude` object:
   clip.
 - Decoder output is capped at 20 minutes of 1 kHz PCM16 (2,400,000 bytes), the
   serialized envelope at 24,000 samples, and decoder wall time at 30 seconds.
+  The Swift socket boundary independently rejects envelopes above the same
+  24,000-sample protocol ceiling before copying or retaining their samples.
   Window intervals must resolve to an exact whole PCM sample count.
 - The event is emitted immediately after the audio player process starts.
   VoiceBar records its local monotonic-uptime receipt clock and uses that same
