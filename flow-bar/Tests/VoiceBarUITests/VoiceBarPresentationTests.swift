@@ -24,6 +24,49 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
+    func testRecordingHoldControlIsVADOnlyAndAccessible() {
+        XCTAssertNil(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .idle,
+                recordingMode: "vad",
+                isEngaged: false
+            )
+        )
+        XCTAssertNil(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "ptt",
+                isEngaged: false
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "vad",
+                isEngaged: false
+            ),
+            VoiceBarRecordingHoldControl(
+                iconName: "hand.raised",
+                accessibilityLabel: "Hold recording",
+                accessibilityHint: "Keep recording through silence",
+                isSelected: false
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "vad",
+                isEngaged: true
+            ),
+            VoiceBarRecordingHoldControl(
+                iconName: "hand.raised.fill",
+                accessibilityLabel: "Release recording hold",
+                accessibilityHint: "Resume automatic silence stop",
+                isSelected: true
+            )
+        )
+    }
+
     func testQueuePreviewSummarizesCurrentNextAndOverflow() {
         let preview = VoiceBarPresentation.queuePreview(from: [
             QueueItemState(

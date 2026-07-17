@@ -62,6 +62,18 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterVisibilityPolicy.hiddenLabelOpacity(isDismissed: false), 0)
     }
 
+    func testReadbackUsesStaticReadableScrollablePresentation() {
+        XCTAssertFalse(TeleprompterPlaybackPolicy.animatesTimeline(isReadback: true))
+        XCTAssertEqual(TeleprompterPlaybackPolicy.wordOpacity(isReadback: true), 0.9)
+        XCTAssertTrue(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: true))
+    }
+
+    func testLivePlaybackKeepsAnimatedHighlightPresentation() {
+        XCTAssertTrue(TeleprompterPlaybackPolicy.animatesTimeline(isReadback: false))
+        XCTAssertNil(TeleprompterPlaybackPolicy.wordOpacity(isReadback: false))
+        XCTAssertFalse(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: false))
+    }
+
     func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {
         XCTAssertFalse(
             VoiceBarContentTransitionPolicy.insertionUsesCrossFade(from: .speaking, to: .idle)

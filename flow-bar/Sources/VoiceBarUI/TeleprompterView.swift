@@ -199,10 +199,27 @@ public enum TeleprompterVisibilityPolicy {
     }
 }
 
+public enum TeleprompterPlaybackPolicy {
+    public static func animatesTimeline(isReadback: Bool) -> Bool {
+        !isReadback
+    }
+
+    /// Live playback owns its karaoke opacity curve. Read-back is deliberately
+    /// uniform so every original-script word remains equally legible.
+    public static func wordOpacity(isReadback: Bool) -> Double? {
+        isReadback ? 0.9 : nil
+    }
+
+    public static func showsScrollIndicators(isReadback: Bool) -> Bool {
+        isReadback
+    }
+}
+
 public struct TeleprompterView: View {
     public let text: String
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    public var isReadback = false
 
     /// Fallback timing constants for non-edge-tts engines (client estimation).
     private static let baseDelay: Double = 0.28
@@ -233,7 +250,12 @@ public struct TeleprompterView: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(
+                .vertical,
+                showsIndicators: TeleprompterPlaybackPolicy.showsScrollIndicators(
+                    isReadback: isReadback
+                )
+            ) {
                 FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
                     wordViews
                 }
@@ -250,7 +272,9 @@ public struct TeleprompterView: View {
             .clipped()
             .onAppear {
                 scrollToCurrentWord(with: proxy, animated: false)
-                startAnimating()
+                if TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback) {
+                    startAnimating()
+                }
             }
             .onDisappear { stopAnimating() }
             .onChange(of: text) { _, _ in
@@ -263,6 +287,13 @@ public struct TeleprompterView: View {
             }
             .onChange(of: currentIndex) { _, _ in
                 scrollToCurrentWord(with: proxy)
+            }
+            .onChange(of: isReadback) { _, readback in
+                if readback {
+                    stopAnimating()
+                } else {
+                    restart()
+                }
             }
         }
     }
@@ -287,6 +318,9 @@ public struct TeleprompterView: View {
     // MARK: - Word opacity
 
     private func opacityFor(_ index: Int) -> Double {
+        if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
+            return readbackOpacity
+        }
         if index == currentIndex { return 1.0 }
         if index < currentIndex {
             let distance = currentIndex - index
@@ -302,6 +336,7 @@ public struct TeleprompterView: View {
     }
 
     private func startAnimating() {
+        guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback) else { return }
         guard teleprompterWords.count > 1 else { return }
 
         if hasServerTimestamps {

@@ -82,11 +82,12 @@ public enum Theme {
         for mode: VoiceMode,
         statusText: String,
         idleAccessoryButtonCount: Int = 0,
-        queueItemCount: Int = 0
+        queueItemCount: Int = 0,
+        showsRecordingHold: Bool = false
     ) -> CGFloat {
         switch mode {
         case .recording:
-            return 154
+            return showsRecordingHold ? 182 : 154
         case .transcribing:
             return transcribingPillWidth(for: statusText)
         case .speaking:

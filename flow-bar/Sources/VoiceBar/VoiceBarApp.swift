@@ -706,8 +706,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
                 transcriptionVocabularyAliases: state?.transcriptionVocabularyAliases ?? [],
                 canReplay: state?.canReplay ?? false
-            ),
+            ) + ((state?.isTeleprompterReadback ?? false) ? 2 : 0),
             queueItemCount: state?.queueItems.count ?? 0,
+            showsTeleprompter: state?.teleprompterText != nil && !(state?.isTeleprompterDismissed ?? false),
+            showsRecordingHold: VoiceBarPresentation.recordingHoldControl(
+                mode: mode,
+                recordingMode: state?.recordingMode,
+                isEngaged: state?.isRecordingHoldEngaged ?? false
+            ) != nil,
             isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
             padding: Theme.panelPadding
         )

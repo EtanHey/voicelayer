@@ -222,6 +222,7 @@ describe("input recording durability", () => {
   let savedRetainedPath: string | undefined;
   let savedRecordingsDir: string | undefined;
   let savedRecordingStatePath: string | undefined;
+  let savedRecordingHoldPath: string | undefined;
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "voicelayer-input-durability-"));
@@ -229,11 +230,16 @@ describe("input recording durability", () => {
     savedRetainedPath = process.env.QA_VOICE_RETAINED_RECORDING_PATH;
     savedRecordingsDir = process.env.QA_VOICE_RECORDINGS_DIR;
     savedRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    savedRecordingHoldPath = process.env.QA_VOICE_RECORDING_HOLD_PATH;
     process.env.QA_VOICE_RETAINED_RECORDING_PATH = retainedPath;
     process.env.QA_VOICE_RECORDINGS_DIR = join(tmpRoot, "recordings");
     process.env.QA_VOICE_RECORDING_STATE_PATH = join(
       tmpRoot,
       "recording-state.json",
+    );
+    process.env.QA_VOICE_RECORDING_HOLD_PATH = join(
+      tmpRoot,
+      "recording-hold",
     );
     vadMode = "silence";
     onVadCall = null;
@@ -326,6 +332,21 @@ describe("input recording durability", () => {
     } else {
       process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
     }
+    if (savedRecordingHoldPath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_HOLD_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_HOLD_PATH = savedRecordingHoldPath;
+    }
+  });
+
+  it("keeps recording idle when stale HOLD cleanup fails before capture", async () => {
+    const holdPath = process.env.QA_VOICE_RECORDING_HOLD_PATH!;
+    mkdirSync(holdPath);
+    const { getRecordingState, recordToBuffer } = await import("../input");
+
+    await expect(recordToBuffer(1000, "quick", false)).rejects.toThrow();
+
+    expect(getRecordingState()).toBe("idle");
   });
 
   it("keeps the retained WAV valid while batching recovery fsyncs during capture", async () => {

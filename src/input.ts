@@ -103,6 +103,11 @@ import {
   setRecordingState,
 } from "./recording-state";
 import { appendControlLayerEvent } from "./control-layer-journal";
+import {
+  RecordingSilenceAutoClosePolicy,
+  clearRecordingHold,
+  isRecordingHoldEngaged,
+} from "./recording-hold";
 
 const SAMPLE_RATE = 16000;
 const BYTES_PER_SAMPLE = 2;
@@ -1618,6 +1623,9 @@ export async function recordToBuffer(
       `Recording already in progress (state: ${currentRecordingState})`,
     );
   }
+  // Clear stale cross-process HOLD before exposing the new recording state.
+  // If secure-state cleanup fails, the daemon remains truthfully idle.
+  clearRecordingHold();
   setRecordingState("recording");
 
   const silenceChunksNeeded = pressToTalk
@@ -1682,7 +1690,6 @@ export async function recordToBuffer(
   clearCancelSignal();
 
   return new Promise<Uint8Array | null>((resolve, reject) => {
-    let consecutiveSilentChunks = 0;
     let totalChunksProcessed = 0;
     let hasSpeech = false;
     let firstSpeechChunkIndex = -1;
@@ -1696,6 +1703,10 @@ export async function recordToBuffer(
     let abortHandler: (() => void) | undefined;
     let pttStopRequestedAtMs: number | null = null;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
+    const silencePolicy = new RecordingSilenceAutoClosePolicy({
+      preSpeechChunks,
+      postSpeechSilenceChunks: silenceChunksNeeded,
+    });
 
     const beginPttStopDrain = () => {
       if (pttStopRequestedAtMs !== null) return;
@@ -1721,6 +1732,13 @@ export async function recordToBuffer(
       if (resolved) return;
       resolved = true;
       setRecordingState("idle");
+      try {
+        clearRecordingHold();
+      } catch (err) {
+        console.error(
+          `[voicelayer] Failed to clear recording HOLD: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
       clearTimeout(timer);
       if (stopSignalPoll) clearInterval(stopSignalPoll);
       if (abortHandler && signal) {
@@ -1960,15 +1978,18 @@ export async function recordToBuffer(
               );
             }
 
+            const hadSpeech = hasSpeech;
+            const silenceObservation = silencePolicy.observe({
+              speechDetected,
+              holdEngaged: isRecordingHoldEngaged(),
+            });
+            hasSpeech = silenceObservation.hasSpeech;
+
             if (speechDetected) {
-              if (!hasSpeech) {
+              if (!hadSpeech) {
                 firstSpeechChunkIndex = pcmChunks.length - 1;
                 broadcast({ type: "speech", detected: true });
               }
-              hasSpeech = true;
-              consecutiveSilentChunks = 0;
-            } else {
-              consecutiveSilentChunks++;
             }
 
             if (hasStopSignal()) {
@@ -1980,7 +2001,10 @@ export async function recordToBuffer(
               return;
             }
 
-            if (hasSpeech && consecutiveSilentChunks >= silenceChunksNeeded) {
+            if (
+              silenceObservation.shouldClose &&
+              silenceObservation.reason === "post-speech-silence"
+            ) {
               console.error(
                 `[voicelayer] Silence detected (${silenceMode} mode) — ending recording`,
               );
@@ -1988,7 +2012,10 @@ export async function recordToBuffer(
               return;
             }
 
-            if (!hasSpeech && totalChunksProcessed >= preSpeechChunks) {
+            if (
+              silenceObservation.shouldClose &&
+              silenceObservation.reason === "pre-speech-silence"
+            ) {
               console.error(
                 `[voicelayer] No speech detected within ${PRE_SPEECH_TIMEOUT_SECONDS}s — ending recording`,
               );

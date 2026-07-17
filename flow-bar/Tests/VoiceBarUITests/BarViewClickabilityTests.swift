@@ -46,6 +46,25 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
+    func testVADRecordingHoldControlReceivesClickAndSendsCommand() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "vad"
+        state.isConnected = true
+        state.isCollapsed = false
+        var sentCommand: [String: Any]?
+        state.sendCommand = { sentCommand = $0 }
+
+        let router = SpyCommandRouter()
+        let host = makeHost(state: state, router: router)
+
+        click(host, at: recordingHoldButtonCenter(in: host))
+
+        XCTAssertEqual(sentCommand?["cmd"] as? String, "set_recording_hold")
+        XCTAssertEqual(sentCommand?["engaged"] as? Bool, true)
+        XCTAssertTrue(state.isRecordingHoldEngaged)
+    }
+
     func testIdlePillBackgroundTapDoesNotRoutePrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
@@ -130,6 +149,10 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
         NSPoint(x: host.bounds.maxX - 14 - 26 - 2 - 13, y: host.bounds.midY)
+    }
+
+    private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
+        NSPoint(x: host.bounds.maxX - 14 - ((26 + 2) * 2) - 13, y: host.bounds.midY)
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
