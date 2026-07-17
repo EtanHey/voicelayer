@@ -207,6 +207,8 @@ public final class VoiceState {
     public var audioLevel: Double?
     private var socketAudioLevel: Double?
     private var localRecordingLevel: Double?
+    public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
+    private var playbackAmplitudeStartedAt: TimeInterval?
     private var recordCommandUptimeMs: Int?
     private var recordingStateUptimeMs: Int?
     private var didLogFirstRecordingAudioLevel = false
@@ -401,6 +403,7 @@ public final class VoiceState {
     private let recentTranscriptionEntriesSaver: ([RecentTranscriptionEntry]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
     private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
+    private let playbackAmplitudeClock: () -> TimeInterval
 
     /// Transport-layer hook injected by AppDelegate.
     /// BarView calls stop()/toggle()/replay() which forward through this closure.
@@ -445,12 +448,16 @@ public final class VoiceState {
             VoiceState.saveRecentTranscriptionEntries($0)
         },
         transcriptionVocabularyLoader: @escaping () -> [String] = { [] },
-        transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] }
+        transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] },
+        playbackAmplitudeClock: @escaping () -> TimeInterval = {
+            Date.timeIntervalSinceReferenceDate
+        }
     ) {
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
         self.recentTranscriptionEntriesSaver = recentTranscriptionEntriesSaver
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
+        self.playbackAmplitudeClock = playbackAmplitudeClock
         recentTranscriptionEntries = Self.normalizeRecentTranscriptionEntries(
             recentTranscriptionEntriesLoader(),
             fallbackTexts: recentTranscriptionsLoader()
@@ -618,6 +625,15 @@ public final class VoiceState {
         refreshAudioLevel()
     }
 
+    public func playbackAudioLevel(at referenceTime: TimeInterval? = nil) -> Double {
+        guard let envelope = playbackAmplitudeEnvelope,
+              let startedAt = playbackAmplitudeStartedAt
+        else { return 0 }
+        let now = referenceTime ?? playbackAmplitudeClock()
+        let elapsedMilliseconds = Int(((now - startedAt) * 1000).rounded(.down))
+        return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
+    }
+
     /// Paste the most recent transcript into the current target app again.
     public func repasteLastTranscript(source: String = "unknown") {
         repasteTranscript(latestReusableTranscript, source: source)
@@ -776,7 +792,10 @@ public final class VoiceState {
         onPolishStatusChange?()
     }
 
-    public func handleEvent(_ event: [String: Any]) {
+    public func handleEvent(
+        _ event: [String: Any],
+        playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
+    ) {
         guard let type = event["type"] as? String else { return }
 
         switch type {
@@ -825,6 +844,9 @@ public final class VoiceState {
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                resetAudioLevels()
+                playbackAmplitudeEnvelope = playbackAmplitude
+                playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackAmplitudeClock() }
                 mode = .speaking
                 isTeleprompterDismissed = false
                 statusText = event["text"] as? String ?? ""
@@ -848,6 +870,7 @@ public final class VoiceState {
                 transcribingStartedAt = nil
                 transcribingStatusText = nil
                 errorMessage = nil
+                resetPlaybackAmplitude()
                 if recordingStateUptimeMs == nil {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
                     didLogFirstRecordingAudioLevel = false
@@ -1023,6 +1046,7 @@ public final class VoiceState {
                 recordStartInsertionHandler = nil
             }
             if shouldShowError {
+                resetAudioLevels()
                 mode = .error
                 errorMessage = event["message"] as? String ?? "Unknown error"
                 expandFromCollapse()
@@ -1235,6 +1259,12 @@ public final class VoiceState {
         recordCommandUptimeMs = nil
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
+        resetPlaybackAmplitude()
+    }
+
+    private func resetPlaybackAmplitude() {
+        playbackAmplitudeEnvelope = nil
+        playbackAmplitudeStartedAt = nil
     }
 
     private static func clampAudioLevel(_ level: Double) -> Double {

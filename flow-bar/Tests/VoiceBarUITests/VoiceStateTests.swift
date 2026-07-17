@@ -2,6 +2,75 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testSpeakingIndexesTypedPlaybackAmplitudeFromReceiptClock() {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.1, 0.5, 0.9]
+        )
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: envelope)
+
+        XCTAssertEqual(state.playbackAudioLevel(), 0.1, accuracy: 0.0001)
+        now = 10.075
+        XCTAssertEqual(state.playbackAudioLevel(), 0.5, accuracy: 0.0001)
+    }
+
+    func testPlaybackIdleClearsPlaybackAmplitudeTruth() {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.8]
+        )
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: envelope)
+        now = 10.01
+        XCTAssertEqual(state.playbackAudioLevel(), 0.8, accuracy: 0.0001)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertNil(state.playbackAmplitudeEnvelope)
+        XCTAssertEqual(state.playbackAudioLevel(), 0)
+    }
+
+    func testPlaybackErrorClearsPlaybackAmplitudeTruth() {
+        let state = VoiceState(playbackAmplitudeClock: { 10 })
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.8]
+        ))
+        XCTAssertNotNil(state.playbackAmplitudeEnvelope)
+
+        state.handleEvent([
+            "type": "error",
+            "message": "player failed",
+            "recoverable": true,
+        ])
+
+        XCTAssertNil(state.playbackAmplitudeEnvelope)
+        XCTAssertEqual(state.playbackAudioLevel(), 0)
+    }
+
     func testPolishDegradationPersistsAndSignalsMenuOnlyOnce() throws {
         let state = VoiceState()
 

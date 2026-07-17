@@ -252,12 +252,14 @@ final class SocketServer {
             return
         }
 
+        let playbackAmplitude = SocketPlaybackAmplitudeParser.parse(event: dict)
+
         DispatchQueue.main.async { [weak self] in
             if dict["type"] as? String == "error",
                let captureFailure = dict["capture_failure"] as? String {
                 self?.onCaptureFailure?(captureFailure)
             }
-            self?.state.handleEvent(dict)
+            self?.state.handleEvent(dict, playbackAmplitude: playbackAmplitude)
         }
     }
 
