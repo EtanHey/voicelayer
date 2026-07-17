@@ -646,12 +646,15 @@ public final class VoiceState {
         refreshAudioLevel()
     }
 
-    public func playbackAudioLevel(at referenceTime: TimeInterval? = nil) -> Double {
+    public func playbackAudioLevel() -> Double {
+        playbackAudioLevel(atSystemUptime: playbackAmplitudeClock())
+    }
+
+    func playbackAudioLevel(atSystemUptime systemUptime: TimeInterval) -> Double {
         guard let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
         else { return 0 }
-        let now = referenceTime ?? playbackAmplitudeClock()
-        let elapsedMilliseconds = Int(((now - startedAt) * 1000).rounded(.down))
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded(.down))
         return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
     }
 

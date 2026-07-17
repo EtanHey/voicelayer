@@ -4,7 +4,7 @@ import SwiftUI
 
 public struct WaveformView: View {
     public let color: Color
-    private let levelAtTime: (TimeInterval) -> Double?
+    private let currentLevel: () -> Double?
 
     private let barCount = 7
     private let barWidth: CGFloat = 4
@@ -14,20 +14,20 @@ public struct WaveformView: View {
 
     public init(audioLevel: Double?, color: Color) {
         self.color = color
-        levelAtTime = { _ in audioLevel }
+        currentLevel = { audioLevel }
     }
 
     public init(
         color: Color,
-        levelAtTime: @escaping (TimeInterval) -> Double?
+        currentLevel: @escaping () -> Double?
     ) {
         self.color = color
-        self.levelAtTime = levelAtTime
+        self.currentLevel = currentLevel
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
-            let audioLevel = levelAtTime(timeline.date.timeIntervalSinceReferenceDate)
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { _ in
+            let audioLevel = currentLevel()
             HStack(spacing: barSpacing) {
                 ForEach(0 ..< barCount, id: \.self) { index in
                     WaveformBar(

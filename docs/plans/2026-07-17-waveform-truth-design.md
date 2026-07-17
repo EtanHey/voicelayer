@@ -75,7 +75,8 @@ The speaking state event gains an optional `playback_amplitude` object:
   serialized envelope at 24,000 samples, and decoder wall time at 30 seconds.
   Window intervals must resolve to an exact whole PCM sample count.
 - The event is emitted immediately after the audio player process starts.
-  VoiceBar records its local receipt clock and uses
+  VoiceBar records its local monotonic-uptime receipt clock and uses that same
+  clock domain on each renderer refresh to compute
   `floor(elapsed_ms / sample_interval_ms)` to select the current level.
 - Out-of-range elapsed time returns zero. Stop/idle clears the envelope.
 - Playback queue progress and engine-disclosure metadata remain unchanged.

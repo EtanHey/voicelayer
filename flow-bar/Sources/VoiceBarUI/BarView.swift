@@ -318,8 +318,10 @@ public struct BarView: View {
                 if state.queueItems.count > 1 {
                     queueVisualization
                 } else {
-                    WaveformView(color: Theme.speakingColor) { referenceTime in
-                        state.playbackAudioLevel(at: referenceTime)
+                    // TimelineView only drives refresh cadence. VoiceState owns
+                    // the monotonic uptime domain used to index the envelope.
+                    WaveformView(color: Theme.speakingColor) {
+                        state.playbackAudioLevel()
                     }
                     if TeleprompterVisibilityPolicy.keepsTimelineMounted(
                         hasText: !state.statusText.isEmpty

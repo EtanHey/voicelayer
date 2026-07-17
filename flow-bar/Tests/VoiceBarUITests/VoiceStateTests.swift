@@ -16,7 +16,9 @@ final class VoiceStateTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            state.playbackAudioLevel(at: ProcessInfo.processInfo.systemUptime + 60.075),
+            state.playbackAudioLevel(
+                atSystemUptime: ProcessInfo.processInfo.systemUptime + 60.075
+            ),
             0.8
         )
     }
