@@ -21,6 +21,7 @@ const MIN_SPECIMEN_DURATION_MS = 500;
 const MIN_REFERENCE_WORDS = 3;
 const MIN_REFERENCE_OVERLAP = 0.45;
 const MIN_VOCABULARY_JACCARD = 0.25;
+const MIN_PUNCTUATION_FLOOR_WORDS = 40;
 const DEFAULT_INTERACTION_TIMEOUT_MS = 300_000;
 const DEFAULT_INTERACTION_TERMINATION_GRACE_MS = 10_000;
 const HANDLED_POLISH_STATUSES = new Set([
@@ -148,6 +149,7 @@ export function assertCorpusReplayResult(input: {
   if (/^1[.)]?$/u.test(actual) || /^1\.\s*$/u.test(actual)) {
     throw new Error(`${input.specimenId}: degenerate polished output ${JSON.stringify(actual)}`);
   }
+  const similarity = wordSimilarity(input.reference, actual);
   if (input.polishStatus === "applied") {
     if (input.polished !== true) {
       throw new Error(
@@ -156,11 +158,14 @@ export function assertCorpusReplayResult(input: {
           `reason ${JSON.stringify(input.polishReason || "missing")})`,
       );
     }
-    if (!hasPunctuationFloor(actual)) {
-      throw new Error(`${input.specimenId}: punctuation floor was not applied`);
-    }
   }
-  const similarity = wordSimilarity(input.reference, actual);
+  const needsPunctuationFloor =
+    input.polishStatus === "applied" ||
+    (normalizedWords(actual).length >= MIN_PUNCTUATION_FLOOR_WORDS &&
+      similarity.referenceOverlap >= MIN_REFERENCE_OVERLAP);
+  if (needsPunctuationFloor && !hasPunctuationFloor(actual)) {
+    throw new Error(`${input.specimenId}: punctuation floor was not applied`);
+  }
   if (similarity.referenceOverlap < MIN_REFERENCE_OVERLAP) {
     throw new Error(
       `${input.specimenId}: reference overlap ${similarity.referenceOverlap.toFixed(2)} is below ` +
@@ -188,6 +193,7 @@ function readSpecimen(directory: string): CorpusSpecimen | null {
   }
   try {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+    if (metadata.source !== "voicebar") return null;
     const transcript = readFileSync(transcriptPath, "utf8").trim();
     const durationMs = Number(metadata.duration_ms);
     if (

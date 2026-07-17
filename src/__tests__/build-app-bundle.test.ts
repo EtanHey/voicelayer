@@ -58,6 +58,16 @@ describe("build-app.sh bundles runtime assets", () => {
     );
   });
 
+  test("bundles daemon production dependencies beside the bundled src", () => {
+    expect(packageJson.files).toContain("bun.lock");
+    expect(buildScript).toContain('require_bundle_file "bun.lock"');
+    expect(buildScript).toContain("node_modules/zod");
+    expect(buildScript).toContain("node_modules/@modelcontextprotocol");
+    expect(buildScript).toMatch(
+      /bun install --production --frozen-lockfile --cwd "\$APP_DIR\/Contents\/Resources"/,
+    );
+  });
+
   test("bundles every file required by the F5 hidutil installer", () => {
     expect(buildScript).toContain("scripts/install-voicebar-f5-hidutil.sh");
     expect(buildScript).toContain("scripts/apply-voicebar-f5-hidutil.sh");
@@ -113,6 +123,31 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).toMatch(
       /--entitlements "\$VOICEBAR_ENTITLEMENTS"/,
     );
+  });
+
+  test("signs nested Mach-O daemon dependencies before the outer app bundle", () => {
+    const helperStart = buildScript.indexOf(
+      "sign_nested_native_dependencies() {",
+    );
+    const helperEnd = buildScript.indexOf("\n}\n", helperStart);
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(helperEnd).toBeGreaterThan(helperStart);
+    const helperBody = buildScript.slice(helperStart, helperEnd);
+    expect(helperBody).toContain("node_modules");
+    expect(helperBody).toContain("*.node");
+    expect(helperBody).toContain("*.dylib");
+    expect(helperBody).toContain("Mach-O");
+    expect(helperBody).toContain("codesign --force --options runtime --timestamp");
+
+    const helperCall = buildScript.indexOf(
+      "\nsign_nested_native_dependencies\n",
+      helperEnd,
+    );
+    const outerSign = buildScript.indexOf(
+      'codesign --force --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS"',
+    );
+    expect(helperCall).toBeGreaterThan(helperEnd);
+    expect(outerSign).toBeGreaterThan(helperCall);
   });
 
   test("stamps git provenance into the built VoiceBar Info.plist", () => {

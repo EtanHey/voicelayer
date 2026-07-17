@@ -58,13 +58,14 @@ function writeSpecimen(
   id: string,
   transcript: string,
   durationMs = 2_000,
+  source: "voicebar" | "voice_ask" = "voicebar",
 ) {
   const directory = join(root, day, id);
   mkdirSync(directory, { recursive: true });
   writeFileSync(join(directory, "audio.wav"), "RIFF-test-audio");
   writeFileSync(
     join(directory, "metadata.json"),
-    JSON.stringify({ id, duration_ms: durationMs, sample_rate: 16_000 }),
+    JSON.stringify({ id, duration_ms: durationMs, sample_rate: 16_000, source }),
   );
   writeFileSync(join(directory, "voicelayer-transcript.txt"), transcript);
 }
@@ -187,6 +188,27 @@ describe("corpus replay verification", () => {
     ).not.toThrow();
   });
 
+  test("rejects a long unpunctuated fallback rejected by a safety guard", () => {
+    const reference =
+      "so i was thinking about the whole voice layer pipeline and how the polish " +
+      "step is supposed to add punctuation but sometimes it just does not and then " +
+      "you end up with this giant wall of text that has no periods no commas nothing " +
+      "and it is really hard to read especially when the dictation is long like this " +
+      "one where i just keep talking and talking without ever stopping to breathe or " +
+      "add any kind of structure to what i am saying which is exactly the failure mode";
+
+    expect(() =>
+      assertCorpusReplayResult({
+        specimenId: "punct-flicker-long-narrative",
+        reference,
+        actual: reference,
+        polished: false,
+        polishStatus: "rejected",
+        polishReason: "polish response self-correction introduced new content",
+      }),
+    ).toThrow("punctuation floor");
+  });
+
   test("rejects an unrelated fallback even when the polish outcome was handled", () => {
     expect(() =>
       assertCorpusReplayResult({
@@ -254,6 +276,28 @@ describe("corpus replay verification", () => {
     ).toThrow("missing-pinned-recording");
   });
 
+  test("excludes paired voice_ask rounds from the VoiceBar corpus", () => {
+    const root = makeTempRoot();
+    writeSpecimen(
+      root,
+      "2026-07-13",
+      "voicebar-round",
+      "This VoiceBar recording remains eligible.",
+    );
+    writeSpecimen(
+      root,
+      "2026-07-14",
+      "voice-ask-round",
+      "This newer voice ask reply must not enter the corpus.",
+      2_000,
+      "voice_ask",
+    );
+
+    expect(selectCorpusSpecimens(root, 1).map((item) => item.id)).toEqual([
+      "voicebar-round",
+    ]);
+  });
+
   test("reads a documented corpus manifest and rejects duplicate ids", () => {
     const root = makeTempRoot();
     const manifest = join(root, "corpus-manifest.txt");
@@ -274,6 +318,7 @@ describe("corpus replay verification", () => {
         id: "duplicate-id",
         duration_ms: 2_000,
         sample_rate: 16_000,
+        source: "voicebar",
       }),
     );
 

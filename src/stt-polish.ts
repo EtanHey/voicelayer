@@ -77,7 +77,10 @@ const DEFAULT_POLISH_MAX_TOKENS = 512;
 const MAX_POLISH_COMPLETION_TOKENS = 4_096;
 const MAX_HTTP_NOOP_POLISH_ATTEMPTS = 3;
 const RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS = 18;
+const SINGLE_NARRATIVE_PUNCTUATION_FLOOR_MIN_WORDS = 40;
 const MIN_QUESTION_BOUNDARY_TRANSITIONS = 2;
+const MIN_REJECTED_CANDIDATE_PROJECTION_OVERLAP = 0.8;
+const MAX_PUNCTUATION_PROJECTION_ALIGNMENT_CELLS = 1_000_000;
 const QUESTION_STARTER_WORDS =
   "(?:did|do|does|is|are|can|could|would|should|what|why|how|when|where|who)";
 const QUESTION_STARTER_PATTERN = new RegExp(
@@ -479,6 +482,131 @@ function getSTTPolishMaxTokens(cleanedText: string): number {
   );
 }
 
+interface PunctuationProjectionToken {
+  value: string;
+  end: number;
+}
+
+function punctuationProjectionTokens(text: string): PunctuationProjectionToken[] {
+  const tokens: PunctuationProjectionToken[] = [];
+  for (const match of text.matchAll(/[\p{L}\p{N}'’]+/gu)) {
+    if (match.index === undefined) continue;
+    tokens.push({
+      value: normalizeContentToken(match[0]),
+      end: match.index + match[0].length,
+    });
+  }
+  return tokens;
+}
+
+function alignPunctuationProjectionTokens(
+  cleanedTokens: PunctuationProjectionToken[],
+  candidateTokens: PunctuationProjectionToken[],
+): Array<{ cleanedIndex: number; candidateIndex: number }> {
+  const cellCount = (cleanedTokens.length + 1) * (candidateTokens.length + 1);
+  if (cellCount > MAX_PUNCTUATION_PROJECTION_ALIGNMENT_CELLS) {
+    return [];
+  }
+
+  const lengths = Array.from(
+    { length: cleanedTokens.length + 1 },
+    () => new Uint32Array(candidateTokens.length + 1),
+  );
+  for (let cleanedIndex = 1; cleanedIndex <= cleanedTokens.length; cleanedIndex++) {
+    for (
+      let candidateIndex = 1;
+      candidateIndex <= candidateTokens.length;
+      candidateIndex++
+    ) {
+      lengths[cleanedIndex][candidateIndex] =
+        cleanedTokens[cleanedIndex - 1].value ===
+        candidateTokens[candidateIndex - 1].value
+          ? lengths[cleanedIndex - 1][candidateIndex - 1] + 1
+          : Math.max(
+              lengths[cleanedIndex - 1][candidateIndex],
+              lengths[cleanedIndex][candidateIndex - 1],
+            );
+    }
+  }
+
+  const aligned: Array<{ cleanedIndex: number; candidateIndex: number }> = [];
+  let cleanedIndex = cleanedTokens.length;
+  let candidateIndex = candidateTokens.length;
+  while (cleanedIndex > 0 && candidateIndex > 0) {
+    if (
+      cleanedTokens[cleanedIndex - 1].value ===
+      candidateTokens[candidateIndex - 1].value
+    ) {
+      aligned.push({
+        cleanedIndex: cleanedIndex - 1,
+        candidateIndex: candidateIndex - 1,
+      });
+      cleanedIndex--;
+      candidateIndex--;
+    } else if (
+      lengths[cleanedIndex - 1][candidateIndex] >
+      lengths[cleanedIndex][candidateIndex - 1]
+    ) {
+      cleanedIndex--;
+    } else {
+      candidateIndex--;
+    }
+  }
+  return aligned.reverse();
+}
+
+function projectRejectedCandidatePunctuation(
+  cleanedText: string,
+  candidateText: string,
+): string {
+  if (
+    countWords(cleanedText) < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
+    !shouldRetryNoopPolish(cleanedText)
+  ) {
+    return cleanedText;
+  }
+
+  const cleanedTokens = punctuationProjectionTokens(cleanedText);
+  const candidateTokens = punctuationProjectionTokens(candidateText);
+  if (cleanedTokens.length === 0 || candidateTokens.length === 0) {
+    return cleanedText;
+  }
+
+  const aligned = alignPunctuationProjectionTokens(
+    cleanedTokens,
+    candidateTokens,
+  );
+
+  const overlap =
+    aligned.length / Math.max(cleanedTokens.length, candidateTokens.length);
+  if (overlap < MIN_REJECTED_CANDIDATE_PROJECTION_OVERLAP) {
+    return cleanedText;
+  }
+
+  const insertions: Array<{ index: number; punctuation: string }> = [];
+  for (const { cleanedIndex, candidateIndex } of aligned) {
+    const candidateSuffix = candidateText.slice(candidateTokens[candidateIndex].end);
+    const punctuation = candidateSuffix.match(
+      /^([,.!?…:;]+)(?:["')\]]*)?(?=\s|$)/u,
+    )?.[1];
+    if (!punctuation) continue;
+
+    const insertionIndex = cleanedTokens[cleanedIndex].end;
+    if (/^[,.!?…:;]+/u.test(cleanedText.slice(insertionIndex))) continue;
+    insertions.push({ index: insertionIndex, punctuation });
+  }
+  if (insertions.length === 0) return cleanedText;
+
+  let projected = cleanedText;
+  for (const insertion of insertions.reverse()) {
+    projected =
+      projected.slice(0, insertion.index) +
+      insertion.punctuation +
+      projected.slice(insertion.index);
+  }
+  return projected;
+}
+
 function capitalizeRunOnSegmentStart(segment: string): string {
   if (!QUESTION_STARTER_PATTERN.test(segment)) return segment;
   return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
@@ -546,11 +674,18 @@ function deterministicRunOnPunctuationFloor(cleanedText: string): string {
   const boundaryIndices = questionBoundaryIndices(compactText);
   if (
     words < RUN_ON_PUNCTUATION_FLOOR_MIN_WORDS ||
-    !shouldRetryNoopPolish(cleanedText) ||
+    !shouldRetryNoopPolish(cleanedText)
+  ) {
+    return cleanedText;
+  }
+
+  if (
     !QUESTION_STARTER_PATTERN.test(compactText) ||
     boundaryIndices.length < MIN_QUESTION_BOUNDARY_TRANSITIONS
   ) {
-    return cleanedText;
+    return words >= SINGLE_NARRATIVE_PUNCTUATION_FLOOR_MIN_WORDS
+      ? withTerminalPunctuation(compactText, ".")
+      : cleanedText;
   }
 
   const normalized = compactText.replace(/[.?!]+$/u, "");
@@ -571,6 +706,18 @@ function deterministicRunOnPunctuationFloor(cleanedText: string): string {
       return withTerminalPunctuation(sentence, fallback);
     })
     .join(" ");
+}
+
+function punctuationFloorFallbackText(
+  cleanedText: string,
+  rejectedCandidateText?: string,
+): string {
+  const projected = rejectedCandidateText
+    ? projectRejectedCandidatePunctuation(cleanedText, rejectedCandidateText)
+    : cleanedText;
+  return projected === cleanedText
+    ? deterministicRunOnPunctuationFloor(cleanedText)
+    : withTerminalPunctuation(projected, ".");
 }
 
 function protectedCodePunctuationCounts(text: string): Map<string, number> {
@@ -854,7 +1001,9 @@ function hasUngroundedContent(cleanedText: string, candidate: string): boolean {
 
 function withTerminalPunctuation(text: string, fallback: string): string {
   const trimmed = text.trim().replace(/\s+([,.?!])/gu, "$1");
-  return /[.?!]$/u.test(trimmed) ? trimmed : `${trimmed}${fallback || "."}`;
+  return /[.?!](?:["')\]]*)$/u.test(trimmed)
+    ? trimmed
+    : `${trimmed}${fallback || "."}`;
 }
 
 function deterministicSelfCorrectionCandidate(cleanedText: string): string | null {
@@ -977,6 +1126,7 @@ function applyPolishCandidate(
     error?: string,
     retried?: boolean,
   ) => STTPolishResult,
+  buildFallbackText: (rejectedCandidateText?: string) => string,
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
@@ -998,7 +1148,7 @@ function applyPolishCandidate(
   }
   if (rejectionReason) {
     return buildResult(
-      cleanedText,
+      buildFallbackText(candidateText),
       candidateText,
       "rejected",
       rejectionReason,
@@ -1366,10 +1516,10 @@ export async function polishTranscriptionText(
     };
   };
 
-  const punctuationFloorFallbackText = (): string =>
+  const buildFallbackText = (rejectedCandidateText?: string): string =>
     mode === "shadow"
       ? input.cleanedText
-      : deterministicRunOnPunctuationFloor(input.cleanedText);
+      : punctuationFloorFallbackText(input.cleanedText, rejectedCandidateText);
 
   if (mode === "off" || !input.cleanedText.trim()) {
     return buildResult(input.cleanedText, null, "skipped");
@@ -1383,7 +1533,7 @@ export async function polishTranscriptionText(
     );
     if (!health.ok) {
       const result = buildResult(
-        punctuationFloorFallbackText(),
+        buildFallbackText(),
         null,
         "failed",
         health.error,
@@ -1405,6 +1555,7 @@ export async function polishTranscriptionText(
         polishedText,
         mode,
         buildResult,
+        buildFallbackText,
       );
       const retryReason =
         result.status === "applied" &&
@@ -1436,6 +1587,7 @@ export async function polishTranscriptionText(
                 retryPolishedText,
                 mode,
                 buildResult,
+                buildFallbackText,
                 true,
               );
               if (
@@ -1453,7 +1605,7 @@ export async function polishTranscriptionText(
               }
             } catch (retryErr) {
               const retryFailedResult = buildResult(
-                punctuationFloorFallbackText(),
+                buildFallbackText(),
                 latestResult.polishedText,
                 "failed",
                 retryErr instanceof Error ? retryErr.message : String(retryErr),
@@ -1469,7 +1621,7 @@ export async function polishTranscriptionText(
             }
           }
           const flooredResult = buildResult(
-            punctuationFloorFallbackText(),
+            buildFallbackText(),
             latestResult.polishedText,
             latestResult.status,
             latestResult.error,
@@ -1498,13 +1650,14 @@ export async function polishTranscriptionText(
             retryPolishedText,
             mode,
             buildResult,
+            buildFallbackText,
             true,
           );
           writePolishLog(retryResult, input.rawText, input.cleanedText, env);
           return retryResult;
         } catch (retryErr) {
           const retryFailedResult = buildResult(
-            result.text,
+            buildFallbackText(result.polishedText ?? undefined),
             result.polishedText,
             result.status,
             retryErr instanceof Error ? retryErr.message : String(retryErr),
@@ -1523,7 +1676,7 @@ export async function polishTranscriptionText(
       return result;
     } catch (err) {
       const result = buildResult(
-        punctuationFloorFallbackText(),
+        buildFallbackText(),
         null,
         "failed",
         err instanceof Error ? err.message : String(err),
@@ -1535,7 +1688,7 @@ export async function polishTranscriptionText(
 
   const socketPath = getSTTPolishSocketPath(env);
   if (!existsSync(socketPath)) {
-    const result = buildResult(input.cleanedText, null, "unavailable");
+    const result = buildResult(buildFallbackText(), null, "unavailable");
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;
   }
@@ -1556,12 +1709,13 @@ export async function polishTranscriptionText(
       polishedText,
       mode,
       buildResult,
+      buildFallbackText,
     );
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;
   } catch (err) {
     const result = buildResult(
-      punctuationFloorFallbackText(),
+      buildFallbackText(),
       null,
       "failed",
       err instanceof Error ? err.message : String(err),

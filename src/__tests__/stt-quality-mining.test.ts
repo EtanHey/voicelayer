@@ -28,6 +28,7 @@ function makeRecording(
     createdAt: string;
     transcript: string;
     durationMs?: number;
+    source?: "voicebar" | "voice_ask";
   },
 ): string {
   const dir = join(root, input.day, input.id);
@@ -39,7 +40,7 @@ function makeRecording(
     `${JSON.stringify({
       id: input.id,
       created_at: input.createdAt,
-      source: "voicebar",
+      source: input.source ?? "voicebar",
       mode: "vad",
       silence_mode: "vad",
       duration_ms: input.durationMs ?? 1200,
@@ -105,6 +106,37 @@ describe("stt-quality-mining", () => {
       });
 
       expect(recordings).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("excludes paired voice_ask rounds from VoiceBar quality mining", () => {
+    const root = mkdtempSync(join(tmpdir(), "voicelayer-mining-source-"));
+    try {
+      makeRecording(root, {
+        day: "2026-05-20",
+        id: "voicebar-round",
+        createdAt: "2026-05-20T08:00:00.000Z",
+        transcript: "VoiceBar recording stays in the mining population.",
+      });
+      makeRecording(root, {
+        day: "2026-05-20",
+        id: "voice-ask-round",
+        createdAt: "2026-05-20T09:00:00.000Z",
+        transcript: "Voice ask reply must not enter VoiceBar mining.",
+        source: "voice_ask",
+      });
+
+      const recordings = loadVoiceBarRecordings({
+        archiveRoot: root,
+        since: new Date("2026-05-19T00:00:00.000Z"),
+        until: new Date("2026-05-21T00:00:00.000Z"),
+      });
+
+      expect(recordings.map((recording) => recording.id)).toEqual([
+        "voicebar-round",
+      ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

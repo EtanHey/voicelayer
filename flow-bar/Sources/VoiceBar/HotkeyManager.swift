@@ -306,6 +306,10 @@ struct HotkeyDebounceState {
     var lastProcessedKeyDownTime: TimeInterval?
 }
 
+struct HotkeySequenceState {
+    var pendingRepasteKeycodes: Set<Int64> = []
+}
+
 private let hotkeyDuplicateEventDebounceSeconds: TimeInterval = 0.01
 
 func shouldDebounceHotkeyAction(
@@ -425,6 +429,10 @@ func hotkeyAction(
         }
     }
 
+    let exactShiftOnly = flags.contains(.maskShift)
+        && !flags.contains(.maskCommand)
+        && !flags.contains(.maskAlternate)
+        && !flags.contains(.maskControl)
     if type == .keyUp {
         NSLog(
             "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",
@@ -434,10 +442,6 @@ func hotkeyAction(
         return .keyUp
     }
 
-    let exactShiftOnly = flags.contains(.maskShift)
-        && !flags.contains(.maskCommand)
-        && !flags.contains(.maskAlternate)
-        && !flags.contains(.maskControl)
     if exactShiftOnly {
         guard type == .keyDown else {
             NSLog(
@@ -454,6 +458,10 @@ func hotkeyAction(
             }
             NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
             return .ignore
+        }
+        guard !gestureIsActive else {
+            NSLog("[HotkeyManager] Consuming Shift+F5 keyDown during an active gesture for keycode %lld", keycode)
+            return .consume
         }
         NSLog(
             "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
@@ -538,6 +546,44 @@ func hotkeyAction(
     return action
 }
 
+func sequenceAwareHotkeyAction(
+    type: CGEventType,
+    keycode: Int64,
+    flags: CGEventFlags,
+    autorepeat: Int64,
+    targetKeycodes: Set<Int64>,
+    useModifierMode: Bool,
+    currentModifierFlags: CGEventFlags = CGEventSource.flagsState(.hidSystemState),
+    gestureIsActive: Bool = false,
+    cancellationIsActive: Bool? = nil,
+    sequenceState: inout HotkeySequenceState
+) -> HotkeyAction {
+    if type == .keyUp, sequenceState.pendingRepasteKeycodes.remove(keycode) != nil {
+        NSLog("[HotkeyManager] Consuming keyUp paired with re-paste keyDown for keycode %lld", keycode)
+        return .consume
+    }
+
+    let action = hotkeyAction(
+        type: type,
+        keycode: keycode,
+        flags: flags,
+        autorepeat: autorepeat,
+        targetKeycodes: targetKeycodes,
+        useModifierMode: useModifierMode,
+        currentModifierFlags: currentModifierFlags,
+        gestureIsActive: gestureIsActive,
+        cancellationIsActive: cancellationIsActive
+    )
+    if type == .keyDown, autorepeat == 0, targetKeycodes.contains(keycode) {
+        if action == .pasteLastTranscript {
+            sequenceState.pendingRepasteKeycodes.insert(keycode)
+        } else {
+            sequenceState.pendingRepasteKeycodes.remove(keycode)
+        }
+    }
+    return action
+}
+
 func mouseHotkeyAction(
     type: CGEventType,
     buttonNumber: Int64,
@@ -617,6 +663,7 @@ private final class TapContext {
     let onPasteLastTranscript: () -> Void
     let shouldHandleEscape: () -> Bool
     var debounceState = HotkeyDebounceState()
+    var hotkeySequenceState = HotkeySequenceState()
     /// CFMachPort reference for re-enabling the tap after system disables it.
     var tap: CFMachPort?
 
@@ -694,7 +741,7 @@ private func hotkeyCallback(
             enterMouseButtons: ctx.enterMouseButtons
         )
     } else {
-        hotkeyAction(
+        sequenceAwareHotkeyAction(
             type: type,
             keycode: keycode,
             flags: event.flags,
@@ -702,7 +749,8 @@ private func hotkeyCallback(
             targetKeycodes: ctx.targetKeycodes,
             useModifierMode: ctx.useModifierMode,
             gestureIsActive: ctx.gesture.state != .idle,
-            cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape()
+            cancellationIsActive: ctx.gesture.state != .idle || ctx.shouldHandleEscape(),
+            sequenceState: &ctx.hotkeySequenceState
         )
     }
     if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {

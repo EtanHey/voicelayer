@@ -94,6 +94,49 @@ describe("stt-cleanup", () => {
     expect(cleaned).not.toContain("Seamux");
   });
 
+  it("normalizes the Constitution-gated Phase-0 mined aliases", () => {
+    const cases: Array<[input: string, expected: string]> = [
+      ["use brain lair now", "Use BrainLayer now"],
+      ["use brain lear now", "Use BrainLayer now"],
+      ["use bearing layer now", "Use BrainLayer now"],
+      ["use narration layer now", "Use NarrationLayer now"],
+      ["use tailscale now", "Use Tailscale now"],
+      ["use olama now", "Use Ollama now"],
+      ["use comfy ui now", "Use ComfyUI now"],
+      ["use notebook lm now", "Use NotebookLM now"],
+      ["use notebook l m now", "Use NotebookLM now"],
+      ["use notebook-lm now", "Use NotebookLM now"],
+      ["use chroma db now", "Use ChromaDB now"],
+      ["use carpathy now", "Use Karpathy now"],
+      ["use fts5 now", "Use FTS5 now"],
+      ["use fts 5 now", "Use FTS5 now"],
+      ["use rrf now", "Use RRF now"],
+      ["use esculite now", "Use SQLite now"],
+      ["use sq lite now", "Use SQLite now"],
+      ["use quen 3 now", "Use Qwen3 now"],
+      ["use qwen 3 now", "Use Qwen3 now"],
+      ["use quen 3 tts now", "Use Qwen3 TTS now"],
+      ["use qwen 3 tts now", "Use Qwen3 TTS now"],
+      ["use gwen engine now", "Use Qwen engine now"],
+      ["use claw.md now", "Use CLAUDE.md now"],
+      ["use claw dot md now", "Use CLAUDE.md now"],
+      ["use clawed desktop now", "Use Claude Desktop now"],
+      ["use claw desktop now", "Use Claude Desktop now"],
+      ["use orkclaud now", "Use orcClaude now"],
+      ["use cmuxs now", "Use cmux now"],
+      ["use bnaya now", "Use Benaya now"],
+      ["use sagitt now", "Use Sagit now"],
+      [
+        "use if they eyes bg large now",
+        "Use Ivrit AI's BG Large now",
+      ],
+    ];
+
+    for (const [input, expected] of cases) {
+      expect(cleanupTranscriptionText(input), input).toBe(expected);
+    }
+  });
+
   it("cleans YashClaude spoken forms used in agent routing", () => {
     expect(
       cleanupTranscriptionText("ask yash claude to watch the pr loop"),

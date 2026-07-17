@@ -230,6 +230,7 @@ export function loadVoiceBarRecordings(
       if (!existsSync(metadataPath) || !existsSync(transcriptPath) || !existsSync(audioPath)) continue;
 
       const metadata = readJson(metadataPath);
+      if (stringValue(metadata?.source) !== "voicebar") continue;
       const createdAt =
         stringValue(metadata?.created_at) ?? `${dayEntry}T00:00:00.000Z`;
       if (!dateInWindow(createdAt, options.since, options.until)) continue;

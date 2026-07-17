@@ -38,11 +38,29 @@ export interface TextToSpeechOptions {
    * render/narration path; default (false) keeps the resilient fallback.
    */
   requireClonedVoice?: boolean;
+  /** Return an immutable copy of the synthesized audio for paired archives. */
+  captureAudioArtifact?: boolean;
 }
 
 export interface TextToSpeechResult {
   warning?: string;
+  /** Sanitized human-readable text paired with the synthesized audio. */
+  displayText?: string;
+  /** Synthesis engine that actually produced the returned/played audio. */
+  engine?: TextToSpeechEngine;
+  /** Resolved clone profile or concrete engine voice actually used. */
+  voice?: string;
+  audioArtifact?: {
+    bytes: Uint8Array;
+    format: "mp3";
+  };
 }
+
+export type TextToSpeechEngine =
+  | "xtts-v2"
+  | "f5-tts-mlx"
+  | "qwen3-tts"
+  | "edge-tts";
 
 export interface TextToSpeechBackend {
   speak(

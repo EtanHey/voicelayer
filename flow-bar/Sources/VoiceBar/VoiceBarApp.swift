@@ -490,7 +490,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
         }
-        voiceState.dictationInsertionHandlerProvider = {
+        voiceState.asyncDictationInsertionHandlerProvider = {
             CommandModeAXHelper.captureFocusedInsertionHandler()
         }
         voiceState.commandModeApplyHandler = { [commandModeAXHelper] text in

@@ -70,4 +70,116 @@ final class CommandModeAXHelperTests: XCTestCase {
             .appliedUnverified
         )
     }
+
+    func testLargeCmuxTerminalInsertionUsesSelectedTextStreamingPlan() {
+        let strategy = CommandModeAXHelper.insertionStrategy(
+            text: String(repeating: "large transcript chunk ", count: 300),
+            focusedValueLength: 120_000,
+            targetBundleIdentifier: "com.cmuxterm.app"
+        )
+
+        XCTAssertEqual(
+            strategy,
+            .selectedTextStreaming(maxChunkUTF16Length: 240, interChunkDelay: 0.012)
+        )
+    }
+
+    func testSelectedTextChunksPreserveTranscriptWithBoundedChunks() {
+        let transcript = String(repeating: "alpha beta gamma delta epsilon\n", count: 80)
+
+        let chunks = CommandModeAXHelper.selectedTextChunks(
+            for: transcript,
+            maxUTF16Length: 64
+        )
+
+        XCTAssertEqual(chunks.joined(), transcript)
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { ($0 as NSString).length <= 64 })
+    }
+
+    func testSelectedTextChunksSplitOversizedGraphemeWithinUTF16Bound() {
+        let oversizedGrapheme = "a" + String(repeating: "\u{0301}", count: 300)
+
+        let chunks = CommandModeAXHelper.selectedTextChunks(
+            for: oversizedGrapheme,
+            maxUTF16Length: 64
+        )
+
+        XCTAssertEqual(oversizedGrapheme.count, 1)
+        XCTAssertEqual(chunks.joined(), oversizedGrapheme)
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { ($0 as NSString).length <= 64 })
+    }
+
+    func testSelectedTextStreamingSuppressesWholeTranscriptFallbackAfterPartialWrite() {
+        var attemptedChunks: [String] = []
+
+        let disposition = CommandModeAXHelper.selectedTextStreamingDisposition(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0,
+            writeChunk: { chunk in
+                attemptedChunks.append(chunk)
+                return attemptedChunks.count == 1
+            },
+            sleep: { _ in }
+        )
+
+        XCTAssertEqual(attemptedChunks, ["abcd", "efgh"])
+        XCTAssertEqual(
+            disposition,
+            .partiallyApplied(writtenChunkCount: 1, totalChunkCount: 2)
+        )
+        XCTAssertTrue(disposition.suppressesWholeTranscriptFallback)
+    }
+
+    func testSelectedTextStreamingQueuesRemainingChunksWithoutSleepingCaller() {
+        var attemptedChunks: [String] = []
+        var sleepIntervals: [TimeInterval] = []
+        var queuedRemainder: (() -> Void)?
+        var completion: AXSelectedTextStreamingDisposition?
+
+        let started = CommandModeAXHelper.beginSelectedTextStreaming(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0.012,
+            writeChunk: { chunk in
+                attemptedChunks.append(chunk)
+                return true
+            },
+            enqueueRemainder: { queuedRemainder = $0 },
+            sleep: { sleepIntervals.append($0) },
+            onCompletion: { completion = $0 }
+        )
+
+        XCTAssertTrue(started)
+        XCTAssertEqual(attemptedChunks, ["abcd"])
+        XCTAssertTrue(sleepIntervals.isEmpty)
+        XCTAssertNil(completion)
+
+        queuedRemainder?()
+
+        XCTAssertEqual(sleepIntervals, [0.012])
+        XCTAssertEqual(attemptedChunks, ["abcd", "efgh"])
+        XCTAssertEqual(completion, .applied(writtenChunkCount: 2))
+    }
+
+    func testSelectedTextStreamingRejectsFirstChunkSynchronouslyForFallback() {
+        var queuedRemainder: (() -> Void)?
+        var completion: AXSelectedTextStreamingDisposition?
+
+        let started = CommandModeAXHelper.beginSelectedTextStreaming(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0.012,
+            writeChunk: { _ in false },
+            enqueueRemainder: { queuedRemainder = $0 },
+            sleep: { _ in XCTFail("A rejected first chunk must not sleep") },
+            onCompletion: { completion = $0 }
+        )
+
+        XCTAssertFalse(started)
+        XCTAssertNil(queuedRemainder)
+        XCTAssertEqual(completion, .failedBeforeWrite)
+    }
 }
