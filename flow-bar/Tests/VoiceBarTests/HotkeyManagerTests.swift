@@ -213,28 +213,58 @@ final class HotkeyManagerTests: XCTestCase {
     }
 
     func testShiftF5ReleaseAfterRepasteIsConsumedWithoutRecordingReleaseInNonModifierMode() {
+        var sequenceState = HotkeySequenceState()
+
         XCTAssertEqual(
-            hotkeyAction(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .pasteLastTranscript
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
                 type: .keyUp,
                 keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-                useModifierMode: false
+                useModifierMode: false,
+                sequenceState: &sequenceState
             ),
             .consume
         )
     }
 
     func testShiftF5ReleaseAfterRepasteIsConsumedWithoutRecordingReleaseInModifierMode() {
+        var sequenceState = HotkeySequenceState()
+
         XCTAssertEqual(
-            hotkeyAction(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: true,
+                sequenceState: &sequenceState
+            ),
+            .pasteLastTranscript
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
                 type: .keyUp,
                 keycode: 96,
                 flags: .maskShift,
                 autorepeat: 0,
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
-                useModifierMode: true
+                useModifierMode: true,
+                sequenceState: &sequenceState
             ),
             .consume
         )
@@ -338,6 +368,36 @@ final class HotkeyManagerTests: XCTestCase {
                 sequenceState: &sequenceState
             ),
             .consume
+        )
+    }
+
+    func testShiftPressedDuringOrdinaryHoldPreservesMatchingKeyUpBeforeGestureDispatch() {
+        var sequenceState = HotkeySequenceState()
+
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .keyDown
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: false,
+                sequenceState: &sequenceState
+            ),
+            .keyUp
         )
     }
 

@@ -433,15 +433,6 @@ func hotkeyAction(
         && !flags.contains(.maskCommand)
         && !flags.contains(.maskAlternate)
         && !flags.contains(.maskControl)
-    if exactShiftOnly, type == .keyUp {
-        if gestureIsActive {
-            NSLog("[HotkeyManager] Letting Shift+F5 keyUp unwind the active gesture for keycode %lld", keycode)
-            return .keyUp
-        }
-        NSLog("[HotkeyManager] Consuming Shift+F5 release after re-paste for keycode %lld", keycode)
-        return .consume
-    }
-
     if type == .keyUp {
         NSLog(
             "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",

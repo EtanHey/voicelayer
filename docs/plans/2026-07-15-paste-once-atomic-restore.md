@@ -28,13 +28,11 @@ Expected: the idle Shift+F5 release and active-hold Shift+F5 key-down assertions
 
 **Step 2: Implement the minimal classifier guard**
 
-Move exact Shift-only classification ahead of the generic key-up return. Use these outcomes:
+Let the sequence-aware wrapper consume a key-up only when it has recorded a matching re-paste key-down. The stateless classifier must preserve every other target key-up, even when Shift is present at release time, then classify exact Shift-only key-downs with these outcomes:
 
 ```swift
+if type == .keyUp { return .keyUp }
 if exactShiftOnly {
-    if type == .keyUp {
-        return gestureIsActive ? .keyUp : .consume
-    }
     guard type == .keyDown else { return .ignore }
     guard autorepeat == 0 else { return gestureIsActive ? .consume : .ignore }
     guard !gestureIsActive else { return .consume }
@@ -44,11 +42,11 @@ if exactShiftOnly {
 
 Keep all non-Shift hotkey behavior unchanged.
 
-Track pending re-paste releases per keycode when key-down returns `.pasteLastTranscript`, and consume each matching key-up before flag-based classification. Clear only that keycode's stale pairing state on its next non-autorepeat target key-down. This preserves event pairing when Shift is released before F5 or another configured target key is pressed meanwhile.
+Track pending re-paste releases per keycode when key-down returns `.pasteLastTranscript`, and consume each matching key-up before flag-based classification. Clear only that keycode's stale pairing state on its next non-autorepeat target key-down. This preserves event pairing when Shift is released before F5 or another configured target key is pressed meanwhile, while an ordinary hold that acquires Shift before release still delivers its required `.keyUp`.
 
 **Step 3: Verify GREEN**
 
-Run the same filtered Swift test command. Expected: all `HotkeyManagerTests` pass, including Shift-up-before-F5-up ordering and independent F5/F18 pairing.
+Run the same filtered Swift test command. Expected: all `HotkeyManagerTests` pass, including Shift-up-before-F5-up ordering, independent F5/F18 pairing, and Shift acquired during an ordinary hold.
 
 ### Task 2: Preserve bounded, guarded clipboard restoration
 

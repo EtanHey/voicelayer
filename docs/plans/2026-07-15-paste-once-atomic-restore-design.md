@@ -30,13 +30,13 @@ The clipboard fallback captures the user's pasteboard, writes the transcript, po
 
 ## Design
 
-Classify the exact Shift+F5 chord before the generic key-up path. When no gesture is active, key-down remains the sole `.pasteLastTranscript` dispatch and its paired key-up is consumed without dispatch so the target does not receive an unmatched release. Track pending pairings per keycode in the event-tap context so the key-up is still consumed if Shift is released before F5 and a second configured hotkey is pressed meanwhile. When a gesture is active, Shift+F5 key-down is consumed without repasting, while key-up remains `.keyUp` so an active recording can unwind safely.
+Classify exact Shift+F5 key-downs separately from generic target key-up. When no gesture is active, key-down remains the sole `.pasteLastTranscript` dispatch and only its recorded paired key-up is consumed without dispatch so the target does not receive an unmatched release. Track pending pairings per keycode in the event-tap context so the key-up is still consumed if Shift is released before F5 and a second configured hotkey is pressed meanwhile. Modifier state alone must never establish a re-paste pairing: when an ordinary F5/F18 hold acquires Shift before release, its key-up remains `.keyUp`. When a gesture is active, Shift+F5 key-down is consumed without repasting, while key-up remains `.keyUp` so an active recording can unwind safely.
 
 After `simulatedPasteHandler()` returns, schedule the existing change-count-guarded clipboard restoration using the production `pasteboardRestoreDelay` value of 0.5 seconds. Preserve the guard that refuses to overwrite clipboard content changed before restoration. Do not change the paste transport or add target acknowledgement.
 
 ## Verification
 
-- Hotkey tests prove idle Shift+F5 dispatches one repaste, its later release dispatches none even when Shift is released first or another configured hotkey is pressed, active-gesture key-down cannot repaste, and active-gesture key-up still unwinds.
+- Hotkey tests prove idle Shift+F5 dispatches one repaste, its later release dispatches none even when Shift is released first or another configured hotkey is pressed, an ordinary hold still releases if Shift is pressed in between, active-gesture key-down cannot repaste, and active-gesture key-up still unwinds.
 - Paste tests prove the original clipboard is restored after the bounded delay and that a clipboard change made before restoration is preserved.
 - Existing AX-success tests prove the clipboard fallback is not touched when insertion succeeds.
 - The full Swift suites plus `bun test src/` provide regression coverage. No resident-app runtime verification is allowed in this worker lane.
