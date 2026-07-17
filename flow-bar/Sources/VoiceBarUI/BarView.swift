@@ -163,7 +163,7 @@ public struct BarView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, pillVerticalPadding)
         .frame(
-            minWidth: state.mode == .speaking ? Theme.pillMinWidth : Theme.pillCompactWidth,
+            minWidth: showsTeleprompter ? Theme.pillMinWidth : Theme.pillCompactWidth,
             alignment: pillContentAlignment
         )
         .frame(width: pillFixedWidth, height: pillFixedHeight, alignment: pillContentAlignment)
@@ -286,104 +286,79 @@ public struct BarView: View {
 
     private var stateContent: some View {
         Group {
-            switch state.mode {
-            case .recording:
-                let recordingContent = VoiceBarPresentation.recordingContent(
-                    hotkeyPhase: state.hotkeyPhase
-                )
-                HStack(spacing: 8) {
-                    if recordingContent.showsWaveform {
-                        WaveformView(
-                            audioLevel: state.recordingWaveformLevel,
-                            color: Theme.recordingColor
-                        )
+            if state.teleprompterText != nil,
+               !transcriptPreviewIsVisible,
+               state.queueItems.count <= 1 {
+                teleprompterContent
+            } else {
+                switch state.mode {
+                case .recording:
+                    let recordingContent = VoiceBarPresentation.recordingContent(
+                        hotkeyPhase: state.hotkeyPhase
+                    )
+                    HStack(spacing: 8) {
+                        if recordingContent.showsWaveform {
+                            WaveformView(
+                                audioLevel: state.recordingWaveformLevel,
+                                color: Theme.recordingColor
+                            )
+                        }
+                        if !recordingContent.statusText.isEmpty {
+                            if recordingContent.usesPulsingLabelOpacity {
+                                PulsingStatusLabel(text: recordingContent.statusText)
+                            } else {
+                                Text(recordingContent.statusText)
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                            }
+                        }
                     }
-                    if !recordingContent.statusText.isEmpty {
-                        if recordingContent.usesPulsingLabelOpacity {
-                            PulsingStatusLabel(text: recordingContent.statusText)
-                        } else {
-                            Text(recordingContent.statusText)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(
+                        recordingContent.statusText.isEmpty ? "Recording" : recordingContent.statusText
+                    )
+                case .speaking:
+                    if state.queueItems.count > 1 {
+                        queueVisualization
+                    } else {
+                        // TimelineView only drives refresh cadence. VoiceState owns
+                        // the monotonic uptime domain used to index the envelope.
+                        WaveformView(color: Theme.speakingColor) {
+                            state.playbackAudioLevel()
+                        }
+                        statusLabel
+                    }
+                case .transcribing:
+                    HStack(spacing: 8) {
+                        if !statusText.isEmpty {
+                            Text(statusText)
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(.white.opacity(0.9))
                                 .lineLimit(1)
                                 .truncationMode(.tail)
                         }
                     }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(
-                    recordingContent.statusText.isEmpty ? "Recording" : recordingContent.statusText
-                )
-            case .speaking:
-                if state.queueItems.count > 1 {
-                    queueVisualization
-                } else {
-                    // TimelineView only drives refresh cadence. VoiceState owns
-                    // the monotonic uptime domain used to index the envelope.
-                    WaveformView(color: Theme.speakingColor) {
-                        state.playbackAudioLevel()
-                    }
-                    if TeleprompterVisibilityPolicy.keepsTimelineMounted(
-                        hasText: !state.statusText.isEmpty
-                    ) {
-                        ZStack(alignment: .leading) {
-                            TeleprompterView(
-                                text: state.statusText,
-                                wordBoundaries: state.wordBoundaries
-                            )
-                            .opacity(
-                                TeleprompterVisibilityPolicy.timelineOpacity(
-                                    isDismissed: state.isTeleprompterDismissed
-                                )
-                            )
-                            .accessibilityHidden(state.isTeleprompterDismissed)
-
-                            Text("Teleprompter hidden")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(.white.opacity(0.72))
-                                .opacity(
-                                    TeleprompterVisibilityPolicy.hiddenLabelOpacity(
-                                        isDismissed: state.isTeleprompterDismissed
-                                    )
-                                )
-                                .accessibilityHidden(!state.isTeleprompterDismissed)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(statusText.isEmpty ? "Transcribing" : statusText)
+                case .error:
+                    Button {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+                        commandRouter.handlePrimaryTap()
+                    } label: {
+                        HStack(spacing: 8) {
+                            statusIconImage
+                            statusLabel
                         }
-                        .frame(
-                            width: Theme.teleprompterViewportWidth,
-                            height: Theme.teleprompterViewportHeight
-                        )
-                    } else {
-                        statusLabel
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Retry voice recording")
+                default:
+                    statusIcon
+                    statusLabel
                 }
-            case .transcribing:
-                HStack(spacing: 8) {
-                    if !statusText.isEmpty {
-                        Text(statusText)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(statusText.isEmpty ? "Transcribing" : statusText)
-            case .error:
-                Button {
-                    NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-                    commandRouter.handlePrimaryTap()
-                } label: {
-                    HStack(spacing: 8) {
-                        statusIconImage
-                        statusLabel
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Retry voice recording")
-            default:
-                statusIcon
-                statusLabel
             }
         }
         // Force a clean view identity swap on mode change — prevents glitchy
@@ -396,6 +371,47 @@ public struct BarView: View {
                 insertedFrom: state.previousMode
             )
         )
+    }
+
+    @ViewBuilder
+    private var teleprompterContent: some View {
+        if state.mode == .speaking {
+            // TimelineView only drives refresh cadence. VoiceState owns the
+            // monotonic uptime domain used to index the envelope.
+            WaveformView(color: Theme.speakingColor) {
+                state.playbackAudioLevel()
+            }
+        }
+        if let text = state.teleprompterText,
+           TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: !text.isEmpty) {
+            ZStack(alignment: .leading) {
+                TeleprompterView(
+                    text: text,
+                    wordBoundaries: state.teleprompterWordBoundaries,
+                    isReadback: state.isTeleprompterReadback
+                )
+                .opacity(
+                    TeleprompterVisibilityPolicy.timelineOpacity(
+                        isDismissed: state.isTeleprompterDismissed
+                    )
+                )
+                .accessibilityHidden(state.isTeleprompterDismissed)
+
+                Text("Teleprompter hidden")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.72))
+                    .opacity(
+                        TeleprompterVisibilityPolicy.hiddenLabelOpacity(
+                            isDismissed: state.isTeleprompterDismissed
+                        )
+                    )
+                    .accessibilityHidden(!state.isTeleprompterDismissed)
+            }
+            .frame(
+                width: Theme.teleprompterViewportWidth,
+                height: Theme.teleprompterViewportHeight
+            )
+        }
     }
 
     private var queueVisualization: some View {
@@ -533,7 +549,7 @@ public struct BarView: View {
     }
 
     private var compactPillUsesFixedHeight: Bool {
-        state.mode != .speaking && !transcriptPreviewIsVisible && state.queueDepth <= 1
+        !showsTeleprompter && !transcriptPreviewIsVisible && state.queueDepth <= 1
     }
 
     private var pillFixedHeight: CGFloat? {
@@ -555,11 +571,19 @@ public struct BarView: View {
             return Theme.transcriptPreviewPillWidth(for: transcriptPreviewText)
         }
 
+        if showsTeleprompter {
+            return Theme.teleprompterPillWidth(
+                for: state.mode,
+                accessoryButtonCount: idleAccessoryButtonCount
+            )
+        }
+
         return Theme.pillContentWidth(
             for: state.mode,
             statusText: statusText,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: state.queueItems.count
+            queueItemCount: state.queueItems.count,
+            showsRecordingHold: recordingHoldControl != nil
         )
     }
 
@@ -602,6 +626,14 @@ public struct BarView: View {
             transcriptionVocabularyTerms: state.transcriptionVocabularyTerms,
             transcriptionVocabularyAliases: state.transcriptionVocabularyAliases,
             canReplay: state.canReplay
+        ) + (state.isTeleprompterReadback ? 2 : 0)
+    }
+
+    private var showsTeleprompter: Bool {
+        VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: state.teleprompterText != nil,
+            isDismissed: state.isTeleprompterDismissed,
+            isReadback: state.isTeleprompterReadback
         )
     }
 
@@ -610,6 +642,16 @@ public struct BarView: View {
     private var actionButtons: some View {
         HStack(spacing: 2) {
             if state.mode == .recording {
+                if let recordingHoldControl {
+                    pillButton(
+                        icon: recordingHoldControl.iconName,
+                        isSelected: recordingHoldControl.isSelected,
+                        accessibilityLabel: recordingHoldControl.accessibilityLabel,
+                        accessibilityHint: recordingHoldControl.accessibilityHint
+                    ) {
+                        state.setRecordingHold(!state.isRecordingHoldEngaged)
+                    }
+                }
                 pillButton(icon: "xmark") { commandRouter.handleCancel() }
                 pillButton(icon: "stop.fill") { commandRouter.handleStop() }
             }
@@ -629,6 +671,16 @@ public struct BarView: View {
             if state.mode == .error {
                 pillButton(icon: "xmark") { state.dismissError() }
             }
+            if state.isTeleprompterReadback {
+                pillButton(icon: state.isTeleprompterDismissed ? "eye" : "eye.slash") {
+                    if state.isTeleprompterDismissed {
+                        state.showTeleprompter()
+                    } else {
+                        state.dismissTeleprompter()
+                    }
+                }
+                pillButton(icon: "xmark") { state.dismissRetainedTeleprompter() }
+            }
             if state.mode == .idle, !state.recentTranscriptionEntries.isEmpty {
                 historyButton
             }
@@ -640,6 +692,14 @@ public struct BarView: View {
                 pillButton(icon: "arrow.counterclockwise") { commandRouter.handleReplay() }
             }
         }
+    }
+
+    private var recordingHoldControl: VoiceBarRecordingHoldControl? {
+        VoiceBarPresentation.recordingHoldControl(
+            mode: state.mode,
+            recordingMode: state.recordingMode,
+            isEngaged: state.isRecordingHoldEngaged
+        )
     }
 
     private var historyButton: some View {
@@ -821,20 +881,33 @@ public struct BarView: View {
         .disabled(isDisabled)
     }
 
-    private func pillButton(icon: String, action: @escaping () -> Void) -> some View {
+    private func pillButton(
+        icon: String,
+        isSelected: Bool = false,
+        accessibilityLabel: String? = nil,
+        accessibilityHint: String? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
         Button {
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
             action()
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.8))
+                .foregroundStyle(.white.opacity(isSelected ? 1 : 0.8))
                 .frame(width: 26, height: 26)
-                .background(Color.white.opacity(0.06))
+                .background(
+                    isSelected
+                        ? Theme.recordingColor.opacity(0.34)
+                        : Color.white.opacity(0.06)
+                )
                 .clipShape(Circle())
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel ?? icon)
+        .accessibilityHint(accessibilityHint ?? "")
+        .help(accessibilityLabel ?? icon)
         .transition(.scale.combined(with: .opacity))
     }
 }

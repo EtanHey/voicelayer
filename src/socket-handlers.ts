@@ -51,6 +51,7 @@ import {
   restartWhisperServerForPerformanceChange,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
+import { setRecordingHold } from "./recording-hold";
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -342,6 +343,16 @@ export function handleSocketCommand(
       try {
         setWhisperPerformanceEffort(command.effort);
         restartWhisperServerForPerformanceChange();
+        return buildAck(command, "accept");
+      } catch (error) {
+        return buildAck(command, "reject", vocabularyErrorReason(error));
+      }
+    case "set_recording_hold":
+      if (recordingState !== "recording") {
+        return buildAck(command, "noop", "not recording");
+      }
+      try {
+        setRecordingHold(command.engaged);
         return buildAck(command, "accept");
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));

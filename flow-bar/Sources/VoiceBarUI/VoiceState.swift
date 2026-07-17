@@ -181,6 +181,9 @@ public final class VoiceState {
     public var mode: VoiceMode = .idle {
         didSet {
             previousMode = oldValue
+            if oldValue != mode, oldValue == .recording || mode == .recording {
+                resetRecordingHold()
+            }
             notifyPanelLayoutChangedIfNeeded(oldValue != mode)
         }
     }
@@ -202,6 +205,8 @@ public final class VoiceState {
     // Recording metadata
     public var recordingMode: String? // "vad" or "ptt"
     public var silenceMode: String? // "quick" | "standard" | "thoughtful"
+    public private(set) var isRecordingHoldEngaged = false
+    private var pendingRecordingHold: (id: String, previous: Bool)?
 
     /// Brief confirmation text shown after paste (e.g., "Pasted!").
     public var confirmationText: String? {
@@ -229,16 +234,64 @@ public final class VoiceState {
 
     /// Word boundary timestamps from TTS engine (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
+    private var retainedTeleprompterText: String?
+    private var retainedTeleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public private(set) var isTeleprompterDismissed = false
 
+    public var teleprompterText: String? {
+        if mode == .speaking, !statusText.isEmpty {
+            return statusText
+        }
+        if mode == .idle {
+            return retainedTeleprompterText
+        }
+        return nil
+    }
+
+    public var teleprompterWordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] {
+        mode == .idle ? retainedTeleprompterWordBoundaries : wordBoundaries
+    }
+
+    public var isTeleprompterReadback: Bool {
+        mode == .idle && retainedTeleprompterText != nil
+    }
+
     public func dismissTeleprompter() {
-        guard mode == .speaking else { return }
+        guard teleprompterText != nil else { return }
+        let reservedBefore = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: true,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
         isTeleprompterDismissed = true
+        let reservedAfter = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: teleprompterText != nil,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
+        notifyPanelLayoutChangedIfNeeded(reservedBefore != reservedAfter)
     }
 
     public func showTeleprompter() {
-        guard mode == .speaking else { return }
+        guard teleprompterText != nil else { return }
+        let reservedBefore = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: true,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
         isTeleprompterDismissed = false
+        let reservedAfter = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: teleprompterText != nil,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
+        notifyPanelLayoutChangedIfNeeded(reservedBefore != reservedAfter)
+    }
+
+    public func dismissRetainedTeleprompter() {
+        guard isTeleprompterReadback else { return }
+        clearRetainedTeleprompter()
+        startCollapseTimer()
     }
 
     /// Whether the last completed action was TTS playback (replay is valid).
@@ -572,6 +625,22 @@ public final class VoiceState {
         )
     }
 
+    public func setRecordingHold(_ engaged: Bool) {
+        guard mode == .recording, recordingMode == "vad" else { return }
+        guard pendingRecordingHold == nil else { return }
+        guard engaged != isRecordingHoldEngaged else { return }
+
+        let id = UUID().uuidString
+        let previous = isRecordingHoldEngaged
+        isRecordingHoldEngaged = engaged
+        pendingRecordingHold = (id: id, previous: previous)
+        sendCommand?([
+            "cmd": IntentCommand.setRecordingHold.rawValue,
+            "engaged": engaged,
+            "id": id,
+        ])
+    }
+
     public func replay() {
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
@@ -748,6 +817,7 @@ public final class VoiceState {
     public func record(pressToTalk: Bool = false) {
         guard mode == .idle || mode == .error else { return }
         guard pendingIntent?.command != .record else { return }
+        clearRetainedTeleprompter()
         let commandUptimeMs = currentRecordingUptimeMs()
         recordCommandUptimeMs = commandUptimeMs
         recordingStateUptimeMs = nil
@@ -877,6 +947,7 @@ public final class VoiceState {
                 resetAudioLevels()
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackAmplitudeClock() }
+                clearRetainedTeleprompter()
                 mode = .speaking
                 isTeleprompterDismissed = false
                 statusText = event["text"] as? String ?? ""
@@ -905,6 +976,7 @@ public final class VoiceState {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
                     didLogFirstRecordingAudioLevel = false
                 }
+                clearRetainedTeleprompter()
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
@@ -1178,7 +1250,7 @@ public final class VoiceState {
     private func startCollapseTimer() {
         guard modalInteractionDepth == 0 else { return }
         collapseTimer?.cancel()
-        guard !keepsExpandedInDevState else {
+        guard !keepsExpandedInDevState, retainedTeleprompterText == nil else {
             isCollapsed = false
             return
         }
@@ -1410,6 +1482,14 @@ public final class VoiceState {
     }
 
     private func enterIdleState(clearQueue: Bool) {
+        if clearQueue, mode == .speaking {
+            let trimmed = statusText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                retainedTeleprompterText = statusText
+                retainedTeleprompterWordBoundaries = wordBoundaries
+                notifyPanelLayoutChangedIfNeeded(true)
+            }
+        }
         mode = .idle
         statusText = ""
         speechDetected = false
@@ -1421,7 +1501,9 @@ public final class VoiceState {
         transcribingStatusText = nil
         resetAudioLevels()
         wordBoundaries = []
-        isTeleprompterDismissed = false
+        if retainedTeleprompterText == nil {
+            isTeleprompterDismissed = false
+        }
         if clearQueue {
             queueDepth = 0
             queueItems = []
@@ -1429,6 +1511,19 @@ public final class VoiceState {
         hotkeyPhase = .idle
         onModeChange?(.idle)
         startCollapseTimer()
+    }
+
+    private func clearRetainedTeleprompter() {
+        let hadRetainedTeleprompter = retainedTeleprompterText != nil
+        retainedTeleprompterText = nil
+        retainedTeleprompterWordBoundaries = []
+        isTeleprompterDismissed = false
+        notifyPanelLayoutChangedIfNeeded(hadRetainedTeleprompter)
+    }
+
+    private func resetRecordingHold() {
+        pendingRecordingHold = nil
+        isRecordingHoldEngaged = false
     }
 
     private func cancelDeferredFinalTranscription() {
@@ -2145,6 +2240,16 @@ public final class VoiceState {
         }
 
         onAckEvent?(ack)
+
+        if ack.command == .setRecordingHold,
+           let pendingRecordingHold,
+           pendingRecordingHold.id == ack.id {
+            if ack.outcome != .accept {
+                isRecordingHoldEngaged = pendingRecordingHold.previous
+            }
+            self.pendingRecordingHold = nil
+            return
+        }
 
         if ack.command == .retranscribeRecording,
            historyRetranscriptionRequest.matchesIntent(id: ack.id) {

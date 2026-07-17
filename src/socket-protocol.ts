@@ -175,6 +175,7 @@ export type AckCommand =
   | "vocab_remove"
   | "vocab_add_term"
   | "vocab_remove_term"
+  | "set_recording_hold"
   | "set_whisper_effort";
 
 export interface AckEvent {
@@ -290,6 +291,11 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+export interface SetRecordingHoldCommand extends SocketCommandBase {
+  cmd: "set_recording_hold";
+  engaged: boolean;
+}
+
 export type SocketCommand =
   | StopCommand
   | CancelCommand
@@ -306,6 +312,7 @@ export type SocketCommand =
   | VocabRemoveCommand
   | VocabAddTermCommand
   | VocabRemoveTermCommand
+  | SetRecordingHoldCommand
   | SetWhisperEffortCommand;
 
 export interface HealthResponse {
@@ -470,6 +477,18 @@ export function parseCommand(line: string): SocketCommand | null {
           {
             cmd: "set_whisper_effort",
             effort: parsed.effort,
+          },
+          id,
+        );
+      }
+      case "set_recording_hold": {
+        if (typeof parsed.engaged !== "boolean") {
+          return null;
+        }
+        return withCommandId<SetRecordingHoldCommand>(
+          {
+            cmd: "set_recording_hold",
+            engaged: parsed.engaged,
           },
           id,
         );

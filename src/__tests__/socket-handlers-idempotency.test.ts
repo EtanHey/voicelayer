@@ -4,6 +4,7 @@ import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import { handleSocketCommand } from "../socket-handlers";
+import * as recordingHold from "../recording-hold";
 import * as tts from "../tts";
 import * as whisperPerformance from "../whisper-performance";
 
@@ -23,6 +24,7 @@ describe("socket handler idempotency matrix", () => {
   let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
   let setWhisperEffortSpy: ReturnType<typeof spyOn>;
   let restartWhisperServerSpy: ReturnType<typeof spyOn>;
+  let setRecordingHoldSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
@@ -64,6 +66,10 @@ describe("socket handler idempotency matrix", () => {
       whisperPerformance,
       "restartWhisperServerForPerformanceChange",
     ).mockImplementation(() => {});
+    setRecordingHoldSpy = spyOn(
+      recordingHold,
+      "setRecordingHold",
+    ).mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -82,6 +88,7 @@ describe("socket handler idempotency matrix", () => {
     retranscribeLastCaptureSpy.mockRestore();
     setWhisperEffortSpy.mockRestore();
     restartWhisperServerSpy.mockRestore();
+    setRecordingHoldSpy.mockRestore();
   });
 
   it("returns noop for stop while idle without broadcasting or stopping playback", () => {
@@ -126,6 +133,56 @@ describe("socket handler idempotency matrix", () => {
       reason: "already recording",
     });
     expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+
+  it("accepts recording hold engage and release only while recording", () => {
+    recordingStateSpy.mockReturnValue("recording");
+
+    expect(
+      handleSocketCommand({
+        cmd: "set_recording_hold",
+        engaged: true,
+        id: "hold-engage",
+      }),
+    ).toEqual({
+      type: "ack",
+      command: "set_recording_hold",
+      outcome: "accept",
+      id: "hold-engage",
+    });
+    expect(
+      handleSocketCommand({
+        cmd: "set_recording_hold",
+        engaged: false,
+        id: "hold-release",
+      }),
+    ).toEqual({
+      type: "ack",
+      command: "set_recording_hold",
+      outcome: "accept",
+      id: "hold-release",
+    });
+    expect(setRecordingHoldSpy.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("returns noop for recording hold outside recording without writing", () => {
+    for (const state of ["idle", "transcribing"] as const) {
+      recordingStateSpy.mockReturnValue(state);
+      expect(
+        handleSocketCommand({
+          cmd: "set_recording_hold",
+          engaged: true,
+          id: `hold-${state}`,
+        }),
+      ).toEqual({
+        type: "ack",
+        command: "set_recording_hold",
+        outcome: "noop",
+        id: `hold-${state}`,
+        reason: "not recording",
+      });
+    }
+    expect(setRecordingHoldSpy).not.toHaveBeenCalled();
   });
 
   it("stops playback before recording when record arrives while speaking", () => {

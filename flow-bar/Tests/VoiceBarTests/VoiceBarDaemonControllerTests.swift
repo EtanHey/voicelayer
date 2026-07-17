@@ -106,12 +106,14 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
             "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
             "QA_VOICE_RECORDING_STATE_PATH": ProcessInfo.processInfo.environment["QA_VOICE_RECORDING_STATE_PATH"],
+            "QA_VOICE_RECORDING_HOLD_PATH": ProcessInfo.processInfo.environment["QA_VOICE_RECORDING_HOLD_PATH"],
             "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
         ]
         setenv("QA_VOICE_CHUNKED_STT", "1", 1)
         setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
         setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
         setenv("QA_VOICE_RECORDING_STATE_PATH", "/tmp/test-recording-state.json", 1)
+        setenv("QA_VOICE_RECORDING_HOLD_PATH", "/tmp/test-recording-hold", 1)
         setenv("CODEX_CI", "1", 1)
         defer {
             for (key, value) in previousValues {
@@ -137,6 +139,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_RECORDING_STATE_PATH"])
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_RECORDING_HOLD_PATH"])
         XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
         XCTAssertNil(process.capturedEnvironment?["VOICELAYER_ALLOW_SOCKET_RECLAIM"])
         XCTAssertNotNil(process.capturedEnvironment?["PATH"])
@@ -155,6 +158,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
                 "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
                 "QA_VOICE_RECORDING_STATE_PATH": "/tmp/qa-recording-state.json",
+                "QA_VOICE_RECORDING_HOLD_PATH": "/tmp/qa-recording-hold",
                 "QA_VOICE_RETAINED_RECORDING_PATH": "/tmp/qa-last.wav",
                 "QA_VOICE_DISABLE_FLAG_PATH": "/tmp/qa-disable.flag",
                 "QA_VOICE_ALLOW_SOCKET_RECLAIM": "1",
@@ -169,6 +173,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
         XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
         XCTAssertEqual(environment["QA_VOICE_RECORDING_STATE_PATH"], "/tmp/qa-recording-state.json")
+        XCTAssertEqual(environment["QA_VOICE_RECORDING_HOLD_PATH"], "/tmp/qa-recording-hold")
         XCTAssertEqual(environment["QA_VOICE_RETAINED_RECORDING_PATH"], "/tmp/qa-last.wav")
         XCTAssertEqual(environment["QA_VOICE_DISABLE_FLAG_PATH"], "/tmp/qa-disable.flag")
         XCTAssertNil(environment["VOICEBAR_QA_PRESERVE_OVERRIDES"])

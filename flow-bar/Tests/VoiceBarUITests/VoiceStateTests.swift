@@ -1043,4 +1043,274 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterDismissed)
         XCTAssertEqual(state.statusText, "Etan runs supabase")
     }
+
+    func testLiveTeleprompterVisibilityChangesRequestPanelRelayout() async {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Live teleprompter changes its panel envelope",
+        ])
+        try? await Task.sleep(for: .milliseconds(30))
+        var relayoutCount = 0
+        state.onPanelLayoutChange = {
+            relayoutCount += 1
+        }
+
+        state.dismissTeleprompter()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(relayoutCount, 1)
+
+        state.showTeleprompter()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(relayoutCount, 2)
+    }
+
+    func testPlaybackIdleRetainsOriginalTeleprompterAndWordBoundaries() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Original Etan spelling",
+        ])
+        state.handleEvent([
+            "type": "subtitle",
+            "words": [
+                ["offset_ms": 0, "duration_ms": 120, "text": "Eh tahn"],
+                ["offset_ms": 120, "duration_ms": 180, "text": "spelling"],
+            ],
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(state.teleprompterText, "Original Etan spelling")
+        XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["Eh tahn", "spelling"])
+        XCTAssertTrue(state.isTeleprompterReadback)
+    }
+
+    func testPlaybackIdlePreservesTemporaryTeleprompterVisibility() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Keep this visible",
+        ])
+
+        state.dismissTeleprompter()
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertTrue(state.isTeleprompterDismissed)
+        state.showTeleprompter()
+        XCTAssertFalse(state.isTeleprompterDismissed)
+        XCTAssertEqual(state.teleprompterText, "Keep this visible")
+    }
+
+    func testExplicitRetainedTeleprompterDismissalClearsSnapshot() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Dismiss this readback",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        state.dismissRetainedTeleprompter()
+
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertTrue(state.teleprompterWordBoundaries.isEmpty)
+        XCTAssertFalse(state.isTeleprompterReadback)
+    }
+
+    func testGenericIdleDoesNotOverwriteRetainedTeleprompter() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Retained original script",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "status",
+        ])
+
+        XCTAssertEqual(state.teleprompterText, "Retained original script")
+        XCTAssertTrue(state.isTeleprompterReadback)
+    }
+
+    func testNewRecordingTurnClearsRetainedTeleprompter() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Previous original script",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+    }
+
+    func testNewSpeakingTurnClearsRetainedTeleprompterEvenBeforeFreshTextArrives() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Previous original script",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+        XCTAssertTrue(state.isTeleprompterReadback)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertTrue(state.teleprompterWordBoundaries.isEmpty)
+    }
+
+    func testVADRecordingHoldOptimisticallyEngagesAndReleases() throws {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+
+        state.setRecordingHold(true)
+        XCTAssertTrue(state.isRecordingHoldEngaged)
+        XCTAssertEqual(commands.last?["cmd"] as? String, "set_recording_hold")
+        XCTAssertEqual(commands.last?["engaged"] as? Bool, true)
+        XCTAssertNotNil(commands.last?["id"] as? String)
+
+        let engageID = try XCTUnwrap(commands.last?["id"] as? String)
+        state.handleEvent([
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "accept",
+            "id": engageID,
+        ])
+        state.setRecordingHold(false)
+
+        XCTAssertFalse(state.isRecordingHoldEngaged)
+        XCTAssertEqual(commands.last?["engaged"] as? Bool, false)
+    }
+
+    func testPTTRecordingCannotEngageRecordingHold() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+
+        state.setRecordingHold(true)
+
+        XCTAssertFalse(state.isRecordingHoldEngaged)
+        XCTAssertTrue(commands.isEmpty)
+    }
+
+    func testRecordingHoldRejectAckRollsBackOptimisticState() throws {
+        let state = VoiceState()
+        var sentCommand: [String: Any]?
+        state.sendCommand = { sentCommand = $0 }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+        state.setRecordingHold(true)
+        let id = try XCTUnwrap(sentCommand?["id"] as? String)
+
+        state.handleEvent([
+            "type": "ack",
+            "command": "set_recording_hold",
+            "outcome": "reject",
+            "id": id,
+            "reason": "not recording",
+        ])
+
+        XCTAssertFalse(state.isRecordingHoldEngaged)
+    }
+
+    func testRecordingHoldSerializesToggleRequestsUntilAck() {
+        let state = VoiceState()
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+
+        state.setRecordingHold(true)
+        state.setRecordingHold(false)
+
+        XCTAssertTrue(state.isRecordingHoldEngaged)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["engaged"] as? Bool, true)
+    }
+
+    func testRecordingExitClearsHoldState() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+        state.setRecordingHold(true)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "transcribing",
+        ])
+
+        XCTAssertFalse(state.isRecordingHoldEngaged)
+    }
 }

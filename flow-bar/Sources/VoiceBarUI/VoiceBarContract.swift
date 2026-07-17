@@ -8,6 +8,7 @@ public enum IntentCommand: String {
     case retranscribeRecording = "retranscribe_recording"
     case toggle
     case record
+    case setRecordingHold = "set_recording_hold"
     case setWhisperEffort = "set_whisper_effort"
 }
 
