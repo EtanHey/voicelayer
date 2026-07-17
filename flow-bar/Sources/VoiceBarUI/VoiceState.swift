@@ -65,6 +65,11 @@ public struct PasteboardSnapshot: Equatable {
     public var items: [[String: Data]]
 }
 
+public typealias AsyncDictationInsertionHandler = (
+    _ text: String,
+    _ completion: @escaping () -> Void
+) -> Bool
+
 public struct RecentTranscriptionEntry: Codable, Equatable {
     public var text: String
     public var recordingPath: String?
@@ -79,6 +84,12 @@ private enum VoicePasteOutcome: Equatable {
     case insertedAtCursor
     case pasted
     case failed(String)
+}
+
+private enum AXInsertionAttempt: Equatable {
+    case started
+    case busy
+    case failed
 }
 
 private struct HistoryRetranscriptionRequest {
@@ -329,12 +340,15 @@ public final class VoiceState {
 
     /// The app that was frontmost when bar-initiated recording started.
     private var frontmostAppOnRecordStart: NSRunningApplication?
-    private var recordStartInsertionHandler: ((String) -> Bool)?
+    private var recordStartInsertionHandler: AsyncDictationInsertionHandler?
 
     /// The most recent app we pasted into. Reused for Shift+F5 re-paste.
     private var lastPasteTargetApp: NSRunningApplication?
     private var settingsHistoryPasteTargetApp: NSRunningApplication?
-    private var settingsHistoryInsertionHandler: ((String) -> Bool)?
+    private var settingsHistoryInsertionHandler: AsyncDictationInsertionHandler?
+    private var isAXInsertionInFlight = false
+    private var activeAXInsertionTargetBundleID: String?
+    private var axInsertionWatchdog: DispatchWorkItem?
 
     /// Test seam for paste side effects. When set, bypasses system paste.
     public var pasteHandler: ((String) -> Bool)?
@@ -343,6 +357,7 @@ public final class VoiceState {
     /// Delay before sending Cmd+V after activating the target app.
     public var pasteConfirmationDelay: TimeInterval = 0.25
     public var pasteboardRestoreDelay: TimeInterval = 0.5
+    public var axInsertionCompletionTimeout: TimeInterval = 30
 
     /// Test seam for delayed paste scheduling.
     public var pasteScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, block in
@@ -367,6 +382,9 @@ public final class VoiceState {
 
     /// Test seam for capturing a direct insertion closure tied to the focused input.
     public var dictationInsertionHandlerProvider: () -> ((String) -> Bool)? = { nil }
+
+    /// Completion-aware production seam. The completion must run on the main thread.
+    public var asyncDictationInsertionHandlerProvider: () -> AsyncDictationInsertionHandler? = { nil }
 
     /// Test seam for clipboard writes used by fallback paste.
     public var pasteboardWriter: (String) -> Void = { string in
@@ -652,7 +670,7 @@ public final class VoiceState {
               front.bundleIdentifier != Bundle.main.bundleIdentifier
         else { return }
         settingsHistoryPasteTargetApp = front
-        settingsHistoryInsertionHandler = dictationInsertionHandlerProvider()
+        settingsHistoryInsertionHandler = captureDictationInsertionHandler()
     }
 
     public func copyLastTranscript() {
@@ -723,7 +741,7 @@ public final class VoiceState {
         let front = frontmostAppProvider()
         if front?.bundleIdentifier != Bundle.main.bundleIdentifier {
             frontmostAppOnRecordStart = front
-            recordStartInsertionHandler = dictationInsertionHandlerProvider()
+            recordStartInsertionHandler = captureDictationInsertionHandler()
         } else {
             frontmostAppOnRecordStart = nil
             recordStartInsertionHandler = nil
@@ -1647,26 +1665,45 @@ public final class VoiceState {
 
                     let freshInsertionHandler =
                         plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil)
-                            ? dictationInsertionHandlerProvider()
+                            ? captureDictationInsertionHandler()
                             : nil
-                    if let freshInsertionHandler, freshInsertionHandler(text) {
-                        logDiagnostic("paste_ax_insert_success", details: [
-                            "plan": String(describing: plan),
-                            "targetApp": pasteTargetBundleID,
-                            "source": "fresh",
-                        ])
-                        finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
-                        return
+                    if let freshInsertionHandler {
+                        let attempt = beginAXInsertion(
+                            freshInsertionHandler,
+                            text: text,
+                            plan: plan,
+                            targetBundleID: pasteTargetBundleID,
+                            source: "fresh"
+                        )
+                        if attempt == .started {
+                            return
+                        }
+                        if attempt == .busy {
+                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            return
+                        }
                     }
 
-                    if let capturedInsertionHandler,
-                       capturedInsertionHandler(text) {
-                        logDiagnostic("paste_ax_insert_success", details: [
-                            "plan": String(describing: plan),
-                            "targetApp": pasteTargetBundleID,
-                            "source": "captured",
-                        ])
-                        finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+                    if let capturedInsertionHandler {
+                        let attempt = beginAXInsertion(
+                            capturedInsertionHandler,
+                            text: text,
+                            plan: plan,
+                            targetBundleID: pasteTargetBundleID,
+                            source: "captured"
+                        )
+                        if attempt == .started {
+                            return
+                        }
+                        if attempt == .busy {
+                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            return
+                        }
+                    }
+
+                    if isAXInsertionInFlight,
+                       activeAXInsertionTargetBundleID == pasteTargetBundleID {
+                        rejectCompetingAXInsertion(text: text, plan: plan)
                         return
                     }
 
@@ -1727,6 +1764,107 @@ public final class VoiceState {
             recordStartInsertionHandler = nil
             return
         }
+    }
+
+    private func captureDictationInsertionHandler() -> AsyncDictationInsertionHandler? {
+        if let asyncHandler = asyncDictationInsertionHandlerProvider() {
+            return asyncHandler
+        }
+        guard let synchronousHandler = dictationInsertionHandlerProvider() else {
+            return nil
+        }
+        return { text, completion in
+            let inserted = synchronousHandler(text)
+            if inserted {
+                completion()
+            }
+            return inserted
+        }
+    }
+
+    private func beginAXInsertion(
+        _ handler: AsyncDictationInsertionHandler,
+        text: String,
+        plan: VoicePastePlan,
+        targetBundleID: String,
+        source: String
+    ) -> AXInsertionAttempt {
+        guard !isAXInsertionInFlight else {
+            return .busy
+        }
+
+        isAXInsertionInFlight = true
+        activeAXInsertionTargetBundleID = targetBundleID
+        var handlerReturned = false
+        var completionArrived = false
+        var didFinish = false
+
+        let finishSuccess = { [weak self] in
+            guard let self, !didFinish else { return }
+            didFinish = true
+            axInsertionWatchdog?.cancel()
+            axInsertionWatchdog = nil
+            isAXInsertionInFlight = false
+            activeAXInsertionTargetBundleID = nil
+            logDiagnostic("paste_ax_insert_success", details: [
+                "plan": String(describing: plan),
+                "targetApp": targetBundleID,
+                "source": source,
+            ])
+            finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+        }
+
+        let started = handler(text) {
+            if handlerReturned {
+                finishSuccess()
+            } else {
+                completionArrived = true
+            }
+        }
+        handlerReturned = true
+
+        guard started else {
+            isAXInsertionInFlight = false
+            activeAXInsertionTargetBundleID = nil
+            return .failed
+        }
+        if completionArrived {
+            finishSuccess()
+        } else {
+            let watchdog = DispatchWorkItem { [weak self] in
+                guard let self, !didFinish, isAXInsertionInFlight else { return }
+                didFinish = true
+                axInsertionWatchdog = nil
+                isAXInsertionInFlight = false
+                activeAXInsertionTargetBundleID = nil
+                logDiagnostic("paste_ax_insert_timeout", details: [
+                    "plan": String(describing: plan),
+                    "targetApp": targetBundleID,
+                    "source": source,
+                ])
+                finishPasteConfirmation(
+                    outcome: .failed("Text insertion timed out"),
+                    text: text
+                )
+            }
+            axInsertionWatchdog = watchdog
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + axInsertionCompletionTimeout,
+                execute: watchdog
+            )
+        }
+        return .started
+    }
+
+    private func rejectCompetingAXInsertion(text: String, plan: VoicePastePlan) {
+        logDiagnostic("paste_ax_insert_busy", details: [
+            "plan": String(describing: plan),
+            "textLength": String(text.count),
+        ])
+        finishPasteConfirmation(
+            outcome: .failed("Text insertion already in progress"),
+            text: text
+        )
     }
 
     private static let genericPasteFailureMessage = "Paste failed — click back into the input and retry"
