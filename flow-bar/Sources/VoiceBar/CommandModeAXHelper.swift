@@ -19,6 +19,16 @@ enum AXInsertionStrategy: Equatable {
     case selectedTextStreaming(maxChunkUTF16Length: Int, interChunkDelay: TimeInterval)
 }
 
+enum AXSelectedTextStreamingDisposition: Equatable {
+    case failedBeforeWrite
+    case partiallyApplied(writtenChunkCount: Int, totalChunkCount: Int)
+    case applied(writtenChunkCount: Int)
+
+    var suppressesWholeTranscriptFallback: Bool {
+        self != .failedBeforeWrite
+    }
+}
+
 final class CommandModeAXHelper {
     private static let terminalBundleIdentifiers = Set([
         "com.cmuxterm.app",
@@ -210,16 +220,16 @@ final class CommandModeAXHelper {
         var current = ""
         var currentLength = 0
 
-        for character in text {
-            let characterString = String(character)
-            let characterLength = (characterString as NSString).length
-            if currentLength + characterLength > maxLength, !current.isEmpty {
+        for scalar in text.unicodeScalars {
+            let scalarString = String(scalar)
+            let scalarLength = (scalarString as NSString).length
+            if currentLength + scalarLength > maxLength, !current.isEmpty {
                 chunks.append(current)
                 current = ""
                 currentLength = 0
             }
-            current.append(character)
-            currentLength += characterLength
+            current.append(scalarString)
+            currentLength += scalarLength
         }
 
         if !current.isEmpty {
@@ -234,21 +244,55 @@ final class CommandModeAXHelper {
         maxChunkUTF16Length: Int,
         interChunkDelay: TimeInterval
     ) -> Bool {
-        let chunks = selectedTextChunks(for: text, maxUTF16Length: maxChunkUTF16Length)
-        guard !chunks.isEmpty else { return true }
+        let disposition = selectedTextStreamingDisposition(
+            for: text,
+            maxUTF16Length: maxChunkUTF16Length,
+            interChunkDelay: interChunkDelay,
+            writeChunk: { chunk in
+                AXUIElementSetAttributeValue(
+                    element,
+                    kAXSelectedTextAttribute as CFString,
+                    chunk as CFTypeRef
+                ) == .success
+            },
+            sleep: Thread.sleep(forTimeInterval:)
+        )
+        if case let .partiallyApplied(writtenChunkCount, totalChunkCount) = disposition {
+            NSLog(
+                "[VoiceBar] AX selected-text streaming stopped after %d/%d chunks; suppressing whole-transcript fallback",
+                writtenChunkCount,
+                totalChunkCount
+            )
+        }
+        return disposition.suppressesWholeTranscriptFallback
+    }
 
+    static func selectedTextStreamingDisposition(
+        for text: String,
+        maxUTF16Length: Int,
+        interChunkDelay: TimeInterval,
+        writeChunk: (String) -> Bool,
+        sleep: (TimeInterval) -> Void
+    ) -> AXSelectedTextStreamingDisposition {
+        let chunks = selectedTextChunks(for: text, maxUTF16Length: maxUTF16Length)
+        guard !chunks.isEmpty else { return .applied(writtenChunkCount: 0) }
+
+        var writtenChunkCount = 0
         for (index, chunk) in chunks.enumerated() {
-            let didWrite = AXUIElementSetAttributeValue(
-                element,
-                kAXSelectedTextAttribute as CFString,
-                chunk as CFTypeRef
-            ) == .success
-            guard didWrite else { return false }
+            guard writeChunk(chunk) else {
+                return writtenChunkCount == 0
+                    ? .failedBeforeWrite
+                    : .partiallyApplied(
+                        writtenChunkCount: writtenChunkCount,
+                        totalChunkCount: chunks.count
+                    )
+            }
+            writtenChunkCount += 1
             if index < chunks.count - 1, interChunkDelay > 0 {
-                Thread.sleep(forTimeInterval: interChunkDelay)
+                sleep(interChunkDelay)
             }
         }
-        return true
+        return .applied(writtenChunkCount: writtenChunkCount)
     }
 
     static func assessAXWrite(

@@ -96,4 +96,40 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertGreaterThan(chunks.count, 1)
         XCTAssertTrue(chunks.allSatisfy { ($0 as NSString).length <= 64 })
     }
+
+    func testSelectedTextChunksSplitOversizedGraphemeWithinUTF16Bound() {
+        let oversizedGrapheme = "a" + String(repeating: "\u{0301}", count: 300)
+
+        let chunks = CommandModeAXHelper.selectedTextChunks(
+            for: oversizedGrapheme,
+            maxUTF16Length: 64
+        )
+
+        XCTAssertEqual(oversizedGrapheme.count, 1)
+        XCTAssertEqual(chunks.joined(), oversizedGrapheme)
+        XCTAssertGreaterThan(chunks.count, 1)
+        XCTAssertTrue(chunks.allSatisfy { ($0 as NSString).length <= 64 })
+    }
+
+    func testSelectedTextStreamingSuppressesWholeTranscriptFallbackAfterPartialWrite() {
+        var attemptedChunks: [String] = []
+
+        let disposition = CommandModeAXHelper.selectedTextStreamingDisposition(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0,
+            writeChunk: { chunk in
+                attemptedChunks.append(chunk)
+                return attemptedChunks.count == 1
+            },
+            sleep: { _ in }
+        )
+
+        XCTAssertEqual(attemptedChunks, ["abcd", "efgh"])
+        XCTAssertEqual(
+            disposition,
+            .partiallyApplied(writtenChunkCount: 1, totalChunkCount: 2)
+        )
+        XCTAssertTrue(disposition.suppressesWholeTranscriptFallback)
+    }
 }
