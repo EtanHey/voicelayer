@@ -59,6 +59,8 @@ describe("build-app.sh bundles runtime assets", () => {
   });
 
   test("bundles daemon production dependencies beside the bundled src", () => {
+    expect(packageJson.files).toContain("bun.lock");
+    expect(buildScript).toContain('require_bundle_file "bun.lock"');
     expect(buildScript).toContain("node_modules/zod");
     expect(buildScript).toContain("node_modules/@modelcontextprotocol");
     expect(buildScript).toMatch(
@@ -121,6 +123,29 @@ describe("build-app.sh Developer ID release contract", () => {
     expect(buildScript).toMatch(
       /--entitlements "\$VOICEBAR_ENTITLEMENTS"/,
     );
+  });
+
+  test("signs nested Mach-O daemon dependencies before the outer app bundle", () => {
+    const helperStart = buildScript.indexOf(
+      "sign_nested_native_dependencies() {",
+    );
+    const helperEnd = buildScript.indexOf("\n}\n", helperStart);
+    const helperBody = buildScript.slice(helperStart, helperEnd);
+    expect(helperStart).toBeGreaterThan(0);
+    expect(helperBody).toContain("node_modules");
+    expect(helperBody).toContain("*.node");
+    expect(helperBody).toContain("*.dylib");
+    expect(helperBody).toContain("Mach-O");
+    expect(helperBody).toContain("codesign --force --options runtime --timestamp");
+
+    const helperCall = buildScript.lastIndexOf(
+      "sign_nested_native_dependencies",
+    );
+    const outerSign = buildScript.indexOf(
+      'codesign --force --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS"',
+    );
+    expect(helperCall).toBeGreaterThan(helperStart);
+    expect(outerSign).toBeGreaterThan(helperCall);
   });
 
   test("stamps git provenance into the built VoiceBar Info.plist", () => {
