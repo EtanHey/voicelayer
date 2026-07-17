@@ -867,13 +867,9 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    if (next.expiresAt <= Date.now()) {
-      completeJob(next);
-      this.emitQueueSnapshot();
-      this.resolveIfIdle();
-      this.processNext();
-      return;
-    }
+    // TTL bounds pending queue staleness. Once a still-valid job becomes the
+    // owned preparation, decoder time must not silently consume that promise;
+    // timeout/failure starts playback with the explicit unavailable envelope.
 
     try {
       assertSpeakerClear();

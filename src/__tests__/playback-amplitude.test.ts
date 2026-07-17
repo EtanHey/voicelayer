@@ -3,6 +3,7 @@ import {
   PLAYBACK_AMPLITUDE_INTERVAL_MS,
   buildPlaybackAmplitudeEnvelope,
   extractPlaybackAmplitudeEnvelope,
+  startPlaybackAmplitudeEnvelopeExtraction,
 } from "../playback-amplitude";
 
 function pcm16(samples: number[]): Uint8Array {
@@ -160,5 +161,33 @@ describe("playback amplitude", () => {
     expect(
       buildPlaybackAmplitudeEnvelope(pcm16([1000, -1000]), 1000, 1.5).source,
     ).toBe("unavailable");
+  });
+
+  it("terminates asynchronous decoding as soon as PCM exceeds the byte bound", async () => {
+    const originalSpawn = Bun.spawn;
+    let killed = false;
+    // @ts-ignore — focused process seam for the default async decoder.
+    Bun.spawn = () => ({
+      exited: Promise.resolve(0),
+      stdout: new Blob([new Uint8Array(maximumPcmBytes + 1)]).stream(),
+      kill: () => {
+        killed = true;
+      },
+    });
+
+    try {
+      const extraction = startPlaybackAmplitudeEnvelopeExtraction(
+        "/tmp/oversized.mp3",
+      );
+
+      expect(await extraction.result).toEqual({
+        source: "unavailable",
+        sample_interval_ms: PLAYBACK_AMPLITUDE_INTERVAL_MS,
+        samples: [],
+      });
+      expect(killed).toBe(true);
+    } finally {
+      Bun.spawn = originalSpawn;
+    }
   });
 });

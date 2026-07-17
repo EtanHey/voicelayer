@@ -353,6 +353,32 @@ describe("playback queue — P0-1 sequential playback", () => {
     await playback.exited;
   });
 
+  it("does not expire an eligible job while amplitude preparation is active", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    holdDecoderExits = true;
+    let now = 1_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      const playback = playAudioNonBlocking("/tmp/pq-slow-preparation.mp3", {
+        text: "Prepared fallback must still play",
+        voice: "TestVoice",
+      });
+      expect(decoderMocks).toHaveLength(1);
+
+      now += 30_001;
+      decoderMocks[0].resolveExit();
+      await decoderMocks[0].exited;
+      await Bun.sleep(10);
+
+      expect(playerMocks).toHaveLength(1);
+      playerMocks[0].resolveExit();
+      await playback.exited;
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("cancels a job while asynchronous envelope preparation is in flight", async () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
     holdDecoderExits = true;

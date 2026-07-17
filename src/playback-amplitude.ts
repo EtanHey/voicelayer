@@ -138,6 +138,39 @@ function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
   };
 }
 
+async function readBoundedPCM(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  cancelDecoder: () => void,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > maximumBytes - byteLength) {
+        cancelDecoder();
+        await reader.cancel().catch(() => {});
+        throw new Error("decoded PCM exceeded playback amplitude byte bound");
+      }
+      chunks.push(value);
+      byteLength += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
 function runFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
   const subprocess = Bun.spawn(command, {
     stdin: "ignore",
@@ -147,21 +180,29 @@ function runFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
     timeout: PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS,
   });
   let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    try {
+      subprocess.kill("SIGTERM");
+    } catch {}
+  };
   return {
-    result: Promise.all([
-      subprocess.exited,
-      new Response(subprocess.stdout).arrayBuffer(),
-    ]).then(([exitCode, stdout]) => ({
-      exitCode,
-      stdout: new Uint8Array(stdout),
-    })),
-    cancel: () => {
-      if (cancelled) return;
-      cancelled = true;
-      try {
-        subprocess.kill("SIGTERM");
-      } catch {}
-    },
+    result: readBoundedPCM(
+      subprocess.stdout,
+      PLAYBACK_AMPLITUDE_MAX_PCM_BYTES,
+      cancel,
+    )
+      .then(async (stdout) => ({
+        exitCode: await subprocess.exited,
+        stdout,
+      }))
+      .catch(async () => {
+        cancel();
+        await subprocess.exited.catch(() => -1);
+        return { exitCode: 1, stdout: new Uint8Array() };
+      }),
+    cancel,
   };
 }
 
