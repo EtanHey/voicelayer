@@ -132,4 +132,54 @@ final class CommandModeAXHelperTests: XCTestCase {
         )
         XCTAssertTrue(disposition.suppressesWholeTranscriptFallback)
     }
+
+    func testSelectedTextStreamingQueuesRemainingChunksWithoutSleepingCaller() {
+        var attemptedChunks: [String] = []
+        var sleepIntervals: [TimeInterval] = []
+        var queuedRemainder: (() -> Void)?
+        var completion: AXSelectedTextStreamingDisposition?
+
+        let started = CommandModeAXHelper.beginSelectedTextStreaming(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0.012,
+            writeChunk: { chunk in
+                attemptedChunks.append(chunk)
+                return true
+            },
+            enqueueRemainder: { queuedRemainder = $0 },
+            sleep: { sleepIntervals.append($0) },
+            onCompletion: { completion = $0 }
+        )
+
+        XCTAssertTrue(started)
+        XCTAssertEqual(attemptedChunks, ["abcd"])
+        XCTAssertTrue(sleepIntervals.isEmpty)
+        XCTAssertNil(completion)
+
+        queuedRemainder?()
+
+        XCTAssertEqual(sleepIntervals, [0.012])
+        XCTAssertEqual(attemptedChunks, ["abcd", "efgh"])
+        XCTAssertEqual(completion, .applied(writtenChunkCount: 2))
+    }
+
+    func testSelectedTextStreamingRejectsFirstChunkSynchronouslyForFallback() {
+        var queuedRemainder: (() -> Void)?
+        var completion: AXSelectedTextStreamingDisposition?
+
+        let started = CommandModeAXHelper.beginSelectedTextStreaming(
+            for: "abcdefgh",
+            maxUTF16Length: 4,
+            interChunkDelay: 0.012,
+            writeChunk: { _ in false },
+            enqueueRemainder: { queuedRemainder = $0 },
+            sleep: { _ in XCTFail("A rejected first chunk must not sleep") },
+            onCompletion: { completion = $0 }
+        )
+
+        XCTAssertFalse(started)
+        XCTAssertNil(queuedRemainder)
+        XCTAssertEqual(completion, .failedBeforeWrite)
+    }
 }

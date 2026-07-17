@@ -37,6 +37,9 @@ final class CommandModeAXHelper {
     private static let selectedTextStreamingInterChunkDelay: TimeInterval = 0.012
     private static let valueRewriteMaxTextUTF16Length = 2048
     private static let valueRewriteMaxFocusedValueUTF16Length = 32768
+    private static let selectedTextStreamingQueue = DispatchQueue(
+        label: "com.voicelayer.voicebar.ax-selected-text-streaming"
+    )
 
     private let readSelection: () -> CommandModeSelectionSnapshot?
     private let writeValue: (String) -> Bool
@@ -244,7 +247,7 @@ final class CommandModeAXHelper {
         maxChunkUTF16Length: Int,
         interChunkDelay: TimeInterval
     ) -> Bool {
-        let disposition = selectedTextStreamingDisposition(
+        beginSelectedTextStreaming(
             for: text,
             maxUTF16Length: maxChunkUTF16Length,
             interChunkDelay: interChunkDelay,
@@ -255,16 +258,67 @@ final class CommandModeAXHelper {
                     chunk as CFTypeRef
                 ) == .success
             },
-            sleep: Thread.sleep(forTimeInterval:)
+            enqueueRemainder: { work in
+                selectedTextStreamingQueue.async {
+                    work()
+                }
+            },
+            sleep: Thread.sleep(forTimeInterval:),
+            onCompletion: { disposition in
+                if case let .partiallyApplied(writtenChunkCount, totalChunkCount) = disposition {
+                    NSLog(
+                        "[VoiceBar] AX selected-text streaming stopped after %d/%d chunks; suppressing whole-transcript fallback",
+                        writtenChunkCount,
+                        totalChunkCount
+                    )
+                }
+            }
         )
-        if case let .partiallyApplied(writtenChunkCount, totalChunkCount) = disposition {
-            NSLog(
-                "[VoiceBar] AX selected-text streaming stopped after %d/%d chunks; suppressing whole-transcript fallback",
-                writtenChunkCount,
-                totalChunkCount
-            )
+    }
+
+    static func beginSelectedTextStreaming(
+        for text: String,
+        maxUTF16Length: Int,
+        interChunkDelay: TimeInterval,
+        writeChunk: @escaping (String) -> Bool,
+        enqueueRemainder: (@escaping () -> Void) -> Void,
+        sleep: @escaping (TimeInterval) -> Void,
+        onCompletion: @escaping (AXSelectedTextStreamingDisposition) -> Void
+    ) -> Bool {
+        let chunks = selectedTextChunks(for: text, maxUTF16Length: maxUTF16Length)
+        guard let firstChunk = chunks.first else {
+            onCompletion(.applied(writtenChunkCount: 0))
+            return true
         }
-        return disposition.suppressesWholeTranscriptFallback
+        guard writeChunk(firstChunk) else {
+            onCompletion(.failedBeforeWrite)
+            return false
+        }
+        guard chunks.count > 1 else {
+            onCompletion(.applied(writtenChunkCount: 1))
+            return true
+        }
+
+        enqueueRemainder {
+            var writtenChunkCount = 1
+            for chunk in chunks.dropFirst() {
+                if interChunkDelay > 0 {
+                    sleep(interChunkDelay)
+                }
+                guard writeChunk(chunk) else {
+                    onCompletion(
+                        .partiallyApplied(
+                            writtenChunkCount: writtenChunkCount,
+                            totalChunkCount: chunks.count
+                        )
+                    )
+                    return
+                }
+                writtenChunkCount += 1
+            }
+            onCompletion(.applied(writtenChunkCount: writtenChunkCount))
+        }
+        return true
     }
 
     static func selectedTextStreamingDisposition(
