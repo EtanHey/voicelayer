@@ -121,6 +121,31 @@ public enum Theme {
     public static let speakingTeleprompterAvailableWidth: CGFloat =
         pillSpeakingQueueWidth - speakingTeleprompterChromeWidth
 
+    /// Live speaking has two trailing controls; idle readback can have eye,
+    /// close, history, vocabulary, and replay. Expand only the readback pill so
+    /// its complete accessory row remains inside the capsule and hit region.
+    public static func teleprompterPillWidth(
+        for mode: VoiceMode,
+        accessoryButtonCount: Int = 0
+    ) -> CGFloat {
+        guard mode == .idle else { return pillSpeakingQueueWidth }
+        let safeButtonCount = max(0, accessoryButtonCount)
+        let accessoryWidth: CGFloat = if safeButtonCount > 0 {
+            (CGFloat(safeButtonCount) * pillActionButtonSize) +
+                (CGFloat(safeButtonCount - 1) * pillActionButtonSpacing)
+        } else {
+            0
+        }
+        let horizontalPadding: CGFloat = 28
+        let leadingIndicatorWidth: CGFloat = 6
+        let hStackGaps: CGFloat = safeButtonCount > 0 ? 16 : 8
+        return max(
+            pillSpeakingQueueWidth,
+            horizontalPadding + leadingIndicatorWidth + hStackGaps +
+                teleprompterViewportWidth + accessoryWidth
+        )
+    }
+
     /// Seconds of idle before pill collapses.
     public static let collapseDelay: TimeInterval = 5.0
 

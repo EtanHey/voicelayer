@@ -256,12 +256,34 @@ public final class VoiceState {
 
     public func dismissTeleprompter() {
         guard teleprompterText != nil else { return }
+        let reservedBefore = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: true,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
         isTeleprompterDismissed = true
+        let reservedAfter = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: teleprompterText != nil,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
+        notifyPanelLayoutChangedIfNeeded(reservedBefore != reservedAfter)
     }
 
     public func showTeleprompter() {
         guard teleprompterText != nil else { return }
+        let reservedBefore = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: true,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
         isTeleprompterDismissed = false
+        let reservedAfter = VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: teleprompterText != nil,
+            isDismissed: isTeleprompterDismissed,
+            isReadback: isTeleprompterReadback
+        )
+        notifyPanelLayoutChangedIfNeeded(reservedBefore != reservedAfter)
     }
 
     public func dismissRetainedTeleprompter() {

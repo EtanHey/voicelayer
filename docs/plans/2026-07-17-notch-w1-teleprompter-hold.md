@@ -73,7 +73,7 @@ XCTAssertEqual(TeleprompterPlaybackPolicy.wordOpacity(isReadback: true), 0.9)
 XCTAssertTrue(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: true))
 ```
 
-Add a layout test calling `VoiceBarPanelLayout.make(mode: .idle, ..., showsTeleprompter: true)` and assert the full panel width and teleprompter height.
+Add a layout test calling `VoiceBarPanelLayout.make(mode: .idle, ..., showsTeleprompter: true)` and assert the accessory-aware readback width and teleprompter height.
 
 **Step 2: Run tests to verify RED**
 

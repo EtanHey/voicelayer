@@ -473,6 +473,33 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertNil(VoiceBarLocalControlCommand(payload: ["type": "control", "command": "bogus"]))
     }
 
+    func testRecordingHoldCommandPayloadRoundTripsStrictBooleanAndID() throws {
+        let command = SetRecordingHoldCommand(engaged: true, id: "hold-123")
+
+        let decoded = try XCTUnwrap(SetRecordingHoldCommand(payload: command.payload))
+
+        XCTAssertEqual(decoded, command)
+        XCTAssertEqual(command.payload["cmd"] as? String, "set_recording_hold")
+        XCTAssertEqual(command.payload["engaged"] as? Bool, true)
+        XCTAssertEqual(command.payload["id"] as? String, "hold-123")
+    }
+
+    func testRecordingHoldCommandRejectsNumericBooleanBridge() {
+        XCTAssertNil(
+            SetRecordingHoldCommand(payload: [
+                "cmd": "set_recording_hold",
+                "engaged": NSNumber(value: 1),
+                "id": "hold-123",
+            ])
+        )
+        XCTAssertNil(
+            SetRecordingHoldCommand(payload: [
+                "cmd": "set_recording_hold",
+                "engaged": NSNumber(value: 0),
+            ])
+        )
+    }
+
     func testLocalControlHoldUsesHotkeyGestureCallbacksInsteadOfDirectURLs() {
         let app = AppDelegate()
         let spyRouter = SpyCommandRouter()

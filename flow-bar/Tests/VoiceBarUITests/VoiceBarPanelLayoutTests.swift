@@ -242,17 +242,19 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertLessThanOrEqual(Theme.teleprompterViewportWidth, Theme.speakingTeleprompterAvailableWidth)
     }
 
-    func testIdleReadbackTeleprompterUsesFullPanelEnvelope() {
+    func testIdleReadbackTeleprompterExpandsPanelForFiveAccessoryButtons() {
         let layout = VoiceBarPanelLayout.make(
             mode: .idle,
             isCollapsed: false,
             previewText: nil,
             statusText: "Ready",
+            idleAccessoryButtonCount: 5,
             showsTeleprompter: true,
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(layout.panelSize.width, 450)
+        XCTAssertGreaterThan(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(
             layout.panelSize.height,
             Theme.teleprompterViewportHeight + (Theme.panelPadding * 2)

@@ -61,6 +61,30 @@ final class TeleprompterSecondWaveArtifactTests: XCTestCase {
         )
     }
 
+    func testConfirmationToastTakesPriorityOverRetainedReadback() async throws {
+        let state = speakingState(text: "Retained readback must yield to confirmation")
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+        state.confirmationText = "Copied"
+        let host = pillHost(state: state)
+        try await settle(for: .milliseconds(80), host: host)
+
+        let bitmap = try XCTUnwrap(renderBitmap(host, size: host.frame.size))
+        let recognizedText = try recognizedText(in: bitmap).lowercased()
+
+        XCTAssertTrue(
+            recognizedText.contains("copied"),
+            "Confirmation must replace retained readback while visible; OCR found: \(recognizedText)"
+        )
+        XCTAssertFalse(
+            recognizedText.contains("retained"),
+            "Retained readback must stay hidden behind the confirmation; OCR found: \(recognizedText)"
+        )
+    }
+
     func testWritesSecondWaveTeleprompterArtifacts() async throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = repoRoot()

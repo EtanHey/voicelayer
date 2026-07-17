@@ -919,6 +919,28 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.statusText, "Etan runs supabase")
     }
 
+    func testLiveTeleprompterVisibilityChangesRequestPanelRelayout() async {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Live teleprompter changes its panel envelope",
+        ])
+        try? await Task.sleep(for: .milliseconds(30))
+        var relayoutCount = 0
+        state.onPanelLayoutChange = {
+            relayoutCount += 1
+        }
+
+        state.dismissTeleprompter()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(relayoutCount, 1)
+
+        state.showTeleprompter()
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(relayoutCount, 2)
+    }
+
     func testPlaybackIdleRetainsOriginalTeleprompterAndWordBoundaries() {
         let state = VoiceState()
         state.handleEvent([
@@ -1031,6 +1053,36 @@ final class VoiceStateTests: XCTestCase {
 
         XCTAssertNil(state.teleprompterText)
         XCTAssertFalse(state.isTeleprompterReadback)
+    }
+
+    func testNewSpeakingTurnClearsRetainedTeleprompterEvenBeforeFreshTextArrives() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Previous original script",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+        XCTAssertTrue(state.isTeleprompterReadback)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertTrue(state.teleprompterWordBoundaries.isEmpty)
     }
 
     func testVADRecordingHoldOptimisticallyEngagesAndReleases() throws {

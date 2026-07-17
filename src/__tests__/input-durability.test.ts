@@ -34,6 +34,8 @@ const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2;
 
 let vadMode: "silence" | "throw" = "silence";
 let onVadCall: (() => void) | null = null;
+let vadCallCount = 0;
+let vadProbabilityForCall: ((call: number) => number) | null = null;
 let backendMode: "ok" | "throw-on-get" = "ok";
 let backendTranscribeCalls = 0;
 let backendTranscribedDataSize: number | undefined;
@@ -243,6 +245,8 @@ describe("input recording durability", () => {
     );
     vadMode = "silence";
     onVadCall = null;
+    vadCallCount = 0;
+    vadProbabilityForCall = null;
     backendMode = "ok";
     backendTranscribeCalls = 0;
     backendTranscribedDataSize = undefined;
@@ -251,11 +255,12 @@ describe("input recording durability", () => {
     polishSurfaces = [];
     vadProcessSpy = spyOn(vad, "processVADChunk").mockImplementation(
       async () => {
+        vadCallCount++;
         onVadCall?.();
         if (vadMode === "throw") {
           throw new Error("vad exploded after capture");
         }
-        return 0;
+        return vadProbabilityForCall?.(vadCallCount) ?? 0;
       },
     );
     vadResetSpy = spyOn(vad, "resetVAD").mockImplementation(async () => {});
@@ -347,6 +352,78 @@ describe("input recording durability", () => {
     await expect(recordToBuffer(1000, "quick", false)).rejects.toThrow();
 
     expect(getRecordingState()).toBe("idle");
+  });
+
+  it("keeps live quick-mode capture open while held then closes after a fresh full countdown", async () => {
+    const holdPath = process.env.QA_VOICE_RECORDING_HOLD_PATH!;
+    const quickSilenceChunks = vad.silenceChunksForMode("quick");
+    const heldSilentChunks = quickSilenceChunks + 2;
+    const releaseCall = 2 + heldSilentChunks;
+    const closingCall = releaseCall + quickSilenceChunks - 1;
+    const chunks = Array.from(
+      { length: 1 + heldSilentChunks + quickSilenceChunks },
+      () => makePcmChunk(),
+    );
+    let recordingSettled = false;
+    let sawHeldThreshold!: () => void;
+    let sawFreshCountdown!: () => void;
+    const heldThresholdObserved = new Promise<void>((resolve) => {
+      sawHeldThreshold = resolve;
+    });
+    const freshCountdownObserved = new Promise<void>((resolve) => {
+      sawFreshCountdown = resolve;
+    });
+    vadProbabilityForCall = (call) => (call === 1 ? 0.95 : 0);
+    onVadCall = () => {
+      if (vadCallCount === 1) {
+        writeFileSync(holdPath, "hold", { mode: 0o600 });
+      }
+      if (vadCallCount === releaseCall) {
+        expect(recordingSettled).toBe(false);
+        expect(existsSync(holdPath)).toBe(true);
+        sawHeldThreshold();
+        rmSync(holdPath, { force: true });
+      }
+      if (vadCallCount === closingCall) {
+        expect(recordingSettled).toBe(false);
+        sawFreshCountdown();
+      }
+    };
+    const recorder = installFakeRecorder(chunks, true);
+    const { recordToBuffer } = await import("../input");
+    const recording = recordToBuffer(2_000, "quick", false).finally(() => {
+      recordingSettled = true;
+    });
+
+    try {
+      await recorder.waitForSpawn();
+      await expect(
+        Promise.race([
+          heldThresholdObserved.then(() => "held-threshold"),
+          recording.then(() => "recording-settled"),
+        ]),
+      ).resolves.toBe("held-threshold");
+      await freshCountdownObserved;
+      await expect(recording).resolves.toBeInstanceOf(Uint8Array);
+      expect(existsSync(holdPath)).toBe(false);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  });
+
+  it("clears an engaged live HOLD marker whenever capture resolves", async () => {
+    const holdPath = process.env.QA_VOICE_RECORDING_HOLD_PATH!;
+    const recorder = installFakeRecorder([], true);
+    const { recordToBuffer } = await import("../input");
+    const recording = recordToBuffer(1_000, "quick", false);
+
+    await recorder.waitForSpawn();
+    writeFileSync(holdPath, "hold", { mode: 0o600 });
+    writeFileSync(STOP_FILE, "stop");
+
+    await expect(recording).resolves.toBeNull();
+    expect(existsSync(holdPath)).toBe(false);
   });
 
   it("keeps the retained WAV valid while batching recovery fsyncs during capture", async () => {

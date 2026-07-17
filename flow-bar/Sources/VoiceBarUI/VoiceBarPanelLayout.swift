@@ -77,14 +77,22 @@ public struct VoiceBarPanelLayout: Equatable {
         let height = mode == .speaking || showsTeleprompter
             ? Theme.teleprompterViewportHeight
             : Theme.pillCompactHeight
-        return CGSize(
-            width: Theme.pillContentWidth(
-                for: showsTeleprompter ? .speaking : mode,
+        let width = if showsTeleprompter {
+            Theme.teleprompterPillWidth(
+                for: mode,
+                accessoryButtonCount: idleAccessoryButtonCount
+            )
+        } else {
+            Theme.pillContentWidth(
+                for: mode,
                 statusText: statusText,
                 idleAccessoryButtonCount: idleAccessoryButtonCount,
                 queueItemCount: queueItemCount,
                 showsRecordingHold: showsRecordingHold
-            ),
+            )
+        }
+        return CGSize(
+            width: width,
             height: height
         )
     }

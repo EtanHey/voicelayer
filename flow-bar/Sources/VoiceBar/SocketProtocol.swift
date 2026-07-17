@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import VoiceBarUI
 
@@ -14,11 +15,12 @@ struct SetRecordingHoldCommand: Equatable {
 
     init?(payload: [String: Any]) {
         guard payload["cmd"] as? String == Self.commandName,
-              let engaged = payload["engaged"] as? Bool
+              let engagedNumber = payload["engaged"] as? NSNumber,
+              CFGetTypeID(engagedNumber) == CFBooleanGetTypeID()
         else {
             return nil
         }
-        self.engaged = engaged
+        engaged = engagedNumber.boolValue
         id = payload["id"] as? String
     }
 

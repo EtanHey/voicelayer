@@ -286,7 +286,9 @@ public struct BarView: View {
 
     private var stateContent: some View {
         Group {
-            if state.teleprompterText != nil, state.queueItems.count <= 1 {
+            if state.teleprompterText != nil,
+               !transcriptPreviewIsVisible,
+               state.queueItems.count <= 1 {
                 teleprompterContent
             } else {
                 switch state.mode {
@@ -562,10 +564,9 @@ public struct BarView: View {
         }
 
         if showsTeleprompter {
-            return Theme.pillContentWidth(
-                for: .speaking,
-                statusText: statusText,
-                queueItemCount: state.queueItems.count
+            return Theme.teleprompterPillWidth(
+                for: state.mode,
+                accessoryButtonCount: idleAccessoryButtonCount
             )
         }
 
