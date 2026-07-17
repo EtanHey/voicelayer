@@ -108,4 +108,29 @@ describe("playback amplitude", () => {
       samples: [],
     });
   });
+
+  it("rejects truncated odd-byte PCM16 instead of decoding a partial frame", () => {
+    expect(
+      buildPlaybackAmplitudeEnvelope(new Uint8Array([1, 0, 1]), 1000),
+    ).toEqual({
+      source: "unavailable",
+      sample_interval_ms: PLAYBACK_AMPLITUDE_INTERVAL_MS,
+      samples: [],
+    });
+  });
+
+  it("rejects non-finite sample rates and intervals", () => {
+    const pcm = pcm16([1000, -1000]);
+
+    for (const sampleRate of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(buildPlaybackAmplitudeEnvelope(pcm, sampleRate).source).toBe(
+        "unavailable",
+      );
+    }
+    for (const interval of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(buildPlaybackAmplitudeEnvelope(pcm, 1000, interval).source).toBe(
+        "unavailable",
+      );
+    }
+  });
 });

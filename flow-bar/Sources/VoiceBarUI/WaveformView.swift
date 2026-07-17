@@ -98,7 +98,6 @@ private struct WaveformBar: View {
             .fill(color)
             .frame(height: barHeight)
             .shadow(color: color.opacity(0.35), radius: 4)
-            .animation(.easeOut(duration: 0.08), value: normalizedLevel)
     }
 
     private var barHeight: CGFloat {

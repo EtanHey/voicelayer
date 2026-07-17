@@ -51,7 +51,14 @@ export function buildPlaybackAmplitudeEnvelope(
   intervalMs = PLAYBACK_AMPLITUDE_INTERVAL_MS,
 ): PlaybackAmplitudeEnvelope {
   const sampleCount = Math.floor(pcm16.byteLength / 2);
-  if (sampleCount === 0 || sampleRate <= 0 || intervalMs <= 0) {
+  if (
+    sampleCount === 0 ||
+    pcm16.byteLength % 2 !== 0 ||
+    !Number.isFinite(sampleRate) ||
+    sampleRate <= 0 ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0
+  ) {
     return unavailableEnvelope();
   }
 
