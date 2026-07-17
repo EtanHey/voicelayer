@@ -102,7 +102,7 @@ Run:
 git diff b5de177 -- flow-bar/Sources/VoiceBarUI/VoiceState.swift flow-bar/Sources/VoiceBar/HotkeyManager.swift flow-bar/Sources/VoiceBar/CommandModeAXHelper.swift
 ```
 
-Expected: only Shift+F5 classification and restore timing differ; `CommandModeAXHelper.swift` is unchanged, transcripts are not chunked, AX remains first, and Cmd+V remains the fallback.
+Expected: only Shift+F5 classification differs from current main; restore timing and `CommandModeAXHelper.swift` are unchanged, transcripts are not chunked, AX remains first, and Cmd+V remains the fallback.
 
 **Step 2: Run the Swift suites**
 
