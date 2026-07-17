@@ -727,9 +727,6 @@ class PlaybackQueueManager {
     const job: PlaybackJob = {
       audioFile,
       metadata,
-      playbackAmplitude: metadata
-        ? extractPlaybackAmplitudeEnvelope(audioFile)
-        : undefined,
       priority,
       enqueuedAt: Date.now(),
       expiresAt: Date.now() + ttlForPriority(priority),
@@ -842,6 +839,9 @@ class PlaybackQueueManager {
         this.refuseQueuedPlayback(next, err);
         continue;
       }
+      next.playbackAmplitude = next.metadata
+        ? extractPlaybackAmplitudeEnvelope(next.audioFile)
+        : undefined;
       let proc: ReturnType<typeof Bun.spawn>;
       try {
         proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
