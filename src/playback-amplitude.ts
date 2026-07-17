@@ -2,6 +2,13 @@
 
 export const PLAYBACK_AMPLITUDE_INTERVAL_MS = 50;
 export const PLAYBACK_AMPLITUDE_SAMPLE_RATE = 1000;
+export const PLAYBACK_AMPLITUDE_MAX_DURATION_MS = 20 * 60 * 1000;
+export const PLAYBACK_AMPLITUDE_MAX_PCM_BYTES =
+  (PLAYBACK_AMPLITUDE_SAMPLE_RATE * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) /
+  1000;
+export const PLAYBACK_AMPLITUDE_MAX_ENVELOPE_SAMPLES =
+  PLAYBACK_AMPLITUDE_MAX_DURATION_MS / PLAYBACK_AMPLITUDE_INTERVAL_MS;
+export const PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS = 30_000;
 const PLAYBACK_AMPLITUDE_DBFS_FLOOR = -60;
 const PCM16_FULL_SCALE = 32768;
 
@@ -26,9 +33,19 @@ export type PlaybackAmplitudeDecoder = (
   command: string[],
 ) => PlaybackAmplitudeDecoderResult;
 
+export interface PlaybackAmplitudeDecoderTask {
+  result: Promise<PlaybackAmplitudeDecoderResult>;
+  cancel: () => void;
+}
+
 export type AsyncPlaybackAmplitudeDecoder = (
   command: string[],
-) => Promise<PlaybackAmplitudeDecoderResult>;
+) => PlaybackAmplitudeDecoderTask;
+
+export interface PlaybackAmplitudeExtraction {
+  result: Promise<PlaybackAmplitudeEnvelope>;
+  cancel: () => void;
+}
 
 function unavailableEnvelope(): PlaybackAmplitudeEnvelope {
   return {
@@ -54,9 +71,8 @@ export function buildPlaybackAmplitudeEnvelope(
   sampleRate: number,
   intervalMs = PLAYBACK_AMPLITUDE_INTERVAL_MS,
 ): PlaybackAmplitudeEnvelope {
-  const sampleCount = Math.floor(pcm16.byteLength / 2);
   if (
-    sampleCount === 0 ||
+    pcm16.byteLength === 0 ||
     pcm16.byteLength % 2 !== 0 ||
     !Number.isFinite(sampleRate) ||
     sampleRate <= 0 ||
@@ -66,10 +82,25 @@ export function buildPlaybackAmplitudeEnvelope(
     return unavailableEnvelope();
   }
 
-  const samplesPerWindow = Math.max(
-    1,
-    Math.round((sampleRate * intervalMs) / 1000),
-  );
+  const maximumPcmBytes =
+    (sampleRate * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) / 1000;
+  const samplesPerWindow = (sampleRate * intervalMs) / 1000;
+  if (
+    !Number.isSafeInteger(maximumPcmBytes) ||
+    pcm16.byteLength > maximumPcmBytes ||
+    !Number.isSafeInteger(samplesPerWindow) ||
+    samplesPerWindow < 1
+  ) {
+    return unavailableEnvelope();
+  }
+
+  const sampleCount = pcm16.byteLength / 2;
+  if (
+    Math.ceil(sampleCount / samplesPerWindow) >
+    PLAYBACK_AMPLITUDE_MAX_ENVELOPE_SAMPLES
+  ) {
+    return unavailableEnvelope();
+  }
   const view = new DataView(
     pcm16.buffer,
     pcm16.byteOffset,
@@ -98,6 +129,8 @@ function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
   const result = Bun.spawnSync(command, {
     stdout: "pipe",
     stderr: "ignore",
+    maxBuffer: PLAYBACK_AMPLITUDE_MAX_PCM_BYTES + 1,
+    timeout: PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS,
   });
   return {
     exitCode: result.exitCode,
@@ -105,21 +138,30 @@ function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
   };
 }
 
-async function runFFmpegAsync(
-  command: string[],
-): Promise<PlaybackAmplitudeDecoderResult> {
-  const process = Bun.spawn(command, {
+function runFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
+  const subprocess = Bun.spawn(command, {
     stdin: "ignore",
     stdout: "pipe",
     stderr: "ignore",
+    maxBuffer: PLAYBACK_AMPLITUDE_MAX_PCM_BYTES + 1,
+    timeout: PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS,
   });
-  const [exitCode, stdout] = await Promise.all([
-    process.exited,
-    new Response(process.stdout).arrayBuffer(),
-  ]);
+  let cancelled = false;
   return {
-    exitCode,
-    stdout: new Uint8Array(stdout),
+    result: Promise.all([
+      subprocess.exited,
+      new Response(subprocess.stdout).arrayBuffer(),
+    ]).then(([exitCode, stdout]) => ({
+      exitCode,
+      stdout: new Uint8Array(stdout),
+    })),
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      try {
+        subprocess.kill("SIGTERM");
+      } catch {}
+    },
   };
 }
 
@@ -159,20 +201,37 @@ export function extractPlaybackAmplitudeEnvelope(
   }
 }
 
+export function startPlaybackAmplitudeEnvelopeExtraction(
+  audioFile: string,
+  runDecoder: AsyncPlaybackAmplitudeDecoder = runFFmpegAsync,
+): PlaybackAmplitudeExtraction {
+  try {
+    const decoder = runDecoder(playbackAmplitudeCommand(audioFile));
+    return {
+      cancel: decoder.cancel,
+      result: decoder.result
+        .then((result) => {
+          if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
+            return unavailableEnvelope();
+          }
+          return buildPlaybackAmplitudeEnvelope(
+            result.stdout,
+            PLAYBACK_AMPLITUDE_SAMPLE_RATE,
+          );
+        })
+        .catch(() => unavailableEnvelope()),
+    };
+  } catch {
+    return {
+      cancel: () => {},
+      result: Promise.resolve(unavailableEnvelope()),
+    };
+  }
+}
+
 export async function extractPlaybackAmplitudeEnvelopeAsync(
   audioFile: string,
   runDecoder: AsyncPlaybackAmplitudeDecoder = runFFmpegAsync,
 ): Promise<PlaybackAmplitudeEnvelope> {
-  try {
-    const result = await runDecoder(playbackAmplitudeCommand(audioFile));
-    if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
-      return unavailableEnvelope();
-    }
-    return buildPlaybackAmplitudeEnvelope(
-      result.stdout,
-      PLAYBACK_AMPLITUDE_SAMPLE_RATE,
-    );
-  } catch {
-    return unavailableEnvelope();
-  }
+  return startPlaybackAmplitudeEnvelopeExtraction(audioFile, runDecoder).result;
 }

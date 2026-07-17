@@ -15,6 +15,9 @@ function pcm16(samples: number[]): Uint8Array {
 }
 
 describe("playback amplitude", () => {
+  const maximumPcmBytes = 2_400_000;
+  const maximumEnvelopeSamples = 24_000;
+
   it("builds one truthful zero sample for a silent window", () => {
     expect(
       buildPlaybackAmplitudeEnvelope(pcm16([0, 0]), 40),
@@ -132,5 +135,30 @@ describe("playback amplitude", () => {
         "unavailable",
       );
     }
+  });
+
+  it("rejects decoded audio beyond the 20-minute PCM duration bound", () => {
+    expect(
+      buildPlaybackAmplitudeEnvelope(
+        new Uint8Array(maximumPcmBytes + 2),
+        1000,
+      ).source,
+    ).toBe("unavailable");
+  });
+
+  it("rejects envelopes that would exceed the JSON sample bound", () => {
+    expect(
+      buildPlaybackAmplitudeEnvelope(
+        new Uint8Array((maximumEnvelopeSamples + 1) * 2),
+        1000,
+        1,
+      ).source,
+    ).toBe("unavailable");
+  });
+
+  it("rejects intervals that do not contain a whole PCM sample count", () => {
+    expect(
+      buildPlaybackAmplitudeEnvelope(pcm16([1000, -1000]), 1000, 1.5).source,
+    ).toBe("unavailable");
   });
 });

@@ -52,7 +52,7 @@ import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { getEffectiveRecordingState } from "./recording-state";
 import {
-  extractPlaybackAmplitudeEnvelopeAsync,
+  startPlaybackAmplitudeEnvelopeExtraction,
   type PlaybackAmplitudeEnvelope,
 } from "./playback-amplitude";
 
@@ -721,7 +721,7 @@ function completeJob(job: PlaybackJob) {
 
 class PlaybackQueueManager {
   private pending: PlaybackJob[] = [];
-  private preparing: PlaybackJob | null = null;
+  private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
   private current: {
     job: PlaybackJob;
     proc: ReturnType<typeof Bun.spawn>;
@@ -777,11 +777,12 @@ class PlaybackQueueManager {
     const preparing = this.preparing;
     this.current = null;
     this.preparing = null;
+    preparing?.cancel();
 
     for (const job of this.pending.splice(0)) {
       completeJob(job);
     }
-    if (preparing) completeJob(preparing);
+    if (preparing) completeJob(preparing.job);
 
     if (active) {
       try {
@@ -831,13 +832,18 @@ class PlaybackQueueManager {
         continue;
       }
 
-      this.preparing = next;
-      this.emitQueueSnapshot();
       if (!next.metadata) {
+        this.preparing = { job: next, cancel: () => {} };
+        this.emitQueueSnapshot();
         this.startPreparedPlayback(next, undefined);
         return;
       }
-      void extractPlaybackAmplitudeEnvelopeAsync(next.audioFile).then(
+      const extraction = startPlaybackAmplitudeEnvelopeExtraction(
+        next.audioFile,
+      );
+      this.preparing = { job: next, cancel: extraction.cancel };
+      this.emitQueueSnapshot();
+      void extraction.result.then(
         (playbackAmplitude) => {
           this.startPreparedPlayback(next, playbackAmplitude);
         },
@@ -855,7 +861,7 @@ class PlaybackQueueManager {
     next: PlaybackJob,
     playbackAmplitude: PlaybackAmplitudeEnvelope | undefined,
   ) {
-    if (this.preparing !== next) return;
+    if (this.preparing?.job !== next) return;
     this.preparing = null;
     if (next.completed) {
       this.processNext();
@@ -954,17 +960,18 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
-    // ASYNC SAFETY: Clearing `preparing` invalidates any late decoder result;
-    // startPreparedPlayback accepts only the job that still owns that slot.
+    // ASYNC SAFETY: Cancel the decoder and clear its ownership before any late
+    // result can attempt to start playback.
     const active = this.current;
     const preparing = this.preparing;
     this.current = null;
     this.preparing = null;
+    preparing?.cancel();
 
     for (const queued of this.pending.splice(0)) {
       completeJob(queued);
     }
-    if (preparing) completeJob(preparing);
+    if (preparing) completeJob(preparing.job);
 
     if (active) {
       try {
@@ -1023,9 +1030,9 @@ class PlaybackQueueManager {
 
     if (this.preparing) {
       items.push({
-        text: this.preparing.metadata?.text ?? "",
-        voice: this.preparing.metadata?.voice ?? "",
-        priority: this.preparing.priority,
+        text: this.preparing.job.metadata?.text ?? "",
+        voice: this.preparing.job.metadata?.voice ?? "",
+        priority: this.preparing.job.priority,
         is_current: false,
         progress: 0,
       });

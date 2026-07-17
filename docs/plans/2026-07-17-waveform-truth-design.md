@@ -30,9 +30,10 @@ engine and cached replay.
 
 ### 1. Precomputed RMS envelope in the speaking state event (chosen)
 
-Decode the synthesized or cached audio file before enqueue, compute a compact
-fixed-window RMS envelope, and attach it to the speaking state event when
-playback starts. VoiceBar indexes the samples from its receipt time.
+Decode the synthesized or cached audio file asynchronously when its queue item
+is eligible to start, compute a compact fixed-window RMS envelope, and attach
+it to the speaking state event when playback starts. VoiceBar indexes the
+samples from its receipt time.
 
 This uses the queue's existing start/stop/barge-in lifecycle, sends one bounded
 payload instead of continuous IPC traffic, and covers edge-TTS, cloned voices,
@@ -70,6 +71,9 @@ The speaking state event gains an optional `playback_amplitude` object:
 - RMS-to-display mapping uses a fixed dBFS floor, never per-clip peak
   normalization. A quiet clip therefore remains visually quieter than a loud
   clip.
+- Decoder output is capped at 20 minutes of 1 kHz PCM16 (2,400,000 bytes), the
+  serialized envelope at 24,000 samples, and decoder wall time at 30 seconds.
+  Window intervals must resolve to an exact whole PCM sample count.
 - The event is emitted immediately after the audio player process starts.
   VoiceBar records its local receipt clock and uses
   `floor(elapsed_ms / sample_interval_ms)` to select the current level.
@@ -90,9 +94,13 @@ clamping, and unavailable behavior.
 2. A file extractor that invokes `ffmpeg` to decode any supported TTS artifact
    to mono PCM16, then calls the pure function.
 
-The queue prepares the envelope when an item is enqueued. Newly synthesized
-files are decoded once before playback. Replay recomputes the envelope from the
-cached audio file, so the ring-buffer schema does not need migration.
+The queue prepares the envelope only when an item is eligible to start. This
+keeps enqueue and `voice_speak` responses non-blocking and avoids decoding
+items that remain behind active playback. Newly synthesized files are decoded
+once before playback. Replay recomputes the envelope from the cached audio
+file, so the ring-buffer schema does not need migration. Stop and critical
+barge-in terminate any in-flight decoder before invalidating its queue slot;
+late results cannot start superseded audio.
 
 If the file cannot be decoded, the state event carries:
 
