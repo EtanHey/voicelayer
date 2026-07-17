@@ -8,6 +8,20 @@ const originalSpawn = Bun.spawn;
 const originalSpawnSync = Bun.spawnSync;
 let spawnCalls: { cmd: string[] }[] = [];
 
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
 const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-tts-${process.pid}-disabled`;
 
 mock.module("../paths", () => ({
@@ -93,7 +107,7 @@ describe("tts module", () => {
     const { speak } = await import("../tts");
 
     const result = await speak("Hello test", { captureAudioArtifact: true });
-    await Bun.sleep(20);
+    await waitFor(() => spawnCalls.length === 3, "audio player spawn");
 
     // On macOS: afplay, on Linux with no players: mpg123 fallback
     const expectedPlayer = platform() === "darwin" ? "afplay" : "mpg123";
@@ -196,7 +210,7 @@ describe("tts module", () => {
     const { speak } = await import("../tts");
 
     await speak("ffprobe is optional");
-    await Bun.sleep(20);
+    await waitFor(() => spawnCalls.length === 3, "fallback audio player spawn");
 
     expect(spawnCalls.length).toBe(3);
     expect(spawnCalls[0].cmd[0]).toContain("python3");

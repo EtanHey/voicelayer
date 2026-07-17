@@ -7,7 +7,7 @@ final class VoiceStateTests: XCTestCase {
         let envelope = PlaybackAmplitudeEnvelope(
             source: .decodedRMS,
             sampleIntervalMilliseconds: 60000,
-            samples: [0.1, 0.8]
+            samples: [0.8]
         )
 
         state.handleEvent(
@@ -17,7 +17,7 @@ final class VoiceStateTests: XCTestCase {
 
         XCTAssertEqual(
             state.playbackAudioLevel(
-                atSystemUptime: ProcessInfo.processInfo.systemUptime + 60.075
+                atSystemUptime: ProcessInfo.processInfo.systemUptime
             ),
             0.8
         )

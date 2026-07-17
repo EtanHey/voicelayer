@@ -157,7 +157,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         case .idle:
             state.transcript = ""
         case .recording:
-            state.audioLevel = 0.45
+            state.handleEvent(["type": "audio_level", "rms": 0.75])
         case .transcribing:
             state.transcript = "Draft transcript"
         case .speaking:
