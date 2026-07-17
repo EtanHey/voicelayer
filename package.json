@@ -13,6 +13,7 @@
     "!src/__tests__/**",
     "flow-bar/Package.swift",
     "flow-bar/build-app.sh",
+    "bun.lock",
     "flow-bar/bundle/",
     "flow-bar/Sources/",
     "flow-bar/Tests/",
