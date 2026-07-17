@@ -54,6 +54,19 @@ public struct WaveformView: View {
 }
 
 public enum WaveformMetrics {
+    /// AudioLevelMonitor uses a -120...0 dB display scale, so observed room
+    /// tone lands near 0.58 rather than zero. Adapt that source once before the
+    /// shared geometry; playback envelopes already use their own fixed -60 dBFS
+    /// scale and must not pass through this gate.
+    public static let recordingSilenceFloor = AudioLevelMonitor.normalizeAveragePower(-50)
+
+    public static func recordingLevel(from audioLevel: Double?) -> Double {
+        guard let audioLevel, audioLevel.isFinite, audioLevel > recordingSilenceFloor else {
+            return 0
+        }
+        return min(1, (audioLevel - recordingSilenceFloor) / (1 - recordingSilenceFloor))
+    }
+
     public static func normalizedLevel(
         audioLevel: Double?,
         index: Int,

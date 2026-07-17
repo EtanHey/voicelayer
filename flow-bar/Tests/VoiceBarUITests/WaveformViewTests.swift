@@ -82,4 +82,27 @@ final class WaveformViewTests: XCTestCase {
             WaveformMetrics.normalizedLevel(audioLevel: 1, index: 3, barCount: 7)
         )
     }
+
+    func testRecordingSourceMapsObservedRoomToneToSilence() {
+        let roomTone = AudioLevelMonitor.normalizeAveragePower(-50)
+
+        XCTAssertEqual(WaveformMetrics.recordingLevel(from: nil), 0)
+        XCTAssertEqual(WaveformMetrics.recordingLevel(from: roomTone), 0)
+        XCTAssertGreaterThan(
+            WaveformMetrics.recordingLevel(from: AudioLevelMonitor.normalizeAveragePower(-20)),
+            0
+        )
+    }
+
+    func testRecordingSourcePreservesOrderingAboveFixedSilenceFloor() {
+        let quiet = WaveformMetrics.recordingLevel(
+            from: AudioLevelMonitor.normalizeAveragePower(-40)
+        )
+        let loud = WaveformMetrics.recordingLevel(
+            from: AudioLevelMonitor.normalizeAveragePower(-10)
+        )
+
+        XCTAssertGreaterThan(quiet, 0)
+        XCTAssertGreaterThan(loud, quiet)
+    }
 }
