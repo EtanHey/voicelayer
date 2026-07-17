@@ -156,6 +156,48 @@ describe("socket-client", () => {
     expect(parsed.text).toBe("hello");
   });
 
+  it("delivers a formerly over-8KB speaking event as one bounded NDJSON frame", async () => {
+    mockServer = createMockVoiceBarServer(TEST_SOCKET);
+
+    const { connectToBar, broadcast } = await import("../socket-client");
+    const { VOICEBAR_SOCKET_EVENT_MAX_BYTES } = await import(
+      "../socket-protocol"
+    );
+    connectToBar(TEST_SOCKET);
+    await Bun.sleep(200);
+
+    broadcast({
+      type: "state",
+      state: "speaking",
+      text: "שלום".repeat(500),
+      voice: "en-US-JennyNeural",
+      playback_amplitude: {
+        source: "decoded-rms",
+        sample_interval_ms: 60,
+        samples: Array.from({ length: 1_000 }, (_, index) =>
+          index % 2 === 0 ? 0.9999 : 0.1234,
+        ),
+      },
+    });
+
+    expect(
+      await waitFor(() =>
+        parseReceived(mockServer!).some(
+          (message) => message.state === "speaking",
+        ),
+      ),
+    ).toBe(true);
+    const line = mockServer.received.find(
+      (message) => JSON.parse(message).state === "speaking",
+    )!;
+    const parsed = JSON.parse(line);
+    expect(Buffer.byteLength(`${line}\n`, "utf8")).toBeLessThan(
+      VOICEBAR_SOCKET_EVENT_MAX_BYTES + 1,
+    );
+    expect(parsed.playback_amplitude.samples).toHaveLength(1_000);
+    expect(parsed.text.length).toBeGreaterThan(0);
+  });
+
   it("sends a client_hello that is not command-eligible by default", async () => {
     mockServer = createMockVoiceBarServer(TEST_SOCKET);
 

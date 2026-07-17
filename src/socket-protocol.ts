@@ -333,9 +333,86 @@ export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
 
 // --- Serialization ---
 
+/**
+ * Keep a single VoiceBar-bound NDJSON frame below the historical 8 KiB
+ * transport boundary. The newline is included in this byte budget.
+ */
+export const VOICEBAR_SOCKET_EVENT_MAX_BYTES = 8_191;
+
+function serializedByteLength(payload: string): number {
+  return new TextEncoder().encode(payload).byteLength;
+}
+
+function serializeJsonEvent(event: SocketEvent): string {
+  return JSON.stringify(event) + "\n";
+}
+
+function fitSpeakingTextToSocketFrame(event: StateEvent): string | null {
+  const withoutText: StateEvent = { ...event };
+  delete withoutText.text;
+  const basePayload = serializeJsonEvent(withoutText);
+  if (serializedByteLength(basePayload) > VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+    return null;
+  }
+
+  if (typeof event.text !== "string" || event.text.length === 0) {
+    return basePayload;
+  }
+
+  // Search Unicode scalar boundaries so truncation never leaves a broken
+  // surrogate pair. JSON-escaping and UTF-8 bytes are measured exactly for
+  // each candidate; the TTS audio itself is never truncated here.
+  const scalars = Array.from(event.text);
+  let low = 0;
+  let high = scalars.length;
+  let best = basePayload;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = serializeJsonEvent({
+      ...event,
+      text: scalars.slice(0, middle).join(""),
+    });
+    if (serializedByteLength(candidate) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
+}
+
 /** Serialize an event to NDJSON (JSON + newline). */
 export function serializeEvent(event: SocketEvent): string {
-  return JSON.stringify(event) + "\n";
+  const payload = serializeJsonEvent(event);
+  if (serializedByteLength(payload) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+    return payload;
+  }
+
+  if (event.type === "state" && event.state === "speaking") {
+    const textBoundedPayload = fitSpeakingTextToSocketFrame(event);
+    if (textBoundedPayload) return textBoundedPayload;
+
+    // An envelope not produced by our bounded RMS extractor may still exceed
+    // the frame even without teleprompter text. Fail truthful and flat instead
+    // of emitting a truncated or unparsable waveform.
+    if (event.playback_amplitude) {
+      const unavailableEvent: StateEvent = {
+        ...event,
+        playback_amplitude: {
+          source: "unavailable",
+          sample_interval_ms: event.playback_amplitude.sample_interval_ms,
+          samples: [],
+        },
+      };
+      const unavailablePayload = fitSpeakingTextToSocketFrame(unavailableEvent);
+      if (unavailablePayload) return unavailablePayload;
+    }
+
+    return serializeJsonEvent({ type: "state", state: "speaking" });
+  }
+
+  return payload;
 }
 
 /** Parse a single JSON line into a SocketCommand. Returns null if invalid. */
