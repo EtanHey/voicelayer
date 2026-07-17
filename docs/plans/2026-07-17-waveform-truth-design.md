@@ -66,20 +66,24 @@ The speaking state event gains an optional `playback_amplitude` object:
 ```
 
 - `samples` are clamped normalized RMS values in `[0, 1]`.
-- Samples use fixed 50 ms windows. The sampling interval is explicit so the
-  client never assumes a hidden rate.
+- Samples use a 50 ms base window. Envelopes that would exceed 1,000 on-wire
+  samples increase the window by an integer factor and publish the scaled
+  `sample_interval_ms`, so duration remains truthful without an oversized
+  socket event. VoiceBar is interval-agnostic.
 - RMS-to-display mapping uses a fixed dBFS floor, never per-clip peak
   normalization. A quiet clip therefore remains visually quieter than a loud
   clip.
 - Decoder output is capped at 20 minutes of 1 kHz PCM16 (2,400,000 bytes), the
-  serialized envelope at 24,000 samples, and decoder wall time at 30 seconds.
+  serialized envelope at 1,000 samples, and decoder wall time at 30 seconds.
   The Swift socket boundary independently rejects envelopes above the same
-  24,000-sample protocol ceiling before copying or retaining their samples.
+  1,000-sample protocol ceiling before copying or retaining their samples.
   Window intervals must resolve to an exact whole PCM sample count.
 - The event is emitted immediately after the audio player process starts.
   VoiceBar records its local monotonic-uptime receipt clock and uses that same
   clock domain on each renderer refresh to compute
-  `floor(elapsed_ms / sample_interval_ms)` to select the current level.
+  `elapsed_ms / sample_interval_ms` to interpolate between adjacent levels at
+  the display refresh cadence. Interpolation changes presentation cadence, not
+  the measured range or the event's duration.
 - Out-of-range elapsed time returns zero. Stop/idle clears the envelope.
 - Playback queue progress and engine-disclosure metadata remain unchanged.
 
@@ -121,23 +125,62 @@ future engine output format that the installed decoder cannot read.
 
 ## One waveform renderer
 
-`WaveformView` becomes one seven-bar amplitude component. Its input is either a
-live level or a playback envelope, but both resolve to one current amplitude
-and one height function. State may select recording red or speaking blue; color
-does not change the amplitude geometry.
+`WaveformView` becomes one seven-bar amplitude component. Speaking accepts a
+playback-envelope level. Recording and transcribing accept seven time-offset
+samples from the real recording envelope. State may select recording red or
+speaking/transcribing blue; color does not change the amplitude geometry.
 
-- Every bar height is a monotonic function of current amplitude.
-- Static center weighting gives the row a legible silhouette without claiming
-  spectral information.
+- Speaking bar height remains a monotonic function of current playback
+  amplitude.
+- Recording bars are the last seven real 50 ms envelope samples, in time order.
+  There is no static center-weight bell: peak position may wander and one bar
+  may dip while its neighbors remain high.
 - No time-based sine, jitter, breathing, speech-detected boost, or no-level
   simulation remains.
 - Recording no longer switches renderer behavior on the speech-detected bit;
   the real RMS level alone controls height.
 - Speaking uses the clock-indexed playback envelope.
-- Transcribing keeps its existing processing spinner and text, but removes the
-  synthetic waveform because no audio exists in that phase.
+- Transcribing replays the captured recording envelope at its real 50 ms
+  sample cadence and loops it while transcription is active. That keeps a
+  full-amplitude animated waveform using only recorded data; it never blanks,
+  freezes a snapshot, or invents a new signal.
 - Missing, silent, expired, or unavailable input produces the same flat
   minimum baseline.
+
+## Etan acceptance-fixture repair amendment
+
+The accepted normal-F5 capture remains the reference and its acquisition and
+paste paths are frozen. The repair is confined to the declared native seam
+`VoiceState.audioLevel -> WaveformView`:
+
+- Preserve the response mapping measured in the 23:42 fixture: range and
+  attack latency are already at parity. Local and socket levels continue
+  through the existing `max(local, socket) -> recordingLevel` seam; no source
+  remap or new response curve is introduced.
+- `WaveformEnvelopeHistory` retains a bounded sequence of those mapped real
+  levels. The live seven-bar window consumes independent time-offset samples,
+  eliminating the rigid center-weight bell measured at shape constancy 0.937.
+- Target changes begin immediately and use deterministic per-bar 100-200 ms
+  rise and 180-300 ms settle durations. Overlapping real-sample transitions
+  produce a graded re-attack without a delayed onset, plateau hold, or
+  post-sound overshoot.
+- Recording-to-transcribing anchors a monotonic replay clock and advances a
+  seven-sample window across the recorded envelope every 50 ms. It starts at
+  the last live window, loops the captured data at full amplitude, and never
+  substitutes a snapshot, decay-to-floor, or generated animation.
+- The transcribing pill uses the compact accepted reference width rather than
+  a wide empty envelope. Waveform, status, and cancel control occupy that
+  deliberate shape without a duplicate spinner. Recording stays at the
+  154-point content width (the captured 303 px class) even when VAD exposes
+  the HOLD control; spacing compresses without shrinking its 26-point target.
+  Transcription state, paste timing, and hold behavior remain unchanged.
+- Playback envelope lookup linearly interpolates adjacent truthful RMS samples
+  so 60 fps rendering preserves range while remaining smooth at both 50 ms and
+  downsampled intervals.
+
+The on-wire budget uses direct RMS over scaled windows, not peak-preserving or
+clip-normalized resampling. That keeps each sample's meaning stable and avoids
+inventing amplitude. Transport-wide backpressure is explicitly out of scope.
 
 ## Verification
 

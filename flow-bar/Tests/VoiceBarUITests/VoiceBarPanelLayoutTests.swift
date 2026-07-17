@@ -135,16 +135,21 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
 
-    func testTranscribingPanelShowsFallbackLabel() {
+    func testTranscribingPanelMatchesTheCompactAcceptedReferenceWidth() {
+        let statusText = "Transcribing..."
         let layout = VoiceBarPanelLayout.make(
             mode: .transcribing,
             isCollapsed: false,
             previewText: nil,
-            statusText: "Transcribing...",
+            statusText: statusText,
             padding: Theme.panelPadding
         )
 
-        XCTAssertGreaterThanOrEqual(layout.panelSize.width, 212)
+        XCTAssertEqual(
+            layout.panelSize.width,
+            Theme.transcribingPillWidth(for: statusText) + (Theme.panelPadding * 2),
+            accuracy: 0.0001
+        )
         XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
     }
@@ -194,7 +199,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(success.panelSize.width, Theme.panelWidth)
     }
 
-    func testVADHoldControlAddsOneButtonWithoutGrowingPTT() {
+    func testRecordingStaysAtThe303PixelClassWithTheVADHoldControl() {
         let vad = VoiceBarPanelLayout.make(
             mode: .recording,
             isCollapsed: false,
@@ -210,7 +215,16 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(vad.panelSize.width - ptt.panelSize.width, 28)
+        XCTAssertEqual(vad.panelSize.width, ptt.panelSize.width)
+        XCTAssertEqual(vad.panelSize.width, 162)
+        XCTAssertEqual(
+            Theme.pillContentWidth(
+                for: .recording,
+                statusText: "",
+                showsRecordingHold: true
+            ),
+            154
+        )
     }
 
     func testSpeakingQueuePanelFitsQueueVisualizationChrome() {

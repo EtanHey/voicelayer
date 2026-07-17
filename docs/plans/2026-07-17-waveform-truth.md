@@ -10,6 +10,46 @@
 
 ---
 
+### Repair amendment: voice_ask parity and bounded events
+
+**Files:**
+- Modify: `src/playback-amplitude.ts`
+- Modify: `src/__tests__/playback-amplitude.test.ts`
+- Modify: `flow-bar/Sources/VoiceBarUI/PlaybackAmplitude.swift`
+- Modify: `flow-bar/Sources/VoiceBarUI/VoiceState.swift`
+- Modify: `flow-bar/Sources/VoiceBarUI/WaveformView.swift`
+- Modify: `flow-bar/Sources/VoiceBarUI/BarView.swift`
+- Modify: `flow-bar/Sources/VoiceBar/SocketProtocol.swift`
+- Modify: `flow-bar/Tests/VoiceBarTests/SocketProtocolTests.swift`
+- Modify: `flow-bar/Tests/VoiceBarUITests/PlaybackAmplitudeTests.swift`
+- Modify: `flow-bar/Tests/VoiceBarUITests/VoiceStateTests.swift`
+- Modify: `flow-bar/Tests/VoiceBarUITests/WaveformViewTests.swift`
+
+1. RED: prove a long PCM envelope stays at or below 1,000 samples and scales
+   `sample_interval_ms`; prove the Swift parser rejects 1,001 samples.
+2. RED: prove playback lookup interpolates between adjacent samples, preserving
+   the quiet-to-loud range at render cadence.
+3. RED: preserve the fixture-proven recording range and onset mapping while a
+   seven-sample live window retains independent real time-offset levels without
+   applying the scalar center-weight bell.
+4. RED: prove target changes begin immediately with per-bar 100-200 ms attack
+   and 180-300 ms settle durations, with no plateau hold.
+5. RED: prove transcribing starts from the last live seven-sample window, then
+   advances and loops the actual captured envelope every 50 ms instead of
+   freezing or decaying a snapshot.
+6. RED: prove the transcribing waveform reserves real HStack space, the panel
+   stays compact, and VAD recording remains at the 154-point/303 px class while
+   its HOLD control remains clickable.
+7. GREEN: implement scaled-window RMS, the mirrored 1,000-sample bound,
+   interpolated playback lookup, bounded recording history, the independent
+   sample renderer, truthful transcribing replay, and compact geometry behind
+   `VoiceState.audioLevel -> WaveformView`.
+8. Verify focused tests, full Bun/Swift suites, isolated release build, and an
+   ephemeral isolated capture runner that terminates its exact PID on every
+   exit path. Do not commit or push during this repair pass.
+
+---
+
 ### Task 1: Build deterministic playback-amplitude envelopes
 
 **Files:**
@@ -186,7 +226,7 @@ XCTAssertEqual(envelope.level(elapsedMilliseconds: 500), 0)
 ```
 
 Add executable-target protocol tests that parse a speaking dictionary, reject
-nonpositive intervals/non-numeric samples or more than 24,000 samples, clamp
+nonpositive intervals/non-numeric samples or more than 1,000 samples, clamp
 numeric samples, and preserve `source: unavailable` with an empty list.
 
 Add state tests that inject an envelope and clock into a speaking event, advance
@@ -245,9 +285,10 @@ XCTAssertGreaterThan(
 )
 ```
 
-Prove identical inputs yield identical heights regardless of time, and prove
-every bar is monotonic from quiet to loud. Update artifact-state setup to
-provide a deterministic playback envelope for speaking snapshots.
+Prove scalar speaking inputs remain monotonic, and prove a seven-sample live
+input preserves each real value and its peak position without bell weighting.
+Update artifact-state setup to provide a deterministic playback envelope for
+speaking snapshots.
 
 **Step 2: Run waveform tests to verify RED**
 
@@ -259,13 +300,15 @@ Expected: FAIL because the single metrics API does not exist and old synthetic m
 
 - Remove `WaveformMode`, idle breathing, speech simulation, processing motion,
   and all time-based sine/jitter.
-- Make `WaveformView` accept a current-level provider/source plus a state color.
-- Use one static center-weighted, monotonic amplitude-to-height function.
-- Recording passes only live `state.audioLevel`, ignoring `speechDetected` for
-  geometry.
+- Make `WaveformView` accept either a current scalar or seven independent
+  time-offset levels plus a state color.
+- Keep the scalar speaking path monotonic; do not apply center weighting to the
+  recording/transcribing sample window.
+- Recording passes the bounded live sample window, ignoring `speechDetected`
+  for geometry.
 - Speaking passes `state.playbackAudioLevel(at:)` from the render timeline.
-- Transcribing removes `WaveformView(mode: .processing)` and keeps the existing
-  `ProcessingSpinner`/status presentation.
+- Transcribing passes the clock-indexed replay window, keeps status/cancel, and
+  removes the duplicate processing spinner.
 
 **Step 4: Run targeted tests to verify GREEN**
 

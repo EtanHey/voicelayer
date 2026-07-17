@@ -6,8 +6,7 @@ export const PLAYBACK_AMPLITUDE_MAX_DURATION_MS = 20 * 60 * 1000;
 export const PLAYBACK_AMPLITUDE_MAX_PCM_BYTES =
   (PLAYBACK_AMPLITUDE_SAMPLE_RATE * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) /
   1000;
-export const PLAYBACK_AMPLITUDE_MAX_ENVELOPE_SAMPLES =
-  PLAYBACK_AMPLITUDE_MAX_DURATION_MS / PLAYBACK_AMPLITUDE_INTERVAL_MS;
+export const PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES = 1000;
 export const PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS = 30_000;
 const PLAYBACK_AMPLITUDE_DBFS_FLOOR = -60;
 const PCM16_FULL_SCALE = 32768;
@@ -84,20 +83,27 @@ export function buildPlaybackAmplitudeEnvelope(
 
   const maximumPcmBytes =
     (sampleRate * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) / 1000;
-  const samplesPerWindow = (sampleRate * intervalMs) / 1000;
+  const baseSamplesPerWindow = (sampleRate * intervalMs) / 1000;
   if (
     !Number.isSafeInteger(maximumPcmBytes) ||
     pcm16.byteLength > maximumPcmBytes ||
-    !Number.isSafeInteger(samplesPerWindow) ||
-    samplesPerWindow < 1
+    !Number.isSafeInteger(baseSamplesPerWindow) ||
+    baseSamplesPerWindow < 1
   ) {
     return unavailableEnvelope();
   }
 
   const sampleCount = pcm16.byteLength / 2;
+  const baseWindowCount = Math.ceil(sampleCount / baseSamplesPerWindow);
+  const windowScale = Math.max(
+    1,
+    Math.ceil(baseWindowCount / PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES),
+  );
+  const samplesPerWindow = baseSamplesPerWindow * windowScale;
+  const effectiveIntervalMs = intervalMs * windowScale;
   if (
-    Math.ceil(sampleCount / samplesPerWindow) >
-    PLAYBACK_AMPLITUDE_MAX_ENVELOPE_SAMPLES
+    !Number.isSafeInteger(samplesPerWindow) ||
+    !Number.isSafeInteger(effectiveIntervalMs)
   ) {
     return unavailableEnvelope();
   }
@@ -120,7 +126,7 @@ export function buildPlaybackAmplitudeEnvelope(
 
   return {
     source: "decoded-rms",
-    sample_interval_ms: intervalMs,
+    sample_interval_ms: effectiveIntervalMs,
     samples,
   };
 }

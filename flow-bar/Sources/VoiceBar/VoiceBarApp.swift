@@ -159,6 +159,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func enforceCanonicalSingleInstance() -> Bool {
+        let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
+        let enforcesSingleton = defaultsEnforceSingleton && VoiceLayerPaths.enforcesSingletonInstance
+        guard enforcesSingleton else {
+            if !VoiceLayerPaths.enforcesSingletonInstance {
+                NSLog(
+                    "[VoiceBar] Singleton guard skipped for isolated socket path %@",
+                    VoiceLayerPaths.socketPath
+                )
+            } else {
+                NSLog("[VoiceBar] Singleton guard skipped by defaults")
+            }
+            return true
+        }
+
+        do {
+            return try VoiceBarInstanceElectionLock.withExclusiveLock {
+                performCanonicalSingleInstanceElection()
+            }
+        } catch {
+            NSLog("[VoiceBar] Single-instance election lock failed: %@", String(describing: error))
+            DispatchQueue.main.async {
+                NSApplication.shared.terminate(nil)
+            }
+            return false
+        }
+    }
+
+    private func performCanonicalSingleInstanceElection() -> Bool {
+        let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.voicelayer.voicebar"
+        let runningApplications = NSRunningApplication
+            .runningApplications(withBundleIdentifier: bundleIdentifier)
+            .filter { !$0.isTerminated }
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let decision = VoiceBarInstanceGuard.plan(
+            current: VoiceBarInstanceDescriptor(
+                pid: myPID,
+                bundlePath: Bundle.main.bundleURL.path
+            ),
+            running: runningApplications.map { application in
+                VoiceBarInstanceDescriptor(
+                    pid: application.processIdentifier,
+                    bundlePath: application.bundleURL?.path
+                )
+            },
+            enforcesSingleton: true
+        )
+
+        switch decision {
+        case .bypass:
+            return true
+
+        case let .exitCurrent(canonicalPID):
+            NSLog(
+                "[VoiceBar] Canonical VoiceBar PID %d already owns the resident path; exiting PID %d",
+                canonicalPID,
+                myPID
+            )
+            DispatchQueue.main.async {
+                NSApplication.shared.terminate(nil)
+            }
+            return false
+
+        case let .supersede(exactPIDs):
+            guard !exactPIDs.isEmpty else { return true }
+            let targets = runningApplications.filter { exactPIDs.contains($0.processIdentifier) }
+            for application in targets {
+                NSLog(
+                    "[VoiceBar] Superseding duplicate exact PID %d at %@",
+                    application.processIdentifier,
+                    application.bundleURL?.path ?? "unknown-path"
+                )
+                _ = application.terminate()
+            }
+
+            waitForTermination(ofExactPIDs: exactPIDs, timeout: 1.0)
+            let stubbornTargets = targets.filter {
+                processIsAlive(exactPID: $0.processIdentifier)
+            }
+            for application in stubbornTargets {
+                NSLog(
+                    "[VoiceBar] Duplicate exact PID %d ignored graceful termination; force-terminating",
+                    application.processIdentifier
+                )
+                _ = application.forceTerminate()
+            }
+            waitForTermination(
+                ofExactPIDs: stubbornTargets.map(\.processIdentifier),
+                timeout: 0.5
+            )
+
+            let survivorPIDs = exactPIDs.filter { processIsAlive(exactPID: $0) }
+            guard survivorPIDs.isEmpty else {
+                let survivorList = survivorPIDs.map(String.init).joined(separator: ",")
+                NSLog(
+                    "[VoiceBar] Refusing duplicate startup; exact PIDs still alive: %@",
+                    survivorList
+                )
+                DispatchQueue.main.async {
+                    NSApplication.shared.terminate(nil)
+                }
+                return false
+            }
+            return true
+        }
+    }
+
+    private func waitForTermination(
+        ofExactPIDs exactPIDs: [pid_t],
+        timeout: TimeInterval
+    ) {
+        guard !exactPIDs.isEmpty else { return }
+        let deadline = Date().addingTimeInterval(timeout)
+        while exactPIDs.contains(where: { processIsAlive(exactPID: $0) }), Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
+    private func processIsAlive(exactPID: pid_t) -> Bool {
+        guard exactPID > 0 else { return false }
+        if Darwin.kill(exactPID, 0) == 0 { return true }
+        return errno == EPERM
+    }
+
     /// Handle voicebar:// URLs via Apple Events (kAEGetURL).
     /// This fires when `open voicebar://toggle` is invoked from Karabiner or the shell.
     @objc private func handleGetURLEvent(_ event: NSAppleEventDescriptor, withReply reply: NSAppleEventDescriptor) {
@@ -186,26 +310,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("[VoiceBar] Apple Event handler registered for voicebar:// scheme")
         }
 
-        let myPID = ProcessInfo.processInfo.processIdentifier
-        // Singleton guard: daily-driver launches keep one VoiceBar instance, while
-        // isolated QA socket paths can run beside the installed app.
-        if VoiceBarDefaults.shouldEnforceSingleton(), VoiceLayerPaths.enforcesSingletonInstance {
-            let running = NSRunningApplication
-                .runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
-            let others = running.filter { $0.processIdentifier != myPID && !$0.isTerminated }
-            if !others.isEmpty {
-                NSLog("[VoiceBar] Another instance already running (PID %d) — exiting", others[0].processIdentifier)
-                // Give a moment for the log to flush
-                DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
-                }
-                return
-            }
-        } else if !VoiceLayerPaths.enforcesSingletonInstance {
-            NSLog("[VoiceBar] Singleton guard skipped for isolated socket path %@", VoiceLayerPaths.socketPath)
-        } else {
-            NSLog("[VoiceBar] Singleton guard skipped by defaults")
-        }
+        guard enforceCanonicalSingleInstance() else { return }
 
         // No Dock icon (LSUIElement equivalent)
         NSApp.setActivationPolicy(.accessory)

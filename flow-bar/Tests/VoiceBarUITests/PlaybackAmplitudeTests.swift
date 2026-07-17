@@ -10,8 +10,9 @@ final class PlaybackAmplitudeTests: XCTestCase {
         )
 
         XCTAssertEqual(envelope.level(elapsedMilliseconds: 0), 0)
-        XCTAssertEqual(envelope.level(elapsedMilliseconds: 49), 0)
-        XCTAssertEqual(envelope.level(elapsedMilliseconds: 75), 0.4, accuracy: 0.0001)
+        XCTAssertEqual(envelope.level(elapsedMilliseconds: 25), 0.2, accuracy: 0.0001)
+        XCTAssertEqual(envelope.level(elapsedMilliseconds: 49), 0.392, accuracy: 0.0001)
+        XCTAssertEqual(envelope.level(elapsedMilliseconds: 75), 0.65, accuracy: 0.0001)
         XCTAssertEqual(envelope.level(elapsedMilliseconds: 149), 0.9, accuracy: 0.0001)
         XCTAssertEqual(envelope.level(elapsedMilliseconds: 150), 0)
     }

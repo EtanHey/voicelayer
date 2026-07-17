@@ -72,6 +72,15 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertGreaterThan(levels[3], levels[0])
     }
 
+    func testTimeOffsetLevelsPreserveIndependentRealShapeAndPeakPosition() {
+        let realSamples = [0.7, 0.2, 0.6, 0.1, 0.3, 0.9, 0.4]
+
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevels(audioLevels: realSamples, barCount: 7),
+            realSamples
+        )
+    }
+
     func testAmplitudeIsClampedBeforeHeightMapping() {
         XCTAssertEqual(
             WaveformMetrics.normalizedLevel(audioLevel: -0.5, index: 3, barCount: 7),
@@ -104,5 +113,30 @@ final class WaveformViewTests: XCTestCase {
 
         XCTAssertGreaterThan(quiet, 0)
         XCTAssertGreaterThan(loud, quiet)
+    }
+
+    func testLiveTargetsUseGradedPerBarAttackAndSettleWithoutHolding() {
+        let attacks = (0 ..< 7).map { index in
+            WaveformMetrics.transitionDuration(
+                from: 0.2,
+                to: 0.8,
+                index: index,
+                barCount: 7
+            )
+        }
+        let releases = (0 ..< 7).map { index in
+            WaveformMetrics.transitionDuration(
+                from: 0.8,
+                to: 0.2,
+                index: index,
+                barCount: 7
+            )
+        }
+
+        XCTAssertTrue(attacks.allSatisfy { (0.10 ... 0.20).contains($0) })
+        XCTAssertGreaterThan(Set(attacks).count, 1)
+        XCTAssertGreaterThanOrEqual(releases.min() ?? 0, 0.18)
+        XCTAssertLessThanOrEqual(releases.max() ?? 0, 0.30)
+        XCTAssertGreaterThan(Set(releases).count, 1)
     }
 }

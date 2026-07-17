@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   PLAYBACK_AMPLITUDE_INTERVAL_MS,
+  PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   buildPlaybackAmplitudeEnvelope,
   extractPlaybackAmplitudeEnvelope,
   startPlaybackAmplitudeEnvelopeExtraction,
@@ -17,7 +18,6 @@ function pcm16(samples: number[]): Uint8Array {
 
 describe("playback amplitude", () => {
   const maximumPcmBytes = 2_400_000;
-  const maximumEnvelopeSamples = 24_000;
 
   it("builds one truthful zero sample for a silent window", () => {
     expect(
@@ -147,14 +147,21 @@ describe("playback amplitude", () => {
     ).toBe("unavailable");
   });
 
-  it("rejects envelopes that would exceed the JSON sample bound", () => {
+  it("downsamples long envelopes to the on-wire budget and scales the interval", () => {
+    const envelope = buildPlaybackAmplitudeEnvelope(
+      pcm16(Array.from({ length: 4000 }, (_, index) =>
+        index < 2000 ? 1000 : 8000,
+      )),
+      40,
+    );
+
+    expect(envelope.source).toBe("decoded-rms");
+    expect(envelope.samples).toHaveLength(PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES);
+    expect(envelope.sample_interval_ms).toBe(100);
+    expect(envelope.samples.at(-1)).toBeGreaterThan(envelope.samples[0]);
     expect(
-      buildPlaybackAmplitudeEnvelope(
-        new Uint8Array((maximumEnvelopeSamples + 1) * 2),
-        1000,
-        1,
-      ).source,
-    ).toBe("unavailable");
+      envelope.samples.length * envelope.sample_interval_ms,
+    ).toBe(100_000);
   });
 
   it("rejects intervals that do not contain a whole PCM sample count", () => {
