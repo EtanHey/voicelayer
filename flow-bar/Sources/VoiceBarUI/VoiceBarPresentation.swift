@@ -92,6 +92,14 @@ public enum VoiceBarPresentation {
         )
     }
 
+    public static func reservesTeleprompterEnvelope(
+        hasText: Bool,
+        isDismissed: Bool,
+        isReadback: Bool
+    ) -> Bool {
+        hasText && (!isDismissed || isReadback)
+    }
+
     public static func isHotkeyTransitionStatus(_ statusText: String) -> Bool {
         switch statusText {
         case holdToTalkHint, releaseToSendHint, tapAgainToLockHint:

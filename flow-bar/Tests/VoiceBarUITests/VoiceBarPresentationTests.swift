@@ -2,6 +2,23 @@
 import XCTest
 
 final class VoiceBarPresentationTests: XCTestCase {
+    func testHiddenReadbackKeepsTeleprompterEnvelopeForRestoreControls() {
+        XCTAssertTrue(
+            VoiceBarPresentation.reservesTeleprompterEnvelope(
+                hasText: true,
+                isDismissed: true,
+                isReadback: true
+            )
+        )
+        XCTAssertFalse(
+            VoiceBarPresentation.reservesTeleprompterEnvelope(
+                hasText: true,
+                isDismissed: true,
+                isReadback: false
+            )
+        )
+    }
+
     func testRecordingContentShowsWaveformWithoutListeningLabelByDefault() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingContent(hotkeyPhase: .idle),

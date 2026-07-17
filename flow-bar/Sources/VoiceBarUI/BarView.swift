@@ -621,7 +621,11 @@ public struct BarView: View {
     }
 
     private var showsTeleprompter: Bool {
-        state.teleprompterText != nil && !state.isTeleprompterDismissed
+        VoiceBarPresentation.reservesTeleprompterEnvelope(
+            hasText: state.teleprompterText != nil,
+            isDismissed: state.isTeleprompterDismissed,
+            isReadback: state.isTeleprompterReadback
+        )
     }
 
     // MARK: - Action buttons

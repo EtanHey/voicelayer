@@ -708,7 +708,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 canReplay: state?.canReplay ?? false
             ) + ((state?.isTeleprompterReadback ?? false) ? 2 : 0),
             queueItemCount: state?.queueItems.count ?? 0,
-            showsTeleprompter: state?.teleprompterText != nil && !(state?.isTeleprompterDismissed ?? false),
+            showsTeleprompter: VoiceBarPresentation.reservesTeleprompterEnvelope(
+                hasText: state?.teleprompterText != nil,
+                isDismissed: state?.isTeleprompterDismissed ?? false,
+                isReadback: state?.isTeleprompterReadback ?? false
+            ),
             showsRecordingHold: VoiceBarPresentation.recordingHoldControl(
                 mode: mode,
                 recordingMode: state?.recordingMode,
