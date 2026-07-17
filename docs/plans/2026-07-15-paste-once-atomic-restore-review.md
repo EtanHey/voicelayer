@@ -11,6 +11,7 @@ Status: SKIPPED — local `coderabbit review --agent` emitted no findings before
 
 - CRITICAL: none.
 - HIGH: GitHub Codex reported that `CGEvent.post` queues Cmd+V and returns before the target app is guaranteed to read the pasteboard. The VoiceLayer lead resolved this on 2026-07-17 by selecting bounded post-paste restoration with the existing production delay. Immediate restoration is no longer a requirement because it can paste the prior clipboard into the target; target-consumption acknowledgement remains a frozen-surface redesign outside this PR.
+- HIGH: Final CodeRabbit review found that an idle re-paste key-up could lose its Shift flag when Shift was released first and then fall through to recording `.keyUp`. Resolved test-first by tracking the re-paste key-down keycode in the event-tap context and consuming its paired key-up regardless of modifier-release order.
 - MEDIUM: none.
 - LOW: none.
 

@@ -44,9 +44,11 @@ if exactShiftOnly {
 
 Keep all non-Shift hotkey behavior unchanged.
 
+Track the keycode when key-down returns `.pasteLastTranscript`, and consume its matching key-up before flag-based classification. Clear stale pairing state on the next non-autorepeat target key-down. This preserves event pairing when Shift is released before F5.
+
 **Step 3: Verify GREEN**
 
-Run the same filtered Swift test command. Expected: all `HotkeyManagerTests` pass.
+Run the same filtered Swift test command. Expected: all `HotkeyManagerTests` pass, including Shift-up-before-F5-up ordering.
 
 ### Task 2: Preserve bounded, guarded clipboard restoration
 

@@ -270,6 +270,35 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testShiftReleasedBeforeF5KeyUpConsumesMatchingRepasteRelease() {
+        var sequenceState = HotkeySequenceState()
+
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .pasteLastTranscript
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .consume
+        )
+    }
+
     func testCmdShiftVIsIgnoredInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
