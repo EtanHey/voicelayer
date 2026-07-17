@@ -32,5 +32,5 @@
 1. Commit only the approved #344 amendment and force-push the rebased branch.
 2. Update the PR body with the exact runtime receipt and bounded-delay decision.
 3. Reply to the blocker comment with the lead decision, new head, and fresh evidence.
-4. Request CodeRabbit, Codex, and Cursor/Bugbot reviews; address event-ordering findings test-first, including modifier release before F5 key-up; and confirm the latest required checks.
+4. Request CodeRabbit, Codex, and Cursor/Bugbot reviews; address event-ordering findings test-first, including modifier release before F5 key-up and independent F5/F18 pairings; and confirm the latest required checks.
 5. Update the revival report with a fresh `PR344_READY` line and final merged/open state.

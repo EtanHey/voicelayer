@@ -299,6 +299,48 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    func testAnotherTargetKeyDownDoesNotClearPendingRepasteRelease() {
+        var sequenceState = HotkeySequenceState()
+
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .pasteLastTranscript
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyDown,
+                keycode: 79,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                sequenceState: &sequenceState
+            ),
+            .keyDown
+        )
+        XCTAssertEqual(
+            sequenceAwareHotkeyAction(
+                type: .keyUp,
+                keycode: 96,
+                flags: [],
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true,
+                sequenceState: &sequenceState
+            ),
+            .consume
+        )
+    }
+
     func testCmdShiftVIsIgnoredInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(

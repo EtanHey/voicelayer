@@ -307,7 +307,7 @@ struct HotkeyDebounceState {
 }
 
 struct HotkeySequenceState {
-    var repasteKeyDownKeycode: Int64?
+    var pendingRepasteKeycodes: Set<Int64> = []
 }
 
 private let hotkeyDuplicateEventDebounceSeconds: TimeInterval = 0.01
@@ -567,8 +567,7 @@ func sequenceAwareHotkeyAction(
     cancellationIsActive: Bool? = nil,
     sequenceState: inout HotkeySequenceState
 ) -> HotkeyAction {
-    if type == .keyUp, sequenceState.repasteKeyDownKeycode == keycode {
-        sequenceState.repasteKeyDownKeycode = nil
+    if type == .keyUp, sequenceState.pendingRepasteKeycodes.remove(keycode) != nil {
         NSLog("[HotkeyManager] Consuming keyUp paired with re-paste keyDown for keycode %lld", keycode)
         return .consume
     }
@@ -585,7 +584,11 @@ func sequenceAwareHotkeyAction(
         cancellationIsActive: cancellationIsActive
     )
     if type == .keyDown, autorepeat == 0, targetKeycodes.contains(keycode) {
-        sequenceState.repasteKeyDownKeycode = action == .pasteLastTranscript ? keycode : nil
+        if action == .pasteLastTranscript {
+            sequenceState.pendingRepasteKeycodes.insert(keycode)
+        } else {
+            sequenceState.pendingRepasteKeycodes.remove(keycode)
+        }
     }
     return action
 }
