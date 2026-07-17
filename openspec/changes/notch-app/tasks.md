@@ -10,8 +10,8 @@
 
 ## 2. Build phase
 
-- [ ] 2.1 Teleprompter persists + scrolls after turn-end (read-back) — retains original-script text/boundaries in truthful idle; reversible eye hide/show; permanent × dismissal; new-turn clear; static readable scroll view; idle-collapse suppression
-- [ ] 2.2 VAD-only HOLD-RECORDING control — accessible selected state; strict mirrored socket command; pre/post-speech silence suppression; fresh countdown on release; explicit stop/cancel and overall timeout unchanged
+- [x] 2.1 Teleprompter persists + scrolls after turn-end (read-back) — retains original-script text/boundaries in truthful idle; reversible eye hide/show; permanent × dismissal; new-turn clear; static readable scroll view; idle-collapse suppression
+- [x] 2.2 VAD-only HOLD-RECORDING control — accessible selected state; strict mirrored socket command; pre/post-speech silence suppression; fresh countdown on release; explicit stop/cancel and overall timeout unchanged
 - [ ] 2.3 Waveform parity — RED fixture: agent-side dot row static across six turns (frame_0413 class)
 - [ ] 2.4 Jump-scroll/spoiler-flash/snap-to-top family — fixtures qa a7_10–a7_14, frames 0642/0655
 - [ ] 2.5 TTFA telemetry (queue/synth/transfer) + generating-state for dead-air — baseline 11–56s in hand
