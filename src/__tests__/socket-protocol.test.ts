@@ -283,6 +283,25 @@ describe("socket-protocol", () => {
       expect(result).toEqual({ cmd: "health" });
     });
 
+    it("parses recording hold commands with strict Boolean engagement", () => {
+      expect(
+        parseCommand(
+          '{"cmd":"set_recording_hold","engaged":true,"id":"hold-1"}',
+        ),
+      ).toEqual({
+        cmd: "set_recording_hold",
+        engaged: true,
+        id: "hold-1",
+      });
+      expect(
+        parseCommand('{"cmd":"set_recording_hold","engaged":false}'),
+      ).toEqual({ cmd: "set_recording_hold", engaged: false });
+      expect(parseCommand('{"cmd":"set_recording_hold"}')).toBeNull();
+      expect(
+        parseCommand('{"cmd":"set_recording_hold","engaged":1}'),
+      ).toBeNull();
+    });
+
     it("allows long VoiceBar recording timeouts", () => {
       const result = parseCommand('{"cmd":"record","timeout_seconds":3600}');
       expect(result).toEqual({ cmd: "record", timeout_seconds: 3600 });

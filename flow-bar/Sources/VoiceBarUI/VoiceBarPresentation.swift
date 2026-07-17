@@ -14,6 +14,13 @@ public struct VoiceBarRecordingContent: Equatable {
     public var usesPulsingLabelOpacity: Bool
 }
 
+public struct VoiceBarRecordingHoldControl: Equatable {
+    public var iconName: String
+    public var accessibilityLabel: String
+    public var accessibilityHint: String
+    public var isSelected: Bool
+}
+
 public struct VoiceBarQueuePreview: Equatable {
     public var currentText: String
     public var nextText: String?
@@ -67,6 +74,30 @@ public enum VoiceBarPresentation {
             showsWaveform: true,
             usesPulsingLabelOpacity: false
         )
+    }
+
+    public static func recordingHoldControl(
+        mode: VoiceMode,
+        recordingMode: String?,
+        isEngaged: Bool
+    ) -> VoiceBarRecordingHoldControl? {
+        guard mode == .recording, recordingMode == "vad" else { return nil }
+        return VoiceBarRecordingHoldControl(
+            iconName: isEngaged ? "hand.raised.fill" : "hand.raised",
+            accessibilityLabel: isEngaged ? "Release recording hold" : "Hold recording",
+            accessibilityHint: isEngaged
+                ? "Resume automatic silence stop"
+                : "Keep recording through silence",
+            isSelected: isEngaged
+        )
+    }
+
+    public static func reservesTeleprompterEnvelope(
+        hasText: Bool,
+        isDismissed: Bool,
+        isReadback: Bool
+    ) -> Bool {
+        hasText && (!isDismissed || isReadback)
     }
 
     public static func isHotkeyTransitionStatus(_ statusText: String) -> Bool {

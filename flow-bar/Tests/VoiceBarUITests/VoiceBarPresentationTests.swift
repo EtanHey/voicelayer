@@ -2,6 +2,23 @@
 import XCTest
 
 final class VoiceBarPresentationTests: XCTestCase {
+    func testHiddenReadbackKeepsTeleprompterEnvelopeForRestoreControls() {
+        XCTAssertTrue(
+            VoiceBarPresentation.reservesTeleprompterEnvelope(
+                hasText: true,
+                isDismissed: true,
+                isReadback: true
+            )
+        )
+        XCTAssertFalse(
+            VoiceBarPresentation.reservesTeleprompterEnvelope(
+                hasText: true,
+                isDismissed: true,
+                isReadback: false
+            )
+        )
+    }
+
     func testRecordingContentShowsWaveformWithoutListeningLabelByDefault() {
         XCTAssertEqual(
             VoiceBarPresentation.recordingContent(hotkeyPhase: .idle),
@@ -20,6 +37,49 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "",
                 showsWaveform: true,
                 usesPulsingLabelOpacity: false
+            )
+        )
+    }
+
+    func testRecordingHoldControlIsVADOnlyAndAccessible() {
+        XCTAssertNil(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .idle,
+                recordingMode: "vad",
+                isEngaged: false
+            )
+        )
+        XCTAssertNil(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "ptt",
+                isEngaged: false
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "vad",
+                isEngaged: false
+            ),
+            VoiceBarRecordingHoldControl(
+                iconName: "hand.raised",
+                accessibilityLabel: "Hold recording",
+                accessibilityHint: "Keep recording through silence",
+                isSelected: false
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.recordingHoldControl(
+                mode: .recording,
+                recordingMode: "vad",
+                isEngaged: true
+            ),
+            VoiceBarRecordingHoldControl(
+                iconName: "hand.raised.fill",
+                accessibilityLabel: "Release recording hold",
+                accessibilityHint: "Resume automatic silence stop",
+                isSelected: true
             )
         )
     }

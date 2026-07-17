@@ -43,6 +43,11 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
                     activeClipMarker: state.activeClipMarker
                 ),
                 queueItemCount: state.queueItems.count,
+                showsTeleprompter: VoiceBarPresentation.reservesTeleprompterEnvelope(
+                    hasText: state.teleprompterText != nil,
+                    isDismissed: state.isTeleprompterDismissed,
+                    isReadback: state.isTeleprompterReadback
+                ),
                 padding: Theme.panelPadding
             )
             let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
@@ -109,6 +114,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
             isCollapsed: state.isCollapsed,
             previewText: nil,
             statusText: state.statusText,
+            showsTeleprompter: true,
             padding: Theme.panelPadding
         )
         let view = BarView(state: state, commandRouter: SnapshotCommandRouter())

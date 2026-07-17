@@ -194,6 +194,25 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(success.panelSize.width, Theme.panelWidth)
     }
 
+    func testVADHoldControlAddsOneButtonWithoutGrowingPTT() {
+        let vad = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            showsRecordingHold: true,
+            padding: Theme.panelPadding
+        )
+        let ptt = VoiceBarPanelLayout.make(
+            mode: .recording,
+            isCollapsed: false,
+            previewText: nil,
+            showsRecordingHold: false,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(vad.panelSize.width - ptt.panelSize.width, 28)
+    }
+
     func testSpeakingQueuePanelFitsQueueVisualizationChrome() {
         let layout = VoiceBarPanelLayout.make(
             mode: .speaking,
@@ -201,6 +220,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             previewText: nil,
             statusText: "Speaking...",
             queueItemCount: 2,
+            showsTeleprompter: true,
             padding: Theme.panelPadding
         )
 
@@ -215,12 +235,48 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             previewText: nil,
             statusText: "A long spoken sentence should wrap inside the teleprompter instead of clipping.",
             queueItemCount: 1,
+            showsTeleprompter: true,
             padding: Theme.panelPadding
         )
 
         XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(Theme.speakingTeleprompterAvailableWidth, 254, accuracy: 0.001)
         XCTAssertLessThanOrEqual(Theme.teleprompterViewportWidth, Theme.speakingTeleprompterAvailableWidth)
+    }
+
+    func testHiddenSpeakingTeleprompterUsesCompactHeight() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .speaking,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "Speaking...",
+            showsTeleprompter: false,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(
+            layout.panelSize.height,
+            Theme.pillCompactHeight + (Theme.panelPadding * 2)
+        )
+    }
+
+    func testIdleReadbackTeleprompterExpandsPanelForFiveAccessoryButtons() {
+        let layout = VoiceBarPanelLayout.make(
+            mode: .idle,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: "Ready",
+            idleAccessoryButtonCount: 5,
+            showsTeleprompter: true,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertEqual(layout.panelSize.width, 450)
+        XCTAssertGreaterThan(layout.panelSize.width, Theme.panelWidth)
+        XCTAssertEqual(
+            layout.panelSize.height,
+            Theme.teleprompterViewportHeight + (Theme.panelPadding * 2)
+        )
     }
 
     func testLongTranscriptPreviewIncludesIconAndPaddingChrome() {

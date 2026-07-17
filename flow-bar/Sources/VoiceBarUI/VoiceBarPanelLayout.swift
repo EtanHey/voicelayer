@@ -11,6 +11,8 @@ public struct VoiceBarPanelLayout: Equatable {
         statusText: String = "",
         idleAccessoryButtonCount: Int = 0,
         queueItemCount: Int = 0,
+        showsTeleprompter: Bool = false,
+        showsRecordingHold: Bool = false,
         isPasteFlowActive: Bool = false,
         padding: CGFloat
     ) -> VoiceBarPanelLayout {
@@ -20,7 +22,9 @@ public struct VoiceBarPanelLayout: Equatable {
             previewText: previewText,
             statusText: statusText,
             idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: queueItemCount
+            queueItemCount: queueItemCount,
+            showsTeleprompter: showsTeleprompter,
+            showsRecordingHold: showsRecordingHold
         )
         let safePadding = max(0, padding)
         let resolvedContentSize = if isPasteFlowActive, !isCollapsed {
@@ -54,7 +58,9 @@ public struct VoiceBarPanelLayout: Equatable {
         previewText: String?,
         statusText: String,
         idleAccessoryButtonCount: Int,
-        queueItemCount: Int
+        queueItemCount: Int,
+        showsTeleprompter: Bool,
+        showsRecordingHold: Bool
     ) -> CGSize {
         if isCollapsed {
             return CGSize(width: 22, height: 22)
@@ -68,14 +74,25 @@ public struct VoiceBarPanelLayout: Equatable {
             )
         }
 
-        let height = mode == .speaking ? Theme.teleprompterViewportHeight : Theme.pillCompactHeight
-        return CGSize(
-            width: Theme.pillContentWidth(
+        let height = showsTeleprompter
+            ? Theme.teleprompterViewportHeight
+            : Theme.pillCompactHeight
+        let width = if showsTeleprompter {
+            Theme.teleprompterPillWidth(
+                for: mode,
+                accessoryButtonCount: idleAccessoryButtonCount
+            )
+        } else {
+            Theme.pillContentWidth(
                 for: mode,
                 statusText: statusText,
                 idleAccessoryButtonCount: idleAccessoryButtonCount,
-                queueItemCount: queueItemCount
-            ),
+                queueItemCount: queueItemCount,
+                showsRecordingHold: showsRecordingHold
+            )
+        }
+        return CGSize(
+            width: width,
             height: height
         )
     }

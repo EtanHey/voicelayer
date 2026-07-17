@@ -51,6 +51,28 @@ final class VoiceBarDevStateTests: XCTestCase {
         XCTAssertTrue(state.isCollapsed)
     }
 
+    func testRetainedTeleprompterStaysExpandedPastIdleCollapseDelay() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.01
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Read this after playback",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        state.setHovering(false)
+        let didCollapse = try await waitUntil { state.isCollapsed }
+
+        XCTAssertFalse(didCollapse)
+        XCTAssertFalse(state.isCollapsed)
+        XCTAssertTrue(state.isTeleprompterReadback)
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws -> Bool {
         for _ in 0 ..< 25 {
             if condition() {

@@ -35,6 +35,7 @@ const MCP_SOCKET_OVERRIDE_ENVS = [
 ] as const;
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
+const RECORDING_HOLD_OVERRIDE_ENV = "QA_VOICE_RECORDING_HOLD_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
 /**
@@ -106,6 +107,17 @@ export function recordingStateFilePath(
   return readOverride(
     RECORDING_STATE_OVERRIDE_ENV,
     join(STATE_DIR, "recording-state.json"),
+    env,
+  );
+}
+
+/** Cross-process VAD hold flag — suppresses only silence-driven auto-close. */
+export function recordingHoldFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return readOverride(
+    RECORDING_HOLD_OVERRIDE_ENV,
+    join(STATE_DIR, "recording-hold"),
     env,
   );
 }
