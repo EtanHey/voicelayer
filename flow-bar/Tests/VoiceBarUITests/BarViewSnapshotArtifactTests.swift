@@ -86,11 +86,21 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         )
 
         let state = VoiceState()
-        state.mode = .speaking
         state.isConnected = true
         state.hotkeyEnabled = true
         state.isCollapsed = false
-        state.statusText = "Etan runs supabase cmuxlayer golems and BrainLayer on version 2.1"
+        state.handleEvent(
+            [
+                "type": "state",
+                "state": "speaking",
+                "text": "Etan runs supabase cmuxlayer golems and BrainLayer on version 2.1",
+            ],
+            playbackAmplitude: PlaybackAmplitudeEnvelope(
+                source: .decodedRMS,
+                sampleIntervalMilliseconds: 50,
+                samples: Array(repeating: 0.55, count: 200)
+            )
+        )
         state.wordBoundaries = [
             (0, 220, "Etan"),
             (240, 180, "runs"),
@@ -151,8 +161,24 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         case .transcribing:
             state.transcript = "Draft transcript"
         case .speaking:
-            state.statusText = "Speaking this sample line"
-            state.wordBoundaries = [(0, 400, "Speaking"), (450, 300, "this"), (800, 400, "sample"), (1250, 300, "line")]
+            state.handleEvent(
+                [
+                    "type": "state",
+                    "state": "speaking",
+                    "text": "Speaking this sample line",
+                ],
+                playbackAmplitude: PlaybackAmplitudeEnvelope(
+                    source: .decodedRMS,
+                    sampleIntervalMilliseconds: 50,
+                    samples: Array(repeating: 0.55, count: 200)
+                )
+            )
+            state.wordBoundaries = [
+                (0, 400, "Speaking"),
+                (450, 300, "this"),
+                (800, 400, "sample"),
+                (1250, 300, "line"),
+            ]
         case .error:
             state.errorMessage = "Try again"
         case .disconnected:

@@ -3,7 +3,7 @@
 // Solid dark pill with dynamic width — shrink-wraps content per state.
 // No vibrancy blur (eliminates dark edge artifacts on light backgrounds).
 //
-// Phase 5 polish: recording pulse, speaking waveform,
+// Phase 5 polish: recording pulse, truthful waveform,
 // state border glow, right-click context menu.
 
 import AppKit
@@ -294,8 +294,8 @@ public struct BarView: View {
                 HStack(spacing: 8) {
                     if recordingContent.showsWaveform {
                         WaveformView(
-                            mode: state.speechDetected ? .speechDetected : .listening,
-                            audioLevel: state.audioLevel
+                            audioLevel: state.audioLevel,
+                            color: Theme.recordingColor
                         )
                     }
                     if !recordingContent.statusText.isEmpty {
@@ -318,8 +318,9 @@ public struct BarView: View {
                 if state.queueItems.count > 1 {
                     queueVisualization
                 } else {
-                    // Shimmer waveform + teleprompter during speaking
-                    WaveformView(mode: .idle, audioLevel: state.audioLevel)
+                    WaveformView(color: Theme.speakingColor) { referenceTime in
+                        state.playbackAudioLevel(at: referenceTime)
+                    }
                     if TeleprompterVisibilityPolicy.keepsTimelineMounted(
                         hasText: !state.statusText.isEmpty
                     ) {
@@ -355,7 +356,6 @@ public struct BarView: View {
                 }
             case .transcribing:
                 HStack(spacing: 8) {
-                    WaveformView(mode: .processing)
                     if !statusText.isEmpty {
                         Text(statusText)
                             .font(.system(size: 12, weight: .medium))
