@@ -52,7 +52,7 @@ import { synthesizeWithRetry } from "./tts-health";
 import { sanitizeTtsText } from "./sanitize";
 import { getEffectiveRecordingState } from "./recording-state";
 import {
-  extractPlaybackAmplitudeEnvelope,
+  extractPlaybackAmplitudeEnvelopeAsync,
   type PlaybackAmplitudeEnvelope,
 } from "./playback-amplitude";
 
@@ -721,6 +721,7 @@ function completeJob(job: PlaybackJob) {
 
 class PlaybackQueueManager {
   private pending: PlaybackJob[] = [];
+  private preparing: PlaybackJob | null = null;
   private current: {
     job: PlaybackJob;
     proc: ReturnType<typeof Bun.spawn>;
@@ -773,11 +774,14 @@ class PlaybackQueueManager {
   stop(): boolean {
     const hadActivity = this.depth() > 0;
     const active = this.current;
+    const preparing = this.preparing;
     this.current = null;
+    this.preparing = null;
 
     for (const job of this.pending.splice(0)) {
       completeJob(job);
     }
+    if (preparing) completeJob(preparing);
 
     if (active) {
       try {
@@ -811,7 +815,7 @@ class PlaybackQueueManager {
   }
 
   private processNext() {
-    if (this.current) return;
+    if (this.current || this.preparing) return;
 
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
@@ -827,74 +831,17 @@ class PlaybackQueueManager {
         continue;
       }
 
-      try {
-        assertSpeakerClear();
-      } catch (err) {
-        this.refuseQueuedPlayback(next, err);
-        continue;
-      }
-      if (next.metadata?.preStartIdle) {
-        broadcast({ type: "state", state: "idle" });
-      }
-      if (next.metadata?.wordBoundaries?.length) {
-        broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
-      }
-      if (next.metadata?.clipMarker) {
-        broadcast({
-          type: "clip_marker",
-          marker_id: next.metadata.clipMarker.id,
-          label: next.metadata.clipMarker.label,
-          source: next.metadata.clipMarker.source ?? "tts",
-          status: "marked",
-        });
-      }
-      try {
-        assertSpeakerClear();
-      } catch (err) {
-        this.refuseQueuedPlayback(next, err);
-        continue;
-      }
-      next.playbackAmplitude = next.metadata
-        ? extractPlaybackAmplitudeEnvelope(next.audioFile)
-        : undefined;
-      let proc: ReturnType<typeof Bun.spawn>;
-      try {
-        proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-      } catch {
-        if (this.depth() === 0) {
-          broadcastPlaybackIdleIfSpeakerClear();
-        }
-        this.emitQueueSnapshot();
-        completeJob(next);
-        this.resolveIfIdle();
-        this.processNext();
+      this.preparing = next;
+      this.emitQueueSnapshot();
+      if (!next.metadata) {
+        this.startPreparedPlayback(next, undefined);
         return;
       }
-
-      this.current = { job: next, proc, startedAt: Date.now() };
-      if (next.metadata) {
-        broadcast({
-          type: "state",
-          state: "speaking",
-          text: next.metadata.text,
-          voice: next.metadata.voice,
-          playback_amplitude: next.playbackAmplitude,
-        });
-      }
-      next.metadata?.onStarted?.(this.current.startedAt);
-      this.startProgressTimer();
-      this.emitQueueSnapshot();
-
-      proc.exited
-        .then(() => {
-          this.finish(next, proc.pid);
-        })
-        .catch(() => {
-          this.finish(next, proc.pid);
-        });
+      void extractPlaybackAmplitudeEnvelopeAsync(next.audioFile).then(
+        (playbackAmplitude) => {
+          this.startPreparedPlayback(next, playbackAmplitude);
+        },
+      );
       return;
     }
 
@@ -902,6 +849,94 @@ class PlaybackQueueManager {
       this.emitQueueSnapshot();
       this.resolveIfIdle();
     }
+  }
+
+  private startPreparedPlayback(
+    next: PlaybackJob,
+    playbackAmplitude: PlaybackAmplitudeEnvelope | undefined,
+  ) {
+    if (this.preparing !== next) return;
+    this.preparing = null;
+    if (next.completed) {
+      this.processNext();
+      return;
+    }
+    if (next.expiresAt <= Date.now()) {
+      completeJob(next);
+      this.emitQueueSnapshot();
+      this.resolveIfIdle();
+      this.processNext();
+      return;
+    }
+
+    try {
+      assertSpeakerClear();
+    } catch (err) {
+      this.refuseQueuedPlayback(next, err);
+      this.processNext();
+      return;
+    }
+    if (next.metadata?.preStartIdle) {
+      broadcast({ type: "state", state: "idle" });
+    }
+    if (next.metadata?.wordBoundaries?.length) {
+      broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
+    }
+    if (next.metadata?.clipMarker) {
+      broadcast({
+        type: "clip_marker",
+        marker_id: next.metadata.clipMarker.id,
+        label: next.metadata.clipMarker.label,
+        source: next.metadata.clipMarker.source ?? "tts",
+        status: "marked",
+      });
+    }
+    try {
+      assertSpeakerClear();
+    } catch (err) {
+      this.refuseQueuedPlayback(next, err);
+      this.processNext();
+      return;
+    }
+    next.playbackAmplitude = playbackAmplitude;
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+    } catch {
+      if (this.depth() === 0) {
+        broadcastPlaybackIdleIfSpeakerClear();
+      }
+      this.emitQueueSnapshot();
+      completeJob(next);
+      this.resolveIfIdle();
+      this.processNext();
+      return;
+    }
+
+    this.current = { job: next, proc, startedAt: Date.now() };
+    if (next.metadata) {
+      broadcast({
+        type: "state",
+        state: "speaking",
+        text: next.metadata.text,
+        voice: next.metadata.voice,
+        playback_amplitude: next.playbackAmplitude,
+      });
+    }
+    next.metadata?.onStarted?.(this.current.startedAt);
+    this.startProgressTimer();
+    this.emitQueueSnapshot();
+
+    proc.exited
+      .then(() => {
+        this.finish(next, proc.pid);
+      })
+      .catch(() => {
+        this.finish(next, proc.pid);
+      });
   }
 
   private finish(job: PlaybackJob, pid: number) {
@@ -919,15 +954,17 @@ class PlaybackQueueManager {
   }
 
   private bargeIn(job: PlaybackJob) {
-    // THREAD-SAFETY: This method assumes single-threaded execution.
-    // All queue mutations happen synchronously on the main event loop.
-    // If future async operations are added, consider adding a lock pattern.
+    // ASYNC SAFETY: Clearing `preparing` invalidates any late decoder result;
+    // startPreparedPlayback accepts only the job that still owns that slot.
     const active = this.current;
+    const preparing = this.preparing;
     this.current = null;
+    this.preparing = null;
 
     for (const queued of this.pending.splice(0)) {
       completeJob(queued);
     }
+    if (preparing) completeJob(preparing);
 
     if (active) {
       try {
@@ -984,6 +1021,16 @@ class PlaybackQueueManager {
       });
     }
 
+    if (this.preparing) {
+      items.push({
+        text: this.preparing.metadata?.text ?? "",
+        voice: this.preparing.metadata?.voice ?? "",
+        priority: this.preparing.priority,
+        is_current: false,
+        progress: 0,
+      });
+    }
+
     for (const job of this.pending) {
       items.push({
         text: job.metadata?.text ?? "",
@@ -1017,7 +1064,11 @@ class PlaybackQueueManager {
   }
 
   private depth() {
-    return this.pending.length + (this.current ? 1 : 0);
+    return (
+      this.pending.length +
+      (this.preparing ? 1 : 0) +
+      (this.current ? 1 : 0)
+    );
   }
 
   getDepthForHealth() {

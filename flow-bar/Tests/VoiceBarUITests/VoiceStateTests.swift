@@ -2,6 +2,25 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testDefaultPlaybackClockUsesMonotonicSystemUptime() {
+        let state = VoiceState()
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.1, 0.8]
+        )
+
+        state.handleEvent(
+            ["type": "state", "state": "speaking", "text": "hello"],
+            playbackAmplitude: envelope
+        )
+
+        XCTAssertEqual(
+            state.playbackAudioLevel(at: ProcessInfo.processInfo.systemUptime + 0.075),
+            0.8
+        )
+    }
+
     func testSpeakingIndexesTypedPlaybackAmplitudeFromReceiptClock() {
         var now = 10.0
         let state = VoiceState(playbackAmplitudeClock: { now })

@@ -469,7 +469,7 @@ public final class VoiceState {
         transcriptionVocabularyLoader: @escaping () -> [String] = { [] },
         transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] },
         playbackAmplitudeClock: @escaping () -> TimeInterval = {
-            Date.timeIntervalSinceReferenceDate
+            ProcessInfo.processInfo.systemUptime
         },
         keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded()
     ) {

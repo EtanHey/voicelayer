@@ -43,7 +43,15 @@ describe("tts module", () => {
           );
         }
       }
-      return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
+      return {
+        exited: Promise.resolve(0),
+        pid: 99999,
+        stdout:
+          cmd[0] === "ffmpeg"
+            ? new Blob([new Uint8Array([0, 0])]).stream()
+            : undefined,
+        kill: () => {},
+      };
     };
     // @ts-ignore — mock Bun.spawnSync so getAudioPlayer() is deterministic on all platforms
     Bun.spawnSync = (cmd: string[]) => {
@@ -67,7 +75,10 @@ describe("tts module", () => {
     } catch {}
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { stopPlayback, awaitCurrentPlayback } = await import("../tts");
+    stopPlayback();
+    await awaitCurrentPlayback();
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
     try {
@@ -82,10 +93,11 @@ describe("tts module", () => {
     const { speak } = await import("../tts");
 
     const result = await speak("Hello test", { captureAudioArtifact: true });
+    await Bun.sleep(20);
 
     // On macOS: afplay, on Linux with no players: mpg123 fallback
     const expectedPlayer = platform() === "darwin" ? "afplay" : "mpg123";
-    expect(spawnCalls.length).toBe(2);
+    expect(spawnCalls.length).toBe(3);
     // python3 may be resolved to full path (e.g., /Library/Frameworks/.../python3)
     expect(spawnCalls[0].cmd[0]).toContain("python3");
     // Uses edge-tts-words.py script for word boundary metadata
@@ -95,7 +107,8 @@ describe("tts module", () => {
     // Text is passed in =-bound form (--text=<value>) so a dash-leading
     // utterance can't be misparsed by argparse (exit-2 regression guard).
     expect(spawnCalls[0].cmd).toContain("--text=Hello test");
-    expect(spawnCalls[1].cmd[0]).toBe(expectedPlayer);
+    expect(spawnCalls[1].cmd[0]).toBe("ffmpeg");
+    expect(spawnCalls[2].cmd[0]).toBe(expectedPlayer);
     expect(result.audioArtifact?.format).toBe("mp3");
     expect(Buffer.from(result.audioArtifact!.bytes)).toEqual(
       Buffer.from("fake mp3"),
@@ -183,9 +196,11 @@ describe("tts module", () => {
     const { speak } = await import("../tts");
 
     await speak("ffprobe is optional");
+    await Bun.sleep(20);
 
-    expect(spawnCalls.length).toBe(2);
+    expect(spawnCalls.length).toBe(3);
     expect(spawnCalls[0].cmd[0]).toContain("python3");
+    expect(spawnCalls[1].cmd[0]).toBe("ffmpeg");
   });
 
   it("speak() skips when TTS is disabled via flag file", async () => {

@@ -26,6 +26,10 @@ export type PlaybackAmplitudeDecoder = (
   command: string[],
 ) => PlaybackAmplitudeDecoderResult;
 
+export type AsyncPlaybackAmplitudeDecoder = (
+  command: string[],
+) => Promise<PlaybackAmplitudeDecoderResult>;
+
 function unavailableEnvelope(): PlaybackAmplitudeEnvelope {
   return {
     source: "unavailable",
@@ -101,26 +105,66 @@ function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
   };
 }
 
+async function runFFmpegAsync(
+  command: string[],
+): Promise<PlaybackAmplitudeDecoderResult> {
+  const process = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const [exitCode, stdout] = await Promise.all([
+    process.exited,
+    new Response(process.stdout).arrayBuffer(),
+  ]);
+  return {
+    exitCode,
+    stdout: new Uint8Array(stdout),
+  };
+}
+
+function playbackAmplitudeCommand(audioFile: string): string[] {
+  return [
+    "ffmpeg",
+    "-v",
+    "error",
+    "-i",
+    audioFile,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    String(PLAYBACK_AMPLITUDE_SAMPLE_RATE),
+    "-f",
+    "s16le",
+    "pipe:1",
+  ];
+}
+
 export function extractPlaybackAmplitudeEnvelope(
   audioFile: string,
   runDecoder: PlaybackAmplitudeDecoder = runFFmpeg,
 ): PlaybackAmplitudeEnvelope {
   try {
-    const result = runDecoder([
-      "ffmpeg",
-      "-v",
-      "error",
-      "-i",
-      audioFile,
-      "-vn",
-      "-ac",
-      "1",
-      "-ar",
-      String(PLAYBACK_AMPLITUDE_SAMPLE_RATE),
-      "-f",
-      "s16le",
-      "pipe:1",
-    ]);
+    const result = runDecoder(playbackAmplitudeCommand(audioFile));
+    if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
+      return unavailableEnvelope();
+    }
+    return buildPlaybackAmplitudeEnvelope(
+      result.stdout,
+      PLAYBACK_AMPLITUDE_SAMPLE_RATE,
+    );
+  } catch {
+    return unavailableEnvelope();
+  }
+}
+
+export async function extractPlaybackAmplitudeEnvelopeAsync(
+  audioFile: string,
+  runDecoder: AsyncPlaybackAmplitudeDecoder = runFFmpegAsync,
+): Promise<PlaybackAmplitudeEnvelope> {
+  try {
+    const result = await runDecoder(playbackAmplitudeCommand(audioFile));
     if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
       return unavailableEnvelope();
     }
