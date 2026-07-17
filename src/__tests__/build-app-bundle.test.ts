@@ -130,21 +130,23 @@ describe("build-app.sh Developer ID release contract", () => {
       "sign_nested_native_dependencies() {",
     );
     const helperEnd = buildScript.indexOf("\n}\n", helperStart);
+    expect(helperStart).toBeGreaterThanOrEqual(0);
+    expect(helperEnd).toBeGreaterThan(helperStart);
     const helperBody = buildScript.slice(helperStart, helperEnd);
-    expect(helperStart).toBeGreaterThan(0);
     expect(helperBody).toContain("node_modules");
     expect(helperBody).toContain("*.node");
     expect(helperBody).toContain("*.dylib");
     expect(helperBody).toContain("Mach-O");
     expect(helperBody).toContain("codesign --force --options runtime --timestamp");
 
-    const helperCall = buildScript.lastIndexOf(
-      "sign_nested_native_dependencies",
+    const helperCall = buildScript.indexOf(
+      "\nsign_nested_native_dependencies\n",
+      helperEnd,
     );
     const outerSign = buildScript.indexOf(
       'codesign --force --options runtime --entitlements "$VOICEBAR_ENTITLEMENTS"',
     );
-    expect(helperCall).toBeGreaterThan(helperStart);
+    expect(helperCall).toBeGreaterThan(helperEnd);
     expect(outerSign).toBeGreaterThan(helperCall);
   });
 
