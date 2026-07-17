@@ -30,7 +30,7 @@ The clipboard fallback captures the user's pasteboard, writes the transcript, po
 
 ## Design
 
-Classify the exact Shift+F5 chord before the generic key-up path. When no gesture is active, key-down remains the sole `.pasteLastTranscript` dispatch and key-up is ignored. When a gesture is active, Shift+F5 key-down is consumed without repasting, while key-up remains `.keyUp` so an active recording can unwind safely.
+Classify the exact Shift+F5 chord before the generic key-up path. When no gesture is active, key-down remains the sole `.pasteLastTranscript` dispatch and key-up is consumed without dispatch so the target does not receive an unmatched release. When a gesture is active, Shift+F5 key-down is consumed without repasting, while key-up remains `.keyUp` so an active recording can unwind safely.
 
 After `simulatedPasteHandler()` returns, schedule the existing change-count-guarded clipboard restoration using the production `pasteboardRestoreDelay` value of 0.5 seconds. Preserve the guard that refuses to overwrite clipboard content changed before restoration. Do not change the paste transport or add target acknowledgement.
 

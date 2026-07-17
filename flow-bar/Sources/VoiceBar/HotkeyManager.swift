@@ -434,8 +434,8 @@ func hotkeyAction(
             NSLog("[HotkeyManager] Letting Shift+F5 keyUp unwind the active gesture for keycode %lld", keycode)
             return .keyUp
         }
-        NSLog("[HotkeyManager] Ignoring Shift+F5 release after re-paste for keycode %lld", keycode)
-        return .ignore
+        NSLog("[HotkeyManager] Consuming Shift+F5 release after re-paste for keycode %lld", keycode)
+        return .consume
     }
 
     if type == .keyUp {

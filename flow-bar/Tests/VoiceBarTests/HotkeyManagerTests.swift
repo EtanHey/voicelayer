@@ -212,7 +212,7 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF5ReleaseAfterRepasteDoesNotTriggerRecordingReleaseInNonModifierMode() {
+    func testShiftF5ReleaseAfterRepasteIsConsumedWithoutRecordingReleaseInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
@@ -222,11 +222,11 @@ final class HotkeyManagerTests: XCTestCase {
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: false
             ),
-            .ignore
+            .consume
         )
     }
 
-    func testShiftF5ReleaseAfterRepasteDoesNotTriggerRecordingReleaseInModifierMode() {
+    func testShiftF5ReleaseAfterRepasteIsConsumedWithoutRecordingReleaseInModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyUp,
@@ -236,7 +236,7 @@ final class HotkeyManagerTests: XCTestCase {
                 targetKeycodes: HotkeyManager.defaultTargetKeycodes,
                 useModifierMode: true
             ),
-            .ignore
+            .consume
         )
     }
 

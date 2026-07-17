@@ -33,7 +33,7 @@ Move exact Shift-only classification ahead of the generic key-up return. Use the
 ```swift
 if exactShiftOnly {
     if type == .keyUp {
-        return gestureIsActive ? .keyUp : .ignore
+        return gestureIsActive ? .keyUp : .consume
     }
     guard type == .keyDown else { return .ignore }
     guard autorepeat == 0 else { return gestureIsActive ? .consume : .ignore }

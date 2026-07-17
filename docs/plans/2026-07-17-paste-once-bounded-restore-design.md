@@ -8,7 +8,7 @@ Approved by the VoiceLayer lead on 2026-07-17 as Option 1 for PR #344. This deci
 
 - Retain the existing production `pasteboardRestoreDelay` class and its 0.5-second value.
 - Retain the pasteboard snapshot/change-count guard so restoration never overwrites a clipboard changed before the delayed restore executes.
-- Retain PR #344's Shift+F5 ordering: idle key-down emits one re-paste, idle key-up is ignored, active-gesture key-down is consumed, and active-gesture key-up unwinds the gesture.
+- Retain PR #344's Shift+F5 ordering: idle key-down emits one re-paste, idle key-up is consumed without dispatch, active-gesture key-down is consumed, and active-gesture key-up unwinds the gesture.
 - Preserve the existing AX-first, clipboard-plus-Cmd+V-second transport and paste each transcript once.
 
 ## Rejected alternatives
