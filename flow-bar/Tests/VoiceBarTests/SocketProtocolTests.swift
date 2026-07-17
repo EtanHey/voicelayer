@@ -34,6 +34,17 @@ final class SocketProtocolTests: XCTestCase {
         XCTAssertTrue(envelope.samples.isEmpty)
     }
 
+    func testParsesPlaybackAmplitudeAfterRealJSONDeserialization() throws {
+        let json = #"{"type":"state","state":"speaking","playback_amplitude":{"source":"decoded-rms","sample_interval_ms":50,"samples":[0,0.4,1]}}"#
+        let event = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+        )
+
+        let envelope = try XCTUnwrap(SocketPlaybackAmplitudeParser.parse(event: event))
+
+        XCTAssertEqual(envelope.samples, [0, 0.4, 1])
+    }
+
     func testRejectsMalformedPlaybackAmplitude() {
         let malformedPayloads: [[String: Any]] = [
             ["source": "decoded-rms", "sample_interval_ms": 0, "samples": [0.2]],

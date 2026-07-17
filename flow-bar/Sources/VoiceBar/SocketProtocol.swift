@@ -1,3 +1,4 @@
+import CoreFoundation
 import Foundation
 import VoiceBarUI
 
@@ -30,7 +31,7 @@ enum SocketPlaybackAmplitudeParser {
     }
 
     private static func integer(_ value: Any?) -> Int? {
-        guard let value, !(value is Bool) else { return nil }
+        guard let value, !isBoolean(value) else { return nil }
         if let integer = value as? Int { return integer }
         guard let number = value as? NSNumber else { return nil }
         let double = number.doubleValue
@@ -39,7 +40,7 @@ enum SocketPlaybackAmplitudeParser {
     }
 
     private static func number(_ value: Any) -> Double? {
-        guard !(value is Bool) else { return nil }
+        guard !isBoolean(value) else { return nil }
         let parsed: Double? = if let double = value as? Double {
             double
         } else if let integer = value as? Int {
@@ -51,6 +52,11 @@ enum SocketPlaybackAmplitudeParser {
         }
         guard let parsed, parsed.isFinite else { return nil }
         return parsed
+    }
+
+    private static func isBoolean(_ value: Any) -> Bool {
+        guard let number = value as? NSNumber else { return value is Bool }
+        return CFGetTypeID(number) == CFBooleanGetTypeID()
     }
 }
 
