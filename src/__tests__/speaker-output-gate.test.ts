@@ -58,7 +58,15 @@ describe("speaker output recording gate", () => {
       if (metadataPath) {
         writeFileSync(metadataPath, "");
       }
-      return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
+      return {
+        exited: Promise.resolve(0),
+        pid: 99999,
+        stdout:
+          cmd[0] === "ffmpeg"
+            ? new Blob([new Uint8Array([0, 0])]).stream()
+            : undefined,
+        kill: () => {},
+      };
     };
 
     // @ts-ignore — make audio player selection deterministic.
@@ -265,10 +273,12 @@ describe("speaker output recording gate", () => {
     writeRecordingState("idle");
 
     await tts.speak("idle path still speaks");
+    await Bun.sleep(20);
 
-    expect(spawnCalls.length).toBe(2);
+    expect(spawnCalls.length).toBe(3);
     expect(spawnCalls[0][0]).toContain("python3");
-    expect(spawnCalls[1]).toContain(
+    expect(spawnCalls[1][0]).toBe("ffmpeg");
+    expect(spawnCalls[2]).toContain(
       process.platform === "darwin" ? "afplay" : "mpg123",
     );
   });

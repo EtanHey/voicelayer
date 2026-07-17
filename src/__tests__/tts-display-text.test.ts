@@ -93,7 +93,15 @@ describe("TTS display text stays separate from pronunciation text", () => {
         }
       }
 
-      return { exited: Promise.resolve(0), pid: 81000, kill: () => {} };
+      return {
+        exited: Promise.resolve(0),
+        pid: 81000,
+        stdout:
+          command[0] === "ffmpeg"
+            ? new Blob([new Uint8Array([0, 0])]).stream()
+            : undefined,
+        kill: () => {},
+      };
     };
 
     // @ts-ignore — avoid invoking platform probes in this unit fixture.
@@ -153,6 +161,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
       const { speak } = await import("../tts");
 
       await speak(displayText);
+      await Bun.sleep(20);
 
       const synthesis = spawnCalls.find((call) =>
         call.cmd[0].includes("python3"),
@@ -170,6 +179,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("cmuxlayer");
+    await Bun.sleep(20);
 
     const synthesis = spawnCalls.find((call) =>
       call.cmd[0].includes("python3"),
@@ -185,6 +195,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("Etan");
+    await Bun.sleep(20);
 
     const subtitle = broadcasts.find((event) => event.type === "subtitle");
     expect(subtitle?.words).toEqual([
@@ -196,6 +207,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("Etan runs supabase cmuxlayer golems and BrainLayer");
+    await Bun.sleep(20);
 
     const synthesis = spawnCalls.find((call) => call.cmd[0].includes("python3"));
     expect(synthesis?.cmd).toContain(
