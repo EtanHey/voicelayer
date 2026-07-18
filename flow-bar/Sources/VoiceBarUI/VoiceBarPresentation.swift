@@ -45,6 +45,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var queueDepth: Int
     public var keepsPasteFlowEnvelope: Bool
     public var hotkeyPhase: HotkeyPhase
+    public var statusText: String
     public var isHovered: Bool
     public var isKeyboardFocused: Bool
 
@@ -59,6 +60,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         queueDepth: Int = 0,
         keepsPasteFlowEnvelope: Bool = false,
         hotkeyPhase: HotkeyPhase = .idle,
+        statusText: String = "",
         isHovered: Bool = false,
         isKeyboardFocused: Bool = false
     ) {
@@ -72,6 +74,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.queueDepth = queueDepth
         self.keepsPasteFlowEnvelope = keepsPasteFlowEnvelope
         self.hotkeyPhase = hotkeyPhase
+        self.statusText = statusText
         self.isHovered = isHovered
         self.isKeyboardFocused = isKeyboardFocused
     }
@@ -113,9 +116,27 @@ public enum VoiceBarPresentation {
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
+            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(
+                mode: input.mode,
+                statusText: input.statusText
+            ),
             isHovered: input.isHovered,
             isKeyboardFocused: input.isKeyboardFocused
         )
+    }
+
+    private static func compactStatusTrailingWingWidth(
+        mode: VoiceMode,
+        statusText: String
+    ) -> CGFloat? {
+        guard mode == .transcribing else { return nil }
+        let contentWidth = Theme.pillWaveformWidth
+            + Theme.intrinsicPillStatusWidth(for: statusText)
+            + 18
+            + 8
+        return VoiceBarNotchContract.material.blackToGlassFadeWidth
+            + 2
+            + contentWidth
     }
 
     public static func hotkeyPermissionHint(

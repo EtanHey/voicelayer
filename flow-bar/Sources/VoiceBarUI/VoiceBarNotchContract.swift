@@ -139,6 +139,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         hasTeleprompter: Bool,
         isRecording: Bool,
         hasCompactStatus: Bool,
+        compactStatusTrailingWingWidth: CGFloat? = nil,
         isHovered: Bool,
         isKeyboardFocused: Bool
     ) -> VoiceBarNotchPresentation {
@@ -154,9 +155,28 @@ public struct VoiceBarNotchPresentation: Equatable {
             .idle
         }
 
+        let baseGeometry = VoiceBarNotchContract.geometry(for: visualState)
+        let geometry = if visualState == .compactStatus,
+                          let compactStatusTrailingWingWidth {
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: baseGeometry.leadingWingWidth,
+                trailingWingWidth: max(
+                    baseGeometry.trailingWingWidth,
+                    compactStatusTrailingWingWidth
+                ),
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else {
+            baseGeometry
+        }
+
         return VoiceBarNotchPresentation(
             visualState: visualState,
-            geometry: VoiceBarNotchContract.geometry(for: visualState),
+            geometry: geometry,
             contentRoles: contentRoles(for: visualState),
             accessibilityLabel: accessibilityLabel(for: visualState)
         )

@@ -57,6 +57,32 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
+    func testTranscribingNotchExpandsTrailingWingForTheUntruncatedStatusLabel() {
+        let baseline = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Transcribing..."
+            )
+        )
+        let warmup = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Loading speech model"
+            )
+        )
+        let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
+            + Theme.pillWaveformWidth
+            + 18
+            + 8
+            + VoiceBarNotchContract.material.blackToGlassFadeWidth
+            + 2
+
+        XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 409)
+        XCTAssertGreaterThan(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
+        XCTAssertGreaterThanOrEqual(warmup.geometry.trailingWingWidth, requiredWarmupWidth)
+        XCTAssertEqual(warmup.geometry.coreOriginX, baseline.geometry.coreOriginX)
+    }
+
     func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {
         let inputs: [VoiceBarNotchOperationalInput] = [
             VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Pasted"),

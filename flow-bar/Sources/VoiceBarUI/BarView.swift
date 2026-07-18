@@ -197,6 +197,7 @@ public struct BarView: View {
                 queueDepth: state.queueDepth,
                 keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
                 hotkeyPhase: state.hotkeyPhase,
+                statusText: statusText,
                 isHovered: state.isHovering,
                 isKeyboardFocused: keepsLauncherMounted
             )

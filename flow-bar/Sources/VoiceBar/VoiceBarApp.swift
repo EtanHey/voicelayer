@@ -883,7 +883,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         notchPresentationModel.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
-            hasCompactStatus: resolved.visualState == .compactStatus
+            hasCompactStatus: resolved.visualState == .compactStatus,
+            compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
+                ? resolved.geometry.trailingWingWidth
+                : nil
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
@@ -902,9 +905,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 queueDepth: state?.queueDepth ?? 0,
                 keepsPasteFlowEnvelope: state?.keepsPasteFlowEnvelope ?? false,
                 hotkeyPhase: state?.hotkeyPhase ?? .idle,
+                statusText: notchStatusText(for: state),
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false
             )
+        )
+    }
+
+    private static func notchStatusText(for state: VoiceState?) -> String {
+        guard let state else { return "" }
+        return VoiceBarPresentation.liveStatusText(
+            mode: state.mode,
+            transcript: state.transcript,
+            confirmationText: state.confirmationText,
+            hotkeyPhase: state.hotkeyPhase,
+            hotkeyEnabled: state.hotkeyEnabled,
+            errorMessage: state.errorMessage,
+            transcribingStatusText: state.transcribingStatusText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker
         )
     }
 

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Observation
 
 public enum VoiceBarRetainedReadbackPolicy {
@@ -15,6 +16,7 @@ public final class VoiceBarNotchPresentationModel {
     private var hasTeleprompter = false
     private var isRecording = false
     private var hasCompactStatus = false
+    private var compactStatusTrailingWingWidth: CGFloat?
     @ObservationIgnored private let onLayoutInvalidated: () -> Void
 
     public init(
@@ -41,11 +43,13 @@ public final class VoiceBarNotchPresentationModel {
     public func updateOperationalEnvelope(
         hasTeleprompter: Bool,
         isRecording: Bool,
-        hasCompactStatus: Bool
+        hasCompactStatus: Bool,
+        compactStatusTrailingWingWidth: CGFloat? = nil
     ) {
         self.hasTeleprompter = hasTeleprompter
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus
+        self.compactStatusTrailingWingWidth = compactStatusTrailingWingWidth
         resolvePresentation()
     }
 
@@ -70,6 +74,7 @@ public final class VoiceBarNotchPresentationModel {
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
+            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth,
             isHovered: isHovered,
             isKeyboardFocused: isKeyboardFocused
         )
