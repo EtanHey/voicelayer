@@ -7,6 +7,8 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     public let lowerSurfaceCount: Int
     public let clipsContentToVisibleSurfaces: Bool
     public let coreUsesMaterial: Bool
+    public let usesSequencedSurfaceTransitions: Bool
+    public let keepsHardwareCoreOutsideAnimatedSurfaces: Bool
     public let accessibilityLabel: String
 
     public static func resolve(
@@ -19,6 +21,8 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
             coreUsesMaterial: VoiceBarNotchContract.material.coreUsesBackdropMaterial,
+            usesSequencedSurfaceTransitions: true,
+            keepsHardwareCoreOutsideAnimatedSurfaces: true,
             accessibilityLabel: presentation.accessibilityLabel
         )
     }
@@ -30,6 +34,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let trailingContent: TrailingContent
     private let lowerContent: LowerContent
     private let onHoverChanged: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public init(
         presentation: VoiceBarNotchPresentation,
@@ -49,9 +54,16 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         ZStack(alignment: .topLeading) {
             if presentation.visualState == .teleprompter {
                 teleprompterSurface
+                    .transition(surfaceTransition(delay: VoiceBarNotchContract.motion.panelDelay))
                 teleprompterSlots
-            } else {
+                    // Never composite stale words over the destination state.
+                    // The filled surface carries the closing motion; content
+                    // is replaced atomically before the next surface appears.
+                    .transition(.identity)
+            } else if presentation.visualState != .idle {
                 compactWings
+                    .id(presentation.visualState)
+                    .transition(surfaceTransition(delay: 0))
             }
 
             fixedHardwareCore
@@ -64,6 +76,34 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
         .onHover(perform: onHoverChanged)
+    }
+
+    private func surfaceTransition(delay: TimeInterval) -> AnyTransition {
+        let insertionAnimation: Animation = if accessibilityReduceMotion {
+            .easeOut(duration: 0.18).delay(delay)
+        } else {
+            .interpolatingSpring(
+                mass: VoiceBarNotchContract.motion.mass,
+                stiffness: VoiceBarNotchContract.motion.stiffness,
+                damping: VoiceBarNotchContract.motion.damping
+            )
+            .delay(delay)
+        }
+        let removalAnimation = Animation.easeOut(
+            duration: VoiceBarNotchContract.motion.contentExitDuration
+        )
+        let insertion: AnyTransition = if accessibilityReduceMotion {
+            .opacity.animation(insertionAnimation)
+        } else {
+            .scale(scale: 0.97, anchor: .top)
+                .combined(with: .opacity)
+                .animation(insertionAnimation)
+        }
+
+        return .asymmetric(
+            insertion: insertion,
+            removal: .opacity.animation(removalAnimation)
+        )
     }
 
     private var layout: VoiceBarNotchShapeLayout {
@@ -184,12 +224,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     private func contentInsets(for side: VoiceBarNotchSide) -> EdgeInsets {
         let material = VoiceBarNotchContract.material
-        let coreInset = material.blackToGlassFadeWidth + material.fadeToContentGap
+        let isTeleprompter = presentation.visualState == .teleprompter
+        let coreInset = material.blackToGlassFadeWidth + (isTeleprompter ? material.fadeToContentGap : 0)
+        let outerInset = isTeleprompter ? material.outerContentInset : 2
         return switch side {
         case .leading:
             EdgeInsets(
                 top: 0,
-                leading: material.outerContentInset,
+                leading: outerInset,
                 bottom: 0,
                 trailing: coreInset
             )
@@ -198,7 +240,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 top: 0,
                 leading: coreInset,
                 bottom: 0,
-                trailing: material.outerContentInset
+                trailing: outerInset
             )
         }
     }

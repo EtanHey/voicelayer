@@ -86,11 +86,6 @@ public enum VoiceBarPresentation {
     public static func notchPresentation(
         from input: VoiceBarNotchOperationalInput
     ) -> VoiceBarNotchPresentation {
-        let hasTeleprompter = reservesTeleprompterEnvelope(
-            hasText: input.hasTeleprompterText,
-            isDismissed: input.isTeleprompterDismissed,
-            isReadback: input.isTeleprompterReadback
-        )
         let isRecording = input.mode == .recording
         let hasCompactStatus: Bool
         switch input.mode {
@@ -108,6 +103,11 @@ public enum VoiceBarPresentation {
         case .speaking, .transcribing, .error, .disconnected:
             hasCompactStatus = true
         }
+        let hasTeleprompter = reservesTeleprompterEnvelope(
+            hasText: input.hasTeleprompterText,
+            isDismissed: input.isTeleprompterDismissed,
+            isReadback: input.isTeleprompterReadback
+        ) && !(input.mode == .idle && hasCompactStatus)
 
         return VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter,

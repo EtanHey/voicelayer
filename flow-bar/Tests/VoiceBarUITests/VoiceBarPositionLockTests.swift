@@ -71,6 +71,25 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertFalse(panel.shouldHandlePillDrag(startedInVisiblePill: false))
     }
 
+    func testNativeNotchPanelUsesStatusBarLevelWithoutActivationOrShadow() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 209, height: 49)))
+
+        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertEqual(panel.level, .statusBar)
+        XCTAssertFalse(panel.hasShadow)
+        XCTAssertFalse(panel.canBecomeMain)
+    }
+
+    func testPointHitProviderPassesThroughInvisibleTeleprompterCorners() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 489, height: 245)))
+        panel.activeHitTestProvider = { point in
+            point.x >= 12 && point.x <= 477 && point.y >= 17 && point.y <= 213
+        }
+
+        XCTAssertFalse(panel.startsDrag(at: NSPoint(x: 2, y: 240)))
+        XCTAssertTrue(panel.startsDrag(at: NSPoint(x: 200, y: 100)))
+    }
+
     func testScreenFollowPolicySelectsMouseScreenForAnchoredModes() {
         let screens = [
             CGRect(x: 0, y: 0, width: 1200, height: 800),

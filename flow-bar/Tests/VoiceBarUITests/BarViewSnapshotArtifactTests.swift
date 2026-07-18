@@ -28,30 +28,15 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         for mode in [VoiceMode.idle, .recording, .transcribing, .speaking, .error] {
             let state = snapshotState(for: mode)
             let layout = VoiceBarPanelLayout.make(
-                mode: state.mode,
-                isCollapsed: state.isCollapsed,
-                previewText: nil,
-                statusText: VoiceBarPresentation.liveStatusText(
-                    mode: state.mode,
-                    transcript: state.transcript,
-                    confirmationText: state.confirmationText,
-                    hotkeyPhase: state.hotkeyPhase,
-                    hotkeyEnabled: state.hotkeyEnabled,
-                    errorMessage: state.errorMessage,
-                    transcribingStatusText: state.transcribingStatusText,
-                    commandModeState: state.commandModeState,
-                    activeClipMarker: state.activeClipMarker
-                ),
-                queueItemCount: state.queueItems.count,
-                showsTeleprompter: VoiceBarPresentation.reservesTeleprompterEnvelope(
-                    hasText: state.teleprompterText != nil,
-                    isDismissed: state.isTeleprompterDismissed,
-                    isReadback: state.isTeleprompterReadback
-                ),
-                padding: Theme.panelPadding
+                presentation: notchPresentation(for: state)
             )
             let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
-                .frame(width: layout.panelSize.width, height: layout.panelSize.height)
+                .frame(
+                    width: layout.visibleContentRect.width,
+                    height: layout.visibleContentRect.height
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 17)
 
             let renderer = ImageRenderer(content: view)
             renderer.proposedSize = ProposedViewSize(layout.panelSize)
@@ -120,15 +105,15 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         ]
 
         let layout = VoiceBarPanelLayout.make(
-            mode: state.mode,
-            isCollapsed: state.isCollapsed,
-            previewText: nil,
-            statusText: state.statusText,
-            showsTeleprompter: true,
-            padding: Theme.panelPadding
+            presentation: notchPresentation(for: state)
         )
         let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
-            .frame(width: layout.panelSize.width, height: layout.panelSize.height)
+            .frame(
+                width: layout.visibleContentRect.width,
+                height: layout.visibleContentRect.height
+            )
+            .padding(.horizontal, 12)
+            .padding(.bottom, 17)
 
         let host = NSHostingView(rootView: view)
         host.frame = NSRect(origin: .zero, size: layout.panelSize)
@@ -192,6 +177,25 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         }
 
         return state
+    }
+
+    private func notchPresentation(for state: VoiceState) -> VoiceBarNotchPresentation {
+        VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: state.mode,
+                hasTeleprompterText: state.teleprompterText != nil,
+                isTeleprompterDismissed: state.isTeleprompterDismissed,
+                isTeleprompterReadback: state.isTeleprompterReadback,
+                confirmationText: state.confirmationText,
+                commandModeState: state.commandModeState,
+                activeClipMarker: state.activeClipMarker,
+                queueDepth: state.queueDepth,
+                keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
+                hotkeyPhase: state.hotkeyPhase,
+                isHovered: state.isHovering,
+                isKeyboardFocused: false
+            )
+        )
     }
 
     private func repoRoot() -> URL {

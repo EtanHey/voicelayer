@@ -101,6 +101,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// given geometry change should tween instead of snap.
     private var previousVoiceMode: VoiceMode = .idle
     private var currentVoiceMode: VoiceMode = .idle
+    private lazy var notchPresentationModel = VoiceBarNotchPresentationModel(
+        onLayoutInvalidated: { [weak self] in
+            self?.applyPanelLayout(animated: true)
+        }
+    )
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -386,7 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.handleVoiceModeChange(mode)
         }
         voiceState.onPanelLayoutChange = { [weak self] in
-            self?.applyPanelLayout(animated: true)
+            self?.refreshNotchPresentationAndPanelLayout(animated: true)
         }
         voiceState.onHistoryArchiveChange = {
             NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
@@ -409,11 +414,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configureWakeRecovery()
 
         // Floating pill
-        let initialLayout = Self.panelLayout(for: voiceState)
-        let barView = BarView(state: voiceState, commandRouter: commandRouter)
+        refreshNotchPresentationModel()
+        let initialLayout = currentPanelLayout()
+        let barView = BarView(
+            state: voiceState,
+            commandRouter: commandRouter,
+            presentationModel: notchPresentationModel,
+            includesPanelOutsets: true
+        )
         let hosting = PillHostingView(rootView: barView)
-        hosting.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+        hosting.activeHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
         hosting.frame = NSRect(
             x: 0, y: 0,
@@ -434,8 +445,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
-        pill.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+        pill.activeHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
@@ -785,7 +796,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
-        applyPanelLayout(animated: true)
+        refreshNotchPresentationAndPanelLayout(animated: true)
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -800,67 +811,95 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func applyPanelLayout(animated: Bool) {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
-        guard let visibleFrame = targetScreen?.visibleFrame else { return }
-        let layout = Self.panelLayout(for: voiceState)
+        guard let targetScreen else { return }
+        let visibleFrame = targetScreen.visibleFrame
+        let layout = currentPanelLayout()
+        let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
-        let plan = PillResizePlan.makeAnchored(
-            visibleFrame: visibleFrame,
-            horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset,
-            topPadding: Theme.topPadding,
-            pillSize: layout.panelSize,
-            from: previousVoiceMode,
-            to: currentVoiceMode,
-            padding: 0
-        )
+        let plan = if screenGeometry.kind == .hardwareNotch {
+            PillResizePlan(
+                frame: layout.windowFrame(anchoredTo: screenGeometry),
+                animate: false
+            )
+        } else {
+            PillResizePlan.makeAnchored(
+                visibleFrame: visibleFrame,
+                horizontalOffset: placement.horizontalOffset,
+                verticalOffset: placement.verticalOffset,
+                topPadding: Theme.topPadding,
+                pillSize: layout.panelSize,
+                from: previousVoiceMode,
+                to: currentVoiceMode,
+                padding: 0
+            )
+        }
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
+        configurePanelDragging(panel, for: screenGeometry)
     }
 
-    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
+    private func currentPanelLayout() -> VoiceBarPanelLayout {
+        VoiceBarPanelLayout.make(presentation: notchPresentationModel.presentation)
+    }
+
+    private func refreshNotchPresentationAndPanelLayout(animated: Bool) {
+        let previousPresentation = notchPresentationModel.presentation
+        refreshNotchPresentationModel()
+        if notchPresentationModel.presentation == previousPresentation {
+            applyPanelLayout(animated: animated)
+        }
+    }
+
+    private func refreshNotchPresentationModel() {
+        let resolved = Self.notchPresentation(for: voiceState)
+        notchPresentationModel.updateOperationalEnvelope(
+            hasTeleprompter: resolved.visualState == .teleprompter,
+            isRecording: resolved.visualState == .recording,
+            hasCompactStatus: resolved.visualState == .compactStatus
+        )
+        notchPresentationModel.setHovered(voiceState.isHovering)
+    }
+
+    private static func notchPresentation(for state: VoiceState?) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
-        let previewText = VoiceBarPresentation.transcriptPreviewText(
-            mode: mode,
-            confirmationText: state?.confirmationText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        let statusText = VoiceBarPresentation.liveStatusText(
-            mode: mode,
-            transcript: state?.transcript ?? "",
-            confirmationText: state?.confirmationText,
-            hotkeyPhase: state?.hotkeyPhase ?? .idle,
-            hotkeyEnabled: state?.hotkeyEnabled ?? false,
-            errorMessage: state?.errorMessage,
-            transcribingStatusText: state?.transcribingStatusText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        return VoiceBarPanelLayout.make(
-            mode: mode,
-            isCollapsed: state?.isCollapsed ?? false,
-            previewText: previewText,
-            statusText: statusText,
-            idleAccessoryButtonCount: VoiceBarPresentation.idleAccessoryButtonCount(
-                recentTranscriptions: state?.recentTranscriptions ?? [],
-                transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
-                transcriptionVocabularyAliases: state?.transcriptionVocabularyAliases ?? [],
-                canReplay: state?.canReplay ?? false
-            ) + ((state?.isTeleprompterReadback ?? false) ? 2 : 0),
-            queueItemCount: state?.queueItems.count ?? 0,
-            showsTeleprompter: VoiceBarPresentation.reservesTeleprompterEnvelope(
-                hasText: state?.teleprompterText != nil,
-                isDismissed: state?.isTeleprompterDismissed ?? false,
-                isReadback: state?.isTeleprompterReadback ?? false
-            ),
-            showsRecordingHold: VoiceBarPresentation.recordingHoldControl(
+        return VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
                 mode: mode,
-                recordingMode: state?.recordingMode,
-                isEngaged: state?.isRecordingHoldEngaged ?? false
-            ) != nil,
-            isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
-            padding: Theme.panelPadding
+                hasTeleprompterText: state?.teleprompterText != nil,
+                isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
+                isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
+                confirmationText: state?.confirmationText,
+                commandModeState: state?.commandModeState,
+                activeClipMarker: state?.activeClipMarker,
+                queueDepth: state?.queueDepth ?? 0,
+                keepsPasteFlowEnvelope: state?.keepsPasteFlowEnvelope ?? false,
+                hotkeyPhase: state?.hotkeyPhase ?? .idle,
+                isHovered: state?.isHovering ?? false,
+                isKeyboardFocused: false
+            )
         )
+    }
+
+    private static func notchScreenGeometry(for screen: NSScreen) -> VoiceBarNotchScreenGeometry {
+        VoiceBarNotchScreenGeometry.resolve(
+            metrics: VoiceBarNotchScreenMetrics(
+                frame: screen.frame,
+                safeAreaTop: screen.safeAreaInsets.top,
+                auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+                auxiliaryTopRightArea: screen.auxiliaryTopRightArea
+            )
+        )
+    }
+
+    private func configurePanelDragging(
+        _ panel: FloatingPillPanel,
+        for screenGeometry: VoiceBarNotchScreenGeometry
+    ) {
+        let usesPhysicalHousing = screenGeometry.kind == .hardwareNotch
+        panel.isPillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
+        panel.isMovableByWindowBackground = !usesPhysicalHousing
+            && anchorMode.allowsFreeDrag
+            && VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
     }
 
     private func logDiagnostic(event: String, details: [String: String] = [:]) {
@@ -1017,7 +1056,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
         let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
-        let visibleFrame = targetScreen?.visibleFrame ?? .zero
+        guard let targetScreen else { return }
+        let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+        if screenGeometry.kind == .hardwareNotch {
+            panel.setFrame(
+                currentPanelLayout().windowFrame(anchoredTo: screenGeometry),
+                display: true
+            )
+            configurePanelDragging(panel, for: screenGeometry)
+            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
+
+        let visibleFrame = targetScreen.visibleFrame
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
@@ -1028,8 +1081,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset
         )
-        if let targetScreen,
-           let index = NSScreen.screens.firstIndex(of: targetScreen) {
+        configurePanelDragging(panel, for: screenGeometry)
+        if let index = NSScreen.screens.firstIndex(of: targetScreen) {
             currentScreenIndex = index
         }
     }

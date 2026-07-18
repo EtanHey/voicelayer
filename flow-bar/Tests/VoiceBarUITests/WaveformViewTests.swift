@@ -163,13 +163,16 @@ final class WaveformViewTests: XCTestCase {
 
     func testTranscribingRestoresM1SpinnerAsLeadingIndicator() throws {
         let source = try barViewSource()
-        let transcribingBranch = source
-            .components(separatedBy: "} else if state.mode == .transcribing {")
+        let compactStatusBranch = source
+            .components(separatedBy: "case .compactStatus:")
             .dropFirst()
+            .first?
+            .components(separatedBy: "case .teleprompter:")
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        XCTAssertTrue(transcribingBranch?.hasPrefix("ProcessingSpinner()") == true)
+        XCTAssertTrue(compactStatusBranch?.contains("if state.mode == .transcribing") == true)
+        XCTAssertTrue(compactStatusBranch?.contains("ProcessingSpinner()") == true)
         XCTAssertTrue(source.contains("WaveformView(processingColor:"))
     }
 

@@ -34,11 +34,18 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         let teleprompterFrame = resolved.panelFrame(
             for: VoiceBarNotchContract.geometry(for: .teleprompter)
         )
+        let recordingFrame = resolved.panelFrame(
+            for: VoiceBarNotchContract.geometry(for: .recording)
+        )
 
         XCTAssertEqual(idleFrame, CGRect(x: 771, y: 1085, width: 185, height: 32))
         XCTAssertEqual(teleprompterFrame, CGRect(x: 631, y: 889, width: 465, height: 228))
         XCTAssertEqual(idleFrame.midX, resolved.housingFrame.midX)
         XCTAssertEqual(teleprompterFrame.midX, resolved.housingFrame.midX)
+        XCTAssertEqual(
+            recordingFrame.minX + VoiceBarNotchContract.geometry(for: .recording).coreOriginX,
+            resolved.housingFrame.minX
+        )
         XCTAssertEqual(idleFrame.maxY, resolved.screenFrame.maxY)
         XCTAssertEqual(teleprompterFrame.maxY, resolved.screenFrame.maxY)
     }

@@ -32,6 +32,60 @@ final class BarViewClickabilityTests: XCTestCase {
         func handleRetranscribeHistoryEntry(recordingPath: String) {}
     }
 
+    func testBarViewKeepsTheMergedW2WaveformTruthCallSites() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("audioLevels: state.recordingWaveformLevels"))
+        XCTAssertTrue(source.contains("state.playbackAudioLevel()"))
+        XCTAssertTrue(source.contains("state.transcribingWaveformLevels()"))
+        XCTAssertTrue(source.contains("case .transcribing:"))
+        XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
+    }
+
+    func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
+        let idle = VoiceState()
+        idle.mode = .idle
+        idle.isConnected = true
+        idle.isCollapsed = false
+        XCTAssertEqual(
+            makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 185, height: 32)
+        )
+
+        let hover = VoiceState()
+        hover.mode = .idle
+        hover.isConnected = true
+        hover.isCollapsed = false
+        hover.isHovering = true
+        XCTAssertEqual(
+            makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 285, height: 32)
+        )
+
+        let recording = VoiceState()
+        recording.mode = .recording
+        recording.recordingMode = "vad"
+        recording.isConnected = true
+        recording.isCollapsed = false
+        XCTAssertEqual(
+            makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 409, height: 32)
+        )
+
+        let teleprompter = VoiceState()
+        teleprompter.isConnected = true
+        teleprompter.isCollapsed = false
+        teleprompter.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Native teleprompter geometry",
+        ])
+        XCTAssertEqual(
+            makeHost(state: teleprompter, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 465, height: 228)
+        )
+    }
+
     func testRecordingCancelAndStopControlsReceiveClicks() {
         let state = VoiceState()
         state.mode = .recording
@@ -66,6 +120,24 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(sentCommand?["cmd"] as? String, "set_recording_hold")
         XCTAssertEqual(sentCommand?["engaged"] as? Bool, true)
         XCTAssertTrue(state.isRecordingHoldEngaged)
+    }
+
+    func testPTTRecordingDoesNotExposeTheVADHoldControl() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "ptt"
+        state.isConnected = true
+        state.isCollapsed = false
+        var sentCommands: [[String: Any]] = []
+        state.sendCommand = { sentCommands.append($0) }
+
+        let router = SpyCommandRouter()
+        let host = makeHost(state: state, router: router)
+
+        click(host, at: recordingHoldButtonCenter(in: host))
+
+        XCTAssertTrue(sentCommands.isEmpty)
+        XCTAssertFalse(state.isRecordingHoldEngaged)
     }
 
     func testIdlePillBackgroundTapDoesNotRoutePrimaryAction() {
@@ -111,11 +183,40 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
+    func testReadbackHideShowAndDismissControlsRemainInTheTeleprompterSurface() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Retained native readback",
+        ])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        let host = makeHost(state: state, router: SpyCommandRouter())
+
+        click(host, at: readbackVisibilityButtonCenter(in: host))
+        XCTAssertTrue(state.isTeleprompterDismissed)
+
+        click(host, at: readbackVisibilityButtonCenter(in: host))
+        XCTAssertFalse(state.isTeleprompterDismissed)
+
+        click(host, at: readbackDismissButtonCenter(in: host))
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertNil(state.teleprompterText)
+    }
+
     func testIdleMicButtonRoutesPrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
         state.isConnected = true
         state.isCollapsed = false
+        state.isHovering = true
 
         let router = SpyCommandRouter()
         let host = makeHost(state: state, router: router)
@@ -178,19 +279,27 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 26 - 2 - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.maxX - 55, y: host.bounds.midY)
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - ((26 + 2) * 2) - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.maxX - 65, y: host.bounds.midY)
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.maxX - 27, y: host.bounds.midY)
     }
 
     private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 14 - 13, y: host.bounds.midY)
+        NSPoint(x: host.bounds.midX - 28, y: 23)
+    }
+
+    private func readbackVisibilityButtonCenter(in host: NSView) -> NSPoint {
+        NSPoint(x: host.bounds.midX, y: 23)
+    }
+
+    private func readbackDismissButtonCenter(in host: NSView) -> NSPoint {
+        NSPoint(x: host.bounds.midX + 28, y: 23)
     }
 
     private func statusIconCenter(in host: NSView) -> NSPoint {
@@ -257,6 +366,18 @@ final class BarViewClickabilityTests: XCTestCase {
             eventNumber: 1,
             clickCount: 1,
             pressure: 0
+        )
+    }
+
+    private func barViewSource() throws -> String {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
         )
     }
 }

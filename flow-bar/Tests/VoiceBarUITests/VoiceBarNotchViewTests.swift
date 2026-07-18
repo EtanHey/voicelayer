@@ -68,6 +68,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(teleprompter.lowerSurfaceCount, 1)
         XCTAssertTrue(teleprompter.clipsContentToVisibleSurfaces)
         XCTAssertFalse(teleprompter.coreUsesMaterial)
+        XCTAssertTrue(teleprompter.usesSequencedSurfaceTransitions)
+        XCTAssertTrue(teleprompter.keepsHardwareCoreOutsideAnimatedSurfaces)
         XCTAssertEqual(teleprompter.accessibilityLabel, "VoiceBar teleprompter")
     }
 }

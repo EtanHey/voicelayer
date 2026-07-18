@@ -1,6 +1,5 @@
 import Observation
 
-@MainActor
 @Observable
 public final class VoiceBarNotchPresentationModel {
     public private(set) var presentation: VoiceBarNotchPresentation

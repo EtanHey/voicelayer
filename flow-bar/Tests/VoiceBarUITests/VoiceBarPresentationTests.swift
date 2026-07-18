@@ -25,6 +25,19 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
+    func testIdleTransientStatusTemporarilyReplacesRetainedReadback() {
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .idle,
+                hasTeleprompterText: true,
+                isTeleprompterReadback: true,
+                confirmationText: "Copied"
+            )
+        )
+
+        XCTAssertEqual(presentation.visualState, .compactStatus)
+    }
+
     func testNotchPresentationMapsRecordingAndAllCompatibilityModes() {
         XCTAssertEqual(
             VoiceBarPresentation.notchPresentation(
