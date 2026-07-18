@@ -199,7 +199,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(success.panelSize.width, Theme.panelWidth)
     }
 
-    func testRecordingStaysAtThe303PixelClassWithTheVADHoldControl() {
+    func testRecordingPanelHugsTheVisibleVADHoldControl() {
         let vad = VoiceBarPanelLayout.make(
             mode: .recording,
             isCollapsed: false,
@@ -215,16 +215,12 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             padding: Theme.panelPadding
         )
 
-        XCTAssertEqual(vad.panelSize.width, ptt.panelSize.width)
-        XCTAssertEqual(vad.panelSize.width, 162)
         XCTAssertEqual(
-            Theme.pillContentWidth(
-                for: .recording,
-                statusText: "",
-                showsRecordingHold: true
-            ),
-            154
+            vad.panelSize.width - ptt.panelSize.width,
+            Theme.pillActionButtonSize + Theme.pillActionButtonSpacing,
+            accuracy: 0.0001
         )
+        XCTAssertGreaterThan(vad.panelSize.width, ptt.panelSize.width)
     }
 
     func testSpeakingQueuePanelFitsQueueVisualizationChrome() {
@@ -303,5 +299,86 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
 
         XCTAssertEqual(layout.panelSize.width, Theme.panelWidth)
+    }
+
+    func testRecordingEntryModesShareTheSameRedDotInset() {
+        let askMetrics = Theme.pillMetrics(
+            for: .recording,
+            statusText: "",
+            showsRecordingHold: true
+        )
+        let f5Metrics = Theme.pillMetrics(
+            for: .recording,
+            statusText: "",
+            showsRecordingHold: false
+        )
+        let pillPressMetrics = Theme.pillMetrics(
+            for: .recording,
+            statusText: "",
+            showsRecordingHold: false
+        )
+
+        XCTAssertEqual(askMetrics.horizontalPadding, 10)
+        XCTAssertEqual(askMetrics.horizontalPadding, f5Metrics.horizontalPadding)
+        XCTAssertEqual(f5Metrics.horizontalPadding, pillPressMetrics.horizontalPadding)
+        XCTAssertEqual(askMetrics.contentSpacing, f5Metrics.contentSpacing)
+    }
+
+    func testRecordingWidthHugsTheVisibleHoldControlInsteadOfCompressingPadding() {
+        let askMetrics = Theme.pillMetrics(
+            for: .recording,
+            statusText: "",
+            showsRecordingHold: true
+        )
+        let manualMetrics = Theme.pillMetrics(
+            for: .recording,
+            statusText: "",
+            showsRecordingHold: false
+        )
+
+        XCTAssertEqual(
+            askMetrics.width - manualMetrics.width,
+            Theme.pillActionButtonSize + Theme.pillActionButtonSpacing,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            askMetrics.width - askMetrics.contentWidth,
+            askMetrics.horizontalPadding * 2,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            manualMetrics.width - manualMetrics.contentWidth,
+            manualMetrics.horizontalPadding * 2,
+            accuracy: 0.0001
+        )
+    }
+
+    func testTranscribingWidthHasNoResidualTrailingSlack() {
+        let metrics = Theme.pillMetrics(
+            for: .transcribing,
+            statusText: "Transcribing..."
+        )
+
+        XCTAssertEqual(metrics.horizontalPadding, 10)
+        XCTAssertEqual(
+            metrics.width - metrics.contentWidth,
+            metrics.horizontalPadding * 2,
+            accuracy: 0.0001
+        )
+        XCTAssertLessThan(metrics.width, 212)
+    }
+
+    func testTranscribingWidthRespondsToVisibleStatusContent() {
+        let short = Theme.pillMetrics(
+            for: .transcribing,
+            statusText: "Working"
+        )
+        let long = Theme.pillMetrics(
+            for: .transcribing,
+            statusText: "Loading speech model"
+        )
+
+        XCTAssertGreaterThan(long.width, short.width)
+        XCTAssertLessThanOrEqual(long.width, Theme.panelWidth - (Theme.panelPadding * 2))
     }
 }

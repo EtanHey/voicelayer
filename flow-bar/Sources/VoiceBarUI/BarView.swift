@@ -579,13 +579,7 @@ public struct BarView: View {
             )
         }
 
-        return Theme.pillContentWidth(
-            for: state.mode,
-            statusText: statusText,
-            idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: state.queueItems.count,
-            showsRecordingHold: recordingHoldControl != nil
-        )
+        return pillMetrics.width
     }
 
     private var pillContentAlignment: Alignment {
@@ -597,11 +591,21 @@ public struct BarView: View {
     }
 
     private var pillContentSpacing: CGFloat {
-        state.mode == .recording && recordingHoldControl != nil ? 4 : 8
+        pillMetrics.contentSpacing
     }
 
     private var pillHorizontalPadding: CGFloat {
-        state.mode == .recording && recordingHoldControl != nil ? 5 : 14
+        pillMetrics.horizontalPadding
+    }
+
+    private var pillMetrics: VoiceBarPillMetrics {
+        Theme.pillMetrics(
+            for: state.mode,
+            statusText: statusText,
+            idleAccessoryButtonCount: idleAccessoryButtonCount,
+            queueItemCount: state.queueItems.count,
+            showsRecordingHold: recordingHoldControl != nil
+        )
     }
 
     private var statusLineLimit: Int {
