@@ -206,9 +206,16 @@ public enum TeleprompterContentModel {
         boundaryWords: [TeleprompterWord]
     ) -> Bool {
         guard !displayWords.isEmpty, !boundaryWords.isEmpty else { return false }
+        let displayText = normalizedText(for: displayWords)
+        let boundaryText = normalizedText(for: boundaryWords)
+        guard !displayText.isEmpty, !boundaryText.isEmpty else { return false }
+        guard displayText == boundaryText ||
+            (!displayText.contains(boundaryText) && !boundaryText.contains(displayText))
+        else {
+            return false
+        }
         let displaySignature = normalizedSignature(for: displayWords)
         let boundarySignature = normalizedSignature(for: boundaryWords)
-        guard !displaySignature.isEmpty, !boundarySignature.isEmpty else { return false }
 
         let maximumLength = max(displaySignature.count, boundarySignature.count)
         let distance = editDistance(displaySignature, boundarySignature)
@@ -216,14 +223,16 @@ public enum TeleprompterContentModel {
         return similarity >= 0.55
     }
 
+    private static func normalizedText(for words: [TeleprompterWord]) -> String {
+        words
+            .map(\.text)
+            .joined()
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
     private static func normalizedSignature(for words: [TeleprompterWord]) -> [Character] {
-        let signature = Array(
-            words
-                .map(\.text)
-                .joined()
-                .lowercased()
-                .filter { $0.isLetter || $0.isNumber }
-        )
+        let signature = Array(normalizedText(for: words))
         guard signature.count > maximumBoundaryComparisonCharacters else {
             return signature
         }

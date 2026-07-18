@@ -50,17 +50,22 @@ final class RetainedReadbackDismissalCoordinator {
     ) {
         let delay = delay
         dismissalTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: delay)
-            guard let self, !Task.isCancelled else { return }
-            if isPointerInsideVisibleSurface() {
-                schedulePointerAwareDismissal(
-                    isPointerInsideVisibleSurface: isPointerInsideVisibleSurface,
-                    onDismiss: onDismiss
-                )
+            var requiresFreshGraceAfterExit = isPointerInsideVisibleSurface()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: delay)
+                guard !Task.isCancelled else { return }
+                if isPointerInsideVisibleSurface() {
+                    requiresFreshGraceAfterExit = true
+                    continue
+                }
+                if requiresFreshGraceAfterExit {
+                    requiresFreshGraceAfterExit = false
+                    continue
+                }
+                self?.dismissalTask = nil
+                onDismiss()
                 return
             }
-            dismissalTask = nil
-            onDismiss()
         }
     }
 }

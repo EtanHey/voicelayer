@@ -74,6 +74,25 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
     }
 
+    func testStaleBoundaryPrefixOfFreshQueuedTextFallsBackToEstimatedPacing() {
+        let sharedLeadIn = String(
+            repeating: "The shared queued introduction remains exactly the same ",
+            count: 12
+        )
+        let words = TeleprompterContentModel.words(
+            text: sharedLeadIn + "before a fresh ending",
+            wordBoundaries: [
+                TeleprompterBoundary(
+                    offsetMs: 0,
+                    durationMs: 5400,
+                    text: sharedLeadIn
+                ),
+            ]
+        )
+
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+    }
+
     func testLongStaleBoundariesThatOnlyDifferInTheMiddleFallBackToEstimatedPacing() {
         let sharedPrefix = String(repeating: "a", count: 300)
         let sharedSuffix = String(repeating: "z", count: 300)

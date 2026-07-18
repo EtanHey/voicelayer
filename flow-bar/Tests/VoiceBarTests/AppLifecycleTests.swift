@@ -493,6 +493,34 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(dismissCount, 1)
     }
 
+    @MainActor
+    func testReadbackWatchdogStartsAFreshGraceWindowAfterObservingPointerExit() async {
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(80)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(60))
+        pointer.isInside = false
+
+        try? await Task.sleep(for: .milliseconds(45))
+        XCTAssertEqual(
+            dismissCount,
+            0,
+            "A read-back that was hovered must not inherit the current polling deadline after exit"
+        )
+
+        try? await Task.sleep(for: .milliseconds(75))
+        XCTAssertEqual(dismissCount, 1)
+    }
+
     func testReadbackPointerCheckRejectsScreenPointOutsidePanelBeforeConversion() {
         var didConvert = false
 
