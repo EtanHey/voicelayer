@@ -71,7 +71,8 @@ public struct VoiceBarPanelLayout: Equatable {
         anchoredTo screenGeometry: VoiceBarNotchScreenGeometry
     ) -> CGRect {
         CGRect(
-            x: screenGeometry.housingFrame.minX
+            x: screenGeometry.housingFrame.midX
+                - (presentation.geometry.coreWidth / 2)
                 - visibleContentRect.minX
                 - presentation.geometry.coreOriginX,
             y: screenGeometry.screenFrame.maxY - panelSize.height,

@@ -603,7 +603,9 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
         return try String(
             contentsOf: repoRoot
-                .appendingPathComponent("flow-bar/Sources/VoiceBar")
+                .appendingPathComponent("flow-bar")
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBar")
                 .appendingPathComponent(name),
             encoding: .utf8
         )
@@ -617,7 +619,9 @@ final class AppLifecycleTests: XCTestCase {
             .deletingLastPathComponent()
         return try String(
             contentsOf: repoRoot
-                .appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+                .appendingPathComponent("flow-bar")
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBarUI")
                 .appendingPathComponent(name),
             encoding: .utf8
         )

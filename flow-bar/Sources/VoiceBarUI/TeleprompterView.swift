@@ -228,8 +228,11 @@ public enum TeleprompterContentModel {
             return signature
         }
 
-        let edgeLength = maximumBoundaryComparisonCharacters / 2
-        return Array(signature.prefix(edgeLength)) + Array(signature.suffix(edgeLength))
+        let lastSignatureIndex = signature.count - 1
+        let lastSampleIndex = maximumBoundaryComparisonCharacters - 1
+        return (0 ..< maximumBoundaryComparisonCharacters).map { sampleIndex in
+            signature[(sampleIndex * lastSignatureIndex) / lastSampleIndex]
+        }
     }
 
     private static func editDistance(_ lhs: [Character], _ rhs: [Character]) -> Int {

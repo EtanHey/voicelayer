@@ -77,6 +77,27 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 
+    func testWiderDetectedHousingKeepsTheRenderedCoreCentered() {
+        let screen = VoiceBarNotchScreenGeometry.resolve(
+            metrics: VoiceBarNotchScreenMetrics(
+                frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                safeAreaTop: 32,
+                auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
+                auxiliaryTopRightArea: CGRect(x: 972, y: 1085, width: 756, height: 32)
+            )
+        )
+        let layout = VoiceBarPanelLayout.make(presentation: presentation(.recording))
+
+        let frame = layout.windowFrame(anchoredTo: screen)
+        let renderedCoreMidX = frame.minX
+            + layout.visibleContentRect.minX
+            + layout.presentation.geometry.coreOriginX
+            + (layout.presentation.geometry.coreWidth / 2)
+
+        XCTAssertEqual(screen.housingFrame.width, 201)
+        XCTAssertEqual(renderedCoreMidX, screen.housingFrame.midX)
+    }
+
     func testEveryStateHitBoundsStayInsideTheShadowSafeWindow() {
         for state in VoiceBarNotchVisualState.allCases {
             let layout = VoiceBarPanelLayout.make(presentation: presentation(state))

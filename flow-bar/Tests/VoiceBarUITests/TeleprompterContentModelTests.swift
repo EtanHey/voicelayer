@@ -74,6 +74,27 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
     }
 
+    func testLongStaleBoundariesThatOnlyDifferInTheMiddleFallBackToEstimatedPacing() {
+        let sharedPrefix = String(repeating: "a", count: 300)
+        let sharedSuffix = String(repeating: "z", count: 300)
+        let displayText = sharedPrefix + String(repeating: "x", count: 1000) + sharedSuffix
+        let staleBoundaryText = sharedPrefix + String(repeating: "y", count: 1000) + sharedSuffix
+
+        let words = TeleprompterContentModel.words(
+            text: displayText,
+            wordBoundaries: [
+                TeleprompterBoundary(
+                    offsetMs: 0,
+                    durationMs: 4000,
+                    text: staleBoundaryText
+                ),
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text).joined(), displayText)
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+    }
+
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)

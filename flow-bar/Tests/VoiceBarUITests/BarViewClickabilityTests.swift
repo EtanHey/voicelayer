@@ -452,7 +452,9 @@ final class BarViewClickabilityTests: XCTestCase {
             .deletingLastPathComponent()
         return try String(
             contentsOf: packageRoot
-                .appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBarUI")
+                .appendingPathComponent("BarView.swift"),
             encoding: .utf8
         )
     }
