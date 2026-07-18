@@ -43,6 +43,27 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0.7, accuracy: 0.0001)
     }
 
+    func testSpeakingPresentsTheSameIndependentTimeOffsetShapeAsF5() {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.1, 0.7, 0.2, 0.9, 0.3, 0.8, 0.4, 0.6]
+        )
+        state.handleEvent(
+            ["type": "state", "state": "speaking", "text": "Truth"],
+            playbackAmplitude: envelope
+        )
+
+        now = 10.350
+
+        XCTAssertEqual(
+            state.playbackWaveformLevels(),
+            [0.7, 0.2, 0.9, 0.3, 0.8, 0.4, 0.6]
+        )
+    }
+
     func testPlaybackIdleClearsPlaybackAmplitudeTruth() {
         var now = 10.0
         let state = VoiceState(playbackAmplitudeClock: { now })
@@ -218,7 +239,7 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(sentCommand?["timeout_seconds"] as? Int, 3600)
     }
 
-    func testRecordingAudioLevelUsesSocketWhenLocalMeterReportsSilence() throws {
+    func testVoiceAskUsesTheF5LocalMeterEvenWhenTheSocketMeterIsInflated() throws {
         let state = VoiceState()
         state.setConnectionStatus(true)
         state.sendCommand = { _ in }
@@ -230,7 +251,8 @@ final class VoiceStateTests: XCTestCase {
         ])
         state.setLocalRecordingLevel(0)
 
-        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.42, accuracy: 0.0001)
+        XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0, accuracy: 0.0001)
+        XCTAssertEqual(state.recordingWaveformLevel, 0, accuracy: 0.0001)
     }
 
     func testRecordingAudioLevelKeepsLocalMeterWhenItIsStrongerThanSocket() throws {
@@ -1143,8 +1165,26 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(modes, [.recording, .transcribing])
     }
 
-    func testTeleprompterDismissAndReshowIsSeparateFromPlaybackStop() {
+    func testPlaybackStopExitsWithoutRetainingADismissedLiveTeleprompter() {
         let state = VoiceState()
+        state.handleEvent([
+            "type": "queue",
+            "depth": 2,
+            "items": [
+                [
+                    "text": "Current line",
+                    "voice": "jenny",
+                    "priority": "normal",
+                    "is_current": true,
+                ],
+                [
+                    "text": "Queued line",
+                    "voice": "jenny",
+                    "priority": "normal",
+                    "is_current": false,
+                ],
+            ],
+        ])
         state.handleEvent([
             "type": "state",
             "state": "speaking",
@@ -1154,12 +1194,13 @@ final class VoiceStateTests: XCTestCase {
         state.dismissTeleprompter()
         state.stop()
 
-        XCTAssertTrue(state.isTeleprompterDismissed)
-        XCTAssertEqual(state.mode, .speaking)
-
-        state.showTeleprompter()
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
         XCTAssertFalse(state.isTeleprompterDismissed)
-        XCTAssertEqual(state.statusText, "Etan runs supabase")
+        XCTAssertEqual(state.statusText, "")
+        XCTAssertEqual(state.queueDepth, 0)
+        XCTAssertTrue(state.queueItems.isEmpty)
     }
 
     func testLiveTeleprompterVisibilityChangesRequestPanelRelayout() async {

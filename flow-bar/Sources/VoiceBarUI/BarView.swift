@@ -261,7 +261,7 @@ public struct BarView: View {
         if state.mode == .recording {
             PulsingDot()
         } else if state.mode == .transcribing {
-            EmptyView()
+            ProcessingSpinner()
         } else if state.mode == .error {
             EmptyView()
         } else {
@@ -299,8 +299,9 @@ public struct BarView: View {
                     HStack(spacing: 8) {
                         if recordingContent.showsWaveform {
                             WaveformView(
-                                audioLevels: state.recordingWaveformLevels,
-                                color: Theme.recordingColor
+                                color: Theme.recordingColor,
+                                isListening: !state.speechDetected,
+                                currentLevel: { state.recordingWaveformLevel }
                             )
                         }
                         if !recordingContent.statusText.isEmpty {
@@ -323,21 +324,14 @@ public struct BarView: View {
                     if state.queueItems.count > 1 {
                         queueVisualization
                     } else {
-                        // TimelineView only drives refresh cadence. VoiceState owns
-                        // the monotonic uptime domain used to index the envelope.
-                        WaveformView(color: Theme.speakingColor) {
+                        WaveformView(color: Theme.speakingColor, currentLevel: {
                             state.playbackAudioLevel()
-                        }
+                        })
                         statusLabel
                     }
                 case .transcribing:
                     HStack(spacing: 8) {
-                        WaveformView(
-                            color: Theme.stateColor(for: .transcribing),
-                            currentLevels: {
-                                state.transcribingWaveformLevels()
-                            }
-                        )
+                        WaveformView(processingColor: Theme.stateColor(for: .transcribing))
                         if !statusText.isEmpty {
                             Text(statusText)
                                 .font(.system(size: 12, weight: .medium))
@@ -382,11 +376,9 @@ public struct BarView: View {
     @ViewBuilder
     private var teleprompterContent: some View {
         if state.mode == .speaking {
-            // TimelineView only drives refresh cadence. VoiceState owns the
-            // monotonic uptime domain used to index the envelope.
-            WaveformView(color: Theme.speakingColor) {
+            WaveformView(color: Theme.speakingColor, currentLevel: {
                 state.playbackAudioLevel()
-            }
+            })
         }
         if let text = state.teleprompterText,
            TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: !text.isEmpty) {
@@ -584,13 +576,7 @@ public struct BarView: View {
             )
         }
 
-        return Theme.pillContentWidth(
-            for: state.mode,
-            statusText: statusText,
-            idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: state.queueItems.count,
-            showsRecordingHold: recordingHoldControl != nil
-        )
+        return pillMetrics.width
     }
 
     private var pillContentAlignment: Alignment {
@@ -602,11 +588,21 @@ public struct BarView: View {
     }
 
     private var pillContentSpacing: CGFloat {
-        state.mode == .recording && recordingHoldControl != nil ? 4 : 8
+        pillMetrics.contentSpacing
     }
 
     private var pillHorizontalPadding: CGFloat {
-        state.mode == .recording && recordingHoldControl != nil ? 5 : 14
+        pillMetrics.horizontalPadding
+    }
+
+    private var pillMetrics: VoiceBarPillMetrics {
+        Theme.pillMetrics(
+            for: state.mode,
+            statusText: statusText,
+            idleAccessoryButtonCount: idleAccessoryButtonCount,
+            queueItemCount: state.queueItems.count,
+            showsRecordingHold: recordingHoldControl != nil
+        )
     }
 
     private var statusLineLimit: Int {

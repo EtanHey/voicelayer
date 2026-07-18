@@ -3,7 +3,15 @@
 // Industrial-minimal aesthetic: solid dark pill, clean white text,
 // bright state indicators. Dynamic width that breathes with content.
 
+import AppKit
 import SwiftUI
+
+public struct VoiceBarPillMetrics: Equatable {
+    public var width: CGFloat
+    public var contentWidth: CGFloat
+    public var horizontalPadding: CGFloat
+    public var contentSpacing: CGFloat
+}
 
 public enum Theme {
     // MARK: - Colors
@@ -26,12 +34,14 @@ public enum Theme {
     public static let pillMinWidth: CGFloat = 100
     public static let pillCompactWidth: CGFloat = 136
     public static let pillCompactHeight: CGFloat = 42
-    public static let pillStatusMaxWidth: CGFloat = 160
+    public static let pillStatusMaxWidth: CGFloat = 282
     public static let pillTranscriptPreviewWidth: CGFloat = 330
     public static let pillTranscriptPreviewHeight: CGFloat = 70
     public static let pillQueueWidth: CGFloat = 300
     public static let pillActionButtonSize: CGFloat = 26
     public static let pillActionButtonSpacing: CGFloat = 2
+    public static let pillWaveformWidth: CGFloat = 46
+    public static let pillProcessingSpinnerWidth: CGFloat = 14
     public static let pillSpeakingQueueWidth: CGFloat = 412
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
@@ -72,10 +82,86 @@ public enum Theme {
 
     public static let hotkeyTransitionPillWidth: CGFloat = compactPillWidth(for: "Tap again to lock")
 
+    public static func intrinsicPillStatusWidth(for text: String) -> CGFloat {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return 0 }
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let measured = (trimmed as NSString).size(withAttributes: [.font: font]).width
+        return min(pillStatusMaxWidth, ceil(measured))
+    }
+
     public static func transcribingPillWidth(for statusText: String) -> CGFloat {
-        let textWidth = compactStatusWidth(for: statusText)
-        guard textWidth > 0 else { return 102 }
-        return min(panelWidth - (panelPadding * 2), max(212, textWidth + 96))
+        pillMetrics(for: .transcribing, statusText: statusText).width
+    }
+
+    public static func pillMetrics(
+        for mode: VoiceMode,
+        statusText: String,
+        idleAccessoryButtonCount: Int = 0,
+        queueItemCount: Int = 0,
+        showsRecordingHold: Bool = false
+    ) -> VoiceBarPillMetrics {
+        let defaultHorizontalPadding: CGFloat = 14
+        let compactHorizontalPadding: CGFloat = 10
+        let contentSpacing: CGFloat = 8
+        let maximumWidth = panelWidth - (panelPadding * 2)
+
+        switch mode {
+        case .recording:
+            let actionButtonCount = showsRecordingHold ? 3 : 2
+            let actionButtonsWidth = pillActionButtonsWidth(count: actionButtonCount)
+            let contentWidth = 8 + pillWaveformWidth + actionButtonsWidth + (contentSpacing * 2)
+            return VoiceBarPillMetrics(
+                width: contentWidth + (compactHorizontalPadding * 2),
+                contentWidth: contentWidth,
+                horizontalPadding: compactHorizontalPadding,
+                contentSpacing: contentSpacing
+            )
+        case .transcribing:
+            let statusWidth = intrinsicPillStatusWidth(for: statusText)
+            let statusSegmentWidth = statusWidth > 0 ? contentSpacing + statusWidth : 0
+            let naturalContentWidth = pillProcessingSpinnerWidth + pillWaveformWidth +
+                pillActionButtonSize + statusSegmentWidth + (contentSpacing * 2)
+            let clampedContentWidth = min(
+                naturalContentWidth,
+                maximumWidth - (compactHorizontalPadding * 2)
+            )
+            let width = max(
+                pillCompactWidth,
+                clampedContentWidth + (compactHorizontalPadding * 2)
+            )
+            return VoiceBarPillMetrics(
+                width: width,
+                contentWidth: width - (compactHorizontalPadding * 2),
+                horizontalPadding: compactHorizontalPadding,
+                contentSpacing: contentSpacing
+            )
+        case .speaking:
+            return fixedPillMetrics(
+                width: pillSpeakingQueueWidth,
+                horizontalPadding: defaultHorizontalPadding,
+                contentSpacing: contentSpacing
+            )
+        case .error:
+            return fixedPillMetrics(
+                width: 210,
+                horizontalPadding: defaultHorizontalPadding,
+                contentSpacing: contentSpacing
+            )
+        case .idle, .disconnected:
+            let statusWidth = compactPillWidth(
+                for: statusText,
+                accessoryButtonCount: mode == .idle ? idleAccessoryButtonCount : 0
+            )
+            let width = VoiceBarPresentation.isHotkeyTransitionStatus(statusText)
+                ? max(statusWidth, hotkeyTransitionPillWidth)
+                : statusWidth
+            return fixedPillMetrics(
+                width: width,
+                horizontalPadding: defaultHorizontalPadding,
+                contentSpacing: contentSpacing
+            )
+        }
     }
 
     public static func pillContentWidth(
@@ -85,24 +171,33 @@ public enum Theme {
         queueItemCount: Int = 0,
         showsRecordingHold: Bool = false
     ) -> CGFloat {
-        switch mode {
-        case .recording:
-            return 154
-        case .transcribing:
-            return transcribingPillWidth(for: statusText)
-        case .speaking:
-            return pillSpeakingQueueWidth
-        case .error:
-            return 210
-        case .idle, .disconnected:
-            let statusWidth = compactPillWidth(
-                for: statusText,
-                accessoryButtonCount: mode == .idle ? idleAccessoryButtonCount : 0
-            )
-            return VoiceBarPresentation.isHotkeyTransitionStatus(statusText)
-                ? max(statusWidth, hotkeyTransitionPillWidth)
-                : statusWidth
-        }
+        pillMetrics(
+            for: mode,
+            statusText: statusText,
+            idleAccessoryButtonCount: idleAccessoryButtonCount,
+            queueItemCount: queueItemCount,
+            showsRecordingHold: showsRecordingHold
+        ).width
+    }
+
+    private static func pillActionButtonsWidth(count: Int) -> CGFloat {
+        let safeCount = max(0, count)
+        guard safeCount > 0 else { return 0 }
+        return (CGFloat(safeCount) * pillActionButtonSize) +
+            (CGFloat(safeCount - 1) * pillActionButtonSpacing)
+    }
+
+    private static func fixedPillMetrics(
+        width: CGFloat,
+        horizontalPadding: CGFloat,
+        contentSpacing: CGFloat
+    ) -> VoiceBarPillMetrics {
+        VoiceBarPillMetrics(
+            width: width,
+            contentWidth: max(0, width - (horizontalPadding * 2)),
+            horizontalPadding: horizontalPadding,
+            contentSpacing: contentSpacing
+        )
     }
 
     public static func transcriptPreviewPillWidth(for text: String) -> CGFloat {

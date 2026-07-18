@@ -402,6 +402,7 @@ export interface WaitForInputOptions {
     agentTtsVoice: string;
     createdAt?: Date;
   };
+  onCaptureEnd?: () => void;
   signal?: AbortSignal;
 }
 
@@ -427,6 +428,21 @@ interface WaitForInputArchiveInput {
   durationMs: number;
   transcribedDurationMs?: number;
   backend: string;
+}
+
+export interface VoiceAskCaptureArchiveInput {
+  options: WaitForInputOptions;
+  audioBytes: Uint8Array;
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+  durationMs: number;
+  transcribedDurationMs?: number;
+}
+
+export interface VoiceAskArchiveFinalizationInput {
+  transcript: string;
+  backend: string;
+  transcribedDurationMs?: number;
 }
 
 interface VoiceBarRecordingMetadata {
@@ -467,11 +483,11 @@ interface VoiceAskRecordingMetadata {
   transcribed_duration_ms: number;
   sample_rate: number;
   channels: number;
-  backend: string;
+  backend: string | null;
   agent_tts_engine: TextToSpeechEngine;
   agent_tts_voice: string;
   language_mode: string;
-  transcription_status: "transcribed";
+  transcription_status: "captured" | "transcribed";
   retention_policy: "indefinite";
   voicelayer_transcript_chars: number;
   agent_transcript_chars: number;
@@ -481,7 +497,7 @@ interface VoiceAskRecordingMetadata {
   user_audio_sha256: string;
   artifacts: typeof VOICE_ASK_ARTIFACT_NAMES;
   app_version: null;
-  schema_version: 2;
+  schema_version: 3;
 }
 
 function recordingsArchiveRoot(): string {
@@ -822,27 +838,10 @@ function writeVoiceBarRecordingArchive(
   return finalDir;
 }
 
-export function archiveWaitForInputRecording(
-  input: WaitForInputArchiveInput,
-): string | null {
-  throwIfWaitForInputAborted(input.options.signal);
-  if (input.options.archiveSource === "voicebar") {
-    return archiveVoiceBarRecording({
-      audioBytes: input.audioBytes,
-      transcript: input.transcript,
-      source: input.options.archiveSource,
-      silenceMode: input.silenceMode,
-      pressToTalk: input.pressToTalk,
-      durationMs: input.durationMs,
-      transcribedDurationMs: input.transcribedDurationMs,
-      backend: input.backend,
-    });
-  }
-
-  if (input.options.archiveSource !== "voice_ask") return null;
-  if (!input.transcript?.trim()) return null;
-  const artifacts = input.options.voiceAskArtifacts;
+function requireVoiceAskArtifacts(options: WaitForInputOptions) {
+  const artifacts = options.voiceAskArtifacts;
   if (
+    options.archiveSource !== "voice_ask" ||
     !artifacts ||
     artifacts.agentAudioFormat !== "mp3" ||
     artifacts.agentAudioBytes.byteLength === 0 ||
@@ -857,6 +856,13 @@ export function archiveWaitForInputRecording(
       "voice_ask archive requires actual-used TTS engine and voice",
     );
   }
+  return artifacts;
+}
+
+export function archiveVoiceAskCapture(
+  input: VoiceAskCaptureArchiveInput,
+): string {
+  const artifacts = requireVoiceAskArtifacts(input.options);
 
   const createdAt = artifacts.createdAt ?? new Date();
   const createdAtIso = createdAt.toISOString();
@@ -880,15 +886,15 @@ export function archiveWaitForInputRecording(
     transcribed_duration_ms: input.transcribedDurationMs ?? input.durationMs,
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
-    backend: input.backend,
+    backend: null,
     agent_tts_engine: artifacts.agentTtsEngine,
     agent_tts_voice: artifacts.agentTtsVoice,
     language_mode: getLanguageModeFromEnv(),
-    transcription_status: "transcribed",
+    transcription_status: "captured",
     retention_policy: "indefinite",
-    voicelayer_transcript_chars: input.transcript.length,
+    voicelayer_transcript_chars: 0,
     agent_transcript_chars: artifacts.agentTranscript.length,
-    user_transcript_chars: input.transcript.length,
+    user_transcript_chars: 0,
     audio_sha256: userAudioSha256,
     agent_audio_sha256: createHash("sha256")
       .update(agentAudioBytes)
@@ -896,7 +902,7 @@ export function archiveWaitForInputRecording(
     user_audio_sha256: userAudioSha256,
     artifacts: VOICE_ASK_ARTIFACT_NAMES,
     app_version: null,
-    schema_version: 2,
+    schema_version: 3,
   };
 
   let stagingCreated = false;
@@ -918,10 +924,6 @@ export function archiveWaitForInputRecording(
       input.audioBytes,
     );
     atomicWriteFile(
-      join(stagingDir, VOICE_ASK_ARTIFACT_NAMES.user_transcript),
-      input.transcript,
-    );
-    atomicWriteFile(
       join(stagingDir, "metadata.json"),
       `${JSON.stringify(metadata, null, 2)}\n`,
     );
@@ -937,6 +939,107 @@ export function archiveWaitForInputRecording(
   }
 
   return finalDir;
+}
+
+function requireVoiceAskArchiveDirectory(archivePath: string): {
+  path: string;
+  metadata: VoiceAskRecordingMetadata;
+} {
+  const resolvedPath = realpathSync(archivePath);
+  const archiveRoot = resolvedRecordingsArchiveRoot();
+  const relativePath = relative(archiveRoot, resolvedPath);
+  if (
+    !relativePath ||
+    relativePath.startsWith("..") ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error(
+      `voice_ask archive path must be inside ${archiveRoot}: ${archivePath}`,
+    );
+  }
+
+  const metadata = JSON.parse(
+    readFileSync(join(resolvedPath, "metadata.json"), "utf8"),
+  ) as VoiceAskRecordingMetadata;
+  if (
+    metadata.source !== "voice_ask" ||
+    metadata.schema_version !== 3 ||
+    metadata.id !== basename(resolvedPath)
+  ) {
+    throw new Error(`Invalid voice_ask archive metadata: ${archivePath}`);
+  }
+  return { path: resolvedPath, metadata };
+}
+
+export function finalizeVoiceAskArchive(
+  archivePath: string,
+  input: VoiceAskArchiveFinalizationInput,
+): string {
+  if (!input.transcript.trim()) {
+    throw new Error("voice_ask archive transcript must not be empty");
+  }
+  if (!input.backend.trim()) {
+    throw new Error("voice_ask archive backend must not be empty");
+  }
+
+  const archive = requireVoiceAskArchiveDirectory(archivePath);
+  if (archive.metadata.transcription_status !== "captured") {
+    throw new Error(`voice_ask archive is already finalized: ${archivePath}`);
+  }
+  atomicWriteFile(
+    join(archive.path, VOICE_ASK_ARTIFACT_NAMES.user_transcript),
+    input.transcript,
+  );
+  const metadata: VoiceAskRecordingMetadata = {
+    ...archive.metadata,
+    ...(input.transcribedDurationMs === undefined
+      ? {}
+      : { transcribed_duration_ms: input.transcribedDurationMs }),
+    backend: input.backend,
+    transcription_status: "transcribed",
+    voicelayer_transcript_chars: input.transcript.length,
+    user_transcript_chars: input.transcript.length,
+  };
+  atomicWriteFile(
+    join(archive.path, "metadata.json"),
+    `${JSON.stringify(metadata, null, 2)}\n`,
+  );
+  fsyncPath(archive.path);
+  return archivePath;
+}
+
+export function archiveWaitForInputRecording(
+  input: WaitForInputArchiveInput,
+): string | null {
+  if (input.options.archiveSource === "voicebar") {
+    throwIfWaitForInputAborted(input.options.signal);
+    return archiveVoiceBarRecording({
+      audioBytes: input.audioBytes,
+      transcript: input.transcript,
+      source: input.options.archiveSource,
+      silenceMode: input.silenceMode,
+      pressToTalk: input.pressToTalk,
+      durationMs: input.durationMs,
+      transcribedDurationMs: input.transcribedDurationMs,
+      backend: input.backend,
+    });
+  }
+
+  if (input.options.archiveSource !== "voice_ask") return null;
+  if (!input.transcript?.trim()) return null;
+  const archivePath = archiveVoiceAskCapture({
+    options: input.options,
+    audioBytes: input.audioBytes,
+    silenceMode: input.silenceMode,
+    pressToTalk: input.pressToTalk,
+    durationMs: input.durationMs,
+    transcribedDurationMs: input.transcribedDurationMs,
+  });
+  return finalizeVoiceAskArchive(archivePath, {
+    transcript: input.transcript,
+    backend: input.backend,
+    transcribedDurationMs: input.transcribedDurationMs,
+  });
 }
 
 export interface CaptureFailure {
@@ -2111,24 +2214,75 @@ export async function waitForInput(
     }
     throw err;
   }
-  throwIfWaitForInputAborted(options.signal);
   if (!pcmData) {
+    throwIfWaitForInputAborted(options.signal);
     clearCancelSignal();
     broadcast({ type: "state", state: "idle", source: "recording" });
     return null;
   }
 
+  const retainedWavData = createWavBuffer(pcmData);
+  const sttTrim = trimTrailingSilenceForSTT(pcmData, pressToTalk);
+  let voiceAskArchivePath: string | null = null;
+  if (options.archiveSource === "voice_ask") {
+    try {
+      voiceAskArchivePath = archiveVoiceAskCapture({
+        options,
+        audioBytes: retainedWavData,
+        silenceMode,
+        pressToTalk,
+        durationMs: sttTrim.rawDurationMs,
+        transcribedDurationMs: sttTrim.transcribedDurationMs,
+      });
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(`[voicelayer] Failed to archive voice_ask capture: ${detail}`);
+      const archiveError = `voice_ask archive failed: ${detail}`;
+      appendControlLayerEvent("capture.archive_failed", {
+        archive_source: "voice_ask",
+        duration_ms: sttTrim.rawDurationMs,
+        error: detail,
+      });
+      setRecordingState("idle");
+      broadcast({
+        type: "error",
+        message: archiveError,
+        recoverable: true,
+      });
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      throw new Error(archiveError);
+    }
+  }
+  try {
+    options.onCaptureEnd?.();
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    appendControlLayerEvent("capture.completion_callback_failed", {
+      archive_source: options.archiveSource ?? null,
+      duration_ms: sttTrim.rawDurationMs,
+      error: detail,
+    });
+    setRecordingState("idle");
+    broadcast({
+      type: "error",
+      message: `Capture completion failed: ${detail}`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw err;
+  }
+  throwIfWaitForInputAborted(options.signal);
+
   // Check if recording was cancelled (X button) — keep a recovery WAV but don't transcribe.
   if (consumeCancelSignalForRecording()) {
-    const cancelledWavData = createWavBuffer(pcmData);
     retainLastCaptureForRecovery(
-      cancelledWavData,
+      retainedWavData,
       polishSurfaceForWaitOptions(options),
     );
     if (options.archiveSource === "voicebar") {
       try {
         archiveVoiceBarUntranscribedRecording({
-          audioBytes: cancelledWavData,
+          audioBytes: retainedWavData,
           source: options.archiveSource,
           silenceMode,
           pressToTalk,
@@ -2156,7 +2310,6 @@ export async function waitForInput(
     return null;
   }
 
-  const sttTrim = trimTrailingSilenceForSTT(pcmData, pressToTalk);
   if (sttTrim.trimmed) {
     console.error(
       `[voicelayer] Trimmed trailing silence before STT: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
@@ -2248,7 +2401,6 @@ export async function waitForInput(
   // Save as WAV to temp file
   const wavPath = recordingFilePath(process.pid, Date.now());
   try {
-    const retainedWavData = createWavBuffer(pcmData);
     const sttWavData = sttTrim.trimmed
       ? createWavBuffer(sttTrim.pcmData)
       : retainedWavData;
@@ -2337,16 +2489,22 @@ export async function waitForInput(
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
-        archivedRecordingPath = archiveWaitForInputRecording({
-          options,
-          audioBytes: retainedWavData,
-          transcript: text,
-          silenceMode,
-          pressToTalk,
-          durationMs: sttTrim.rawDurationMs,
-          transcribedDurationMs: sttTrim.transcribedDurationMs,
-          backend: backend.name,
-        });
+        archivedRecordingPath = voiceAskArchivePath
+          ? finalizeVoiceAskArchive(voiceAskArchivePath, {
+              transcript: text,
+              backend: backend.name,
+              transcribedDurationMs: sttTrim.transcribedDurationMs,
+            })
+          : archiveWaitForInputRecording({
+              options,
+              audioBytes: retainedWavData,
+              transcript: text,
+              silenceMode,
+              pressToTalk,
+              durationMs: sttTrim.rawDurationMs,
+              transcribedDurationMs: sttTrim.transcribedDurationMs,
+              backend: backend.name,
+            });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         console.error(

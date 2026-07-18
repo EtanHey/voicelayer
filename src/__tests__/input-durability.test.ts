@@ -36,10 +36,11 @@ let vadMode: "silence" | "throw" = "silence";
 let onVadCall: (() => void) | null = null;
 let vadCallCount = 0;
 let vadProbabilityForCall: ((call: number) => number) | null = null;
-let backendMode: "ok" | "throw-on-get" = "ok";
+let backendMode: "ok" | "throw-on-get" | "hang" = "ok";
 let backendTranscribeCalls = 0;
 let backendTranscribedDataSize: number | undefined;
 let backendTranscribedFileBytes: number | undefined;
+let finishHangingTranscription: (() => void) | undefined;
 let broadcasts: any[] = [];
 let vadProcessSpy: ReturnType<typeof spyOn> | undefined;
 let vadResetSpy: ReturnType<typeof spyOn> | undefined;
@@ -251,6 +252,7 @@ describe("input recording durability", () => {
     backendTranscribeCalls = 0;
     backendTranscribedDataSize = undefined;
     backendTranscribedFileBytes = undefined;
+    finishHangingTranscription = undefined;
     broadcasts = [];
     polishSurfaces = [];
     vadProcessSpy = spyOn(vad, "processVADChunk").mockImplementation(
@@ -275,6 +277,11 @@ describe("input recording durability", () => {
           backendTranscribeCalls++;
           backendTranscribedDataSize = readWavDataSize(path);
           backendTranscribedFileBytes = readFileSync(path).byteLength;
+          if (backendMode === "hang") {
+            await new Promise<void>((resolve) => {
+              finishHangingTranscription = resolve;
+            });
+          }
           return {
             text: "retained transcript",
             backend: "fake-stt",
@@ -774,7 +781,54 @@ describe("input recording durability", () => {
     ).toBe(true);
   });
 
-  it("labels paired archive failures as archive failures after successful STT", async () => {
+  it("publishes the paired voice_ask capture before a timed-out STT can fail", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    backendMode = "hang";
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const controller = new AbortController();
+    const pending = waitForInput(2_000, "standard", true, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 9, 8, 7]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Archive the failure case",
+        agentTtsEngine: "f5-tts-mlx",
+        agentTtsVoice: "etan-f5",
+        createdAt: new Date("2026-07-18T11:04:10.000Z"),
+      },
+      signal: controller.signal,
+    });
+
+    while (backendTranscribeCalls === 0) await Bun.sleep(1);
+    controller.abort(new Error("voice_ask return stage timed out"));
+
+    const dayDir = join(tmpRoot, "recordings", "2026-07-18");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    const archiveDir = join(dayDir, archiveIds[0]);
+    expect(readdirSync(archiveDir).sort()).toEqual([
+      "agent-audio.mp3",
+      "agent-transcript.txt",
+      "audio.wav",
+      "metadata.json",
+    ]);
+    expect(
+      JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8")),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "captured",
+      retention_policy: "indefinite",
+    });
+
+    finishHangingTranscription?.();
+    await expect(pending).rejects.toThrow("voice_ask return stage timed out");
+  });
+
+  it("labels paired archive failures at the capture-end boundary", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     installFakeRecorder(
       Array.from({ length: 24 }, () => makePcmChunk(1800)),
@@ -800,6 +854,44 @@ describe("input recording durability", () => {
 
     const errorEvent = broadcasts.find((event) => event.type === "error");
     expect(errorEvent?.message).toStartWith("voice_ask archive failed:");
+  });
+
+  it("restores idle and preserves the capture when its completion callback throws", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { getRecordingState, waitForInput } = await import("../input");
+
+    await expect(
+      waitForInput(2_000, "standard", true, {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 4, 5, 6]),
+          agentAudioFormat: "mp3",
+          agentTranscript: "Keep the capture if the callback fails",
+          agentTtsEngine: "f5-tts-mlx",
+          agentTtsVoice: "etan-f5",
+          createdAt: new Date("2026-07-18T11:05:10.000Z"),
+        },
+        onCaptureEnd: () => {
+          throw new Error("capture completion callback failed");
+        },
+      }),
+    ).rejects.toThrow("capture completion callback failed");
+
+    expect(getRecordingState()).toBe("idle");
+    expect(
+      broadcasts.some(
+        (event) =>
+          event.type === "state" &&
+          event.state === "idle" &&
+          event.source === "recording",
+      ),
+    ).toBe(true);
+    const dayDir = join(tmpRoot, "recordings", "2026-07-18");
+    expect(readdirSync(dayDir)).toHaveLength(1);
   });
 
   it("retranscribes a specific archived recording through the current finalizer and updates the history event in place", async () => {

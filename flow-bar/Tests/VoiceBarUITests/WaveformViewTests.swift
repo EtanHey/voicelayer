@@ -2,94 +2,129 @@
 import XCTest
 
 final class WaveformViewTests: XCTestCase {
-    func testMissingAndSilentAmplitudeUseMinimumLevel() {
-        XCTAssertEqual(
-            WaveformMetrics.normalizedLevel(audioLevel: nil, index: 3, barCount: 7),
-            0
-        )
-        XCTAssertEqual(
-            WaveformMetrics.normalizedLevel(audioLevel: 0, index: 3, barCount: 7),
-            0
-        )
-    }
+    func testAudioDrivenFormulaMatchesM1GoldForEveryBar() {
+        for level in [0.1, 0.43, 0.8, 1.0] {
+            for time in [0.0, 0.42, 1.7] {
+                let actual = WaveformMetrics.audioDrivenLevels(
+                    level: level,
+                    time: time,
+                    barCount: 7,
+                    isListening: false
+                )
 
-    func testLouderAmplitudeProducesTallerBars() {
-        for index in 0 ..< 7 {
-            let quiet = WaveformMetrics.normalizedLevel(
-                audioLevel: 0.2,
-                index: index,
-                barCount: 7
-            )
-            let loud = WaveformMetrics.normalizedLevel(
-                audioLevel: 0.8,
-                index: index,
-                barCount: 7
-            )
-
-            XCTAssertGreaterThan(loud, quiet, "bar \(index) must preserve amplitude ordering")
+                for index in 0 ..< 7 {
+                    XCTAssertEqual(
+                        actual[index],
+                        m1GoldLevel(level: level, time: time, index: index, barCount: 7),
+                        accuracy: 0.000_000_1,
+                        "bar \(index), level \(level), time \(time) must equal 5beaf34"
+                    )
+                }
+            }
         }
     }
 
-    func testEveryBarIsMonotonicAcrossAmplitudeRange() {
+    func testListeningUsesM1GoldDampingBeforeTheFormula() {
+        let level = 0.72
+        let time = 0.63
+        let actual = WaveformMetrics.audioDrivenLevels(
+            level: level,
+            time: time,
+            barCount: 7,
+            isListening: true
+        )
+
         for index in 0 ..< 7 {
-            let levels = [0.0, 0.1, 0.4, 0.8, 1.0].map { amplitude in
-                WaveformMetrics.normalizedLevel(
-                    audioLevel: amplitude,
+            XCTAssertEqual(
+                actual[index],
+                m1GoldLevel(
+                    level: level * 0.7,
+                    time: time,
                     index: index,
                     barCount: 7
+                ),
+                accuracy: 0.000_000_1
+            )
+        }
+    }
+
+    func testSharedEnvelopeUsesM1GoldAttackAndRelease() {
+        XCTAssertEqual(WaveformMetrics.envelopeAttackDuration, 0.06, accuracy: 0.0001)
+        XCTAssertEqual(WaveformMetrics.envelopeReleaseDuration, 0.40, accuracy: 0.0001)
+        XCTAssertEqual(WaveformMetrics.listeningDamping, 0.7, accuracy: 0.0001)
+        XCTAssertEqual(
+            WaveformMetrics.envelopeTransitionDuration(from: 0.2, to: 0.8),
+            0.06,
+            accuracy: 0.0001
+        )
+        XCTAssertEqual(
+            WaveformMetrics.envelopeTransitionDuration(from: 0.8, to: 0.2),
+            0.40,
+            accuracy: 0.0001
+        )
+    }
+
+    func testTruthfulSilenceIsExactlyFlatDespiteGoldShimmer() {
+        for level in [nil, 0] as [Double?] {
+            for time in [0.0, 0.42, 1.0] {
+                XCTAssertEqual(
+                    WaveformMetrics.audioDrivenLevels(
+                        level: level,
+                        time: time,
+                        barCount: 7,
+                        isListening: false
+                    ),
+                    Array(repeating: 0, count: 7)
                 )
             }
+        }
+    }
 
-            for pair in zip(levels, levels.dropFirst()) {
-                XCTAssertLessThanOrEqual(
-                    pair.0,
-                    pair.1,
-                    "bar \(index) must not shrink as real amplitude rises"
+    func testGoldenRatioShimmerIsPerBarAndNotAChronologicalSweep() {
+        let first = WaveformMetrics.audioDrivenLevels(
+            level: 0.6,
+            time: 0.42,
+            barCount: 7,
+            isListening: false
+        )
+        let sameCurrentMagnitude = WaveformMetrics.audioDrivenLevels(
+            level: 0.6,
+            time: 0.42,
+            barCount: 7,
+            isListening: false
+        )
+
+        XCTAssertEqual(first, sameCurrentMagnitude)
+        XCTAssertTrue(zip(first.prefix(3), first.suffix(3).reversed()).contains { pair in
+            abs(pair.0 - pair.1) > 0.01
+        })
+
+        let averages = (0 ..< 7).map { index in
+            let samples = stride(from: 0.0, through: 4.0, by: 0.05).map { time in
+                WaveformMetrics.audioDrivenLevels(
+                    level: 0.6,
+                    time: time,
+                    barCount: 7,
+                    isListening: false
+                )[index]
+            }
+            return samples.reduce(0, +) / Double(samples.count)
+        }
+        XCTAssertGreaterThan(averages[3], averages[0])
+        XCTAssertGreaterThan(averages[3], averages[6])
+    }
+
+    func testProcessingFormulaMatchesM1Gold() {
+        for time in [0.0, 0.42, 1.7] {
+            let actual = WaveformMetrics.processingLevels(time: time, barCount: 7)
+            for index in 0 ..< 7 {
+                XCTAssertEqual(
+                    actual[index],
+                    m1GoldProcessingLevel(time: time, index: index, barCount: 7),
+                    accuracy: 0.000_000_1
                 )
             }
         }
-    }
-
-    func testIdenticalAmplitudeProducesIdenticalGeometry() {
-        let first = (0 ..< 7).map { index in
-            WaveformMetrics.normalizedLevel(audioLevel: 0.63, index: index, barCount: 7)
-        }
-        let second = (0 ..< 7).map { index in
-            WaveformMetrics.normalizedLevel(audioLevel: 0.63, index: index, barCount: 7)
-        }
-
-        XCTAssertEqual(first, second)
-    }
-
-    func testCenterWeightingIsStaticAndSymmetric() {
-        let levels = (0 ..< 7).map { index in
-            WaveformMetrics.normalizedLevel(audioLevel: 0.5, index: index, barCount: 7)
-        }
-
-        XCTAssertEqual(levels[0], levels[6], accuracy: 0.0001)
-        XCTAssertEqual(levels[1], levels[5], accuracy: 0.0001)
-        XCTAssertEqual(levels[2], levels[4], accuracy: 0.0001)
-        XCTAssertGreaterThan(levels[3], levels[0])
-    }
-
-    func testTimeOffsetLevelsPreserveIndependentRealShapeAndPeakPosition() {
-        let realSamples = [0.7, 0.2, 0.6, 0.1, 0.3, 0.9, 0.4]
-
-        XCTAssertEqual(
-            WaveformMetrics.normalizedLevels(audioLevels: realSamples, barCount: 7),
-            realSamples
-        )
-    }
-
-    func testAmplitudeIsClampedBeforeHeightMapping() {
-        XCTAssertEqual(
-            WaveformMetrics.normalizedLevel(audioLevel: -0.5, index: 3, barCount: 7),
-            0
-        )
-        XCTAssertEqual(
-            WaveformMetrics.normalizedLevel(audioLevel: 1.5, index: 3, barCount: 7),
-            WaveformMetrics.normalizedLevel(audioLevel: 1, index: 3, barCount: 7)
-        )
     }
 
     func testRecordingSourceMapsObservedRoomToneToSilence() {
@@ -115,28 +150,73 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertGreaterThan(loud, quiet)
     }
 
-    func testLiveTargetsUseGradedPerBarAttackAndSettleWithoutHolding() {
-        let attacks = (0 ..< 7).map { index in
-            WaveformMetrics.transitionDuration(
-                from: 0.2,
-                to: 0.8,
-                index: index,
-                barCount: 7
-            )
-        }
-        let releases = (0 ..< 7).map { index in
-            WaveformMetrics.transitionDuration(
-                from: 0.8,
-                to: 0.2,
-                index: index,
-                barCount: 7
-            )
-        }
+    func testBarViewFeedsCurrentTruthSourcesIntoOneGoldFormula() throws {
+        let source = try barViewSource()
 
-        XCTAssertTrue(attacks.allSatisfy { (0.10 ... 0.20).contains($0) })
-        XCTAssertGreaterThan(Set(attacks).count, 1)
-        XCTAssertGreaterThanOrEqual(releases.min() ?? 0, 0.18)
-        XCTAssertLessThanOrEqual(releases.max() ?? 0, 0.30)
-        XCTAssertGreaterThan(Set(releases).count, 1)
+        XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
+        XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertFalse(source.contains("recordingWaveformLevels"))
+        XCTAssertFalse(source.contains("playbackWaveformLevels"))
+        XCTAssertFalse(source.contains("centerOutHistory"))
+    }
+
+    func testTranscribingRestoresM1SpinnerAsLeadingIndicator() throws {
+        let source = try barViewSource()
+        let transcribingBranch = source
+            .components(separatedBy: "} else if state.mode == .transcribing {")
+            .dropFirst()
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        XCTAssertTrue(transcribingBranch?.hasPrefix("ProcessingSpinner()") == true)
+        XCTAssertTrue(source.contains("WaveformView(processingColor:"))
+    }
+
+    private func m1GoldLevel(
+        level: Double,
+        time: Double,
+        index: Int,
+        barCount: Int
+    ) -> Double {
+        let phi = 1.618033988749895
+        let phaseOffset = Double(index) * phi
+        let center = Double(barCount - 1) / 2
+        let distance = abs(Double(index) - center) / center
+        let centerWeight = 1 - distance * 0.35
+        let fast = sin(time * 7 + phaseOffset * 2.5) * 0.08
+        let jitter = sin(time * 12 + phaseOffset * 6) * 0.05
+        let motionScale = 0.4 + level * 0.6
+        let base = 0.04 + level * 0.12
+        let envelope = pow(level, 0.9) * centerWeight
+        return max(0, min(1, base + envelope * 0.82 + (fast + jitter) * motionScale))
+    }
+
+    private func m1GoldProcessingLevel(
+        time: Double,
+        index: Int,
+        barCount: Int
+    ) -> Double {
+        let center = Double(barCount - 1) / 2
+        let distanceFromCenter = abs(Double(index) - center)
+        let normalizedDistance = center == 0 ? 0 : distanceFromCenter / center
+        let inwardOutward = sin(time * 4.8 - normalizedDistance * .pi) * 0.5 + 0.5
+        let centerPulse = sin(time * 2.4) * 0.5 + 0.5
+        let centerWeight = 1 - normalizedDistance * 0.35
+        return max(0, min(1, 0.12 + inwardOutward * 0.38 + centerPulse * 0.16 * centerWeight))
+    }
+
+    private func barViewSource() throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let barViewURL = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("VoiceBarUI")
+            .appendingPathComponent("BarView.swift")
+        return try String(contentsOf: barViewURL, encoding: .utf8)
     }
 }

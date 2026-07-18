@@ -75,6 +75,7 @@ const THINK_FILE =
   process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
 
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
+const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
 
 // --- Validation wrappers ---
 
@@ -286,6 +287,41 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
   const inputAbortController = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timeoutSettled = false;
+  let resolveTimeout!: (result: McpResult) => void;
+  const timeoutPromise = new Promise<McpResult>((resolve) => {
+    resolveTimeout = resolve;
+  });
+  const armTimeout = (
+    timeoutMs: number,
+    stage: "capture" | "return",
+  ): void => {
+    if (timeoutSettled) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timeoutSettled = true;
+      console.error(
+        `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
+      );
+      const timeoutResult = textResult(
+        `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s. ` +
+          "The voice pipeline may be stuck. Try again.",
+        true,
+      );
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      // Settle the public timeout result before aborting the deeper pipeline so
+      // a synchronous abort rejection cannot replace the intended response.
+      resolveTimeout(timeoutResult);
+      inputAbortController.abort(
+        new Error(
+          `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
+        ),
+      );
+    }, timeoutMs);
+  };
+  armTimeout(outerTimeoutMs, "capture");
+
   const converseFlow = async (): Promise<McpResult> => {
     // V1 policy: refuse instead of queueing while the user is recording.
     // Queueing a question would make the eventual prompt stale and can still
@@ -329,6 +365,9 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
           agentTtsEngine: speech.engine,
           agentTtsVoice: speech.voice,
         },
+        onCaptureEnd: () => {
+          armTimeout(VOICE_ASK_RETURN_TIMEOUT_MS, "return");
+        },
         signal: inputAbortController.signal,
       },
     );
@@ -340,38 +379,14 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     return textResult(formatAsk(response));
   };
 
-  let timer: ReturnType<typeof setTimeout>;
-  const timeoutPromise = new Promise<McpResult>((resolve) => {
-    timer = setTimeout(() => {
-      console.error(
-        `[voicelayer] voice_ask hard timeout after ${outerTimeoutMs / 1000}s`,
-      );
-      const timeoutResult = textResult(
-        `[converse] Hard timeout after ${Math.round(outerTimeoutMs / 1000)}s. ` +
-          "The voice pipeline may be stuck. Try again.",
-        true,
-      );
-      // P0-2: broadcast idle so VoiceBar doesn't get stuck
-      broadcast({ type: "state", state: "idle", source: "recording" });
-      // Settle the public timeout result before aborting the deeper pipeline so
-      // a synchronous abort rejection cannot replace the intended response.
-      resolve(timeoutResult);
-      inputAbortController.abort(
-        new Error(
-          `voice_ask input aborted after hard timeout (${outerTimeoutMs}ms)`,
-        ),
-      );
-    }, outerTimeoutMs);
-  });
-
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
   try {
     const result = await Promise.race([converseFlow(), timeoutPromise]);
-    clearTimeout(timer!);
+    if (timer) clearTimeout(timer);
     return result;
   } catch (err) {
-    clearTimeout(timer!);
+    if (timer) clearTimeout(timer);
     if (
       !isSpeakerOutputRefusedError(err) &&
       !isRecordingConflictError(err) &&
