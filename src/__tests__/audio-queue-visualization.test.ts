@@ -35,7 +35,15 @@ describe("audio queue visualization events", () => {
     };
 
     // @ts-ignore
-    Bun.spawn = (_cmd: string[], _opts?: unknown) => {
+    Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      if (cmd[0] === "ffmpeg") {
+        return {
+          exited: Promise.resolve(0),
+          pid: 90000,
+          stdout: new Blob([new Uint8Array([0, 0])]).stream(),
+          kill: () => {},
+        };
+      }
       let resolveExit!: () => void;
       const exited = new Promise<number>((resolve) => {
         resolveExit = () => resolve(0);

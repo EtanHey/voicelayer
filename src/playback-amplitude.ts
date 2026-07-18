@@ -1,0 +1,284 @@
+/** Truthful playback-amplitude extraction for VoiceBar waveforms. */
+
+export const PLAYBACK_AMPLITUDE_INTERVAL_MS = 50;
+export const PLAYBACK_AMPLITUDE_SAMPLE_RATE = 1000;
+export const PLAYBACK_AMPLITUDE_MAX_DURATION_MS = 20 * 60 * 1000;
+export const PLAYBACK_AMPLITUDE_MAX_PCM_BYTES =
+  (PLAYBACK_AMPLITUDE_SAMPLE_RATE * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) /
+  1000;
+export const PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES = 1000;
+export const PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS = 30_000;
+const PLAYBACK_AMPLITUDE_DBFS_FLOOR = -60;
+const PCM16_FULL_SCALE = 32768;
+
+export type PlaybackAmplitudeEnvelope =
+  | {
+      source: "decoded-rms";
+      sample_interval_ms: number;
+      samples: number[];
+    }
+  | {
+      source: "unavailable";
+      sample_interval_ms: number;
+      samples: [];
+    };
+
+export interface PlaybackAmplitudeDecoderResult {
+  exitCode: number;
+  stdout: Uint8Array;
+}
+
+export type PlaybackAmplitudeDecoder = (
+  command: string[],
+) => PlaybackAmplitudeDecoderResult;
+
+export interface PlaybackAmplitudeDecoderTask {
+  result: Promise<PlaybackAmplitudeDecoderResult>;
+  cancel: () => void;
+}
+
+export type AsyncPlaybackAmplitudeDecoder = (
+  command: string[],
+) => PlaybackAmplitudeDecoderTask;
+
+export interface PlaybackAmplitudeExtraction {
+  result: Promise<PlaybackAmplitudeEnvelope>;
+  cancel: () => void;
+}
+
+function unavailableEnvelope(): PlaybackAmplitudeEnvelope {
+  return {
+    source: "unavailable",
+    sample_interval_ms: PLAYBACK_AMPLITUDE_INTERVAL_MS,
+    samples: [],
+  };
+}
+
+function normalizedRMS(sumSquares: number, sampleCount: number): number {
+  if (sampleCount <= 0 || sumSquares <= 0) return 0;
+  const rms = Math.sqrt(sumSquares / sampleCount) / PCM16_FULL_SCALE;
+  if (!Number.isFinite(rms) || rms <= 0) return 0;
+  const dbfs = 20 * Math.log10(rms);
+  const normalized =
+    (dbfs - PLAYBACK_AMPLITUDE_DBFS_FLOOR) /
+    -PLAYBACK_AMPLITUDE_DBFS_FLOOR;
+  return Math.round(Math.max(0, Math.min(1, normalized)) * 10_000) / 10_000;
+}
+
+export function buildPlaybackAmplitudeEnvelope(
+  pcm16: Uint8Array,
+  sampleRate: number,
+  intervalMs = PLAYBACK_AMPLITUDE_INTERVAL_MS,
+): PlaybackAmplitudeEnvelope {
+  if (
+    pcm16.byteLength === 0 ||
+    pcm16.byteLength % 2 !== 0 ||
+    !Number.isFinite(sampleRate) ||
+    sampleRate <= 0 ||
+    !Number.isFinite(intervalMs) ||
+    intervalMs <= 0
+  ) {
+    return unavailableEnvelope();
+  }
+
+  const maximumPcmBytes =
+    (sampleRate * PLAYBACK_AMPLITUDE_MAX_DURATION_MS * 2) / 1000;
+  const baseSamplesPerWindow = (sampleRate * intervalMs) / 1000;
+  if (
+    !Number.isSafeInteger(maximumPcmBytes) ||
+    pcm16.byteLength > maximumPcmBytes ||
+    !Number.isSafeInteger(baseSamplesPerWindow) ||
+    baseSamplesPerWindow < 1
+  ) {
+    return unavailableEnvelope();
+  }
+
+  const sampleCount = pcm16.byteLength / 2;
+  const baseWindowCount = Math.ceil(sampleCount / baseSamplesPerWindow);
+  const windowScale = Math.max(
+    1,
+    Math.ceil(baseWindowCount / PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES),
+  );
+  const samplesPerWindow = baseSamplesPerWindow * windowScale;
+  const effectiveIntervalMs = intervalMs * windowScale;
+  if (
+    !Number.isSafeInteger(samplesPerWindow) ||
+    !Number.isSafeInteger(effectiveIntervalMs)
+  ) {
+    return unavailableEnvelope();
+  }
+  const view = new DataView(
+    pcm16.buffer,
+    pcm16.byteOffset,
+    sampleCount * 2,
+  );
+  const samples: number[] = [];
+
+  for (let start = 0; start < sampleCount; start += samplesPerWindow) {
+    const end = Math.min(sampleCount, start + samplesPerWindow);
+    let sumSquares = 0;
+    for (let index = start; index < end; index++) {
+      const sample = view.getInt16(index * 2, true);
+      sumSquares += sample * sample;
+    }
+    samples.push(normalizedRMS(sumSquares, end - start));
+  }
+
+  return {
+    source: "decoded-rms",
+    sample_interval_ms: effectiveIntervalMs,
+    samples,
+  };
+}
+
+function runFFmpeg(command: string[]): PlaybackAmplitudeDecoderResult {
+  const result = Bun.spawnSync(command, {
+    stdout: "pipe",
+    stderr: "ignore",
+    maxBuffer: PLAYBACK_AMPLITUDE_MAX_PCM_BYTES + 1,
+    timeout: PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS,
+  });
+  return {
+    exitCode: result.exitCode,
+    stdout: new Uint8Array(result.stdout),
+  };
+}
+
+async function readBoundedPCM(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  cancelDecoder: () => void,
+): Promise<Uint8Array> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value.byteLength > maximumBytes - byteLength) {
+        cancelDecoder();
+        await reader.cancel().catch(() => {});
+        throw new Error("decoded PCM exceeded playback amplitude byte bound");
+      }
+      chunks.push(value);
+      byteLength += value.byteLength;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const output = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
+}
+
+function runFFmpegAsync(command: string[]): PlaybackAmplitudeDecoderTask {
+  const subprocess = Bun.spawn(command, {
+    stdin: "ignore",
+    stdout: "pipe",
+    stderr: "ignore",
+    maxBuffer: PLAYBACK_AMPLITUDE_MAX_PCM_BYTES + 1,
+    timeout: PLAYBACK_AMPLITUDE_DECODE_TIMEOUT_MS,
+  });
+  let cancelled = false;
+  const cancel = () => {
+    if (cancelled) return;
+    cancelled = true;
+    try {
+      subprocess.kill("SIGTERM");
+    } catch {}
+  };
+  return {
+    result: readBoundedPCM(
+      subprocess.stdout,
+      PLAYBACK_AMPLITUDE_MAX_PCM_BYTES,
+      cancel,
+    )
+      .then(async (stdout) => ({
+        exitCode: await subprocess.exited,
+        stdout,
+      }))
+      .catch(async () => {
+        cancel();
+        await subprocess.exited.catch(() => -1);
+        return { exitCode: 1, stdout: new Uint8Array() };
+      }),
+    cancel,
+  };
+}
+
+function playbackAmplitudeCommand(audioFile: string): string[] {
+  return [
+    "ffmpeg",
+    "-v",
+    "error",
+    "-i",
+    audioFile,
+    "-vn",
+    "-ac",
+    "1",
+    "-ar",
+    String(PLAYBACK_AMPLITUDE_SAMPLE_RATE),
+    "-f",
+    "s16le",
+    "pipe:1",
+  ];
+}
+
+export function extractPlaybackAmplitudeEnvelope(
+  audioFile: string,
+  runDecoder: PlaybackAmplitudeDecoder = runFFmpeg,
+): PlaybackAmplitudeEnvelope {
+  try {
+    const result = runDecoder(playbackAmplitudeCommand(audioFile));
+    if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
+      return unavailableEnvelope();
+    }
+    return buildPlaybackAmplitudeEnvelope(
+      result.stdout,
+      PLAYBACK_AMPLITUDE_SAMPLE_RATE,
+    );
+  } catch {
+    return unavailableEnvelope();
+  }
+}
+
+export function startPlaybackAmplitudeEnvelopeExtraction(
+  audioFile: string,
+  runDecoder: AsyncPlaybackAmplitudeDecoder = runFFmpegAsync,
+): PlaybackAmplitudeExtraction {
+  try {
+    const decoder = runDecoder(playbackAmplitudeCommand(audioFile));
+    return {
+      cancel: decoder.cancel,
+      result: decoder.result
+        .then((result) => {
+          if (result.exitCode !== 0 || result.stdout.byteLength === 0) {
+            return unavailableEnvelope();
+          }
+          return buildPlaybackAmplitudeEnvelope(
+            result.stdout,
+            PLAYBACK_AMPLITUDE_SAMPLE_RATE,
+          );
+        })
+        .catch(() => unavailableEnvelope()),
+    };
+  } catch {
+    return {
+      cancel: () => {},
+      result: Promise.resolve(unavailableEnvelope()),
+    };
+  }
+}
+
+export async function extractPlaybackAmplitudeEnvelopeAsync(
+  audioFile: string,
+  runDecoder: AsyncPlaybackAmplitudeDecoder = runFFmpegAsync,
+): Promise<PlaybackAmplitudeEnvelope> {
+  return startPlaybackAmplitudeEnvelopeExtraction(audioFile, runDecoder).result;
+}

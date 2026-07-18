@@ -223,6 +223,10 @@ public final class VoiceState {
     public var audioLevel: Double?
     private var socketAudioLevel: Double?
     private var localRecordingLevel: Double?
+    public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
+    private var playbackAmplitudeStartedAt: TimeInterval?
+    private var recordingWaveformHistory = WaveformEnvelopeHistory()
+    private var transcribingWaveformReplayStartedAt: TimeInterval?
     private var recordCommandUptimeMs: Int?
     private var recordingStateUptimeMs: Int?
     private var didLogFirstRecordingAudioLevel = false
@@ -472,6 +476,7 @@ public final class VoiceState {
     private let recentTranscriptionEntriesSaver: ([RecentTranscriptionEntry]) -> Void
     private let transcriptionVocabularyLoader: () -> [String]
     private let transcriptionVocabularyAliasLoader: () -> [STTVocabularyAliasPreview]
+    private let playbackAmplitudeClock: () -> TimeInterval
     private let keepsExpandedInDevState: Bool
 
     /// Transport-layer hook injected by AppDelegate.
@@ -518,12 +523,16 @@ public final class VoiceState {
         },
         transcriptionVocabularyLoader: @escaping () -> [String] = { [] },
         transcriptionVocabularyAliasLoader: @escaping () -> [STTVocabularyAliasPreview] = { [] },
+        playbackAmplitudeClock: @escaping () -> TimeInterval = {
+            ProcessInfo.processInfo.systemUptime
+        },
         keepsExpandedInDevState: Bool = VoiceBarDevState.shouldKeepExpanded()
     ) {
         self.recentTranscriptionsSaver = recentTranscriptionsSaver
         self.recentTranscriptionEntriesSaver = recentTranscriptionEntriesSaver
         self.transcriptionVocabularyLoader = transcriptionVocabularyLoader
         self.transcriptionVocabularyAliasLoader = transcriptionVocabularyAliasLoader
+        self.playbackAmplitudeClock = playbackAmplitudeClock
         self.keepsExpandedInDevState = keepsExpandedInDevState
         recentTranscriptionEntries = Self.normalizeRecentTranscriptionEntries(
             recentTranscriptionEntriesLoader(),
@@ -706,6 +715,53 @@ public final class VoiceState {
         guard mode == .recording else { return }
         localRecordingLevel = level.map { min(1, max(0, $0)) }
         refreshAudioLevel()
+        appendRecordingWaveformSample()
+    }
+
+    public func playbackAudioLevel() -> Double {
+        playbackAudioLevel(atSystemUptime: playbackAmplitudeClock())
+    }
+
+    func playbackAudioLevel(atSystemUptime systemUptime: TimeInterval) -> Double {
+        guard let envelope = playbackAmplitudeEnvelope,
+              let startedAt = playbackAmplitudeStartedAt
+        else { return 0 }
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
+    }
+
+    public var recordingWaveformLevel: Double {
+        guard mode == .recording else { return 0 }
+        let combinedLevel: Double? = switch (localRecordingLevel, socketAudioLevel) {
+        case let (local?, socket?): max(local, socket)
+        case let (local?, nil): local
+        case let (nil, socket?): socket
+        case (nil, nil): nil
+        }
+        return WaveformMetrics.recordingLevel(from: combinedLevel)
+    }
+
+    public var recordingWaveformLevels: [Double] {
+        guard mode == .recording else { return Array(repeating: 0, count: 7) }
+        return recordingWaveformHistory.liveWindow(barCount: 7)
+    }
+
+    func transcribingWaveformLevels(
+        atSystemUptime systemUptime: TimeInterval
+    ) -> [Double]? {
+        guard mode == .transcribing, let transcribingWaveformReplayStartedAt else { return nil }
+        let elapsedMilliseconds = max(
+            0,
+            Int(((systemUptime - transcribingWaveformReplayStartedAt) * 1000).rounded())
+        )
+        return recordingWaveformHistory.replayWindow(
+            elapsedMilliseconds: elapsedMilliseconds,
+            barCount: 7
+        )
+    }
+
+    public func transcribingWaveformLevels() -> [Double]? {
+        transcribingWaveformLevels(atSystemUptime: playbackAmplitudeClock())
     }
 
     /// Paste the most recent transcript into the current target app again.
@@ -867,7 +923,10 @@ public final class VoiceState {
         onPolishStatusChange?()
     }
 
-    public func handleEvent(_ event: [String: Any]) {
+    public func handleEvent(
+        _ event: [String: Any],
+        playbackAmplitude: PlaybackAmplitudeEnvelope? = nil
+    ) {
         guard let type = event["type"] as? String else { return }
 
         switch type {
@@ -916,6 +975,9 @@ public final class VoiceState {
                 clearHistoryRetranscriptionRequest(removeSuppression: false)
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
+                resetAudioLevels()
+                playbackAmplitudeEnvelope = playbackAmplitude
+                playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackAmplitudeClock() }
                 clearRetainedTeleprompter()
                 mode = .speaking
                 isTeleprompterDismissed = false
@@ -925,6 +987,7 @@ public final class VoiceState {
                 onModeChange?(.speaking)
                 expandFromCollapse()
             case "recording":
+                let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 if pendingIntent?.command == .record {
                     recordStartAckTimeoutTask?.cancel()
@@ -940,17 +1003,25 @@ public final class VoiceState {
                 transcribingStartedAt = nil
                 transcribingStatusText = nil
                 errorMessage = nil
+                resetPlaybackAmplitude()
                 if recordingStateUptimeMs == nil {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
                     didLogFirstRecordingAudioLevel = false
                 }
                 clearRetainedTeleprompter()
+                if startsNewRecording {
+                    recordingWaveformHistory = WaveformEnvelopeHistory()
+                    transcribingWaveformReplayStartedAt = nil
+                    localRecordingLevel = nil
+                }
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
                 speechDetected = false
-                localRecordingLevel = nil
                 refreshAudioLevel()
+                if startsNewRecording {
+                    appendRecordingWaveformSample()
+                }
                 canReplay = false // User recording — replay not applicable
                 onModeChange?(.recording)
                 expandFromCollapse()
@@ -1071,6 +1142,9 @@ public final class VoiceState {
             if let rms = event["rms"] as? Double {
                 socketAudioLevel = Self.clampAudioLevel(rms)
                 refreshAudioLevel()
+                if mode == .recording {
+                    appendRecordingWaveformSample()
+                }
                 logFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
 
@@ -1116,6 +1190,7 @@ public final class VoiceState {
                 recordStartInsertionHandler = nil
             }
             if shouldShowError {
+                resetAudioLevels()
                 mode = .error
                 errorMessage = event["message"] as? String ?? "Unknown error"
                 expandFromCollapse()
@@ -1329,9 +1404,24 @@ public final class VoiceState {
         socketAudioLevel = nil
         localRecordingLevel = nil
         audioLevel = nil
+        recordingWaveformHistory = WaveformEnvelopeHistory()
+        transcribingWaveformReplayStartedAt = nil
         recordCommandUptimeMs = nil
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
+        resetPlaybackAmplitude()
+    }
+
+    private func resetPlaybackAmplitude() {
+        playbackAmplitudeEnvelope = nil
+        playbackAmplitudeStartedAt = nil
+    }
+
+    private func appendRecordingWaveformSample() {
+        recordingWaveformHistory.append(
+            level: recordingWaveformLevel,
+            atUptimeMilliseconds: Int((playbackAmplitudeClock() * 1000).rounded())
+        )
     }
 
     private static func clampAudioLevel(_ level: Double) -> Double {
@@ -1508,6 +1598,9 @@ public final class VoiceState {
 
     private func enterTranscribingMode() {
         let modeChanged = mode != .transcribing
+        if mode == .recording, !recordingWaveformHistory.samples.isEmpty {
+            transcribingWaveformReplayStartedAt = playbackAmplitudeClock()
+        }
         mode = .transcribing
         if modeChanged || transcribingStartedAt == nil {
             transcribingStartedAt = currentDateProvider()

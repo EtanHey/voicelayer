@@ -52,9 +52,18 @@ describe("tts priority queue", () => {
 
     // @ts-ignore
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
+      const command = [...(Array.isArray(cmd) ? cmd : [String(cmd)])];
+      if (command[0] === "ffmpeg") {
+        return {
+          exited: Promise.resolve(0),
+          pid: 87000,
+          stdout: new Blob([new Uint8Array([0, 0])]).stream(),
+          kill: () => {},
+        };
+      }
       let resolveExit!: () => void;
       const mock: MockPlayer = {
-        cmd: [...(Array.isArray(cmd) ? cmd : [String(cmd)])],
+        cmd: command,
         killed: false,
         resolveExit: () => {},
       };

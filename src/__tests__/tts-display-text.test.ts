@@ -31,6 +31,20 @@ interface SpawnCall {
   cmd: string[];
 }
 
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
 describe("TTS display text stays separate from pronunciation text", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
@@ -93,7 +107,15 @@ describe("TTS display text stays separate from pronunciation text", () => {
         }
       }
 
-      return { exited: Promise.resolve(0), pid: 81000, kill: () => {} };
+      return {
+        exited: Promise.resolve(0),
+        pid: 81000,
+        stdout:
+          command[0] === "ffmpeg"
+            ? new Blob([new Uint8Array([0, 0])]).stream()
+            : undefined,
+        kill: () => {},
+      };
     };
 
     // @ts-ignore — avoid invoking platform probes in this unit fixture.
@@ -153,6 +175,14 @@ describe("TTS display text stays separate from pronunciation text", () => {
       const { speak } = await import("../tts");
 
       await speak(displayText);
+      await waitFor(
+        () => broadcasts.some(
+          (event) => event.type === "state" &&
+            event.state === "speaking" &&
+            event.text === displayText,
+        ),
+        `speaking event for ${displayText}`,
+      );
 
       const synthesis = spawnCalls.find((call) =>
         call.cmd[0].includes("python3"),
@@ -170,6 +200,14 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("cmuxlayer");
+    await waitFor(
+      () => broadcasts.some(
+        (event) => event.type === "state" &&
+          event.state === "speaking" &&
+          event.text === "cmuxlayer",
+      ),
+      "negative-control speaking event",
+    );
 
     const synthesis = spawnCalls.find((call) =>
       call.cmd[0].includes("python3"),
@@ -185,6 +223,10 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("Etan");
+    await waitFor(
+      () => broadcasts.some((event) => event.type === "subtitle"),
+      "substituted subtitle event",
+    );
 
     const subtitle = broadcasts.find((event) => event.type === "subtitle");
     expect(subtitle?.words).toEqual([
@@ -196,6 +238,14 @@ describe("TTS display text stays separate from pronunciation text", () => {
     const { speak } = await import("../tts");
 
     await speak("Etan runs supabase cmuxlayer golems and BrainLayer");
+    await waitFor(
+      () => broadcasts.some(
+        (event) => event.type === "state" &&
+          event.state === "speaking" &&
+          event.text === "Etan runs supabase cmuxlayer golems and BrainLayer",
+      ),
+      "full display-text speaking event",
+    );
 
     const synthesis = spawnCalls.find((call) => call.cmd[0].includes("python3"));
     expect(synthesis?.cmd).toContain(

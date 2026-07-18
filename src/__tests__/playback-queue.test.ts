@@ -24,6 +24,33 @@ interface MockPlayer {
   resolveExit: () => void;
 }
 
+interface MockDecoder {
+  killed: boolean;
+  exited: Promise<number>;
+  resolveExit: () => void;
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
+function pcm16(samples: number[]): Uint8Array {
+  const bytes = new Uint8Array(samples.length * 2);
+  const view = new DataView(bytes.buffer);
+  samples.forEach((sample, index) => view.setInt16(index * 2, sample, true));
+  return bytes;
+}
+
 const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-playback-queue-state-${process.pid}.json`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
@@ -53,6 +80,13 @@ describe("playback queue — P0-1 sequential playback", () => {
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
   let originalRecordingStatePath: string | undefined;
+  let decodeSucceeds: boolean;
+  let speakingSpawnCounts: number[];
+  let queueEvents: string[];
+  let decoderMocks: MockDecoder[];
+  let holdDecoderExits: boolean;
+  let synchronousDecodeCount: number;
+  let decoderSpawnOptions: unknown;
 
   beforeEach(async () => {
     originalRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
@@ -67,9 +101,19 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     broadcasts = [];
     playerMocks = [];
+    decodeSucceeds = true;
+    speakingSpawnCounts = [];
+    queueEvents = [];
+    decoderMocks = [];
+    holdDecoderExits = false;
+    synchronousDecodeCount = 0;
+    decoderSpawnOptions = undefined;
 
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       (event: unknown) => {
+        if ((event as any).type === "state" && (event as any).state === "speaking") {
+          speakingSpawnCounts.push(playerMocks.length);
+        }
         broadcasts.push(JSON.parse(JSON.stringify(event)));
       },
     );
@@ -90,22 +134,68 @@ describe("playback queue — P0-1 sequential playback", () => {
           stderr: new Uint8Array(0),
         };
       }
+      if (Array.isArray(cmd) && cmd[0] === "ffmpeg") {
+        synchronousDecodeCount += 1;
+        const inputIndex = cmd.indexOf("-i");
+        queueEvents.push(`decode:${cmd[inputIndex + 1]}`);
+        const samples = [
+          ...Array(50).fill(1000),
+          ...Array(50).fill(8000),
+        ];
+        return {
+          exitCode: decodeSucceeds ? 0 : 1,
+          stdout: decodeSucceeds ? pcm16(samples) : new Uint8Array(0),
+          stderr: new Uint8Array(0),
+        };
+      }
       return originalSpawnSync(cmd);
     };
 
     // @ts-ignore — mock Bun.spawn: audio players are controllable
-    Bun.spawn = (cmd: string[], _opts?: unknown) => {
+    Bun.spawn = (cmd: string[], opts?: unknown) => {
       const cmdArray = Array.isArray(cmd) ? [...cmd] : [String(cmd)];
+      if (cmdArray[0] === "ffmpeg") {
+        decoderSpawnOptions = opts;
+        const inputIndex = cmdArray.indexOf("-i");
+        queueEvents.push(`decode:${cmdArray[inputIndex + 1]}`);
+        const samples = [
+          ...Array(50).fill(1000),
+          ...Array(50).fill(8000),
+        ];
+        let resolveExit!: () => void;
+        const exited = new Promise<number>((resolve) => {
+          resolveExit = () => resolve(decodeSucceeds ? 0 : 1);
+        });
+        const decoder = { killed: false, exited, resolveExit };
+        decoderMocks.push(decoder);
+        if (!holdDecoderExits) queueMicrotask(resolveExit);
+        return {
+          exited,
+          pid: 98000 + decoderMocks.length,
+          stdout: new Blob([
+            decodeSucceeds ? pcm16(samples) : new Uint8Array(),
+          ]).stream(),
+          kill: () => {
+            decoder.killed = true;
+            resolveExit();
+          },
+        };
+      }
       let resolveExit!: () => void;
       const exited = new Promise<number>((r) => {
         resolveExit = () => r(0);
       });
       playerMocks.push({ cmd: cmdArray, resolveExit });
-      return { exited, pid: 99000 + playerMocks.length, kill: () => {} };
+      return {
+        exited,
+        pid: 99000 + playerMocks.length,
+        kill: () => queueEvents.push(`kill:${cmdArray.at(-1)}`),
+      };
     };
   });
 
   afterEach(async () => {
+    for (const decoder of decoderMocks) decoder.resolveExit();
     // Drain queue before restoring spawn
     for (let i = 0; i < playerMocks.length; i++) {
       try {
@@ -182,6 +272,15 @@ describe("playback queue — P0-1 sequential playback", () => {
     );
     expect(speakingEvents.length).toBe(1);
     expect((speakingEvents[0] as any).text).toBe("First message");
+    expect(speakingSpawnCounts[0]).toBe(1);
+    expect((speakingEvents[0] as any).playback_amplitude).toEqual({
+      source: "decoded-rms",
+      sample_interval_ms: 50,
+      samples: expect.arrayContaining([expect.any(Number), expect.any(Number)]),
+    });
+    expect((speakingEvents[0] as any).playback_amplitude.samples[1]).toBeGreaterThan(
+      (speakingEvents[0] as any).playback_amplitude.samples[0],
+    );
 
     // Finish first playback → second should start and broadcast
     playerMocks[0].resolveExit();
@@ -192,10 +291,202 @@ describe("playback queue — P0-1 sequential playback", () => {
     );
     expect(allSpeaking.length).toBe(2);
     expect((allSpeaking[1] as any).text).toBe("Second message");
+    expect(speakingSpawnCounts[1]).toBe(2);
 
     // Cleanup
     playerMocks[1].resolveExit();
     await Bun.sleep(50);
+  });
+
+  it("publishes an explicit flat fallback when cached audio cannot be decoded", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    decodeSucceeds = false;
+
+    const playback = playAudioNonBlocking("/tmp/pq-replay-corrupt.mp3", {
+      text: "Cached replay",
+      voice: "TestVoice",
+      preStartIdle: true,
+    });
+    await waitFor(
+      () => broadcasts.some(
+        (event: any) => event.type === "state" && event.state === "speaking",
+      ),
+      "fallback speaking event",
+    );
+
+    const speaking = broadcasts.find(
+      (event: any) => event.type === "state" && event.state === "speaking",
+    ) as any;
+    expect(speaking.playback_amplitude).toEqual({
+      source: "unavailable",
+      sample_interval_ms: 50,
+      samples: [],
+    });
+    expect(speakingSpawnCounts).toEqual([1]);
+
+    playerMocks[0].resolveExit();
+    await playback.exited;
+  });
+
+  it("returns before asynchronous envelope preparation completes", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    holdDecoderExits = true;
+
+    const playback = playAudioNonBlocking("/tmp/pq-nonblocking.mp3", {
+      text: "Nonblocking",
+      voice: "TestVoice",
+    });
+
+    expect(synchronousDecodeCount).toBe(0);
+    expect(decoderMocks).toHaveLength(1);
+    expect(playerMocks).toHaveLength(0);
+    expect(decoderSpawnOptions).toMatchObject({
+      maxBuffer: 2_400_001,
+      timeout: 30_000,
+    });
+
+    decoderMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 1, "prepared player creation");
+
+    expect(playerMocks).toHaveLength(1);
+    playerMocks[0].resolveExit();
+    await playback.exited;
+  });
+
+  it("does not expire an eligible job while amplitude preparation is active", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    holdDecoderExits = true;
+    let now = 1_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      const playback = playAudioNonBlocking("/tmp/pq-slow-preparation.mp3", {
+        text: "Prepared fallback must still play",
+        voice: "TestVoice",
+      });
+      expect(decoderMocks).toHaveLength(1);
+
+      now += 30_001;
+      decoderMocks[0].resolveExit();
+      await decoderMocks[0].exited;
+      await Bun.sleep(10);
+
+      expect(playerMocks).toHaveLength(1);
+      playerMocks[0].resolveExit();
+      await playback.exited;
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("cancels a job while asynchronous envelope preparation is in flight", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+    holdDecoderExits = true;
+
+    const playback = playAudioNonBlocking("/tmp/pq-cancel-preparing.mp3", {
+      text: "Cancel preparing",
+      voice: "TestVoice",
+    });
+    let exited = false;
+    playback.exited.then(() => {
+      exited = true;
+    });
+
+    expect(stopPlayback()).toBe(true);
+    await playback.exited;
+    expect(exited).toBe(true);
+    expect(decoderMocks[0].killed).toBe(true);
+
+    decoderMocks[0].resolveExit();
+    await decoderMocks[0].exited;
+    await Promise.resolve();
+    expect(playerMocks).toHaveLength(0);
+  });
+
+  it("terminates superseded envelope preparation on critical barge-in", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+    holdDecoderExits = true;
+
+    playAudioNonBlocking("/tmp/pq-barge-preparing.mp3", {
+      text: "Preparing",
+      voice: "TestVoice",
+    });
+    expect(decoderMocks).toHaveLength(1);
+
+    playAudioNonBlocking("/tmp/pq-barge-preparing-critical.mp3", {
+      text: "Critical",
+      voice: "TestVoice",
+      priority: "critical",
+    });
+
+    expect(decoderMocks[0].killed).toBe(true);
+    expect(decoderMocks).toHaveLength(2);
+    stopPlayback();
+    expect(decoderMocks[1].killed).toBe(true);
+  });
+
+  it("defers envelope decoding for queued audio until that job can start", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+
+    const first = playAudioNonBlocking("/tmp/pq-decode-first.mp3", {
+      text: "First",
+      voice: "TestVoice",
+    });
+    const second = playAudioNonBlocking("/tmp/pq-decode-second.mp3", {
+      text: "Second",
+      voice: "TestVoice",
+    });
+    await waitFor(() => playerMocks.length === 1, "first prepared player");
+
+    expect(queueEvents.filter((event) => event.startsWith("decode:"))).toEqual([
+      "decode:/tmp/pq-decode-first.mp3",
+    ]);
+
+    playerMocks[0].resolveExit();
+    await first.exited;
+    await waitFor(
+      () => queueEvents.includes("decode:/tmp/pq-decode-second.mp3"),
+      "second decoder start",
+    );
+
+    expect(queueEvents.filter((event) => event.startsWith("decode:"))).toEqual([
+      "decode:/tmp/pq-decode-first.mp3",
+      "decode:/tmp/pq-decode-second.mp3",
+    ]);
+
+    await waitFor(() => playerMocks.length === 2, "second prepared player");
+    playerMocks[1].resolveExit();
+    await second.exited;
+  });
+
+  it("interrupts active playback before decoding a critical barge-in", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+
+    const current = playAudioNonBlocking("/tmp/pq-barge-current.mp3", {
+      text: "Current",
+      voice: "TestVoice",
+    });
+    await waitFor(() => playerMocks.length === 1, "current player start");
+    queueEvents = [];
+
+    const critical = playAudioNonBlocking("/tmp/pq-barge-critical.mp3", {
+      text: "Critical",
+      voice: "TestVoice",
+      priority: "critical",
+    });
+    await current.exited;
+    await waitFor(
+      () => playerMocks.length === 2,
+      "critical speaking player",
+    );
+
+    expect(queueEvents.slice(0, 2)).toEqual([
+      "kill:/tmp/pq-barge-current.mp3",
+      "decode:/tmp/pq-barge-critical.mp3",
+    ]);
+
+    playerMocks[1].resolveExit();
+    await critical.exited;
   });
 
   it("broadcasts idle only when queue fully drains, not between items", async () => {

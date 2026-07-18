@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+  VOICEBAR_SOCKET_EVENT_MAX_BYTES,
   serializeEvent,
   parseCommand,
   type SocketEvent,
@@ -28,6 +29,81 @@ describe("socket-protocol", () => {
       expect(parsed.state).toBe("speaking");
       expect(parsed.text).toBe("Hello world");
       expect(parsed.voice).toBe("jenny");
+    });
+
+    it("serializes truthful playback amplitude with speaking state", () => {
+      const event: SocketEvent = {
+        type: "state",
+        state: "speaking",
+        text: "Amplitude truth",
+        voice: "jenny",
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: [0, 0.25, 0.75],
+        },
+      };
+
+      expect(JSON.parse(serializeEvent(event).trim())).toMatchObject({
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: [0, 0.25, 0.75],
+        },
+      });
+    });
+
+    it("keeps the complete speaking frame below the VoiceBar socket ceiling", () => {
+      const event: SocketEvent = {
+        type: "state",
+        state: "speaking",
+        text: "שלום".repeat(500),
+        voice: "en-US-JennyNeural",
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 60,
+          samples: Array.from({ length: 1_000 }, (_, index) =>
+            index % 2 === 0 ? 0.9999 : 0.1234,
+          ),
+        },
+      };
+
+      const serialized = serializeEvent(event);
+      const parsed = JSON.parse(serialized.trim());
+
+      expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
+        VOICEBAR_SOCKET_EVENT_MAX_BYTES + 1,
+      );
+      expect(parsed.playback_amplitude.samples).toHaveLength(1_000);
+      expect(parsed.text.length).toBeGreaterThan(0);
+      expect(event.text?.startsWith(parsed.text)).toBe(true);
+    });
+
+    it("downgrades a producer-incompatible envelope before fitting speaking text", () => {
+      const event: SocketEvent = {
+        type: "state",
+        state: "speaking",
+        text: "שלום".repeat(1_000),
+        voice: "en-US-JennyNeural",
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: Array.from({ length: 1_001 }, () => 0),
+        },
+      };
+
+      const serialized = serializeEvent(event);
+      const parsed = JSON.parse(serialized.trim());
+
+      expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
+        VOICEBAR_SOCKET_EVENT_MAX_BYTES + 1,
+      );
+      expect(parsed.playback_amplitude).toEqual({
+        source: "unavailable",
+        sample_interval_ms: 50,
+        samples: [],
+      });
+      expect(parsed.text.length).toBeGreaterThan(0);
     });
 
     it("serializes state recording event with mode", () => {

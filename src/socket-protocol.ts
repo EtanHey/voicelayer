@@ -8,6 +8,10 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
+import {
+  PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
+  type PlaybackAmplitudeEnvelope,
+} from "./playback-amplitude";
 
 // --- Events: VoiceLayer → Voice Bar ---
 
@@ -24,6 +28,8 @@ export interface StateEvent {
   text?: string;
   /** Present when state is "speaking" — the voice being used. */
   voice?: string;
+  /** Fixed-window RMS truth for the audio file that just started playing. */
+  playback_amplitude?: PlaybackAmplitudeEnvelope;
   /** Present when state is "recording" — the recording mode. */
   mode?: "vad" | "ptt";
   /** Present when state is "recording" with VAD — the silence mode. */
@@ -330,9 +336,110 @@ export type SocketResponse = HealthResponse | AckEvent | VocabListResponse;
 
 // --- Serialization ---
 
+/**
+ * Keep a single VoiceBar-bound NDJSON frame below the historical 8 KiB
+ * transport boundary. The newline is included in this byte budget.
+ */
+export const VOICEBAR_SOCKET_EVENT_MAX_BYTES = 8_191;
+
+function serializedByteLength(payload: string): number {
+  return new TextEncoder().encode(payload).byteLength;
+}
+
+function serializeJsonEvent(event: SocketEvent): string {
+  return JSON.stringify(event) + "\n";
+}
+
+function fitSpeakingTextToSocketFrame(event: StateEvent): string | null {
+  const withoutText: StateEvent = { ...event };
+  delete withoutText.text;
+  const basePayload = serializeJsonEvent(withoutText);
+  if (serializedByteLength(basePayload) > VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+    return null;
+  }
+
+  if (typeof event.text !== "string" || event.text.length === 0) {
+    return basePayload;
+  }
+
+  // Search Unicode scalar boundaries so truncation never leaves a broken
+  // surrogate pair. JSON-escaping and UTF-8 bytes are measured exactly for
+  // each candidate; the TTS audio itself is never truncated here.
+  const scalars = Array.from(event.text);
+  let low = 0;
+  let high = scalars.length;
+  let best = basePayload;
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = serializeJsonEvent({
+      ...event,
+      text: scalars.slice(0, middle).join(""),
+    });
+    if (serializedByteLength(candidate) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return best;
+}
+
+function normalizeSpeakingEnvelope(event: StateEvent): StateEvent {
+  const envelope = event.playback_amplitude;
+  if (
+    envelope?.source !== "decoded-rms" ||
+    envelope.samples.length <= PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES
+  ) {
+    return event;
+  }
+
+  return {
+    ...event,
+    playback_amplitude: {
+      source: "unavailable",
+      sample_interval_ms: envelope.sample_interval_ms,
+      samples: [],
+    },
+  };
+}
+
 /** Serialize an event to NDJSON (JSON + newline). */
 export function serializeEvent(event: SocketEvent): string {
-  return JSON.stringify(event) + "\n";
+  const normalizedEvent =
+    event.type === "state" && event.state === "speaking"
+      ? normalizeSpeakingEnvelope(event)
+      : event;
+  const payload = serializeJsonEvent(normalizedEvent);
+  if (serializedByteLength(payload) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
+    return payload;
+  }
+
+  if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
+    const textBoundedPayload = fitSpeakingTextToSocketFrame(normalizedEvent);
+    if (textBoundedPayload) return textBoundedPayload;
+
+    // An envelope not produced by our bounded RMS extractor may still exceed
+    // the frame even without teleprompter text. Fail truthful and flat instead
+    // of emitting a truncated or unparsable waveform.
+    if (normalizedEvent.playback_amplitude) {
+      const unavailableEvent: StateEvent = {
+        ...normalizedEvent,
+        playback_amplitude: {
+          source: "unavailable",
+          sample_interval_ms:
+            normalizedEvent.playback_amplitude.sample_interval_ms,
+          samples: [],
+        },
+      };
+      const unavailablePayload = fitSpeakingTextToSocketFrame(unavailableEvent);
+      if (unavailablePayload) return unavailablePayload;
+    }
+
+    return serializeJsonEvent({ type: "state", state: "speaking" });
+  }
+
+  return payload;
 }
 
 /** Parse a single JSON line into a SocketCommand. Returns null if invalid. */

@@ -2,6 +2,96 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testDefaultPlaybackClockUsesMonotonicSystemUptime() {
+        let state = VoiceState()
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 60000,
+            samples: [0.8]
+        )
+
+        state.handleEvent(
+            ["type": "state", "state": "speaking", "text": "hello"],
+            playbackAmplitude: envelope
+        )
+
+        XCTAssertEqual(
+            state.playbackAudioLevel(
+                atSystemUptime: ProcessInfo.processInfo.systemUptime
+            ),
+            0.8
+        )
+    }
+
+    func testSpeakingIndexesTypedPlaybackAmplitudeFromReceiptClock() {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.1, 0.5, 0.9]
+        )
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: envelope)
+
+        XCTAssertEqual(state.playbackAudioLevel(), 0.1, accuracy: 0.0001)
+        now = 10.075
+        XCTAssertEqual(state.playbackAudioLevel(), 0.7, accuracy: 0.0001)
+    }
+
+    func testPlaybackIdleClearsPlaybackAmplitudeTruth() {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        let envelope = PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.8]
+        )
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: envelope)
+        now = 10.01
+        XCTAssertEqual(state.playbackAudioLevel(), 0.8, accuracy: 0.0001)
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+
+        XCTAssertNil(state.playbackAmplitudeEnvelope)
+        XCTAssertEqual(state.playbackAudioLevel(), 0)
+    }
+
+    func testPlaybackErrorClearsPlaybackAmplitudeTruth() {
+        let state = VoiceState(playbackAmplitudeClock: { 10 })
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Truth",
+        ], playbackAmplitude: PlaybackAmplitudeEnvelope(
+            source: .decodedRMS,
+            sampleIntervalMilliseconds: 50,
+            samples: [0.8]
+        ))
+        XCTAssertNotNil(state.playbackAmplitudeEnvelope)
+
+        state.handleEvent([
+            "type": "error",
+            "message": "player failed",
+            "recoverable": true,
+        ])
+
+        XCTAssertNil(state.playbackAmplitudeEnvelope)
+        XCTAssertEqual(state.playbackAudioLevel(), 0)
+    }
+
     func testPolishDegradationPersistsAndSignalsMenuOnlyOnce() throws {
         let state = VoiceState()
 
@@ -156,6 +246,159 @@ final class VoiceStateTests: XCTestCase {
         state.setLocalRecordingLevel(0.63)
 
         XCTAssertEqual(try XCTUnwrap(state.audioLevel), 0.63, accuracy: 0.0001)
+    }
+
+    func testVoiceAskSocketOnlyRoomToneUsesTheAcceptedF5SilenceFloor() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.42,
+        ])
+        state.setLocalRecordingLevel(AudioLevelMonitor.normalizeAveragePower(-50))
+
+        XCTAssertEqual(state.recordingWaveformLevel, 0, accuracy: 0.0001)
+    }
+
+    func testVoiceAskSocketOnlySpeechPreservesRangeAboveTheAcceptedF5SilenceFloor() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+
+        state.handleEvent(["type": "audio_level", "rms": 0.7])
+        let quietSpeech = state.recordingWaveformLevel
+        state.handleEvent(["type": "audio_level", "rms": 0.95])
+        let loudSpeech = state.recordingWaveformLevel
+
+        XCTAssertEqual(
+            quietSpeech,
+            WaveformMetrics.recordingLevel(from: 0.7),
+            accuracy: 0.0001
+        )
+        XCTAssertGreaterThan(quietSpeech, 0)
+        XCTAssertGreaterThan(loudSpeech, quietSpeech)
+    }
+
+    func testRecordingWaveformUsesAdaptedLocalMeterWhenItIsStronger() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+        ])
+        state.handleEvent([
+            "type": "audio_level",
+            "rms": 0.25,
+        ])
+        let loudLocalLevel = AudioLevelMonitor.normalizeAveragePower(-20)
+        state.setLocalRecordingLevel(loudLocalLevel)
+
+        XCTAssertEqual(
+            state.recordingWaveformLevel,
+            WaveformMetrics.recordingLevel(from: loudLocalLevel),
+            accuracy: 0.0001
+        )
+    }
+
+    func testRecordingWaveformUsesARealTimeOffsetSampleWindow() {
+        var now = 40.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "recording"])
+        let rawLevels = [0.70, 0.85, 0.75, 0.95, 0.80, 0.90, 0.72]
+
+        for rawLevel in rawLevels {
+            state.handleEvent(["type": "audio_level", "rms": rawLevel])
+            now += 0.05
+        }
+
+        XCTAssertEqual(
+            state.recordingWaveformLevels,
+            rawLevels.map { WaveformMetrics.recordingLevel(from: $0) }
+        )
+    }
+
+    func testRepeatedRecordingStateDoesNotClearTheLiveLevelOrInjectASilentSample() {
+        var now = 50.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.setLocalRecordingLevel(0.9)
+        let beforeRefresh = state.recordingWaveformLevels
+
+        now += 0.05
+        state.handleEvent(["type": "state", "state": "recording"])
+
+        XCTAssertEqual(state.recordingWaveformLevels, beforeRefresh)
+        XCTAssertEqual(
+            state.recordingWaveformLevel,
+            WaveformMetrics.recordingLevel(from: 0.9),
+            accuracy: 0.0001
+        )
+    }
+
+    func testTranscribingReplaysTheActualRecordedEnvelopeFromTheLastLiveWindow() throws {
+        var now = 10.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "recording"])
+        let rawLevels = [0.70, 0.82, 0.74, 0.93, 0.78, 0.88, 0.76, 0.97]
+        for rawLevel in rawLevels {
+            state.handleEvent(["type": "audio_level", "rms": rawLevel])
+            now += 0.05
+        }
+        let realLevels = rawLevels.map { WaveformMetrics.recordingLevel(from: $0) }
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        XCTAssertEqual(
+            try XCTUnwrap(state.transcribingWaveformLevels(atSystemUptime: now)),
+            Array(realLevels.suffix(7))
+        )
+        now += 0.05
+        XCTAssertEqual(
+            try XCTUnwrap(state.transcribingWaveformLevels(atSystemUptime: now)),
+            [realLevels[2], realLevels[3], realLevels[4], realLevels[5], realLevels[6], realLevels[7], realLevels[0]]
+        )
+    }
+
+    func testTranscribingReplayKeepsMovingAtTheRecordedFiftyMillisecondCadence() throws {
+        var now = 20.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "recording"])
+        for rawLevel in [0.70, 0.82, 0.74, 0.93, 0.78, 0.88, 0.76, 0.97] {
+            state.handleEvent(["type": "audio_level", "rms": rawLevel])
+            now += 0.05
+        }
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        let initial = try XCTUnwrap(state.transcribingWaveformLevels(atSystemUptime: now))
+        now += 0.049
+        XCTAssertEqual(
+            try XCTUnwrap(state.transcribingWaveformLevels(atSystemUptime: now)),
+            initial
+        )
+        now += 0.001
+        XCTAssertNotEqual(
+            try XCTUnwrap(state.transcribingWaveformLevels(atSystemUptime: now)),
+            initial
+        )
+    }
+
+    func testTranscribingWithoutARecordingDoesNotReuseAnOlderWaveform() {
+        var now = 30.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.50])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        XCTAssertNotNil(state.transcribingWaveformLevels(atSystemUptime: now))
+
+        state.handleEvent(["type": "state", "state": "idle"])
+        now = 31
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        XCTAssertNil(state.transcribingWaveformLevels(atSystemUptime: now))
     }
 
     func testPressToTalkRecordAndFirstAudioDiagnosticsCarryTimingDeltas() throws {

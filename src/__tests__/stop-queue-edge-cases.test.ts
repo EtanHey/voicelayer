@@ -45,6 +45,14 @@ describe("stopPlayback queue clearing", () => {
     // @ts-ignore — mock Bun.spawn: audio players are controllable
     Bun.spawn = (cmd: string[], _opts?: unknown) => {
       const cmdArray = Array.isArray(cmd) ? [...cmd] : [String(cmd)];
+      if (cmdArray[0] === "ffmpeg") {
+        return {
+          exited: Promise.resolve(0),
+          pid: 98000,
+          stdout: new Blob([new Uint8Array([0, 0])]).stream(),
+          kill: () => {},
+        };
+      }
       let resolveExit!: () => void;
       const exited = new Promise<number>((r) => {
         resolveExit = () => r(0);

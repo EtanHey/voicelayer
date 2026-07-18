@@ -572,7 +572,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
     }
 
-    func testInstalledAppPrefersHomebrewPackageDaemonWhenAvailable() throws {
+    func testInstalledAppPrefersItsBundledDaemonWhenHomebrewPackageAlsoMatches() throws {
         let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
 
         let configuration = try XCTUnwrap(
@@ -592,12 +592,12 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(configuration.launchPath, testBunPath)
         XCTAssertEqual(configuration.arguments, [
             "run",
-            testHomebrewDaemonPath,
+            testBundledDaemonPath,
         ])
-        XCTAssertEqual(configuration.workingDirectory, testHomebrewPackageRoot)
+        XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
     }
 
-    func testInstalledAppFallsBackToBundledDaemonWhenHomebrewPackageVersionIsStale() throws {
+    func testInstalledAppFallsBackToMatchingHomebrewPackageWhenBundledDaemonIsMissing() throws {
         let executableURL = URL(fileURLWithPath: "/Applications/VoiceBar.app/Contents/MacOS/VoiceBar")
 
         let configuration = try XCTUnwrap(
@@ -605,24 +605,18 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 for: executableURL,
                 fileExists: { path in
                     path == testBunPath ||
-                        path == testHomebrewDaemonPath ||
-                        path == testBundledDaemonPath
+                        path == testHomebrewDaemonPath
                 },
-                fileData: { path in
-                    if path == testHomebrewPackageJSONPath {
-                        return packageJSONData(version: "2.1.9")
-                    }
-                    return testVersionData[path]
-                }
+                fileData: { path in testVersionData[path] }
             )
         )
 
         XCTAssertEqual(configuration.launchPath, testBunPath)
         XCTAssertEqual(configuration.arguments, [
             "run",
-            testBundledDaemonPath,
+            testHomebrewDaemonPath,
         ])
-        XCTAssertEqual(configuration.workingDirectory, "/Applications/VoiceBar.app/Contents/Resources")
+        XCTAssertEqual(configuration.workingDirectory, testHomebrewPackageRoot)
     }
 
     func testFreshSessionLivenessProbeUsesDaemonPidPath() {

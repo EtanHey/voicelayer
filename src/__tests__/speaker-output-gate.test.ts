@@ -11,6 +11,20 @@ const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-speaker-gate-${process.pid}.j
 const TEST_REPLAY_FILE = `/tmp/voicelayer-speaker-gate-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      throw new Error(`Timed out waiting for ${description}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
 function writeRecordingState(state: "idle" | "recording" | "transcribing") {
   writeFileSync(
     TEST_RECORDING_STATE_FILE,
@@ -58,7 +72,15 @@ describe("speaker output recording gate", () => {
       if (metadataPath) {
         writeFileSync(metadataPath, "");
       }
-      return { exited: Promise.resolve(0), pid: 99999, kill: () => {} };
+      return {
+        exited: Promise.resolve(0),
+        pid: 99999,
+        stdout:
+          cmd[0] === "ffmpeg"
+            ? new Blob([new Uint8Array([0, 0])]).stream()
+            : undefined,
+        kill: () => {},
+      };
     };
 
     // @ts-ignore — make audio player selection deterministic.
@@ -265,10 +287,12 @@ describe("speaker output recording gate", () => {
     writeRecordingState("idle");
 
     await tts.speak("idle path still speaks");
+    await waitFor(() => spawnCalls.length === 3, "idle-path player spawn");
 
-    expect(spawnCalls.length).toBe(2);
+    expect(spawnCalls.length).toBe(3);
     expect(spawnCalls[0][0]).toContain("python3");
-    expect(spawnCalls[1]).toContain(
+    expect(spawnCalls[1][0]).toBe("ffmpeg");
+    expect(spawnCalls[2]).toContain(
       process.platform === "darwin" ? "afplay" : "mpg123",
     );
   });

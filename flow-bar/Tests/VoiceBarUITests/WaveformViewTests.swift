@@ -2,141 +2,141 @@
 import XCTest
 
 final class WaveformViewTests: XCTestCase {
-    func testListeningModeUsesMinimumAmplitudeWhenAudioLevelIsNil() {
-        let samples = stride(from: 0.0, through: 1.0, by: 0.25).map { time in
-            WaveformMetrics.normalizedLevel(
-                mode: .listening,
-                audioLevel: nil,
-                time: time,
-                index: 3,
-                barCount: 7
-            )
-        }
-
-        XCTAssertEqual(samples, Array(repeating: 0, count: samples.count))
-    }
-
-    func testListeningModeUsesMinimumAmplitudeWhenAudioLevelIsSilent() {
-        let samples = stride(from: 0.0, through: 1.0, by: 0.25).map { time in
-            WaveformMetrics.normalizedLevel(
-                mode: .listening,
-                audioLevel: 0,
-                time: time,
-                index: 3,
-                barCount: 7
-            )
-        }
-
-        XCTAssertEqual(samples, Array(repeating: 0, count: samples.count))
-    }
-
-    func testListeningModeRespondsOnceRealAudioArrives() {
-        let quiet = WaveformMetrics.normalizedLevel(
-            mode: .listening,
-            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.59),
-            time: 0.5,
-            index: 3,
-            barCount: 7
+    func testMissingAndSilentAmplitudeUseMinimumLevel() {
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevel(audioLevel: nil, index: 3, barCount: 7),
+            0
         )
-        let louder = WaveformMetrics.normalizedLevel(
-            mode: .listening,
-            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.8),
-            time: 0.5,
-            index: 3,
-            barCount: 7
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevel(audioLevel: 0, index: 3, barCount: 7),
+            0
+        )
+    }
+
+    func testLouderAmplitudeProducesTallerBars() {
+        for index in 0 ..< 7 {
+            let quiet = WaveformMetrics.normalizedLevel(
+                audioLevel: 0.2,
+                index: index,
+                barCount: 7
+            )
+            let loud = WaveformMetrics.normalizedLevel(
+                audioLevel: 0.8,
+                index: index,
+                barCount: 7
+            )
+
+            XCTAssertGreaterThan(loud, quiet, "bar \(index) must preserve amplitude ordering")
+        }
+    }
+
+    func testEveryBarIsMonotonicAcrossAmplitudeRange() {
+        for index in 0 ..< 7 {
+            let levels = [0.0, 0.1, 0.4, 0.8, 1.0].map { amplitude in
+                WaveformMetrics.normalizedLevel(
+                    audioLevel: amplitude,
+                    index: index,
+                    barCount: 7
+                )
+            }
+
+            for pair in zip(levels, levels.dropFirst()) {
+                XCTAssertLessThanOrEqual(
+                    pair.0,
+                    pair.1,
+                    "bar \(index) must not shrink as real amplitude rises"
+                )
+            }
+        }
+    }
+
+    func testIdenticalAmplitudeProducesIdenticalGeometry() {
+        let first = (0 ..< 7).map { index in
+            WaveformMetrics.normalizedLevel(audioLevel: 0.63, index: index, barCount: 7)
+        }
+        let second = (0 ..< 7).map { index in
+            WaveformMetrics.normalizedLevel(audioLevel: 0.63, index: index, barCount: 7)
+        }
+
+        XCTAssertEqual(first, second)
+    }
+
+    func testCenterWeightingIsStaticAndSymmetric() {
+        let levels = (0 ..< 7).map { index in
+            WaveformMetrics.normalizedLevel(audioLevel: 0.5, index: index, barCount: 7)
+        }
+
+        XCTAssertEqual(levels[0], levels[6], accuracy: 0.0001)
+        XCTAssertEqual(levels[1], levels[5], accuracy: 0.0001)
+        XCTAssertEqual(levels[2], levels[4], accuracy: 0.0001)
+        XCTAssertGreaterThan(levels[3], levels[0])
+    }
+
+    func testTimeOffsetLevelsPreserveIndependentRealShapeAndPeakPosition() {
+        let realSamples = [0.7, 0.2, 0.6, 0.1, 0.3, 0.9, 0.4]
+
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevels(audioLevels: realSamples, barCount: 7),
+            realSamples
+        )
+    }
+
+    func testAmplitudeIsClampedBeforeHeightMapping() {
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevel(audioLevel: -0.5, index: 3, barCount: 7),
+            0
+        )
+        XCTAssertEqual(
+            WaveformMetrics.normalizedLevel(audioLevel: 1.5, index: 3, barCount: 7),
+            WaveformMetrics.normalizedLevel(audioLevel: 1, index: 3, barCount: 7)
+        )
+    }
+
+    func testRecordingSourceMapsObservedRoomToneToSilence() {
+        let roomTone = AudioLevelMonitor.normalizeAveragePower(-50)
+
+        XCTAssertEqual(WaveformMetrics.recordingLevel(from: nil), 0)
+        XCTAssertEqual(WaveformMetrics.recordingLevel(from: roomTone), 0)
+        XCTAssertGreaterThan(
+            WaveformMetrics.recordingLevel(from: AudioLevelMonitor.normalizeAveragePower(-20)),
+            0
+        )
+    }
+
+    func testRecordingSourcePreservesOrderingAboveFixedSilenceFloor() {
+        let quiet = WaveformMetrics.recordingLevel(
+            from: AudioLevelMonitor.normalizeAveragePower(-40)
+        )
+        let loud = WaveformMetrics.recordingLevel(
+            from: AudioLevelMonitor.normalizeAveragePower(-10)
         )
 
         XCTAssertGreaterThan(quiet, 0)
-        XCTAssertGreaterThan(louder, quiet)
+        XCTAssertGreaterThan(loud, quiet)
     }
 
-    func testListeningModePreservesDynamicRangeAboveSilenceGate() {
-        let justAboveGate = WaveformMetrics.normalizedLevel(
-            mode: .listening,
-            audioLevel: WaveformMetrics.listeningTargetLevel(from: WaveformMetrics.listeningSilenceFloor + 0.01),
-            time: 0.5,
-            index: 3,
-            barCount: 7
-        )
-        let loudSpeech = WaveformMetrics.normalizedLevel(
-            mode: .listening,
-            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.9),
-            time: 0.5,
-            index: 3,
-            barCount: 7
-        )
-
-        XCTAssertLessThan(justAboveGate, 0.2)
-        XCTAssertGreaterThan(loudSpeech - justAboveGate, 0.35)
-    }
-
-    func testListeningModeNoiseGatesObservedSilentMicFloor() {
-        let samples = stride(from: 0.0, through: 1.0, by: 0.25).map { time in
-            WaveformMetrics.normalizedLevel(
-                mode: .listening,
-                audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.55),
-                time: time,
-                index: 3,
+    func testLiveTargetsUseGradedPerBarAttackAndSettleWithoutHolding() {
+        let attacks = (0 ..< 7).map { index in
+            WaveformMetrics.transitionDuration(
+                from: 0.2,
+                to: 0.8,
+                index: index,
+                barCount: 7
+            )
+        }
+        let releases = (0 ..< 7).map { index in
+            WaveformMetrics.transitionDuration(
+                from: 0.8,
+                to: 0.2,
+                index: index,
                 barCount: 7
             )
         }
 
-        XCTAssertEqual(samples, Array(repeating: 0, count: samples.count))
-    }
-
-    func testListeningModeStillRespondsAboveSilenceGate() {
-        let sample = WaveformMetrics.normalizedLevel(
-            mode: .listening,
-            audioLevel: WaveformMetrics.listeningTargetLevel(from: 0.59),
-            time: 0.5,
-            index: 3,
-            barCount: 7
-        )
-
-        XCTAssertGreaterThan(sample, 0)
-    }
-
-    func testListeningTargetLevelNoiseGatesQuietRoomTone() {
-        XCTAssertEqual(WaveformMetrics.listeningTargetLevel(from: 0.55), 0)
-        XCTAssertGreaterThan(WaveformMetrics.listeningTargetLevel(from: 0.59), 0)
-    }
-
-    func testProcessingModeIsSymmetricAroundCenter() {
-        let time = 0.42
-        let left = WaveformMetrics.normalizedLevel(
-            mode: .processing,
-            audioLevel: nil,
-            time: time,
-            index: 1,
-            barCount: 7
-        )
-        let right = WaveformMetrics.normalizedLevel(
-            mode: .processing,
-            audioLevel: nil,
-            time: time,
-            index: 5,
-            barCount: 7
-        )
-
-        XCTAssertEqual(left, right, accuracy: 0.0001)
-    }
-
-    func testProcessingModeAnimatesWithoutAudioInput() {
-        let early = WaveformMetrics.normalizedLevel(
-            mode: .processing,
-            audioLevel: nil,
-            time: 0.1,
-            index: 3,
-            barCount: 7
-        )
-        let later = WaveformMetrics.normalizedLevel(
-            mode: .processing,
-            audioLevel: nil,
-            time: 0.6,
-            index: 3,
-            barCount: 7
-        )
-
-        XCTAssertNotEqual(early, later)
+        XCTAssertTrue(attacks.allSatisfy { (0.10 ... 0.20).contains($0) })
+        XCTAssertGreaterThan(Set(attacks).count, 1)
+        XCTAssertGreaterThanOrEqual(releases.min() ?? 0, 0.18)
+        XCTAssertLessThanOrEqual(releases.max() ?? 0, 0.30)
+        XCTAssertGreaterThan(Set(releases).count, 1)
     }
 }

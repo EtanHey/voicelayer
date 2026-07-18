@@ -87,7 +87,7 @@ public enum Theme {
     ) -> CGFloat {
         switch mode {
         case .recording:
-            return showsRecordingHold ? 182 : 154
+            return 154
         case .transcribing:
             return transcribingPillWidth(for: statusText)
         case .speaking:
