@@ -1,0 +1,514 @@
+.prototype {
+  color: #f5f7fb;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+    system-ui, sans-serif;
+  width: 100%;
+}
+
+.prototypeHeader {
+  align-items: center;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.eyebrow {
+  color: #8a909a;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.14em;
+  margin: 0 0 3px;
+  text-transform: uppercase;
+}
+
+.title {
+  color: #f7f8fa;
+  font-size: 18px;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.stateControls {
+  align-items: center;
+  background: rgba(13, 15, 20, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  display: flex;
+  gap: 2px;
+  margin: 0;
+  padding: 3px;
+  width: fit-content;
+}
+
+.stateButton {
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  color: rgba(236, 240, 249, 0.58);
+  cursor: pointer;
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0.01em;
+  padding: 7px 10px;
+  text-transform: capitalize;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.stateButton:hover {
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.stateButton[data-active="true"] {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.stage {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.3);
+  height: 352px;
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.stage-dark {
+  background:
+    radial-gradient(circle at 22% 18%, #243044 0, transparent 34%),
+    linear-gradient(145deg, #11151d, #080a0f 68%);
+}
+
+.stage-light {
+  background:
+    radial-gradient(circle at 72% 20%, rgba(255, 255, 255, 0.92), transparent 38%),
+    linear-gradient(145deg, #b9c6d6, #7d91aa);
+}
+
+.stage-purple {
+  background:
+    radial-gradient(circle at 82% 20%, rgba(224, 152, 255, 0.5), transparent 34%),
+    linear-gradient(145deg, #283a68, #70417e 58%, #351f4f);
+}
+
+.stage::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 22%);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+.menuBar {
+  align-items: center;
+  color: rgba(255, 255, 255, 0.82);
+  display: flex;
+  font-size: 11px;
+  font-weight: 600;
+  height: 32px;
+  justify-content: space-between;
+  left: 0;
+  padding: 0 12px;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.52);
+  top: 0;
+  z-index: 1;
+}
+
+.shell {
+  border-radius: 0 0 20px 20px;
+  contain: paint;
+  left: 50%;
+  overflow: hidden;
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  transition:
+    width 380ms cubic-bezier(0.2, 0.72, 0.2, 1),
+    height 330ms cubic-bezier(0.2, 0.72, 0.2, 1),
+    border-radius 220ms ease;
+  will-change: width, height;
+  z-index: 3;
+}
+
+.shell[data-state="idle"],
+.shell[data-state="recording"] {
+  border-radius: 0 0 14px 14px;
+}
+
+.topBand {
+  display: grid;
+  grid-template-columns: 185px;
+  height: 32px;
+  justify-content: center;
+  position: relative;
+  width: 100%;
+  z-index: 2;
+}
+
+.topBand[data-expanded="true"] {
+  grid-template-columns: 104px 185px 176px;
+}
+
+.hardwareCore {
+  align-items: center;
+  background: #000;
+  box-shadow: inset 0 -1px rgba(255, 255, 255, 0.025);
+  display: flex;
+  height: 32px;
+  justify-content: center;
+  position: relative;
+  width: 185px;
+  z-index: 4;
+}
+
+.cameraDot {
+  background: #06080b;
+  border: 1px solid rgba(255, 255, 255, 0.025);
+  border-radius: 999px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.82);
+  height: 5px;
+  width: 5px;
+}
+
+.wing,
+.teleprompterPanel {
+  -webkit-backdrop-filter: blur(24px) saturate(1.16) brightness(0.76);
+  backdrop-filter: blur(24px) saturate(1.16) brightness(0.76);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 38%),
+    rgba(8, 11, 17, 0.63);
+}
+
+.wing {
+  align-items: center;
+  box-shadow:
+    inset 0 1px rgba(0, 0, 0, 0.92),
+    inset 0 -1px rgba(255, 255, 255, 0.1);
+  display: flex;
+  height: 32px;
+  min-width: 0;
+  position: relative;
+}
+
+.leftWing {
+  border-radius: 0 0 0 13px;
+  gap: 5px;
+  padding: 0 8px;
+}
+
+.rightWing {
+  border-radius: 0 0 13px 0;
+  gap: 4px;
+  justify-content: flex-end;
+  padding: 0 7px;
+}
+
+.shell[data-state="teleprompter"] .wing {
+  border-radius: 0;
+}
+
+.liveDot {
+  background: #ff5148;
+  border-radius: 999px;
+  box-shadow: 0 0 8px rgba(255, 69, 58, 0.76);
+  flex: 0 0 auto;
+  height: 6px;
+  width: 6px;
+}
+
+.micIcon {
+  fill: none;
+  flex: 0 0 auto;
+  height: 13px;
+  stroke: rgba(250, 252, 255, 0.86);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+  width: 13px;
+}
+
+.timer {
+  color: rgba(248, 250, 255, 0.9);
+  font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+.waveform {
+  align-items: center;
+  display: flex;
+  flex: 0 0 var(--waveform-slot);
+  gap: 3px;
+  height: 18px;
+  justify-content: center;
+  overflow: hidden;
+  width: var(--waveform-slot);
+}
+
+.waveform i {
+  animation: adaptiveWave 980ms ease-in-out infinite alternate;
+  animation-delay: var(--bar-delay);
+  background: linear-gradient(180deg, #b8d3ff, #6b98ef);
+  border-radius: 999px;
+  box-shadow: 0 0 5px rgba(102, 153, 255, 0.34);
+  display: block;
+  height: calc(18px * var(--bar-level));
+  min-height: 3px;
+  transform-origin: center;
+  transition:
+    opacity 240ms ease var(--bar-delay),
+    transform 240ms ease var(--bar-delay);
+  width: 2px;
+}
+
+.waveform[data-phase="paused"] i {
+  animation-play-state: paused;
+}
+
+.waveform[data-phase="decaying"] i {
+  animation: none;
+  opacity: 0.28;
+  transform: scaleY(0.16);
+}
+
+@keyframes adaptiveWave {
+  0% {
+    transform: scaleY(0.45);
+  }
+  58% {
+    transform: scaleY(1);
+  }
+  100% {
+    transform: scaleY(0.68);
+  }
+}
+
+.iconButton {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  color: rgba(248, 250, 255, 0.8);
+  cursor: pointer;
+  display: flex;
+  flex: 0 0 21px;
+  font: 600 11px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  height: 21px;
+  justify-content: center;
+  padding: 0;
+  transition:
+    background-color 130ms ease,
+    transform 130ms ease;
+  width: 21px;
+}
+
+.iconButton:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.stopButton {
+  background: #ff5148;
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 0 10px rgba(255, 69, 58, 0.42);
+}
+
+.stopButton:hover {
+  background: #ff625a;
+}
+
+.stopButton span {
+  background: #fff;
+  border-radius: 2px;
+  height: 7px;
+  width: 7px;
+}
+
+.teleprompterPanel {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0 0 20px 20px;
+  border-top: 0;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.08),
+    0 22px 44px rgba(0, 0, 0, 0.42);
+  clip-path: path(
+    "M 0 0 H 465 Q 460 0 460 5 V 176 Q 460 196 440 196 H 25 Q 5 196 5 176 V 5 Q 5 0 0 0 Z"
+  );
+  height: 196px;
+  overflow: hidden;
+  position: relative;
+  width: 465px;
+  z-index: 1;
+}
+
+.teleprompterContent {
+  background:
+    radial-gradient(circle at 50% 6%, rgba(87, 124, 178, 0.1), transparent 36%),
+    rgba(3, 5, 9, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.05),
+    0 14px 24px rgba(0, 0, 0, 0.18);
+  inset: 10px;
+  overflow: hidden;
+  padding: 14px 20px 10px;
+  position: absolute;
+}
+
+.teleprompterContent p {
+  margin: 0;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.previousLine {
+  color: rgba(229, 235, 246, 0.36);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.currentLine {
+  color: #f8faff;
+  font-size: 14px;
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: 28px;
+  text-shadow: 0 0 18px rgba(164, 198, 255, 0.22);
+}
+
+.nextLine {
+  color: rgba(224, 231, 244, 0.2);
+  font-size: 12px;
+  line-height: 18px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+
+.progress {
+  align-items: center;
+  color: rgba(226, 232, 244, 0.42);
+  display: grid;
+  font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  gap: 9px;
+  grid-template-columns: auto 1fr auto;
+  margin-top: 13px;
+}
+
+.progressTrack {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  height: 3px;
+  overflow: hidden;
+}
+
+.progressTrack span {
+  background: linear-gradient(90deg, #78a8ff, #b4d1ff);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  width: 43%;
+}
+
+.transport {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+.transport button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: rgba(239, 243, 251, 0.62);
+  cursor: pointer;
+  display: flex;
+  font: 600 15px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  height: 25px;
+  justify-content: center;
+  padding: 0;
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease;
+  width: 25px;
+}
+
+.transport button:hover {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.transport .primaryTransport {
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.1),
+    0 5px 14px rgba(0, 0, 0, 0.2);
+  color: #fff;
+  height: 30px;
+  width: 30px;
+}
+
+.auditLabel {
+  bottom: 13px;
+  color: rgba(255, 255, 255, 0.52);
+  display: flex;
+  font: 550 9px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  justify-content: space-between;
+  left: 14px;
+  letter-spacing: 0.02em;
+  position: absolute;
+  right: 14px;
+  text-transform: uppercase;
+  z-index: 1;
+}
+
+.stateButton:focus-visible,
+.iconButton:focus-visible,
+.transport button:focus-visible {
+  outline: 2px solid #8ab7ff;
+  outline-offset: 2px;
+}
+
+@media (max-width: 620px) {
+  .prototypeHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stage {
+    height: 330px;
+  }
+
+  .shell {
+    transform: translateX(-50%) scale(0.82);
+    transform-origin: top center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shell,
+  .waveform i,
+  .iconButton,
+  .transport button {
+    animation: none;
+    transition-duration: 1ms;
+  }
+}
