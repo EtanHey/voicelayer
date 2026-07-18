@@ -122,25 +122,10 @@ public struct VoiceBarNotchContinuousShape: Shape {
             return Path()
         }
 
-        var path = Path()
-        if layout.leadingWingRect.width > 0 {
-            path.addPath(
-                VoiceBarNotchWingShape(
-                    side: .leading,
-                    outerCornerRadius: layout.inverseJoinRadius
-                ).path(in: layout.leadingWingRect)
-            )
-        }
-        if layout.trailingWingRect.width > 0 {
-            path.addPath(
-                VoiceBarNotchWingShape(
-                    side: .trailing,
-                    outerCornerRadius: layout.inverseJoinRadius
-                ).path(in: layout.trailingWingRect)
-            )
-        }
-        if !layout.bodyRect.isEmpty {
-            path.addPath(lowerBodyPath(layout: layout))
+        let path = if layout.bodyRect.isEmpty {
+            compactPath(layout: layout)
+        } else {
+            continuousBodyPath(layout: layout)
         }
 
         let transform = CGAffineTransform(
@@ -154,34 +139,77 @@ public struct VoiceBarNotchContinuousShape: Shape {
         return path.applying(transform)
     }
 
-    private func lowerBodyPath(layout: VoiceBarNotchShapeLayout) -> Path {
-        let rect = layout.bodyRect
-        let topRadius = min(layout.inverseJoinRadius, rect.width / 2, rect.height / 2)
-        let lowerRadius = min(layout.lowerCornerRadius, rect.width / 2, rect.height / 2)
+    private func compactPath(layout: VoiceBarNotchShapeLayout) -> Path {
+        var path = Path()
+        if layout.leadingWingRect.width > 0 {
+            path.addPath(
+                VoiceBarNotchWingShape(side: .leading)
+                    .path(in: layout.leadingWingRect)
+            )
+        }
+        if layout.trailingWingRect.width > 0 {
+            path.addPath(
+                VoiceBarNotchWingShape(side: .trailing)
+                    .path(in: layout.trailingWingRect)
+            )
+        }
+        return path
+    }
+
+    private func continuousBodyPath(layout: VoiceBarNotchShapeLayout) -> Path {
+        let body = layout.bodyRect
+        let leadingWing = layout.leadingWingRect
+        let trailingWing = layout.trailingWingRect
+        let core = layout.coreRect
+        let shoulderRadius = min(
+            layout.inverseJoinRadius,
+            leadingWing.width,
+            trailingWing.width,
+            layout.geometry.topHeight
+        )
+        let lowerRadius = min(
+            layout.lowerCornerRadius,
+            body.width / 2,
+            body.height / 2
+        )
         var path = Path()
 
-        path.move(to: CGPoint(x: layout.leadingWingRect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + topRadius, y: rect.minY))
+        path.move(to: CGPoint(x: core.minX, y: 0))
+        path.addLine(to: CGPoint(x: leadingWing.minX, y: 0))
+        path.addLine(to: CGPoint(x: leadingWing.minX, y: body.minY - shoulderRadius))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.minY + topRadius),
-            control: CGPoint(x: rect.minX, y: rect.minY)
+            to: CGPoint(x: leadingWing.minX - shoulderRadius, y: body.minY),
+            control: CGPoint(x: leadingWing.minX, y: body.minY)
         )
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY - lowerRadius))
+        path.addLine(to: CGPoint(x: body.minX + shoulderRadius, y: body.minY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + lowerRadius, y: rect.maxY),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
+            to: CGPoint(x: body.minX, y: body.minY + shoulderRadius),
+            control: CGPoint(x: body.minX, y: body.minY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX - lowerRadius, y: rect.maxY))
+        path.addLine(to: CGPoint(x: body.minX, y: body.maxY - lowerRadius))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.maxY - lowerRadius),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
+            to: CGPoint(x: body.minX + lowerRadius, y: body.maxY),
+            control: CGPoint(x: body.minX, y: body.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + topRadius))
+        path.addLine(to: CGPoint(x: body.maxX - lowerRadius, y: body.maxY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - topRadius, y: rect.minY),
-            control: CGPoint(x: rect.maxX, y: rect.minY)
+            to: CGPoint(x: body.maxX, y: body.maxY - lowerRadius),
+            control: CGPoint(x: body.maxX, y: body.maxY)
         )
-        path.addLine(to: CGPoint(x: layout.trailingWingRect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: body.maxX, y: body.minY + shoulderRadius))
+        path.addQuadCurve(
+            to: CGPoint(x: body.maxX - shoulderRadius, y: body.minY),
+            control: CGPoint(x: body.maxX, y: body.minY)
+        )
+        path.addLine(to: CGPoint(x: trailingWing.maxX + shoulderRadius, y: body.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: trailingWing.maxX, y: body.minY - shoulderRadius),
+            control: CGPoint(x: trailingWing.maxX, y: body.minY)
+        )
+        path.addLine(to: CGPoint(x: trailingWing.maxX, y: 0))
+        path.addLine(to: CGPoint(x: core.maxX, y: 0))
+        path.addLine(to: CGPoint(x: core.maxX, y: body.minY))
+        path.addLine(to: CGPoint(x: core.minX, y: body.minY))
         path.closeSubpath()
         return path
     }

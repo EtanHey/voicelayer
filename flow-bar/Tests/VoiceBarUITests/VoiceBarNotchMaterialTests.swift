@@ -31,6 +31,24 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertEqual(trailing.width, 16)
         XCTAssertEqual(leading.opaqueEdge, .trailing)
         XCTAssertEqual(trailing.opaqueEdge, .leading)
+        XCTAssertEqual(leading.stops.last?.opacity, 1)
+        XCTAssertEqual(trailing.stops.first?.opacity, 1)
+        XCTAssertEqual(leading.stops.first?.opacity, 0)
+        XCTAssertEqual(trailing.stops.last?.opacity, 0)
+        for (leadingStop, trailingStop) in zip(
+            leading.stops,
+            trailing.stops.reversed()
+        ) {
+            XCTAssertEqual(
+                leadingStop.location,
+                1 - trailingStop.location,
+                accuracy: 0.0001
+            )
+        }
+        XCTAssertEqual(
+            leading.stops.map(\.opacity),
+            trailing.stops.reversed().map(\.opacity)
+        )
     }
 
     func testMaterialFallbackOrderIsNativeThenVisualEffectThenOpaque() {

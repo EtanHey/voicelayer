@@ -4,6 +4,7 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     public let shellIdentity: String
     public let fixedCoreCount: Int
     public let reusableWingSlotCount: Int
+    public let coreEdgeVeilCount: Int
     public let lowerSurfaceCount: Int
     public let clipsContentToVisibleSurfaces: Bool
     public let coreUsesMaterial: Bool
@@ -18,6 +19,7 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
             shellIdentity: "VoiceBarNotchShell",
             fixedCoreCount: 1,
             reusableWingSlotCount: 2,
+            coreEdgeVeilCount: presentation.visualState == .idle ? 0 : 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
             coreUsesMaterial: VoiceBarNotchContract.material.coreUsesBackdropMaterial,
@@ -126,7 +128,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         VoiceBarGlassContainer {
             ZStack(alignment: .topLeading) {
                 if layout.leadingWingRect.width > 0 {
-                    VoiceBarGlassWing(side: .leading) {
+                    VoiceBarGlassWing(
+                        side: .leading,
+                        outerCornerRadius: compactOuterCornerRadius
+                    ) {
                         wingSlot(leadingContent, side: .leading)
                     }
                     .frame(
@@ -140,7 +145,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 }
 
                 if layout.trailingWingRect.width > 0 {
-                    VoiceBarGlassWing(side: .trailing) {
+                    VoiceBarGlassWing(
+                        side: .trailing,
+                        outerCornerRadius: compactOuterCornerRadius
+                    ) {
                         wingSlot(trailingContent, side: .trailing)
                     }
                     .frame(
@@ -174,7 +182,41 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     )
                 )
             )
+            .overlay(alignment: .topLeading) {
+                coreEdgeVeils
+            }
             .allowsHitTesting(false)
+    }
+
+    private var coreEdgeVeils: some View {
+        let fadeWidth = VoiceBarNotchContract.material.blackToGlassFadeWidth
+        return ZStack(alignment: .topLeading) {
+            VoiceBarBlackToGlassFade(wing: .leading)
+                .frame(height: presentation.geometry.topHeight)
+                .position(
+                    x: layout.coreRect.minX - fadeWidth / 2,
+                    y: presentation.geometry.topHeight / 2
+                )
+            VoiceBarBlackToGlassFade(wing: .trailing)
+                .frame(height: presentation.geometry.topHeight)
+                .position(
+                    x: layout.coreRect.maxX + fadeWidth / 2,
+                    y: presentation.geometry.topHeight / 2
+                )
+        }
+        .frame(
+            width: presentation.geometry.totalWidth,
+            height: presentation.geometry.topHeight,
+            alignment: .topLeading
+        )
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var compactOuterCornerRadius: CGFloat {
+        VoiceBarNotchContract.material.compactOuterCornerRadius(
+            for: presentation.visualState
+        )
     }
 
     private var teleprompterSlots: some View {

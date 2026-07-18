@@ -44,5 +44,18 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertTrue(path.contains(CGPoint(x: layout.trailingWingRect.midX, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: 10, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: 455, y: 16)))
+        XCTAssertEqual(path.moveElementCount, 1)
+    }
+}
+
+private extension Path {
+    var moveElementCount: Int {
+        var count = 0
+        cgPath.applyWithBlock { element in
+            if element.pointee.type == .moveToPoint {
+                count += 1
+            }
+        }
+        return count
     }
 }

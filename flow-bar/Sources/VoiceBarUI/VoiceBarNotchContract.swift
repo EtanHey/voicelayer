@@ -95,6 +95,17 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     private var reservedWingInset: CGFloat {
         blackToGlassFadeWidth + fadeToContentGap + outerContentInset
     }
+
+    public func compactOuterCornerRadius(
+        for visualState: VoiceBarNotchVisualState
+    ) -> CGFloat {
+        switch visualState {
+        case .recording, .compactStatus:
+            15
+        case .idle, .hoverLauncher, .teleprompter:
+            11
+        }
+    }
 }
 
 public struct VoiceBarNotchMotionContract: Equatable {
