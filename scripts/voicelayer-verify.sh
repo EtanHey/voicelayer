@@ -22,8 +22,9 @@ the current branch touches VoiceLayer daemon/socket/MCP surfaces.
 
 --corpus [N] boots an isolated daemon, replays the first N recordings from the
 pinned scripts/corpus-replay-manifest.txt set (default: 10), runs the
-interaction-event leg, and requires no human input. Override the frozen set with
-VOICELAYER_VERIFY_CORPUS_MANIFEST when intentionally certifying another corpus.
+interaction-event and F5-finish-paste-into-terminal legs, and requires no human
+input. Override the frozen set with VOICELAYER_VERIFY_CORPUS_MANIFEST when
+intentionally certifying another corpus.
 USAGE
 }
 
@@ -323,6 +324,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --work-dir "$corpus_work_dir" \
       --repo-root "$REPO_ROOT"
   fi
+  printf '[voicelayer-verify] F5 finish-paste terminal gate: PASS\n'
 
   assert_corpus_tree_clean
 
@@ -336,6 +338,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'short_sha: %s\n' "$short_sha"
     printf 'tester: %s\n' "$tester"
     printf 'verification_mode: corpus\n'
+    printf 'f5_finish_paste_terminal: pass\n'
     printf 'corpus_count: %s\n' "$CORPUS_COUNT"
     printf 'corpus_manifest: %s\n' "$corpus_manifest"
     printf 'daemon_files:\n'

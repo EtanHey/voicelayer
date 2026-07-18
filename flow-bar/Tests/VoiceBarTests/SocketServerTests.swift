@@ -279,6 +279,16 @@ final class SocketServerTests: XCTestCase {
 /// isolated socket and exercise production input/UI event dispatch against the
 /// still-running daemon.
 final class CorpusReplayRuntimeInteractionTests: XCTestCase {
+    private final class ScratchCmuxApplication: NSRunningApplication, @unchecked Sendable {
+        override var bundleIdentifier: String? {
+            "com.cmuxterm.app"
+        }
+
+        override var processIdentifier: pid_t {
+            52005
+        }
+    }
+
     @MainActor
     func testF18EscapeAndStopButtonDriveSpawnedDaemonNDJSON() throws {
         let environment = ProcessInfo.processInfo.environment
@@ -342,10 +352,27 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         dispatchRuntimeKey(virtualKey: 53, router: router)
         XCTAssertTrue(waitForCondition(timeout: 15) { idleTransitions >= 2 })
 
-        var pastedText = ""
-        state.pasteHandler = { text in
-            pastedText = text
-            return true
+        let cmux = ScratchCmuxApplication()
+        var scratchTerminal = ""
+        var axInsertionFired = false
+        state.frontmostAppProvider = { cmux }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, block in block() }
+        state.pasteConfirmationDelay = 0
+        state.asyncDictationInsertionHandlerProvider = {
+            { text, completion in
+                axInsertionFired = true
+                let strategy = CommandModeAXHelper.insertionStrategy(
+                    text: text,
+                    focusedValueLength: (scratchTerminal as NSString).length,
+                    targetBundleIdentifier: cmux.bundleIdentifier
+                )
+                if strategy == .valueRewrite {
+                    scratchTerminal.append(text)
+                }
+                completion()
+                return true
+            }
         }
         recordingTransitions = 0
         dispatchRuntimeKey(virtualKey: 79, router: router)
@@ -367,8 +394,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         try clickRecordingStop(host, in: window, state: state)
         // This is the STT half of the mission's paste/subtitle surface: subtitle
         // word boundaries are emitted by the separate TTS playback queue.
-        XCTAssertTrue(waitForCondition(timeout: 240) { !pastedText.isEmpty })
-        XCTAssertEqual(state.transcript, pastedText)
+        XCTAssertTrue(waitForCondition(timeout: 240) { !state.transcript.isEmpty })
+        XCTAssertTrue(axInsertionFired)
+        XCTAssertEqual(scratchTerminal, state.transcript)
         XCTAssertEqual(state.lastTranscriptionPolished, true)
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
     }
