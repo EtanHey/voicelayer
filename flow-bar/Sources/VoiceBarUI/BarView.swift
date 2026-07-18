@@ -299,7 +299,7 @@ public struct BarView: View {
                     HStack(spacing: 8) {
                         if recordingContent.showsWaveform {
                             WaveformView(
-                                audioLevels: state.recordingWaveformLevels,
+                                centeredAudioLevels: state.recordingWaveformLevels,
                                 color: Theme.recordingColor
                             )
                         }
@@ -325,7 +325,7 @@ public struct BarView: View {
                     } else {
                         // TimelineView only drives refresh cadence. VoiceState owns
                         // the monotonic uptime domain used to index the envelope.
-                        WaveformView(color: Theme.speakingColor, currentLevels: {
+                        WaveformView(color: Theme.speakingColor, centeredCurrentLevels: {
                             state.playbackWaveformLevels()
                         })
                         statusLabel
@@ -384,7 +384,7 @@ public struct BarView: View {
         if state.mode == .speaking {
             // TimelineView only drives refresh cadence. VoiceState owns the
             // monotonic uptime domain used to index the envelope.
-            WaveformView(color: Theme.speakingColor, currentLevels: {
+            WaveformView(color: Theme.speakingColor, centeredCurrentLevels: {
                 state.playbackWaveformLevels()
             })
         }

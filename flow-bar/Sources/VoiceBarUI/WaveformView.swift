@@ -17,7 +17,8 @@ public struct WaveformView: View {
         currentFrame = {
             RenderFrame(
                 audioLevel: audioLevel,
-                audioLevels: nil
+                audioLevels: nil,
+                mapping: .centeredReactive
             )
         }
     }
@@ -27,7 +28,19 @@ public struct WaveformView: View {
         currentFrame = {
             RenderFrame(
                 audioLevel: nil,
-                audioLevels: audioLevels
+                audioLevels: audioLevels,
+                mapping: .independent
+            )
+        }
+    }
+
+    public init(centeredAudioLevels audioLevels: [Double], color: Color) {
+        self.color = color
+        currentFrame = {
+            RenderFrame(
+                audioLevel: nil,
+                audioLevels: audioLevels,
+                mapping: .centeredReactive
             )
         }
     }
@@ -40,7 +53,8 @@ public struct WaveformView: View {
         currentFrame = {
             RenderFrame(
                 audioLevel: currentLevel(),
-                audioLevels: nil
+                audioLevels: nil,
+                mapping: .centeredReactive
             )
         }
     }
@@ -52,7 +66,27 @@ public struct WaveformView: View {
         self.color = color
         currentFrame = {
             currentLevels().map { levels in
-                RenderFrame(audioLevel: nil, audioLevels: levels)
+                RenderFrame(
+                    audioLevel: nil,
+                    audioLevels: levels,
+                    mapping: .independent
+                )
+            }
+        }
+    }
+
+    public init(
+        color: Color,
+        centeredCurrentLevels: @escaping () -> [Double]?
+    ) {
+        self.color = color
+        currentFrame = {
+            centeredCurrentLevels().map { levels in
+                RenderFrame(
+                    audioLevel: nil,
+                    audioLevels: levels,
+                    mapping: .centeredReactive
+                )
             }
         }
     }
@@ -60,29 +94,41 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { _ in
             let frame = currentFrame()
-            let independentLevels = frame.map { frame in
-                WaveformMetrics.normalizedLevels(
-                    audioLevels: frame.audioLevels ?? [],
-                    barCount: barCount
-                )
+            let normalizedLevels = frame.map { frame in
+                switch frame.mapping {
+                case .centeredReactive:
+                    if let audioLevels = frame.audioLevels {
+                        return WaveformMetrics.centeredLevels(
+                            audioLevels: audioLevels,
+                            barCount: barCount
+                        )
+                    }
+                    return (0 ..< barCount).map { index in
+                        WaveformMetrics.normalizedLevel(
+                            audioLevel: frame.audioLevel,
+                            index: index,
+                            barCount: barCount
+                        )
+                    }
+                case .independent:
+                    return WaveformMetrics.normalizedLevels(
+                        audioLevels: frame.audioLevels ?? [],
+                        barCount: barCount
+                    )
+                }
             }
             HStack(spacing: barSpacing) {
                 ForEach(0 ..< barCount, id: \.self) { index in
                     WaveformBar(
-                        targetNormalizedLevel: frame?.audioLevels != nil
-                            ? independentLevels?[index] ?? 0
-                            : WaveformMetrics.normalizedLevel(
-                                audioLevel: frame?.audioLevel,
-                                index: index,
-                                barCount: barCount
-                            ),
+                        targetNormalizedLevel: normalizedLevels?[index] ?? 0,
                         color: color,
                         maxHeight: maxHeight,
                         minHeight: minHeight,
                         barWidth: barWidth,
                         index: index,
                         barCount: barCount,
-                        isVisible: frame != nil
+                        isVisible: frame != nil,
+                        usesReactiveTransition: frame?.mapping == .centeredReactive
                     )
                     .frame(width: barWidth)
                 }
@@ -98,6 +144,12 @@ public struct WaveformView: View {
     private struct RenderFrame {
         let audioLevel: Double?
         let audioLevels: [Double]?
+        let mapping: RenderMapping
+    }
+
+    private enum RenderMapping {
+        case centeredReactive
+        case independent
     }
 }
 
@@ -138,6 +190,22 @@ public enum WaveformMetrics {
         return Array(repeating: 0, count: max(0, barCount - realLevels.count)) + realLevels
     }
 
+    public static func centeredLevels(audioLevels: [Double], barCount: Int) -> [Double] {
+        guard barCount > 0 else { return [] }
+        let currentMagnitude = audioLevels.last
+        return (0 ..< barCount).map { index in
+            normalizedLevel(
+                audioLevel: currentMagnitude,
+                index: index,
+                barCount: barCount
+            )
+        }
+    }
+
+    public static func reactiveTransitionDuration(from current: Double, to target: Double) -> Double {
+        target < current ? minimumLiveReleaseDuration : minimumLiveAttackDuration
+    }
+
     public static func transitionDuration(
         from current: Double,
         to target: Double,
@@ -174,6 +242,7 @@ private struct WaveformBar: View {
     let index: Int
     let barCount: Int
     let isVisible: Bool
+    let usesReactiveTransition: Bool
     @State private var displayedNormalizedLevel = 0.0
 
     var body: some View {
@@ -186,12 +255,19 @@ private struct WaveformBar: View {
                 displayedNormalizedLevel = targetNormalizedLevel
             }
             .onChange(of: targetNormalizedLevel) { _, newLevel in
-                let duration = WaveformMetrics.transitionDuration(
-                    from: displayedNormalizedLevel,
-                    to: newLevel,
-                    index: index,
-                    barCount: barCount
-                )
+                let duration = if usesReactiveTransition {
+                    WaveformMetrics.reactiveTransitionDuration(
+                        from: displayedNormalizedLevel,
+                        to: newLevel
+                    )
+                } else {
+                    WaveformMetrics.transitionDuration(
+                        from: displayedNormalizedLevel,
+                        to: newLevel,
+                        index: index,
+                        barCount: barCount
+                    )
+                }
                 withAnimation(.easeOut(duration: duration)) {
                     displayedNormalizedLevel = newLevel
                 }
