@@ -22,7 +22,7 @@
 
 - [x] 3.1 React mock approved by Etan (“perfect”); approved geometry/material/motion contract frozen as the native pixel target
 - [x] 3.2 Paper-only Swift architecture and TDD implementation plan written, including new-type boundaries and explicit W2 shared-file touch/no-touch map
-- [ ] 3.3 Sequencing gate — initial W1 branch is based on post-P0 `db90fcc`; keep pending until #351 merges, W1 rebases onto that merged main, and the merged #351 commit + rebase head are recorded here
+- [x] 3.3 Sequencing gate — initial W1 branch was based on post-P0 `db90fcc`; #351 merged as `d721e11`, and W1 rebased onto that merged main with the first post-rebase exact-head gate at `0471cebe87f855a134df15195ad3c44feb07a3a7`
 - [x] 3.4 New pure native contracts — visual-state reducer, exact 185/285/409/465×228-point geometry, corrected 36/64 · 72/152 · 76/88-point wing extents, 16-point fade, content-safe insets, motion hierarchy
 - [x] 3.5 New shell primitives — safe-area/auxiliary-top-area-derived physical-notch placement with the 185-point fallback, one teleprompter shape, shared glass/fallback material, fixed black core, ordered motion, and shape-aware hit regions
 - [x] 3.6 Rebase integration — adapted `VoiceBarPresentation`, `VoiceBarPanelLayout`, `BarView`, `FloatingPanel`, and `VoiceBarApp` over W2 while leaving `VoiceState`/`WaveformView`/`TeleprompterView` behavior unchanged
