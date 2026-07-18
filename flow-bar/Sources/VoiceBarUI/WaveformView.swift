@@ -34,6 +34,17 @@ public struct WaveformView: View {
         }
     }
 
+    public init(recordingAudioLevels audioLevels: [Double], color: Color) {
+        self.color = color
+        currentFrame = {
+            RenderFrame(
+                audioLevel: nil,
+                audioLevels: audioLevels,
+                mapping: .centerOutHistory
+            )
+        }
+    }
+
     public init(organicAudioLevels audioLevels: [Double], color: Color) {
         self.color = color
         currentFrame = {
@@ -123,6 +134,11 @@ public struct WaveformView: View {
                     )
                 case .processing:
                     return WaveformMetrics.processingLevels(time: now, barCount: barCount)
+                case .centerOutHistory:
+                    return WaveformMetrics.centerOutLevels(
+                        audioLevels: frame.audioLevels ?? [],
+                        barCount: barCount
+                    )
                 case .independent:
                     return WaveformMetrics.normalizedLevels(
                         audioLevels: frame.audioLevels ?? [],
@@ -164,6 +180,7 @@ public struct WaveformView: View {
     private enum RenderMapping {
         case organicReactive
         case processing
+        case centerOutHistory
         case independent
     }
 }
@@ -175,9 +192,9 @@ public enum WaveformMetrics {
     /// scale and must not pass through this gate.
     public static let recordingSilenceFloor = AudioLevelMonitor.normalizeAveragePower(-50)
     public static let minimumLiveAttackDuration = 0.10
-    public static let maximumLiveAttackDuration = 0.20
+    public static let maximumLiveAttackDuration = 0.15
     public static let minimumLiveReleaseDuration = 0.18
-    public static let maximumLiveReleaseDuration = 0.30
+    public static let maximumLiveReleaseDuration = 0.40
 
     public static func recordingLevel(from audioLevel: Double?) -> Double {
         guard let audioLevel, audioLevel.isFinite, audioLevel > recordingSilenceFloor else {
@@ -205,6 +222,36 @@ public enum WaveformMetrics {
         return Array(repeating: 0, count: max(0, barCount - realLevels.count)) + realLevels
     }
 
+    public static func centerOutLevels(audioLevels: [Double], barCount: Int) -> [Double] {
+        guard barCount > 0 else { return [] }
+        let history = normalizedLevels(audioLevels: audioLevels, barCount: barCount)
+        let center = (barCount - 1) / 2
+        var destinationOrder = [center]
+        var distance = 1
+        while destinationOrder.count < barCount {
+            let left = center - distance
+            if left >= 0 {
+                destinationOrder.append(left)
+            }
+            let right = center + distance
+            if right < barCount {
+                destinationOrder.append(right)
+            }
+            distance += 1
+        }
+
+        var levels = Array(repeating: 0.0, count: barCount)
+        for (age, destination) in destinationOrder.enumerated() {
+            let source = history[history.count - 1 - age]
+            levels[destination] = normalizedLevel(
+                audioLevel: source,
+                index: destination,
+                barCount: barCount
+            )
+        }
+        return levels
+    }
+
     public static func organicLevels(
         audioLevels: [Double],
         time: Double,
@@ -228,15 +275,10 @@ public enum WaveformMetrics {
 
     public static func processingLevels(time: Double, barCount: Int) -> [Double] {
         guard barCount > 0 else { return [] }
+        let pulse = sin(time * 4) * 0.5 + 0.5
         return (0 ..< barCount).map { index in
-            let center = Double(barCount - 1) / 2
-            let distanceFromCenter = abs(Double(index) - center)
-            let normalizedDistance = center == 0 ? 0 : distanceFromCenter / center
-            let inwardOutward = sin(time * 4.8 - normalizedDistance * .pi) * 0.5 + 0.5
-            let centerPulse = sin(time * 2.4) * 0.5 + 0.5
             let normalized = 0.12
-                + inwardOutward * 0.38
-                + centerPulse * 0.16 * centerWeight(index: index, barCount: barCount)
+                + (0.20 + pulse * 0.48) * centerWeight(index: index, barCount: barCount)
             return min(1, max(0, normalized))
         }
     }

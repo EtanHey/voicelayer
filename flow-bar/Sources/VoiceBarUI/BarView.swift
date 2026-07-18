@@ -299,7 +299,7 @@ public struct BarView: View {
                     HStack(spacing: 8) {
                         if recordingContent.showsWaveform {
                             WaveformView(
-                                organicAudioLevels: state.recordingWaveformLevels,
+                                recordingAudioLevels: state.recordingWaveformLevels,
                                 color: Theme.recordingColor
                             )
                         }

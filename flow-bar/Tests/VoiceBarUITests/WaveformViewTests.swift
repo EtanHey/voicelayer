@@ -81,6 +81,58 @@ final class WaveformViewTests: XCTestCase {
         )
     }
 
+    func testRecordingHistoryUsesEveryDistinctSliceWithNewestAtCenter() {
+        let realSamples = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+        let levels = WaveformMetrics.centerOutLevels(
+            audioLevels: realSamples,
+            barCount: 7
+        )
+        let sourceLevelByBar = [0.2, 0.4, 0.6, 0.7, 0.5, 0.3, 0.1]
+        let expected = sourceLevelByBar.enumerated().map { index, level in
+            WaveformMetrics.normalizedLevel(
+                audioLevel: level,
+                index: index,
+                barCount: 7
+            )
+        }
+
+        XCTAssertEqual(levels.count, expected.count)
+        for (actual, expectedLevel) in zip(levels, expected) {
+            XCTAssertEqual(actual, expectedLevel, accuracy: 0.0001)
+        }
+    }
+
+    func testRecordingHistoryRadiatesCenterOutWithoutChronologicalTravel() {
+        let expectedBarBySampleAge = [3, 2, 4, 1, 5, 0, 6]
+        let center = 3
+
+        let actualBarBySampleAge = (0 ..< 7).map { age in
+            var samples = Array(repeating: 0.0, count: 7)
+            samples[6 - age] = 1
+            let levels = WaveformMetrics.centerOutLevels(
+                audioLevels: samples,
+                barCount: 7
+            )
+            return levels.enumerated().max(by: { $0.element < $1.element })?.offset
+        }
+
+        XCTAssertEqual(actualBarBySampleAge, expectedBarBySampleAge.map(Optional.some))
+        XCTAssertEqual(
+            actualBarBySampleAge.compactMap { $0 }.map { abs($0 - center) },
+            [0, 1, 1, 2, 2, 3, 3]
+        )
+    }
+
+    func testRecordingHistoryKeepsTrueSilenceExactlyFlat() {
+        XCTAssertEqual(
+            WaveformMetrics.centerOutLevels(
+                audioLevels: Array(repeating: 0, count: 7),
+                barCount: 7
+            ),
+            Array(repeating: 0, count: 7)
+        )
+    }
+
     func testReactiveWindowUsesOrganicCenterOutVariationFromCurrentMagnitude() {
         let levels = WaveformMetrics.organicLevels(
             audioLevels: [0.9, 0.1, 0.8, 0.2, 0.7, 0.3, 0.6],
@@ -155,16 +207,31 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(peakHeight / floorHeight, 4.8)
     }
 
-    func testProcessingMotionIsAnimatedSymmetricallyWithoutLateralTravel() {
-        let early = WaveformMetrics.processingLevels(time: 0.1, barCount: 7)
-        let later = WaveformMetrics.processingLevels(time: 0.6, barCount: 7)
+    func testProcessingMotionPulsesInPhaseWithoutLateralTravel() {
+        let sampledTimes = stride(from: 0.0, through: 2.0, by: 0.05)
+        let sampledLevels = sampledTimes.map {
+            WaveformMetrics.processingLevels(time: $0, barCount: 7)
+        }
 
-        for levels in [early, later] {
+        for levels in sampledLevels {
             XCTAssertEqual(levels[0], levels[6], accuracy: 0.0001)
             XCTAssertEqual(levels[1], levels[5], accuracy: 0.0001)
             XCTAssertEqual(levels[2], levels[4], accuracy: 0.0001)
+            XCTAssertGreaterThanOrEqual(levels[3], levels[0])
         }
-        XCTAssertNotEqual(early, later)
+
+        for (current, next) in zip(sampledLevels, sampledLevels.dropFirst()) {
+            let centerDelta = next[3] - current[3]
+            for index in 0 ..< 7 {
+                let barDelta = next[index] - current[index]
+                XCTAssertGreaterThanOrEqual(
+                    centerDelta * barDelta,
+                    -0.000_001,
+                    "processing bar \(index) must pulse in phase with the center"
+                )
+            }
+        }
+        XCTAssertNotEqual(sampledLevels.first, sampledLevels.last)
     }
 
     func testAmplitudeIsClampedBeforeHeightMapping() {
@@ -201,7 +268,7 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertGreaterThan(loud, quiet)
     }
 
-    func testLiveTargetsUseGradedPerBarAttackAndSettleWithoutHolding() {
+    func testRecordingTargetsUseStaggeredAttackAndNaturalRelease() {
         let attacks = (0 ..< 7).map { index in
             WaveformMetrics.transitionDuration(
                 from: 0.2,
@@ -219,10 +286,10 @@ final class WaveformViewTests: XCTestCase {
             )
         }
 
-        XCTAssertTrue(attacks.allSatisfy { (0.10 ... 0.20).contains($0) })
+        XCTAssertTrue(attacks.allSatisfy { (0.10 ... 0.15).contains($0) })
         XCTAssertGreaterThan(Set(attacks).count, 1)
         XCTAssertGreaterThanOrEqual(releases.min() ?? 0, 0.18)
-        XCTAssertLessThanOrEqual(releases.max() ?? 0, 0.30)
+        XCTAssertEqual(releases.max() ?? 0, 0.40, accuracy: 0.0001)
         XCTAssertGreaterThan(Set(releases).count, 1)
     }
 }
