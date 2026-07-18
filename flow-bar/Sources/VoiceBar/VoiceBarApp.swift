@@ -826,8 +826,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private var isPointerInsideVisibleNotchSurface: Bool {
         guard let panel else { return false }
-        let point = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
-        return currentPanelLayout().containsActiveContent(point)
+        let layout = currentPanelLayout()
+        return RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: NSEvent.mouseLocation,
+            panelFrame: panel.frame,
+            convertFromScreen: { panel.convertPoint(fromScreen: $0) },
+            containsLocalPoint: { layout.containsActiveContent($0) }
+        )
     }
 
     private func applyPanelLayout(animated: Bool) {

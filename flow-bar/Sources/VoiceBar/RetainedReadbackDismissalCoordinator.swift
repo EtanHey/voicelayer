@@ -1,6 +1,18 @@
 import Foundation
 import VoiceBarUI
 
+enum RetainedReadbackPointerPolicy {
+    static func isInsideVisibleSurface(
+        screenPoint: CGPoint,
+        panelFrame: CGRect,
+        convertFromScreen: (CGPoint) -> CGPoint,
+        containsLocalPoint: (CGPoint) -> Bool
+    ) -> Bool {
+        guard panelFrame.contains(screenPoint) else { return false }
+        return containsLocalPoint(convertFromScreen(screenPoint))
+    }
+}
+
 final class RetainedReadbackDismissalCoordinator {
     private let delay: Duration
     private var dismissalTask: Task<Void, Never>?

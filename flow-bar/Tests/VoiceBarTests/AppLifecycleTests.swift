@@ -493,6 +493,34 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(dismissCount, 1)
     }
 
+    func testReadbackPointerCheckRejectsScreenPointOutsidePanelBeforeConversion() {
+        var didConvert = false
+
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 900, y: 700),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { point in
+                didConvert = true
+                return point
+            },
+            containsLocalPoint: { _ in true }
+        )
+
+        XCTAssertFalse(isInside)
+        XCTAssertFalse(didConvert)
+    }
+
+    func testReadbackPointerCheckConvertsAndChecksPointInsidePanelFrame() {
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 320, y: 180),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { _ in CGPoint(x: 220, y: 80) },
+            containsLocalPoint: { $0 == CGPoint(x: 220, y: 80) }
+        )
+
+        XCTAssertTrue(isInside)
+    }
+
     func testVoiceModeChangesSynchronizeRetainedReadbackLifecycle() throws {
         let source = try voiceBarAppSource()
 
