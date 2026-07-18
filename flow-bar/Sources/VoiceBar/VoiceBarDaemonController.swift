@@ -52,11 +52,26 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("Resources")
+        let bundledDaemon = resourcesDirectory
+            .appendingPathComponent("src")
+            .appendingPathComponent("mcp-server-daemon.ts")
+            .path
 
         let isolatedQAMode = environment["VOICEBAR_QA_PRESERVE_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1" ||
             environment["QA_VOICEBAR_PRESERVE_TEST_OVERRIDES"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) == "1"
+
+        // The installed app and its bundled daemon are one deployable unit.
+        // Prefer that exact build so a same-version Homebrew package cannot
+        // leave the resident UI on new code while its audio daemon stays old.
+        if fileExists(bundledDaemon) {
+            return VoiceBarDaemonLaunchConfiguration(
+                launchPath: bunPath,
+                arguments: ["run", bundledDaemon],
+                workingDirectory: resourcesDirectory.path
+            )
+        }
 
         if !isolatedQAMode, let homebrewPackageRoot = homebrewPackageRoot(
             appVersion: installedAppVersion(for: executableURL, fileData: fileData),
@@ -70,17 +85,7 @@ struct VoiceBarDaemonLaunchConfiguration: Equatable {
             )
         }
 
-        let bundledDaemon = resourcesDirectory
-            .appendingPathComponent("src")
-            .appendingPathComponent("mcp-server-daemon.ts")
-            .path
-
-        guard fileExists(bundledDaemon) else { return nil }
-        return VoiceBarDaemonLaunchConfiguration(
-            launchPath: bunPath,
-            arguments: ["run", bundledDaemon],
-            workingDirectory: resourcesDirectory.path
-        )
+        return nil
     }
 
     private static func homebrewPackageRoot(
