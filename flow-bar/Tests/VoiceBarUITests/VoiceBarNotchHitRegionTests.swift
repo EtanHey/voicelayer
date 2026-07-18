@@ -1,0 +1,41 @@
+@testable import VoiceBarUI
+import XCTest
+
+final class VoiceBarNotchHitRegionTests: XCTestCase {
+    func testRecordingRegionContainsLeadingCoreAndTrailingStrips() {
+        let geometry = VoiceBarNotchContract.geometry(for: .recording)
+        let region = VoiceBarNotchHitRegion(geometry: geometry)
+
+        XCTAssertEqual(region.rects, [CGRect(x: 0, y: 0, width: 409, height: 32)])
+        XCTAssertTrue(region.contains(CGPoint(x: 10, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: 150, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: 400, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: 204.5, y: 40)))
+    }
+
+    func testTeleprompterRegionIsTheTopBarPlusLowerBodyUnion() {
+        let geometry = VoiceBarNotchContract.geometry(for: .teleprompter)
+        let region = VoiceBarNotchHitRegion(geometry: geometry)
+
+        XCTAssertEqual(region.rects, [
+            CGRect(x: 64, y: 196, width: 349, height: 32),
+            CGRect(x: 0, y: 0, width: 465, height: 196),
+        ])
+        XCTAssertEqual(geometry.coreOriginX, 140)
+        XCTAssertEqual(geometry.coreMidX, geometry.totalWidth / 2)
+        XCTAssertTrue(region.contains(CGPoint(x: 232.5, y: 212)))
+        XCTAssertTrue(region.contains(CGPoint(x: 10, y: 190)))
+        XCTAssertFalse(region.contains(CGPoint(x: 10, y: 212)))
+        XCTAssertFalse(region.contains(CGPoint(x: 455, y: 212)))
+    }
+
+    func testIdleRegionDoesNotAddPixelsBeyondTheHardwareCore() {
+        let region = VoiceBarNotchHitRegion(
+            geometry: VoiceBarNotchContract.geometry(for: .idle)
+        )
+
+        XCTAssertEqual(region.bounds, CGRect(x: 0, y: 0, width: 185, height: 32))
+        XCTAssertTrue(region.contains(CGPoint(x: 92.5, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: 186, y: 16)))
+    }
+}
