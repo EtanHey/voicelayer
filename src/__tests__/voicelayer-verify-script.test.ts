@@ -209,6 +209,7 @@ describe("voicelayer-verify.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).not.toContain("Press F5");
+    expect(text(result.stdout)).toContain("F5 finish-paste terminal gate: PASS");
     expect(existsSync(join(tempRoot, "build.log"))).toBe(false);
     const runnerOutput = await Bun.file(runnerLog).text();
     const corpusManifest = join(
@@ -225,6 +226,7 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("Verified-Runtime:");
     expect(body).toContain("tester: Corpus Unit Test");
     expect(body).toContain("verification_mode: corpus");
+    expect(body).toContain("f5_finish_paste_terminal: pass");
     expect(body).toContain("corpus_count: 2");
     expect(body).toContain(`corpus_manifest: ${corpusManifest}`);
   });

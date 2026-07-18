@@ -1,8 +1,19 @@
+import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
 
 final class CommandModeAXHelperTests: XCTestCase {
+    private final class FakeRunningApplication: NSRunningApplication, @unchecked Sendable {
+        override var bundleIdentifier: String? {
+            "com.cmuxterm.app"
+        }
+
+        override var processIdentifier: pid_t {
+            42424
+        }
+    }
+
     func testApplyReplacementVerifiesAXWriteByReadingBackValue() {
         var storedValue = "hello world"
         let helper = CommandModeAXHelper(
@@ -82,6 +93,58 @@ final class CommandModeAXHelperTests: XCTestCase {
             strategy,
             .selectedTextStreaming(maxChunkUTF16Length: 240, interChunkDelay: 0.012)
         )
+    }
+
+    func testOrdinaryF5FinishIntoCmuxKeepsReliableValueRewritePlan() {
+        let strategy = CommandModeAXHelper.insertionStrategy(
+            text: "ordinary F5 transcript completed into the focused cmux pane",
+            focusedValueLength: 12000,
+            targetBundleIdentifier: "com.cmuxterm.app"
+        )
+
+        XCTAssertEqual(strategy, .valueRewrite)
+    }
+
+    func testF5FinishTranscriptionFiresReliableAXInsertionIntoCmuxTarget() {
+        let state = VoiceState()
+        let cmux = FakeRunningApplication()
+        let transcript = "F5 completion must arrive in the focused cmux pane"
+        var scratchTerminal = "cmux> "
+        var captureCount = 0
+        var insertionAttempts = 0
+        state.sendCommand = { _ in }
+        state.minimumTranscribingDisplayDuration = 0
+        state.pasteConfirmationDelay = 0
+        state.frontmostAppProvider = { cmux }
+        state.targetAppActivator = { _ in }
+        state.pasteScheduler = { _, block in block() }
+        state.asyncDictationInsertionHandlerProvider = {
+            captureCount += 1
+            return { text, completion in
+                insertionAttempts += 1
+                let strategy = CommandModeAXHelper.insertionStrategy(
+                    text: text,
+                    focusedValueLength: (scratchTerminal as NSString).length,
+                    targetBundleIdentifier: cmux.bundleIdentifier
+                )
+                // cmux reports selected-text AX writes as accepted without
+                // rendering them. The pre-regression value rewrite is visible.
+                if strategy == .valueRewrite {
+                    scratchTerminal.append(text)
+                }
+                completion()
+                return true
+            }
+        }
+
+        state.record()
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "transcription", "text": transcript])
+
+        XCTAssertEqual(captureCount, 2)
+        XCTAssertEqual(insertionAttempts, 1)
+        XCTAssertEqual(scratchTerminal, "cmux> \(transcript)")
+        XCTAssertEqual(state.confirmationText, transcript)
     }
 
     func testSelectedTextChunksPreserveTranscriptWithBoundedChunks() {
