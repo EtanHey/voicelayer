@@ -20,6 +20,21 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
         XCTAssertEqual(decision, .supersede([42, 91]))
     }
 
+    func testCanonicalLaunchLeavesIsolatedQAPeerAndSupersedesNormalPeer() {
+        let decision = VoiceBarInstanceGuard.plan(
+            current: .init(pid: 300, bundlePath: canonicalPath),
+            running: [
+                .init(pid: 300, bundlePath: canonicalPath),
+                .init(pid: 91, bundlePath: "/tmp/VoiceBar-qa.app", isIsolated: true),
+                .init(pid: 42, bundlePath: "/Users/test/VoiceBar-dev.app"),
+            ],
+            canonicalBundlePath: canonicalPath,
+            enforcesSingleton: true
+        )
+
+        XCTAssertEqual(decision, .supersede([42]))
+    }
+
     func testNoncanonicalLaunchExitsWhenCanonicalInstanceAlreadyRuns() {
         let decision = VoiceBarInstanceGuard.plan(
             current: .init(pid: 300, bundlePath: "/tmp/VoiceBar-new.app"),
@@ -60,6 +75,44 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
         )
 
         XCTAssertEqual(decision, .bypass)
+    }
+
+    func testIsolationRegistryMatchesTheExactPIDAndLaunchInstance() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoiceBarIsolationRegistryTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let launchDate = Date(timeIntervalSince1970: 1_784_333_000.125)
+
+        try VoiceBarInstanceIsolationRegistry.register(
+            pid: 91,
+            launchDate: launchDate,
+            socketPath: "/tmp/voicelayer-qa/voicebar.sock",
+            directory: directory
+        )
+
+        XCTAssertTrue(
+            VoiceBarInstanceIsolationRegistry.isRegistered(
+                pid: 91,
+                launchDate: launchDate,
+                directory: directory
+            )
+        )
+        XCTAssertFalse(
+            VoiceBarInstanceIsolationRegistry.isRegistered(
+                pid: 91,
+                launchDate: launchDate.addingTimeInterval(1),
+                directory: directory
+            )
+        )
+
+        VoiceBarInstanceIsolationRegistry.unregister(pid: 91, directory: directory)
+        XCTAssertFalse(
+            VoiceBarInstanceIsolationRegistry.isRegistered(
+                pid: 91,
+                launchDate: launchDate,
+                directory: directory
+            )
+        )
     }
 
     func testElectionLockSerializesConcurrentLaunchPlanning() {

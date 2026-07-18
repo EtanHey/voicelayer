@@ -4,6 +4,13 @@ import Foundation
 struct VoiceBarInstanceDescriptor: Equatable {
     let pid: pid_t
     let bundlePath: String?
+    let isIsolated: Bool
+
+    init(pid: pid_t, bundlePath: String?, isIsolated: Bool = false) {
+        self.pid = pid
+        self.bundlePath = bundlePath
+        self.isIsolated = isIsolated
+    }
 }
 
 enum VoiceBarInstanceDecision: Equatable {
@@ -26,7 +33,7 @@ enum VoiceBarInstanceGuard {
         let canonicalPath = normalizedPath(canonicalBundlePath)
         let currentPath = current.bundlePath.map(normalizedPath)
         let otherInstances = running.filter { instance in
-            instance.pid > 0 && instance.pid != current.pid
+            instance.pid > 0 && instance.pid != current.pid && !instance.isIsolated
         }
 
         if currentPath != canonicalPath,
@@ -46,6 +53,74 @@ enum VoiceBarInstanceGuard {
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
+    }
+}
+
+enum VoiceBarInstanceIsolationRegistryError: Error {
+    case launchDateUnavailable(pid: pid_t)
+}
+
+enum VoiceBarInstanceIsolationRegistry {
+    private struct Marker: Codable {
+        let pid: Int32
+        let launchTimeMilliseconds: Int64
+        let socketPath: String
+    }
+
+    static let defaultDirectory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Application Support/VoiceLayer")
+        .appendingPathComponent("isolated-voicebar-instances", isDirectory: true)
+
+    static func register(
+        pid: pid_t,
+        launchDate: Date,
+        socketPath: String,
+        directory: URL = defaultDirectory
+    ) throws {
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        let marker = Marker(
+            pid: pid,
+            launchTimeMilliseconds: launchTimeMilliseconds(launchDate),
+            socketPath: socketPath
+        )
+        let url = markerURL(pid: pid, directory: directory)
+        try JSONEncoder().encode(marker).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
+        )
+    }
+
+    static func isRegistered(
+        pid: pid_t,
+        launchDate: Date?,
+        directory: URL = defaultDirectory
+    ) -> Bool {
+        guard let launchDate,
+              let data = try? Data(contentsOf: markerURL(pid: pid, directory: directory)),
+              let marker = try? JSONDecoder().decode(Marker.self, from: data)
+        else { return false }
+        return marker.pid == pid &&
+            marker.launchTimeMilliseconds == launchTimeMilliseconds(launchDate)
+    }
+
+    static func unregister(
+        pid: pid_t,
+        directory: URL = defaultDirectory
+    ) {
+        try? FileManager.default.removeItem(at: markerURL(pid: pid, directory: directory))
+    }
+
+    private static func markerURL(pid: pid_t, directory: URL) -> URL {
+        directory.appendingPathComponent("\(pid).json", isDirectory: false)
+    }
+
+    private static func launchTimeMilliseconds(_ date: Date) -> Int64 {
+        Int64((date.timeIntervalSince1970 * 1000).rounded())
     }
 }
 

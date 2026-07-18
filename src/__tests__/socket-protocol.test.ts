@@ -79,6 +79,33 @@ describe("socket-protocol", () => {
       expect(event.text?.startsWith(parsed.text)).toBe(true);
     });
 
+    it("downgrades a producer-incompatible envelope before fitting speaking text", () => {
+      const event: SocketEvent = {
+        type: "state",
+        state: "speaking",
+        text: "שלום".repeat(1_000),
+        voice: "en-US-JennyNeural",
+        playback_amplitude: {
+          source: "decoded-rms",
+          sample_interval_ms: 50,
+          samples: Array.from({ length: 1_001 }, () => 0),
+        },
+      };
+
+      const serialized = serializeEvent(event);
+      const parsed = JSON.parse(serialized.trim());
+
+      expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
+        VOICEBAR_SOCKET_EVENT_MAX_BYTES + 1,
+      );
+      expect(parsed.playback_amplitude).toEqual({
+        source: "unavailable",
+        sample_interval_ms: 50,
+        samples: [],
+      });
+      expect(parsed.text.length).toBeGreaterThan(0);
+    });
+
     it("serializes state recording event with mode", () => {
       const event: SocketEvent = {
         type: "state",

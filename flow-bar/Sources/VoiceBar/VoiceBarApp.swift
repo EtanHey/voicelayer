@@ -95,6 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var anchorMode: VoiceBarAnchorMode = .follow
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
+    private var isolatedInstanceMarkerPID: pid_t?
 
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
@@ -161,16 +162,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func enforceCanonicalSingleInstance() -> Bool {
         let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
-        let enforcesSingleton = defaultsEnforceSingleton && VoiceLayerPaths.enforcesSingletonInstance
-        guard enforcesSingleton else {
-            if !VoiceLayerPaths.enforcesSingletonInstance {
+        if !VoiceLayerPaths.enforcesSingletonInstance {
+            do {
+                return try VoiceBarInstanceElectionLock.withExclusiveLock {
+                    let myPID = ProcessInfo.processInfo.processIdentifier
+                    guard let launchDate = NSRunningApplication(
+                        processIdentifier: myPID
+                    )?.launchDate else {
+                        throw VoiceBarInstanceIsolationRegistryError
+                            .launchDateUnavailable(pid: myPID)
+                    }
+                    try VoiceBarInstanceIsolationRegistry.register(
+                        pid: myPID,
+                        launchDate: launchDate,
+                        socketPath: VoiceLayerPaths.socketPath
+                    )
+                    isolatedInstanceMarkerPID = myPID
+                    NSLog(
+                        "[VoiceBar] Singleton guard skipped for registered isolated socket path %@",
+                        VoiceLayerPaths.socketPath
+                    )
+                    return true
+                }
+            } catch {
                 NSLog(
-                    "[VoiceBar] Singleton guard skipped for isolated socket path %@",
-                    VoiceLayerPaths.socketPath
+                    "[VoiceBar] Isolated-instance registration failed: %@",
+                    String(describing: error)
                 )
-            } else {
-                NSLog("[VoiceBar] Singleton guard skipped by defaults")
+                DispatchQueue.main.async {
+                    NSApplication.shared.terminate(nil)
+                }
+                return false
             }
+        }
+
+        guard defaultsEnforceSingleton else {
+            NSLog("[VoiceBar] Singleton guard skipped by defaults")
             return true
         }
 
@@ -201,7 +228,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             running: runningApplications.map { application in
                 VoiceBarInstanceDescriptor(
                     pid: application.processIdentifier,
-                    bundlePath: application.bundleURL?.path
+                    bundlePath: application.bundleURL?.path,
+                    isIsolated: VoiceBarInstanceIsolationRegistry.isRegistered(
+                        pid: application.processIdentifier,
+                        launchDate: application.launchDate
+                    )
                 )
             },
             enforcesSingleton: true
@@ -442,6 +473,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let isolatedInstanceMarkerPID {
+            VoiceBarInstanceIsolationRegistry.unregister(pid: isolatedInstanceMarkerPID)
+            self.isolatedInstanceMarkerPID = nil
+        }
         snoozeTask?.cancel()
         dictionarySheetWindow?.close()
         settingsWindow?.close()

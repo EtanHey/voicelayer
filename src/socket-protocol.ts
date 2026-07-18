@@ -8,7 +8,10 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
-import type { PlaybackAmplitudeEnvelope } from "./playback-amplitude";
+import {
+  PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
+  type PlaybackAmplitudeEnvelope,
+} from "./playback-amplitude";
 
 // --- Events: VoiceLayer → Voice Bar ---
 
@@ -382,26 +385,50 @@ function fitSpeakingTextToSocketFrame(event: StateEvent): string | null {
   return best;
 }
 
+function normalizeSpeakingEnvelope(event: StateEvent): StateEvent {
+  const envelope = event.playback_amplitude;
+  if (
+    envelope?.source !== "decoded-rms" ||
+    envelope.samples.length <= PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES
+  ) {
+    return event;
+  }
+
+  return {
+    ...event,
+    playback_amplitude: {
+      source: "unavailable",
+      sample_interval_ms: envelope.sample_interval_ms,
+      samples: [],
+    },
+  };
+}
+
 /** Serialize an event to NDJSON (JSON + newline). */
 export function serializeEvent(event: SocketEvent): string {
-  const payload = serializeJsonEvent(event);
+  const normalizedEvent =
+    event.type === "state" && event.state === "speaking"
+      ? normalizeSpeakingEnvelope(event)
+      : event;
+  const payload = serializeJsonEvent(normalizedEvent);
   if (serializedByteLength(payload) <= VOICEBAR_SOCKET_EVENT_MAX_BYTES) {
     return payload;
   }
 
-  if (event.type === "state" && event.state === "speaking") {
-    const textBoundedPayload = fitSpeakingTextToSocketFrame(event);
+  if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
+    const textBoundedPayload = fitSpeakingTextToSocketFrame(normalizedEvent);
     if (textBoundedPayload) return textBoundedPayload;
 
     // An envelope not produced by our bounded RMS extractor may still exceed
     // the frame even without teleprompter text. Fail truthful and flat instead
     // of emitting a truncated or unparsable waveform.
-    if (event.playback_amplitude) {
+    if (normalizedEvent.playback_amplitude) {
       const unavailableEvent: StateEvent = {
-        ...event,
+        ...normalizedEvent,
         playback_amplitude: {
           source: "unavailable",
-          sample_interval_ms: event.playback_amplitude.sample_interval_ms,
+          sample_interval_ms:
+            normalizedEvent.playback_amplitude.sample_interval_ms,
           samples: [],
         },
       };
