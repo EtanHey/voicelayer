@@ -261,7 +261,7 @@ public struct BarView: View {
         if state.mode == .recording {
             PulsingDot()
         } else if state.mode == .transcribing {
-            EmptyView()
+            ProcessingSpinner()
         } else if state.mode == .error {
             EmptyView()
         } else {
@@ -299,8 +299,9 @@ public struct BarView: View {
                     HStack(spacing: 8) {
                         if recordingContent.showsWaveform {
                             WaveformView(
-                                recordingAudioLevels: state.recordingWaveformLevels,
-                                color: Theme.recordingColor
+                                color: Theme.recordingColor,
+                                isListening: !state.speechDetected,
+                                currentLevel: { state.recordingWaveformLevel }
                             )
                         }
                         if !recordingContent.statusText.isEmpty {
@@ -323,10 +324,8 @@ public struct BarView: View {
                     if state.queueItems.count > 1 {
                         queueVisualization
                     } else {
-                        // TimelineView only drives refresh cadence. VoiceState owns
-                        // the monotonic uptime domain used to index the envelope.
-                        WaveformView(color: Theme.speakingColor, organicCurrentLevels: {
-                            state.playbackWaveformLevels()
+                        WaveformView(color: Theme.speakingColor, currentLevel: {
+                            state.playbackAudioLevel()
                         })
                         statusLabel
                     }
@@ -377,10 +376,8 @@ public struct BarView: View {
     @ViewBuilder
     private var teleprompterContent: some View {
         if state.mode == .speaking {
-            // TimelineView only drives refresh cadence. VoiceState owns the
-            // monotonic uptime domain used to index the envelope.
-            WaveformView(color: Theme.speakingColor, organicCurrentLevels: {
-                state.playbackWaveformLevels()
+            WaveformView(color: Theme.speakingColor, currentLevel: {
+                state.playbackAudioLevel()
             })
         }
         if let text = state.teleprompterText,
