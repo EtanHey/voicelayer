@@ -797,6 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
         refreshNotchPresentationAndPanelLayout(animated: true)
+        synchronizeRetainedReadbackLifecycle()
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -805,6 +806,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             audioLevelMonitor.start()
         default:
             audioLevelMonitor.stop()
+        }
+    }
+
+    private func synchronizeRetainedReadbackLifecycle() {
+        notchPresentationModel.updateRetainedReadback(
+            isReadback: voiceState.isTeleprompterReadback,
+            isHovered: voiceState.isHovering
+        ) { [weak self] in
+            guard let self,
+                  voiceState.isTeleprompterReadback,
+                  !voiceState.isHovering
+            else { return }
+            voiceState.dismissRetainedTeleprompter()
         }
     }
 

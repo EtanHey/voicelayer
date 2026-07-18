@@ -449,6 +449,31 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
     }
 
+    func testVoiceModeChangesSynchronizeRetainedReadbackLifecycle() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("private func synchronizeRetainedReadbackLifecycle()"))
+        XCTAssertTrue(source.contains("notchPresentationModel.updateRetainedReadback("))
+        XCTAssertTrue(source.contains("isReadback: voiceState.isTeleprompterReadback"))
+        XCTAssertTrue(source.contains("isHovered: voiceState.isHovering"))
+        XCTAssertTrue(source.contains("voiceState.dismissRetainedTeleprompter()"))
+
+        let modeHandler = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
+        let synchronizeCall = try XCTUnwrap(
+            source.range(
+                of: "synchronizeRetainedReadbackLifecycle()",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        let switchRange = try XCTUnwrap(
+            source.range(
+                of: "switch mode",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

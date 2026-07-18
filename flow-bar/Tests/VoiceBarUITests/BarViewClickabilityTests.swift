@@ -214,6 +214,37 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertNil(state.teleprompterText)
     }
 
+    func testHostedBarSchedulesUnattendedReadbackDismissal() async {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        let presentationModel = VoiceBarNotchPresentationModel(
+            retainedReadbackDismissDelay: .milliseconds(20)
+        )
+        let host = makeHost(
+            state: state,
+            router: SpyCommandRouter(),
+            presentationModel: presentationModel
+        )
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Dismiss this unattended readback",
+        ])
+        host.layoutSubtreeIfNeeded()
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+        ])
+        host.layoutSubtreeIfNeeded()
+        try? await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertNil(state.teleprompterText)
+    }
+
     func testHiddenLiveTeleprompterKeepsAReachableShowControlInCompactStatus() {
         let state = VoiceState()
         state.isConnected = true
@@ -283,8 +314,18 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
-    private func makeHost(state: VoiceState, router: SpyCommandRouter) -> NSHostingView<BarView> {
-        let host = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+    private func makeHost(
+        state: VoiceState,
+        router: SpyCommandRouter,
+        presentationModel: VoiceBarNotchPresentationModel? = nil
+    ) -> NSHostingView<BarView> {
+        let host = NSHostingView(
+            rootView: BarView(
+                state: state,
+                commandRouter: router,
+                presentationModel: presentationModel
+            )
+        )
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(
             contentRect: host.frame,
