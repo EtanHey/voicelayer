@@ -41,6 +41,59 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(model.activeTransition?.plan.steps.allSatisfy { $0.animation == .opacity } == true)
     }
 
+    func testUnattendedReadbackDismissesAfterGraceWindow() async {
+        var dismissCount = 0
+        let model = VoiceBarNotchPresentationModel(
+            retainedReadbackDismissDelay: .milliseconds(20)
+        )
+
+        model.updateRetainedReadback(isReadback: true, isHovered: false) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(35))
+
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    func testHoverCancelsDismissalAndLeavingGetsFreshFullGraceWindow() async {
+        var dismissCount = 0
+        let model = VoiceBarNotchPresentationModel(
+            retainedReadbackDismissDelay: .milliseconds(30)
+        )
+
+        model.updateRetainedReadback(isReadback: true, isHovered: false) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(15))
+        model.updateRetainedReadback(isReadback: true, isHovered: true) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(35))
+        XCTAssertEqual(dismissCount, 0)
+
+        model.updateRetainedReadback(isReadback: true, isHovered: false) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(15))
+        XCTAssertEqual(dismissCount, 0)
+        try? await Task.sleep(for: .milliseconds(25))
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    func testNonReadbackNeverSchedulesDismissal() async {
+        var dismissCount = 0
+        let model = VoiceBarNotchPresentationModel(
+            retainedReadbackDismissDelay: .milliseconds(10)
+        )
+
+        model.updateRetainedReadback(isReadback: false, isHovered: false) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(25))
+
+        XCTAssertEqual(dismissCount, 0)
+    }
+
     func testViewContractHasOneFixedCoreTwoReusableWingsAndOptionalLowerSurface() {
         let recording = VoiceBarNotchViewDescriptor.resolve(
             presentation: VoiceBarNotchPresentation.resolve(

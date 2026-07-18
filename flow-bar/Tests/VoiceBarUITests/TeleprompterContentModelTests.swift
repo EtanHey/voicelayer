@@ -40,11 +40,23 @@ final class TeleprompterContentModelTests: XCTestCase {
         )
         XCTAssertFalse(words.map(\.text).contains("Eh"))
         XCTAssertFalse(words.map(\.text).contains("Soopa"))
+        XCTAssertEqual(words.first?.offsetMs, 0)
+        XCTAssertEqual(
+            zip(words.compactMap(\.offsetMs), words.compactMap(\.durationMs))
+                .map(+)
+                .last,
+            1210
+        )
+        XCTAssertTrue(words.allSatisfy { ($0.durationMs ?? 0) > 0 })
+        let offsets = words.compactMap(\.offsetMs)
+        XCTAssertEqual(offsets.count, words.count)
+        XCTAssertTrue(zip(offsets, offsets.dropFirst()).allSatisfy(<))
     }
 
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .top)
     }
 
     func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
@@ -72,6 +84,7 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertTrue(TeleprompterPlaybackPolicy.animatesTimeline(isReadback: false))
         XCTAssertNil(TeleprompterPlaybackPolicy.wordOpacity(isReadback: false))
         XCTAssertFalse(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: false))
+        XCTAssertEqual(TeleprompterPlaybackPolicy.startupDelay, .zero)
     }
 
     func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {

@@ -82,6 +82,62 @@ public struct TeleprompterWord: Equatable, Identifiable {
     public let durationMs: Int?
 }
 
+public enum TeleprompterPacePolicy {
+    private static let baseDelay = 0.28
+    private static let perCharacterDelay = 0.015
+    private static let minimumDelay = 0.22
+    private static let maximumDelay = 0.38
+
+    public static func estimatedDelay(for word: String) -> Double {
+        let characterDelay = baseDelay + Double(word.count) * perCharacterDelay
+        var delay = min(maximumDelay, max(minimumDelay, characterDelay))
+
+        if let last = word.last {
+            if last == "." || last == "!" || last == "?" {
+                delay += 0.10
+            } else if last == "," || last == ";" || last == ":" {
+                delay += 0.05
+            }
+        }
+        return delay
+    }
+
+    public static func reschedule(
+        displayWords: [TeleprompterWord],
+        across boundaryWords: [TeleprompterWord]
+    ) -> [TeleprompterWord] {
+        guard !displayWords.isEmpty,
+              let startOffset = boundaryWords.compactMap(\.offsetMs).min(),
+              let endOffset = boundaryWords.compactMap({ word -> Int? in
+                  guard let offset = word.offsetMs, let duration = word.durationMs else { return nil }
+                  return offset + duration
+              }).max(),
+              endOffset > startOffset
+        else { return displayWords }
+
+        let weights = displayWords.map { estimatedDelay(for: $0.text) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0 else { return displayWords }
+
+        let span = Double(endOffset - startOffset)
+        var cumulativeWeight = 0.0
+        return zip(displayWords, weights).enumerated().map { index, pair in
+            let (word, weight) = pair
+            let scheduledStart = startOffset + Int((span * cumulativeWeight / totalWeight).rounded())
+            cumulativeWeight += weight
+            let scheduledEnd = index == displayWords.indices.last
+                ? endOffset
+                : startOffset + Int((span * cumulativeWeight / totalWeight).rounded())
+            return TeleprompterWord(
+                id: word.id,
+                text: word.text,
+                offsetMs: scheduledStart,
+                durationMs: max(1, scheduledEnd - scheduledStart)
+            )
+        }
+    }
+}
+
 public enum TeleprompterContentModel {
     public static let maxDisplayTokenLength = 24
 
@@ -122,7 +178,12 @@ public enum TeleprompterContentModel {
             })
         }
         if !textWords.isEmpty {
-            return assignStableIDs(to: textWords)
+            return assignStableIDs(
+                to: TeleprompterPacePolicy.reschedule(
+                    displayWords: textWords,
+                    across: boundaryWords
+                )
+            )
         }
         if !boundaryWords.isEmpty {
             return assignStableIDs(to: boundaryWords.flatMap(splitDisplayToken))
@@ -171,6 +232,8 @@ public enum TeleprompterScrollPosition: Equatable {
 }
 
 public enum TeleprompterScrollPolicy {
+    public static let initialViewportAlignment: Alignment = .top
+
     public static func position(for wordIndex: Int) -> TeleprompterScrollPosition {
         wordIndex == 0 ? .top : .center
     }
@@ -200,6 +263,8 @@ public enum TeleprompterVisibilityPolicy {
 }
 
 public enum TeleprompterPlaybackPolicy {
+    public static let startupDelay: Duration = .zero
+
     public static func animatesTimeline(isReadback: Bool) -> Bool {
         !isReadback
     }
@@ -221,11 +286,6 @@ public struct TeleprompterView: View {
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
 
-    /// Fallback timing constants for non-edge-tts engines (client estimation).
-    private static let baseDelay: Double = 0.28
-    private static let perCharDelay: Double = 0.015
-    private static let minDelay: Double = 0.22
-    private static let maxDelay: Double = 0.38
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
     @State private var currentIndex: Int = 0
@@ -265,7 +325,7 @@ public struct TeleprompterView: View {
                 .frame(
                     maxWidth: .infinity,
                     minHeight: Theme.teleprompterViewportHeight,
-                    alignment: .center
+                    alignment: TeleprompterScrollPolicy.initialViewportAlignment
                 )
             }
             .id(TeleprompterScrollPolicy.contentIdentity(for: text))
@@ -352,8 +412,7 @@ public struct TeleprompterView: View {
         let words = timedWords
 
         animationTask = Task { @MainActor in
-            // Wait for audio player to start (~300ms startup latency)
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
 
             let startTime = ContinuousClock.now
@@ -378,30 +437,17 @@ public struct TeleprompterView: View {
     /// Client-side estimated animation (fallback for non-edge-tts engines).
     private func startEstimatedAnimation() {
         animationTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
             for i in 0 ..< teleprompterWords.count {
                 currentIndex = i
-                let delay = Self.estimateDelay(for: teleprompterWords[i].text)
+                let delay = TeleprompterPacePolicy.estimatedDelay(
+                    for: teleprompterWords[i].text
+                )
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
             }
         }
-    }
-
-    /// Estimate speaking duration for a word based on length and punctuation.
-    private static func estimateDelay(for word: String) -> Double {
-        let charTime = baseDelay + Double(word.count) * perCharDelay
-        var delay = min(maxDelay, max(minDelay, charTime))
-
-        if let last = word.last {
-            if last == "." || last == "!" || last == "?" {
-                delay += 0.10
-            } else if last == "," || last == ";" || last == ":" {
-                delay += 0.05
-            }
-        }
-        return delay
     }
 
     private func stopAnimating() {

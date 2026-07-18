@@ -130,6 +130,7 @@ public struct BarView: View {
             onHoverChanged: { hovering in
                 state.setHovering(hovering)
                 presentationModel?.setHovered(hovering)
+                updateRetainedReadbackLifecycle(isHovered: hovering)
             },
             leadingContent: {
                 notchLeadingContent
@@ -146,6 +147,9 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onChange(of: state.isTeleprompterReadback) { _, _ in
+            updateRetainedReadbackLifecycle()
+        }
         .onChange(of: isNotchKeyboardFocused) { _, isFocused in
             presentationModel?.setKeyboardFocused(isFocused)
         }
@@ -156,6 +160,10 @@ public struct BarView: View {
             presentationModel?.setHovered(state.isHovering)
             presentationModel?.setKeyboardFocused(isNotchKeyboardFocused)
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
+            updateRetainedReadbackLifecycle()
+        }
+        .onDisappear {
+            presentationModel?.cancelRetainedReadbackDismissal()
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -195,6 +203,19 @@ public struct BarView: View {
                 isKeyboardFocused: isNotchKeyboardFocused
             )
         )
+    }
+
+    private func updateRetainedReadbackLifecycle(isHovered: Bool? = nil) {
+        presentationModel?.updateRetainedReadback(
+            isReadback: state.isTeleprompterReadback,
+            isHovered: isHovered ?? state.isHovering
+        ) { [weak state] in
+            guard let state,
+                  state.isTeleprompterReadback,
+                  !state.isHovering
+            else { return }
+            state.dismissRetainedTeleprompter()
+        }
     }
 
     @ViewBuilder
