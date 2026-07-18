@@ -299,7 +299,7 @@ public struct BarView: View {
                     HStack(spacing: 8) {
                         if recordingContent.showsWaveform {
                             WaveformView(
-                                centeredAudioLevels: state.recordingWaveformLevels,
+                                organicAudioLevels: state.recordingWaveformLevels,
                                 color: Theme.recordingColor
                             )
                         }
@@ -325,19 +325,14 @@ public struct BarView: View {
                     } else {
                         // TimelineView only drives refresh cadence. VoiceState owns
                         // the monotonic uptime domain used to index the envelope.
-                        WaveformView(color: Theme.speakingColor, centeredCurrentLevels: {
+                        WaveformView(color: Theme.speakingColor, organicCurrentLevels: {
                             state.playbackWaveformLevels()
                         })
                         statusLabel
                     }
                 case .transcribing:
                     HStack(spacing: 8) {
-                        WaveformView(
-                            color: Theme.stateColor(for: .transcribing),
-                            currentLevels: {
-                                state.transcribingWaveformLevels()
-                            }
-                        )
+                        WaveformView(processingColor: Theme.stateColor(for: .transcribing))
                         if !statusText.isEmpty {
                             Text(statusText)
                                 .font(.system(size: 12, weight: .medium))
@@ -384,7 +379,7 @@ public struct BarView: View {
         if state.mode == .speaking {
             // TimelineView only drives refresh cadence. VoiceState owns the
             // monotonic uptime domain used to index the envelope.
-            WaveformView(color: Theme.speakingColor, centeredCurrentLevels: {
+            WaveformView(color: Theme.speakingColor, organicCurrentLevels: {
                 state.playbackWaveformLevels()
             })
         }

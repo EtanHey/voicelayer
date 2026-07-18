@@ -81,26 +81,41 @@ final class WaveformViewTests: XCTestCase {
         )
     }
 
-    func testReactiveWindowCollapsesToCenteredCurrentMagnitude() {
-        let levels = WaveformMetrics.centeredLevels(
+    func testReactiveWindowUsesOrganicCenterOutVariationFromCurrentMagnitude() {
+        let levels = WaveformMetrics.organicLevels(
             audioLevels: [0.9, 0.1, 0.8, 0.2, 0.7, 0.3, 0.6],
+            time: 0.42,
             barCount: 7
         )
 
-        XCTAssertEqual(levels[0], levels[6], accuracy: 0.0001)
-        XCTAssertEqual(levels[1], levels[5], accuracy: 0.0001)
-        XCTAssertEqual(levels[2], levels[4], accuracy: 0.0001)
-        XCTAssertGreaterThan(levels[3], levels[0])
-        XCTAssertEqual(levels[3], 0.6, accuracy: 0.0001)
+        let mirroredPairs = zip(levels.prefix(3), levels.suffix(3).reversed())
+        XCTAssertTrue(mirroredPairs.contains { pair in
+            abs(pair.0 - pair.1) > 0.01
+        })
+
+        let averages = (0 ..< 7).map { index in
+            let samples = stride(from: 0.0, through: 4.0, by: 0.05).map { time in
+                WaveformMetrics.organicLevels(
+                    audioLevels: [0.6],
+                    time: time,
+                    barCount: 7
+                )[index]
+            }
+            return samples.reduce(0, +) / Double(samples.count)
+        }
+        XCTAssertGreaterThan(averages[3], averages[0])
+        XCTAssertGreaterThan(averages[3], averages[6])
     }
 
     func testReactiveWindowDoesNotTravelWhenOnlyHistoryChanges() {
-        let first = WaveformMetrics.centeredLevels(
+        let first = WaveformMetrics.organicLevels(
             audioLevels: [0.9, 0.1, 0.8, 0.2, 0.7, 0.3, 0.6],
+            time: 0.42,
             barCount: 7
         )
-        let shifted = WaveformMetrics.centeredLevels(
+        let shifted = WaveformMetrics.organicLevels(
             audioLevels: [0.0, 0.9, 0.1, 0.8, 0.2, 0.7, 0.6],
+            time: 0.42,
             barCount: 7
         )
 
@@ -113,12 +128,15 @@ final class WaveformViewTests: XCTestCase {
     }
 
     func testReactiveWindowUsesHardFlatFloorForSilentCurrentSample() {
-        let levels = WaveformMetrics.centeredLevels(
-            audioLevels: [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0],
-            barCount: 7
-        )
+        for time in [0.0, 0.42, 1.0] {
+            let levels = WaveformMetrics.organicLevels(
+                audioLevels: [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0],
+                time: time,
+                barCount: 7
+            )
 
-        XCTAssertEqual(levels, Array(repeating: 0, count: 7))
+            XCTAssertEqual(levels, Array(repeating: 0, count: 7))
+        }
     }
 
     func testReactiveRendererMeetsAttackAndDynamicRangeFloor() {
@@ -129,10 +147,24 @@ final class WaveformViewTests: XCTestCase {
         )
 
         let floorHeight = 3.0
-        let peakLevels = WaveformMetrics.centeredLevels(audioLevels: [1], barCount: 7)
-        let peakHeights = peakLevels.map { floorHeight + (24 - floorHeight) * $0 }
+        let peakLevel = stride(from: 0.0, through: 4.0, by: 0.01).flatMap { time in
+            WaveformMetrics.organicLevels(audioLevels: [1], time: time, barCount: 7)
+        }.max() ?? 0
+        let peakHeight = floorHeight + (24 - floorHeight) * peakLevel
 
-        XCTAssertTrue(peakHeights.allSatisfy { $0 / floorHeight >= 4.8 })
+        XCTAssertGreaterThanOrEqual(peakHeight / floorHeight, 4.8)
+    }
+
+    func testProcessingMotionIsAnimatedSymmetricallyWithoutLateralTravel() {
+        let early = WaveformMetrics.processingLevels(time: 0.1, barCount: 7)
+        let later = WaveformMetrics.processingLevels(time: 0.6, barCount: 7)
+
+        for levels in [early, later] {
+            XCTAssertEqual(levels[0], levels[6], accuracy: 0.0001)
+            XCTAssertEqual(levels[1], levels[5], accuracy: 0.0001)
+            XCTAssertEqual(levels[2], levels[4], accuracy: 0.0001)
+        }
+        XCTAssertNotEqual(early, later)
     }
 
     func testAmplitudeIsClampedBeforeHeightMapping() {
