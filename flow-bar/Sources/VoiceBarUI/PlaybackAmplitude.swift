@@ -36,4 +36,12 @@ public struct PlaybackAmplitudeEnvelope: Equatable {
         let fraction = position - Double(lowerIndex)
         return samples[lowerIndex] + (samples[upperIndex] - samples[lowerIndex]) * fraction
     }
+
+    public func levels(elapsedMilliseconds: Int, barCount: Int) -> [Double] {
+        guard barCount > 0, sampleIntervalMilliseconds > 0 else { return [] }
+        return (0 ..< barCount).map { index in
+            let offset = (barCount - index - 1) * sampleIntervalMilliseconds
+            return level(elapsedMilliseconds: elapsedMilliseconds - offset)
+        }
+    }
 }

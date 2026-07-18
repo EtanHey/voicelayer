@@ -713,7 +713,11 @@ public final class VoiceState {
 
     public func setLocalRecordingLevel(_ level: Double?) {
         guard mode == .recording else { return }
+        let beginsF5LocalMeterTruth = localRecordingLevel == nil && level != nil
         localRecordingLevel = level.map { min(1, max(0, $0)) }
+        if beginsF5LocalMeterTruth {
+            recordingWaveformHistory = WaveformEnvelopeHistory()
+        }
         refreshAudioLevel()
         appendRecordingWaveformSample()
     }
@@ -730,15 +734,21 @@ public final class VoiceState {
         return envelope.level(elapsedMilliseconds: elapsedMilliseconds)
     }
 
+    public func playbackWaveformLevels() -> [Double]? {
+        playbackWaveformLevels(atSystemUptime: playbackAmplitudeClock())
+    }
+
+    func playbackWaveformLevels(atSystemUptime systemUptime: TimeInterval) -> [Double]? {
+        guard let envelope = playbackAmplitudeEnvelope,
+              let startedAt = playbackAmplitudeStartedAt
+        else { return nil }
+        let elapsedMilliseconds = Int(((systemUptime - startedAt) * 1000).rounded())
+        return envelope.levels(elapsedMilliseconds: elapsedMilliseconds, barCount: 7)
+    }
+
     public var recordingWaveformLevel: Double {
         guard mode == .recording else { return 0 }
-        let combinedLevel: Double? = switch (localRecordingLevel, socketAudioLevel) {
-        case let (local?, socket?): max(local, socket)
-        case let (local?, nil): local
-        case let (nil, socket?): socket
-        case (nil, nil): nil
-        }
-        return WaveformMetrics.recordingLevel(from: combinedLevel)
+        return WaveformMetrics.recordingLevel(from: localRecordingLevel ?? socketAudioLevel)
     }
 
     public var recordingWaveformLevels: [Double] {
@@ -1142,7 +1152,7 @@ public final class VoiceState {
             if let rms = event["rms"] as? Double {
                 socketAudioLevel = Self.clampAudioLevel(rms)
                 refreshAudioLevel()
-                if mode == .recording {
+                if mode == .recording, localRecordingLevel == nil {
                     appendRecordingWaveformSample()
                 }
                 logFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
@@ -1385,16 +1395,7 @@ public final class VoiceState {
 
     private func refreshAudioLevel() {
         if mode == .recording {
-            switch (localRecordingLevel, socketAudioLevel) {
-            case let (local?, socket?):
-                audioLevel = max(local, socket)
-            case let (local?, nil):
-                audioLevel = local
-            case let (nil, socket?):
-                audioLevel = socket
-            case (nil, nil):
-                audioLevel = nil
-            }
+            audioLevel = localRecordingLevel ?? socketAudioLevel
         } else {
             audioLevel = socketAudioLevel
         }

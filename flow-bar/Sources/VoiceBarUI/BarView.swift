@@ -325,9 +325,9 @@ public struct BarView: View {
                     } else {
                         // TimelineView only drives refresh cadence. VoiceState owns
                         // the monotonic uptime domain used to index the envelope.
-                        WaveformView(color: Theme.speakingColor) {
-                            state.playbackAudioLevel()
-                        }
+                        WaveformView(color: Theme.speakingColor, currentLevels: {
+                            state.playbackWaveformLevels()
+                        })
                         statusLabel
                     }
                 case .transcribing:
@@ -384,9 +384,9 @@ public struct BarView: View {
         if state.mode == .speaking {
             // TimelineView only drives refresh cadence. VoiceState owns the
             // monotonic uptime domain used to index the envelope.
-            WaveformView(color: Theme.speakingColor) {
-                state.playbackAudioLevel()
-            }
+            WaveformView(color: Theme.speakingColor, currentLevels: {
+                state.playbackWaveformLevels()
+            })
         }
         if let text = state.teleprompterText,
            TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: !text.isEmpty) {

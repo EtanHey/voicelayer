@@ -18,6 +18,7 @@ import { join } from "path";
 import {
   archiveVoiceBarRecording,
   archiveVoiceBarUntranscribedRecording,
+  archiveVoiceAskCapture,
   archiveWaitForInputRecording,
   calculateRMS,
   ChunkedRecordingSession,
@@ -34,6 +35,7 @@ import {
   transcribeChunkSequence,
   finalizeTranscriptionTextForSurface,
   finalizeTranscriptionText,
+  finalizeVoiceAskArchive,
   trimTrailingSilenceForSTT,
   terminateRecorderProcess,
 } from "../input";
@@ -409,8 +411,83 @@ describe("input module", () => {
         user_transcript_chars: "The archive now keeps both sides.".length,
         agent_audio_sha256: createHash("sha256").update(agentAudio).digest("hex"),
         user_audio_sha256: createHash("sha256").update(userAudio).digest("hex"),
-        schema_version: 2,
+        schema_version: 3,
       });
+    });
+
+    it("publishes voice_ask audio at capture end before finalizing its transcript", () => {
+      const agentAudio = Buffer.from([0x49, 0x44, 0x33, 1, 2, 3, 4]);
+      const userAudio = createWavBuffer(new Uint8Array([5, 6, 7, 8]));
+      const options = {
+        archiveSource: "voice_ask" as const,
+        voiceAskArtifacts: {
+          agentAudioBytes: agentAudio,
+          agentAudioFormat: "mp3" as const,
+          agentTranscript: "What changed?",
+          agentTtsEngine: "qwen3-tts" as const,
+          agentTtsVoice: "etan-clone",
+          createdAt: new Date("2026-07-18T11:04:10.000Z"),
+        },
+      };
+
+      const archivedPath = archiveVoiceAskCapture({
+        options,
+        audioBytes: userAudio,
+        silenceMode: "thoughtful",
+        pressToTalk: false,
+        durationMs: 1_200,
+        transcribedDurationMs: 1_000,
+      });
+
+      expect(readdirSync(archivedPath).sort()).toEqual([
+        "agent-audio.mp3",
+        "agent-transcript.txt",
+        "audio.wav",
+        "metadata.json",
+      ]);
+      expect(
+        JSON.parse(readFileSync(join(archivedPath, "metadata.json"), "utf8")),
+      ).toMatchObject({
+        source: "voice_ask",
+        backend: null,
+        transcription_status: "captured",
+        user_transcript_chars: 0,
+        schema_version: 3,
+      });
+
+      finalizeVoiceAskArchive(archivedPath, {
+        transcript: "The capture survived its return leg.",
+        backend: "whisper.cpp",
+        transcribedDurationMs: 1_000,
+      });
+
+      expect(readdirSync(archivedPath).sort()).toEqual([
+        "agent-audio.mp3",
+        "agent-transcript.txt",
+        "audio.wav",
+        "metadata.json",
+        "voicelayer-transcript.txt",
+      ]);
+      expect(
+        readFileSync(join(archivedPath, "voicelayer-transcript.txt"), "utf8"),
+      ).toBe("The capture survived its return leg.");
+      expect(
+        JSON.parse(readFileSync(join(archivedPath, "metadata.json"), "utf8")),
+      ).toMatchObject({
+        backend: "whisper.cpp",
+        transcription_status: "transcribed",
+        user_transcript_chars: "The capture survived its return leg.".length,
+      });
+
+      expect(() =>
+        finalizeVoiceAskArchive(archivedPath, {
+          transcript: "A late retry must not replace the accepted transcript.",
+          backend: "other-backend",
+        }),
+      ).toThrow("already finalized");
+      expect(
+        readFileSync(join(archivedPath, "voicelayer-transcript.txt"), "utf8"),
+      ).toBe("The capture survived its return leg.");
     });
 
     it("does not remove a voice_ask staging folder owned by another invocation", () => {

@@ -17,6 +17,9 @@ import {
   spyOn,
   jest,
 } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import * as tts from "../tts";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
@@ -42,8 +45,18 @@ describe("handleConverse resilience — P0-2", () => {
   let bookingSpy: ReturnType<typeof spyOn>;
   let clearInputSpy: ReturnType<typeof spyOn>;
   let clearStopSpy: ReturnType<typeof spyOn>;
+  let recordingStateRoot: string;
+  let savedRecordingStatePath: string | undefined;
 
   beforeEach(() => {
+    recordingStateRoot = mkdtempSync(
+      join(tmpdir(), "voicelayer-converse-resilience-"),
+    );
+    savedRecordingStatePath = process.env.QA_VOICE_RECORDING_STATE_PATH;
+    process.env.QA_VOICE_RECORDING_STATE_PATH = join(
+      recordingStateRoot,
+      "recording-state.json",
+    );
     broadcasts = [];
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       (event: unknown) => {
@@ -74,6 +87,12 @@ describe("handleConverse resilience — P0-2", () => {
     bookingSpy.mockRestore();
     clearInputSpy.mockRestore();
     clearStopSpy.mockRestore();
+    if (savedRecordingStatePath === undefined) {
+      delete process.env.QA_VOICE_RECORDING_STATE_PATH;
+    } else {
+      process.env.QA_VOICE_RECORDING_STATE_PATH = savedRecordingStatePath;
+    }
+    rmSync(recordingStateRoot, { recursive: true, force: true });
   });
 
   it("returns error result when speak() throws, not unhandled rejection", async () => {
@@ -217,6 +236,48 @@ describe("handleConverse resilience — P0-2", () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("Hard timeout");
       expect(capturedSignal?.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("gives STT and the return pipe a fresh deadline after a long capture ends", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      let captureEnded: (() => void) | undefined;
+      let finishTranscription!: (value: string) => void;
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pressToTalk, options) => {
+          captureEnded = (
+            options as { onCaptureEnd?: () => void } | undefined
+          )?.onCaptureEnd;
+          return new Promise<string>((resolve) => {
+            finishTranscription = resolve;
+          });
+        },
+      );
+
+      const pending = handleConverse({
+        message: "Return the complete 53-second answer",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(19_000);
+      captureEnded?.();
+      jest.advanceTimersByTime(6_000);
+      finishTranscription("complete 53-second transcript");
+      const result = await pending;
+
+      expect(captureEnded).toBeInstanceOf(Function);
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain("complete 53-second transcript");
     } finally {
       jest.useRealTimers();
       errorSpy.mockRestore();
