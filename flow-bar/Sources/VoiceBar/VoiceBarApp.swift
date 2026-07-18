@@ -820,6 +820,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             guard let self,
                   voiceState.isTeleprompterReadback
             else { return }
+            voiceState.setHovering(false)
             voiceState.dismissRetainedTeleprompter()
         }
     }

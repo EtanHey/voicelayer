@@ -545,6 +545,28 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
     }
 
+    func testReadbackWatchdogClearsStaleHoverBeforeDismissing() throws {
+        let source = try voiceBarAppSource()
+        let synchronizeStart = try XCTUnwrap(
+            source.range(of: "private func synchronizeRetainedReadbackLifecycle()")
+        )
+        let synchronizeEnd = try XCTUnwrap(
+            source.range(
+                of: "private var isPointerInsideVisibleNotchSurface",
+                range: synchronizeStart.upperBound ..< source.endIndex
+            )
+        )
+        let bodyRange = synchronizeStart.lowerBound ..< synchronizeEnd.lowerBound
+        let clearHover = try XCTUnwrap(
+            source.range(of: "voiceState.setHovering(false)", range: bodyRange)
+        )
+        let dismiss = try XCTUnwrap(
+            source.range(of: "voiceState.dismissRetainedTeleprompter()", range: bodyRange)
+        )
+
+        XCTAssertLessThan(clearHover.lowerBound, dismiss.lowerBound)
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
