@@ -554,6 +554,8 @@ public final class VoiceState {
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
+            queueDepth = 0
+            queueItems = []
             clearRetainedTeleprompter()
             enterIdleState(clearQueue: false)
         }

@@ -1168,6 +1168,24 @@ final class VoiceStateTests: XCTestCase {
     func testPlaybackStopExitsWithoutRetainingADismissedLiveTeleprompter() {
         let state = VoiceState()
         state.handleEvent([
+            "type": "queue",
+            "depth": 2,
+            "items": [
+                [
+                    "text": "Current line",
+                    "voice": "jenny",
+                    "priority": "normal",
+                    "is_current": true,
+                ],
+                [
+                    "text": "Queued line",
+                    "voice": "jenny",
+                    "priority": "normal",
+                    "is_current": false,
+                ],
+            ],
+        ])
+        state.handleEvent([
             "type": "state",
             "state": "speaking",
             "text": "Etan runs supabase",
@@ -1181,6 +1199,8 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertFalse(state.isTeleprompterReadback)
         XCTAssertFalse(state.isTeleprompterDismissed)
         XCTAssertEqual(state.statusText, "")
+        XCTAssertEqual(state.queueDepth, 0)
+        XCTAssertTrue(state.queueItems.isEmpty)
     }
 
     func testLiveTeleprompterVisibilityChangesRequestPanelRelayout() async {
