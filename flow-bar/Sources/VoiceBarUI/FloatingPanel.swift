@@ -74,6 +74,7 @@ public final class FloatingPillPanel: NSPanel {
     /// for SwiftUI buttons to respond without activation.
     override public func sendEvent(_ event: NSEvent) {
         if event.type == .rightMouseDown,
+           shouldHandleContextMenu(at: event.locationInWindow),
            let contentView,
            let menu = contextMenuProvider?() {
             NSMenu.popUpContextMenu(menu, with: event, for: contentView)
@@ -103,6 +104,10 @@ public final class FloatingPillPanel: NSPanel {
     }
 
     public func startsDrag(at point: NSPoint) -> Bool {
+        activeHitTestProvider?(point) ?? true
+    }
+
+    public func shouldHandleContextMenu(at point: NSPoint) -> Bool {
         activeHitTestProvider?(point) ?? true
     }
 

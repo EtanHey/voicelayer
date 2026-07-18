@@ -294,6 +294,14 @@ public struct BarView: View {
             }
         case .speaking:
             HStack(spacing: 4) {
+                if state.isTeleprompterDismissed {
+                    notchButton(
+                        icon: "eye",
+                        accessibilityLabel: "Show teleprompter"
+                    ) {
+                        state.showTeleprompter()
+                    }
+                }
                 WaveformView(color: Theme.speakingColor, currentLevel: {
                     state.playbackAudioLevel()
                 })

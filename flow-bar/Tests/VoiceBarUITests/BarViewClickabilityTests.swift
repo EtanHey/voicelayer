@@ -35,9 +35,12 @@ final class BarViewClickabilityTests: XCTestCase {
     func testBarViewKeepsTheMergedW2WaveformTruthCallSites() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("audioLevels: state.recordingWaveformLevels"))
-        XCTAssertTrue(source.contains("state.playbackAudioLevel()"))
-        XCTAssertTrue(source.contains("state.transcribingWaveformLevels()"))
+        XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
+        XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+        XCTAssertFalse(source.contains("recordingWaveformLevels"))
+        XCTAssertFalse(source.contains("transcribingWaveformLevels"))
         XCTAssertTrue(source.contains("case .transcribing:"))
         XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
     }
@@ -211,6 +214,24 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertNil(state.teleprompterText)
     }
 
+    func testHiddenLiveTeleprompterKeepsAReachableShowControlInCompactStatus() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Show this live teleprompter again",
+        ])
+        state.dismissTeleprompter()
+        XCTAssertTrue(state.isTeleprompterDismissed)
+
+        let host = makeHost(state: state, router: SpyCommandRouter())
+        clickFirstTeleprompterShow(in: host, state: state)
+
+        XCTAssertFalse(state.isTeleprompterDismissed)
+    }
+
     func testIdleMicButtonRoutesPrimaryAction() {
         let state = VoiceState()
         state.mode = .idle
@@ -334,6 +355,18 @@ final class BarViewClickabilityTests: XCTestCase {
             x += 4
         }
         XCTFail("Expected to find a clickable status icon in the leading half of the pill; bounds=\(host.bounds)")
+    }
+
+    private func clickFirstTeleprompterShow(in host: NSView, state: VoiceState) {
+        var x = host.bounds.midX
+        while x <= host.bounds.maxX {
+            click(host, at: NSPoint(x: x, y: host.bounds.midY))
+            if !state.isTeleprompterDismissed {
+                return
+            }
+            x += 4
+        }
+        XCTFail("Expected a clickable Show teleprompter control in compact speaking status; bounds=\(host.bounds)")
     }
 
     private func drag(_ host: NSView, from start: NSPoint, to end: NSPoint) {

@@ -90,6 +90,16 @@ final class VoiceBarPositionLockTests: XCTestCase {
         XCTAssertTrue(panel.startsDrag(at: NSPoint(x: 200, y: 100)))
     }
 
+    func testContextMenuOnlyHandlesPointsInsideTheActiveNotchRegion() {
+        let panel = FloatingPillPanel(content: NSView(frame: NSRect(x: 0, y: 0, width: 489, height: 245)))
+        panel.activeHitTestProvider = { point in
+            point.x >= 12 && point.x <= 477 && point.y >= 17 && point.y <= 213
+        }
+
+        XCTAssertFalse(panel.shouldHandleContextMenu(at: NSPoint(x: 2, y: 240)))
+        XCTAssertTrue(panel.shouldHandleContextMenu(at: NSPoint(x: 200, y: 100)))
+    }
+
     func testScreenFollowPolicySelectsMouseScreenForAnchoredModes() {
         let screens = [
             CGRect(x: 0, y: 0, width: 1200, height: 800),
