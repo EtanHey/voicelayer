@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Pin the geometry regression with RED tests
+## Task 1: Pin the geometry regression with RED tests
 
 **Files:**
 - Modify: `flow-bar/Tests/VoiceBarUITests/VoiceBarPanelLayoutTests.swift`
@@ -28,7 +28,7 @@ Run: `swift test --package-path flow-bar --filter VoiceBarPanelLayoutTests`
 
 Expected: FAIL because the shared pill-metrics API is absent and the old recording/transcribing widths are fixed/minimum-padded.
 
-### Task 2: Implement the minimal shared metrics seam
+## Task 2: Implement the minimal shared metrics seam
 
 **Files:**
 - Modify: `flow-bar/Sources/VoiceBarUI/Theme.swift`
@@ -56,7 +56,7 @@ Run: `swift test --package-path flow-bar --filter BarViewClickabilityTests`
 
 Expected: PASS.
 
-### Task 3: Verify, review, and publish the exact head
+## Task 3: Verify, review, and publish the exact head
 
 **Files:**
 - Verify: `flow-bar/Sources/VoiceBarUI/WaveformView.swift`
