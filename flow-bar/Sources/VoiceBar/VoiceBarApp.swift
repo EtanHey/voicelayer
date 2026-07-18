@@ -106,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.applyPanelLayout(animated: true)
         }
     )
+    private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -810,16 +811,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func synchronizeRetainedReadbackLifecycle() {
-        notchPresentationModel.updateRetainedReadback(
+        retainedReadbackDismissalCoordinator.synchronize(
             isReadback: voiceState.isTeleprompterReadback,
-            isHovered: voiceState.isHovering
+            isPointerInsideVisibleSurface: { [weak self] in
+                self?.isPointerInsideVisibleNotchSurface ?? false
+            }
         ) { [weak self] in
             guard let self,
-                  voiceState.isTeleprompterReadback,
-                  !voiceState.isHovering
+                  voiceState.isTeleprompterReadback
             else { return }
             voiceState.dismissRetainedTeleprompter()
         }
+    }
+
+    private var isPointerInsideVisibleNotchSurface: Bool {
+        guard let panel else { return false }
+        let point = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        return currentPanelLayout().containsActiveContent(point)
     }
 
     private func applyPanelLayout(animated: Bool) {

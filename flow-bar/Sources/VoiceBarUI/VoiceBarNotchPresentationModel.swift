@@ -1,5 +1,9 @@
 import Observation
 
+public enum VoiceBarRetainedReadbackPolicy {
+    public static let dismissDelay: Duration = .milliseconds(800)
+}
+
 @Observable
 public final class VoiceBarNotchPresentationModel {
     public private(set) var presentation: VoiceBarNotchPresentation
@@ -16,7 +20,7 @@ public final class VoiceBarNotchPresentationModel {
     @ObservationIgnored private var retainedReadbackDismissTask: Task<Void, Never>?
 
     public init(
-        retainedReadbackDismissDelay: Duration = .milliseconds(800),
+        retainedReadbackDismissDelay: Duration = VoiceBarRetainedReadbackPolicy.dismissDelay,
         onLayoutInvalidated: @escaping () -> Void = {}
     ) {
         let initial = VoiceBarNotchPresentation.resolve(

@@ -3,6 +3,10 @@
 import XCTest
 
 final class AppLifecycleTests: XCTestCase {
+    private final class PointerProbe: @unchecked Sendable {
+        var isInside = true
+    }
+
     // MARK: - Context menu snooze toggle
 
     func testContextMenuShowsHideWhenNotSnoozed() {
@@ -449,13 +453,52 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
     }
 
+    @MainActor
+    func testReadbackWatchdogDismissesOutsideTheVisibleNotchSurface() async {
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { false }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    @MainActor
+    func testReadbackWatchdogPersistsInsideThenDismissesAfterPointerLeaves() async {
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(35))
+        XCTAssertEqual(dismissCount, 0)
+
+        pointer.isInside = false
+        try? await Task.sleep(for: .milliseconds(30))
+        XCTAssertEqual(dismissCount, 1)
+    }
+
     func testVoiceModeChangesSynchronizeRetainedReadbackLifecycle() throws {
         let source = try voiceBarAppSource()
 
         XCTAssertTrue(source.contains("private func synchronizeRetainedReadbackLifecycle()"))
-        XCTAssertTrue(source.contains("notchPresentationModel.updateRetainedReadback("))
-        XCTAssertTrue(source.contains("isReadback: voiceState.isTeleprompterReadback"))
-        XCTAssertTrue(source.contains("isHovered: voiceState.isHovering"))
+        XCTAssertTrue(source.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(source.contains("isPointerInsideVisibleNotchSurface"))
         XCTAssertTrue(source.contains("voiceState.dismissRetainedTeleprompter()"))
 
         let modeHandler = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
