@@ -46,7 +46,7 @@ Expected: PASS.
 
 **Step 1: Write the failing tests**
 
-Count CoreGraphics move elements to require one teleprompter subpath. Require the view descriptor to report two core-edge veils for every expanded presentation.
+Count CoreGraphics move elements to require one teleprompter subpath. Require both compact presentations (hover launcher, recording, and compact status) and teleprompter presentation to use the shared veil contract, with exactly two core-edge veils whenever wings are visible.
 
 **Step 2: Run focused tests and verify RED**
 
@@ -66,8 +66,8 @@ Expected: PASS.
 
 **Files:**
 - Update ignored receipts under: `docs.local/notch-v10-native-port/`
-- Modify: `/Users/etanheyman/Gits/orchestrator/docs.local/handoffs/2026-07-17-notch-w1-native-port-REPORT.md`
-- Append: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`
+- Modify: `<orchestrator-repo>/docs.local/handoffs/2026-07-17-notch-w1-native-port-REPORT.md`
+- Append: `<orchestrator-repo>/collab/2026-07-17-voicelayer-notch-w1-w2.md`
 
 **Step 1: Run focused and full verification**
 
@@ -84,4 +84,3 @@ Capture hover, recording, compact status, and teleprompter in Dark, Light, and R
 **Step 4: Commit, push, and repin PR #352**
 
 Push the clean commit, update the standalone `Verified-Runtime:` marker and report, and explicitly post the three W2 carryover confirmations. Keep merge blocked until #351 merges and this branch is rebased onto merged main.
-

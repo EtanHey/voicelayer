@@ -141,6 +141,8 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(sentCommands.isEmpty)
         XCTAssertFalse(state.isRecordingHoldEngaged)
+        XCTAssertEqual(router.cancelCount, 0)
+        XCTAssertEqual(router.stopCount, 0)
     }
 
     func testIdlePillBackgroundTapDoesNotRoutePrimaryAction() {
@@ -214,37 +216,6 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertNil(state.teleprompterText)
     }
 
-    func testHostedBarSchedulesUnattendedReadbackDismissal() async {
-        let state = VoiceState()
-        state.isConnected = true
-        state.isCollapsed = false
-        let presentationModel = VoiceBarNotchPresentationModel(
-            retainedReadbackDismissDelay: .milliseconds(20)
-        )
-        let host = makeHost(
-            state: state,
-            router: SpyCommandRouter(),
-            presentationModel: presentationModel
-        )
-
-        state.handleEvent([
-            "type": "state",
-            "state": "speaking",
-            "text": "Dismiss this unattended readback",
-        ])
-        host.layoutSubtreeIfNeeded()
-        state.handleEvent([
-            "type": "state",
-            "state": "idle",
-            "source": "playback",
-        ])
-        host.layoutSubtreeIfNeeded()
-        try? await Task.sleep(for: .milliseconds(60))
-
-        XCTAssertFalse(state.isTeleprompterReadback)
-        XCTAssertNil(state.teleprompterText)
-    }
-
     func testHiddenLiveTeleprompterKeepsAReachableShowControlInCompactStatus() {
         let state = VoiceState()
         state.isConnected = true
@@ -278,6 +249,37 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 1)
         XCTAssertEqual(router.cancelCount, 0)
         XCTAssertEqual(router.stopCount, 0)
+    }
+
+    func testTranscribingNotchRendersTheLiveStatusText() throws {
+        let source = try barViewSource()
+        let start = try XCTUnwrap(source.range(of: "case .transcribing:"))
+        let end = try XCTUnwrap(
+            source.range(of: "case .speaking:", range: start.upperBound ..< source.endIndex)
+        )
+
+        XCTAssertTrue(source[start.lowerBound ..< end.lowerBound].contains("statusLabel"))
+    }
+
+    func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("if state.queueItems.count > 1"))
+        XCTAssertTrue(source.contains("VoiceBarPresentation.queuePreview(from: state.queueItems)"))
+    }
+
+    func testOpenPopoversKeepTheLauncherMountedAfterPointerExit() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("isHistoryPresented || isVocabularyPresented"))
+        XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
+    }
+
+    func testBarViewDoesNotOwnRetainedReadbackDismissal() throws {
+        let source = try barViewSource()
+
+        XCTAssertFalse(source.contains("presentationModel?.updateRetainedReadback"))
+        XCTAssertFalse(source.contains("private func updateRetainedReadbackLifecycle"))
     }
 
     func testErrorStatusIconRoutesPrimaryAction() {

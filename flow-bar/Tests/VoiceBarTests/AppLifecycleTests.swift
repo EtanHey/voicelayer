@@ -545,6 +545,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
     }
 
+    func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
+        let appSource = try voiceBarAppSource()
+        let barSource = try voiceBarUISource(named: "BarView.swift")
+        let modelSource = try voiceBarUISource(named: "VoiceBarNotchPresentationModel.swift")
+        let coordinatorSource = try voiceBarSource(named: "RetainedReadbackDismissalCoordinator.swift")
+
+        XCTAssertTrue(appSource.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(appSource.contains("voiceState.dismissRetainedTeleprompter()"))
+        XCTAssertFalse(barSource.contains("presentationModel?.updateRetainedReadback"))
+        XCTAssertFalse(modelSource.contains("updateRetainedReadback("))
+        XCTAssertTrue(coordinatorSource.contains("deinit"))
+        XCTAssertTrue(coordinatorSource.contains("dismissalTask?.cancel()"))
+    }
+
     func testReadbackWatchdogClearsStaleHoverBeforeDismissing() throws {
         let source = try voiceBarAppSource()
         let synchronizeStart = try XCTUnwrap(
@@ -579,5 +593,33 @@ final class AppLifecycleTests: XCTestCase {
             .appendingPathComponent("VoiceBar")
             .appendingPathComponent("VoiceBarApp.swift")
         return try String(contentsOf: sourceURL)
+    }
+
+    private func voiceBarSource(named name: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("flow-bar/Sources/VoiceBar")
+                .appendingPathComponent(name),
+            encoding: .utf8
+        )
+    }
+
+    private func voiceBarUISource(named name: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+                .appendingPathComponent(name),
+            encoding: .utf8
+        )
     }
 }

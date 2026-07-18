@@ -65,4 +65,21 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertNil(resolved.leadingSeamError)
         XCTAssertNil(resolved.trailingSeamError)
     }
+
+    func testFixedCoreStaysCenteredWhenTheDetectedHousingIsWiderThanTheContractCore() {
+        let resolved = VoiceBarNotchScreenGeometry.resolve(
+            metrics: VoiceBarNotchScreenMetrics(
+                frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                safeAreaTop: 32,
+                auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 760, height: 32),
+                auxiliaryTopRightArea: CGRect(x: 961, y: 1085, width: 767, height: 32)
+            )
+        )
+        let geometry = VoiceBarNotchContract.geometry(for: .recording)
+        let frame = resolved.panelFrame(for: geometry)
+        let fixedCoreMidX = frame.minX + geometry.coreOriginX + geometry.coreWidth / 2
+
+        XCTAssertEqual(resolved.housingFrame.width, 201)
+        XCTAssertEqual(fixedCoreMidX, resolved.housingFrame.midX)
+    }
 }

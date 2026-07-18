@@ -170,22 +170,23 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 
     private var teleprompterSurface: some View {
-        Color.clear
+        let shape = VoiceBarNotchContinuousShape(
+            geometry: presentation.geometry
+        )
+        return Color.clear
             .frame(
                 width: presentation.geometry.totalWidth,
                 height: presentation.geometry.totalHeight
             )
             .modifier(
                 VoiceBarGlassMaterial(
-                    shape: VoiceBarNotchContinuousShape(
-                        geometry: presentation.geometry
-                    )
+                    shape: shape
                 )
             )
+            .contentShape(shape)
             .overlay(alignment: .topLeading) {
                 coreEdgeVeils
             }
-            .allowsHitTesting(false)
     }
 
     private var coreEdgeVeils: some View {

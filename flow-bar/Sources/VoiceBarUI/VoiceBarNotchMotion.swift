@@ -41,7 +41,7 @@ public struct VoiceBarNotchMotionPlan: Equatable, Sendable {
     ) -> VoiceBarNotchMotionPlan {
         let steps: [VoiceBarNotchMotionStep] = if source == destination {
             []
-        } else if visualRank(destination) >= visualRank(source) {
+        } else if surfaceExtent(destination) >= surfaceExtent(source) {
             openingSteps(reducedMotion: reducedMotion)
         } else {
             closingSteps(reducedMotion: reducedMotion)
@@ -56,15 +56,9 @@ public struct VoiceBarNotchMotionPlan: Equatable, Sendable {
         )
     }
 
-    private static func visualRank(_ state: VoiceBarNotchVisualState) -> Int {
-        switch state {
-        case .idle:
-            0
-        case .hoverLauncher, .recording, .compactStatus:
-            1
-        case .teleprompter:
-            2
-        }
+    private static func surfaceExtent(_ state: VoiceBarNotchVisualState) -> CGFloat {
+        let geometry = VoiceBarNotchContract.geometry(for: state)
+        return geometry.totalWidth * geometry.totalHeight
     }
 
     private static func openingSteps(reducedMotion: Bool) -> [VoiceBarNotchMotionStep] {

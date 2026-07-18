@@ -21,6 +21,10 @@ final class RetainedReadbackDismissalCoordinator {
         self.delay = delay
     }
 
+    deinit {
+        dismissalTask?.cancel()
+    }
+
     func synchronize(
         isReadback: Bool,
         isPointerInsideVisibleSurface: @escaping @MainActor @Sendable () -> Bool,

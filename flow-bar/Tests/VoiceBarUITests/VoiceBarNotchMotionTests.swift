@@ -31,6 +31,17 @@ final class VoiceBarNotchMotionTests: XCTestCase {
         XCTAssertTrue(plan.preservesFixedCore)
     }
 
+    func testRecordingToHoverLauncherUsesClosingMotionBecauseTheSurfaceContracts() {
+        let plan = VoiceBarNotchMotionPlan.resolve(
+            from: .recording,
+            to: .hoverLauncher,
+            reducedMotion: false
+        )
+
+        XCTAssertEqual(plan.steps.map(\.component), [.content, .panel, .wings])
+        XCTAssertTrue(plan.steps.allSatisfy { !$0.targetVisible })
+    }
+
     func testFixedCoreNeverAppearsInAnAnimatedComponent() {
         for source in VoiceBarNotchVisualState.allCases {
             for destination in VoiceBarNotchVisualState.allCases {

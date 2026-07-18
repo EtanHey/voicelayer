@@ -42,6 +42,10 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertFalse(words.map(\.text).contains("Soopa"))
         XCTAssertEqual(words.first?.offsetMs, 0)
         XCTAssertEqual(
+            words.map(\.offsetMs),
+            [0, 164, 327, 510, 693, 871, 1027]
+        )
+        XCTAssertEqual(
             zip(words.compactMap(\.offsetMs), words.compactMap(\.durationMs))
                 .map(+)
                 .last,
@@ -51,6 +55,23 @@ final class TeleprompterContentModelTests: XCTestCase {
         let offsets = words.compactMap(\.offsetMs)
         XCTAssertEqual(offsets.count, words.count)
         XCTAssertTrue(zip(offsets, offsets.dropFirst()).allSatisfy(<))
+    }
+
+    func testUnrelatedStaleBoundariesFallBackToEstimatedPacing() {
+        let words = TeleprompterContentModel.words(
+            text: "Fresh queued playback has no subtitle payload",
+            wordBoundaries: [
+                TeleprompterBoundary(offsetMs: 0, durationMs: 200, text: "Previous"),
+                TeleprompterBoundary(offsetMs: 240, durationMs: 180, text: "item"),
+                TeleprompterBoundary(offsetMs: 460, durationMs: 190, text: "timings"),
+            ]
+        )
+
+        XCTAssertEqual(
+            words.map(\.text),
+            ["Fresh", "queued", "playback", "has", "no", "subtitle", "payload"]
+        )
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
     }
 
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {

@@ -107,9 +107,14 @@ public struct VoiceBarNotchWingShape: Shape {
 /// The physical camera housing is intentionally absent from the path.
 public struct VoiceBarNotchContinuousShape: Shape {
     public let geometry: VoiceBarNotchGeometry
+    public var compactOuterCornerRadius: CGFloat
 
-    public init(geometry: VoiceBarNotchGeometry) {
+    public init(
+        geometry: VoiceBarNotchGeometry,
+        compactOuterCornerRadius: CGFloat = 11
+    ) {
         self.geometry = geometry
+        self.compactOuterCornerRadius = compactOuterCornerRadius
     }
 
     public func path(in rect: CGRect) -> Path {
@@ -143,14 +148,20 @@ public struct VoiceBarNotchContinuousShape: Shape {
         var path = Path()
         if layout.leadingWingRect.width > 0 {
             path.addPath(
-                VoiceBarNotchWingShape(side: .leading)
-                    .path(in: layout.leadingWingRect)
+                VoiceBarNotchWingShape(
+                    side: .leading,
+                    outerCornerRadius: compactOuterCornerRadius
+                )
+                .path(in: layout.leadingWingRect)
             )
         }
         if layout.trailingWingRect.width > 0 {
             path.addPath(
-                VoiceBarNotchWingShape(side: .trailing)
-                    .path(in: layout.trailingWingRect)
+                VoiceBarNotchWingShape(
+                    side: .trailing,
+                    outerCornerRadius: compactOuterCornerRadius
+                )
+                .path(in: layout.trailingWingRect)
             )
         }
         return path

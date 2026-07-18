@@ -130,7 +130,6 @@ public struct BarView: View {
             onHoverChanged: { hovering in
                 state.setHovering(hovering)
                 presentationModel?.setHovered(hovering)
-                updateRetainedReadbackLifecycle(isHovered: hovering)
             },
             leadingContent: {
                 notchLeadingContent
@@ -147,23 +146,22 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
-        .onChange(of: state.isTeleprompterReadback) { _, _ in
-            updateRetainedReadbackLifecycle()
+        .onChange(of: isNotchKeyboardFocused) { _, _ in
+            synchronizeLauncherRetention()
         }
-        .onChange(of: isNotchKeyboardFocused) { _, isFocused in
-            presentationModel?.setKeyboardFocused(isFocused)
+        .onChange(of: isHistoryPresented) { _, _ in
+            synchronizeLauncherRetention()
+        }
+        .onChange(of: isVocabularyPresented) { _, _ in
+            synchronizeLauncherRetention()
         }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
             presentationModel?.setReducedMotion(isEnabled)
         }
         .onAppear {
             presentationModel?.setHovered(state.isHovering)
-            presentationModel?.setKeyboardFocused(isNotchKeyboardFocused)
+            synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
-            updateRetainedReadbackLifecycle()
-        }
-        .onDisappear {
-            presentationModel?.cancelRetainedReadbackDismissal()
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -200,22 +198,17 @@ public struct BarView: View {
                 keepsPasteFlowEnvelope: state.keepsPasteFlowEnvelope,
                 hotkeyPhase: state.hotkeyPhase,
                 isHovered: state.isHovering,
-                isKeyboardFocused: isNotchKeyboardFocused
+                isKeyboardFocused: keepsLauncherMounted
             )
         )
     }
 
-    private func updateRetainedReadbackLifecycle(isHovered: Bool? = nil) {
-        presentationModel?.updateRetainedReadback(
-            isReadback: state.isTeleprompterReadback,
-            isHovered: isHovered ?? state.isHovering
-        ) { [weak state] in
-            guard let state,
-                  state.isTeleprompterReadback,
-                  !state.isHovering
-            else { return }
-            state.dismissRetainedTeleprompter()
-        }
+    private var keepsLauncherMounted: Bool {
+        isNotchKeyboardFocused || isHistoryPresented || isVocabularyPresented
+    }
+
+    private func synchronizeLauncherRetention() {
+        presentationModel?.setKeyboardFocused(keepsLauncherMounted)
     }
 
     @ViewBuilder
@@ -359,8 +352,14 @@ public struct BarView: View {
     private var notchLowerContent: some View {
         if notchPresentation.visualState == .teleprompter {
             VStack(spacing: 12) {
-                notchTeleprompterTimeline
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                Group {
+                    if state.queueItems.count > 1 {
+                        queueVisualization
+                    } else {
+                        notchTeleprompterTimeline
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 notchTeleprompterControls
             }
             .padding(.horizontal, 20)
@@ -458,6 +457,55 @@ public struct BarView: View {
             .background(Theme.speakingColor.opacity(0.22))
             .clipShape(Capsule())
             .contentTransition(.numericText())
+    }
+
+    private var queueVisualization: some View {
+        let preview = VoiceBarPresentation.queuePreview(from: state.queueItems)
+
+        return VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Text("Queue")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.62))
+                if preview.overflowCount > 0 {
+                    Text("+\(preview.overflowCount) more")
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+
+            Text(preview.currentText)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.96))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.12))
+                    Capsule()
+                        .fill(Theme.speakingColor.opacity(0.95))
+                        .frame(width: max(10, geometry.size.width * preview.progress))
+                }
+                .animation(Theme.queueProgressTransition, value: preview.progress)
+            }
+            .frame(height: 4)
+
+            if let nextText = preview.nextText {
+                HStack(spacing: 6) {
+                    Text("Up next")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Text(nextText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.74))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Status icon

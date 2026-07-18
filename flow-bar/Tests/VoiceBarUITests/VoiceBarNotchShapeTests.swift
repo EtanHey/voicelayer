@@ -7,7 +7,11 @@ final class VoiceBarNotchShapeTests: XCTestCase {
     func testRecordingGlassFillsBothWingsButNeverTheHardwareCore() {
         let geometry = VoiceBarNotchContract.geometry(for: .recording)
         let layout = VoiceBarNotchShapeLayout(geometry: geometry)
-        let path = VoiceBarNotchContinuousShape(geometry: geometry).path(
+        let radius = VoiceBarNotchContract.material.compactOuterCornerRadius(for: .recording)
+        let path = VoiceBarNotchContinuousShape(
+            geometry: geometry,
+            compactOuterCornerRadius: radius
+        ).path(
             in: CGRect(origin: .zero, size: layout.totalSize)
         )
 
@@ -15,6 +19,8 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertTrue(path.contains(CGPoint(x: 20, y: 16)))
         XCTAssertTrue(path.contains(CGPoint(x: 320, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
+        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 15, y: 32)))
+        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 394, y: 32)))
     }
 
     func testTeleprompterKeepsTheHousingCenteredInsideAnAsymmetricTopBar() {
@@ -57,5 +63,15 @@ private extension Path {
             }
         }
         return count
+    }
+
+    var quadCurveEndPoints: [CGPoint] {
+        var points: [CGPoint] = []
+        cgPath.applyWithBlock { element in
+            if element.pointee.type == .addQuadCurveToPoint {
+                points.append(element.pointee.points[1])
+            }
+        }
+        return points
     }
 }

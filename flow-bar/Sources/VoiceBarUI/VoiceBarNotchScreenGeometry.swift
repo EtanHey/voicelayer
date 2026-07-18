@@ -69,7 +69,7 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
 
     public func panelFrame(for geometry: VoiceBarNotchGeometry) -> CGRect {
         CGRect(
-            x: housingFrame.minX - geometry.coreOriginX,
+            x: housingFrame.midX - (geometry.coreWidth / 2) - geometry.coreOriginX,
             y: screenFrame.maxY - geometry.totalHeight,
             width: geometry.totalWidth,
             height: geometry.totalHeight

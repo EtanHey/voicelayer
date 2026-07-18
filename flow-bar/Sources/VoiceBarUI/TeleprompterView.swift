@@ -140,6 +140,7 @@ public enum TeleprompterPacePolicy {
 
 public enum TeleprompterContentModel {
     public static let maxDisplayTokenLength = 24
+    private static let maximumBoundaryComparisonCharacters = 512
 
     public static func words(
         text: String,
@@ -166,8 +167,14 @@ public enum TeleprompterContentModel {
                 )
             }
             .filter { !$0.text.isEmpty }
+        let boundariesAreCurrent = boundariesPlausiblyBelong(
+            to: textWords,
+            boundaryWords: boundaryWords
+        )
 
-        if !textWords.isEmpty, textWords.count == boundaryWords.count {
+        if !textWords.isEmpty,
+           textWords.count == boundaryWords.count,
+           boundariesAreCurrent {
             return assignStableIDs(to: zip(textWords, boundaryWords).map { display, boundary in
                 TeleprompterWord(
                     id: 0,
@@ -178,6 +185,9 @@ public enum TeleprompterContentModel {
             })
         }
         if !textWords.isEmpty {
+            guard boundariesAreCurrent else {
+                return assignStableIDs(to: textWords)
+            }
             return assignStableIDs(
                 to: TeleprompterPacePolicy.reschedule(
                     displayWords: textWords,
@@ -189,6 +199,56 @@ public enum TeleprompterContentModel {
             return assignStableIDs(to: boundaryWords.flatMap(splitDisplayToken))
         }
         return assignStableIDs(to: textWords)
+    }
+
+    private static func boundariesPlausiblyBelong(
+        to displayWords: [TeleprompterWord],
+        boundaryWords: [TeleprompterWord]
+    ) -> Bool {
+        guard !displayWords.isEmpty, !boundaryWords.isEmpty else { return false }
+        let displaySignature = normalizedSignature(for: displayWords)
+        let boundarySignature = normalizedSignature(for: boundaryWords)
+        guard !displaySignature.isEmpty, !boundarySignature.isEmpty else { return false }
+
+        let maximumLength = max(displaySignature.count, boundarySignature.count)
+        let distance = editDistance(displaySignature, boundarySignature)
+        let similarity = 1 - (Double(distance) / Double(maximumLength))
+        return similarity >= 0.55
+    }
+
+    private static func normalizedSignature(for words: [TeleprompterWord]) -> [Character] {
+        let signature = Array(
+            words
+                .map(\.text)
+                .joined()
+                .lowercased()
+                .filter { $0.isLetter || $0.isNumber }
+        )
+        guard signature.count > maximumBoundaryComparisonCharacters else {
+            return signature
+        }
+
+        let edgeLength = maximumBoundaryComparisonCharacters / 2
+        return Array(signature.prefix(edgeLength)) + Array(signature.suffix(edgeLength))
+    }
+
+    private static func editDistance(_ lhs: [Character], _ rhs: [Character]) -> Int {
+        var previous = Array(0 ... rhs.count)
+        for (lhsIndex, lhsCharacter) in lhs.enumerated() {
+            var current = [lhsIndex + 1]
+            current.reserveCapacity(rhs.count + 1)
+            for (rhsIndex, rhsCharacter) in rhs.enumerated() {
+                current.append(
+                    min(
+                        current[rhsIndex] + 1,
+                        previous[rhsIndex + 1] + 1,
+                        previous[rhsIndex] + (lhsCharacter == rhsCharacter ? 0 : 1)
+                    )
+                )
+            }
+            previous = current
+        }
+        return previous[rhs.count]
     }
 
     private static func assignStableIDs(to words: [TeleprompterWord]) -> [TeleprompterWord] {
