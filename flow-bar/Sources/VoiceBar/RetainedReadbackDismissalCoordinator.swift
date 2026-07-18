@@ -30,9 +30,11 @@ final class RetainedReadbackDismissalCoordinator {
         isPointerInsideVisibleSurface: @escaping @MainActor @Sendable () -> Bool,
         onDismiss: @escaping @MainActor @Sendable () -> Void
     ) {
-        dismissalTask?.cancel()
-        dismissalTask = nil
-        guard isReadback else { return }
+        guard isReadback else {
+            cancel()
+            return
+        }
+        guard dismissalTask == nil else { return }
         schedulePointerAwareDismissal(
             isPointerInsideVisibleSurface: isPointerInsideVisibleSurface,
             onDismiss: onDismiss

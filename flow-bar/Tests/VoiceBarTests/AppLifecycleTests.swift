@@ -472,6 +472,33 @@ final class AppLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testRepeatedUnattendedReadbackSynchronizationDoesNotRestartGraceWindow() async {
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(100)
+        )
+        let synchronize = {
+            coordinator.synchronize(
+                isReadback: true,
+                isPointerInsideVisibleSurface: { false }
+            ) {
+                dismissCount += 1
+            }
+        }
+
+        synchronize()
+        try? await Task.sleep(for: .milliseconds(70))
+        synchronize()
+        try? await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(
+            dismissCount,
+            1,
+            "Repeated W2 idle/readback broadcasts must not postpone unattended auto-dismiss"
+        )
+    }
+
+    @MainActor
     func testReadbackWatchdogPersistsInsideThenDismissesAfterPointerLeaves() async {
         let pointer = PointerProbe()
         var dismissCount = 0
