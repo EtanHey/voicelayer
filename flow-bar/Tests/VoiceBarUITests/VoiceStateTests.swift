@@ -1165,7 +1165,7 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(modes, [.recording, .transcribing])
     }
 
-    func testTeleprompterDismissAndReshowIsSeparateFromPlaybackStop() {
+    func testPlaybackStopExitsWithoutRetainingADismissedLiveTeleprompter() {
         let state = VoiceState()
         state.handleEvent([
             "type": "state",
@@ -1176,12 +1176,11 @@ final class VoiceStateTests: XCTestCase {
         state.dismissTeleprompter()
         state.stop()
 
-        XCTAssertTrue(state.isTeleprompterDismissed)
-        XCTAssertEqual(state.mode, .speaking)
-
-        state.showTeleprompter()
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
         XCTAssertFalse(state.isTeleprompterDismissed)
-        XCTAssertEqual(state.statusText, "Etan runs supabase")
+        XCTAssertEqual(state.statusText, "")
     }
 
     func testLiveTeleprompterVisibilityChangesRequestPanelRelayout() async {

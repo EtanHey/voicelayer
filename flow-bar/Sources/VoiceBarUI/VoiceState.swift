@@ -549,9 +549,13 @@ public final class VoiceState {
 
     public func stop() {
         let shouldShowTranscribing = mode == .recording
+        let shouldExitInterruptedPlayback = mode == .speaking
         sendIntent(command: .stop, payload: ["cmd": "stop"])
         if shouldShowTranscribing {
             enterTranscribingMode()
+        } else if shouldExitInterruptedPlayback {
+            clearRetainedTeleprompter()
+            enterIdleState(clearQueue: false)
         }
     }
 

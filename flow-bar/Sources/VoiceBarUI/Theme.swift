@@ -34,13 +34,14 @@ public enum Theme {
     public static let pillMinWidth: CGFloat = 100
     public static let pillCompactWidth: CGFloat = 136
     public static let pillCompactHeight: CGFloat = 42
-    public static let pillStatusMaxWidth: CGFloat = 160
+    public static let pillStatusMaxWidth: CGFloat = 282
     public static let pillTranscriptPreviewWidth: CGFloat = 330
     public static let pillTranscriptPreviewHeight: CGFloat = 70
     public static let pillQueueWidth: CGFloat = 300
     public static let pillActionButtonSize: CGFloat = 26
     public static let pillActionButtonSpacing: CGFloat = 2
     public static let pillWaveformWidth: CGFloat = 46
+    public static let pillProcessingSpinnerWidth: CGFloat = 14
     public static let pillSpeakingQueueWidth: CGFloat = 412
     /// Fixed panel envelope that keeps AppKit out of resize loops without
     /// leaving a large invisible draggable surface around the pill.
@@ -118,9 +119,9 @@ public enum Theme {
             )
         case .transcribing:
             let statusWidth = intrinsicPillStatusWidth(for: statusText)
-            let statusSegmentWidth = statusWidth > 0 ? 8 + statusWidth : 0
-            let naturalContentWidth = pillWaveformWidth + statusSegmentWidth +
-                contentSpacing + pillActionButtonSize
+            let statusSegmentWidth = statusWidth > 0 ? contentSpacing + statusWidth : 0
+            let naturalContentWidth = pillProcessingSpinnerWidth + pillWaveformWidth +
+                pillActionButtonSize + statusSegmentWidth + (contentSpacing * 2)
             let clampedContentWidth = min(
                 naturalContentWidth,
                 maximumWidth - (compactHorizontalPadding * 2)

@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBarUI
 import XCTest
 
@@ -166,6 +167,37 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(layout.panelSize.width, 220)
         XCTAssertLessThan(layout.panelSize.width, Theme.panelWidth)
         XCTAssertEqual(layout.panelSize.height, Theme.pillCompactHeight + (Theme.panelPadding * 2))
+    }
+
+    func testLongTranscribingStatusFitsItsRenderedOneLineSurfaceWithoutClipping() {
+        let statusText = "Transcribing long recording with local model"
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let renderedTextWidth = ceil(
+            (statusText as NSString).size(withAttributes: [.font: font]).width
+        )
+        let visibleChromeWidth = Theme.pillProcessingSpinnerWidth + Theme.pillWaveformWidth +
+            Theme.pillActionButtonSize + (8 * 3)
+        let requiredPillWidth = renderedTextWidth + visibleChromeWidth + 20
+
+        XCTAssertLessThan(requiredPillWidth, Theme.panelWidth - (Theme.panelPadding * 2))
+
+        let metrics = Theme.pillMetrics(
+            for: .transcribing,
+            statusText: statusText
+        )
+        let layout = VoiceBarPanelLayout.make(
+            mode: .transcribing,
+            isCollapsed: false,
+            previewText: nil,
+            statusText: statusText,
+            padding: Theme.panelPadding
+        )
+
+        XCTAssertGreaterThanOrEqual(metrics.width, requiredPillWidth)
+        XCTAssertGreaterThanOrEqual(
+            layout.panelSize.width,
+            requiredPillWidth + (Theme.panelPadding * 2)
+        )
     }
 
     func testPasteFlowKeepsFixedPanelWidthAcrossRecordingLoadingAndSuccess() {
@@ -365,7 +397,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             metrics.horizontalPadding * 2,
             accuracy: 0.0001
         )
-        XCTAssertLessThan(metrics.width, 212)
+        XCTAssertLessThan(metrics.width, 220)
     }
 
     func testTranscribingWidthRespondsToVisibleStatusContent() {

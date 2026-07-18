@@ -177,14 +177,34 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         router.handleEscape()
 
-        // Keep the teleprompter visible until playback actually confirms idle.
-        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.mode, .idle)
         XCTAssertEqual(commands.count, 1)
         XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
 
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
 
         XCTAssertEqual(state.mode, .idle)
+    }
+
+    func testSpeakingStopExitsLocallyAndClearsInterruptedTeleprompterWithoutDaemonIdle() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "The ask prompt must not remain stuck after stop",
+        ])
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleStop()
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "stop")
     }
 
     func testEscapeIsIgnoredWhileVoiceBarIsIdle() {
