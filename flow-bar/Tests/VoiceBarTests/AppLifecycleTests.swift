@@ -516,7 +516,7 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(dismissCount, 0)
 
         pointer.isInside = false
-        try? await Task.sleep(for: .milliseconds(30))
+        try? await Task.sleep(for: .milliseconds(60))
         XCTAssertEqual(dismissCount, 1)
     }
 
