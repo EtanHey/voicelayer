@@ -1,11 +1,30 @@
+import AppKit
 import SwiftUI
 
 public enum VoiceBarNotchAppearance: Equatable {
     case light
     case dark
 
-    public init(colorScheme: ColorScheme) {
-        self = colorScheme == .light ? .light : .dark
+    public init(effectiveAppearance: NSAppearance) {
+        self = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            ? .dark
+            : .light
+    }
+}
+
+public struct VoiceBarNotchAppearanceTracker {
+    public private(set) var appearance: VoiceBarNotchAppearance
+
+    public init(initial: VoiceBarNotchAppearance) {
+        appearance = initial
+    }
+
+    @discardableResult
+    public mutating func receive(effectiveAppearance: NSAppearance) -> Bool {
+        let next = VoiceBarNotchAppearance(effectiveAppearance: effectiveAppearance)
+        guard next != appearance else { return false }
+        appearance = next
+        return true
     }
 }
 

@@ -50,14 +50,14 @@ public struct PulsingDot: View {
 public struct PulsingStatusLabel: View {
     public let text: String
     @State private var isPulsing = false
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     public var body: some View {
         Text(text)
             .font(.system(size: 12, weight: .medium))
             .foregroundStyle(
                 VoiceBarNotchContrastPalette
-                    .resolve(for: VoiceBarNotchAppearance(colorScheme: colorScheme))
+                    .resolve(for: notchAppearance)
                     .primary.color
             )
             .lineLimit(1)
@@ -102,16 +102,16 @@ public struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
+    @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
-    @Environment(\.colorScheme) private var colorScheme
 
     public var body: some View {
         if includesPanelOutsets {
-            notchContent
+            appearanceAwareNotchContent
                 .padding(.horizontal, 12)
                 .padding(.bottom, 17)
         } else {
-            notchContent
+            appearanceAwareNotchContent
         }
     }
 
@@ -128,6 +128,16 @@ public struct BarView: View {
     }
 
     // MARK: - Native notch shell
+
+    private var appearanceAwareNotchContent: some View {
+        notchContent
+            .environment(\.voiceBarNotchAppearance, notchAppearance)
+            .background {
+                VoiceBarNotchAppearanceReader(appearance: $notchAppearance)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+            }
+    }
 
     private var notchContent: some View {
         VoiceBarNotchView(
@@ -604,9 +614,7 @@ public struct BarView: View {
     }
 
     private var notchPalette: VoiceBarNotchContrastPalette {
-        VoiceBarNotchContrastPalette.resolve(
-            for: VoiceBarNotchAppearance(colorScheme: colorScheme)
-        )
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
     private var historyButton: some View {
