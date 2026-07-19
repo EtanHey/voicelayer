@@ -572,8 +572,11 @@ private func clickSpeakingStop(
     playbackClient: Int32
 ) throws -> String {
     var x = host.bounds.maxX - 10
+    let y = host.bounds.height > VoiceBarNotchContract.topHeight
+        ? CGFloat(23)
+        : host.bounds.midY
     while x >= host.bounds.midX {
-        try click(host, at: NSPoint(x: x, y: host.bounds.midY), in: window)
+        try click(host, at: NSPoint(x: x, y: y), in: window)
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         if let line = try readLine(from: playbackClient, timeout: 0.02) {
             return line

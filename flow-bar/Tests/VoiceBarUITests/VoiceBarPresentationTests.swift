@@ -2,6 +2,180 @@
 import XCTest
 
 final class VoiceBarPresentationTests: XCTestCase {
+    func testNotchPresentationGivesLiveAndRetainedTeleprompterPrecedence() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(
+                    mode: .speaking,
+                    hasTeleprompterText: true
+                )
+            ).visualState,
+            .teleprompter
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(
+                    mode: .idle,
+                    hasTeleprompterText: true,
+                    isTeleprompterDismissed: true,
+                    isTeleprompterReadback: true
+                )
+            ).visualState,
+            .teleprompter
+        )
+    }
+
+    func testIdleTransientStatusTemporarilyReplacesRetainedReadback() {
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .idle,
+                hasTeleprompterText: true,
+                isTeleprompterReadback: true,
+                confirmationText: "Copied"
+            )
+        )
+
+        XCTAssertEqual(presentation.visualState, .compactStatus)
+    }
+
+    func testNotchPresentationMapsRecordingAndAllCompatibilityModes() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .recording)
+            ).visualState,
+            .recording
+        )
+
+        for mode in [VoiceMode.transcribing, .speaking, .error, .disconnected] {
+            XCTAssertEqual(
+                VoiceBarPresentation.notchPresentation(
+                    from: VoiceBarNotchOperationalInput(mode: mode)
+                ).visualState,
+                .compactStatus,
+                "Expected compatibility shell for \(mode)"
+            )
+        }
+    }
+
+    func testTranscribingNotchExpandsLeadingIndicatorWingForTheUntruncatedStatusLabel() {
+        let baseline = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Transcribing..."
+            )
+        )
+        let warmup = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Loading speech model"
+            )
+        )
+        let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
+            + Theme.pillProcessingSpinnerWidth
+            + VoiceBarNotchContract.material.compactControlSpacing
+            + VoiceBarNotchContract.material.blackToGlassFadeWidth
+            + 2
+
+        XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 409)
+        XCTAssertGreaterThan(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
+        XCTAssertGreaterThanOrEqual(warmup.geometry.leadingWingWidth, requiredWarmupWidth)
+        XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
+    }
+
+    func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {
+        let inputs: [VoiceBarNotchOperationalInput] = [
+            VoiceBarNotchOperationalInput(mode: .idle, confirmationText: "Pasted"),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                commandModeState: CommandModeState(
+                    phase: .applying,
+                    operation: "replace_selection",
+                    prompt: "Rewrite"
+                )
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                activeClipMarker: ClipMarkerState(
+                    id: "clip-1",
+                    label: "Action item",
+                    source: "command",
+                    status: "marked"
+                )
+            ),
+            VoiceBarNotchOperationalInput(mode: .idle, queueDepth: 1),
+            VoiceBarNotchOperationalInput(mode: .idle, keepsPasteFlowEnvelope: true),
+            VoiceBarNotchOperationalInput(mode: .idle, hotkeyPhase: .pressing),
+        ]
+
+        for input in inputs {
+            XCTAssertEqual(
+                VoiceBarPresentation.notchPresentation(from: input).visualState,
+                .compactStatus
+            )
+        }
+    }
+
+    func testCollapsedIdleOverridesEveryTransientEnvelopeUntilActivityReturns() {
+        let inputs = [
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                confirmationText: "Pasted",
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                queueDepth: 1,
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                keepsPasteFlowEnvelope: true,
+                isCollapsed: true
+            ),
+        ]
+
+        for input in inputs {
+            XCTAssertEqual(
+                VoiceBarPresentation.notchPresentation(from: input).visualState,
+                .idle
+            )
+        }
+    }
+
+    func testHoverActivityReopensAPreviouslyCollapsedIdlePresentation() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(
+                    mode: .idle,
+                    isHovered: true,
+                    isCollapsed: true
+                )
+            ).visualState,
+            .hoverLauncher
+        )
+    }
+
+    func testNotchPresentationHoldsPlainIdleThroughTheCollapseGraceWindow() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+            ).visualState,
+            .hoverLauncher
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .idle, isKeyboardFocused: true)
+            ).visualState,
+            .hoverLauncher
+        )
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .idle)
+            ).visualState,
+            .hoverLauncher
+        )
+    }
+
     func testHiddenReadbackKeepsTeleprompterEnvelopeForRestoreControls() {
         XCTAssertTrue(
             VoiceBarPresentation.reservesTeleprompterEnvelope(

@@ -32,9 +32,25 @@ enum VoiceBarInstanceGuard {
 
         let canonicalPath = normalizedPath(canonicalBundlePath)
         let currentPath = current.bundlePath.map(normalizedPath)
-        let otherInstances = running.filter { instance in
-            instance.pid > 0 && instance.pid != current.pid && !instance.isIsolated
+        let allOtherInstances = running.filter { instance in
+            instance.pid > 0 && instance.pid != current.pid
         }
+
+        // An isolated socket is transport isolation, not permission to own a
+        // second operator-visible surface. Preserve the incumbent proof while
+        // refusing any new surface, regardless of its bundle path.
+        if let isolatedIncumbent = allOtherInstances
+            .filter(\.isIsolated)
+            .map(\.pid)
+            .min() {
+            return .exitCurrent(canonicalPID: isolatedIncumbent)
+        }
+        if current.isIsolated,
+           let incumbent = allOtherInstances.map(\.pid).min() {
+            return .exitCurrent(canonicalPID: incumbent)
+        }
+
+        let otherInstances = allOtherInstances.filter { !$0.isIsolated }
 
         if currentPath != canonicalPath,
            let canonicalPID = otherInstances
@@ -61,6 +77,11 @@ enum VoiceBarInstanceIsolationRegistryError: Error {
 }
 
 enum VoiceBarInstanceIsolationRegistry {
+    /// `NSRunningApplication.launchDate` can differ slightly between the process
+    /// registering itself and a later workspace observer. Keep the match bounded
+    /// so a reused PID from a genuinely later launch cannot inherit isolation.
+    private static let launchDateToleranceMilliseconds: Int64 = 1000
+
     private struct Marker: Codable {
         let pid: Int32
         let launchTimeMilliseconds: Int64
@@ -104,8 +125,14 @@ enum VoiceBarInstanceIsolationRegistry {
               let data = try? Data(contentsOf: markerURL(pid: pid, directory: directory)),
               let marker = try? JSONDecoder().decode(Marker.self, from: data)
         else { return false }
-        return marker.pid == pid &&
-            marker.launchTimeMilliseconds == launchTimeMilliseconds(launchDate)
+        let observedLaunchTime = launchTimeMilliseconds(launchDate)
+        let (launchTimeDifference, overflowed) = marker.launchTimeMilliseconds
+            .subtractingReportingOverflow(observedLaunchTime)
+        guard marker.pid == pid,
+              !overflowed,
+              launchTimeDifference != Int64.min
+        else { return false }
+        return abs(launchTimeDifference) <= launchDateToleranceMilliseconds
     }
 
     static func unregister(

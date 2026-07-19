@@ -82,8 +82,65 @@ public struct TeleprompterWord: Equatable, Identifiable {
     public let durationMs: Int?
 }
 
+public enum TeleprompterPacePolicy {
+    private static let baseDelay = 0.28
+    private static let perCharacterDelay = 0.015
+    private static let minimumDelay = 0.22
+    private static let maximumDelay = 0.38
+
+    public static func estimatedDelay(for word: String) -> Double {
+        let characterDelay = baseDelay + Double(word.count) * perCharacterDelay
+        var delay = min(maximumDelay, max(minimumDelay, characterDelay))
+
+        if let last = word.last {
+            if last == "." || last == "!" || last == "?" {
+                delay += 0.10
+            } else if last == "," || last == ";" || last == ":" {
+                delay += 0.05
+            }
+        }
+        return delay
+    }
+
+    public static func reschedule(
+        displayWords: [TeleprompterWord],
+        across boundaryWords: [TeleprompterWord]
+    ) -> [TeleprompterWord] {
+        guard !displayWords.isEmpty,
+              let startOffset = boundaryWords.compactMap(\.offsetMs).min(),
+              let endOffset = boundaryWords.compactMap({ word -> Int? in
+                  guard let offset = word.offsetMs, let duration = word.durationMs else { return nil }
+                  return offset + duration
+              }).max(),
+              endOffset > startOffset
+        else { return displayWords }
+
+        let weights = displayWords.map { estimatedDelay(for: $0.text) }
+        let totalWeight = weights.reduce(0, +)
+        guard totalWeight > 0 else { return displayWords }
+
+        let span = Double(endOffset - startOffset)
+        var cumulativeWeight = 0.0
+        return zip(displayWords, weights).enumerated().map { index, pair in
+            let (word, weight) = pair
+            let scheduledStart = startOffset + Int((span * cumulativeWeight / totalWeight).rounded())
+            cumulativeWeight += weight
+            let scheduledEnd = index == displayWords.indices.last
+                ? endOffset
+                : startOffset + Int((span * cumulativeWeight / totalWeight).rounded())
+            return TeleprompterWord(
+                id: word.id,
+                text: word.text,
+                offsetMs: scheduledStart,
+                durationMs: max(1, scheduledEnd - scheduledStart)
+            )
+        }
+    }
+}
+
 public enum TeleprompterContentModel {
     public static let maxDisplayTokenLength = 24
+    private static let maximumBoundaryComparisonCharacters = 512
 
     public static func words(
         text: String,
@@ -110,8 +167,14 @@ public enum TeleprompterContentModel {
                 )
             }
             .filter { !$0.text.isEmpty }
+        let boundariesAreCurrent = boundariesPlausiblyBelong(
+            to: textWords,
+            boundaryWords: boundaryWords
+        )
 
-        if !textWords.isEmpty, textWords.count == boundaryWords.count {
+        if !textWords.isEmpty,
+           textWords.count == boundaryWords.count,
+           boundariesAreCurrent {
             return assignStableIDs(to: zip(textWords, boundaryWords).map { display, boundary in
                 TeleprompterWord(
                     id: 0,
@@ -122,12 +185,82 @@ public enum TeleprompterContentModel {
             })
         }
         if !textWords.isEmpty {
-            return assignStableIDs(to: textWords)
+            guard boundariesAreCurrent else {
+                return assignStableIDs(to: textWords)
+            }
+            return assignStableIDs(
+                to: TeleprompterPacePolicy.reschedule(
+                    displayWords: textWords,
+                    across: boundaryWords
+                )
+            )
         }
         if !boundaryWords.isEmpty {
             return assignStableIDs(to: boundaryWords.flatMap(splitDisplayToken))
         }
         return assignStableIDs(to: textWords)
+    }
+
+    private static func boundariesPlausiblyBelong(
+        to displayWords: [TeleprompterWord],
+        boundaryWords: [TeleprompterWord]
+    ) -> Bool {
+        guard !displayWords.isEmpty, !boundaryWords.isEmpty else { return false }
+        let displayText = normalizedText(for: displayWords)
+        let boundaryText = normalizedText(for: boundaryWords)
+        guard !displayText.isEmpty, !boundaryText.isEmpty else { return false }
+        guard displayText == boundaryText ||
+            (!displayText.contains(boundaryText) && !boundaryText.contains(displayText))
+        else {
+            return false
+        }
+        let displaySignature = normalizedSignature(for: displayWords)
+        let boundarySignature = normalizedSignature(for: boundaryWords)
+
+        let maximumLength = max(displaySignature.count, boundarySignature.count)
+        let distance = editDistance(displaySignature, boundarySignature)
+        let similarity = 1 - (Double(distance) / Double(maximumLength))
+        return similarity >= 0.55
+    }
+
+    private static func normalizedText(for words: [TeleprompterWord]) -> String {
+        words
+            .map(\.text)
+            .joined()
+            .lowercased()
+            .filter { $0.isLetter || $0.isNumber }
+    }
+
+    private static func normalizedSignature(for words: [TeleprompterWord]) -> [Character] {
+        let signature = Array(normalizedText(for: words))
+        guard signature.count > maximumBoundaryComparisonCharacters else {
+            return signature
+        }
+
+        let lastSignatureIndex = signature.count - 1
+        let lastSampleIndex = maximumBoundaryComparisonCharacters - 1
+        return (0 ..< maximumBoundaryComparisonCharacters).map { sampleIndex in
+            signature[(sampleIndex * lastSignatureIndex) / lastSampleIndex]
+        }
+    }
+
+    private static func editDistance(_ lhs: [Character], _ rhs: [Character]) -> Int {
+        var previous = Array(0 ... rhs.count)
+        for (lhsIndex, lhsCharacter) in lhs.enumerated() {
+            var current = [lhsIndex + 1]
+            current.reserveCapacity(rhs.count + 1)
+            for (rhsIndex, rhsCharacter) in rhs.enumerated() {
+                current.append(
+                    min(
+                        current[rhsIndex] + 1,
+                        previous[rhsIndex + 1] + 1,
+                        previous[rhsIndex] + (lhsCharacter == rhsCharacter ? 0 : 1)
+                    )
+                )
+            }
+            previous = current
+        }
+        return previous[rhs.count]
     }
 
     private static func assignStableIDs(to words: [TeleprompterWord]) -> [TeleprompterWord] {
@@ -171,6 +304,8 @@ public enum TeleprompterScrollPosition: Equatable {
 }
 
 public enum TeleprompterScrollPolicy {
+    public static let initialViewportAlignment: Alignment = .top
+
     public static func position(for wordIndex: Int) -> TeleprompterScrollPosition {
         wordIndex == 0 ? .top : .center
     }
@@ -200,6 +335,8 @@ public enum TeleprompterVisibilityPolicy {
 }
 
 public enum TeleprompterPlaybackPolicy {
+    public static let startupDelay: Duration = .zero
+
     public static func animatesTimeline(isReadback: Bool) -> Bool {
         !isReadback
     }
@@ -220,16 +357,31 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
+    public var wrapWidth = Theme.teleprompterWrapWidth
+    public var viewportHeight = Theme.teleprompterViewportHeight
+    public var contentInset = Theme.teleprompterContentInset
 
-    /// Fallback timing constants for non-edge-tts engines (client estimation).
-    private static let baseDelay: Double = 0.28
-    private static let perCharDelay: Double = 0.015
-    private static let minDelay: Double = 0.22
-    private static let maxDelay: Double = 0.38
+    public init(
+        text: String,
+        wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
+        isReadback: Bool = false,
+        wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
+        viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
+        contentInset: CGFloat = Theme.teleprompterContentInset
+    ) {
+        self.text = text
+        self.wordBoundaries = wordBoundaries
+        self.isReadback = isReadback
+        self.wrapWidth = wrapWidth
+        self.viewportHeight = viewportHeight
+        self.contentInset = contentInset
+    }
+
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
     @State private var currentIndex: Int = 0
     @State private var animationTask: Task<Void, Never>?
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     private var teleprompterWords: [TeleprompterWord] {
         TeleprompterContentModel.words(
@@ -256,16 +408,16 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
+                FlowLayout(spacing: 5, maxWidth: wrapWidth) {
                     wordViews
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 4)
-                .padding(.vertical, Theme.teleprompterContentInset)
+                .padding(.vertical, contentInset)
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: Theme.teleprompterViewportHeight,
-                    alignment: .center
+                    minHeight: viewportHeight,
+                    alignment: TeleprompterScrollPolicy.initialViewportAlignment
                 )
             }
             .id(TeleprompterScrollPolicy.contentIdentity(for: text))
@@ -307,9 +459,9 @@ public struct TeleprompterView: View {
                 ))
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: Theme.teleprompterWrapWidth, alignment: .leading)
+                .frame(maxWidth: wrapWidth, alignment: .leading)
                 .foregroundStyle(
-                    .white.opacity(opacityFor(word.id))
+                    notchPalette.primary.color.opacity(opacityFor(word.id))
                 )
                 .id(word.id)
         }
@@ -318,15 +470,22 @@ public struct TeleprompterView: View {
     // MARK: - Word opacity
 
     private func opacityFor(_ index: Int) -> Double {
+        let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(
+            for: notchAppearance
+        )
         if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
             return readbackOpacity
         }
         if index == currentIndex { return 1.0 }
         if index < currentIndex {
             let distance = currentIndex - index
-            return max(0.2, 0.55 - Double(distance) * 0.12)
+            return max(minimumOpacity, 0.70 - Double(distance) * 0.06)
         }
-        return 0.3
+        return minimumOpacity
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
     // MARK: - Animation
@@ -352,8 +511,7 @@ public struct TeleprompterView: View {
         let words = timedWords
 
         animationTask = Task { @MainActor in
-            // Wait for audio player to start (~300ms startup latency)
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
 
             let startTime = ContinuousClock.now
@@ -378,30 +536,17 @@ public struct TeleprompterView: View {
     /// Client-side estimated animation (fallback for non-edge-tts engines).
     private func startEstimatedAnimation() {
         animationTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(0.3))
+            try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
             for i in 0 ..< teleprompterWords.count {
                 currentIndex = i
-                let delay = Self.estimateDelay(for: teleprompterWords[i].text)
+                let delay = TeleprompterPacePolicy.estimatedDelay(
+                    for: teleprompterWords[i].text
+                )
                 try? await Task.sleep(for: .seconds(delay))
                 if Task.isCancelled { break }
             }
         }
-    }
-
-    /// Estimate speaking duration for a word based on length and punctuation.
-    private static func estimateDelay(for word: String) -> Double {
-        let charTime = baseDelay + Double(word.count) * perCharDelay
-        var delay = min(maxDelay, max(minDelay, charTime))
-
-        if let last = word.last {
-            if last == "." || last == "!" || last == "?" {
-                delay += 0.10
-            } else if last == "," || last == ";" || last == ":" {
-                delay += 0.05
-            }
-        }
-        return delay
     }
 
     private func stopAnimating() {

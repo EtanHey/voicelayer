@@ -155,21 +155,33 @@ final class WaveformViewTests: XCTestCase {
 
         XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
         XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
-        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 1)
         XCTAssertFalse(source.contains("recordingWaveformLevels"))
         XCTAssertFalse(source.contains("playbackWaveformLevels"))
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    func testTranscribingRestoresM1SpinnerAsLeadingIndicator() throws {
+    func testTranscribingKeepsOneGoldWaveformInTheRecordingWingAndMorphsTheIndicator() throws {
         let source = try barViewSource()
-        let transcribingBranch = source
-            .components(separatedBy: "} else if state.mode == .transcribing {")
+        let leadingCompactStatusBranch = source
+            .components(separatedBy: "case .compactStatus:")
             .dropFirst()
             .first?
+            .components(separatedBy: "case .teleprompter:")
+            .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let trailingBranch = source
+            .components(separatedBy: "private var notchTrailingContent")
+            .dropFirst()
+            .first?
+            .components(separatedBy: "private var notchCompactStatusContent")
+            .first
 
-        XCTAssertTrue(transcribingBranch?.hasPrefix("ProcessingSpinner()") == true)
+        XCTAssertTrue(leadingCompactStatusBranch?.contains("if state.mode == .transcribing") == true)
+        XCTAssertTrue(leadingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
+        XCTAssertFalse(leadingCompactStatusBranch?.contains("WaveformView(") == true)
+        XCTAssertTrue(trailingBranch?.contains("notchStableWaveform") == true)
+        XCTAssertTrue(source.contains("private var notchStableWaveform"))
         XCTAssertTrue(source.contains("WaveformView(processingColor:"))
     }
 

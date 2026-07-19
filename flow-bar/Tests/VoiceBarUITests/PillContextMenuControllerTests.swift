@@ -35,8 +35,6 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Copy last transcript",
             "Transcription Tools",
             "Preferences",
-            "",
-            "Quit VoiceBar",
         ])
 
         let toolsItem = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" })
@@ -145,8 +143,6 @@ final class PillContextMenuControllerTests: XCTestCase {
             "Copy last transcript",
             "Transcription Tools",
             "Preferences",
-            "",
-            "Quit VoiceBar",
         ])
 
         let toolsSubmenu = try XCTUnwrap(menu.items.first { $0.title == "Transcription Tools" }?.submenu)

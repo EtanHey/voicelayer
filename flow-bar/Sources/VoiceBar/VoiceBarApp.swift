@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let pillContextMenuController = PillContextMenuController()
     private let daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
+    private var terminationPolicy = VoiceBarTerminationPolicy()
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -101,6 +102,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// given geometry change should tween instead of snap.
     private var previousVoiceMode: VoiceMode = .idle
     private var currentVoiceMode: VoiceMode = .idle
+    private lazy var notchPresentationModel = VoiceBarNotchPresentationModel(
+        onLayoutInvalidated: { [weak self] in
+            self?.applyPanelLayout(animated: true)
+        }
+    )
+    private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
+    private var lastLoggedNotchHousingWidth: CGFloat?
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -162,6 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func enforceCanonicalSingleInstance() -> Bool {
         let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
+        guard defaultsEnforceSingleton else {
+            NSLog("[VoiceBar] Singleton guard skipped by explicit QA override")
+            return true
+        }
+
         if !VoiceLayerPaths.enforcesSingletonInstance {
             do {
                 return try VoiceBarInstanceElectionLock.withExclusiveLock {
@@ -179,42 +192,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     )
                     isolatedInstanceMarkerPID = myPID
                     NSLog(
-                        "[VoiceBar] Singleton guard skipped for registered isolated socket path %@",
+                        "[VoiceBar] Registered isolated transport before visible-surface election at %@",
                         VoiceLayerPaths.socketPath
                     )
-                    return true
+                    let accepted = performCanonicalSingleInstanceElection(
+                        currentIsIsolated: true
+                    )
+                    if !accepted {
+                        VoiceBarInstanceIsolationRegistry.unregister(pid: myPID)
+                        isolatedInstanceMarkerPID = nil
+                    }
+                    return accepted
                 }
             } catch {
                 NSLog(
                     "[VoiceBar] Isolated-instance registration failed: %@",
                     String(describing: error)
                 )
-                DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
                 }
                 return false
             }
         }
 
-        guard defaultsEnforceSingleton else {
-            NSLog("[VoiceBar] Singleton guard skipped by defaults")
-            return true
-        }
-
         do {
             return try VoiceBarInstanceElectionLock.withExclusiveLock {
-                performCanonicalSingleInstanceElection()
+                performCanonicalSingleInstanceElection(currentIsIsolated: false)
             }
         } catch {
             NSLog("[VoiceBar] Single-instance election lock failed: %@", String(describing: error))
-            DispatchQueue.main.async {
-                NSApplication.shared.terminate(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.requestTermination(.internalFailure)
             }
             return false
         }
     }
 
-    private func performCanonicalSingleInstanceElection() -> Bool {
+    private func performCanonicalSingleInstanceElection(
+        currentIsIsolated: Bool
+    ) -> Bool {
         let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.voicelayer.voicebar"
         let runningApplications = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleIdentifier)
@@ -223,7 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let decision = VoiceBarInstanceGuard.plan(
             current: VoiceBarInstanceDescriptor(
                 pid: myPID,
-                bundlePath: Bundle.main.bundleURL.path
+                bundlePath: Bundle.main.bundleURL.path,
+                isIsolated: currentIsIsolated
             ),
             running: runningApplications.map { application in
                 VoiceBarInstanceDescriptor(
@@ -244,12 +262,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         case let .exitCurrent(canonicalPID):
             NSLog(
-                "[VoiceBar] Canonical VoiceBar PID %d already owns the resident path; exiting PID %d",
+                "[VoiceBar] VoiceBar PID %d already owns the visible surface; exiting PID %d",
                 canonicalPID,
                 myPID
             )
-            DispatchQueue.main.async {
-                NSApplication.shared.terminate(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.requestTermination(.internalFailure)
             }
             return false
 
@@ -288,8 +306,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     "[VoiceBar] Refusing duplicate startup; exact PIDs still alive: %@",
                     survivorList
                 )
-                DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
                 }
                 return false
             }
@@ -386,7 +404,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.handleVoiceModeChange(mode)
         }
         voiceState.onPanelLayoutChange = { [weak self] in
-            self?.applyPanelLayout(animated: true)
+            self?.refreshNotchPresentationAndPanelLayout(animated: true)
         }
         voiceState.onHistoryArchiveChange = {
             NotificationCenter.default.post(name: .voiceBarHistoryArchiveDidChange, object: nil)
@@ -409,11 +427,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configureWakeRecovery()
 
         // Floating pill
-        let initialLayout = Self.panelLayout(for: voiceState)
-        let barView = BarView(state: voiceState, commandRouter: commandRouter)
+        refreshNotchPresentationModel()
+        let initialLayout = currentPanelLayout()
+        let barView = BarView(
+            state: voiceState,
+            commandRouter: commandRouter,
+            presentationModel: notchPresentationModel,
+            includesPanelOutsets: true
+        )
         let hosting = PillHostingView(rootView: barView)
-        hosting.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+        hosting.activeHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
+        }
+        hosting.hoverExpansionHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
+        }
+        hosting.hoverRetentionHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsHoverRetention(point) ?? false
+        }
+        hosting.onHoverChanged = { [weak self] hovering in
+            guard let self else { return }
+            voiceState.setHoveringFromDebouncedPointer(hovering)
+            notchPresentationModel.setHovered(hovering)
         }
         hosting.frame = NSRect(
             x: 0, y: 0,
@@ -434,8 +469,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
-        pill.activeHitRectProvider = { [weak self] in
-            Self.panelLayout(for: self?.voiceState).activeHitRect
+        pill.activeHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         positionPanel(pill, on: nil)
@@ -444,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
+        voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
         }
@@ -561,9 +597,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
         }
-        pillContextMenuController.onQuit = {
-            NSApplication.shared.terminate(nil)
-        }
     }
 
     private func snoozeForOneHour() {
@@ -588,6 +621,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let reply = terminationPolicy.reply(
+            enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        guard reply == .terminateNow else {
+            NSLog("[VoiceBar] Ignoring external quit request for isolated QA instance")
+            return reply
+        }
+
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
         snoozeTask?.cancel()
@@ -595,7 +636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         audioLevelMonitor.stop()
         daemonController.stop()
         socketServer?.stop()
-        return .terminateNow
+        return reply
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -785,7 +826,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
-        applyPanelLayout(animated: true)
+        refreshNotchPresentationAndPanelLayout(animated: true)
+        synchronizeRetainedReadbackLifecycle()
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
@@ -797,70 +839,165 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func synchronizeRetainedReadbackLifecycle() {
+        retainedReadbackDismissalCoordinator.synchronize(
+            isReadback: voiceState.isTeleprompterReadback,
+            isPointerInsideVisibleSurface: { [weak self] in
+                self?.isPointerInsideVisibleNotchSurface ?? false
+            }
+        ) { [weak self] in
+            guard let self,
+                  voiceState.isTeleprompterReadback
+            else { return }
+            voiceState.setHovering(false)
+            voiceState.dismissRetainedTeleprompter()
+        }
+    }
+
+    private var isPointerInsideVisibleNotchSurface: Bool {
+        guard let panel else { return false }
+        let layout = currentPanelLayout()
+        return RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: NSEvent.mouseLocation,
+            panelFrame: panel.frame,
+            convertFromScreen: { panel.convertPoint(fromScreen: $0) },
+            containsLocalPoint: { layout.containsActiveContent($0) }
+        )
+    }
+
     private func applyPanelLayout(animated: Bool) {
         guard let panel else { return }
         let targetScreen = panel.screen ?? NSScreen.main
-        guard let visibleFrame = targetScreen?.visibleFrame else { return }
-        let layout = Self.panelLayout(for: voiceState)
+        guard let targetScreen else { return }
+        let visibleFrame = targetScreen.visibleFrame
+        let layout = currentPanelLayout()
+        let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
-        let plan = PillResizePlan.makeAnchored(
-            visibleFrame: visibleFrame,
-            horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset,
-            topPadding: Theme.topPadding,
-            pillSize: layout.panelSize,
-            from: previousVoiceMode,
-            to: currentVoiceMode,
-            padding: 0
-        )
+        let plan = if screenGeometry.kind == .hardwareNotch {
+            PillResizePlan(
+                frame: layout.windowFrame(anchoredTo: screenGeometry),
+                animate: false
+            )
+        } else {
+            PillResizePlan.makeAnchored(
+                visibleFrame: visibleFrame,
+                horizontalOffset: placement.horizontalOffset,
+                verticalOffset: placement.verticalOffset,
+                topPadding: Theme.topPadding,
+                pillSize: layout.panelSize,
+                from: previousVoiceMode,
+                to: currentVoiceMode,
+                padding: 0
+            )
+        }
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
+        configurePanelDragging(panel, for: screenGeometry)
     }
 
-    private static func panelLayout(for state: VoiceState?) -> VoiceBarPanelLayout {
-        let mode = state?.mode ?? .idle
-        let previewText = VoiceBarPresentation.transcriptPreviewText(
-            mode: mode,
-            confirmationText: state?.confirmationText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        let statusText = VoiceBarPresentation.liveStatusText(
-            mode: mode,
-            transcript: state?.transcript ?? "",
-            confirmationText: state?.confirmationText,
-            hotkeyPhase: state?.hotkeyPhase ?? .idle,
-            hotkeyEnabled: state?.hotkeyEnabled ?? false,
-            errorMessage: state?.errorMessage,
-            transcribingStatusText: state?.transcribingStatusText,
-            commandModeState: state?.commandModeState,
-            activeClipMarker: state?.activeClipMarker
-        )
-        return VoiceBarPanelLayout.make(
-            mode: mode,
-            isCollapsed: state?.isCollapsed ?? false,
-            previewText: previewText,
-            statusText: statusText,
-            idleAccessoryButtonCount: VoiceBarPresentation.idleAccessoryButtonCount(
-                recentTranscriptions: state?.recentTranscriptions ?? [],
-                transcriptionVocabularyTerms: state?.transcriptionVocabularyTerms ?? [],
-                transcriptionVocabularyAliases: state?.transcriptionVocabularyAliases ?? [],
-                canReplay: state?.canReplay ?? false
-            ) + ((state?.isTeleprompterReadback ?? false) ? 2 : 0),
-            queueItemCount: state?.queueItems.count ?? 0,
-            showsTeleprompter: VoiceBarPresentation.reservesTeleprompterEnvelope(
-                hasText: state?.teleprompterText != nil,
-                isDismissed: state?.isTeleprompterDismissed ?? false,
-                isReadback: state?.isTeleprompterReadback ?? false
+    private func currentPanelLayout() -> VoiceBarPanelLayout {
+        VoiceBarPanelLayout.make(presentation: notchPresentationModel.presentation)
+    }
+
+    private func refreshNotchPresentationAndPanelLayout(animated: Bool) {
+        let previousPresentation = notchPresentationModel.presentation
+        refreshNotchPresentationModel()
+        if notchPresentationModel.presentation == previousPresentation {
+            applyPanelLayout(animated: animated)
+        }
+    }
+
+    private func refreshNotchPresentationModel(
+        for screen: NSScreen? = nil
+    ) {
+        let screenGeometry = (screen ?? panel?.screen ?? NSScreen.main).map(Self.notchScreenGeometry)
+        let coreWidth = screenGeometry?.housingFrame.width ?? VoiceBarNotchContract.coreWidth
+        if lastLoggedNotchHousingWidth != coreWidth {
+            lastLoggedNotchHousingWidth = coreWidth
+            logDiagnostic(event: "notch_housing_width_resolved", details: [
+                "coreWidth": String(format: "%.2f", coreWidth),
+                "screenKind": screenGeometry?.kind == .hardwareNotch
+                    ? "hardwareNotch"
+                    : "flatDisplayFallback",
+            ])
+        }
+        let resolved = Self.notchPresentation(for: voiceState, coreWidth: coreWidth)
+        notchPresentationModel.updateOperationalEnvelope(
+            hasTeleprompter: resolved.visualState == .teleprompter,
+            isRecording: resolved.visualState == .recording,
+            hasCompactStatus: resolved.visualState == .compactStatus,
+            compactStatusLeadingWingWidth: resolved.visualState == .compactStatus
+                ? resolved.geometry.leadingWingWidth
+                : nil,
+            keepsIdleExpanded: voiceState.mode == .idle && (
+                !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
             ),
-            showsRecordingHold: VoiceBarPresentation.recordingHoldControl(
-                mode: mode,
-                recordingMode: state?.recordingMode,
-                isEngaged: state?.isRecordingHoldEngaged ?? false
-            ) != nil,
-            isPasteFlowActive: state?.keepsPasteFlowEnvelope ?? false,
-            padding: Theme.panelPadding
+            coreWidth: coreWidth
         )
+        notchPresentationModel.setHovered(voiceState.isHovering)
+    }
+
+    private static func notchPresentation(
+        for state: VoiceState?,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+    ) -> VoiceBarNotchPresentation {
+        let mode = state?.mode ?? .idle
+        return VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: mode,
+                hasTeleprompterText: state?.teleprompterText != nil,
+                isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
+                isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
+                confirmationText: state?.confirmationText,
+                commandModeState: state?.commandModeState,
+                activeClipMarker: state?.activeClipMarker,
+                queueDepth: state?.queueDepth ?? 0,
+                keepsPasteFlowEnvelope: state?.keepsPasteFlowEnvelope ?? false,
+                hotkeyPhase: state?.hotkeyPhase ?? .idle,
+                statusText: notchStatusText(for: state),
+                isHovered: state?.isHovering ?? false,
+                isKeyboardFocused: false,
+                isCollapsed: state?.isCollapsed ?? false,
+                coreWidth: coreWidth
+            )
+        )
+    }
+
+    private static func notchStatusText(for state: VoiceState?) -> String {
+        guard let state else { return "" }
+        return VoiceBarPresentation.liveStatusText(
+            mode: state.mode,
+            transcript: state.transcript,
+            confirmationText: state.confirmationText,
+            hotkeyPhase: state.hotkeyPhase,
+            hotkeyEnabled: state.hotkeyEnabled,
+            errorMessage: state.errorMessage,
+            transcribingStatusText: state.transcribingStatusText,
+            commandModeState: state.commandModeState,
+            activeClipMarker: state.activeClipMarker
+        )
+    }
+
+    private static func notchScreenGeometry(for screen: NSScreen) -> VoiceBarNotchScreenGeometry {
+        VoiceBarNotchScreenGeometry.resolve(
+            metrics: VoiceBarNotchScreenMetrics(
+                frame: screen.frame,
+                safeAreaTop: screen.safeAreaInsets.top,
+                auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+                auxiliaryTopRightArea: screen.auxiliaryTopRightArea
+            )
+        )
+    }
+
+    private func configurePanelDragging(
+        _ panel: FloatingPillPanel,
+        for screenGeometry: VoiceBarNotchScreenGeometry
+    ) {
+        let usesPhysicalHousing = screenGeometry.kind == .hardwareNotch
+        panel.isPillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
+        panel.isMovableByWindowBackground = !usesPhysicalHousing
+            && anchorMode.allowsFreeDrag
+            && VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
     }
 
     private func logDiagnostic(event: String, details: [String: String] = [:]) {
@@ -1017,7 +1154,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
         let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
-        let visibleFrame = targetScreen?.visibleFrame ?? .zero
+        guard let targetScreen else { return }
+        let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+        refreshNotchPresentationModel(for: targetScreen)
+        if screenGeometry.kind == .hardwareNotch {
+            panel.setFrame(
+                currentPanelLayout().windowFrame(anchoredTo: screenGeometry),
+                display: true
+            )
+            configurePanelDragging(panel, for: screenGeometry)
+            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
+
+        let visibleFrame = targetScreen.visibleFrame
         let placement = anchorPlacement(
             for: panel,
             visibleFrame: visibleFrame,
@@ -1028,8 +1180,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             horizontalOffset: placement.horizontalOffset,
             verticalOffset: placement.verticalOffset
         )
-        if let targetScreen,
-           let index = NSScreen.screens.firstIndex(of: targetScreen) {
+        configurePanelDragging(panel, for: screenGeometry)
+        if let index = NSScreen.screens.firstIndex(of: targetScreen) {
             currentScreenIndex = index
         }
     }
@@ -1491,8 +1643,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.logDiagnostic(event: "menu_bar_paste_last_transcript_tapped")
                 self?.voiceState.repasteLastTranscript(source: "menu_bar")
             },
-            quit: { NSApplication.shared.terminate(nil) }
+            quit: { [weak self] in self?.requestTermination(.menuBar) }
         )
+    }
+
+    private func requestTermination(_ intent: VoiceBarTerminationIntent) {
+        terminationPolicy.authorize(intent)
+        NSApplication.shared.terminate(nil)
     }
 
     func openSettingsWindow() {

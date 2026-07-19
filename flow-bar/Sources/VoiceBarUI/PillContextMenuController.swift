@@ -33,7 +33,6 @@ public final class PillContextMenuController: NSObject {
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
     public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
-    public var onQuit: () -> Void = {}
 
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
@@ -93,16 +92,6 @@ public final class PillContextMenuController: NSObject {
         let preferencesItem = NSMenuItem(title: "Preferences", action: nil, keyEquivalent: "")
         preferencesItem.submenu = makePreferencesSubmenu()
         menu.addItem(preferencesItem)
-
-        menu.addItem(.separator())
-
-        let quitItem = NSMenuItem(
-            title: "Quit VoiceBar",
-            action: #selector(handleQuit),
-            keyEquivalent: ""
-        )
-        quitItem.target = self
-        menu.addItem(quitItem)
 
         return menu
     }
@@ -321,10 +310,6 @@ public final class PillContextMenuController: NSObject {
 
     @objc private func handleCopyLastTranscript() {
         onCopyLastTranscript()
-    }
-
-    @objc private func handleQuit() {
-        onQuit()
     }
 
     @objc private func handlePasteRecentTranscript(_ sender: NSMenuItem) {

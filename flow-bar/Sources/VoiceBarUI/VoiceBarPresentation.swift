@@ -34,11 +34,119 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
     public var isMultiline: Bool
 }
 
+public struct VoiceBarNotchOperationalInput: Equatable {
+    public var mode: VoiceMode
+    public var hasTeleprompterText: Bool
+    public var isTeleprompterDismissed: Bool
+    public var isTeleprompterReadback: Bool
+    public var confirmationText: String?
+    public var commandModeState: CommandModeState?
+    public var activeClipMarker: ClipMarkerState?
+    public var queueDepth: Int
+    public var keepsPasteFlowEnvelope: Bool
+    public var hotkeyPhase: HotkeyPhase
+    public var statusText: String
+    public var isHovered: Bool
+    public var isKeyboardFocused: Bool
+    public var isCollapsed: Bool
+    public var coreWidth: CGFloat
+
+    public init(
+        mode: VoiceMode,
+        hasTeleprompterText: Bool = false,
+        isTeleprompterDismissed: Bool = false,
+        isTeleprompterReadback: Bool = false,
+        confirmationText: String? = nil,
+        commandModeState: CommandModeState? = nil,
+        activeClipMarker: ClipMarkerState? = nil,
+        queueDepth: Int = 0,
+        keepsPasteFlowEnvelope: Bool = false,
+        hotkeyPhase: HotkeyPhase = .idle,
+        statusText: String = "",
+        isHovered: Bool = false,
+        isKeyboardFocused: Bool = false,
+        isCollapsed: Bool = false,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+    ) {
+        self.mode = mode
+        self.hasTeleprompterText = hasTeleprompterText
+        self.isTeleprompterDismissed = isTeleprompterDismissed
+        self.isTeleprompterReadback = isTeleprompterReadback
+        self.confirmationText = confirmationText
+        self.commandModeState = commandModeState
+        self.activeClipMarker = activeClipMarker
+        self.queueDepth = queueDepth
+        self.keepsPasteFlowEnvelope = keepsPasteFlowEnvelope
+        self.hotkeyPhase = hotkeyPhase
+        self.statusText = statusText
+        self.isHovered = isHovered
+        self.isKeyboardFocused = isKeyboardFocused
+        self.isCollapsed = isCollapsed
+        self.coreWidth = coreWidth
+    }
+}
+
 public enum VoiceBarPresentation {
     public static let readyHotkeyHint = "F5 to talk"
     public static let holdToTalkHint = "Hold to talk"
     public static let releaseToSendHint = "Release to send"
     public static let tapAgainToLockHint = "Tap again to lock"
+
+    public static func notchPresentation(
+        from input: VoiceBarNotchOperationalInput
+    ) -> VoiceBarNotchPresentation {
+        let isRecording = input.mode == .recording
+        let isCollapsedIdle = input.mode == .idle && input.isCollapsed &&
+            !input.isHovered && !input.isKeyboardFocused
+        let hasCompactStatus: Bool
+        switch input.mode {
+        case .recording:
+            hasCompactStatus = false
+        case .idle:
+            let confirmation = input.confirmationText?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            hasCompactStatus = !isCollapsedIdle && (!confirmation.isEmpty ||
+                input.commandModeState != nil ||
+                input.activeClipMarker != nil ||
+                input.queueDepth > 0 ||
+                input.keepsPasteFlowEnvelope ||
+                input.hotkeyPhase != .idle)
+        case .speaking, .transcribing, .error, .disconnected:
+            hasCompactStatus = true
+        }
+        let hasTeleprompter = !isCollapsedIdle && reservesTeleprompterEnvelope(
+            hasText: input.hasTeleprompterText,
+            isDismissed: input.isTeleprompterDismissed,
+            isReadback: input.isTeleprompterReadback
+        ) && !(input.mode == .idle && hasCompactStatus)
+        let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
+
+        return VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: hasTeleprompter,
+            isRecording: isRecording,
+            hasCompactStatus: hasCompactStatus,
+            compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
+                mode: input.mode,
+                statusText: input.statusText
+            ),
+            isHovered: input.isHovered || keepsIdleExpanded,
+            isKeyboardFocused: input.isKeyboardFocused,
+            coreWidth: input.coreWidth
+        )
+    }
+
+    private static func compactStatusLeadingWingWidth(
+        mode: VoiceMode,
+        statusText: String
+    ) -> CGFloat? {
+        guard mode == .transcribing else { return nil }
+        let contentWidth = Theme.pillProcessingSpinnerWidth
+            + Theme.intrinsicPillStatusWidth(for: statusText)
+            + VoiceBarNotchContract.material.compactControlSpacing
+        return VoiceBarNotchContract.material.blackToGlassFadeWidth
+            + 2
+            + contentWidth
+    }
 
     public static func hotkeyPermissionHint(
         hotkeyEnabled: Bool,

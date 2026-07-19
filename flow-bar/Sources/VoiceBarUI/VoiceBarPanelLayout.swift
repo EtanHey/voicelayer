@@ -1,99 +1,98 @@
 import CoreGraphics
 
-public struct VoiceBarPanelLayout: Equatable {
-    public var panelSize: CGSize
-    public var activeHitRect: CGRect
+public struct VoiceBarNotchShadowOutsets: Equatable, Sendable {
+    public let leading: CGFloat
+    public let trailing: CGFloat
+    public let bottom: CGFloat
 
-    public static func make(
-        mode: VoiceMode,
-        isCollapsed: Bool,
-        previewText: String?,
-        statusText: String = "",
-        idleAccessoryButtonCount: Int = 0,
-        queueItemCount: Int = 0,
-        showsTeleprompter: Bool = false,
-        showsRecordingHold: Bool = false,
-        isPasteFlowActive: Bool = false,
-        padding: CGFloat
-    ) -> VoiceBarPanelLayout {
-        let contentSize = contentSize(
-            mode: mode,
-            isCollapsed: isCollapsed,
-            previewText: previewText,
-            statusText: statusText,
-            idleAccessoryButtonCount: idleAccessoryButtonCount,
-            queueItemCount: queueItemCount,
-            showsTeleprompter: showsTeleprompter,
-            showsRecordingHold: showsRecordingHold
-        )
-        let safePadding = max(0, padding)
-        let resolvedContentSize = if isPasteFlowActive, !isCollapsed {
-            CGSize(
-                width: Theme.panelWidth - (safePadding * 2),
-                height: contentSize.height
-            )
-        } else {
-            contentSize
-        }
-        let panelSize = CGSize(
-            width: resolvedContentSize.width + (safePadding * 2),
-            height: resolvedContentSize.height + (safePadding * 2)
-        )
-        let hitInset: CGFloat = 2
-        let horizontalInset = min(hitInset, max(0, resolvedContentSize.width / 2))
-        let verticalInset = min(hitInset, max(0, resolvedContentSize.height / 2))
-        let activeHitRect = CGRect(
-            x: safePadding + horizontalInset,
-            y: safePadding + verticalInset,
-            width: max(1, resolvedContentSize.width - (horizontalInset * 2)),
-            height: max(1, resolvedContentSize.height - (verticalInset * 2))
-        )
-
-        return VoiceBarPanelLayout(panelSize: panelSize, activeHitRect: activeHitRect)
+    public init(leading: CGFloat, trailing: CGFloat, bottom: CGFloat) {
+        self.leading = leading
+        self.trailing = trailing
+        self.bottom = bottom
     }
 
-    private static func contentSize(
-        mode: VoiceMode,
-        isCollapsed: Bool,
-        previewText: String?,
-        statusText: String,
-        idleAccessoryButtonCount: Int,
-        queueItemCount: Int,
-        showsTeleprompter: Bool,
-        showsRecordingHold: Bool
-    ) -> CGSize {
-        if isCollapsed {
-            return CGSize(width: 22, height: 22)
-        }
+    /// The material shadow has radius 12 and a five-point downward offset.
+    /// The screen-top edge deliberately has no outset so the visible core can
+    /// stay physically flush with the display housing.
+    public static let material = VoiceBarNotchShadowOutsets(
+        leading: 12,
+        trailing: 12,
+        bottom: 17
+    )
+}
 
-        if let previewText {
-            let previewLayout = VoiceBarPresentation.transcriptPreviewLayout(for: previewText)
-            return CGSize(
-                width: Theme.transcriptPreviewPillWidth(for: previewText),
-                height: previewLayout.height
-            )
-        }
+public struct VoiceBarPanelLayout: Equatable {
+    public static let hoverRetentionPadding: CGFloat = 12
 
-        let height = showsTeleprompter
-            ? Theme.teleprompterViewportHeight
-            : Theme.pillCompactHeight
-        let width = if showsTeleprompter {
-            Theme.teleprompterPillWidth(
-                for: mode,
-                accessoryButtonCount: idleAccessoryButtonCount
+    public let presentation: VoiceBarNotchPresentation
+    public let panelSize: CGSize
+    public let visibleContentRect: CGRect
+    public let activeHitRect: CGRect
+    public let hoverRetentionRect: CGRect
+
+    private let hitRegion: VoiceBarNotchHitRegion
+
+    public static func make(
+        presentation: VoiceBarNotchPresentation,
+        shadowOutsets: VoiceBarNotchShadowOutsets = .material
+    ) -> VoiceBarPanelLayout {
+        let geometry = presentation.geometry
+        let visibleContentRect = CGRect(
+            x: shadowOutsets.leading,
+            y: shadowOutsets.bottom,
+            width: geometry.totalWidth,
+            height: geometry.totalHeight
+        )
+        let hitRegion = VoiceBarNotchHitRegion(geometry: geometry)
+        let activeHitRect = hitRegion.bounds.offsetBy(
+            dx: visibleContentRect.minX,
+            dy: visibleContentRect.minY
+        )
+        let panelSize = CGSize(
+            width: geometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
+            height: geometry.totalHeight + shadowOutsets.bottom
+        )
+        let hoverRetentionRect = activeHitRect
+            .insetBy(
+                dx: -Self.hoverRetentionPadding,
+                dy: -Self.hoverRetentionPadding
             )
-        } else {
-            Theme.pillContentWidth(
-                for: mode,
-                statusText: statusText,
-                idleAccessoryButtonCount: idleAccessoryButtonCount,
-                queueItemCount: queueItemCount,
-                showsRecordingHold: showsRecordingHold
+            .intersection(CGRect(origin: .zero, size: panelSize))
+
+        return VoiceBarPanelLayout(
+            presentation: presentation,
+            panelSize: panelSize,
+            visibleContentRect: visibleContentRect,
+            activeHitRect: activeHitRect,
+            hoverRetentionRect: hoverRetentionRect,
+            hitRegion: hitRegion
+        )
+    }
+
+    public func containsActiveContent(_ point: CGPoint) -> Bool {
+        hitRegion.contains(
+            CGPoint(
+                x: point.x - visibleContentRect.minX,
+                y: point.y - visibleContentRect.minY
             )
-        }
-        return CGSize(
-            width: width,
-            height: height
+        )
+    }
+
+    public func containsHoverRetention(_ point: CGPoint) -> Bool {
+        hoverRetentionRect.contains(point)
+    }
+
+    public func windowFrame(
+        anchoredTo screenGeometry: VoiceBarNotchScreenGeometry
+    ) -> CGRect {
+        CGRect(
+            x: screenGeometry.housingFrame.midX
+                - (presentation.geometry.coreWidth / 2)
+                - visibleContentRect.minX
+                - presentation.geometry.coreOriginX,
+            y: screenGeometry.screenFrame.maxY - panelSize.height,
+            width: panelSize.width,
+            height: panelSize.height
         )
     }
 }
