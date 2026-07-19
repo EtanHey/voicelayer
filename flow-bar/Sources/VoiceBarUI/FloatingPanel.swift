@@ -36,10 +36,10 @@ public enum VoiceBarBackingScaleSynchronizer {
         guard scale > 0 else { return view.layer?.contentsScale }
         view.wantsLayer = true
         view.layerContentsRedrawPolicy = .onSetNeedsDisplay
-        apply(scale, to: view.layer)
         view.needsLayout = true
-        view.needsDisplay = true
         view.layoutSubtreeIfNeeded()
+        apply(scale, to: view.layer)
+        view.needsDisplay = true
         view.displayIfNeeded()
         return view.layer?.contentsScale
     }

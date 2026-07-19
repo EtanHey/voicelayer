@@ -334,6 +334,12 @@ final class VoiceStateTests: XCTestCase {
         state.handleEvent(["type": "speech", "detected": true])
         XCTAssertTrue(state.speechDetected)
 
+        state.handleEvent(["type": "state", "state": "recording"])
+        XCTAssertTrue(
+            state.speechDetected,
+            "a repeated recording snapshot must not restart the pre-speech damping phase"
+        )
+
         state.handleEvent(["type": "speech", "detected": false])
         XCTAssertTrue(
             state.speechDetected,

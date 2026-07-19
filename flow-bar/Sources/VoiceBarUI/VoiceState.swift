@@ -1041,7 +1041,9 @@ public final class VoiceState {
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
-                speechDetected = false
+                if startsNewRecording {
+                    speechDetected = false
+                }
                 refreshAudioLevel()
                 if startsNewRecording {
                     appendRecordingWaveformSample()
