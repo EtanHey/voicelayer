@@ -388,6 +388,12 @@ export async function handleConverse(
       captureAudioArtifact: true,
       ...playbackTelemetryOptions(context),
     });
+    if (timeoutSettled || inputAbortController.signal.aborted) {
+      return textResult(
+        "[converse] Request ended before recording could start.",
+        true,
+      );
+    }
     if (
       !speech.audioArtifact ||
       !speech.displayText?.trim() ||

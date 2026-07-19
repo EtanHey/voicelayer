@@ -242,6 +242,57 @@ describe("handleConverse resilience — P0-2", () => {
     }
   });
 
+  it("does not start a heartbeat or recording after prompt speech outlives the outer timeout", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let finishPrompt!: (value: ReturnType<typeof capturedPrompt>) => void;
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishPrompt = resolve;
+          }),
+      );
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        () => new Promise(() => {}),
+      );
+      const events: unknown[] = [];
+
+      const pending = handleConverse(
+        {
+          message: "Do not record after this request times out",
+          timeout_seconds: 5,
+        },
+        {
+          heartbeatIntervalMs: 10,
+          emit: (event: unknown) => events.push(event),
+        },
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(speakSpy).toHaveBeenCalledTimes(1);
+      jest.advanceTimersByTime(20_000);
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Hard timeout");
+
+      finishPrompt(capturedPrompt());
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(100);
+
+      expect(waitSpy).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
   it("gives STT and the return pipe a fresh deadline after a long capture ends", async () => {
     jest.useFakeTimers();
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
