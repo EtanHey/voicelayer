@@ -85,20 +85,40 @@ public enum VoiceBarNotchCaptureAudit {
         let baselinePixels = image.values(in: regions.baseline).map(\.brightness)
         let fillBaseline = mean(baselinePixels)
         let auditPixels = image.values(in: regions.audit)
-        let mask = Set(auditPixels.compactMap { pixel -> PixelCoordinate? in
+        let dimArtifactMask = Set(auditPixels.compactMap { pixel -> PixelCoordinate? in
             guard pixel.brightness > fillBaseline + birthmarkBrightnessOffset,
                   pixel.brightness < maximumBirthmarkBrightness
             else { return nil }
             return PixelCoordinate(x: pixel.x, y: pixel.y)
         })
-        let largestBlobPixels = largestConnectedComponent(in: mask)
+        // The broad audit band intentionally excludes the bright symbol/menu-bar
+        // range. Re-check its fully in-wing interior without that ceiling so an
+        // abnormally bright compositing patch cannot disappear from the gate.
+        let brightInteriorPixels = image.values(in: regions.brightInterior)
+        let brightArtifactMask = Set(brightInteriorPixels.compactMap { pixel -> PixelCoordinate? in
+            guard pixel.brightness > fillBaseline + birthmarkBrightnessOffset
+            else { return nil }
+            return PixelCoordinate(x: pixel.x, y: pixel.y)
+        })
         let dimWingPixels = auditPixels
             .map(\.brightness)
             .filter { $0 < maximumBirthmarkBrightness }
-        let settledContrast = max(0, percentile(dimWingPixels, percentile: 0.95) - fillBaseline)
         let scale = (Double(image.width) / referenceSize.width) *
             (Double(image.height) / referenceSize.height)
         let blobPixelLimit = max(1, Int((Double(maximumBirthmarkBlobPixels) * scale).rounded(.up)))
+        let brightBlobPixels = largestConnectedComponent(in: brightArtifactMask)
+        let largestBlobPixels = max(
+            largestConnectedComponent(in: dimArtifactMask),
+            brightBlobPixels
+        )
+        let dimSettledContrast = max(
+            0,
+            percentile(dimWingPixels, percentile: 0.95) - fillBaseline
+        )
+        let brightSettledContrast = brightBlobPixels > blobPixelLimit
+            ? max(0, percentile(brightInteriorPixels.map(\.brightness), percentile: 0.95) - fillBaseline)
+            : 0
+        let settledContrast = max(dimSettledContrast, brightSettledContrast)
         let passed = !baselinePixels.isEmpty &&
             largestBlobPixels <= blobPixelLimit &&
             settledContrast < maximumSettledBirthmarkContrast
@@ -153,17 +173,19 @@ public enum VoiceBarNotchCaptureAudit {
 
     private static func birthmarkRegions(
         for side: VoiceBarNotchSide
-    ) -> (audit: CGRect, baseline: CGRect) {
+    ) -> (audit: CGRect, baseline: CGRect, brightInterior: CGRect) {
         switch side {
         case .leading:
             (
                 audit: normalizedRect(x: 35, y: 48, width: 85, height: 34),
-                baseline: normalizedRect(x: 95, y: 35, width: 30, height: 15)
+                baseline: normalizedRect(x: 95, y: 35, width: 30, height: 15),
+                brightInterior: normalizedRect(x: 50, y: 48, width: 60, height: 14)
             )
         case .trailing:
             (
                 audit: normalizedRect(x: 560, y: 48, width: 80, height: 30),
-                baseline: normalizedRect(x: 515, y: 35, width: 40, height: 15)
+                baseline: normalizedRect(x: 515, y: 35, width: 40, height: 15),
+                brightInterior: normalizedRect(x: 570, y: 48, width: 50, height: 14)
             )
         }
     }

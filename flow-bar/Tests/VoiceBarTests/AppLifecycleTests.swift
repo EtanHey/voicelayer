@@ -688,6 +688,15 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(panelSource.contains("acceptsMouseMovedEvents = true"))
     }
 
+    func testFlatDisplayIdleKeepsAVisibleFallbackInsteadOfAnInvisibleClickTarget() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(
+            source.contains("screenGeometry?.kind == .flatDisplayFallback")
+        )
+        XCTAssertTrue(source.contains("keepsIdleExpanded:"))
+    }
+
     func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
         let appSource = try voiceBarAppSource()
         let barSource = try voiceBarUISource(named: "BarView.swift")

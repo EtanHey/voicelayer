@@ -459,7 +459,7 @@ public struct TeleprompterView: View {
                 ))
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: Theme.teleprompterWrapWidth, alignment: .leading)
+                .frame(maxWidth: wrapWidth, alignment: .leading)
                 .foregroundStyle(
                     notchPalette.primary.color.opacity(opacityFor(word.id))
                 )

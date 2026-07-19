@@ -929,7 +929,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.trailingWingWidth
                 : nil,
-            keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
+            keepsIdleExpanded: voiceState.mode == .idle && (
+                !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
+            ),
             coreWidth: coreWidth
         )
         notchPresentationModel.setHovered(voiceState.isHovering)

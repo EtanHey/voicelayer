@@ -27,6 +27,32 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertLessThan(result.settledContrast, 10)
     }
 
+    func testBrightBirthmarkCannotEvadeTheNumericWingGate() {
+        var brightness = Array(repeating: 197.0, count: 800 * 100)
+        fill(&brightness, width: 800, x: 35 ..< 126, y: 20 ..< 83, with: 30)
+        fill(&brightness, width: 800, x: 50 ..< 92, y: 50 ..< 70, with: 150)
+        let image = VoiceBarLumaImage(width: 800, height: 100, brightness: brightness)
+
+        let result = VoiceBarNotchCaptureAudit.birthmark(in: image, side: .leading)
+
+        XCTAssertFalse(result.passed)
+        XCTAssertGreaterThan(result.largestBlobPixels, 150)
+        XCTAssertGreaterThan(result.settledContrast, 18)
+    }
+
+    func testSmallBrightSymbolStrokeDoesNotCountAsABirthmarkBlob() {
+        var brightness = Array(repeating: 197.0, count: 800 * 100)
+        fill(&brightness, width: 800, x: 35 ..< 126, y: 20 ..< 83, with: 30)
+        fill(&brightness, width: 800, x: 65 ..< 68, y: 48 ..< 62, with: 245)
+        let image = VoiceBarLumaImage(width: 800, height: 100, brightness: brightness)
+
+        let result = VoiceBarNotchCaptureAudit.birthmark(in: image, side: .leading)
+
+        XCTAssertTrue(result.passed)
+        XCTAssertLessThanOrEqual(result.largestBlobPixels, 150)
+        XCTAssertLessThan(result.settledContrast, 10)
+    }
+
     func testIdleHoldRejectsAnyVisibilityToggleAcrossThreeSecondsAtSixtyFPS() {
         let flashing = Array(repeating: 84.0, count: 60)
             + Array(repeating: 197.0, count: 60)
