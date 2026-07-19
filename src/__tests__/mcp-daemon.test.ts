@@ -114,6 +114,58 @@ async function mcpExchange(
   });
 }
 
+async function mcpConversation(
+  socketPath: string,
+  requests: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("MCP conversation timeout")),
+      5000,
+    );
+    let buffer = "";
+    const messages: Record<string, unknown>[] = [];
+    const expectedIds = new Set(requests.map((request) => request.id));
+
+    Bun.connect({
+      unix: socketPath,
+      socket: {
+        open(socket) {
+          socket.write(requests.map(serializeMcpFrame).join(""));
+        },
+        data(_socket, raw) {
+          buffer += raw.toString("utf-8");
+          const parsed = parseMcpFrames(buffer);
+          buffer = parsed.remainder;
+          messages.push(...parsed.messages);
+          const responseIds = new Set(
+            messages
+              .map((message) => message.id)
+              .filter((id) => id !== undefined),
+          );
+          if ([...expectedIds].every((id) => responseIds.has(id))) {
+            clearTimeout(timeout);
+            resolve(messages);
+          }
+        },
+        close() {
+          clearTimeout(timeout);
+          reject(new Error("Socket closed before responses"));
+        },
+        error(_socket, err) {
+          clearTimeout(timeout);
+          reject(err);
+        },
+        connectError(_socket, err) {
+          clearTimeout(timeout);
+          reject(err);
+        },
+        drain() {},
+      },
+    }).catch(reject);
+  });
+}
+
 // Helper: connect as NDJSON client and exchange messages
 async function ndjsonExchange(
   socketPath: string,
@@ -315,6 +367,49 @@ describe("mcp-daemon", () => {
       },
     });
     expect(messages.at(-1)?.id).toBe(31);
+  });
+
+  it("honors logging/setLevel for subsequent messages on the same connection", async () => {
+    const { createMcpDaemon } = await import("../mcp-daemon");
+    daemon = await createMcpDaemon({
+      socketPath: TEST_SOCKET,
+      toolExecutor: {
+        executeTool: async (_name: string, _args: Record<string, unknown>, context: any) => {
+          context.emit({
+            kind: "voice_ask_progress",
+            sequence: 1,
+            stage: "recording",
+            elapsedMs: 0,
+          });
+          return { content: [{ type: "text", text: "answer" }] };
+        },
+      } as any,
+    });
+
+    const messages = await mcpConversation(TEST_SOCKET, [
+      {
+        jsonrpc: "2.0",
+        id: 32,
+        method: "logging/setLevel",
+        params: { level: "warning" },
+      },
+      {
+        jsonrpc: "2.0",
+        id: 33,
+        method: "tools/call",
+        params: {
+          name: "voice_ask",
+          arguments: { message: "Question" },
+        },
+      },
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages.find((message) => message.id === 32)?.result).toEqual({});
+    expect(messages.find((message) => message.id === 33)?.result).toBeDefined();
+    expect(
+      messages.some((message) => message.method === "notifications/message"),
+    ).toBe(false);
   });
 
   it("handles multiple concurrent MCP clients", async () => {

@@ -91,6 +91,45 @@ describe("mcp-handler", () => {
     });
   });
 
+  describe("logging/setLevel", () => {
+    it("accepts a supported level and updates the connection context", async () => {
+      let configuredLevel: string | undefined;
+
+      const response = await handleMcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 6,
+          method: "logging/setLevel",
+          params: { level: "warning" },
+        },
+        undefined,
+        {
+          sendNotification() {},
+          setLoggingLevel(level) {
+            configuredLevel = level;
+          },
+        },
+      );
+
+      expect(response).toEqual({ jsonrpc: "2.0", id: 6, result: {} });
+      expect(configuredLevel).toBe("warning");
+    });
+
+    it("rejects an unsupported logging level", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "logging/setLevel",
+        params: { level: "verbose" },
+      });
+
+      expect(response?.error).toEqual({
+        code: -32602,
+        message: "Invalid logging level: verbose",
+      });
+    });
+  });
+
   describe("tools/list", () => {
     it("returns all tool definitions", async () => {
       const response = await handleMcpRequest({

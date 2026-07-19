@@ -10,7 +10,9 @@ import { formatError } from "./format-response";
 import { PACKAGE_VERSION } from "./version";
 import {
   createVoiceToolContext,
+  isMcpLoggingLevel,
   type McpNotification,
+  type McpLoggingLevel,
   type VoiceToolContext,
 } from "./mcp-notifications";
 
@@ -43,6 +45,7 @@ export interface ToolExecutor {
 
 export interface McpRequestContext {
   sendNotification(notification: McpNotification): void | Promise<void>;
+  setLoggingLevel?(level: McpLoggingLevel): void;
 }
 
 /** MCP JSON-RPC request shape. */
@@ -98,6 +101,27 @@ export async function handleMcpRequest(
           tools: getToolDefinitions(),
         },
       };
+
+    case "logging/setLevel": {
+      const level = request.params?.level;
+      if (!isMcpLoggingLevel(level)) {
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32602,
+            message: `Invalid logging level: ${String(level)}`,
+          },
+        };
+      }
+
+      requestContext?.setLoggingLevel?.(level);
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {},
+      };
+    }
 
     case "tools/call": {
       const params = request.params as {

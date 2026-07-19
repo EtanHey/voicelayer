@@ -11,6 +11,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  type LoggingMessageNotification,
 } from "@modelcontextprotocol/sdk/types.js";
 import { getBackend } from "./stt";
 import { STOP_FILE } from "./paths";
@@ -62,9 +63,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
   const progressToken = request.params._meta?.progressToken;
-  const context = createVoiceToolContext(progressToken, (notification) =>
-    extra.sendNotification(notification as never),
-  );
+  const context = createVoiceToolContext(progressToken, (notification) => {
+    if (notification.method === "notifications/message") {
+      return server.sendLoggingMessage(
+        notification.params as LoggingMessageNotification["params"],
+        extra.sessionId,
+      );
+    }
+    return extra.sendNotification(notification as never);
+  });
 
   try {
     switch (name) {

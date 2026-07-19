@@ -29,6 +29,39 @@ export interface McpNotification {
   params: Record<string, unknown>;
 }
 
+export const MCP_LOGGING_LEVELS = [
+  "debug",
+  "info",
+  "notice",
+  "warning",
+  "error",
+  "critical",
+  "alert",
+  "emergency",
+] as const;
+
+export type McpLoggingLevel = (typeof MCP_LOGGING_LEVELS)[number];
+
+export function isMcpLoggingLevel(value: unknown): value is McpLoggingLevel {
+  return MCP_LOGGING_LEVELS.some((level) => level === value);
+}
+
+export function shouldSendMcpNotification(
+  notification: McpNotification,
+  minimumLevel?: McpLoggingLevel,
+): boolean {
+  if (notification.method !== "notifications/message" || !minimumLevel) {
+    return true;
+  }
+
+  const level = notification.params.level;
+  if (!isMcpLoggingLevel(level)) return false;
+  return (
+    MCP_LOGGING_LEVELS.indexOf(level) >=
+    MCP_LOGGING_LEVELS.indexOf(minimumLevel)
+  );
+}
+
 type ProgressToken = string | number;
 type NotificationSender = (
   notification: McpNotification,
