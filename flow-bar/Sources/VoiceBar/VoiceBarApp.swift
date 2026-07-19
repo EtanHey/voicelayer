@@ -118,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     )
     private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
     private var lastLoggedNotchHousingWidth: CGFloat?
+    private var panelBackingScaleCertificationGeneration: UInt = 0
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -909,6 +910,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
         configurePanelDragging(panel, for: screenGeometry)
+        schedulePanelBackingScaleRecertification(reason: "layout_changed")
+    }
+
+    private func schedulePanelBackingScaleRecertification(reason: String) {
+        guard let panel, panel.alphaValue > 0 else { return }
+        panelBackingScaleCertificationGeneration &+= 1
+        let generation = panelBackingScaleCertificationGeneration
+        writeFirstRenderScaleReceipt(ready: false, reason: "\(reason)_pending")
+
+        // Give Observation/SwiftUI one turn to mount the mode-specific view,
+        // then AppKit one turn to materialize its descendant layer tree.
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  generation == panelBackingScaleCertificationGeneration
+            else { return }
+            panel.contentView?.needsLayout = true
+            panel.contentView?.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async { [weak self] in
+                self?.completePanelBackingScaleRecertification(
+                    reason: reason,
+                    generation: generation,
+                    attempt: 0
+                )
+            }
+        }
+    }
+
+    private func completePanelBackingScaleRecertification(
+        reason: String,
+        generation: UInt,
+        attempt: Int
+    ) {
+        guard generation == panelBackingScaleCertificationGeneration else { return }
+        let readiness = synchronizePanelBackingScale(
+            reason: "\(reason)_post_layout_\(attempt)",
+            forceRerasterization: true
+        )
+        switch readiness {
+        case .ready:
+            writeFirstRenderScaleReceipt(
+                ready: true,
+                reason: "\(reason)_post_layout_\(attempt)"
+            )
+        case .waitingForScreen, .rerasterize:
+            guard attempt < 3 else {
+                writeFirstRenderScaleReceipt(
+                    ready: false,
+                    reason: "\(reason)_post_layout_exhausted"
+                )
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.completePanelBackingScaleRecertification(
+                    reason: reason,
+                    generation: generation,
+                    attempt: attempt + 1
+                )
+            }
+        }
     }
 
     private func completePanelFirstRender(attempt: Int = 0) {

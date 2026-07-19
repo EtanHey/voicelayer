@@ -34,16 +34,12 @@ final class WaveformViewTests: XCTestCase {
         )
 
         XCTAssertGreaterThan(try XCTUnwrap(speech.max()), try XCTUnwrap(listening.max()))
+        let independentFullGainPeak = (0 ..< 7).map {
+            m1GoldLevel(level: level, time: time, index: $0, barCount: 7)
+        }.max()
         XCTAssertGreaterThanOrEqual(
             try XCTUnwrap(speech.max()),
-            try XCTUnwrap(
-                WaveformMetrics.audioDrivenLevels(
-                    level: level,
-                    time: time,
-                    barCount: 7,
-                    isListening: false
-                ).max()
-            ) * 0.8
+            try XCTUnwrap(independentFullGainPeak) * 0.8
         )
     }
 
