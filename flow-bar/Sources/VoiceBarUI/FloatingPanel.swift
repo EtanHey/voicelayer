@@ -8,12 +8,82 @@ import SwiftUI
 
 public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitTestProvider: ((NSPoint) -> Bool)?
+    public var hoverExpansionHitTestProvider: ((NSPoint) -> Bool)?
+    public var hoverRetentionHitTestProvider: ((NSPoint) -> Bool)?
+    public var onHoverChanged: ((Bool) -> Void)?
+
+    private var hoverHysteresis = VoiceBarHoverHysteresis()
+    private var hoverExitTask: Task<Void, Never>?
+    private var hoverTrackingArea: NSTrackingArea?
 
     override public func hitTest(_ point: NSPoint) -> NSView? {
         if let activeHitTestProvider, !activeHitTestProvider(point) {
             return nil
         }
         return super.hitTest(point)
+    }
+
+    override public func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+    }
+
+    override public func mouseEntered(with event: NSEvent) {
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override public func mouseMoved(with event: NSEvent) {
+        updateHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    override public func mouseExited(with _: NSEvent) {
+        applyHoverEffects(
+            hoverHysteresis.update(
+                isInsideExpansionZone: false,
+                isInsideRetentionZone: false
+            )
+        )
+    }
+
+    public func updateHover(at point: NSPoint) {
+        applyHoverEffects(
+            hoverHysteresis.update(
+                isInsideExpansionZone: hoverExpansionHitTestProvider?(point) ?? false,
+                isInsideRetentionZone: hoverRetentionHitTestProvider?(point) ?? false
+            )
+        )
+    }
+
+    private func applyHoverEffects(_ effects: [VoiceBarHoverHysteresisEffect]) {
+        for effect in effects {
+            switch effect {
+            case let .hoverChanged(isHovering):
+                onHoverChanged?(isHovering)
+            case .cancelExit:
+                hoverExitTask?.cancel()
+                hoverExitTask = nil
+            case let .scheduleExit(delay):
+                hoverExitTask?.cancel()
+                hoverExitTask = Task { @MainActor [weak self] in
+                    do {
+                        try await Task.sleep(for: .seconds(delay))
+                    } catch {
+                        return
+                    }
+                    guard let self, !Task.isCancelled else { return }
+                    applyHoverEffects(hoverHysteresis.exitDelayElapsed())
+                }
+            }
+        }
     }
 }
 
@@ -58,6 +128,7 @@ public final class FloatingPillPanel: NSPanel {
         // --- Interaction ---
         isMovableByWindowBackground = false
         ignoresMouseEvents = false // NOT click-through
+        acceptsMouseMovedEvents = true
 
         contentView = content
     }

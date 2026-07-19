@@ -20,7 +20,7 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
         XCTAssertEqual(decision, .supersede([42, 91]))
     }
 
-    func testCanonicalLaunchLeavesIsolatedQAPeerAndSupersedesNormalPeer() {
+    func testCanonicalLaunchDefersToExistingIsolatedQASurface() {
         let decision = VoiceBarInstanceGuard.plan(
             current: .init(pid: 300, bundlePath: canonicalPath),
             running: [
@@ -32,7 +32,7 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
             enforcesSingleton: true
         )
 
-        XCTAssertEqual(decision, .supersede([42]))
+        XCTAssertEqual(decision, .exitCurrent(canonicalPID: 91))
     }
 
     func testNoncanonicalLaunchExitsWhenCanonicalInstanceAlreadyRuns() {
@@ -75,6 +75,44 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
         )
 
         XCTAssertEqual(decision, .bypass)
+    }
+
+    func testIsolatedSurfaceDefersToAnyExistingVoiceBarSibling() {
+        let canonical = VoiceBarInstanceGuard.plan(
+            current: .init(pid: 300, bundlePath: "/tmp/VoiceBar-qa.app", isIsolated: true),
+            running: [
+                .init(pid: 20, bundlePath: canonicalPath),
+                .init(pid: 300, bundlePath: "/tmp/VoiceBar-qa.app", isIsolated: true),
+            ],
+            canonicalBundlePath: canonicalPath,
+            enforcesSingleton: true
+        )
+        let noncanonical = VoiceBarInstanceGuard.plan(
+            current: .init(pid: 300, bundlePath: "/tmp/VoiceBar-new.app", isIsolated: true),
+            running: [
+                .init(pid: 75, bundlePath: "/tmp/VoiceBar-old.app", isIsolated: true),
+                .init(pid: 300, bundlePath: "/tmp/VoiceBar-new.app", isIsolated: true),
+            ],
+            canonicalBundlePath: canonicalPath,
+            enforcesSingleton: true
+        )
+
+        XCTAssertEqual(canonical, .exitCurrent(canonicalPID: 20))
+        XCTAssertEqual(noncanonical, .exitCurrent(canonicalPID: 75))
+    }
+
+    func testCanonicalSurfaceDefersToAnExistingIsolatedProofInsteadOfCoexisting() {
+        let decision = VoiceBarInstanceGuard.plan(
+            current: .init(pid: 300, bundlePath: canonicalPath),
+            running: [
+                .init(pid: 75, bundlePath: "/tmp/VoiceBar-proof.app", isIsolated: true),
+                .init(pid: 300, bundlePath: canonicalPath),
+            ],
+            canonicalBundlePath: canonicalPath,
+            enforcesSingleton: true
+        )
+
+        XCTAssertEqual(decision, .exitCurrent(canonicalPID: 75))
     }
 
     func testIsolationRegistryMatchesTheExactPIDAcrossObserverLaunchDateSkew() throws {

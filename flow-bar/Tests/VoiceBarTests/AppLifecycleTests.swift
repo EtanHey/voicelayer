@@ -659,6 +659,35 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
     }
 
+    func testInitialVisibleIdleStartsItsCollapseCountdownAfterPanelInstallation() throws {
+        let source = try voiceBarAppSource()
+        let panelInstalled = try XCTUnwrap(source.range(of: "panel = pill"))
+        let countdown = try XCTUnwrap(
+            source.range(
+                of: "voiceState.beginIdleCollapseCountdown()",
+                range: panelInstalled.upperBound ..< source.endIndex
+            )
+        )
+
+        XCTAssertGreaterThan(countdown.lowerBound, panelInstalled.lowerBound)
+    }
+
+    func testProductHoverUsesSeparateExpansionAndRetentionGeometry() throws {
+        let appSource = try voiceBarAppSource()
+        let barSource = try voiceBarUISource(named: "BarView.swift")
+        let panelSource = try voiceBarUISource(named: "FloatingPanel.swift")
+
+        XCTAssertTrue(appSource.contains("hosting.hoverExpansionHitTestProvider"))
+        XCTAssertTrue(appSource.contains("containsActiveContent(point)"))
+        XCTAssertTrue(appSource.contains("hosting.hoverRetentionHitTestProvider"))
+        XCTAssertTrue(appSource.contains("containsHoverRetention(point)"))
+        XCTAssertTrue(appSource.contains("hosting.onHoverChanged"))
+        XCTAssertTrue(appSource.contains("voiceState.setHoveringFromDebouncedPointer(hovering)"))
+        XCTAssertTrue(barSource.contains("guard !includesPanelOutsets else { return }"))
+        XCTAssertTrue(panelSource.contains("VoiceBarHoverHysteresis"))
+        XCTAssertTrue(panelSource.contains("acceptsMouseMovedEvents = true"))
+    }
+
     func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
         let appSource = try voiceBarAppSource()
         let barSource = try voiceBarUISource(named: "BarView.swift")

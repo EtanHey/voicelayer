@@ -156,7 +156,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
     }
 
-    func testNotchPresentationMapsIdleHoverAndKeyboardFocusWithoutOpeningTeleprompter() {
+    func testNotchPresentationHoldsPlainIdleThroughTheCollapseGraceWindow() {
         XCTAssertEqual(
             VoiceBarPresentation.notchPresentation(
                 from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
@@ -173,7 +173,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             VoiceBarPresentation.notchPresentation(
                 from: VoiceBarNotchOperationalInput(mode: .idle)
             ).visualState,
-            .idle
+            .hoverLauncher
         )
     }
 

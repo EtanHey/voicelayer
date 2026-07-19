@@ -554,6 +554,11 @@ public final class VoiceState {
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
+            // The stop control lives outside the hardware core. When the
+            // teleprompter shrinks under the pointer AppKit may not emit a
+            // matching hover-exit event, so do not let that stale hover hold
+            // the idle surface open forever.
+            setHovering(false)
             queueDepth = 0
             queueItems = []
             clearRetainedTeleprompter()
@@ -1305,6 +1310,14 @@ public final class VoiceState {
 
     // MARK: - Idle collapse
 
+    /// Starts the ordinary idle grace period once the product surface exists.
+    /// The initial state does not pass through `enterIdleState`, so the app
+    /// delegate calls this after installing the panel.
+    public func beginIdleCollapseCountdown() {
+        guard mode == .idle else { return }
+        startCollapseTimer()
+    }
+
     private func startCollapseTimer() {
         guard modalInteractionDepth == 0 else { return }
         collapseTimer?.cancel()
@@ -1342,6 +1355,30 @@ public final class VoiceState {
         }
     }
 
+    /// Product pointer tracking calls this only after its own 2.5-second exit
+    /// grace has elapsed. Plain idle can therefore perform the one intended
+    /// collapse immediately instead of paying the general idle timeout again.
+    /// Retained read-back and modal/dev retention keep their own lifecycles.
+    public func setHoveringFromDebouncedPointer(_ hovering: Bool) {
+        if hovering {
+            setHovering(true)
+            return
+        }
+
+        isHovering = false
+        collapseTimer?.cancel()
+        guard mode == .idle,
+              modalInteractionDepth == 0,
+              !keepsExpandedInDevState,
+              retainedTeleprompterText == nil
+        else { return }
+
+        // Round 2 settles the clean static lifecycle only. The wing/panel
+        // slide belongs to Round 3, so the debounced exit changes state
+        // without introducing a new implicit transition here.
+        isCollapsed = true
+    }
+
     public func beginModalInteraction() {
         modalInteractionDepth += 1
         collapseTimer?.cancel()
@@ -1351,7 +1388,12 @@ public final class VoiceState {
     public func endModalInteraction() {
         modalInteractionDepth = max(0, modalInteractionDepth - 1)
         guard modalInteractionDepth == 0 else { return }
-        expandFromCollapse()
+        if mode == .idle {
+            isCollapsed = false
+            startCollapseTimer()
+        } else {
+            expandFromCollapse()
+        }
     }
 
     public func setHotkeyEnabled(_ enabled: Bool) {

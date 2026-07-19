@@ -41,6 +41,27 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(model.activeTransition?.plan.steps.allSatisfy { $0.animation == .opacity } == true)
     }
 
+    func testPresentationModelKeepsIdleExpandedUntilTheDebouncedCollapseStateFires() {
+        let model = VoiceBarNotchPresentationModel()
+
+        model.updateOperationalEnvelope(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            keepsIdleExpanded: true
+        )
+        model.setHovered(false)
+        XCTAssertEqual(model.presentation.visualState, .hoverLauncher)
+
+        model.updateOperationalEnvelope(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            keepsIdleExpanded: false
+        )
+        XCTAssertEqual(model.presentation.visualState, .idle)
+    }
+
     func testViewContractHasOneFixedCoreTwoReusableWingsAndOptionalLowerSurface() {
         let idle = VoiceBarNotchViewDescriptor.resolve(
             presentation: VoiceBarNotchPresentation.resolve(
@@ -83,6 +104,24 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(teleprompter.usesSequencedSurfaceTransitions)
         XCTAssertTrue(teleprompter.keepsHardwareCoreOutsideAnimatedSurfaces)
         XCTAssertEqual(teleprompter.accessibilityLabel, "VoiceBar teleprompter")
+    }
+
+    func testCompactWingsRemainSeparateBehindTheFixedCoreForRoundThreeSliding() throws {
+        let source = try notchViewSource()
+        let compactStart = try XCTUnwrap(source.range(of: "private var compactSurface"))
+        let teleprompterStart = try XCTUnwrap(
+            source.range(
+                of: "private var teleprompterSurface",
+                range: compactStart.upperBound ..< source.endIndex
+            )
+        )
+        let compact = source[compactStart.lowerBound ..< teleprompterStart.lowerBound]
+
+        XCTAssertTrue(compact.contains("compactWings"))
+        XCTAssertTrue(compact.contains("VoiceBarGlassWing("))
+        XCTAssertFalse(compact.contains("fixedHardwareCore"))
+        XCTAssertTrue(source.contains("fixedHardwareCore"))
+        XCTAssertTrue(source.contains(".zIndex(10)"))
     }
 
     func testCompactStatesReuseTheTeleprompterCoreEdgeVeils() throws {

@@ -52,6 +52,13 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 285, height: 32),
+            "visible idle must hold the launcher envelope through its collapse grace window"
+        )
+
+        idle.isCollapsed = true
+        XCTAssertEqual(
+            makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
             NSSize(width: 185, height: 32)
         )
 
@@ -289,7 +296,8 @@ final class BarViewClickabilityTests: XCTestCase {
     func testOpenPopoversKeepTheLauncherMountedAfterPointerExit() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("isHistoryPresented || isVocabularyPresented"))
+        XCTAssertTrue(source.contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented"))
+        XCTAssertFalse(source.contains("vocabularyButton"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 

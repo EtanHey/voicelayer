@@ -132,6 +132,7 @@ public struct VoiceBarGlassContainer<Content: View>: View {
 public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     public let shape: SurfaceShape
     public let forceOpaqueFallback: Bool
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     public init(shape: SurfaceShape, forceOpaqueFallback: Bool = false) {
         self.shape = shape
@@ -139,7 +140,14 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
-        materialBody(content: content)
+        ZStack {
+            materialSurface
+            content.clipShape(shape)
+        }
+    }
+
+    private var materialSurface: some View {
+        materialBody
             .overlay {
                 shape.stroke(.white.opacity(0.14), lineWidth: 0.7)
             }
@@ -154,21 +162,34 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     }
 
     @ViewBuilder
-    private func materialBody(content: Content) -> some View {
+    private var materialBody: some View {
         if forceOpaqueFallback {
-            content.background(Color.black.opacity(0.88), in: shape)
+            shape.fill(
+                notchAppearance == .dark
+                    ? Color.black.opacity(0.88)
+                    : Color.white.opacity(0.84)
+            )
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(
-                .regular.tint(.white.opacity(0.06)),
+            shape.fill(.clear).glassEffect(
+                .regular.tint(notchPalette.surfaceTint.color),
                 in: shape
             )
+            .overlay {
+                shape.fill(notchPalette.surfaceOverlay.color)
+                    .allowsHitTesting(false)
+            }
         } else {
-            content
+            shape.fill(.clear)
                 .background(.ultraThinMaterial, in: shape)
                 .overlay {
-                    shape.fill(.white.opacity(0.055))
+                    shape.fill(notchPalette.surfaceOverlay.color)
+                        .allowsHitTesting(false)
                 }
         }
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 }
 
@@ -216,6 +237,5 @@ public struct VoiceBarGlassWing<Content: View>: View {
         )
         content
             .modifier(VoiceBarGlassMaterial(shape: shape))
-            .clipShape(shape)
     }
 }

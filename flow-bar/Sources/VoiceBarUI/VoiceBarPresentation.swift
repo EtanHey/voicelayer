@@ -49,6 +49,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isHovered: Bool
     public var isKeyboardFocused: Bool
     public var isCollapsed: Bool
+    public var coreWidth: CGFloat
 
     public init(
         mode: VoiceMode,
@@ -64,7 +65,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         statusText: String = "",
         isHovered: Bool = false,
         isKeyboardFocused: Bool = false,
-        isCollapsed: Bool = false
+        isCollapsed: Bool = false,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
     ) {
         self.mode = mode
         self.hasTeleprompterText = hasTeleprompterText
@@ -80,6 +82,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.isHovered = isHovered
         self.isKeyboardFocused = isKeyboardFocused
         self.isCollapsed = isCollapsed
+        self.coreWidth = coreWidth
     }
 }
 
@@ -116,6 +119,7 @@ public enum VoiceBarPresentation {
             isDismissed: input.isTeleprompterDismissed,
             isReadback: input.isTeleprompterReadback
         ) && !(input.mode == .idle && hasCompactStatus)
+        let keepsIdleExpanded = input.mode == .idle && !input.isCollapsed
 
         return VoiceBarNotchPresentation.resolve(
             hasTeleprompter: hasTeleprompter,
@@ -125,8 +129,9 @@ public enum VoiceBarPresentation {
                 mode: input.mode,
                 statusText: input.statusText
             ),
-            isHovered: input.isHovered,
-            isKeyboardFocused: input.isKeyboardFocused
+            isHovered: input.isHovered || keepsIdleExpanded,
+            isKeyboardFocused: input.isKeyboardFocused,
+            coreWidth: input.coreWidth
         )
     }
 

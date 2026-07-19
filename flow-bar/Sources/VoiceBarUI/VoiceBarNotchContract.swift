@@ -157,7 +157,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         hasCompactStatus: Bool,
         compactStatusTrailingWingWidth: CGFloat? = nil,
         isHovered: Bool,
-        isKeyboardFocused: Bool
+        isKeyboardFocused: Bool,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
     ) -> VoiceBarNotchPresentation {
         let visualState: VoiceBarNotchVisualState = if hasTeleprompter {
             .teleprompter
@@ -171,7 +172,10 @@ public struct VoiceBarNotchPresentation: Equatable {
             .idle
         }
 
-        let baseGeometry = VoiceBarNotchContract.geometry(for: visualState)
+        let baseGeometry = VoiceBarNotchContract.geometry(
+            for: visualState,
+            coreWidth: coreWidth
+        )
         let geometry = if visualState == .compactStatus,
                           let compactStatusTrailingWingWidth {
             VoiceBarNotchGeometry(
@@ -205,7 +209,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         case .idle:
             []
         case .hoverLauncher:
-            [.microphone, .history, .dictionary]
+            [.microphone, .history]
         case .recording:
             [.recordingStatus, .waveform, .recordingControls]
         case .compactStatus:
@@ -240,7 +244,7 @@ public enum VoiceBarNotchContract {
     public static let teleprompterTrailingWingWidth: CGFloat = 88
 
     public static let material = VoiceBarNotchMaterialContract(
-        blackToGlassFadeWidth: 16,
+        blackToGlassFadeWidth: 10,
         fadeToContentGap: 8,
         outerContentInset: 8,
         inverseJoinRadius: 5,
@@ -266,16 +270,20 @@ public enum VoiceBarNotchContract {
         contentExitDuration: 0.12
     )
 
-    public static func geometry(for visualState: VoiceBarNotchVisualState) -> VoiceBarNotchGeometry {
+    public static func geometry(
+        for visualState: VoiceBarNotchVisualState,
+        coreWidth: CGFloat = coreWidth
+    ) -> VoiceBarNotchGeometry {
         switch visualState {
         case .idle:
-            geometry(leadingWingWidth: 0, trailingWingWidth: 0)
+            geometry(coreWidth: coreWidth, leadingWingWidth: 0, trailingWingWidth: 0)
         case .hoverLauncher:
-            geometry(leadingWingWidth: 36, trailingWingWidth: 64)
+            geometry(coreWidth: coreWidth, leadingWingWidth: 36, trailingWingWidth: 64)
         case .recording, .compactStatus:
-            geometry(leadingWingWidth: 72, trailingWingWidth: 152)
+            geometry(coreWidth: coreWidth, leadingWingWidth: 72, trailingWingWidth: 152)
         case .teleprompter:
             geometry(
+                coreWidth: coreWidth,
                 leadingWingWidth: teleprompterLeadingWingWidth,
                 trailingWingWidth: teleprompterTrailingWingWidth,
                 bodyLeadingExtent: 140,
@@ -286,6 +294,7 @@ public enum VoiceBarNotchContract {
     }
 
     private static func geometry(
+        coreWidth: CGFloat,
         leadingWingWidth: CGFloat,
         trailingWingWidth: CGFloat,
         bodyLeadingExtent: CGFloat = 0,

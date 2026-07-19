@@ -32,9 +32,25 @@ enum VoiceBarInstanceGuard {
 
         let canonicalPath = normalizedPath(canonicalBundlePath)
         let currentPath = current.bundlePath.map(normalizedPath)
-        let otherInstances = running.filter { instance in
-            instance.pid > 0 && instance.pid != current.pid && !instance.isIsolated
+        let allOtherInstances = running.filter { instance in
+            instance.pid > 0 && instance.pid != current.pid
         }
+
+        // An isolated socket is transport isolation, not permission to own a
+        // second operator-visible surface. Preserve the incumbent proof while
+        // refusing any new surface, regardless of its bundle path.
+        if let isolatedIncumbent = allOtherInstances
+            .filter(\.isIsolated)
+            .map(\.pid)
+            .min() {
+            return .exitCurrent(canonicalPID: isolatedIncumbent)
+        }
+        if current.isIsolated,
+           let incumbent = allOtherInstances.map(\.pid).min() {
+            return .exitCurrent(canonicalPID: incumbent)
+        }
+
+        let otherInstances = allOtherInstances.filter { !$0.isIsolated }
 
         if currentPath != canonicalPath,
            let canonicalPID = otherInstances

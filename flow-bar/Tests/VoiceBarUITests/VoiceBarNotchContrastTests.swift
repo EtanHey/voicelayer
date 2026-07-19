@@ -1,8 +1,21 @@
 import AppKit
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
 final class VoiceBarNotchContrastTests: XCTestCase {
+    func testAppearanceDeliveryUpdatesTheBindingBeforeTheNextFrame() {
+        var renderedAppearance = VoiceBarNotchAppearance.light
+        let binding = Binding<VoiceBarNotchAppearance>(
+            get: { renderedAppearance },
+            set: { renderedAppearance = $0 }
+        )
+
+        VoiceBarNotchAppearanceDelivery.publish(.dark, to: binding)
+
+        XCTAssertEqual(renderedAppearance, .dark)
+    }
+
     func testLiveAppearanceTrackerFollowsAppKitBothDirectionsWithoutRelaunch() throws {
         let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
         let darkAqua = try XCTUnwrap(NSAppearance(named: .darkAqua))
@@ -62,8 +75,14 @@ final class VoiceBarNotchContrastTests: XCTestCase {
 
         XCTAssertFalse(barSource.contains("@Environment(\\.colorScheme)"))
         XCTAssertFalse(teleprompterSource.contains("@Environment(\\.colorScheme)"))
+        XCTAssertTrue(
+            barSource.contains(
+                "effectiveAppearance: NSApplication.shared.effectiveAppearance"
+            )
+        )
         XCTAssertTrue(readerSource.contains("viewDidChangeEffectiveAppearance"))
         XCTAssertTrue(readerSource.contains("effectiveAppearance"))
+        XCTAssertFalse(readerSource.contains("DispatchQueue.main.async"))
     }
 
     func testLightAppearanceUsesDarkForegroundsAboveReadableContrast() {
@@ -103,6 +122,20 @@ final class VoiceBarNotchContrastTests: XCTestCase {
                 background: renderedBackdrop
             ),
             VoiceBarContrast.minimumControlRatio
+        )
+    }
+
+    func testDarkAppearanceMaterialKeepsLightTextReadableOverBrightMenuBarContent() {
+        let palette = VoiceBarNotchContrastPalette.resolve(for: .dark)
+        let brightMenuBarBackdrop = VoiceBarRGB(red: 0.50, green: 0.52, blue: 0.55)
+        let renderedGlass = palette.surfaceOverlay.composited(over: brightMenuBarBackdrop)
+
+        XCTAssertGreaterThanOrEqual(
+            VoiceBarContrast.ratio(
+                foreground: palette.primary.composited(over: renderedGlass),
+                background: renderedGlass
+            ),
+            VoiceBarContrast.minimumTextRatio
         )
     }
 

@@ -73,6 +73,8 @@ public struct VoiceBarNotchContrastPalette: Equatable {
     public let tertiary: VoiceBarRGBA
     public let subtleTrack: VoiceBarRGBA
     public let destructiveForeground: VoiceBarRGBA
+    public let surfaceTint: VoiceBarRGBA
+    public let surfaceOverlay: VoiceBarRGBA
 
     public static func resolve(for appearance: VoiceBarNotchAppearance) -> Self {
         switch appearance {
@@ -82,7 +84,9 @@ public struct VoiceBarNotchContrastPalette: Equatable {
                 secondary: VoiceBarRGBA(red: 0.06, green: 0.07, blue: 0.10, alpha: 0.82),
                 tertiary: VoiceBarRGBA(red: 0.06, green: 0.07, blue: 0.10, alpha: 0.72),
                 subtleTrack: VoiceBarRGBA(red: 0.06, green: 0.07, blue: 0.10, alpha: 0.20),
-                destructiveForeground: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 1)
+                destructiveForeground: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+                surfaceTint: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06),
+                surfaceOverlay: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.035)
             )
         case .dark:
             VoiceBarNotchContrastPalette(
@@ -90,7 +94,9 @@ public struct VoiceBarNotchContrastPalette: Equatable {
                 secondary: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.86),
                 tertiary: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.72),
                 subtleTrack: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.14),
-                destructiveForeground: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 1)
+                destructiveForeground: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 1),
+                surfaceTint: VoiceBarRGBA(red: 0, green: 0, blue: 0, alpha: 0.22),
+                surfaceOverlay: VoiceBarRGBA(red: 0, green: 0, blue: 0, alpha: 0.14)
             )
         }
     }

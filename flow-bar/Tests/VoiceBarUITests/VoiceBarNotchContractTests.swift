@@ -75,11 +75,11 @@ final class VoiceBarNotchContractTests: XCTestCase {
     func testMaterialContractLocksFadeSafeContentAndOneSurfaceRules() {
         let material = VoiceBarNotchContract.material
 
-        XCTAssertEqual(material.blackToGlassFadeWidth, 16)
+        XCTAssertEqual(material.blackToGlassFadeWidth, 10)
         XCTAssertEqual(material.fadeToContentGap, 8)
         XCTAssertEqual(material.outerContentInset, 8)
-        XCTAssertEqual(material.leadingTeleprompterContentWidth, 44)
-        XCTAssertEqual(material.trailingTeleprompterContentWidth, 56)
+        XCTAssertEqual(material.leadingTeleprompterContentWidth, 50)
+        XCTAssertEqual(material.trailingTeleprompterContentWidth, 62)
         XCTAssertEqual(material.inverseJoinRadius, 5)
         XCTAssertEqual(material.waveformSlotWidth, 72)
         XCTAssertEqual(material.lowerSurfaceLayerCount, 1)
@@ -173,7 +173,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
 
         XCTAssertEqual(presentation.geometry.totalWidth, 285)
-        XCTAssertEqual(presentation.contentRoles, [.microphone, .history, .dictionary])
+        XCTAssertEqual(presentation.contentRoles, [.microphone, .history])
         XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
     }
 }

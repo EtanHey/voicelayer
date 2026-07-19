@@ -12,6 +12,16 @@ public extension EnvironmentValues {
     }
 }
 
+enum VoiceBarNotchAppearanceDelivery {
+    static func publish(
+        _ next: VoiceBarNotchAppearance,
+        to appearance: Binding<VoiceBarNotchAppearance>
+    ) {
+        guard appearance.wrappedValue != next else { return }
+        appearance.wrappedValue = next
+    }
+}
+
 public final class VoiceBarEffectiveAppearanceView: NSView {
     var onAppearanceChange: ((VoiceBarNotchAppearance) -> Void)?
     private var tracker = VoiceBarNotchAppearanceTracker(initial: .dark)
@@ -46,9 +56,6 @@ public struct VoiceBarNotchAppearanceReader: NSViewRepresentable {
     public func makeNSView(context: Context) -> VoiceBarEffectiveAppearanceView {
         let view = VoiceBarEffectiveAppearanceView(frame: .zero)
         installReporter(on: view)
-        DispatchQueue.main.async {
-            view.reportEffectiveAppearance()
-        }
         return view
     }
 
@@ -59,10 +66,7 @@ public struct VoiceBarNotchAppearanceReader: NSViewRepresentable {
     private func installReporter(on view: VoiceBarEffectiveAppearanceView) {
         let appearance = $appearance
         view.onAppearanceChange = { next in
-            guard appearance.wrappedValue != next else { return }
-            DispatchQueue.main.async {
-                appearance.wrappedValue = next
-            }
+            VoiceBarNotchAppearanceDelivery.publish(next, to: appearance)
         }
     }
 }

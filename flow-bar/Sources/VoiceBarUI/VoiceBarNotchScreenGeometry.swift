@@ -75,4 +75,15 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
             height: geometry.totalHeight
         )
     }
+
+    /// Resolves every visual state against the same measured hardware core.
+    /// Flat displays deliberately retain the 185pt synthetic fallback.
+    public func geometry(
+        for visualState: VoiceBarNotchVisualState
+    ) -> VoiceBarNotchGeometry {
+        VoiceBarNotchContract.geometry(
+            for: visualState,
+            coreWidth: housingFrame.width
+        )
+    }
 }

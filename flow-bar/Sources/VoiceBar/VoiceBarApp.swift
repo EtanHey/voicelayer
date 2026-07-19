@@ -108,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     )
     private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
+    private var lastLoggedNotchHousingWidth: CGFloat?
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -169,6 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func enforceCanonicalSingleInstance() -> Bool {
         let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
+        guard defaultsEnforceSingleton else {
+            NSLog("[VoiceBar] Singleton guard skipped by explicit QA override")
+            return true
+        }
+
         if !VoiceLayerPaths.enforcesSingletonInstance {
             do {
                 return try VoiceBarInstanceElectionLock.withExclusiveLock {
@@ -186,10 +192,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     )
                     isolatedInstanceMarkerPID = myPID
                     NSLog(
-                        "[VoiceBar] Singleton guard skipped for registered isolated socket path %@",
+                        "[VoiceBar] Registered isolated transport before visible-surface election at %@",
                         VoiceLayerPaths.socketPath
                     )
-                    return true
+                    let accepted = performCanonicalSingleInstanceElection(
+                        currentIsIsolated: true
+                    )
+                    if !accepted {
+                        VoiceBarInstanceIsolationRegistry.unregister(pid: myPID)
+                        isolatedInstanceMarkerPID = nil
+                    }
+                    return accepted
                 }
             } catch {
                 NSLog(
@@ -203,14 +216,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
 
-        guard defaultsEnforceSingleton else {
-            NSLog("[VoiceBar] Singleton guard skipped by defaults")
-            return true
-        }
-
         do {
             return try VoiceBarInstanceElectionLock.withExclusiveLock {
-                performCanonicalSingleInstanceElection()
+                performCanonicalSingleInstanceElection(currentIsIsolated: false)
             }
         } catch {
             NSLog("[VoiceBar] Single-instance election lock failed: %@", String(describing: error))
@@ -221,7 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func performCanonicalSingleInstanceElection() -> Bool {
+    private func performCanonicalSingleInstanceElection(
+        currentIsIsolated: Bool
+    ) -> Bool {
         let bundleIdentifier = Bundle.main.bundleIdentifier ?? "com.voicelayer.voicebar"
         let runningApplications = NSRunningApplication
             .runningApplications(withBundleIdentifier: bundleIdentifier)
@@ -230,7 +240,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let decision = VoiceBarInstanceGuard.plan(
             current: VoiceBarInstanceDescriptor(
                 pid: myPID,
-                bundlePath: Bundle.main.bundleURL.path
+                bundlePath: Bundle.main.bundleURL.path,
+                isIsolated: currentIsIsolated
             ),
             running: runningApplications.map { application in
                 VoiceBarInstanceDescriptor(
@@ -251,7 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         case let .exitCurrent(canonicalPID):
             NSLog(
-                "[VoiceBar] Canonical VoiceBar PID %d already owns the resident path; exiting PID %d",
+                "[VoiceBar] VoiceBar PID %d already owns the visible surface; exiting PID %d",
                 canonicalPID,
                 myPID
             )
@@ -428,6 +439,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hosting.activeHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
+        hosting.hoverExpansionHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsActiveContent(point) ?? false
+        }
+        hosting.hoverRetentionHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsHoverRetention(point) ?? false
+        }
+        hosting.onHoverChanged = { [weak self] hovering in
+            guard let self else { return }
+            voiceState.setHoveringFromDebouncedPointer(hovering)
+            notchPresentationModel.setHovered(hovering)
+        }
         hosting.frame = NSRect(
             x: 0, y: 0,
             width: initialLayout.panelSize.width,
@@ -457,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pill.orderFront(nil)
         panel = pill
         applyPanelLayout(animated: false)
+        voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
         }
@@ -884,20 +907,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func refreshNotchPresentationModel() {
-        let resolved = Self.notchPresentation(for: voiceState)
+    private func refreshNotchPresentationModel(
+        for screen: NSScreen? = nil
+    ) {
+        let screenGeometry = (screen ?? panel?.screen ?? NSScreen.main).map(Self.notchScreenGeometry)
+        let coreWidth = screenGeometry?.housingFrame.width ?? VoiceBarNotchContract.coreWidth
+        if lastLoggedNotchHousingWidth != coreWidth {
+            lastLoggedNotchHousingWidth = coreWidth
+            logDiagnostic(event: "notch_housing_width_resolved", details: [
+                "coreWidth": String(format: "%.2f", coreWidth),
+                "screenKind": screenGeometry?.kind == .hardwareNotch
+                    ? "hardwareNotch"
+                    : "flatDisplayFallback",
+            ])
+        }
+        let resolved = Self.notchPresentation(for: voiceState, coreWidth: coreWidth)
         notchPresentationModel.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
             hasCompactStatus: resolved.visualState == .compactStatus,
             compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.trailingWingWidth
-                : nil
+                : nil,
+            keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
+            coreWidth: coreWidth
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
 
-    private static func notchPresentation(for state: VoiceState?) -> VoiceBarNotchPresentation {
+    private static func notchPresentation(
+        for state: VoiceState?,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+    ) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
         return VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
@@ -914,7 +955,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 statusText: notchStatusText(for: state),
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false,
-                isCollapsed: state?.isCollapsed ?? false
+                isCollapsed: state?.isCollapsed ?? false,
+                coreWidth: coreWidth
             )
         )
     }
@@ -1112,6 +1154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+        refreshNotchPresentationModel(for: targetScreen)
         if screenGeometry.kind == .hardwareNotch {
             panel.setFrame(
                 currentPanelLayout().windowFrame(anchoredTo: screenGeometry),

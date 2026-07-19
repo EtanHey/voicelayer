@@ -54,6 +54,56 @@ final class VoiceBarDevStateTests: XCTestCase {
         XCTAssertTrue(state.isCollapsed)
     }
 
+    func testDebouncedPointerExitPerformsTheOnePlainIdleCollapseImmediately() {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.mode = .idle
+        state.setHoveringFromDebouncedPointer(true)
+
+        state.setHoveringFromDebouncedPointer(false)
+
+        XCTAssertFalse(state.isHovering)
+        XCTAssertTrue(
+            state.isCollapsed,
+            "the hover coordinator already paid Etan's 2.5-second grace"
+        )
+    }
+
+    func testDebouncedPointerExitDoesNotCollapseRetainedReadback() {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Keep this teleprompter until its own lifecycle resolves",
+        ])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+
+        state.setHoveringFromDebouncedPointer(false)
+
+        XCTAssertFalse(state.isCollapsed)
+        XCTAssertTrue(state.isTeleprompterReadback)
+    }
+
+    func testCursorAbsentCaptureHoldCanStayExpandedWithoutAudioOrHover() {
+        let state = VoiceState(keepsExpandedInDevState: true)
+        state.mode = .idle
+
+        state.setHoveringFromDebouncedPointer(false)
+
+        XCTAssertFalse(state.isHovering)
+        XCTAssertFalse(state.isCollapsed)
+    }
+
+    func testPlainVisibleIdleBeginsCollapseWithoutAHoverEvent() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.05
+
+        state.beginIdleCollapseCountdown()
+
+        XCTAssertFalse(state.isCollapsed)
+        let didCollapse = try await waitUntil { state.isCollapsed }
+        XCTAssertTrue(didCollapse)
+    }
+
     func testRetainedTeleprompterStaysExpandedPastIdleCollapseDelay() async throws {
         let state = VoiceState(keepsExpandedInDevState: false)
         state.idleCollapseDelay = 0.01
@@ -110,6 +160,25 @@ final class VoiceBarDevStateTests: XCTestCase {
         XCTAssertTrue(didCollapse)
     }
 
+    func testStopSpeakingClearsStaleSurfaceHoverBeforeIdleCollapseDeadline() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.05
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "The square control is below the hardware core",
+        ])
+        state.setHovering(true)
+
+        state.stop()
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertFalse(state.isHovering)
+        XCTAssertFalse(state.isCollapsed)
+        let didCollapse = try await waitUntil { state.isCollapsed }
+        XCTAssertTrue(didCollapse)
+    }
+
     func testF5AndMCPActivityImmediatelyExpandCollapsedIdle() async throws {
         let state = VoiceState(keepsExpandedInDevState: false)
         state.idleCollapseDelay = 0.01
@@ -128,6 +197,20 @@ final class VoiceBarDevStateTests: XCTestCase {
             "text": "MCP activity",
         ])
         XCTAssertFalse(state.isCollapsed)
+    }
+
+    func testClosingAnIdleModalStartsAFreshCollapseDeadline() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.05
+        state.beginModalInteraction()
+
+        state.endModalInteraction()
+
+        XCTAssertFalse(state.isCollapsed)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(state.isCollapsed)
+        let didCollapse = try await waitUntil { state.isCollapsed }
+        XCTAssertTrue(didCollapse)
     }
 
     private func waitUntil(_ condition: () -> Bool) async throws -> Bool {

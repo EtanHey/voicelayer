@@ -107,6 +107,21 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
+    func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
+        let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
+        let justPastTrailingWing = CGPoint(
+            x: layout.activeHitRect.maxX + 8,
+            y: layout.activeHitRect.midY
+        )
+
+        XCTAssertFalse(layout.containsActiveContent(justPastTrailingWing))
+        XCTAssertTrue(layout.containsHoverRetention(justPastTrailingWing))
+        XCTAssertTrue(
+            CGRect(origin: .zero, size: layout.panelSize)
+                .contains(layout.hoverRetentionRect)
+        )
+    }
+
     private func presentation(_ state: VoiceBarNotchVisualState) -> VoiceBarNotchPresentation {
         VoiceBarNotchPresentation.resolve(
             hasTeleprompter: state == .teleprompter,
@@ -116,7 +131,6 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             isKeyboardFocused: false
         )
     }
-
 
     func testRecordingEntryModesShareTheSameRedDotInset() {
         let askMetrics = Theme.pillMetrics(
