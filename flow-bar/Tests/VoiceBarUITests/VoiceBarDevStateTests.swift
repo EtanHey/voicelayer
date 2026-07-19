@@ -42,9 +42,12 @@ final class VoiceBarDevStateTests: XCTestCase {
 
     func testDisabledDevStatePreservesIdleCollapse() async throws {
         let state = VoiceState(keepsExpandedInDevState: false)
-        state.idleCollapseDelay = 0.01
+        state.idleCollapseDelay = 0.05
 
         state.setHovering(false)
+        XCTAssertFalse(state.isCollapsed)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(state.isCollapsed, "plain idle must receive the full grace interval")
         let didCollapse = try await waitUntil { state.isCollapsed }
 
         XCTAssertTrue(didCollapse)
@@ -75,10 +78,13 @@ final class VoiceBarDevStateTests: XCTestCase {
 
     func testPostAskRecordingIdleCollapsesAfterAFreshFullDeadline() async throws {
         let state = VoiceState(keepsExpandedInDevState: false)
-        state.idleCollapseDelay = 0.01
+        state.idleCollapseDelay = 0.05
         state.handleEvent(["type": "state", "state": "recording", "mode": "vad"])
         state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
 
+        XCTAssertFalse(state.isCollapsed)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(state.isCollapsed, "post-ask idle must receive a fresh full grace interval")
         let didCollapse = try await waitUntil { state.isCollapsed }
 
         XCTAssertEqual(state.mode, .idle)
@@ -87,7 +93,7 @@ final class VoiceBarDevStateTests: XCTestCase {
 
     func testDismissedPostSpeakReadbackStartsTheGeneralIdleCollapseDeadline() async throws {
         let state = VoiceState(keepsExpandedInDevState: false)
-        state.idleCollapseDelay = 0.01
+        state.idleCollapseDelay = 0.05
         state.handleEvent([
             "type": "state",
             "state": "speaking",
@@ -96,6 +102,9 @@ final class VoiceBarDevStateTests: XCTestCase {
         state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
         state.dismissRetainedTeleprompter()
 
+        XCTAssertFalse(state.isCollapsed)
+        try await Task.sleep(for: .milliseconds(10))
+        XCTAssertFalse(state.isCollapsed, "post-speak idle must receive the full grace interval")
         let didCollapse = try await waitUntil { state.isCollapsed }
 
         XCTAssertTrue(didCollapse)
@@ -111,6 +120,7 @@ final class VoiceBarDevStateTests: XCTestCase {
         state.setHotkeyPhase(.pressing)
         XCTAssertFalse(state.isCollapsed)
 
+        state.setHotkeyPhase(.idle)
         state.isCollapsed = true
         state.handleEvent([
             "type": "state",

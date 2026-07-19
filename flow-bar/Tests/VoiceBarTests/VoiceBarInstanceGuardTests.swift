@@ -77,7 +77,7 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
         XCTAssertEqual(decision, .bypass)
     }
 
-    func testIsolationRegistryMatchesTheExactPIDAndLaunchInstance() throws {
+    func testIsolationRegistryMatchesTheExactPIDAcrossObserverLaunchDateSkew() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("VoiceBarIsolationRegistryTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -97,12 +97,21 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
                 directory: directory
             )
         )
+        XCTAssertTrue(
+            VoiceBarInstanceIsolationRegistry.isRegistered(
+                pid: 91,
+                launchDate: launchDate.addingTimeInterval(0.25),
+                directory: directory
+            ),
+            "NSRunningApplication observers can report the same launch with sub-second skew"
+        )
         XCTAssertFalse(
             VoiceBarInstanceIsolationRegistry.isRegistered(
                 pid: 91,
-                launchDate: launchDate.addingTimeInterval(1),
+                launchDate: launchDate.addingTimeInterval(2),
                 directory: directory
-            )
+            ),
+            "a reused PID from a later launch must not inherit the old isolation marker"
         )
 
         VoiceBarInstanceIsolationRegistry.unregister(pid: 91, directory: directory)
@@ -110,6 +119,28 @@ final class VoiceBarInstanceGuardTests: XCTestCase {
             VoiceBarInstanceIsolationRegistry.isRegistered(
                 pid: 91,
                 launchDate: launchDate,
+                directory: directory
+            )
+        )
+    }
+
+    func testIsolationRegistryRejectsAnOverflowingMarkerTimestamp() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VoiceBarIsolationRegistryTests-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let marker: [String: Any] = [
+            "pid": 91,
+            "launchTimeMilliseconds": Int64.min,
+            "socketPath": "/tmp/voicelayer-qa/voicebar.sock",
+        ]
+        let data = try JSONSerialization.data(withJSONObject: marker)
+        try data.write(to: directory.appendingPathComponent("91.json"))
+
+        XCTAssertFalse(
+            VoiceBarInstanceIsolationRegistry.isRegistered(
+                pid: 91,
+                launchDate: Date(timeIntervalSince1970: 1_784_333_000.125),
                 directory: directory
             )
         )

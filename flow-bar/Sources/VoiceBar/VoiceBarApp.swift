@@ -79,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let pillContextMenuController = PillContextMenuController()
     private let daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
+    private var terminationPolicy = VoiceBarTerminationPolicy()
 
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
@@ -195,8 +196,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     "[VoiceBar] Isolated-instance registration failed: %@",
                     String(describing: error)
                 )
-                DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
                 }
                 return false
             }
@@ -213,8 +214,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         } catch {
             NSLog("[VoiceBar] Single-instance election lock failed: %@", String(describing: error))
-            DispatchQueue.main.async {
-                NSApplication.shared.terminate(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.requestTermination(.internalFailure)
             }
             return false
         }
@@ -254,8 +255,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 canonicalPID,
                 myPID
             )
-            DispatchQueue.main.async {
-                NSApplication.shared.terminate(nil)
+            DispatchQueue.main.async { [weak self] in
+                self?.requestTermination(.internalFailure)
             }
             return false
 
@@ -294,8 +295,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     "[VoiceBar] Refusing duplicate startup; exact PIDs still alive: %@",
                     survivorList
                 )
-                DispatchQueue.main.async {
-                    NSApplication.shared.terminate(nil)
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
                 }
                 return false
             }
@@ -573,9 +574,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
         }
-        pillContextMenuController.onQuit = {
-            NSApplication.shared.terminate(nil)
-        }
     }
 
     private func snoozeForOneHour() {
@@ -600,6 +598,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let reply = terminationPolicy.reply(
+            enforcesSingleton: VoiceLayerPaths.enforcesSingletonInstance
+        )
+        guard reply == .terminateNow else {
+            NSLog("[VoiceBar] Ignoring external quit request for isolated QA instance")
+            return reply
+        }
+
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
         snoozeTask?.cancel()
@@ -607,7 +613,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         audioLevelMonitor.stop()
         daemonController.stop()
         socketServer?.stop()
-        return .terminateNow
+        return reply
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -1592,8 +1598,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self?.logDiagnostic(event: "menu_bar_paste_last_transcript_tapped")
                 self?.voiceState.repasteLastTranscript(source: "menu_bar")
             },
-            quit: { NSApplication.shared.terminate(nil) }
+            quit: { [weak self] in self?.requestTermination(.menuBar) }
         )
+    }
+
+    private func requestTermination(_ intent: VoiceBarTerminationIntent) {
+        terminationPolicy.authorize(intent)
+        NSApplication.shared.terminate(nil)
     }
 
     func openSettingsWindow() {

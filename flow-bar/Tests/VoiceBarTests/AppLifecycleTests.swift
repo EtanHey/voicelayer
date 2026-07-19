@@ -7,6 +7,65 @@ final class AppLifecycleTests: XCTestCase {
         var isInside = true
     }
 
+    func testProductSurfaceControlsCannotReachApplicationTermination() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let uiSourceDirectory = repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI")
+        let uiSources = try FileManager.default.contentsOfDirectory(
+            at: uiSourceDirectory,
+            includingPropertiesForKeys: nil
+        ).filter { $0.pathExtension == "swift" && $0.lastPathComponent != "VoiceBarMenu.swift" }
+        let surfaceSources = uiSources + [
+            repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarCommandRouter.swift"),
+        ]
+
+        for sourceURL in surfaceSources {
+            let source = try String(contentsOf: sourceURL, encoding: .utf8)
+            XCTAssertFalse(
+                source.contains("NSApplication.shared.terminate") ||
+                    source.contains("NSApp.terminate") ||
+                    source.contains("Quit VoiceBar"),
+                "product-surface controls must dismiss/cancel/stop without quitting: \(sourceURL.lastPathComponent)"
+            )
+        }
+
+        let menuBarSource = try String(
+            contentsOf: repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBarUI/VoiceBarMenu.swift"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(menuBarSource.contains("Quit VoiceBar"), "the menu-bar quit remains the user exit path")
+    }
+
+    func testIsolatedQARejectsExternalQuitUntilVoiceBarAuthorizesItsOwnExit() {
+        var policy = VoiceBarTerminationPolicy()
+
+        XCTAssertEqual(
+            policy.reply(enforcesSingleton: false),
+            .terminateCancel,
+            "a canonical launch must not evict an isolated proof process via Quit AppleEvent"
+        )
+
+        policy.authorize(.menuBar)
+        XCTAssertEqual(policy.reply(enforcesSingleton: false), .terminateNow)
+        XCTAssertEqual(
+            policy.reply(enforcesSingleton: false),
+            .terminateCancel,
+            "application-owned authorization is single-use"
+        )
+
+        policy.authorize(.internalFailure)
+        XCTAssertEqual(policy.reply(enforcesSingleton: false), .terminateNow)
+    }
+
+    func testCanonicalResidentStillAcceptsExternalSingletonTermination() {
+        var policy = VoiceBarTerminationPolicy()
+
+        XCTAssertEqual(policy.reply(enforcesSingleton: true), .terminateNow)
+    }
+
     // MARK: - Context menu snooze toggle
 
     func testContextMenuShowsHideWhenNotSnoozed() {
