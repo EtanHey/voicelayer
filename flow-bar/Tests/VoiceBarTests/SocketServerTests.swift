@@ -289,6 +289,35 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
     }
 
+    private func writeTerminalProof(
+        environmentKey: String,
+        environment: [String: String],
+        workDirectory: String
+    ) throws {
+        guard let rawProofPath = environment[environmentKey],
+              !rawProofPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            XCTFail("missing \(environmentKey) runtime proof path")
+            return
+        }
+        let workDirectoryURL = URL(fileURLWithPath: workDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let proofURL = URL(fileURLWithPath: rawProofPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard proofURL.deletingLastPathComponent().path == workDirectoryURL.path else {
+            XCTFail("runtime terminal proof path is outside the verifier work directory")
+            return
+        }
+
+        try Data("pass\n".utf8).write(to: proofURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: proofURL.path
+        )
+    }
+
     @MainActor
     func testF18EscapeAndStopButtonDriveSpawnedDaemonNDJSON() throws {
         let environment = ProcessInfo.processInfo.environment
@@ -399,6 +428,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(scratchTerminal, state.transcript)
         XCTAssertEqual(state.lastTranscriptionPolished, true)
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
+        try writeTerminalProof(
+            environmentKey: "VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH",
+            environment: environment,
+            workDirectory: workDirectory
+        )
 
         let veryLongState = VoiceState()
         let veryLongTranscript = String(
@@ -437,6 +471,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(veryLongInsertionAttempts, 1)
         XCTAssertEqual(veryLongScratchTerminal, veryLongTranscript)
         XCTAssertEqual(veryLongState.confirmationText, veryLongTranscript)
+        try writeTerminalProof(
+            environmentKey: "VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH",
+            environment: environment,
+            workDirectory: workDirectory
+        )
     }
 }
 

@@ -35,9 +35,9 @@ async function waitFor(
   description: string,
   timeoutMs = 1_000,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() >= deadline) {
+    if (performance.now() >= deadline) {
       throw new Error(`Timed out waiting for ${description}`);
     }
     await Bun.sleep(1);
@@ -224,6 +224,26 @@ describe("playback queue — P0-1 sequential playback", () => {
     } else {
       process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
     }
+  });
+
+  it("times out polling independently of the mocked playback clock", async () => {
+    const nowSpy = spyOn(Date, "now").mockReturnValue(10_000);
+    const polling = waitFor(() => false, "mocked-clock polling", 20).then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    let firstOutcome: string;
+    try {
+      firstOutcome = await Promise.race([
+        polling,
+        Bun.sleep(100).then(() => "hung"),
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+    await polling;
+
+    expect(firstOutcome).toBe("Timed out waiting for mocked-clock polling");
   });
 
   it("plays audio files sequentially — second spawns only after first finishes", async () => {
