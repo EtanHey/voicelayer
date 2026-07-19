@@ -106,7 +106,43 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertFalse(incompleteProof.passed)
     }
 
-    func testCaptureVerifierRequiresBirthmarkAndIdleHoldInputs() throws {
+    func testWingContentSharpnessRejectsTheRoundTwoBlurSignature() {
+        var brightness = Array(repeating: 30.0, count: 80 * 20)
+        // The wing foreground has only a seven-point edge while the same-frame
+        // menu glyph reference has the 133-point edge measured by Round 2 QA.
+        fill(&brightness, width: 80, x: 15 ..< 25, y: 4 ..< 16, with: 37)
+        fill(&brightness, width: 80, x: 55 ..< 65, y: 4 ..< 16, with: 163)
+        let image = VoiceBarLumaImage(width: 80, height: 20, brightness: brightness)
+
+        let result = VoiceBarNotchCaptureAudit.edgeSharpness(
+            in: image,
+            wingContentRect: CGRect(x: 0.10, y: 0.10, width: 0.30, height: 0.80),
+            referenceGlyphRect: CGRect(x: 0.60, y: 0.10, width: 0.30, height: 0.80)
+        )
+
+        XCTAssertFalse(result.passed)
+        XCTAssertEqual(result.wingContentMaxGradient, 7, accuracy: 0.001)
+        XCTAssertEqual(result.referenceGlyphMaxGradient, 133, accuracy: 0.001)
+        XCTAssertGreaterThan(result.referenceToWingRatio, 2)
+    }
+
+    func testWingContentSharpnessPassesWhenItIsWithinTwoTimesTheMenuGlyphReference() {
+        var brightness = Array(repeating: 30.0, count: 80 * 20)
+        fill(&brightness, width: 80, x: 15 ..< 25, y: 4 ..< 16, with: 100)
+        fill(&brightness, width: 80, x: 55 ..< 65, y: 4 ..< 16, with: 150)
+        let image = VoiceBarLumaImage(width: 80, height: 20, brightness: brightness)
+
+        let result = VoiceBarNotchCaptureAudit.edgeSharpness(
+            in: image,
+            wingContentRect: CGRect(x: 0.10, y: 0.10, width: 0.30, height: 0.80),
+            referenceGlyphRect: CGRect(x: 0.60, y: 0.10, width: 0.30, height: 0.80)
+        )
+
+        XCTAssertTrue(result.passed)
+        XCTAssertEqual(result.referenceToWingRatio, 120.0 / 70.0, accuracy: 0.001)
+    }
+
+    func testCaptureVerifierRequiresBirthmarkIdleHoldAndRenderedSharpnessInputs() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -120,9 +156,13 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(source.contains("--expanded-strip"))
         XCTAssertTrue(source.contains("--idle-hold-frames"))
         XCTAssertTrue(source.contains("--idle-hold-cursor-proof"))
+        XCTAssertTrue(source.contains("--sharpness-frame"))
+        XCTAssertTrue(source.contains("--sharpness-wing-region"))
+        XCTAssertTrue(source.contains("--sharpness-reference-region"))
         XCTAssertTrue(source.contains("BIRTHMARK"))
         XCTAssertTrue(source.contains("IDLE-HOLD"))
         XCTAssertTrue(source.contains("CURSOR-ABSENT"))
+        XCTAssertTrue(source.contains("EDGE-SHARPNESS"))
     }
 
     private func fill(

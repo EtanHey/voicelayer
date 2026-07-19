@@ -120,6 +120,64 @@ private func argument(named name: String) -> String? {
     return CommandLine.arguments[index + 1]
 }
 
+private func normalizedRect(argument rawValue: String, name: String) throws -> CGRect {
+    let components = rawValue.split(separator: ",", omittingEmptySubsequences: false)
+    guard components.count == 4,
+          let x = Double(components[0]),
+          let y = Double(components[1]),
+          let width = Double(components[2]),
+          let height = Double(components[3]),
+          [x, y, width, height].allSatisfy(\.isFinite),
+          x >= 0,
+          y >= 0,
+          width > 0,
+          height > 0,
+          x + width <= 1,
+          y + height <= 1
+    else {
+        throw NSError(
+            domain: "NotchCaptureContrastVerifier",
+            code: 4,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "\(name) must be normalized x,y,width,height inside 0...1",
+            ]
+        )
+    }
+    return CGRect(x: x, y: y, width: width, height: height)
+}
+
+private func sharpnessAudit(
+    framePath: String,
+    wingRegionValue: String,
+    referenceRegionValue: String
+) throws -> VoiceBarNotchEdgeSharpnessAuditResult {
+    let frame = try lumaImage(at: URL(fileURLWithPath: framePath))
+    return try VoiceBarNotchCaptureAudit.edgeSharpness(
+        in: frame,
+        wingContentRect: normalizedRect(
+            argument: wingRegionValue,
+            name: "--sharpness-wing-region"
+        ),
+        referenceGlyphRect: normalizedRect(
+            argument: referenceRegionValue,
+            name: "--sharpness-reference-region"
+        )
+    )
+}
+
+private func printSharpness(_ result: VoiceBarNotchEdgeSharpnessAuditResult) {
+    let verdict = result.passed ? "PASS" : "FAIL"
+    let wing = String(format: "%.1f", result.wingContentMaxGradient)
+    let reference = String(format: "%.1f", result.referenceGlyphMaxGradient)
+    let ratio = String(format: "%.2f", result.referenceToWingRatio)
+    let limit = String(format: "%.2f", result.maximumAllowedRatio)
+    print(
+        "\(verdict) EDGE-SHARPNESS wing=\(wing) reference=\(reference) " +
+            "ratio=\(ratio) limit=\(limit)"
+    )
+}
+
 private func median(_ values: [Double]) -> Double {
     guard !values.isEmpty else { return 0 }
     let sorted = values.sorted()
@@ -227,6 +285,34 @@ private func idleHoldFrameURLs(in directory: String) throws -> [URL] {
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
+guard let sharpnessFramePath = argument(named: "--sharpness-frame"),
+      let sharpnessWingRegionValue = argument(named: "--sharpness-wing-region"),
+      let sharpnessReferenceRegionValue = argument(named: "--sharpness-reference-region")
+else {
+    fputs(
+        "usage: NotchCaptureContrastVerifier --sharpness-frame <same-frame-png> " +
+            "--sharpness-wing-region <normalized-x,y,w,h> " +
+            "--sharpness-reference-region <normalized-x,y,w,h> [--sharpness-only]\n",
+        stderr
+    )
+    exit(2)
+}
+
+if CommandLine.arguments.contains("--sharpness-only") {
+    do {
+        let sharpness = try sharpnessAudit(
+            framePath: sharpnessFramePath,
+            wingRegionValue: sharpnessWingRegionValue,
+            referenceRegionValue: sharpnessReferenceRegionValue
+        )
+        printSharpness(sharpness)
+        exit(sharpness.passed ? 0 : 1)
+    } catch {
+        fputs("sharpness verification error: \(error.localizedDescription)\n", stderr)
+        exit(2)
+    }
+}
+
 guard let darkDirectory = argument(named: "--dark"),
       let lightDirectory = argument(named: "--light"),
       let expandedStripPath = argument(named: "--expanded-strip"),
@@ -237,13 +323,23 @@ else {
         "usage: NotchCaptureContrastVerifier --dark <notch-only-dir> " +
             "--light <notch-only-dir> --expanded-strip <800x100-png> " +
             "--idle-hold-frames <three-second-60fps-png-dir> " +
-            "--idle-hold-cursor-proof <cursor-proof-json>\n",
+            "--idle-hold-cursor-proof <cursor-proof-json> " +
+            "--sharpness-frame <same-frame-png> " +
+            "--sharpness-wing-region <normalized-x,y,w,h> " +
+            "--sharpness-reference-region <normalized-x,y,w,h>\n",
         stderr
     )
     exit(2)
 }
 
 do {
+    let sharpnessResult = try sharpnessAudit(
+        framePath: sharpnessFramePath,
+        wingRegionValue: sharpnessWingRegionValue,
+        referenceRegionValue: sharpnessReferenceRegionValue
+    )
+    printSharpness(sharpnessResult)
+
     let results = try [
         (VoiceBarNotchAppearance.dark, "dark", darkDirectory),
         (VoiceBarNotchAppearance.light, "light", lightDirectory),
@@ -326,7 +422,8 @@ do {
             "inside=\(cursorAbsenceResult.insideFrameCount)"
     )
 
-    if results.contains(where: { !$0.passed }) ||
+    if !sharpnessResult.passed ||
+        results.contains(where: { !$0.passed }) ||
         birthmarkResults.contains(where: { !$0.passed }) ||
         !idleHoldResult.passed ||
         !cursorAbsencePassed {

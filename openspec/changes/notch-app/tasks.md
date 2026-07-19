@@ -33,5 +33,6 @@
 - [ ] 3.11 Visible-surface singleton — isolated sockets remain transport-safe but may not create a second operator-visible VoiceBar; a new canonical or QA surface defers to the incumbent unless the explicit test-only parallel override is set.
 - [ ] 3.12 Release gate — no resident swap until isolated proof passes; then Etan F5-batch comparison against `resident-stable-20260717`
 - [x] 3.13 Round-3 animation readiness — compact wings, fixed hardware core, and lower surface remain separate positionable elements so wings can later slide from behind the island without structural rework; no Round-3 animation is implemented in this PR.
+- [x] 3.14 Rendered wing-content sharpness gate — compare glyph-only wing and adjacent menu-bar regions in the same lossless capture, fail closed above a 2.0× reference-to-wing edge-gradient ratio, and require both wings in recording and transcribing. The isolated `6ac76a0` baseline failed at 14.06–103.53×; the Round-2C candidate passes at 1.57–1.82×.
 
 Analyzer rider: no analyzer executable exists in this repository. This lane updated the scaffold rows directly and did not hunt for a runner; Round 2 ports only the two numeric recipes from the supplied external `docs.local/qa/notch-round1-2026-07-19/analyze.py` artifact into the checked-in capture verifier.

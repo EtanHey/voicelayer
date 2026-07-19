@@ -38,6 +38,25 @@ public struct VoiceBarLumaImage: Equatable {
         }
     }
 
+    fileprivate func maximumEdgeGradient(in rect: CGRect) -> Double? {
+        let xRange = pixelRange(origin: rect.minX, extent: rect.width, limit: width)
+        let yRange = pixelRange(origin: rect.minY, extent: rect.height, limit: height)
+        guard xRange.count >= 2, yRange.count >= 2 else { return nil }
+        var maximum = 0.0
+        for y in yRange {
+            for x in xRange {
+                let value = brightness[y * width + x]
+                if x + 1 < xRange.upperBound {
+                    maximum = max(maximum, abs(value - brightness[y * width + x + 1]))
+                }
+                if y + 1 < yRange.upperBound {
+                    maximum = max(maximum, abs(value - brightness[(y + 1) * width + x]))
+                }
+            }
+        }
+        return maximum
+    }
+
     private func pixelRange(origin: CGFloat, extent: CGFloat, limit: Int) -> Range<Int> {
         let lower = max(0, min(limit, Int((origin * CGFloat(limit)).rounded(.down))))
         let upper = max(lower, min(limit, Int(((origin + extent) * CGFloat(limit)).rounded(.up))))
@@ -68,6 +87,14 @@ public struct VoiceBarNotchCursorAbsenceAuditResult: Equatable {
     public let passed: Bool
 }
 
+public struct VoiceBarNotchEdgeSharpnessAuditResult: Equatable {
+    public let wingContentMaxGradient: Double
+    public let referenceGlyphMaxGradient: Double
+    public let referenceToWingRatio: Double
+    public let maximumAllowedRatio: Double
+    public let passed: Bool
+}
+
 public enum VoiceBarNotchCaptureAudit {
     public static let referenceSize = CGSize(width: 800, height: 100)
     public static let birthmarkBrightnessOffset = 18.0
@@ -76,6 +103,7 @@ public enum VoiceBarNotchCaptureAudit {
     public static let maximumBirthmarkBlobPixels = 150
     public static let idleVisibilityThreshold = 90.0
     public static let minimumIdleHoldFrames = 180
+    public static let maximumReferenceToWingSharpnessRatio = 2.0
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -188,6 +216,25 @@ public enum VoiceBarNotchCaptureAudit {
             passed: frameCount >= minimumIdleHoldFrames &&
                 cursorPositions.count == frameCount &&
                 insideFrameCount == 0
+        )
+    }
+
+    public static func edgeSharpness(
+        in image: VoiceBarLumaImage,
+        wingContentRect: CGRect,
+        referenceGlyphRect: CGRect
+    ) -> VoiceBarNotchEdgeSharpnessAuditResult {
+        let wingGradient = image.maximumEdgeGradient(in: wingContentRect) ?? 0
+        let referenceGradient = image.maximumEdgeGradient(in: referenceGlyphRect) ?? 0
+        let ratio = wingGradient > 0 ? referenceGradient / wingGradient : .infinity
+        return VoiceBarNotchEdgeSharpnessAuditResult(
+            wingContentMaxGradient: wingGradient,
+            referenceGlyphMaxGradient: referenceGradient,
+            referenceToWingRatio: ratio,
+            maximumAllowedRatio: maximumReferenceToWingSharpnessRatio,
+            passed: wingGradient > 0 &&
+                referenceGradient > 0 &&
+                ratio <= maximumReferenceToWingSharpnessRatio
         )
     }
 

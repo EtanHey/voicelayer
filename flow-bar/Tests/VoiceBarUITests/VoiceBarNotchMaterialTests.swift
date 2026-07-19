@@ -85,7 +85,7 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
             encoding: .utf8
         )
-        let materialStart = try XCTUnwrap(source.range(of: "private var materialBody"))
+        let materialStart = try XCTUnwrap(source.range(of: "private func materialBody"))
         let paletteStart = try XCTUnwrap(
             source.range(
                 of: "private var notchPalette",
@@ -94,11 +94,11 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         )
         let materialBody = source[materialStart.lowerBound ..< paletteStart.lowerBound]
 
-        XCTAssertTrue(materialBody
-            .contains("shape.fill(notchPalette.surfaceOverlay.color)\n                    .allowsHitTesting(false)"))
+        XCTAssertTrue(materialBody.contains("shape.fill(notchPalette.surfaceOverlay.color)"))
+        XCTAssertTrue(materialBody.contains(".allowsHitTesting(false)"))
     }
 
-    func testSharedPanelShadowBelongsToTheMaterialSurfaceNotTheClippedIconComposite() throws {
+    func testNativeGlassStaysOnTheContentBearingViewAndDoesNotShadowItsGlyphAlpha() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -112,11 +112,9 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
         let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
 
-        XCTAssertTrue(material.contains("private var materialSurface"))
         XCTAssertTrue(material.contains("content.clipShape(shape)"))
-        XCTAssertFalse(
-            material.contains("materialBody(content: content)"),
-            "shadowing the content composite casts icon alpha into the clipped wing"
-        )
+        XCTAssertTrue(material.contains(".glassEffect("))
+        XCTAssertFalse(material.contains("shape.fill(.clear).glassEffect("))
+        XCTAssertFalse(material.contains(".shadow("))
     }
 }
