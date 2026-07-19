@@ -1000,6 +1000,9 @@ public final class VoiceState {
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackAmplitudeClock() }
                 clearRetainedTeleprompter()
+                // A speaking event precedes the fresh subtitle payload. Do not let
+                // timings from the previous utterance animate a similar new one.
+                wordBoundaries = []
                 mode = .speaking
                 isTeleprompterDismissed = false
                 statusText = event["text"] as? String ?? ""

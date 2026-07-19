@@ -2,6 +2,27 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testNewSpeakingStateClearsStaleSubtitleBoundariesBeforeFreshPayloadArrives() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "subtitle",
+            "words": [
+                ["offset_ms": 0, "duration_ms": 220, "text": "deploy"],
+                ["offset_ms": 240, "duration_ms": 300, "text": "staging"],
+                ["offset_ms": 560, "duration_ms": 240, "text": "now"],
+            ],
+        ])
+        XCTAssertEqual(state.wordBoundaries.map(\.text), ["deploy", "staging", "now"])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "deploy production now",
+        ])
+
+        XCTAssertTrue(state.wordBoundaries.isEmpty)
+    }
+
     func testDefaultPlaybackClockUsesMonotonicSystemUptime() {
         let state = VoiceState()
         let envelope = PlaybackAmplitudeEnvelope(
