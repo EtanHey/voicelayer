@@ -9,9 +9,9 @@
 	<key>CFBundleDisplayName</key>
 	<string>VoiceBar</string>
 	<key>CFBundleVersion</key>
-	<string>2.1.15</string>
+	<string>2.1.16</string>
 	<key>CFBundleShortVersionString</key>
-	<string>2.1.15</string>
+	<string>2.1.16</string>
 	<key>CFBundleExecutable</key>
 	<string>VoiceBar</string>
 	<key>CFBundleIconFile</key>
