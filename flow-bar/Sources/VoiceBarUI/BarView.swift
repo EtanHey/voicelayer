@@ -50,11 +50,16 @@ public struct PulsingDot: View {
 public struct PulsingStatusLabel: View {
     public let text: String
     @State private var isPulsing = false
+    @Environment(\.colorScheme) private var colorScheme
 
     public var body: some View {
         Text(text)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(
+                VoiceBarNotchContrastPalette
+                    .resolve(for: VoiceBarNotchAppearance(colorScheme: colorScheme))
+                    .primary.color
+            )
             .lineLimit(1)
             .truncationMode(.tail)
             .opacity(isPulsing ? 0.55 : 1.0)
@@ -98,6 +103,7 @@ public struct BarView: View {
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.colorScheme) private var colorScheme
 
     public var body: some View {
         if includesPanelOutsets {
@@ -224,7 +230,7 @@ public struct BarView: View {
                 PulsingDot()
                 Image(systemName: "mic.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .foregroundStyle(notchPalette.secondary.color)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Recording")
@@ -237,7 +243,7 @@ public struct BarView: View {
         case .teleprompter:
             Image(systemName: "book.closed")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.84))
+                .foregroundStyle(notchPalette.secondary.color)
                 .accessibilityLabel("Teleprompter")
         }
     }
@@ -388,7 +394,7 @@ public struct BarView: View {
 
                 Text("Teleprompter hidden")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(notchPalette.tertiary.color)
                     .opacity(
                         TeleprompterVisibilityPolicy.hiddenLabelOpacity(
                             isDismissed: state.isTeleprompterDismissed
@@ -452,7 +458,7 @@ public struct BarView: View {
     private var queueBadge: some View {
         Text("\(state.queueDepth)")
             .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
+            .foregroundStyle(notchPalette.primary.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Theme.speakingColor.opacity(0.22))
@@ -467,24 +473,24 @@ public struct BarView: View {
             HStack(spacing: 8) {
                 Text("Queue")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(notchPalette.secondary.color)
                 if preview.overflowCount > 0 {
                     Text("+\(preview.overflowCount) more")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(notchPalette.tertiary.color)
                 }
             }
 
             Text(preview.currentText)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.96))
+                .foregroundStyle(notchPalette.primary.color)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(notchPalette.subtleTrack.color)
                     Capsule()
                         .fill(Theme.speakingColor.opacity(0.95))
                         .frame(width: max(10, geometry.size.width * preview.progress))
@@ -497,10 +503,10 @@ public struct BarView: View {
                 HStack(spacing: 6) {
                     Text("Up next")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(notchPalette.tertiary.color)
                     Text(nextText)
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.74))
+                        .foregroundStyle(notchPalette.secondary.color)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -555,7 +561,7 @@ public struct BarView: View {
     private var statusLabel: some View {
         Text(statusText)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(notchPalette.primary.color)
             .lineLimit(1)
             .truncationMode(.tail)
             .contentTransition(.opacity)
@@ -594,6 +600,12 @@ public struct BarView: View {
             mode: state.mode,
             recordingMode: state.recordingMode,
             isEngaged: state.isRecordingHoldEngaged
+        )
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(
+            for: VoiceBarNotchAppearance(colorScheme: colorScheme)
         )
     }
 
@@ -790,7 +802,11 @@ public struct BarView: View {
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(isSelected || isDestructive ? 1 : 0.84))
+                .foregroundStyle(
+                    isDestructive
+                        ? notchPalette.destructiveForeground.color
+                        : notchPalette.secondary.color
+                )
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize

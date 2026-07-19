@@ -381,6 +381,7 @@ public struct TeleprompterView: View {
 
     @State private var currentIndex: Int = 0
     @State private var animationTask: Task<Void, Never>?
+    @Environment(\.colorScheme) private var colorScheme
 
     private var teleprompterWords: [TeleprompterWord] {
         TeleprompterContentModel.words(
@@ -460,7 +461,7 @@ public struct TeleprompterView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: Theme.teleprompterWrapWidth, alignment: .leading)
                 .foregroundStyle(
-                    .white.opacity(opacityFor(word.id))
+                    notchPalette.primary.color.opacity(opacityFor(word.id))
                 )
                 .id(word.id)
         }
@@ -469,15 +470,24 @@ public struct TeleprompterView: View {
     // MARK: - Word opacity
 
     private func opacityFor(_ index: Int) -> Double {
+        let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(
+            for: VoiceBarNotchAppearance(colorScheme: colorScheme)
+        )
         if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
             return readbackOpacity
         }
         if index == currentIndex { return 1.0 }
         if index < currentIndex {
             let distance = currentIndex - index
-            return max(0.2, 0.55 - Double(distance) * 0.12)
+            return max(minimumOpacity, 0.70 - Double(distance) * 0.06)
         }
-        return 0.3
+        return minimumOpacity
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(
+            for: VoiceBarNotchAppearance(colorScheme: colorScheme)
+        )
     }
 
     // MARK: - Animation
