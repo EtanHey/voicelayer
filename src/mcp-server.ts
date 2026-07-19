@@ -70,7 +70,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
         extra.sessionId,
       );
     }
-    return extra.sendNotification(notification as never);
+    return extra.sendNotification(notification);
   });
 
   try {
