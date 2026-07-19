@@ -50,6 +50,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isKeyboardFocused: Bool
     public var isCollapsed: Bool
     public var coreWidth: CGFloat
+    public var visibleCoreOcclusionInset: CGFloat
 
     public init(
         mode: VoiceMode,
@@ -66,7 +67,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         isHovered: Bool = false,
         isKeyboardFocused: Bool = false,
         isCollapsed: Bool = false,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) {
         self.mode = mode
         self.hasTeleprompterText = hasTeleprompterText
@@ -83,6 +85,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.isKeyboardFocused = isKeyboardFocused
         self.isCollapsed = isCollapsed
         self.coreWidth = coreWidth
+        self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
     }
 }
 
@@ -131,7 +134,8 @@ public enum VoiceBarPresentation {
             ),
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
-            coreWidth: input.coreWidth
+            coreWidth: input.coreWidth,
+            visibleCoreOcclusionInset: input.visibleCoreOcclusionInset
         )
     }
 
@@ -141,10 +145,8 @@ public enum VoiceBarPresentation {
     ) -> CGFloat? {
         guard mode == .transcribing else { return nil }
         let contentWidth = Theme.pillProcessingSpinnerWidth
-            + Theme.intrinsicPillStatusWidth(for: statusText)
-            + VoiceBarNotchContract.material.compactControlSpacing
         return VoiceBarNotchContract.material.blackToGlassFadeWidth
-            + 2
+            + VoiceBarNotchContract.material.compactContentInset
             + contentWidth
     }
 

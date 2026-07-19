@@ -45,6 +45,27 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
     }
 
+    func testNotchControlsUseOneBareLanguageWithCentralizedOpticalCorrections() throws {
+        let stop = VoiceBarNotchControlOptics.resolve(for: "stop.fill")
+        let replay = VoiceBarNotchControlOptics.resolve(for: "arrow.counterclockwise")
+        let eye = VoiceBarNotchControlOptics.resolve(for: "eye")
+        let eyeSlash = VoiceBarNotchControlOptics.resolve(for: "eye.slash")
+
+        XCTAssertEqual(stop.offsetX, 0.5)
+        XCTAssertEqual(stop.offsetY, 0.5)
+        XCTAssertEqual(eye.pointSize, eyeSlash.pointSize)
+        XCTAssertLessThan(eye.pointSize, replay.pointSize)
+
+        let source = try barViewSource()
+        let buttonStart = try XCTUnwrap(source.range(of: "private func notchButton"))
+        let buttonSource = source[buttonStart.lowerBound...]
+        XCTAssertTrue(buttonSource.contains("VoiceBarNotchControlOptics.resolve(for: icon)"))
+        XCTAssertTrue(source.contains("Color(nsColor: .labelColor)"))
+        XCTAssertTrue(buttonSource.contains(": notchPrimaryLabelColor"))
+        XCTAssertFalse(buttonSource.contains(": notchPalette.primary.color"))
+        XCTAssertFalse(buttonSource.contains(".background"))
+    }
+
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
         let idle = VoiceState()
         idle.mode = .idle
@@ -52,7 +73,7 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 285, height: 32),
+            NSSize(width: 311, height: 32),
             "visible idle must hold the launcher envelope through its collapse grace window"
         )
 
@@ -69,7 +90,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 285, height: 32)
+            NSSize(width: 311, height: 32)
         )
 
         let recording = VoiceState()
@@ -79,7 +100,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 409, height: 32)
+            NSSize(width: 394, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -256,7 +277,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.stopCount, 0)
     }
 
-    func testTranscribingNotchRendersTheLiveStatusText() throws {
+    func testTranscribingNotchDropsTheRedundantDefaultLabel() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(
@@ -265,7 +286,8 @@ final class BarViewClickabilityTests: XCTestCase {
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
         XCTAssertTrue(leading.contains("if state.mode == .transcribing"))
-        XCTAssertTrue(leading.contains("statusLabel"))
+        XCTAssertTrue(leading.contains("ProcessingSpinner()"))
+        XCTAssertFalse(leading.contains("statusLabel"))
     }
 
     func testTranscribingKeepsTheWaveformTrailingAndMorphsTheLeadingIndicator() throws {
@@ -299,9 +321,33 @@ final class BarViewClickabilityTests: XCTestCase {
     func testOpenPopoversKeepTheLauncherMountedAfterPointerExit() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented"))
-        XCTAssertFalse(source.contains("vocabularyButton"))
+        XCTAssertTrue(source
+            .contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented || isVocabularyPresented"))
+        XCTAssertTrue(source.contains("vocabularyButton"))
+        XCTAssertTrue(source.contains("accessibilityLabel: \"Dictionary\""))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
+    }
+
+    func testManagementButtonsMountOnlyInHoveredLauncherTrailingWing() throws {
+        let source = try barViewSource()
+        let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
+        let compactStart = try XCTUnwrap(
+            source.range(
+                of: "private var notchCompactStatusContent",
+                range: trailingStart.upperBound ..< source.endIndex
+            )
+        )
+        let trailing = String(source[trailingStart.lowerBound ..< compactStart.lowerBound])
+        let hover = try XCTUnwrap(
+            trailing.components(separatedBy: "case .hoverLauncher:").dropFirst().first?
+                .components(separatedBy: "case .recording:").first
+        )
+        let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
+
+        XCTAssertTrue(hover.contains("historyButton"))
+        XCTAssertTrue(hover.contains("vocabularyButton"))
+        XCTAssertFalse(active.contains("historyButton"))
+        XCTAssertFalse(active.contains("vocabularyButton"))
     }
 
     func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
@@ -380,15 +426,32 @@ final class BarViewClickabilityTests: XCTestCase {
     }
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 55, y: host.bounds.midY)
+        NSPoint(
+            x: recordingTrailingContentOriginX +
+                VoiceBarNotchContract.material.waveformSlotWidth +
+                VoiceBarNotchContract.material.compactControlSpacing +
+                VoiceBarNotchContract.material.compactControlSize / 2,
+            y: host.bounds.midY
+        )
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 65, y: host.bounds.midY)
+        recordingCancelButtonCenter(in: host)
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(x: host.bounds.maxX - 27, y: host.bounds.midY)
+        NSPoint(
+            x: recordingCancelButtonCenter(in: host).x +
+                VoiceBarNotchContract.material.compactControlSize +
+                VoiceBarNotchContract.material.compactControlSpacing,
+            y: host.bounds.midY
+        )
+    }
+
+    private var recordingTrailingContentOriginX: CGFloat {
+        let geometry = VoiceBarNotchContract.geometry(for: .recording)
+        return geometry.coreOriginX + geometry.coreWidth +
+            VoiceBarNotchContract.material.blackToGlassFadeWidth
     }
 
     private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {

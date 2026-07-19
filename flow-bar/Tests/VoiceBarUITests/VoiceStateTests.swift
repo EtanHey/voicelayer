@@ -327,6 +327,20 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertGreaterThan(loudSpeech, quietSpeech)
     }
 
+    func testRecordingSpeechPhaseStaysFullGainAfterVoiceActivityDrops() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "recording"])
+
+        state.handleEvent(["type": "speech", "detected": true])
+        XCTAssertTrue(state.speechDetected)
+
+        state.handleEvent(["type": "speech", "detected": false])
+        XCTAssertTrue(
+            state.speechDetected,
+            "listening damping is pre-speech only and must not re-arm during the recording"
+        )
+    }
+
     func testRecordingWaveformUsesAdaptedLocalMeterWhenItIsStronger() {
         let state = VoiceState()
         state.handleEvent([

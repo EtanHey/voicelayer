@@ -206,19 +206,34 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 
     private var coreEdgeVeils: some View {
-        let fadeWidth = VoiceBarNotchContract.material.blackToGlassFadeWidth
+        let leadingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
+            for: .leading,
+            coreRect: layout.coreRect,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+        )
+        let trailingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
+            for: .trailing,
+            coreRect: layout.coreRect,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+        )
         return ZStack(alignment: .topLeading) {
             VoiceBarBlackToGlassFade(wing: .leading)
-                .frame(height: presentation.geometry.topHeight)
+                .frame(
+                    width: leadingPlacement.frame.width,
+                    height: leadingPlacement.frame.height
+                )
                 .position(
-                    x: layout.coreRect.minX - fadeWidth / 2,
-                    y: presentation.geometry.topHeight / 2
+                    x: leadingPlacement.frame.midX,
+                    y: leadingPlacement.frame.midY
                 )
             VoiceBarBlackToGlassFade(wing: .trailing)
-                .frame(height: presentation.geometry.topHeight)
+                .frame(
+                    width: trailingPlacement.frame.width,
+                    height: trailingPlacement.frame.height
+                )
                 .position(
-                    x: layout.coreRect.maxX + fadeWidth / 2,
-                    y: presentation.geometry.topHeight / 2
+                    x: trailingPlacement.frame.midX,
+                    y: trailingPlacement.frame.midY
                 )
         }
         .frame(
@@ -275,32 +290,48 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         _ content: some View,
         side: VoiceBarNotchSide
     ) -> some View {
-        content
-            .padding(contentInsets(for: side))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        let slot = VoiceBarNotchContract.material.wingContentLayout(
+            for: side,
+            state: presentation.visualState,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+        )
+        return content
+            .padding(contentInsets(for: slot))
+            .frame(
+                maxWidth: .infinity,
+                maxHeight: .infinity,
+                alignment: contentAlignment(for: slot)
+            )
             .clipped()
     }
 
-    private func contentInsets(for side: VoiceBarNotchSide) -> EdgeInsets {
-        let material = VoiceBarNotchContract.material
-        let isTeleprompter = presentation.visualState == .teleprompter
-        let coreInset = material.blackToGlassFadeWidth + (isTeleprompter ? material.fadeToContentGap : 0)
-        let outerInset = isTeleprompter ? material.outerContentInset : 2
-        return switch side {
+    private func contentInsets(for slot: VoiceBarNotchWingContentLayout) -> EdgeInsets {
+        switch slot.side {
         case .leading:
             EdgeInsets(
                 top: 0,
-                leading: outerInset,
+                leading: slot.outerInset,
                 bottom: 0,
-                trailing: coreInset
+                trailing: slot.coreInset
             )
         case .trailing:
             EdgeInsets(
                 top: 0,
-                leading: coreInset,
+                leading: slot.coreInset,
                 bottom: 0,
-                trailing: outerInset
+                trailing: slot.outerInset
             )
+        }
+    }
+
+    private func contentAlignment(for slot: VoiceBarNotchWingContentLayout) -> Alignment {
+        switch slot.alignment {
+        case .center:
+            .center
+        case .screenLeading:
+            .leading
+        case .core:
+            slot.side == .leading ? .trailing : .leading
         }
     }
 }

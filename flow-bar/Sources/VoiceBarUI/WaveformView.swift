@@ -2,16 +2,24 @@
 
 import SwiftUI
 
+public enum WaveformLayout {
+    public static let barCount = 7
+    public static let barWidth: CGFloat = 4
+    public static let barSpacing: CGFloat = 3
+    public static let viewportWidth: CGFloat = 46
+    public static let viewportHeight: CGFloat = 24
+}
+
 public struct WaveformView: View {
     public let color: Color
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
 
-    private let barCount = 7
-    private let barWidth: CGFloat = 4
-    private let barSpacing: CGFloat = 3
-    private let maxHeight: CGFloat = 24
+    private let barCount = WaveformLayout.barCount
+    private let barWidth = WaveformLayout.barWidth
+    private let barSpacing = WaveformLayout.barSpacing
+    private let maxHeight = WaveformLayout.viewportHeight
     private let minHeight: CGFloat = 3
 
     public init(
@@ -66,6 +74,9 @@ public struct WaveformView: View {
                 )
             }
         }
+        .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
+        .fixedSize(horizontal: true, vertical: true)
+        .layoutPriority(1)
     }
 
     private enum RenderMode {

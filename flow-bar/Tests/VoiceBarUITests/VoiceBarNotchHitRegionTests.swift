@@ -6,11 +6,11 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         let geometry = VoiceBarNotchContract.geometry(for: .recording)
         let region = VoiceBarNotchHitRegion(geometry: geometry)
 
-        XCTAssertEqual(region.rects, [CGRect(x: 0, y: 0, width: 409, height: 32)])
+        XCTAssertEqual(region.rects, [CGRect(x: 0, y: 0, width: 394, height: 32)])
         XCTAssertTrue(region.contains(CGPoint(x: 10, y: 16)))
         XCTAssertTrue(region.contains(CGPoint(x: 150, y: 16)))
-        XCTAssertTrue(region.contains(CGPoint(x: 400, y: 16)))
-        XCTAssertFalse(region.contains(CGPoint(x: 204.5, y: 40)))
+        XCTAssertTrue(region.contains(CGPoint(x: 380, y: 16)))
+        XCTAssertFalse(region.contains(CGPoint(x: 197, y: 40)))
     }
 
     func testCompactRoundedCornersPassThroughOutsideTheRenderedGlass() {
@@ -19,9 +19,9 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         )
 
         XCTAssertFalse(region.contains(CGPoint(x: 1, y: 1)))
-        XCTAssertFalse(region.contains(CGPoint(x: 408, y: 1)))
+        XCTAssertFalse(region.contains(CGPoint(x: 393, y: 1)))
         XCTAssertTrue(region.contains(CGPoint(x: 16, y: 16)))
-        XCTAssertTrue(region.contains(CGPoint(x: 393, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: 378, y: 16)))
     }
 
     func testTeleprompterRegionIsTheTopBarPlusLowerBodyUnion() {
@@ -29,7 +29,7 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         let region = VoiceBarNotchHitRegion(geometry: geometry)
 
         XCTAssertEqual(region.rects, [
-            CGRect(x: 64, y: 196, width: 349, height: 32),
+            CGRect(x: 58, y: 196, width: 361, height: 32),
             CGRect(x: 0, y: 0, width: 465, height: 196),
         ])
         XCTAssertEqual(geometry.coreOriginX, 140)

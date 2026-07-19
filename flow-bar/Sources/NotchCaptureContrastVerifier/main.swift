@@ -78,6 +78,14 @@ private struct IdleHoldCursorProof: Decodable {
     let positions: [CursorProofPoint]
 }
 
+private struct RenderScaleReceipt: Decodable {
+    let ready: Bool
+    let screenScale: Double?
+    let windowScale: Double
+    let contentScale: Double?
+    let layerScales: [Double]
+}
+
 private let specs = [
     AuditSpec(
         name: "recording-mic",
@@ -274,6 +282,105 @@ private func lumaImage(at url: URL) throws -> VoiceBarLumaImage {
     )
 }
 
+private func rgbImage(at url: URL) throws -> VoiceBarRGBImage {
+    guard let image = NSImage(contentsOf: url),
+          let data = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: data)
+    else {
+        throw NSError(
+            domain: "NotchCaptureContrastVerifier",
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "Could not decode \(url.path)"]
+        )
+    }
+    let pixels = (0 ..< bitmap.pixelsHigh).flatMap { y in
+        (0 ..< bitmap.pixelsWide).map { x -> VoiceBarRGB in
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                return VoiceBarRGB(red: 0, green: 0, blue: 0)
+            }
+            return VoiceBarRGB(
+                red: color.redComponent,
+                green: color.greenComponent,
+                blue: color.blueComponent
+            )
+        }
+    }
+    return VoiceBarRGBImage(
+        width: bitmap.pixelsWide,
+        height: bitmap.pixelsHigh,
+        pixels: pixels
+    )
+}
+
+private func pixels(in image: VoiceBarRGBImage, rect: CGRect) -> [VoiceBarRGB] {
+    let minX = max(0, min(image.width, Int((rect.minX * CGFloat(image.width)).rounded(.down))))
+    let maxX = max(minX, min(image.width, Int((rect.maxX * CGFloat(image.width)).rounded(.up))))
+    let minY = max(0, min(image.height, Int((rect.minY * CGFloat(image.height)).rounded(.down))))
+    let maxY = max(minY, min(image.height, Int((rect.maxY * CGFloat(image.height)).rounded(.up))))
+    return (minY ..< maxY).flatMap { y in
+        (minX ..< maxX).map { x in image.pixels[y * image.width + x] }
+    }
+}
+
+private func glyphContrastParity(
+    framePath: String,
+    appearance: VoiceBarNotchAppearance,
+    wingForegroundRegionValue: String,
+    wingBackgroundRegionValue: String,
+    referenceForegroundRegionValue: String,
+    referenceBackgroundRegionValue: String
+) throws -> VoiceBarNotchGlyphContrastParityAuditResult {
+    let image = try rgbImage(at: URL(fileURLWithPath: framePath))
+    let wingBackgroundPixels = try pixels(
+        in: image,
+        rect: normalizedRect(
+            argument: wingBackgroundRegionValue,
+            name: "--glyph-wing-background-region"
+        )
+    )
+    let referenceBackgroundPixels = try pixels(
+        in: image,
+        rect: normalizedRect(
+            argument: referenceBackgroundRegionValue,
+            name: "--glyph-reference-background-region"
+        )
+    )
+    let wingBackground = medianColor(wingBackgroundPixels)
+    let referenceBackground = medianColor(referenceBackgroundPixels)
+    let wingForegroundPixels = try pixels(
+        in: image,
+        rect: normalizedRect(
+            argument: wingForegroundRegionValue,
+            name: "--glyph-wing-foreground-region"
+        )
+    ).filter {
+        VoiceBarContrast.isForegroundCandidate(
+            $0,
+            against: wingBackground,
+            appearance: appearance
+        )
+    }
+    let referenceForegroundPixels = try pixels(
+        in: image,
+        rect: normalizedRect(
+            argument: referenceForegroundRegionValue,
+            name: "--glyph-reference-foreground-region"
+        )
+    ).filter {
+        VoiceBarContrast.isForegroundCandidate(
+            $0,
+            against: referenceBackground,
+            appearance: appearance
+        )
+    }
+    return VoiceBarNotchCaptureAudit.glyphContrastParity(
+        wingForegroundPixels: wingForegroundPixels,
+        wingBackgroundPixels: wingBackgroundPixels,
+        referenceForegroundPixels: referenceForegroundPixels,
+        referenceBackgroundPixels: referenceBackgroundPixels
+    )
+}
+
 private func idleHoldFrameURLs(in directory: String) throws -> [URL] {
     try FileManager.default
         .contentsOfDirectory(
@@ -317,13 +424,46 @@ guard let darkDirectory = argument(named: "--dark"),
       let lightDirectory = argument(named: "--light"),
       let expandedStripPath = argument(named: "--expanded-strip"),
       let idleHoldFramesDirectory = argument(named: "--idle-hold-frames"),
-      let idleHoldCursorProofPath = argument(named: "--idle-hold-cursor-proof")
+      let idleHoldCursorProofPath = argument(named: "--idle-hold-cursor-proof"),
+      let waveformRecordingFramesDirectory = argument(named: "--waveform-recording-frames"),
+      let waveformTranscribingFramesDirectory = argument(named: "--waveform-transcribing-frames"),
+      let waveformSpeakingFramesDirectory = argument(named: "--waveform-speaking-frames"),
+      let fadeLeadingFramePath = argument(named: "--fade-leading-frame"),
+      let fadeTrailingFramePath = argument(named: "--fade-trailing-frame"),
+      let darkLiveFramePath = argument(named: "--dark-live-frame"),
+      let lightLiveFramePath = argument(named: "--light-live-frame"),
+      let glyphWingForegroundRegionValue = argument(named: "--glyph-wing-foreground-region"),
+      let glyphWingBackgroundRegionValue = argument(named: "--glyph-wing-background-region"),
+      let glyphReferenceForegroundRegionValue = argument(named: "--glyph-reference-foreground-region"),
+      let glyphReferenceBackgroundRegionValue = argument(named: "--glyph-reference-background-region"),
+      let paddingFramePath = argument(named: "--padding-frame"),
+      let paddingLeadingWingRegionValue = argument(named: "--padding-leading-wing-region"),
+      let paddingTrailingWingRegionValue = argument(named: "--padding-trailing-wing-region"),
+      let captureBackingScaleValue = argument(named: "--capture-backing-scale"),
+      let captureBackingScale = Double(captureBackingScaleValue),
+      let renderScaleReceiptPath = argument(named: "--render-scale-receipt")
 else {
     fputs(
         "usage: NotchCaptureContrastVerifier --dark <notch-only-dir> " +
             "--light <notch-only-dir> --expanded-strip <800x100-png> " +
             "--idle-hold-frames <three-second-60fps-png-dir> " +
             "--idle-hold-cursor-proof <cursor-proof-json> " +
+            "--waveform-recording-frames <cropped-png-dir> " +
+            "--waveform-transcribing-frames <cropped-png-dir> " +
+            "--waveform-speaking-frames <cropped-png-dir> " +
+            "--fade-leading-frame <inner-seam-crop-png> " +
+            "--fade-trailing-frame <inner-seam-crop-png> " +
+            "--dark-live-frame <same-frame-dark-png> " +
+            "--light-live-frame <same-frame-light-png> " +
+            "--glyph-wing-foreground-region <normalized-x,y,w,h> " +
+            "--glyph-wing-background-region <normalized-x,y,w,h> " +
+            "--glyph-reference-foreground-region <normalized-x,y,w,h> " +
+            "--glyph-reference-background-region <normalized-x,y,w,h> " +
+            "--padding-frame <transcribing-png> " +
+            "--padding-leading-wing-region <normalized-x,y,w,h> " +
+            "--padding-trailing-wing-region <normalized-x,y,w,h> " +
+            "--capture-backing-scale <scale> " +
+            "--render-scale-receipt <json> " +
             "--sharpness-frame <same-frame-png> " +
             "--sharpness-wing-region <normalized-x,y,w,h> " +
             "--sharpness-reference-region <normalized-x,y,w,h>\n",
@@ -333,6 +473,26 @@ else {
 }
 
 do {
+    let renderScaleReceipt = try JSONDecoder().decode(
+        RenderScaleReceipt.self,
+        from: Data(contentsOf: URL(fileURLWithPath: renderScaleReceiptPath))
+    )
+    let renderScalePassed = renderScaleReceipt.ready &&
+        renderScaleReceipt.screenScale != nil &&
+        abs((renderScaleReceipt.screenScale ?? 0) - renderScaleReceipt.windowScale) <= 0.01 &&
+        abs((renderScaleReceipt.screenScale ?? 0) - (renderScaleReceipt.contentScale ?? 0)) <= 0.01 &&
+        !renderScaleReceipt.layerScales.isEmpty &&
+        renderScaleReceipt.layerScales.allSatisfy {
+            abs((renderScaleReceipt.screenScale ?? 0) - $0) <= 0.01
+        }
+    print(
+        "\(renderScalePassed ? "PASS" : "FAIL") RENDER-SCALE " +
+            "screen=\(renderScaleReceipt.screenScale.map { String(format: "%.2f", $0) } ?? "nil") " +
+            "window=\(String(format: "%.2f", renderScaleReceipt.windowScale)) " +
+            "content=\(renderScaleReceipt.contentScale.map { String(format: "%.2f", $0) } ?? "nil") " +
+            "layers=\(renderScaleReceipt.layerScales.map { String(format: "%.2f", $0) }.joined(separator: ","))"
+    )
+
     let sharpnessResult = try sharpnessAudit(
         framePath: sharpnessFramePath,
         wingRegionValue: sharpnessWingRegionValue,
@@ -360,6 +520,38 @@ do {
                 "\(result.appearance)/\(result.name) " +
                 "contrast=\(String(format: "%.2f", result.ratio)) " +
                 "candidates=\(result.candidateCount)"
+        )
+    }
+
+    let glyphParityResults = try [
+        (
+            "dark",
+            glyphContrastParity(
+                framePath: darkLiveFramePath,
+                appearance: .dark,
+                wingForegroundRegionValue: glyphWingForegroundRegionValue,
+                wingBackgroundRegionValue: glyphWingBackgroundRegionValue,
+                referenceForegroundRegionValue: glyphReferenceForegroundRegionValue,
+                referenceBackgroundRegionValue: glyphReferenceBackgroundRegionValue
+            )
+        ),
+        (
+            "light",
+            glyphContrastParity(
+                framePath: lightLiveFramePath,
+                appearance: .light,
+                wingForegroundRegionValue: glyphWingForegroundRegionValue,
+                wingBackgroundRegionValue: glyphWingBackgroundRegionValue,
+                referenceForegroundRegionValue: glyphReferenceForegroundRegionValue,
+                referenceBackgroundRegionValue: glyphReferenceBackgroundRegionValue
+            )
+        ),
+    ]
+    for (appearance, result) in glyphParityResults {
+        print(
+            "\(result.passed ? "PASS" : "FAIL") GLYPH-CONTRAST-PARITY/\(appearance) " +
+                "wing=\(String(format: "%.2f", result.wingContrastRatio)) " +
+                "reference=\(String(format: "%.2f", result.referenceContrastRatio))"
         )
     }
 
@@ -422,11 +614,92 @@ do {
             "inside=\(cursorAbsenceResult.insideFrameCount)"
     )
 
-    if !sharpnessResult.passed ||
+    let recordingWaveformFrames = try idleHoldFrameURLs(
+        in: waveformRecordingFramesDirectory
+    ).map(rgbImage)
+    let transcribingWaveformFrames = try idleHoldFrameURLs(
+        in: waveformTranscribingFramesDirectory
+    ).map(rgbImage)
+    let speakingWaveformFrames = try idleHoldFrameURLs(
+        in: waveformSpeakingFramesDirectory
+    ).map(rgbImage)
+    let waveformCensus = VoiceBarNotchCaptureAudit.waveformCensus(
+        recordingFrames: recordingWaveformFrames,
+        transcribingFrames: transcribingWaveformFrames,
+        speakingFrames: speakingWaveformFrames
+    )
+    print(
+        "\(waveformCensus.passed ? "PASS" : "FAIL") WAVEFORM-CENSUS " +
+            "frames=\(waveformCensus.recordingFrameCount)/" +
+            "\(waveformCensus.transcribingFrameCount)/" +
+            "\(waveformCensus.speakingFrameCount) bars=" +
+            "\(waveformCensus.minimumRecordingBarCount)/" +
+            "\(waveformCensus.minimumTranscribingBarCount)/" +
+            "\(waveformCensus.minimumSpeakingBarCount) peakRatio=" +
+            String(format: "%.2f", waveformCensus.recordingToSpeakingPeakRatio) +
+            " transcribingComplete=" +
+            String(format: "%.3f", waveformCensus.transcribingCompleteFraction) +
+            " centerDeviation=" +
+            String(format: "%.2f", waveformCensus.recordingMaximumCenterDeviation) +
+            " slotDelta=" +
+            String(format: "%.2f", waveformCensus.maximumSlotOffsetDelta)
+    )
+
+    let fadeResults = try [
+        (
+            "leading",
+            VoiceBarNotchCaptureAudit.seamFade(
+                in: lumaImage(at: URL(fileURLWithPath: fadeLeadingFramePath)),
+                blackEdge: .trailing
+            )
+        ),
+        (
+            "trailing",
+            VoiceBarNotchCaptureAudit.seamFade(
+                in: lumaImage(at: URL(fileURLWithPath: fadeTrailingFramePath)),
+                blackEdge: .leading
+            )
+        ),
+    ]
+    for (side, result) in fadeResults {
+        print(
+            "\(result.passed ? "PASS" : "FAIL") SEAM-FADE/\(side) " +
+                "range=\(String(format: "%.1f", result.brightnessRange)) " +
+                "steps=\(result.progressingColumnCount) " +
+                "correlation=\(String(format: "%.2f", result.progressionCorrelation))"
+        )
+    }
+
+    let paddingFrame = try rgbImage(at: URL(fileURLWithPath: paddingFramePath))
+    let compactPadding = try VoiceBarNotchCaptureAudit.compactPadding(
+        in: paddingFrame,
+        leadingWingRect: normalizedRect(
+            argument: paddingLeadingWingRegionValue,
+            name: "--padding-leading-wing-region"
+        ),
+        trailingWingRect: normalizedRect(
+            argument: paddingTrailingWingRegionValue,
+            name: "--padding-trailing-wing-region"
+        ),
+        backingScale: captureBackingScale
+    )
+    print(
+        "\(compactPadding.passed ? "PASS" : "FAIL") COMPACT-PADDING " +
+            "spinner=\(String(format: "%.2f", compactPadding.spinnerLeadingPadding)) " +
+            "waveform=\(String(format: "%.2f", compactPadding.waveformLeadingPadding)) " +
+            "delta=\(String(format: "%.2f", compactPadding.paddingDelta))"
+    )
+
+    if !renderScalePassed ||
+        !sharpnessResult.passed ||
         results.contains(where: { !$0.passed }) ||
+        glyphParityResults.contains(where: { !$0.1.passed }) ||
         birthmarkResults.contains(where: { !$0.passed }) ||
         !idleHoldResult.passed ||
-        !cursorAbsencePassed {
+        !cursorAbsencePassed ||
+        !waveformCensus.passed ||
+        !compactPadding.passed ||
+        fadeResults.contains(where: { !$0.1.passed }) {
         exit(1)
     }
 } catch {

@@ -212,4 +212,28 @@ final class VoiceBarNotchContrastTests: XCTestCase {
             0.56
         )
     }
+
+    func testCompactWingGlyphsAlwaysUseThePrimaryLabelRole() {
+        XCTAssertEqual(
+            VoiceBarNotchGlyphForegroundRole.resolve(
+                isDestructive: false,
+                isSelected: false
+            ),
+            .primaryLabel
+        )
+        XCTAssertEqual(
+            VoiceBarNotchGlyphForegroundRole.resolve(
+                isDestructive: true,
+                isSelected: false
+            ),
+            .stateAccent
+        )
+        XCTAssertEqual(
+            VoiceBarNotchGlyphForegroundRole.resolve(
+                isDestructive: false,
+                isSelected: true
+            ),
+            .stateAccent
+        )
+    }
 }

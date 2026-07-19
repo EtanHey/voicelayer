@@ -1086,7 +1086,12 @@ public final class VoiceState {
 
         case "speech":
             if let detected = event["detected"] as? Bool {
-                speechDetected = detected
+                // The accepted gold damping is a pre-speech treatment. Once
+                // speech begins, keep the recording on the full-gain path
+                // until the recording state itself resolves.
+                speechDetected = mode == .recording
+                    ? speechDetected || detected
+                    : detected
             }
 
         case "transcription":

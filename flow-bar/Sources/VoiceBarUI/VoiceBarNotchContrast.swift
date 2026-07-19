@@ -12,6 +12,18 @@ public enum VoiceBarNotchAppearance: Equatable {
     }
 }
 
+public enum VoiceBarNotchGlyphForegroundRole: Equatable {
+    case primaryLabel
+    case stateAccent
+
+    public static func resolve(
+        isDestructive: Bool,
+        isSelected: Bool
+    ) -> Self {
+        isDestructive || isSelected ? .stateAccent : .primaryLabel
+    }
+}
+
 public struct VoiceBarNotchAppearanceTracker {
     public private(set) var appearance: VoiceBarNotchAppearance
 

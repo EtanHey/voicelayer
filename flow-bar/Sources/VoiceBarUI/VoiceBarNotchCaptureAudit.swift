@@ -64,6 +64,20 @@ public struct VoiceBarLumaImage: Equatable {
     }
 }
 
+public struct VoiceBarRGBImage: Equatable {
+    public let width: Int
+    public let height: Int
+    public let pixels: [VoiceBarRGB]
+
+    public init(width: Int, height: Int, pixels: [VoiceBarRGB]) {
+        precondition(width > 0 && height > 0)
+        precondition(pixels.count == width * height)
+        self.width = width
+        self.height = height
+        self.pixels = pixels
+    }
+}
+
 public struct VoiceBarNotchBirthmarkAuditResult: Equatable {
     public let side: VoiceBarNotchSide
     public let fillBaseline: Double
@@ -95,6 +109,40 @@ public struct VoiceBarNotchEdgeSharpnessAuditResult: Equatable {
     public let passed: Bool
 }
 
+public struct VoiceBarNotchGlyphContrastParityAuditResult: Equatable {
+    public let wingContrastRatio: Double
+    public let referenceContrastRatio: Double
+    public let passed: Bool
+}
+
+public struct VoiceBarNotchCompactPaddingAuditResult: Equatable {
+    public let spinnerLeadingPadding: Double
+    public let waveformLeadingPadding: Double
+    public let paddingDelta: Double
+    public let passed: Bool
+}
+
+public struct VoiceBarNotchWaveformCensusAuditResult: Equatable {
+    public let recordingFrameCount: Int
+    public let transcribingFrameCount: Int
+    public let speakingFrameCount: Int
+    public let minimumRecordingBarCount: Int
+    public let minimumTranscribingBarCount: Int
+    public let minimumSpeakingBarCount: Int
+    public let transcribingCompleteFraction: Double
+    public let recordingToSpeakingPeakRatio: Double
+    public let recordingMaximumCenterDeviation: Double
+    public let maximumSlotOffsetDelta: Double
+    public let passed: Bool
+}
+
+public struct VoiceBarNotchSeamFadeAuditResult: Equatable {
+    public let brightnessRange: Double
+    public let progressingColumnCount: Int
+    public let progressionCorrelation: Double
+    public let passed: Bool
+}
+
 public enum VoiceBarNotchCaptureAudit {
     public static let referenceSize = CGSize(width: 800, height: 100)
     public static let birthmarkBrightnessOffset = 18.0
@@ -104,6 +152,16 @@ public enum VoiceBarNotchCaptureAudit {
     public static let idleVisibilityThreshold = 90.0
     public static let minimumIdleHoldFrames = 180
     public static let maximumReferenceToWingSharpnessRatio = 2.0
+    public static let minimumReferenceGlyphGradient = 80.0
+    public static let waveformBarCount = 7
+    public static let minimumTranscribingCompleteFraction = 0.95
+    public static let minimumRecordingToSpeakingPeakRatio = 0.8
+    public static let maximumWaveformCenterDeviation = 2.0
+    public static let maximumWaveformSlotOffsetDelta = 2.0
+    public static let maximumCompactPaddingDelta = 2.0
+    public static let minimumSeamFadeBrightnessRange = 6.0
+    public static let minimumSeamFadeProgressingColumns = 4
+    public static let minimumSeamFadeCorrelation = 0.55
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -233,8 +291,156 @@ public enum VoiceBarNotchCaptureAudit {
             referenceToWingRatio: ratio,
             maximumAllowedRatio: maximumReferenceToWingSharpnessRatio,
             passed: wingGradient > 0 &&
-                referenceGradient > 0 &&
+                referenceGradient >= minimumReferenceGlyphGradient &&
                 ratio <= maximumReferenceToWingSharpnessRatio
+        )
+    }
+
+    public static func glyphContrastParity(
+        wingForegroundPixels: [VoiceBarRGB],
+        wingBackgroundPixels: [VoiceBarRGB],
+        referenceForegroundPixels: [VoiceBarRGB],
+        referenceBackgroundPixels: [VoiceBarRGB]
+    ) -> VoiceBarNotchGlyphContrastParityAuditResult {
+        let wingBackground = medianColor(wingBackgroundPixels)
+        let referenceBackground = medianColor(referenceBackgroundPixels)
+        let wingRatio = median(
+            wingForegroundPixels.map {
+                VoiceBarContrast.ratio(foreground: $0, background: wingBackground)
+            }
+        )
+        let referenceRatio = median(
+            referenceForegroundPixels.map {
+                VoiceBarContrast.ratio(foreground: $0, background: referenceBackground)
+            }
+        )
+        return VoiceBarNotchGlyphContrastParityAuditResult(
+            wingContrastRatio: wingRatio,
+            referenceContrastRatio: referenceRatio,
+            passed: !wingForegroundPixels.isEmpty &&
+                !wingBackgroundPixels.isEmpty &&
+                !referenceForegroundPixels.isEmpty &&
+                !referenceBackgroundPixels.isEmpty &&
+                wingRatio >= referenceRatio
+        )
+    }
+
+    public static func compactPadding(
+        in image: VoiceBarRGBImage,
+        leadingWingRect: CGRect,
+        trailingWingRect: CGRect,
+        backingScale: Double
+    ) -> VoiceBarNotchCompactPaddingAuditResult {
+        let leadingBounds = blueForegroundBounds(in: image, rect: leadingWingRect)
+        let trailingBounds = blueForegroundBounds(in: image, rect: trailingWingRect)
+        let leadingPixelRect = pixelRect(
+            normalized: leadingWingRect,
+            width: image.width,
+            height: image.height
+        )
+        let trailingPixelRect = pixelRect(
+            normalized: trailingWingRect,
+            width: image.width,
+            height: image.height
+        )
+        let scale = backingScale > 0 ? backingScale : 1
+        let spinnerPadding = leadingBounds.map {
+            Double($0.minX - leadingPixelRect.minX) / scale
+        } ?? .infinity
+        let waveformPadding = trailingBounds.map {
+            Double($0.minX - trailingPixelRect.minX) / scale
+        } ?? .infinity
+        let delta = abs(spinnerPadding - waveformPadding)
+        return VoiceBarNotchCompactPaddingAuditResult(
+            spinnerLeadingPadding: spinnerPadding,
+            waveformLeadingPadding: waveformPadding,
+            paddingDelta: delta,
+            passed: spinnerPadding.isFinite &&
+                waveformPadding.isFinite &&
+                delta <= maximumCompactPaddingDelta
+        )
+    }
+
+    public static func waveformCensus(
+        recordingFrames: [VoiceBarRGBImage],
+        transcribingFrames: [VoiceBarRGBImage],
+        speakingFrames: [VoiceBarRGBImage]
+    ) -> VoiceBarNotchWaveformCensusAuditResult {
+        let recording = recordingFrames.map { waveformBars(in: $0, color: .red) }
+        let transcribing = transcribingFrames.map { waveformBars(in: $0, color: .blue) }
+        let speaking = speakingFrames.map { waveformBars(in: $0, color: .blue) }
+        let recordingMinimum = recording.map(\.count).min() ?? 0
+        let transcribingMinimum = transcribing.map(\.count).min() ?? 0
+        let speakingMinimum = speaking.map(\.count).min() ?? 0
+        let transcribingCompleteFraction = transcribing.isEmpty
+            ? 0
+            : Double(transcribing.filter { $0.count == waveformBarCount }.count) /
+            Double(transcribing.count)
+        let recordingPeak = recording.flatMap { $0 }.map(\.height).max() ?? 0
+        let speakingPeak = speaking.flatMap { $0 }.map(\.height).max() ?? 0
+        let peakRatio = speakingPeak > 0 ? recordingPeak / speakingPeak : 0
+        let recordingCenterDeviation = zip(recordingFrames, recording)
+            .flatMap { image, bars in
+                let center = Double(image.height - 1) / 2
+                return bars.map { abs($0.centerY - center) }
+            }
+            .max() ?? .infinity
+        let slotOffsetDelta = maximumSlotOffsetDelta(
+            observations: recording + transcribing + speaking
+        )
+        let passed = !recordingFrames.isEmpty &&
+            !transcribingFrames.isEmpty &&
+            !speakingFrames.isEmpty &&
+            recordingMinimum == waveformBarCount &&
+            transcribingCompleteFraction >= minimumTranscribingCompleteFraction &&
+            speakingMinimum == waveformBarCount &&
+            peakRatio >= minimumRecordingToSpeakingPeakRatio &&
+            recordingCenterDeviation <= maximumWaveformCenterDeviation &&
+            slotOffsetDelta <= maximumWaveformSlotOffsetDelta
+
+        return VoiceBarNotchWaveformCensusAuditResult(
+            recordingFrameCount: recordingFrames.count,
+            transcribingFrameCount: transcribingFrames.count,
+            speakingFrameCount: speakingFrames.count,
+            minimumRecordingBarCount: recordingMinimum,
+            minimumTranscribingBarCount: transcribingMinimum,
+            minimumSpeakingBarCount: speakingMinimum,
+            transcribingCompleteFraction: transcribingCompleteFraction,
+            recordingToSpeakingPeakRatio: peakRatio,
+            recordingMaximumCenterDeviation: recordingCenterDeviation,
+            maximumSlotOffsetDelta: slotOffsetDelta,
+            passed: passed
+        )
+    }
+
+    public static func seamFade(
+        in image: VoiceBarLumaImage,
+        blackEdge: VoiceBarNotchSide
+    ) -> VoiceBarNotchSeamFadeAuditResult {
+        var columns = (0 ..< image.width).map { x -> Double in
+            let values = (0 ..< image.height).map { y in
+                image.brightness[y * image.width + x]
+            }
+            return mean(values)
+        }
+        if blackEdge == .trailing {
+            columns.reverse()
+        }
+        let brightnessRange = (columns.max() ?? 0) - (columns.min() ?? 0)
+        let progressingColumns = zip(columns, columns.dropFirst()).filter {
+            $1 - $0 >= 0.5
+        }.count
+        let correlation = pearsonCorrelation(
+            Array(columns.indices).map(Double.init),
+            columns
+        )
+        return VoiceBarNotchSeamFadeAuditResult(
+            brightnessRange: brightnessRange,
+            progressingColumnCount: progressingColumns,
+            progressionCorrelation: correlation,
+            passed: brightnessRange >= minimumSeamFadeBrightnessRange &&
+                progressingColumns >= minimumSeamFadeProgressingColumns &&
+                correlation >= minimumSeamFadeCorrelation
         )
     }
 
@@ -276,6 +482,24 @@ public enum VoiceBarNotchCaptureAudit {
         return values.reduce(0, +) / Double(values.count)
     }
 
+    private static func median(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let sorted = values.sorted()
+        let middle = sorted.count / 2
+        if sorted.count.isMultiple(of: 2) {
+            return (sorted[middle - 1] + sorted[middle]) / 2
+        }
+        return sorted[middle]
+    }
+
+    private static func medianColor(_ values: [VoiceBarRGB]) -> VoiceBarRGB {
+        VoiceBarRGB(
+            red: median(values.map(\.red)),
+            green: median(values.map(\.green)),
+            blue: median(values.map(\.blue))
+        )
+    }
+
     private static func percentile(_ values: [Double], percentile: Double) -> Double {
         guard !values.isEmpty else { return 0 }
         let sorted = values.sorted()
@@ -284,6 +508,143 @@ public enum VoiceBarNotchCaptureAudit {
             max(0, Int((Double(sorted.count - 1) * percentile).rounded(.down)))
         )
         return sorted[index]
+    }
+
+    private enum WaveformPixelColor {
+        case red
+        case blue
+    }
+
+    private struct WaveformBarObservation {
+        let centerX: Double
+        let centerY: Double
+        let height: Double
+    }
+
+    private static func waveformBars(
+        in image: VoiceBarRGBImage,
+        color: WaveformPixelColor
+    ) -> [WaveformBarObservation] {
+        let mask = (0 ..< image.width).map { x in
+            (0 ..< image.height).contains { y in
+                waveformPixelMatches(image.pixels[y * image.width + x], color: color)
+            }
+        }
+        var groups: [ClosedRange<Int>] = []
+        var start: Int?
+        for x in 0 ... image.width {
+            let occupied = x < image.width ? mask[x] : false
+            if occupied, start == nil {
+                start = x
+            } else if !occupied, let groupStart = start {
+                groups.append(groupStart ... max(groupStart, x - 1))
+                start = nil
+            }
+        }
+
+        return groups.compactMap { group in
+            var matchingRows: [Int] = []
+            for y in 0 ..< image.height where group.contains(where: { x in
+                waveformPixelMatches(image.pixels[y * image.width + x], color: color)
+            }) {
+                matchingRows.append(y)
+            }
+            guard let minY = matchingRows.min(), let maxY = matchingRows.max() else { return nil }
+            return WaveformBarObservation(
+                centerX: Double(group.lowerBound + group.upperBound) / 2,
+                centerY: Double(minY + maxY) / 2,
+                height: Double(maxY - minY + 1)
+            )
+        }
+    }
+
+    private static func waveformPixelMatches(
+        _ pixel: VoiceBarRGB,
+        color: WaveformPixelColor
+    ) -> Bool {
+        switch color {
+        case .red:
+            pixel.red > 0.35 && pixel.red - max(pixel.green, pixel.blue) >= 0.10
+        case .blue:
+            pixel.blue > 0.35 && pixel.blue - pixel.red >= 0.10 &&
+                pixel.blue - pixel.green >= 0.08
+        }
+    }
+
+    private static func blueForegroundBounds(
+        in image: VoiceBarRGBImage,
+        rect: CGRect
+    ) -> CGRect? {
+        let bounds = pixelRect(
+            normalized: rect,
+            width: image.width,
+            height: image.height
+        )
+        var minX = Int.max
+        var minY = Int.max
+        var maxX = Int.min
+        var maxY = Int.min
+        for y in Int(bounds.minY) ..< Int(bounds.maxY) {
+            for x in Int(bounds.minX) ..< Int(bounds.maxX)
+                where waveformPixelMatches(
+                    image.pixels[y * image.width + x],
+                    color: .blue
+                ) {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+        guard minX <= maxX, minY <= maxY else { return nil }
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: maxX - minX + 1,
+            height: maxY - minY + 1
+        )
+    }
+
+    private static func pixelRect(
+        normalized rect: CGRect,
+        width: Int,
+        height: Int
+    ) -> CGRect {
+        let minX = max(0, min(width, Int((rect.minX * CGFloat(width)).rounded(.down))))
+        let maxX = max(minX, min(width, Int((rect.maxX * CGFloat(width)).rounded(.up))))
+        let minY = max(0, min(height, Int((rect.minY * CGFloat(height)).rounded(.down))))
+        let maxY = max(minY, min(height, Int((rect.maxY * CGFloat(height)).rounded(.up))))
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private static func maximumSlotOffsetDelta(
+        observations: [[WaveformBarObservation]]
+    ) -> Double {
+        let complete = observations.filter { $0.count == waveformBarCount }
+        guard let reference = complete.first else { return .infinity }
+        let referenceCenter = reference.map(\.centerX).reduce(0, +) / Double(reference.count)
+        let referenceOffsets = reference.map { $0.centerX - referenceCenter }
+        return complete.dropFirst().reduce(0) { maximum, bars in
+            let center = bars.map(\.centerX).reduce(0, +) / Double(bars.count)
+            let offsets = bars.map { $0.centerX - center }
+            return max(
+                maximum,
+                zip(referenceOffsets, offsets).map { abs($0 - $1) }.max() ?? .infinity
+            )
+        }
+    }
+
+    private static func pearsonCorrelation(_ lhs: [Double], _ rhs: [Double]) -> Double {
+        guard lhs.count == rhs.count, lhs.count >= 2 else { return 0 }
+        let lhsMean = mean(lhs)
+        let rhsMean = mean(rhs)
+        let numerator = zip(lhs, rhs).reduce(0) {
+            $0 + ($1.0 - lhsMean) * ($1.1 - rhsMean)
+        }
+        let lhsScale = sqrt(lhs.reduce(0) { $0 + pow($1 - lhsMean, 2) })
+        let rhsScale = sqrt(rhs.reduce(0) { $0 + pow($1 - rhsMean, 2) })
+        guard lhsScale > 0, rhsScale > 0 else { return 0 }
+        return numerator / (lhsScale * rhsScale)
     }
 
     private static func largestConnectedComponent(

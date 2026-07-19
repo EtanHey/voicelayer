@@ -107,6 +107,33 @@ public struct VoiceBarNotchCoreSeamStop: Equatable {
     }
 }
 
+public struct VoiceBarNotchCoreSeamPlacement: Equatable {
+    public let frame: CGRect
+
+    public static func resolve(
+        for wing: VoiceBarNotchSide,
+        coreRect: CGRect,
+        visibleCoreOcclusionInset: CGFloat
+    ) -> Self {
+        let width = VoiceBarNotchContract.material.blackToGlassFadeWidth
+        let occlusion = max(0, visibleCoreOcclusionInset)
+        let originX = switch wing {
+        case .leading:
+            coreRect.minX - occlusion - width
+        case .trailing:
+            coreRect.maxX + occlusion
+        }
+        return VoiceBarNotchCoreSeamPlacement(
+            frame: CGRect(
+                x: originX,
+                y: coreRect.minY,
+                width: width,
+                height: coreRect.height
+            )
+        )
+    }
+}
+
 /// Groups the two compact wing materials on macOS 26 so their native glass
 /// samples as siblings. Older systems preserve the exact same geometry.
 public struct VoiceBarGlassContainer<Content: View>: View {

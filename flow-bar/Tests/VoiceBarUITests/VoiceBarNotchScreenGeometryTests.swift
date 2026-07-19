@@ -16,6 +16,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(resolved.housingFrame, CGRect(x: 779.5, y: 1085, width: 168, height: 32))
         XCTAssertEqual(resolved.leadingSeamError, 8.5)
         XCTAssertEqual(resolved.trailingSeamError, 8.5)
+        XCTAssertEqual(resolved.visibleCoreOcclusionInset, 8.5)
     }
 
     func testHardwareCalibrationInsetIsConfigurableWithoutChangingTheFallback() {
@@ -78,6 +79,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(resolved.housingFrame, CGRect(x: 727.5, y: 908, width: 185, height: 32))
         XCTAssertNil(resolved.leadingSeamError)
         XCTAssertNil(resolved.trailingSeamError)
+        XCTAssertEqual(resolved.visibleCoreOcclusionInset, 0)
     }
 
     func testDetectedHousingWidthDrivesThePanelAndRenderedCoreWithoutPerStateBranches() {
@@ -99,6 +101,37 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(layout.coreRect.width, resolved.housingFrame.width)
         XCTAssertEqual(renderedCoreFrame.minX, resolved.housingFrame.minX)
         XCTAssertEqual(renderedCoreFrame.maxX, resolved.housingFrame.maxX)
-        XCTAssertEqual(frame.width, 72 + 184 + 152)
+        XCTAssertEqual(frame.width, (55 + 8.5) + 184 + (154 + 8.5))
+    }
+
+    func testHardwareOcclusionMovesTheFadeBeyondThePhysicalBezelWithoutShrinkingVisibleWings() {
+        let resolved = VoiceBarNotchScreenGeometry.resolve(
+            metrics: VoiceBarNotchScreenMetrics(
+                frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                safeAreaTop: 32,
+                auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
+                auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
+            )
+        )
+        let geometry = resolved.geometry(for: .recording)
+        let layout = VoiceBarNotchShapeLayout(geometry: geometry)
+        let leadingFade = VoiceBarNotchCoreSeamPlacement.resolve(
+            for: .leading,
+            coreRect: layout.coreRect,
+            visibleCoreOcclusionInset: resolved.visibleCoreOcclusionInset
+        )
+        let trailingFade = VoiceBarNotchCoreSeamPlacement.resolve(
+            for: .trailing,
+            coreRect: layout.coreRect,
+            visibleCoreOcclusionInset: resolved.visibleCoreOcclusionInset
+        )
+
+        XCTAssertEqual(geometry.leadingWingWidth, 63.5)
+        XCTAssertEqual(geometry.trailingWingWidth, 162.5)
+        XCTAssertEqual(geometry.totalWidth, 394)
+        XCTAssertEqual(leadingFade.frame.maxX, layout.coreRect.minX - 8.5)
+        XCTAssertEqual(trailingFade.frame.minX, layout.coreRect.maxX + 8.5)
+        XCTAssertEqual(leadingFade.frame.width, 16)
+        XCTAssertEqual(trailingFade.frame.width, 16)
     }
 }

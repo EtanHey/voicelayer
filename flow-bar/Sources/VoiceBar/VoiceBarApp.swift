@@ -48,6 +48,15 @@ private struct RelaySetupStatus {
     }
 }
 
+private struct VoiceBarFirstRenderScaleReceipt: Codable {
+    let ready: Bool
+    let reason: String
+    let screenScale: Double?
+    let windowScale: Double
+    let contentScale: Double?
+    let layerScales: [Double]
+}
+
 // MARK: - App Delegate
 
 enum HotkeyInputSource {
@@ -473,12 +482,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
+        pill.alphaValue = 0
+        pill.delegate = self
+        panel = pill
         positionPanel(pill, on: nil)
         pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
-        pill.orderFront(nil)
-        panel = pill
         applyPanelLayout(animated: false)
+        _ = synchronizePanelBackingScale(
+            reason: "pre_attach",
+            forceRerasterization: true
+        )
+        pill.orderFront(nil)
+        completePanelFirstRender()
         voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
@@ -895,6 +911,120 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         configurePanelDragging(panel, for: screenGeometry)
     }
 
+    private func completePanelFirstRender(attempt: Int = 0) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel else { return }
+            let readiness = synchronizePanelBackingScale(
+                reason: "post_attach_\(attempt)",
+                forceRerasterization: true
+            )
+            switch readiness {
+            case .ready:
+                panel.alphaValue = 1
+                writeFirstRenderScaleReceipt(
+                    ready: true,
+                    reason: "post_attach_\(attempt)"
+                )
+            case .waitingForScreen, .rerasterize:
+                guard attempt < 3 else {
+                    panel.alphaValue = 1
+                    writeFirstRenderScaleReceipt(
+                        ready: false,
+                        reason: "post_attach_exhausted"
+                    )
+                    return
+                }
+                completePanelFirstRender(attempt: attempt + 1)
+            }
+        }
+    }
+
+    @discardableResult
+    private func synchronizePanelBackingScale(
+        reason: String,
+        forceRerasterization: Bool
+    ) -> VoiceBarBackingScaleReadiness {
+        guard let panel else { return .waitingForScreen }
+        let targetScreen = panel.screen ?? NSScreen.main
+        let screenScale = targetScreen?.backingScaleFactor
+        let before = VoiceBarBackingScaleReadiness.evaluate(
+            screenScale: screenScale,
+            windowScale: panel.backingScaleFactor,
+            contentScale: panel.contentView?.layer?.contentsScale,
+            descendantScales: panel.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0)
+            } ?? []
+        )
+        if forceRerasterization || before != .ready(scale: screenScale ?? 0),
+           let screenScale,
+           let contentView = panel.contentView {
+            VoiceBarBackingScaleSynchronizer.synchronize(contentView, to: screenScale)
+        }
+        let after = VoiceBarBackingScaleReadiness.evaluate(
+            screenScale: screenScale,
+            windowScale: panel.backingScaleFactor,
+            contentScale: panel.contentView?.layer?.contentsScale,
+            descendantScales: panel.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0)
+            } ?? []
+        )
+        logDiagnostic(event: "notch_backing_scale_check", details: [
+            "reason": reason,
+            "screenScale": screenScale.map { String(format: "%.2f", $0) } ?? "nil",
+            "windowScale": String(format: "%.2f", panel.backingScaleFactor),
+            "contentScale": panel.contentView?.layer.map {
+                String(format: "%.2f", $0.contentsScale)
+            } ?? "nil",
+            "ready": boolString({
+                if case .ready = after { return true }
+                return false
+            }()),
+        ])
+        return after
+    }
+
+    private func writeFirstRenderScaleReceipt(ready: Bool, reason: String) {
+        guard let path = ProcessInfo.processInfo.environment[
+            "QA_VOICEBAR_RENDER_SCALE_RECEIPT_PATH"
+        ], !path.isEmpty else { return }
+        let receipt = VoiceBarFirstRenderScaleReceipt(
+            ready: ready,
+            reason: reason,
+            screenScale: panel?.screen.map { Double($0.backingScaleFactor) },
+            windowScale: Double(panel?.backingScaleFactor ?? 0),
+            contentScale: panel?.contentView?.layer.map { Double($0.contentsScale) },
+            layerScales: panel?.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0).map(Double.init)
+            } ?? []
+        )
+        do {
+            let data = try JSONEncoder().encode(receipt)
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            NSLog(
+                "[VoiceBar] Could not write render-scale receipt at %@: %@",
+                path,
+                String(describing: error)
+            )
+        }
+    }
+
+    func windowDidChangeBackingProperties(_ notification: Notification) {
+        guard notification.object as? NSWindow === panel else { return }
+        _ = synchronizePanelBackingScale(
+            reason: "backing_properties_changed",
+            forceRerasterization: true
+        )
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard notification.object as? NSWindow === panel else { return }
+        _ = synchronizePanelBackingScale(
+            reason: "screen_changed",
+            forceRerasterization: true
+        )
+    }
+
     private func currentPanelLayout() -> VoiceBarPanelLayout {
         VoiceBarPanelLayout.make(presentation: notchPresentationModel.presentation)
     }
@@ -921,7 +1051,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     : "flatDisplayFallback",
             ])
         }
-        let resolved = Self.notchPresentation(for: voiceState, coreWidth: coreWidth)
+        let resolved = Self.notchPresentation(
+            for: voiceState,
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
+        )
         notchPresentationModel.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
@@ -932,14 +1066,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             keepsIdleExpanded: voiceState.mode == .idle && (
                 !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
             ),
-            coreWidth: coreWidth
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
 
     private static func notchPresentation(
         for state: VoiceState?,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
         return VoiceBarPresentation.notchPresentation(
@@ -958,7 +1094,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false,
                 isCollapsed: state?.isCollapsed ?? false,
-                coreWidth: coreWidth
+                coreWidth: coreWidth,
+                visibleCoreOcclusionInset: visibleCoreOcclusionInset
             )
         )
     }
