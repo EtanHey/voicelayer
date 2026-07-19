@@ -64,7 +64,6 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     .transition(.identity)
             } else if presentation.visualState != .idle {
                 compactSurface
-                    .id(presentation.visualState)
                     .transition(surfaceTransition(delay: 0))
             }
 

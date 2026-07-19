@@ -238,7 +238,10 @@ public struct BarView: View {
             .accessibilityLabel("Recording")
         case .compactStatus:
             if state.mode == .transcribing {
-                WaveformView(processingColor: Theme.stateColor(for: .transcribing))
+                HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                    ProcessingSpinner()
+                    statusLabel
+                }
             } else {
                 statusIcon
             }
@@ -259,11 +262,7 @@ public struct BarView: View {
             historyButton
         case .recording:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                WaveformView(
-                    color: Theme.recordingColor,
-                    isListening: !state.speechDetected,
-                    currentLevel: { state.recordingWaveformLevel }
-                )
+                notchStableWaveform
                 if let recordingHoldControl {
                     notchButton(
                         icon: recordingHoldControl.iconName,
@@ -289,9 +288,7 @@ public struct BarView: View {
             notchCompactStatusContent
         case .teleprompter:
             if state.mode == .speaking {
-                WaveformView(color: Theme.speakingColor, currentLevel: {
-                    state.playbackAudioLevel()
-                })
+                notchStableWaveform
             }
         }
     }
@@ -301,8 +298,7 @@ public struct BarView: View {
         switch state.mode {
         case .transcribing:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
-                ProcessingSpinner()
-                statusLabel
+                notchStableWaveform
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel transcription") {
                     commandRouter.handleCancel()
                 }
@@ -317,9 +313,7 @@ public struct BarView: View {
                         state.showTeleprompter()
                     }
                 }
-                WaveformView(color: Theme.speakingColor, currentLevel: {
-                    state.playbackAudioLevel()
-                })
+                notchStableWaveform
                 notchButton(
                     icon: "stop.fill",
                     isDestructive: true,
@@ -345,6 +339,26 @@ public struct BarView: View {
         case .disconnected:
             statusLabel
         case .recording:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private var notchStableWaveform: some View {
+        switch state.mode {
+        case .recording:
+            WaveformView(
+                color: Theme.recordingColor,
+                isListening: !state.speechDetected,
+                currentLevel: { state.recordingWaveformLevel }
+            )
+        case .transcribing:
+            WaveformView(processingColor: Theme.stateColor(for: .transcribing))
+        case .speaking:
+            WaveformView(color: Theme.speakingColor, currentLevel: {
+                state.playbackAudioLevel()
+            })
+        case .idle, .disconnected, .error:
             EmptyView()
         }
     }
@@ -381,7 +395,9 @@ public struct BarView: View {
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
                     isReadback: state.isTeleprompterReadback,
-                    wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth,
+                    wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth
+                    ),
                     contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .opacity(

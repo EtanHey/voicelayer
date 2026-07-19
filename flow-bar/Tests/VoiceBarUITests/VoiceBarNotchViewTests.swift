@@ -138,6 +138,17 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(compactSurface.contains("coreEdgeVeils"))
     }
 
+    func testCompactSurfaceKeepsOneIdentityForInPlaceIndicatorAndWaveformTransforms() throws {
+        let source = try notchViewSource()
+        let compactUse = try XCTUnwrap(source.range(of: "compactSurface"))
+        let fixedCoreUse = try XCTUnwrap(
+            source.range(of: "fixedHardwareCore", range: compactUse.upperBound ..< source.endIndex)
+        )
+        let bodyCompactBranch = source[compactUse.lowerBound ..< fixedCoreUse.lowerBound]
+
+        XCTAssertFalse(bodyCompactBranch.contains(".id(presentation.visualState)"))
+    }
+
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
         let source = try notchViewSource()
 

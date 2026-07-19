@@ -119,9 +119,14 @@ public enum VoiceBarNotchCaptureAudit {
             ? max(0, percentile(brightInteriorPixels.map(\.brightness), percentile: 0.95) - fillBaseline)
             : 0
         let settledContrast = max(dimSettledContrast, brightSettledContrast)
-        let passed = !baselinePixels.isEmpty &&
-            largestBlobPixels <= blobPixelLimit &&
-            settledContrast < maximumSettledBirthmarkContrast
+        let passed = passesBirthmarkGate(
+            baselinePixelCount: baselinePixels.count,
+            auditPixelCount: auditPixels.count,
+            brightInteriorPixelCount: brightInteriorPixels.count,
+            largestBlobPixels: largestBlobPixels,
+            blobPixelLimit: blobPixelLimit,
+            settledContrast: settledContrast
+        )
 
         return VoiceBarNotchBirthmarkAuditResult(
             side: side,
@@ -131,6 +136,21 @@ public enum VoiceBarNotchCaptureAudit {
             settledContrast: settledContrast,
             passed: passed
         )
+    }
+
+    static func passesBirthmarkGate(
+        baselinePixelCount: Int,
+        auditPixelCount: Int,
+        brightInteriorPixelCount: Int,
+        largestBlobPixels: Int,
+        blobPixelLimit: Int,
+        settledContrast: Double
+    ) -> Bool {
+        baselinePixelCount > 0 &&
+            auditPixelCount > 0 &&
+            brightInteriorPixelCount > 0 &&
+            largestBlobPixels <= blobPixelLimit &&
+            settledContrast < maximumSettledBirthmarkContrast
     }
 
     public static func idleHold(

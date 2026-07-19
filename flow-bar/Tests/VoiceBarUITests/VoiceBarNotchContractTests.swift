@@ -99,6 +99,35 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertLessThanOrEqual(material.teleprompterTextFillRatio, 0.95)
     }
 
+    func testTeleprompterTextWidthTracksTheMeasuredHardwareCoreWidth() {
+        let material = VoiceBarNotchContract.material
+        let narrowCoreWidth: CGFloat = 165
+        let wideCoreWidth: CGFloat = 201
+
+        XCTAssertEqual(
+            material.teleprompterTextWidth(coreWidth: narrowCoreWidth),
+            VoiceBarNotchContract.geometry(
+                for: .teleprompter,
+                coreWidth: narrowCoreWidth
+            ).bodyWidth - 2 * (
+                material.teleprompterBodyHorizontalInset +
+                    material.teleprompterTextInnerInset
+            )
+        )
+        XCTAssertGreaterThan(
+            material.teleprompterTextWidth(coreWidth: wideCoreWidth),
+            material.teleprompterTextWidth(coreWidth: narrowCoreWidth)
+        )
+        XCTAssertGreaterThanOrEqual(
+            material.teleprompterTextFillRatio(coreWidth: narrowCoreWidth),
+            0.90
+        )
+        XCTAssertLessThanOrEqual(
+            material.teleprompterTextFillRatio(coreWidth: wideCoreWidth),
+            0.95
+        )
+    }
+
     func testMotionContractLocksTheApprovedSpringAndDelays() {
         let motion = VoiceBarNotchContract.motion
 

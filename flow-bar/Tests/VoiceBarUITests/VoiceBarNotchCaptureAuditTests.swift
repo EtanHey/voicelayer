@@ -53,6 +53,19 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertLessThan(result.settledContrast, 10)
     }
 
+    func testBirthmarkGateFailsClosedWhenTheAuditRegionHasNoPixels() {
+        XCTAssertFalse(
+            VoiceBarNotchCaptureAudit.passesBirthmarkGate(
+                baselinePixelCount: 10,
+                auditPixelCount: 0,
+                brightInteriorPixelCount: 10,
+                largestBlobPixels: 0,
+                blobPixelLimit: 150,
+                settledContrast: 0
+            )
+        )
+    }
+
     func testIdleHoldRejectsAnyVisibilityToggleAcrossThreeSecondsAtSixtyFPS() {
         let flashing = Array(repeating: 84.0, count: 60)
             + Array(repeating: 197.0, count: 60)

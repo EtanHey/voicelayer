@@ -926,8 +926,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
             hasCompactStatus: resolved.visualState == .compactStatus,
-            compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
-                ? resolved.geometry.trailingWingWidth
+            compactStatusLeadingWingWidth: resolved.visualState == .compactStatus
+                ? resolved.geometry.leadingWingWidth
                 : nil,
             keepsIdleExpanded: voiceState.mode == .idle && (
                 !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback

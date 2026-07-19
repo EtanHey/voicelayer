@@ -125,7 +125,7 @@ public enum VoiceBarPresentation {
             hasTeleprompter: hasTeleprompter,
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
-            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(
+            compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
                 mode: input.mode,
                 statusText: input.statusText
             ),
@@ -135,15 +135,14 @@ public enum VoiceBarPresentation {
         )
     }
 
-    private static func compactStatusTrailingWingWidth(
+    private static func compactStatusLeadingWingWidth(
         mode: VoiceMode,
         statusText: String
     ) -> CGFloat? {
         guard mode == .transcribing else { return nil }
         let contentWidth = Theme.pillProcessingSpinnerWidth
             + Theme.intrinsicPillStatusWidth(for: statusText)
-            + VoiceBarNotchContract.material.compactControlSize
-            + (VoiceBarNotchContract.material.compactControlSpacing * 2)
+            + VoiceBarNotchContract.material.compactControlSpacing
         return VoiceBarNotchContract.material.blackToGlassFadeWidth
             + 2
             + contentWidth

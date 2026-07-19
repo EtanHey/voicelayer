@@ -155,13 +155,13 @@ final class WaveformViewTests: XCTestCase {
 
         XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
         XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
-        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 1)
         XCTAssertFalse(source.contains("recordingWaveformLevels"))
         XCTAssertFalse(source.contains("playbackWaveformLevels"))
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    func testTranscribingPreservesM1SpinnerAndGoldWaveformAcrossBalancedSlots() throws {
+    func testTranscribingKeepsOneGoldWaveformInTheRecordingWingAndMorphsTheIndicator() throws {
         let source = try barViewSource()
         let leadingCompactStatusBranch = source
             .components(separatedBy: "case .compactStatus:")
@@ -170,16 +170,19 @@ final class WaveformViewTests: XCTestCase {
             .components(separatedBy: "case .teleprompter:")
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let trailingCompactStatusBranch = source
-            .components(separatedBy: "private var notchCompactStatusContent")
+        let trailingBranch = source
+            .components(separatedBy: "private var notchTrailingContent")
             .dropFirst()
             .first?
-            .components(separatedBy: "private var notchLowerContent")
+            .components(separatedBy: "private var notchCompactStatusContent")
             .first
 
         XCTAssertTrue(leadingCompactStatusBranch?.contains("if state.mode == .transcribing") == true)
-        XCTAssertTrue(leadingCompactStatusBranch?.contains("WaveformView(processingColor:") == true)
-        XCTAssertTrue(trailingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
+        XCTAssertTrue(leadingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
+        XCTAssertFalse(leadingCompactStatusBranch?.contains("WaveformView(") == true)
+        XCTAssertTrue(trailingBranch?.contains("notchStableWaveform") == true)
+        XCTAssertTrue(source.contains("private var notchStableWaveform"))
+        XCTAssertTrue(source.contains("WaveformView(processingColor:"))
     }
 
     private func m1GoldLevel(

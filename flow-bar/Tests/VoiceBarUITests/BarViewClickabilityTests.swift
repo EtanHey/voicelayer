@@ -37,7 +37,7 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
         XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
-        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 1)
         XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
         XCTAssertFalse(source.contains("recordingWaveformLevels"))
         XCTAssertFalse(source.contains("transcribingWaveformLevels"))
@@ -258,15 +258,17 @@ final class BarViewClickabilityTests: XCTestCase {
 
     func testTranscribingNotchRendersTheLiveStatusText() throws {
         let source = try barViewSource()
-        let start = try XCTUnwrap(source.range(of: "case .transcribing:"))
-        let end = try XCTUnwrap(
-            source.range(of: "case .speaking:", range: start.upperBound ..< source.endIndex)
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
+        let trailingStart = try XCTUnwrap(
+            source.range(of: "private var notchTrailingContent", range: leadingStart.upperBound ..< source.endIndex)
         )
+        let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
-        XCTAssertTrue(source[start.lowerBound ..< end.lowerBound].contains("statusLabel"))
+        XCTAssertTrue(leading.contains("if state.mode == .transcribing"))
+        XCTAssertTrue(leading.contains("statusLabel"))
     }
 
-    func testTranscribingBalancesTheGoldWaveformLeftAndSpinnerStatusControlsRight() throws {
+    func testTranscribingKeepsTheWaveformTrailingAndMorphsTheLeadingIndicator() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(
@@ -279,11 +281,12 @@ final class BarViewClickabilityTests: XCTestCase {
             )
         )
         let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
-        let compact = source[compactStart.lowerBound...]
+        let trailing = source[trailingStart.lowerBound ..< compactStart.lowerBound]
 
-        XCTAssertTrue(leading.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
-        XCTAssertTrue(compact.contains("ProcessingSpinner()"))
-        XCTAssertFalse(compact.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+        XCTAssertTrue(leading.contains("ProcessingSpinner()"))
+        XCTAssertFalse(leading.contains("WaveformView("))
+        XCTAssertTrue(trailing.contains("notchStableWaveform"))
+        XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
     }
 
     func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {

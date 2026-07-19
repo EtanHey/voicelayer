@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingNotchExpandsTrailingWingForTheUntruncatedStatusLabel() {
+    func testTranscribingNotchExpandsLeadingIndicatorWingForTheUntruncatedStatusLabel() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -72,15 +72,14 @@ final class VoiceBarPresentationTests: XCTestCase {
         )
         let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
             + Theme.pillProcessingSpinnerWidth
-            + VoiceBarNotchContract.material.compactControlSize
-            + (VoiceBarNotchContract.material.compactControlSpacing * 2)
+            + VoiceBarNotchContract.material.compactControlSpacing
             + VoiceBarNotchContract.material.blackToGlassFadeWidth
             + 2
 
         XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 409)
-        XCTAssertGreaterThan(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
-        XCTAssertGreaterThanOrEqual(warmup.geometry.trailingWingWidth, requiredWarmupWidth)
-        XCTAssertEqual(warmup.geometry.coreOriginX, baseline.geometry.coreOriginX)
+        XCTAssertGreaterThan(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
+        XCTAssertGreaterThanOrEqual(warmup.geometry.leadingWingWidth, requiredWarmupWidth)
+        XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
     }
 
     func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {
