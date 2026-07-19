@@ -357,6 +357,25 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
+    public var wrapWidth = Theme.teleprompterWrapWidth
+    public var viewportHeight = Theme.teleprompterViewportHeight
+    public var contentInset = Theme.teleprompterContentInset
+
+    public init(
+        text: String,
+        wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
+        isReadback: Bool = false,
+        wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
+        viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
+        contentInset: CGFloat = Theme.teleprompterContentInset
+    ) {
+        self.text = text
+        self.wordBoundaries = wordBoundaries
+        self.isReadback = isReadback
+        self.wrapWidth = wrapWidth
+        self.viewportHeight = viewportHeight
+        self.contentInset = contentInset
+    }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
@@ -388,15 +407,15 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
+                FlowLayout(spacing: 5, maxWidth: wrapWidth) {
                     wordViews
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 4)
-                .padding(.vertical, Theme.teleprompterContentInset)
+                .padding(.vertical, contentInset)
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: Theme.teleprompterViewportHeight,
+                    minHeight: viewportHeight,
                     alignment: TeleprompterScrollPolicy.initialViewportAlignment
                 )
             }

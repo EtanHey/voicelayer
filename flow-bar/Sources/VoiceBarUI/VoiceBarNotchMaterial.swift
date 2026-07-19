@@ -216,14 +216,6 @@ public struct VoiceBarGlassWing<Content: View>: View {
         )
         content
             .modifier(VoiceBarGlassMaterial(shape: shape))
-            .overlay(alignment: seamAlignment) {
-                VoiceBarBlackToGlassFade(wing: side)
-                    .allowsHitTesting(false)
-            }
             .clipShape(shape)
-    }
-
-    private var seamAlignment: Alignment {
-        side == .leading ? .trailing : .leading
     }
 }

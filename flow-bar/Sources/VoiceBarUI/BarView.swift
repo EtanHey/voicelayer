@@ -97,7 +97,6 @@ public struct BarView: View {
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
-    @FocusState private var isNotchKeyboardFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public var body: some View {
@@ -141,13 +140,8 @@ public struct BarView: View {
                 notchLowerContent
             }
         )
-        .focusable()
-        .focused($isNotchKeyboardFocused)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
-        }
-        .onChange(of: isNotchKeyboardFocused) { _, _ in
-            synchronizeLauncherRetention()
         }
         .onChange(of: isHistoryPresented) { _, _ in
             synchronizeLauncherRetention()
@@ -199,13 +193,14 @@ public struct BarView: View {
                 hotkeyPhase: state.hotkeyPhase,
                 statusText: statusText,
                 isHovered: state.isHovering,
-                isKeyboardFocused: keepsLauncherMounted
+                isKeyboardFocused: keepsLauncherMounted,
+                isCollapsed: state.isCollapsed
             )
         )
     }
 
     private var keepsLauncherMounted: Bool {
-        isNotchKeyboardFocused || isHistoryPresented || isVocabularyPresented
+        isHistoryPresented || isVocabularyPresented
     }
 
     private func synchronizeLauncherRetention() {
@@ -225,7 +220,7 @@ public struct BarView: View {
                 commandRouter.handlePrimaryTap()
             }
         case .recording:
-            HStack(spacing: 4) {
+            HStack(spacing: VoiceBarNotchContract.material.recordingIndicatorSpacing) {
                 PulsingDot()
                 Image(systemName: "mic.fill")
                     .font(.system(size: 10, weight: .semibold))
@@ -235,7 +230,7 @@ public struct BarView: View {
             .accessibilityLabel("Recording")
         case .compactStatus:
             if state.mode == .transcribing {
-                ProcessingSpinner()
+                WaveformView(processingColor: Theme.stateColor(for: .transcribing))
             } else {
                 statusIcon
             }
@@ -253,12 +248,12 @@ public struct BarView: View {
         case .idle:
             EmptyView()
         case .hoverLauncher:
-            HStack(spacing: 2) {
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 historyButton
                 vocabularyButton
             }
         case .recording:
-            HStack(spacing: 2) {
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
                 WaveformView(
                     color: Theme.recordingColor,
                     isListening: !state.speechDetected,
@@ -300,8 +295,8 @@ public struct BarView: View {
     private var notchCompactStatusContent: some View {
         switch state.mode {
         case .transcribing:
-            HStack(spacing: 4) {
-                WaveformView(processingColor: Theme.stateColor(for: .transcribing))
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                ProcessingSpinner()
                 statusLabel
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel transcription") {
                     commandRouter.handleCancel()
@@ -363,7 +358,10 @@ public struct BarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 notchTeleprompterControls
             }
-            .padding(.horizontal, 20)
+            .padding(
+                .horizontal,
+                VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
+            )
             .padding(.top, 16)
             .padding(.bottom, 14)
         }
@@ -377,7 +375,9 @@ public struct BarView: View {
                 TeleprompterView(
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
-                    isReadback: state.isTeleprompterReadback
+                    isReadback: state.isTeleprompterReadback,
+                    wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth,
+                    contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .opacity(
                     TeleprompterVisibilityPolicy.timelineOpacity(
@@ -791,7 +791,10 @@ public struct BarView: View {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(.white.opacity(isSelected || isDestructive ? 1 : 0.84))
-                .frame(width: 18, height: 18)
+                .frame(
+                    width: VoiceBarNotchContract.material.compactControlSize,
+                    height: VoiceBarNotchContract.material.compactControlSize
+                )
                 .background {
                     if isSelected {
                         Circle().fill(Theme.recordingColor.opacity(0.30))

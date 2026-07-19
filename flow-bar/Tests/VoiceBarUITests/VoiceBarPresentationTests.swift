@@ -71,9 +71,9 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
-            + Theme.pillWaveformWidth
-            + 18
-            + 8
+            + Theme.pillProcessingSpinnerWidth
+            + VoiceBarNotchContract.material.compactControlSize
+            + (VoiceBarNotchContract.material.compactControlSpacing * 2)
             + VoiceBarNotchContract.material.blackToGlassFadeWidth
             + 2
 
@@ -114,6 +114,46 @@ final class VoiceBarPresentationTests: XCTestCase {
                 .compactStatus
             )
         }
+    }
+
+    func testCollapsedIdleOverridesEveryTransientEnvelopeUntilActivityReturns() {
+        let inputs = [
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                confirmationText: "Pasted",
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                queueDepth: 1,
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                keepsPasteFlowEnvelope: true,
+                isCollapsed: true
+            ),
+        ]
+
+        for input in inputs {
+            XCTAssertEqual(
+                VoiceBarPresentation.notchPresentation(from: input).visualState,
+                .idle
+            )
+        }
+    }
+
+    func testHoverActivityReopensAPreviouslyCollapsedIdlePresentation() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(
+                    mode: .idle,
+                    isHovered: true,
+                    isCollapsed: true
+                )
+            ).visualState,
+            .hoverLauncher
+        )
     }
 
     func testNotchPresentationMapsIdleHoverAndKeyboardFocusWithoutOpeningTeleprompter() {

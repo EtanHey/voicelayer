@@ -89,6 +89,14 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(material.compactOuterCornerRadius(for: .hoverLauncher), 11)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .recording), 15)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .compactStatus), 15)
+        XCTAssertEqual(material.recordingIndicatorSpacing, 7)
+        XCTAssertEqual(material.compactControlSpacing, 6)
+        XCTAssertEqual(material.compactControlSize, 20)
+        XCTAssertEqual(material.hardwareCoreLowerCornerRadius, 7)
+        XCTAssertEqual(material.teleprompterBodyHorizontalInset, 14)
+        XCTAssertEqual(material.teleprompterTextInnerInset, 4)
+        XCTAssertGreaterThanOrEqual(material.teleprompterTextFillRatio, 0.90)
+        XCTAssertLessThanOrEqual(material.teleprompterTextFillRatio, 0.95)
     }
 
     func testMotionContractLocksTheApprovedSpringAndDelays() {

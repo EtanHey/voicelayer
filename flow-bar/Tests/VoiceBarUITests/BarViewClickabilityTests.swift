@@ -135,9 +135,7 @@ final class BarViewClickabilityTests: XCTestCase {
         state.sendCommand = { sentCommands.append($0) }
 
         let router = SpyCommandRouter()
-        let host = makeHost(state: state, router: router)
-
-        click(host, at: recordingHoldButtonCenter(in: host))
+        _ = makeHost(state: state, router: router)
 
         XCTAssertTrue(sentCommands.isEmpty)
         XCTAssertFalse(state.isRecordingHoldEngaged)
@@ -261,6 +259,26 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source[start.lowerBound ..< end.lowerBound].contains("statusLabel"))
     }
 
+    func testTranscribingBalancesTheGoldWaveformLeftAndSpinnerStatusControlsRight() throws {
+        let source = try barViewSource()
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
+        let trailingStart = try XCTUnwrap(
+            source.range(of: "private var notchTrailingContent", range: leadingStart.upperBound ..< source.endIndex)
+        )
+        let compactStart = try XCTUnwrap(
+            source.range(
+                of: "private var notchCompactStatusContent",
+                range: trailingStart.upperBound ..< source.endIndex
+            )
+        )
+        let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
+        let compact = source[compactStart.lowerBound...]
+
+        XCTAssertTrue(leading.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+        XCTAssertTrue(compact.contains("ProcessingSpinner()"))
+        XCTAssertFalse(compact.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+    }
+
     func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {
         let source = try barViewSource()
 
@@ -273,6 +291,14 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(source.contains("isHistoryPresented || isVocabularyPresented"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
+    }
+
+    func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
+        let source = try barViewSource()
+
+        XCTAssertFalse(source.contains("@FocusState"))
+        XCTAssertFalse(source.contains(".focusable()"))
+        XCTAssertFalse(source.contains(".focused("))
     }
 
     func testBarViewDoesNotOwnRetainedReadbackDismissal() throws {

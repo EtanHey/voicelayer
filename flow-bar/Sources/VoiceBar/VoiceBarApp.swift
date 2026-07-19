@@ -907,7 +907,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 hotkeyPhase: state?.hotkeyPhase ?? .idle,
                 statusText: notchStatusText(for: state),
                 isHovered: state?.isHovering ?? false,
-                isKeyboardFocused: false
+                isKeyboardFocused: false,
+                isCollapsed: state?.isCollapsed ?? false
             )
         )
     }

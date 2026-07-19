@@ -42,6 +42,15 @@ final class VoiceBarNotchViewTests: XCTestCase {
     }
 
     func testViewContractHasOneFixedCoreTwoReusableWingsAndOptionalLowerSurface() {
+        let idle = VoiceBarNotchViewDescriptor.resolve(
+            presentation: VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false,
+                isRecording: false,
+                hasCompactStatus: false,
+                isHovered: false,
+                isKeyboardFocused: false
+            )
+        )
         let recording = VoiceBarNotchViewDescriptor.resolve(
             presentation: VoiceBarNotchPresentation.resolve(
                 hasTeleprompter: false,
@@ -62,6 +71,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         )
 
         XCTAssertEqual(recording.shellIdentity, teleprompter.shellIdentity)
+        XCTAssertEqual(idle.fixedCoreCount, 0)
         XCTAssertEqual(recording.fixedCoreCount, 1)
         XCTAssertEqual(recording.reusableWingSlotCount, 2)
         XCTAssertEqual(recording.coreEdgeVeilCount, 2)
@@ -73,6 +83,27 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(teleprompter.usesSequencedSurfaceTransitions)
         XCTAssertTrue(teleprompter.keepsHardwareCoreOutsideAnimatedSurfaces)
         XCTAssertEqual(teleprompter.accessibilityLabel, "VoiceBar teleprompter")
+    }
+
+    func testCompactStatesReuseTheTeleprompterCoreEdgeVeils() throws {
+        let source = try notchViewSource()
+        let compactStart = try XCTUnwrap(source.range(of: "private var compactSurface"))
+        let compactEnd = try XCTUnwrap(
+            source.range(
+                of: "private var compactWings",
+                range: compactStart.upperBound ..< source.endIndex
+            )
+        )
+        let compactSurface = source[compactStart.lowerBound ..< compactEnd.lowerBound]
+
+        XCTAssertTrue(compactSurface.contains("coreEdgeVeils"))
+    }
+
+    func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
+        let source = try notchViewSource()
+
+        XCTAssertTrue(source.contains(".contentShape(Rectangle())"))
+        XCTAssertTrue(source.contains("presentation.visualState != .idle"))
     }
 
     func testContinuousGlassBackingKeepsBlankSurfaceInsideTheHoverRegion() throws {

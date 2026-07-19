@@ -52,6 +52,18 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertFalse(path.contains(CGPoint(x: 455, y: 16)))
         XCTAssertEqual(path.moveElementCount, 1)
     }
+
+    func testHardwareCoreKeepsRoundedLowerCornersWhenWingsAppear() {
+        let rect = CGRect(x: 0, y: 0, width: 185, height: 32)
+        let path = VoiceBarNotchHardwareCoreShape(
+            lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
+        ).path(in: rect)
+
+        XCTAssertFalse(path.contains(CGPoint(x: 1, y: 31)))
+        XCTAssertFalse(path.contains(CGPoint(x: 184, y: 31)))
+        XCTAssertTrue(path.contains(CGPoint(x: 8, y: 24)))
+        XCTAssertTrue(path.contains(CGPoint(x: 177, y: 24)))
+    }
 }
 
 private extension Path {

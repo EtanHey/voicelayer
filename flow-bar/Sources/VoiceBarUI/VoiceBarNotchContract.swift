@@ -83,6 +83,12 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     public let teleprompterInsetFrameCount: Int
     public let compactWingsHaveOuterEdgeTreatment: Bool
     public let coreUsesBackdropMaterial: Bool
+    public let recordingIndicatorSpacing: CGFloat
+    public let compactControlSpacing: CGFloat
+    public let compactControlSize: CGFloat
+    public let hardwareCoreLowerCornerRadius: CGFloat
+    public let teleprompterBodyHorizontalInset: CGFloat
+    public let teleprompterTextInnerInset: CGFloat
 
     public var leadingTeleprompterContentWidth: CGFloat {
         VoiceBarNotchContract.teleprompterLeadingWingWidth - reservedWingInset
@@ -90,6 +96,16 @@ public struct VoiceBarNotchMaterialContract: Equatable {
 
     public var trailingTeleprompterContentWidth: CGFloat {
         VoiceBarNotchContract.teleprompterTrailingWingWidth - reservedWingInset
+    }
+
+    public var teleprompterTextWidth: CGFloat {
+        VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth -
+            2 * (teleprompterBodyHorizontalInset + teleprompterTextInnerInset)
+    }
+
+    public var teleprompterTextFillRatio: CGFloat {
+        teleprompterTextWidth /
+            VoiceBarNotchContract.geometry(for: .teleprompter).bodyWidth
     }
 
     private var reservedWingInset: CGFloat {
@@ -232,7 +248,13 @@ public enum VoiceBarNotchContract {
         lowerSurfaceLayerCount: 1,
         teleprompterInsetFrameCount: 0,
         compactWingsHaveOuterEdgeTreatment: true,
-        coreUsesBackdropMaterial: false
+        coreUsesBackdropMaterial: false,
+        recordingIndicatorSpacing: 7,
+        compactControlSpacing: 6,
+        compactControlSize: 20,
+        hardwareCoreLowerCornerRadius: 7,
+        teleprompterBodyHorizontalInset: 14,
+        teleprompterTextInnerInset: 4
     )
 
     public static let motion = VoiceBarNotchMotionContract(

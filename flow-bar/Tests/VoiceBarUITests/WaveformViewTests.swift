@@ -161,19 +161,25 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertFalse(source.contains("centerOutHistory"))
     }
 
-    func testTranscribingRestoresM1SpinnerAsLeadingIndicator() throws {
+    func testTranscribingPreservesM1SpinnerAndGoldWaveformAcrossBalancedSlots() throws {
         let source = try barViewSource()
-        let compactStatusBranch = source
+        let leadingCompactStatusBranch = source
             .components(separatedBy: "case .compactStatus:")
             .dropFirst()
             .first?
             .components(separatedBy: "case .teleprompter:")
             .first?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let trailingCompactStatusBranch = source
+            .components(separatedBy: "private var notchCompactStatusContent")
+            .dropFirst()
+            .first?
+            .components(separatedBy: "private var notchLowerContent")
+            .first
 
-        XCTAssertTrue(compactStatusBranch?.contains("if state.mode == .transcribing") == true)
-        XCTAssertTrue(compactStatusBranch?.contains("ProcessingSpinner()") == true)
-        XCTAssertTrue(source.contains("WaveformView(processingColor:"))
+        XCTAssertTrue(leadingCompactStatusBranch?.contains("if state.mode == .transcribing") == true)
+        XCTAssertTrue(leadingCompactStatusBranch?.contains("WaveformView(processingColor:") == true)
+        XCTAssertTrue(trailingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
     }
 
     private func m1GoldLevel(

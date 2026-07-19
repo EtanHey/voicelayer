@@ -48,6 +48,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var statusText: String
     public var isHovered: Bool
     public var isKeyboardFocused: Bool
+    public var isCollapsed: Bool
 
     public init(
         mode: VoiceMode,
@@ -62,7 +63,8 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         hotkeyPhase: HotkeyPhase = .idle,
         statusText: String = "",
         isHovered: Bool = false,
-        isKeyboardFocused: Bool = false
+        isKeyboardFocused: Bool = false,
+        isCollapsed: Bool = false
     ) {
         self.mode = mode
         self.hasTeleprompterText = hasTeleprompterText
@@ -77,6 +79,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.statusText = statusText
         self.isHovered = isHovered
         self.isKeyboardFocused = isKeyboardFocused
+        self.isCollapsed = isCollapsed
     }
 }
 
@@ -90,6 +93,8 @@ public enum VoiceBarPresentation {
         from input: VoiceBarNotchOperationalInput
     ) -> VoiceBarNotchPresentation {
         let isRecording = input.mode == .recording
+        let isCollapsedIdle = input.mode == .idle && input.isCollapsed &&
+            !input.isHovered && !input.isKeyboardFocused
         let hasCompactStatus: Bool
         switch input.mode {
         case .recording:
@@ -97,16 +102,16 @@ public enum VoiceBarPresentation {
         case .idle:
             let confirmation = input.confirmationText?
                 .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            hasCompactStatus = !confirmation.isEmpty ||
+            hasCompactStatus = !isCollapsedIdle && (!confirmation.isEmpty ||
                 input.commandModeState != nil ||
                 input.activeClipMarker != nil ||
                 input.queueDepth > 0 ||
                 input.keepsPasteFlowEnvelope ||
-                input.hotkeyPhase != .idle
+                input.hotkeyPhase != .idle)
         case .speaking, .transcribing, .error, .disconnected:
             hasCompactStatus = true
         }
-        let hasTeleprompter = reservesTeleprompterEnvelope(
+        let hasTeleprompter = !isCollapsedIdle && reservesTeleprompterEnvelope(
             hasText: input.hasTeleprompterText,
             isDismissed: input.isTeleprompterDismissed,
             isReadback: input.isTeleprompterReadback
@@ -130,10 +135,10 @@ public enum VoiceBarPresentation {
         statusText: String
     ) -> CGFloat? {
         guard mode == .transcribing else { return nil }
-        let contentWidth = Theme.pillWaveformWidth
+        let contentWidth = Theme.pillProcessingSpinnerWidth
             + Theme.intrinsicPillStatusWidth(for: statusText)
-            + 18
-            + 8
+            + VoiceBarNotchContract.material.compactControlSize
+            + (VoiceBarNotchContract.material.compactControlSpacing * 2)
         return VoiceBarNotchContract.material.blackToGlassFadeWidth
             + 2
             + contentWidth

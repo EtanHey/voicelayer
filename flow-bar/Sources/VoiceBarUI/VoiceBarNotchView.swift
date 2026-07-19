@@ -17,7 +17,7 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     ) -> VoiceBarNotchViewDescriptor {
         VoiceBarNotchViewDescriptor(
             shellIdentity: "VoiceBarNotchShell",
-            fixedCoreCount: 1,
+            fixedCoreCount: presentation.visualState == .idle ? 0 : 1,
             reusableWingSlotCount: 2,
             coreEdgeVeilCount: presentation.visualState == .idle ? 0 : 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
@@ -63,7 +63,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     // is replaced atomically before the next surface appears.
                     .transition(.identity)
             } else if presentation.visualState != .idle {
-                compactWings
+                compactSurface
                     .id(presentation.visualState)
                     .transition(surfaceTransition(delay: 0))
             }
@@ -75,6 +75,11 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             height: presentation.geometry.totalHeight,
             alignment: .topLeading
         )
+        // The collapsed state draws no software pixels, but the physical
+        // camera housing remains the intentional hover target that summons
+        // VoiceBar again. AppKit still gates this rectangle through the exact
+        // rendered-shape hit region for every expanded state.
+        .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
         .onHover(perform: onHoverChanged)
@@ -112,8 +117,12 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         VoiceBarNotchShapeLayout(geometry: presentation.geometry)
     }
 
+    @ViewBuilder
     private var fixedHardwareCore: some View {
-        Rectangle()
+        if presentation.visualState != .idle {
+            VoiceBarNotchHardwareCoreShape(
+                lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
+            )
             .fill(.black)
             .frame(width: layout.coreRect.width, height: layout.coreRect.height)
             .position(x: layout.coreRect.midX, y: layout.coreRect.midY)
@@ -122,6 +131,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 transaction.animation = nil
             }
             .zIndex(10)
+        }
+    }
+
+    private var compactSurface: some View {
+        ZStack(alignment: .topLeading) {
+            compactWings
+            coreEdgeVeils
+        }
     }
 
     private var compactWings: some View {

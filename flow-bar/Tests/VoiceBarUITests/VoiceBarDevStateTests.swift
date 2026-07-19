@@ -73,8 +73,55 @@ final class VoiceBarDevStateTests: XCTestCase {
         XCTAssertTrue(state.isTeleprompterReadback)
     }
 
+    func testPostAskRecordingIdleCollapsesAfterAFreshFullDeadline() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.01
+        state.handleEvent(["type": "state", "state": "recording", "mode": "vad"])
+        state.handleEvent(["type": "state", "state": "idle", "source": "recording"])
+
+        let didCollapse = try await waitUntil { state.isCollapsed }
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertTrue(didCollapse)
+    }
+
+    func testDismissedPostSpeakReadbackStartsTheGeneralIdleCollapseDeadline() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.01
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Read this then collapse",
+        ])
+        state.handleEvent(["type": "state", "state": "idle", "source": "playback"])
+        state.dismissRetainedTeleprompter()
+
+        let didCollapse = try await waitUntil { state.isCollapsed }
+
+        XCTAssertTrue(didCollapse)
+    }
+
+    func testF5AndMCPActivityImmediatelyExpandCollapsedIdle() async throws {
+        let state = VoiceState(keepsExpandedInDevState: false)
+        state.idleCollapseDelay = 0.01
+        state.setHovering(false)
+        _ = try await waitUntil { state.isCollapsed }
+
+        state.setHotkeyEnabled(true)
+        state.setHotkeyPhase(.pressing)
+        XCTAssertFalse(state.isCollapsed)
+
+        state.isCollapsed = true
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "MCP activity",
+        ])
+        XCTAssertFalse(state.isCollapsed)
+    }
+
     private func waitUntil(_ condition: () -> Bool) async throws -> Bool {
-        for _ in 0 ..< 25 {
+        for _ in 0 ..< 100 {
             if condition() {
                 return true
             }
