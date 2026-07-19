@@ -1071,18 +1071,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func windowDidChangeBackingProperties(_ notification: Notification) {
         guard notification.object as? NSWindow === panel else { return }
-        _ = synchronizePanelBackingScale(
-            reason: "backing_properties_changed",
-            forceRerasterization: true
-        )
+        schedulePanelBackingScaleRecertification(reason: "backing_properties_changed")
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
         guard notification.object as? NSWindow === panel else { return }
-        _ = synchronizePanelBackingScale(
-            reason: "screen_changed",
-            forceRerasterization: true
-        )
+        schedulePanelBackingScaleRecertification(reason: "screen_changed")
     }
 
     private func currentPanelLayout() -> VoiceBarPanelLayout {
