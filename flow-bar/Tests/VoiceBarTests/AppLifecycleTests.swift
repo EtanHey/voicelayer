@@ -3,6 +3,10 @@
 import XCTest
 
 final class AppLifecycleTests: XCTestCase {
+    private final class PointerProbe: @unchecked Sendable {
+        var isInside = true
+    }
+
     // MARK: - Context menu snooze toggle
 
     func testContextMenuShowsHideWhenNotSnoozed() {
@@ -449,6 +453,189 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("sheet.makeKeyAndOrderFront(nil)"))
     }
 
+    @MainActor
+    func testReadbackWatchdogDismissesOutsideTheVisibleNotchSurface() async {
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { false }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(40))
+
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    @MainActor
+    func testRepeatedUnattendedReadbackSynchronizationDoesNotRestartGraceWindow() async {
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(100)
+        )
+        let synchronize = {
+            coordinator.synchronize(
+                isReadback: true,
+                isPointerInsideVisibleSurface: { false }
+            ) {
+                dismissCount += 1
+            }
+        }
+
+        synchronize()
+        try? await Task.sleep(for: .milliseconds(70))
+        synchronize()
+        try? await Task.sleep(for: .milliseconds(60))
+
+        XCTAssertEqual(
+            dismissCount,
+            1,
+            "Repeated W2 idle/readback broadcasts must not postpone unattended auto-dismiss"
+        )
+    }
+
+    @MainActor
+    func testReadbackWatchdogPersistsInsideThenDismissesAfterPointerLeaves() async {
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(20)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(35))
+        XCTAssertEqual(dismissCount, 0)
+
+        pointer.isInside = false
+        try? await Task.sleep(for: .milliseconds(60))
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    @MainActor
+    func testReadbackWatchdogStartsAFreshGraceWindowAfterObservingPointerExit() async {
+        let pointer = PointerProbe()
+        var dismissCount = 0
+        let coordinator = RetainedReadbackDismissalCoordinator(
+            delay: .milliseconds(80)
+        )
+
+        coordinator.synchronize(
+            isReadback: true,
+            isPointerInsideVisibleSurface: { pointer.isInside }
+        ) {
+            dismissCount += 1
+        }
+        try? await Task.sleep(for: .milliseconds(60))
+        pointer.isInside = false
+
+        try? await Task.sleep(for: .milliseconds(45))
+        XCTAssertEqual(
+            dismissCount,
+            0,
+            "A read-back that was hovered must not inherit the current polling deadline after exit"
+        )
+
+        try? await Task.sleep(for: .milliseconds(75))
+        XCTAssertEqual(dismissCount, 1)
+    }
+
+    func testReadbackPointerCheckRejectsScreenPointOutsidePanelBeforeConversion() {
+        var didConvert = false
+
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 900, y: 700),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { point in
+                didConvert = true
+                return point
+            },
+            containsLocalPoint: { _ in true }
+        )
+
+        XCTAssertFalse(isInside)
+        XCTAssertFalse(didConvert)
+    }
+
+    func testReadbackPointerCheckConvertsAndChecksPointInsidePanelFrame() {
+        let isInside = RetainedReadbackPointerPolicy.isInsideVisibleSurface(
+            screenPoint: CGPoint(x: 320, y: 180),
+            panelFrame: CGRect(x: 100, y: 100, width: 500, height: 200),
+            convertFromScreen: { _ in CGPoint(x: 220, y: 80) },
+            containsLocalPoint: { $0 == CGPoint(x: 220, y: 80) }
+        )
+
+        XCTAssertTrue(isInside)
+    }
+
+    func testVoiceModeChangesSynchronizeRetainedReadbackLifecycle() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains("private func synchronizeRetainedReadbackLifecycle()"))
+        XCTAssertTrue(source.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(source.contains("isPointerInsideVisibleNotchSurface"))
+        XCTAssertTrue(source.contains("voiceState.dismissRetainedTeleprompter()"))
+
+        let modeHandler = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
+        let synchronizeCall = try XCTUnwrap(
+            source.range(
+                of: "synchronizeRetainedReadbackLifecycle()",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        let switchRange = try XCTUnwrap(
+            source.range(
+                of: "switch mode",
+                range: modeHandler.lowerBound ..< source.endIndex
+            )
+        )
+        XCTAssertLessThan(synchronizeCall.lowerBound, switchRange.lowerBound)
+    }
+
+    func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {
+        let appSource = try voiceBarAppSource()
+        let barSource = try voiceBarUISource(named: "BarView.swift")
+        let modelSource = try voiceBarUISource(named: "VoiceBarNotchPresentationModel.swift")
+        let coordinatorSource = try voiceBarSource(named: "RetainedReadbackDismissalCoordinator.swift")
+
+        XCTAssertTrue(appSource.contains("retainedReadbackDismissalCoordinator.synchronize("))
+        XCTAssertTrue(appSource.contains("voiceState.dismissRetainedTeleprompter()"))
+        XCTAssertFalse(barSource.contains("presentationModel?.updateRetainedReadback"))
+        XCTAssertFalse(modelSource.contains("updateRetainedReadback("))
+        XCTAssertTrue(coordinatorSource.contains("deinit"))
+        XCTAssertTrue(coordinatorSource.contains("dismissalTask?.cancel()"))
+    }
+
+    func testReadbackWatchdogClearsStaleHoverBeforeDismissing() throws {
+        let source = try voiceBarAppSource()
+        let synchronizeStart = try XCTUnwrap(
+            source.range(of: "private func synchronizeRetainedReadbackLifecycle()")
+        )
+        let synchronizeEnd = try XCTUnwrap(
+            source.range(
+                of: "private var isPointerInsideVisibleNotchSurface",
+                range: synchronizeStart.upperBound ..< source.endIndex
+            )
+        )
+        let bodyRange = synchronizeStart.lowerBound ..< synchronizeEnd.lowerBound
+        let clearHover = try XCTUnwrap(
+            source.range(of: "voiceState.setHovering(false)", range: bodyRange)
+        )
+        let dismiss = try XCTUnwrap(
+            source.range(of: "voiceState.dismissRetainedTeleprompter()", range: bodyRange)
+        )
+
+        XCTAssertLessThan(clearHover.lowerBound, dismiss.lowerBound)
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -461,5 +648,37 @@ final class AppLifecycleTests: XCTestCase {
             .appendingPathComponent("VoiceBar")
             .appendingPathComponent("VoiceBarApp.swift")
         return try String(contentsOf: sourceURL)
+    }
+
+    private func voiceBarSource(named name: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("flow-bar")
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBar")
+                .appendingPathComponent(name),
+            encoding: .utf8
+        )
+    }
+
+    private func voiceBarUISource(named name: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("flow-bar")
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBarUI")
+                .appendingPathComponent(name),
+            encoding: .utf8
+        )
     }
 }

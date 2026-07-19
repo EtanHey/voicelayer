@@ -1,0 +1,171 @@
+@testable import VoiceBarUI
+import XCTest
+
+final class VoiceBarNotchContractTests: XCTestCase {
+    func testApprovedGeometryForEveryVisualState() {
+        XCTAssertEqual(
+            VoiceBarNotchContract.geometry(for: .idle),
+            VoiceBarNotchGeometry(
+                coreWidth: 185,
+                topHeight: 32,
+                leadingWingWidth: 0,
+                trailingWingWidth: 0,
+                bodyLeadingExtent: 0,
+                bodyTrailingExtent: 0,
+                lowerSurfaceHeight: 0
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarNotchContract.geometry(for: .hoverLauncher),
+            VoiceBarNotchGeometry(
+                coreWidth: 185,
+                topHeight: 32,
+                leadingWingWidth: 36,
+                trailingWingWidth: 64,
+                bodyLeadingExtent: 0,
+                bodyTrailingExtent: 0,
+                lowerSurfaceHeight: 0
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarNotchContract.geometry(for: .recording),
+            VoiceBarNotchGeometry(
+                coreWidth: 185,
+                topHeight: 32,
+                leadingWingWidth: 72,
+                trailingWingWidth: 152,
+                bodyLeadingExtent: 0,
+                bodyTrailingExtent: 0,
+                lowerSurfaceHeight: 0
+            )
+        )
+        XCTAssertEqual(
+            VoiceBarNotchContract.geometry(for: .teleprompter),
+            VoiceBarNotchGeometry(
+                coreWidth: 185,
+                topHeight: 32,
+                leadingWingWidth: 76,
+                trailingWingWidth: 88,
+                bodyLeadingExtent: 140,
+                bodyTrailingExtent: 140,
+                lowerSurfaceHeight: 196
+            )
+        )
+    }
+
+    func testDerivedGeometryMatchesTheApprovedTotals() {
+        let idle = VoiceBarNotchContract.geometry(for: .idle)
+        let hover = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let recording = VoiceBarNotchContract.geometry(for: .recording)
+        let teleprompter = VoiceBarNotchContract.geometry(for: .teleprompter)
+
+        XCTAssertEqual(idle.topWidth, 185)
+        XCTAssertEqual(idle.totalWidth, 185)
+        XCTAssertEqual(idle.totalHeight, 32)
+        XCTAssertEqual(hover.topWidth, 285)
+        XCTAssertEqual(hover.totalWidth, 285)
+        XCTAssertEqual(recording.topWidth, 409)
+        XCTAssertEqual(recording.totalWidth, 409)
+        XCTAssertEqual(teleprompter.topWidth, 349)
+        XCTAssertEqual(teleprompter.bodyWidth, 465)
+        XCTAssertEqual(teleprompter.totalWidth, 465)
+        XCTAssertEqual(teleprompter.totalHeight, 228)
+    }
+
+    func testMaterialContractLocksFadeSafeContentAndOneSurfaceRules() {
+        let material = VoiceBarNotchContract.material
+
+        XCTAssertEqual(material.blackToGlassFadeWidth, 16)
+        XCTAssertEqual(material.fadeToContentGap, 8)
+        XCTAssertEqual(material.outerContentInset, 8)
+        XCTAssertEqual(material.leadingTeleprompterContentWidth, 44)
+        XCTAssertEqual(material.trailingTeleprompterContentWidth, 56)
+        XCTAssertEqual(material.inverseJoinRadius, 5)
+        XCTAssertEqual(material.waveformSlotWidth, 72)
+        XCTAssertEqual(material.lowerSurfaceLayerCount, 1)
+        XCTAssertEqual(material.teleprompterInsetFrameCount, 0)
+        XCTAssertTrue(material.compactWingsHaveOuterEdgeTreatment)
+        XCTAssertFalse(material.coreUsesBackdropMaterial)
+        XCTAssertEqual(material.compactOuterCornerRadius(for: .hoverLauncher), 11)
+        XCTAssertEqual(material.compactOuterCornerRadius(for: .recording), 15)
+        XCTAssertEqual(material.compactOuterCornerRadius(for: .compactStatus), 15)
+    }
+
+    func testMotionContractLocksTheApprovedSpringAndDelays() {
+        let motion = VoiceBarNotchContract.motion
+
+        XCTAssertEqual(motion.stiffness, 310)
+        XCTAssertEqual(motion.damping, 31)
+        XCTAssertEqual(motion.mass, 0.72)
+        XCTAssertEqual(motion.bounce, 0)
+        XCTAssertEqual(motion.panelDelay, 0.05)
+        XCTAssertEqual(motion.contentExitDuration, 0.12)
+    }
+
+    func testPresentationPrecedenceIsTeleprompterRecordingStatusHoverIdle() {
+        XCTAssertEqual(
+            VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: true,
+                isRecording: true,
+                hasCompactStatus: true,
+                isHovered: true,
+                isKeyboardFocused: true
+            ).visualState,
+            .teleprompter
+        )
+        XCTAssertEqual(
+            VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false,
+                isRecording: true,
+                hasCompactStatus: true,
+                isHovered: true,
+                isKeyboardFocused: true
+            ).visualState,
+            .recording
+        )
+        XCTAssertEqual(
+            VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false,
+                isRecording: false,
+                hasCompactStatus: true,
+                isHovered: true,
+                isKeyboardFocused: true
+            ).visualState,
+            .compactStatus
+        )
+        XCTAssertEqual(
+            VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false,
+                isRecording: false,
+                hasCompactStatus: false,
+                isHovered: false,
+                isKeyboardFocused: true
+            ).visualState,
+            .hoverLauncher
+        )
+        XCTAssertEqual(
+            VoiceBarNotchPresentation.resolve(
+                hasTeleprompter: false,
+                isRecording: false,
+                hasCompactStatus: false,
+                isHovered: false,
+                isKeyboardFocused: false
+            ).visualState,
+            .idle
+        )
+    }
+
+    func testPresentationCarriesGeometryRolesAndAccessibilityWithoutOperationalState() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            isHovered: true,
+            isKeyboardFocused: false
+        )
+
+        XCTAssertEqual(presentation.geometry.totalWidth, 285)
+        XCTAssertEqual(presentation.contentRoles, [.microphone, .history, .dictionary])
+        XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
+    }
+}

@@ -22,9 +22,11 @@
 
 - [x] 3.1 React mock approved by Etan (“perfect”); approved geometry/material/motion contract frozen as the native pixel target
 - [x] 3.2 Paper-only Swift architecture and TDD implementation plan written, including new-type boundaries and explicit W2 shared-file touch/no-touch map
-- [ ] 3.3 Sequencing gate — W2 combined waveform repair + P0 head committed, reviewed, and merged; W1 branches from the resulting new main before any native edit
-- [ ] 3.4 New pure native contracts — visual-state reducer, exact 185/285/409/465×228-point geometry, corrected 36/64 · 72/152 · 76/88-point wing extents, 16-point fade, content-safe insets, motion hierarchy
-- [ ] 3.5 New shell primitives — safe-area/auxiliary-top-area-derived physical-notch placement with the 185-point fallback, one teleprompter shape, shared glass/fallback material, fixed black core, ordered motion, and shape-aware hit regions
-- [ ] 3.6 Rebase integration — adapt `VoiceBarPresentation`, `VoiceBarPanelLayout`, `BarView`, `FloatingPanel`, and `VoiceBarApp` over W2 while leaving `VoiceState`/`WaveformView`/`TeleprompterView` behavior unchanged
-- [ ] 3.7 Native verification — full suites plus isolated actual-notch Light/Dark/Reduced-Motion receipts against the “perfect” mock and DynamicLake cleanliness bar
+- [x] 3.3 Sequencing gate — initial W1 branch was based on post-P0 `db90fcc`; #351 merged as `d721e11`, and W1 rebased onto that merged main with the first post-rebase exact-head gate at `0471cebe87f855a134df15195ad3c44feb07a3a7`
+- [x] 3.4 New pure native contracts — visual-state reducer, exact 185/285/409/465×228-point geometry, corrected 36/64 · 72/152 · 76/88-point wing extents, 16-point fade, content-safe insets, motion hierarchy
+- [x] 3.5 New shell primitives — safe-area/auxiliary-top-area-derived physical-notch placement with the 185-point fallback, one teleprompter shape, shared glass/fallback material, fixed black core, ordered motion, and shape-aware hit regions
+- [x] 3.6 Rebase integration — adapted `VoiceBarPresentation`, `VoiceBarPanelLayout`, `BarView`, `FloatingPanel`, and `VoiceBarApp` over W2 while leaving `VoiceState`/`WaveformView`/`TeleprompterView` behavior unchanged
+- [x] 3.7 Native verification — post-#351 gate rerun at `01b6289da4e9c7771826d00bcb2152ace3440023`: Swift `579/8 skipped/0 failed`, Bun `1371/2 skipped/0 failed`, typecheck, corpus `10/10`, F18/Escape/stop, and F5 finish-paste pass; isolated actual-notch Dark/Light/Reduced-Motion rehearsal receipts are under `docs.local/notch-v10-native-port/notch-20260719T014100Z/rehearsal-01b6289` and the final notarized exact-head matrix is recorded in PR #352 and the W1 report
 - [ ] 3.8 Release gate — no resident swap until isolated proof passes; then Etan F5-batch comparison against `resident-stable-20260717`
+
+Analyzer rider: no analyzer executable exists locally. This lane updated the scaffold rows directly and did not hunt for an analyzer runner.

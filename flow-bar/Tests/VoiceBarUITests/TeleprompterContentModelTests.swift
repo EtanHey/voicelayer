@@ -40,11 +40,84 @@ final class TeleprompterContentModelTests: XCTestCase {
         )
         XCTAssertFalse(words.map(\.text).contains("Eh"))
         XCTAssertFalse(words.map(\.text).contains("Soopa"))
+        XCTAssertEqual(words.first?.offsetMs, 0)
+        XCTAssertEqual(
+            words.map(\.offsetMs),
+            [0, 164, 327, 510, 693, 871, 1027]
+        )
+        XCTAssertEqual(
+            zip(words.compactMap(\.offsetMs), words.compactMap(\.durationMs))
+                .map(+)
+                .last,
+            1210
+        )
+        XCTAssertTrue(words.allSatisfy { ($0.durationMs ?? 0) > 0 })
+        let offsets = words.compactMap(\.offsetMs)
+        XCTAssertEqual(offsets.count, words.count)
+        XCTAssertTrue(zip(offsets, offsets.dropFirst()).allSatisfy(<))
+    }
+
+    func testUnrelatedStaleBoundariesFallBackToEstimatedPacing() {
+        let words = TeleprompterContentModel.words(
+            text: "Fresh queued playback has no subtitle payload",
+            wordBoundaries: [
+                TeleprompterBoundary(offsetMs: 0, durationMs: 200, text: "Previous"),
+                TeleprompterBoundary(offsetMs: 240, durationMs: 180, text: "item"),
+                TeleprompterBoundary(offsetMs: 460, durationMs: 190, text: "timings"),
+            ]
+        )
+
+        XCTAssertEqual(
+            words.map(\.text),
+            ["Fresh", "queued", "playback", "has", "no", "subtitle", "payload"]
+        )
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+    }
+
+    func testStaleBoundaryPrefixOfFreshQueuedTextFallsBackToEstimatedPacing() {
+        let sharedLeadIn = String(
+            repeating: "The shared queued introduction remains exactly the same ",
+            count: 12
+        )
+        let words = TeleprompterContentModel.words(
+            text: sharedLeadIn + "before a fresh ending",
+            wordBoundaries: [
+                TeleprompterBoundary(
+                    offsetMs: 0,
+                    durationMs: 5400,
+                    text: sharedLeadIn
+                ),
+            ]
+        )
+
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
+    }
+
+    func testLongStaleBoundariesThatOnlyDifferInTheMiddleFallBackToEstimatedPacing() {
+        let sharedPrefix = String(repeating: "a", count: 300)
+        let sharedSuffix = String(repeating: "z", count: 300)
+        let displayText = sharedPrefix + String(repeating: "x", count: 1000) + sharedSuffix
+        let staleBoundaryText = sharedPrefix + String(repeating: "y", count: 1000) + sharedSuffix
+
+        let words = TeleprompterContentModel.words(
+            text: displayText,
+            wordBoundaries: [
+                TeleprompterBoundary(
+                    offsetMs: 0,
+                    durationMs: 4000,
+                    text: staleBoundaryText
+                ),
+            ]
+        )
+
+        XCTAssertEqual(words.map(\.text).joined(), displayText)
+        XCTAssertTrue(words.allSatisfy { $0.offsetMs == nil && $0.durationMs == nil })
     }
 
     func testInitialWordUsesTopScrollPositionInsteadOfCenteringPastViewportStart() {
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 0), .top)
         XCTAssertEqual(TeleprompterScrollPolicy.position(for: 1), .center)
+        XCTAssertEqual(TeleprompterScrollPolicy.initialViewportAlignment, .top)
     }
 
     func testNewBriefGetsFreshScrollIdentityBeforeItsFirstPaint() {
@@ -72,6 +145,7 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertTrue(TeleprompterPlaybackPolicy.animatesTimeline(isReadback: false))
         XCTAssertNil(TeleprompterPlaybackPolicy.wordOpacity(isReadback: false))
         XCTAssertFalse(TeleprompterPlaybackPolicy.showsScrollIndicators(isReadback: false))
+        XCTAssertEqual(TeleprompterPlaybackPolicy.startupDelay, .zero)
     }
 
     func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {

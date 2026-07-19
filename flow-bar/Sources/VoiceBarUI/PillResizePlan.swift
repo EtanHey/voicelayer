@@ -4,6 +4,11 @@ public struct PillResizePlan {
     public let frame: CGRect
     public let animate: Bool
 
+    public init(frame: CGRect, animate: Bool) {
+        self.frame = frame
+        self.animate = animate
+    }
+
     private static func frame(
         minX: CGFloat,
         minY: CGFloat,
