@@ -368,6 +368,10 @@ export interface NoSpeechGateResult {
   reason?: "invalid-sample-rate" | "too-short" | "too-quiet";
 }
 
+export interface RecordingCaptureState {
+  vadSpeechDetected?: boolean;
+}
+
 export function consumeCancelSignalForRecording(): boolean {
   if (!hasCancelSignal()) return false;
   clearCancelSignal();
@@ -1734,6 +1738,7 @@ export async function recordToBuffer(
   chunkedSession?: ChunkedRecordingSession,
   signal?: AbortSignal,
   preserveNoSpeechCapture = false,
+  captureState?: RecordingCaptureState,
 ): Promise<Uint8Array | null> {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
@@ -1902,6 +1907,9 @@ export async function recordToBuffer(
       } else if (!pressToTalk && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
       } else {
+        if (!pressToTalk && captureState) {
+          captureState.vadSpeechDetected = hasSpeech;
+        }
         const selectedChunks =
           !pressToTalk && hasSpeech && firstSpeechChunkIndex >= 0
             ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
@@ -2206,6 +2214,7 @@ export async function waitForInput(
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;
+  const captureState: RecordingCaptureState = {};
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
     : undefined;
@@ -2217,6 +2226,7 @@ export async function waitForInput(
       chunkedSession,
       options.signal,
       options.archiveSource === "voice_ask",
+      captureState,
     );
   } catch (err) {
     appendControlLayerEvent("capture.recording_failed", {
@@ -2352,24 +2362,33 @@ export async function waitForInput(
   }
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
+  const vadNoSpeech =
+    !pressToTalk && captureState.vadSpeechDetected === false;
+  const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
       `rms=${noSpeechGate.rms.toFixed(0)}, ` +
       `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"}, ` +
-      `allowed=${noSpeechGate.allowed}` +
+      `vad_speech=${captureState.vadSpeechDetected ?? "unknown"}, ` +
+      `allowed=${transcriptionAllowed}` +
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
-  if (!noSpeechGate.allowed) {
-    const captureFailure = classifyCaptureFailure(noSpeechGate);
+  if (!transcriptionAllowed) {
+    const noSpeechReason = vadNoSpeech
+      ? "vad-no-speech"
+      : noSpeechGate.reason;
+    const captureFailure = vadNoSpeech
+      ? null
+      : classifyCaptureFailure(noSpeechGate);
     console.error(
-      `[voicelayer] Dropping recording before STT: ${noSpeechGate.reason} ` +
+      `[voicelayer] Dropping recording before STT: ${noSpeechReason} ` +
         `(duration=${noSpeechGate.durationMs}ms, rms=${noSpeechGate.rms.toFixed(0)}, ` +
         `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
     );
     clearCancelSignal();
     invokeCaptureObserver("no_speech", options.onNoSpeech);
     appendControlLayerEvent("capture.no_speech", {
-      reason: noSpeechGate.reason ?? null,
+      reason: noSpeechReason ?? null,
       duration_ms: noSpeechGate.durationMs,
       raw_duration_ms: sttTrim.rawDurationMs,
       transcribed_duration_ms: sttTrim.transcribedDurationMs,
@@ -2379,6 +2398,7 @@ export async function waitForInput(
       silence_mode: silenceMode,
       press_to_talk: pressToTalk,
       archive_source: options.archiveSource ?? null,
+      vad_speech_detected: captureState.vadSpeechDetected ?? null,
       capture_failure: captureFailure?.type ?? null,
     });
     if (captureFailure) {

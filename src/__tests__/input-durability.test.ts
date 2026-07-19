@@ -861,6 +861,47 @@ describe("input recording durability", () => {
     });
   });
 
+  it("archives high-energy VAD no-speech without sending ambient PCM to STT", async () => {
+    vadProcessSpy.mockResolvedValue(0);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    let noSpeechCount = 0;
+
+    const response = await waitForInput(2_000, "standard", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 6, 5, 4]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Did you answer?",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-AndrewNeural",
+        createdAt: new Date("2026-07-18T11:04:20.000Z"),
+      },
+      onNoSpeech: () => {
+        noSpeechCount += 1;
+      },
+    });
+
+    expect(response).toBeNull();
+    expect(noSpeechCount).toBe(1);
+    expect(backendTranscribeCalls).toBe(0);
+    const dayDir = join(tmpRoot, "recordings", "2026-07-18");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    expect(
+      JSON.parse(
+        readFileSync(join(dayDir, archiveIds[0], "metadata.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "captured",
+      retention_policy: "indefinite",
+    });
+  });
+
   it("publishes the paired voice_ask capture before a timed-out STT can fail", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     backendMode = "hang";
