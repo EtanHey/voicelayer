@@ -8,6 +8,13 @@
 import { getToolDefinitions } from "./mcp-tools";
 import { formatError } from "./format-response";
 import { PACKAGE_VERSION } from "./version";
+import {
+  createVoiceToolContext,
+  isMcpLoggingLevel,
+  type McpNotification,
+  type McpLoggingLevel,
+  type VoiceToolContext,
+} from "./mcp-notifications";
 
 /** Known tool names from mcp-server.ts dispatch table. */
 const KNOWN_TOOLS = new Set([
@@ -29,10 +36,16 @@ export interface ToolExecutor {
   executeTool: (
     name: string,
     args: Record<string, unknown>,
+    context: VoiceToolContext,
   ) => Promise<{
     content: Array<{ type: string; text: string }>;
     isError?: boolean;
   }>;
+}
+
+export interface McpRequestContext {
+  sendNotification(notification: McpNotification): void | Promise<void>;
+  setLoggingLevel?(level: McpLoggingLevel): void;
 }
 
 /** MCP JSON-RPC request shape. */
@@ -58,6 +71,7 @@ interface McpResponse {
 export async function handleMcpRequest(
   request: McpRequest,
   executor?: ToolExecutor,
+  requestContext?: McpRequestContext,
 ): Promise<McpResponse | null> {
   // Notifications (no id) don't get responses
   if (request.id === undefined || request.id === null) {
@@ -71,7 +85,7 @@ export async function handleMcpRequest(
         id: request.id,
         result: {
           protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
+          capabilities: { tools: {}, logging: {} },
           serverInfo: {
             name: "voicelayer",
             version: PACKAGE_VERSION,
@@ -87,6 +101,27 @@ export async function handleMcpRequest(
           tools: getToolDefinitions(),
         },
       };
+
+    case "logging/setLevel": {
+      const level = request.params?.level;
+      if (!isMcpLoggingLevel(level)) {
+        return {
+          jsonrpc: "2.0",
+          id: request.id,
+          error: {
+            code: -32602,
+            message: `Invalid logging level: ${String(level)}`,
+          },
+        };
+      }
+
+      requestContext?.setLoggingLevel?.(level);
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: {},
+      };
+    }
 
     case "tools/call": {
       const params = request.params as {
@@ -145,9 +180,17 @@ export async function handleMcpRequest(
       }
 
       try {
+        const requestMeta = params as {
+          _meta?: { progressToken?: string | number };
+        };
+        const context = createVoiceToolContext(
+          requestMeta._meta?.progressToken,
+          requestContext?.sendNotification,
+        );
         const result = await executor.executeTool(
           params.name,
           params.arguments ?? {},
+          context,
         );
         return {
           jsonrpc: "2.0",

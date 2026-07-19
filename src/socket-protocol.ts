@@ -138,6 +138,33 @@ export interface QueueEvent {
   items: QueueItemSnapshot[];
 }
 
+export type PlaybackOutcomeStatus =
+  | "completed"
+  | "interrupted"
+  | "skipped"
+  | "failed";
+
+export type PlaybackOutcomeReason =
+  | "stopped"
+  | "barge-in"
+  | "expired"
+  | "collapsed"
+  | "refused"
+  | "player-error";
+
+export interface PlaybackOutcomeEvent {
+  type: "playback_outcome";
+  playback_id: string;
+  status: PlaybackOutcomeStatus;
+  reason?: PlaybackOutcomeReason;
+  stopped_at_ms: number;
+  duration_ms?: number;
+  progress: number;
+  /** Zero-based word active at the stopped position, when available. */
+  word_index?: number;
+  word_count?: number;
+}
+
 export type CommandModePhase =
   | "listening"
   | "capturing"
@@ -200,6 +227,7 @@ export type SocketEvent =
   | ErrorEvent
   | SubtitleEvent
   | QueueEvent
+  | PlaybackOutcomeEvent
   | CommandModeEvent
   | ClipMarkerEvent
   | AckEvent;

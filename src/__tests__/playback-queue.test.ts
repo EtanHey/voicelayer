@@ -35,9 +35,9 @@ async function waitFor(
   description: string,
   timeoutMs = 1_000,
 ): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+  const deadline = performance.now() + timeoutMs;
   while (!predicate()) {
-    if (Date.now() >= deadline) {
+    if (performance.now() >= deadline) {
       throw new Error(`Timed out waiting for ${description}`);
     }
     await Bun.sleep(1);
@@ -224,6 +224,26 @@ describe("playback queue — P0-1 sequential playback", () => {
     } else {
       process.env.QA_VOICE_RECORDING_STATE_PATH = originalRecordingStatePath;
     }
+  });
+
+  it("times out polling independently of the mocked playback clock", async () => {
+    const nowSpy = spyOn(Date, "now").mockReturnValue(10_000);
+    const polling = waitFor(() => false, "mocked-clock polling", 20).then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    let firstOutcome: string;
+    try {
+      firstOutcome = await Promise.race([
+        polling,
+        Bun.sleep(100).then(() => "hung"),
+      ]);
+    } finally {
+      nowSpy.mockRestore();
+    }
+    await polling;
+
+    expect(firstOutcome).toBe("Timed out waiting for mocked-clock polling");
   });
 
   it("plays audio files sequentially — second spawns only after first finishes", async () => {
@@ -487,6 +507,52 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     playerMocks[1].resolveExit();
     await critical.exited;
+  });
+
+  it("reports the exact stopped-at position when the user interrupts playback", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+    let now = 10_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+    const completed: any[] = [];
+
+    try {
+      const playback = playAudioNonBlocking(
+        "/tmp/pq-interrupted-position.mp3",
+        {
+          text: "one two three",
+          voice: "TestVoice",
+          durationMs: 1_000,
+          wordBoundaries: [
+            { offset_ms: 0, duration_ms: 200, text: "one" },
+            { offset_ms: 400, duration_ms: 200, text: "two" },
+            { offset_ms: 800, duration_ms: 200, text: "three" },
+          ],
+          onCompleted: (outcome: unknown) => completed.push(outcome),
+        } as any,
+      );
+      await waitFor(() => playerMocks.length === 1, "interrupted player start");
+
+      now = 10_550;
+      expect(stopPlayback()).toBe(true);
+      const outcome = await playback.exited;
+
+      expect(playback.id).toMatch(/^playback-/);
+      expect(outcome).toEqual({
+        type: "playback_outcome",
+        playback_id: playback.id,
+        status: "interrupted",
+        reason: "stopped",
+        stopped_at_ms: 550,
+        duration_ms: 1_000,
+        progress: 0.55,
+        word_index: 1,
+        word_count: 3,
+      });
+      expect(completed).toEqual([outcome]);
+      expect(broadcasts).toContainEqual(outcome);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it("broadcasts idle only when queue fully drains, not between items", async () => {

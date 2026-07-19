@@ -306,6 +306,8 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   export VOICELAYER_VERIFY_WORK_DIR="$corpus_work_dir"
   export QA_VOICE_SOCKET_PATH="$VOICELAYER_SOCKET_PATH"
   export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
+  export VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal.proof"
+  export VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal-very-long.proof"
 
   assert_corpus_tree_clean
 
@@ -324,7 +326,18 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --work-dir "$corpus_work_dir" \
       --repo-root "$REPO_ROOT"
   fi
+  if [ ! -f "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH" ] ||
+    ! grep -Fqx 'pass' "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"; then
+    printf '[voicelayer-verify] missing normal terminal gate proof from corpus runner.\n' >&2
+    exit 1
+  fi
+  if [ ! -f "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH" ] ||
+    ! grep -Fqx 'pass' "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"; then
+    printf '[voicelayer-verify] missing very-long terminal gate proof from corpus runner.\n' >&2
+    exit 1
+  fi
   printf '[voicelayer-verify] F5 finish-paste terminal gate: PASS\n'
+  printf '[voicelayer-verify] F5 very-long finish-paste terminal gate: PASS\n'
 
   assert_corpus_tree_clean
 
@@ -339,6 +352,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'tester: %s\n' "$tester"
     printf 'verification_mode: corpus\n'
     printf 'f5_finish_paste_terminal: pass\n'
+    printf 'f5_finish_paste_terminal_very_long: pass\n'
     printf 'corpus_count: %s\n' "$CORPUS_COUNT"
     printf 'corpus_manifest: %s\n' "$corpus_manifest"
     printf 'daemon_files:\n'

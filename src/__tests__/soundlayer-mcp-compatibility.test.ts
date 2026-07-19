@@ -91,6 +91,44 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(waitForInputSpy).not.toHaveBeenCalled();
   });
 
+  it("returns a playback id immediately and follows with interruption telemetry", async () => {
+    const events: any[] = [];
+    speakSpy.mockImplementation(async (_text, options: any) => {
+      const outcome = {
+        type: "playback_outcome" as const,
+        playback_id: "playback-speak-1",
+        status: "interrupted" as const,
+        reason: "stopped" as const,
+        stopped_at_ms: 550,
+        duration_ms: 1_000,
+        progress: 0.55,
+        word_index: 1,
+        word_count: 3,
+      };
+      queueMicrotask(() => options?.onPlaybackComplete?.(outcome));
+      return { playbackId: outcome.playback_id } as any;
+    });
+
+    const result = await handleVoiceSpeak(
+      { message: "Listen until interrupted", mode: "announce" },
+      { emit: (event: unknown) => events.push(event) } as any,
+    );
+    await Promise.resolve();
+
+    expect(result.content[0].text).toContain("playback-speak-1");
+    expect(events).toEqual([
+      {
+        kind: "playback_outcome",
+        outcome: expect.objectContaining({
+          playback_id: "playback-speak-1",
+          status: "interrupted",
+          progress: 0.55,
+          word_index: 1,
+        }),
+      },
+    ]);
+  });
+
   it("keeps voice_ask blocking through playback completion before recording", async () => {
     const calls: string[] = [];
     awaitPlaybackSpy.mockImplementation(async () => {
@@ -133,6 +171,8 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {
       archiveSource: "voice_ask",
       onCaptureEnd: expect.any(Function),
+      onNoSpeech: expect.any(Function),
+      onPhaseChange: expect.any(Function),
       signal: expect.any(AbortSignal),
       voiceAskArtifacts: {
         agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 1, 2, 3, 4]),
@@ -142,6 +182,76 @@ describe("SoundLayer MCP compatibility regression", () => {
         agentTtsVoice: "en-US-AndrewNeural",
       },
     });
+  });
+
+  it("includes ask-prompt interruption telemetry in the blocking result", async () => {
+    speakSpy.mockResolvedValue({
+      displayText: "Stop me when you heard enough.",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+      playbackId: "playback-ask-1",
+      playbackOutcome: {
+        type: "playback_outcome",
+        playback_id: "playback-ask-1",
+        status: "interrupted",
+        reason: "stopped",
+        stopped_at_ms: 600,
+        duration_ms: 1_000,
+        progress: 0.6,
+        word_index: 3,
+        word_count: 7,
+      },
+    } as any);
+    waitForInputSpy.mockResolvedValue("I heard enough");
+
+    const result = await handleVoiceAsk({
+      message: "Stop me when you heard enough.",
+    });
+
+    expect(result.content[0].text).toContain("I heard enough");
+    expect(result.content[0].text).toContain("Prompt interrupted");
+    expect(result.content[0].text).toContain("60%");
+  });
+
+  it("emits monotonic keepalives across a simulated long recording and transcription", async () => {
+    speakSpy.mockResolvedValue({
+      displayText: "Give me the long answer.",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+    waitForInputSpy.mockImplementation(
+      async (_timeoutMs, _silenceMode, _pressToTalk, options) => {
+        await Bun.sleep(35);
+        options?.onPhaseChange?.("transcribing");
+        await Bun.sleep(25);
+        return "Long answer";
+      },
+    );
+    const events: any[] = [];
+
+    const result = await handleVoiceAsk(
+      { message: "Give me the long answer.", timeout_seconds: 180 },
+      {
+        heartbeatIntervalMs: 10,
+        emit: (event: unknown) => events.push(event),
+      } as any,
+    );
+
+    expect(result.content[0].text).toContain("Long answer");
+    expect(events.length).toBeGreaterThanOrEqual(5);
+    expect(events.map((event) => event.sequence)).toEqual(
+      [...events.map((event) => event.sequence)].sort((a, b) => a - b),
+    );
+    expect(events.some((event) => event.stage === "recording")).toBe(true);
+    expect(events.some((event) => event.stage === "transcribing")).toBe(true);
   });
 
   it("refuses voice_ask before recording when prompt audio cannot be retained", async () => {
@@ -226,6 +336,68 @@ describe("SoundLayer MCP compatibility regression", () => {
       expect(
         readFileSync(join(folder, "voicelayer-transcript.txt"), "utf8"),
       ).toBe("Paired answer");
+    } finally {
+      if (savedArchiveRoot === undefined) {
+        delete process.env.QA_VOICE_RECORDINGS_DIR;
+      } else {
+        process.env.QA_VOICE_RECORDINGS_DIR = savedArchiveRoot;
+      }
+      rmSync(archiveRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("archives and returns promptly when a voice_ask capture contains no speech", async () => {
+    const archiveRoot = mkdtempSync(join(tmpdir(), "voiceask-no-speech-test-"));
+    const savedArchiveRoot = process.env.QA_VOICE_RECORDINGS_DIR;
+    process.env.QA_VOICE_RECORDINGS_DIR = archiveRoot;
+    speakSpy.mockResolvedValue({
+      displayText: "Are you there?",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 2]),
+        format: "mp3",
+      },
+    });
+    waitForInputSpy.mockImplementation(
+      async (_timeoutMs, silenceMode, pressToTalk, options) => {
+        input.archiveVoiceAskCapture({
+          options: options!,
+          audioBytes: input.createWavBuffer(new Uint8Array(32_000)),
+          silenceMode: silenceMode!,
+          pressToTalk: pressToTalk!,
+          durationMs: 1_000,
+        });
+        options?.onCaptureEnd?.();
+        options?.onNoSpeech?.();
+        return null;
+      },
+    );
+
+    try {
+      const startedAt = Date.now();
+      const result = await handleVoiceAsk({
+        message: "Are you there?",
+        timeout_seconds: 180,
+      });
+
+      expect(Date.now() - startedAt).toBeLessThan(1_000);
+      expect(result.content[0].text).toContain("No speech detected");
+      expect(result.content[0].text).not.toContain("180s");
+      const dayDirs = readdirSync(archiveRoot);
+      expect(dayDirs).toHaveLength(1);
+      const archiveIds = readdirSync(join(archiveRoot, dayDirs[0]));
+      expect(archiveIds).toHaveLength(1);
+      const metadata = JSON.parse(
+        readFileSync(
+          join(archiveRoot, dayDirs[0], archiveIds[0], "metadata.json"),
+          "utf8",
+        ),
+      );
+      expect(metadata).toMatchObject({
+        source: "voice_ask",
+        transcription_status: "captured",
+      });
     } finally {
       if (savedArchiveRoot === undefined) {
         delete process.env.QA_VOICE_RECORDINGS_DIR;

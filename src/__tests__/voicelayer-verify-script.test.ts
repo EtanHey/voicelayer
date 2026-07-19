@@ -190,6 +190,8 @@ describe("voicelayer-verify.sh", () => {
         "set -euo pipefail",
         'test "${CORPUS_RUNNER_ACTIVE:-}" = "1"',
         'printf "interaction:%s\\n" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
+        'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"',
+        'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"',
         "",
       ].join("\n"),
       { mode: 0o755 },
@@ -210,6 +212,9 @@ describe("voicelayer-verify.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(text(result.stdout)).not.toContain("Press F5");
     expect(text(result.stdout)).toContain("F5 finish-paste terminal gate: PASS");
+    expect(text(result.stdout)).toContain(
+      "F5 very-long finish-paste terminal gate: PASS",
+    );
     expect(existsSync(join(tempRoot, "build.log"))).toBe(false);
     const runnerOutput = await Bun.file(runnerLog).text();
     const corpusManifest = join(
@@ -227,8 +232,40 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("tester: Corpus Unit Test");
     expect(body).toContain("verification_mode: corpus");
     expect(body).toContain("f5_finish_paste_terminal: pass");
+    expect(body).toContain("f5_finish_paste_terminal_very_long: pass");
     expect(body).toContain("corpus_count: 2");
     expect(body).toContain(`corpus_manifest: ${corpusManifest}`);
+  });
+
+  test("refuses to certify a corpus runner that omits the very-long terminal proof", () => {
+    run(["git", "checkout", "-b", "feature/corpus-missing-long-proof"]);
+    const changed = join(tempRoot, "changed.txt");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    writeFileSync(
+      runner,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'printf "pass\\n" > "$VOICELAYER_VERIFY_WORK_DIR/f5-finish-paste-terminal.proof"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = run(["bash", scriptPath, "--corpus", "2"], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain(
+      "missing very-long terminal gate proof",
+    );
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   });
 
   test("removes a stale corpus artifact before a failed verification attempt", () => {

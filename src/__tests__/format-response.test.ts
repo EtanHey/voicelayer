@@ -48,6 +48,16 @@ describe("formatSpeak", () => {
     const out = formatSpeak("announce", "Hello");
     expect(out).not.toContain("⚠");
   });
+
+  it("includes the playback id used to correlate follow-up telemetry", () => {
+    const out = formatSpeak(
+      "announce",
+      "Hello",
+      undefined,
+      "playback-123",
+    );
+    expect(out).toContain("playback-123");
+  });
 });
 
 describe("formatAsk — success", () => {
@@ -55,6 +65,26 @@ describe("formatAsk — success", () => {
     const out = formatAsk("I think we should refactor");
     expect(out).toContain("┌");
     expect(out).toContain("I think we should refactor");
+  });
+
+  it("includes interrupted prompt position in the blocking result", () => {
+    const out = formatAsk("I heard enough", {
+      promptPlayback: {
+        type: "playback_outcome",
+        playback_id: "playback-ask",
+        status: "interrupted",
+        reason: "stopped",
+        stopped_at_ms: 550,
+        duration_ms: 1_000,
+        progress: 0.55,
+        word_index: 1,
+        word_count: 3,
+      },
+    } as any);
+
+    expect(out).toContain("Prompt interrupted");
+    expect(out).toContain("word 2/3");
+    expect(out).toContain("55%");
   });
 });
 
@@ -69,6 +99,18 @@ describe("formatAsk — timeout", () => {
     const out = formatAsk(null, { timeoutSeconds: 60, pressToTalk: true });
     expect(out).toContain("PTT");
     expect(out).toContain("60s");
+  });
+
+  it("reports no speech promptly without claiming the configured timeout elapsed", () => {
+    const out = formatAsk(null, {
+      timeoutSeconds: 180,
+      pressToTalk: false,
+      outcome: "no-speech",
+    } as any);
+
+    expect(out).toContain("No speech detected");
+    expect(out).not.toContain("180s");
+    expect(out).not.toContain("timeout");
   });
 });
 
