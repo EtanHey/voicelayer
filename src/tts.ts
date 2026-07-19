@@ -35,6 +35,9 @@ import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
 import { isXTTSAvailable, synthesizeXTTS } from "./tts/xtts";
 import { broadcast } from "./socket-client";
 import type {
+  PlaybackOutcomeEvent,
+  PlaybackOutcomeReason,
+  PlaybackOutcomeStatus,
   PlaybackPriority,
   QueueItemSnapshot,
   WordBoundary,
@@ -600,9 +603,15 @@ async function playClonedAudio(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
     captureAudioArtifact?: boolean;
   },
-): Promise<TextToSpeechResult["audioArtifact"]> {
+): Promise<
+  Pick<
+    TextToSpeechResult,
+    "audioArtifact" | "playbackId" | "playbackOutcome"
+  >
+> {
   let proc: PlaybackHandle;
   let audioArtifact: TextToSpeechResult["audioArtifact"];
   try {
@@ -619,6 +628,7 @@ async function playClonedAudio(
       priority: playbackPriorityForMode(options?.mode),
       durationMs,
       onStarted: options?.onPlaybackStart,
+      onCompleted: options?.onPlaybackComplete,
     });
   } catch (err) {
     try {
@@ -631,8 +641,14 @@ async function playClonedAudio(
       unlinkSync(ttsFile);
     } catch {}
   });
-  if (options?.waitForPlayback) await proc.exited;
-  return audioArtifact;
+  const playbackOutcome = options?.waitForPlayback
+    ? await proc.exited
+    : undefined;
+  return {
+    audioArtifact,
+    playbackId: proc.id,
+    ...(playbackOutcome ? { playbackOutcome } : {}),
+  };
 }
 
 /**
@@ -662,15 +678,16 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
 }
 
 interface PlaybackJob {
+  id: string;
   audioFile: string;
   metadata?: PlaybackMetadata;
   playbackAmplitude?: PlaybackAmplitudeEnvelope;
   priority: PlaybackPriority;
   enqueuedAt: number;
   expiresAt: number;
-  resolveExited: () => void;
+  resolveExited: (outcome: PlaybackOutcomeEvent) => void;
   completed: boolean;
-  exited: Promise<void>;
+  exited: Promise<PlaybackOutcomeEvent>;
 }
 
 const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
@@ -683,6 +700,12 @@ const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
 
 const LOW_PRIORITY_TTL_MS = 10_000;
 const NORMAL_PRIORITY_TTL_MS = 30_000;
+let playbackIdCounter = 0;
+
+function nextPlaybackId(): string {
+  playbackIdCounter += 1;
+  return `playback-${process.pid}-${Date.now()}-${playbackIdCounter}`;
+}
 
 function playbackPriorityForMode(mode?: string): PlaybackPriority {
   switch (mode) {
@@ -713,10 +736,65 @@ function ttlForPriority(priority: PlaybackPriority): number {
   }
 }
 
-function completeJob(job: PlaybackJob) {
+function buildPlaybackOutcome(
+  job: PlaybackJob,
+  status: PlaybackOutcomeStatus,
+  reason?: PlaybackOutcomeReason,
+  elapsedMs = 0,
+): PlaybackOutcomeEvent {
+  const durationMs = job.metadata?.durationMs;
+  const stoppedAtMs =
+    status === "completed" && durationMs !== undefined
+      ? durationMs
+      : Math.max(0, elapsedMs);
+  const progress =
+    status === "completed"
+      ? 1
+      : durationMs && durationMs > 0
+        ? Math.max(0, Math.min(1, stoppedAtMs / durationMs))
+        : 0;
+  const boundaries = job.metadata?.wordBoundaries ?? [];
+  const words =
+    boundaries.length > 0
+      ? boundaries.map((boundary) => boundary.text)
+      : (job.metadata?.text.trim().split(/\s+/).filter(Boolean) ?? []);
+  let wordIndex: number | undefined;
+  if (words.length > 0 && progress > 0) {
+    if (boundaries.length > 0) {
+      const lastStarted = boundaries.findLastIndex(
+        (boundary) => boundary.offset_ms <= stoppedAtMs,
+      );
+      if (lastStarted >= 0) wordIndex = lastStarted;
+    } else {
+      wordIndex = Math.min(words.length - 1, Math.floor(progress * words.length));
+    }
+  }
+
+  return {
+    type: "playback_outcome",
+    playback_id: job.id,
+    status,
+    ...(reason ? { reason } : {}),
+    stopped_at_ms: stoppedAtMs,
+    ...(durationMs !== undefined ? { duration_ms: durationMs } : {}),
+    progress,
+    ...(wordIndex !== undefined ? { word_index: wordIndex } : {}),
+    ...(words.length > 0 ? { word_count: words.length } : {}),
+  };
+}
+
+function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
   if (job.completed) return;
   job.completed = true;
-  job.resolveExited();
+  broadcast(outcome);
+  try {
+    job.metadata?.onCompleted?.(outcome);
+  } catch (error) {
+    console.error(
+      `[voicelayer] Playback outcome observer failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  job.resolveExited(outcome);
 }
 
 class PlaybackQueueManager {
@@ -733,14 +811,15 @@ class PlaybackQueueManager {
   enqueue(
     audioFile: string,
     metadata?: PlaybackMetadata,
-  ): { exited: Promise<void> } {
+  ): PlaybackHandle {
     const priority = metadata?.priority ?? "normal";
-    let resolveExited!: () => void;
-    const exited = new Promise<void>((resolve) => {
+    let resolveExited!: (outcome: PlaybackOutcomeEvent) => void;
+    const exited = new Promise<PlaybackOutcomeEvent>((resolve) => {
       resolveExited = resolve;
     });
 
     const job: PlaybackJob = {
+      id: nextPlaybackId(),
       audioFile,
       metadata,
       priority,
@@ -753,7 +832,7 @@ class PlaybackQueueManager {
 
     if (priority === "critical") {
       this.bargeIn(job);
-      return { exited };
+      return { id: job.id, exited };
     }
 
     this.evictExpired();
@@ -761,7 +840,7 @@ class PlaybackQueueManager {
     this.insert(job);
     this.emitQueueSnapshot();
     this.processNext();
-    return { exited };
+    return { id: job.id, exited };
   }
 
   async awaitDrained(): Promise<void> {
@@ -780,15 +859,26 @@ class PlaybackQueueManager {
     preparing?.cancel();
 
     for (const job of this.pending.splice(0)) {
-      completeJob(job);
+      completeJob(job, buildPlaybackOutcome(job, "skipped", "stopped"));
     }
-    if (preparing) completeJob(preparing.job);
+    if (preparing) {
+      completeJob(
+        preparing.job,
+        buildPlaybackOutcome(preparing.job, "skipped", "stopped"),
+      );
+    }
 
     if (active) {
+      const outcome = buildPlaybackOutcome(
+        active.job,
+        "interrupted",
+        "stopped",
+        Date.now() - active.startedAt,
+      );
       try {
         active.proc.kill("SIGTERM");
       } catch {}
-      completeJob(active.job);
+      completeJob(active.job, outcome);
     }
 
     if (hadActivity) {
@@ -811,7 +901,7 @@ class PlaybackQueueManager {
       broadcastPlaybackIdleIfSpeakerClear();
     }
     this.emitQueueSnapshot();
-    completeJob(job);
+    completeJob(job, buildPlaybackOutcome(job, "failed", "refused"));
     this.resolveIfIdle();
   }
 
@@ -821,7 +911,7 @@ class PlaybackQueueManager {
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
       if (next.expiresAt <= Date.now()) {
-        completeJob(next);
+        completeJob(next, buildPlaybackOutcome(next, "skipped", "expired"));
         continue;
       }
 
@@ -912,7 +1002,10 @@ class PlaybackQueueManager {
         broadcastPlaybackIdleIfSpeakerClear();
       }
       this.emitQueueSnapshot();
-      completeJob(next);
+      completeJob(
+        next,
+        buildPlaybackOutcome(next, "failed", "player-error"),
+      );
       this.resolveIfIdle();
       this.processNext();
       return;
@@ -933,16 +1026,18 @@ class PlaybackQueueManager {
     this.emitQueueSnapshot();
 
     proc.exited
-      .then(() => {
-        this.finish(next, proc.pid);
+      .then((exitCode) => {
+        this.finish(next, proc.pid, exitCode === 0);
       })
       .catch(() => {
-        this.finish(next, proc.pid);
+        this.finish(next, proc.pid, false);
       });
   }
 
-  private finish(job: PlaybackJob, pid: number) {
+  private finish(job: PlaybackJob, pid: number, succeeded: boolean) {
+    let elapsedMs = 0;
     if (this.current?.proc.pid === pid) {
+      elapsedMs = Date.now() - this.current.startedAt;
       this.stopProgressTimer();
       this.current = null;
       if (this.depth() === 0) {
@@ -952,7 +1047,12 @@ class PlaybackQueueManager {
       this.resolveIfIdle();
       this.processNext();
     }
-    completeJob(job);
+    completeJob(
+      job,
+      succeeded
+        ? buildPlaybackOutcome(job, "completed", undefined, elapsedMs)
+        : buildPlaybackOutcome(job, "failed", "player-error", elapsedMs),
+    );
   }
 
   private bargeIn(job: PlaybackJob) {
@@ -965,15 +1065,29 @@ class PlaybackQueueManager {
     preparing?.cancel();
 
     for (const queued of this.pending.splice(0)) {
-      completeJob(queued);
+      completeJob(
+        queued,
+        buildPlaybackOutcome(queued, "skipped", "barge-in"),
+      );
     }
-    if (preparing) completeJob(preparing.job);
+    if (preparing) {
+      completeJob(
+        preparing.job,
+        buildPlaybackOutcome(preparing.job, "skipped", "barge-in"),
+      );
+    }
 
     if (active) {
+      const outcome = buildPlaybackOutcome(
+        active.job,
+        "interrupted",
+        "barge-in",
+        Date.now() - active.startedAt,
+      );
       try {
         active.proc.kill("SIGTERM");
       } catch {}
-      completeJob(active.job);
+      completeJob(active.job, outcome);
     }
 
     this.pending = [job];
@@ -993,7 +1107,10 @@ class PlaybackQueueManager {
         sameCollapseKey &&
         (queued.priority === job.priority || queued.priority === "background");
       if (isCollapsible) {
-        completeJob(queued);
+        completeJob(
+          queued,
+          buildPlaybackOutcome(queued, "skipped", "collapsed"),
+        );
         return false;
       }
       return true;
@@ -1051,7 +1168,7 @@ class PlaybackQueueManager {
     const now = Date.now();
     this.pending = this.pending.filter((job) => {
       if (job.expiresAt <= now) {
-        completeJob(job);
+        completeJob(job, buildPlaybackOutcome(job, "skipped", "expired"));
         return false;
       }
       return true;
@@ -1243,7 +1360,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
-        const audioArtifact = await playClonedAudio(
+        const playback = await playClonedAudio(
           mp3Path,
           displayText,
           `xtts:${resolved.voice}`,
@@ -1256,7 +1373,7 @@ export async function speak(
           displayText,
           engine: "xtts-v2",
           voice: resolved.voice,
-          audioArtifact,
+          ...playback,
         };
       }
       console.error(
@@ -1278,7 +1395,7 @@ export async function speak(
       );
       const mp3Path = wavPath ? convertWavToMp3(wavPath) : null;
       if (mp3Path) {
-        const audioArtifact = await playClonedAudio(
+        const playback = await playClonedAudio(
           mp3Path,
           displayText,
           `f5tts:${resolved.voice}`,
@@ -1291,7 +1408,7 @@ export async function speak(
           displayText,
           engine: "f5-tts-mlx",
           voice: resolved.voice,
-          audioArtifact,
+          ...playback,
         };
       }
       console.error(
@@ -1304,7 +1421,7 @@ export async function speak(
     if (audioBuffer) {
       const ttsFile = ttsFilePath(process.pid, ttsCounter++);
       writeFileSync(ttsFile, audioBuffer);
-      const audioArtifact = await playClonedAudio(
+      const playback = await playClonedAudio(
         ttsFile,
         displayText,
         `cloned:${resolved.voice}`,
@@ -1317,7 +1434,7 @@ export async function speak(
         displayText,
         engine: "qwen3-tts",
         voice: resolved.voice,
-        audioArtifact,
+        ...playback,
       };
     }
 
@@ -1363,6 +1480,7 @@ async function speakWithEdgeTTS(
     mode?: string;
     waitForPlayback?: boolean;
     onPlaybackStart?: (startedAtMs: number) => void;
+    onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
     captureAudioArtifact?: boolean;
   },
   warning?: string,
@@ -1465,6 +1583,7 @@ async function speakWithEdgeTTS(
           ? inferBoundaryEndMs(wordBoundaries)
           : undefined,
       onStarted: options?.onPlaybackStart,
+      onCompleted: options?.onPlaybackComplete,
     });
   } catch (err) {
     try {
@@ -1478,9 +1597,9 @@ async function speakWithEdgeTTS(
     } catch {}
   });
 
-  if (options?.waitForPlayback) {
-    await proc.exited;
-  }
+  const playbackOutcome = options?.waitForPlayback
+    ? await proc.exited
+    : undefined;
 
   return {
     warning,
@@ -1488,6 +1607,8 @@ async function speakWithEdgeTTS(
     engine: "edge-tts",
     voice,
     audioArtifact,
+    playbackId: proc.id,
+    ...(playbackOutcome ? { playbackOutcome } : {}),
   };
 }
 

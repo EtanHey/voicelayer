@@ -23,12 +23,12 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertTrue(descriptor.usesFilledBackdropMaterial)
     }
 
-    func testCoreSeamFadeIsMirroredAndReservesTheAuditedWidth() {
+    func testCoreSeamFadeIsMirroredAndUsesTheTightenedHardwareJoinWidth() {
         let leading = VoiceBarNotchCoreSeamDescriptor.resolve(for: .leading)
         let trailing = VoiceBarNotchCoreSeamDescriptor.resolve(for: .trailing)
 
-        XCTAssertEqual(leading.width, 16)
-        XCTAssertEqual(trailing.width, 16)
+        XCTAssertEqual(leading.width, 10)
+        XCTAssertEqual(trailing.width, 10)
         XCTAssertEqual(leading.opaqueEdge, .trailing)
         XCTAssertEqual(trailing.opaqueEdge, .leading)
         XCTAssertEqual(leading.stops.last?.opacity, 1)
@@ -73,5 +73,48 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
             ),
             .opaque
         )
+    }
+
+    func testAppearanceOverlayNeverInterceptsNotchControlClicks() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
+            encoding: .utf8
+        )
+        let materialStart = try XCTUnwrap(source.range(of: "private func materialBody"))
+        let paletteStart = try XCTUnwrap(
+            source.range(
+                of: "private var notchPalette",
+                range: materialStart.upperBound ..< source.endIndex
+            )
+        )
+        let materialBody = source[materialStart.lowerBound ..< paletteStart.lowerBound]
+
+        XCTAssertTrue(materialBody.contains("shape.fill(notchPalette.surfaceOverlay.color)"))
+        XCTAssertTrue(materialBody.contains(".allowsHitTesting(false)"))
+    }
+
+    func testNativeGlassStaysOnTheContentBearingViewAndDoesNotShadowItsGlyphAlpha() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
+            encoding: .utf8
+        )
+        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
+        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
+        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+
+        XCTAssertTrue(material.contains("content.clipShape(shape)"))
+        XCTAssertTrue(material.contains(".glassEffect("))
+        XCTAssertFalse(material.contains("shape.fill(.clear).glassEffect("))
+        XCTAssertFalse(material.contains(".shadow("))
     }
 }

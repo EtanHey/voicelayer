@@ -37,7 +37,7 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
         XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
-        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 2)
+        XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 1)
         XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
         XCTAssertFalse(source.contains("recordingWaveformLevels"))
         XCTAssertFalse(source.contains("transcribingWaveformLevels"))
@@ -50,6 +50,13 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.mode = .idle
         idle.isConnected = true
         idle.isCollapsed = false
+        XCTAssertEqual(
+            makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
+            NSSize(width: 285, height: 32),
+            "visible idle must hold the launcher envelope through its collapse grace window"
+        )
+
+        idle.isCollapsed = true
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
             NSSize(width: 185, height: 32)
@@ -135,9 +142,7 @@ final class BarViewClickabilityTests: XCTestCase {
         state.sendCommand = { sentCommands.append($0) }
 
         let router = SpyCommandRouter()
-        let host = makeHost(state: state, router: router)
-
-        click(host, at: recordingHoldButtonCenter(in: host))
+        _ = makeHost(state: state, router: router)
 
         XCTAssertTrue(sentCommands.isEmpty)
         XCTAssertFalse(state.isRecordingHoldEngaged)
@@ -253,12 +258,35 @@ final class BarViewClickabilityTests: XCTestCase {
 
     func testTranscribingNotchRendersTheLiveStatusText() throws {
         let source = try barViewSource()
-        let start = try XCTUnwrap(source.range(of: "case .transcribing:"))
-        let end = try XCTUnwrap(
-            source.range(of: "case .speaking:", range: start.upperBound ..< source.endIndex)
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
+        let trailingStart = try XCTUnwrap(
+            source.range(of: "private var notchTrailingContent", range: leadingStart.upperBound ..< source.endIndex)
         )
+        let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
 
-        XCTAssertTrue(source[start.lowerBound ..< end.lowerBound].contains("statusLabel"))
+        XCTAssertTrue(leading.contains("if state.mode == .transcribing"))
+        XCTAssertTrue(leading.contains("statusLabel"))
+    }
+
+    func testTranscribingKeepsTheWaveformTrailingAndMorphsTheLeadingIndicator() throws {
+        let source = try barViewSource()
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
+        let trailingStart = try XCTUnwrap(
+            source.range(of: "private var notchTrailingContent", range: leadingStart.upperBound ..< source.endIndex)
+        )
+        let compactStart = try XCTUnwrap(
+            source.range(
+                of: "private var notchCompactStatusContent",
+                range: trailingStart.upperBound ..< source.endIndex
+            )
+        )
+        let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
+        let trailing = source[trailingStart.lowerBound ..< compactStart.lowerBound]
+
+        XCTAssertTrue(leading.contains("ProcessingSpinner()"))
+        XCTAssertFalse(leading.contains("WaveformView("))
+        XCTAssertTrue(trailing.contains("notchStableWaveform"))
+        XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
     }
 
     func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {
@@ -271,8 +299,17 @@ final class BarViewClickabilityTests: XCTestCase {
     func testOpenPopoversKeepTheLauncherMountedAfterPointerExit() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("isHistoryPresented || isVocabularyPresented"))
+        XCTAssertTrue(source.contains("private var keepsLauncherMounted: Bool {\n        isHistoryPresented"))
+        XCTAssertFalse(source.contains("vocabularyButton"))
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
+    }
+
+    func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
+        let source = try barViewSource()
+
+        XCTAssertFalse(source.contains("@FocusState"))
+        XCTAssertFalse(source.contains(".focusable()"))
+        XCTAssertFalse(source.contains(".focused("))
     }
 
     func testBarViewDoesNotOwnRetainedReadbackDismissal() throws {

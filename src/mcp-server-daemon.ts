@@ -81,13 +81,14 @@ import {
   handleReplay,
   handleToggle,
 } from "./handlers";
+import type { VoiceToolContext } from "./mcp-notifications";
 
 // --- Tool dispatch table ---
 const DISABLE_POLL_INTERVAL_MS = 5000;
 
 const toolDispatch: Record<
   string,
-  (args: Record<string, unknown>) => Promise<{
+  (args: Record<string, unknown>, context?: VoiceToolContext) => Promise<{
     content: Array<{ type: string; text: string }>;
     isError?: boolean;
   }>
@@ -244,7 +245,7 @@ async function main() {
   const daemon = await createMcpDaemon({
     socketPath: MCP_SOCKET_PATH,
     toolExecutor: {
-      executeTool: async (name, args) => {
+      executeTool: async (name, args, context) => {
         const handler = toolDispatch[name];
         if (!handler) {
           return {
@@ -252,7 +253,7 @@ async function main() {
             isError: true,
           };
         }
-        return await handler(args);
+        return await handler(args, context);
       },
     },
     onNdjsonMessage: (msg) => {

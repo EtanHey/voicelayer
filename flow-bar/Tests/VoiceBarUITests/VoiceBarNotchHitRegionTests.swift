@@ -13,6 +13,17 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         XCTAssertFalse(region.contains(CGPoint(x: 204.5, y: 40)))
     }
 
+    func testCompactRoundedCornersPassThroughOutsideTheRenderedGlass() {
+        let region = VoiceBarNotchHitRegion(
+            geometry: VoiceBarNotchContract.geometry(for: .recording)
+        )
+
+        XCTAssertFalse(region.contains(CGPoint(x: 1, y: 1)))
+        XCTAssertFalse(region.contains(CGPoint(x: 408, y: 1)))
+        XCTAssertTrue(region.contains(CGPoint(x: 16, y: 16)))
+        XCTAssertTrue(region.contains(CGPoint(x: 393, y: 16)))
+    }
+
     func testTeleprompterRegionIsTheTopBarPlusLowerBodyUnion() {
         let geometry = VoiceBarNotchContract.geometry(for: .teleprompter)
         let region = VoiceBarNotchHitRegion(geometry: geometry)
@@ -27,6 +38,17 @@ final class VoiceBarNotchHitRegionTests: XCTestCase {
         XCTAssertTrue(region.contains(CGPoint(x: 10, y: 190)))
         XCTAssertFalse(region.contains(CGPoint(x: 10, y: 212)))
         XCTAssertFalse(region.contains(CGPoint(x: 455, y: 212)))
+    }
+
+    func testTeleprompterRoundedBodyCornersPassThroughOutsideTheContinuousSurface() {
+        let region = VoiceBarNotchHitRegion(
+            geometry: VoiceBarNotchContract.geometry(for: .teleprompter)
+        )
+
+        XCTAssertFalse(region.contains(CGPoint(x: 1, y: 1)))
+        XCTAssertFalse(region.contains(CGPoint(x: 464, y: 1)))
+        XCTAssertTrue(region.contains(CGPoint(x: 18, y: 18)))
+        XCTAssertTrue(region.contains(CGPoint(x: 447, y: 18)))
     }
 
     func testIdleRegionDoesNotAddPixelsBeyondTheHardwareCore() {

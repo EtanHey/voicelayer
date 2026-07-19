@@ -22,10 +22,13 @@ public struct VoiceBarNotchShadowOutsets: Equatable, Sendable {
 }
 
 public struct VoiceBarPanelLayout: Equatable {
+    public static let hoverRetentionPadding: CGFloat = 12
+
     public let presentation: VoiceBarNotchPresentation
     public let panelSize: CGSize
     public let visibleContentRect: CGRect
     public let activeHitRect: CGRect
+    public let hoverRetentionRect: CGRect
 
     private let hitRegion: VoiceBarNotchHitRegion
 
@@ -45,15 +48,23 @@ public struct VoiceBarPanelLayout: Equatable {
             dx: visibleContentRect.minX,
             dy: visibleContentRect.minY
         )
+        let panelSize = CGSize(
+            width: geometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
+            height: geometry.totalHeight + shadowOutsets.bottom
+        )
+        let hoverRetentionRect = activeHitRect
+            .insetBy(
+                dx: -Self.hoverRetentionPadding,
+                dy: -Self.hoverRetentionPadding
+            )
+            .intersection(CGRect(origin: .zero, size: panelSize))
 
         return VoiceBarPanelLayout(
             presentation: presentation,
-            panelSize: CGSize(
-                width: geometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
-                height: geometry.totalHeight + shadowOutsets.bottom
-            ),
+            panelSize: panelSize,
             visibleContentRect: visibleContentRect,
             activeHitRect: activeHitRect,
+            hoverRetentionRect: hoverRetentionRect,
             hitRegion: hitRegion
         )
     }
@@ -65,6 +76,10 @@ public struct VoiceBarPanelLayout: Equatable {
                 y: point.y - visibleContentRect.minY
             )
         )
+    }
+
+    public func containsHoverRetention(_ point: CGPoint) -> Bool {
+        hoverRetentionRect.contains(point)
     }
 
     public func windowFrame(

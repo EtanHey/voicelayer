@@ -357,11 +357,31 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
+    public var wrapWidth = Theme.teleprompterWrapWidth
+    public var viewportHeight = Theme.teleprompterViewportHeight
+    public var contentInset = Theme.teleprompterContentInset
+
+    public init(
+        text: String,
+        wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
+        isReadback: Bool = false,
+        wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
+        viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
+        contentInset: CGFloat = Theme.teleprompterContentInset
+    ) {
+        self.text = text
+        self.wordBoundaries = wordBoundaries
+        self.isReadback = isReadback
+        self.wrapWidth = wrapWidth
+        self.viewportHeight = viewportHeight
+        self.contentInset = contentInset
+    }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
     @State private var currentIndex: Int = 0
     @State private var animationTask: Task<Void, Never>?
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     private var teleprompterWords: [TeleprompterWord] {
         TeleprompterContentModel.words(
@@ -388,15 +408,15 @@ public struct TeleprompterView: View {
                     isReadback: isReadback
                 )
             ) {
-                FlowLayout(spacing: 5, maxWidth: Theme.teleprompterWrapWidth) {
+                FlowLayout(spacing: 5, maxWidth: wrapWidth) {
                     wordViews
                 }
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.horizontal, 4)
-                .padding(.vertical, Theme.teleprompterContentInset)
+                .padding(.vertical, contentInset)
                 .frame(
                     maxWidth: .infinity,
-                    minHeight: Theme.teleprompterViewportHeight,
+                    minHeight: viewportHeight,
                     alignment: TeleprompterScrollPolicy.initialViewportAlignment
                 )
             }
@@ -439,9 +459,9 @@ public struct TeleprompterView: View {
                 ))
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: Theme.teleprompterWrapWidth, alignment: .leading)
+                .frame(maxWidth: wrapWidth, alignment: .leading)
                 .foregroundStyle(
-                    .white.opacity(opacityFor(word.id))
+                    notchPalette.primary.color.opacity(opacityFor(word.id))
                 )
                 .id(word.id)
         }
@@ -450,15 +470,22 @@ public struct TeleprompterView: View {
     // MARK: - Word opacity
 
     private func opacityFor(_ index: Int) -> Double {
+        let minimumOpacity = VoiceBarNotchContrastPalette.minimumTeleprompterOpacity(
+            for: notchAppearance
+        )
         if let readbackOpacity = TeleprompterPlaybackPolicy.wordOpacity(isReadback: isReadback) {
             return readbackOpacity
         }
         if index == currentIndex { return 1.0 }
         if index < currentIndex {
             let distance = currentIndex - index
-            return max(0.2, 0.55 - Double(distance) * 0.12)
+            return max(minimumOpacity, 0.70 - Double(distance) * 0.06)
         }
-        return 0.3
+        return minimumOpacity
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
     // MARK: - Animation

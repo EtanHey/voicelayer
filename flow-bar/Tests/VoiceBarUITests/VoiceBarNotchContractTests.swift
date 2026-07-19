@@ -75,11 +75,11 @@ final class VoiceBarNotchContractTests: XCTestCase {
     func testMaterialContractLocksFadeSafeContentAndOneSurfaceRules() {
         let material = VoiceBarNotchContract.material
 
-        XCTAssertEqual(material.blackToGlassFadeWidth, 16)
+        XCTAssertEqual(material.blackToGlassFadeWidth, 10)
         XCTAssertEqual(material.fadeToContentGap, 8)
         XCTAssertEqual(material.outerContentInset, 8)
-        XCTAssertEqual(material.leadingTeleprompterContentWidth, 44)
-        XCTAssertEqual(material.trailingTeleprompterContentWidth, 56)
+        XCTAssertEqual(material.leadingTeleprompterContentWidth, 50)
+        XCTAssertEqual(material.trailingTeleprompterContentWidth, 62)
         XCTAssertEqual(material.inverseJoinRadius, 5)
         XCTAssertEqual(material.waveformSlotWidth, 72)
         XCTAssertEqual(material.lowerSurfaceLayerCount, 1)
@@ -89,6 +89,43 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(material.compactOuterCornerRadius(for: .hoverLauncher), 11)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .recording), 15)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .compactStatus), 15)
+        XCTAssertEqual(material.recordingIndicatorSpacing, 7)
+        XCTAssertEqual(material.compactControlSpacing, 6)
+        XCTAssertEqual(material.compactControlSize, 20)
+        XCTAssertEqual(material.hardwareCoreLowerCornerRadius, 7)
+        XCTAssertEqual(material.teleprompterBodyHorizontalInset, 14)
+        XCTAssertEqual(material.teleprompterTextInnerInset, 4)
+        XCTAssertGreaterThanOrEqual(material.teleprompterTextFillRatio, 0.90)
+        XCTAssertLessThanOrEqual(material.teleprompterTextFillRatio, 0.95)
+    }
+
+    func testTeleprompterTextWidthTracksTheMeasuredHardwareCoreWidth() {
+        let material = VoiceBarNotchContract.material
+        let narrowCoreWidth: CGFloat = 165
+        let wideCoreWidth: CGFloat = 201
+
+        XCTAssertEqual(
+            material.teleprompterTextWidth(coreWidth: narrowCoreWidth),
+            VoiceBarNotchContract.geometry(
+                for: .teleprompter,
+                coreWidth: narrowCoreWidth
+            ).bodyWidth - 2 * (
+                material.teleprompterBodyHorizontalInset +
+                    material.teleprompterTextInnerInset
+            )
+        )
+        XCTAssertGreaterThan(
+            material.teleprompterTextWidth(coreWidth: wideCoreWidth),
+            material.teleprompterTextWidth(coreWidth: narrowCoreWidth)
+        )
+        XCTAssertGreaterThanOrEqual(
+            material.teleprompterTextFillRatio(coreWidth: narrowCoreWidth),
+            0.90
+        )
+        XCTAssertLessThanOrEqual(
+            material.teleprompterTextFillRatio(coreWidth: wideCoreWidth),
+            0.95
+        )
     }
 
     func testMotionContractLocksTheApprovedSpringAndDelays() {
@@ -165,7 +202,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
 
         XCTAssertEqual(presentation.geometry.totalWidth, 285)
-        XCTAssertEqual(presentation.contentRoles, [.microphone, .history, .dictionary])
+        XCTAssertEqual(presentation.contentRoles, [.microphone, .history])
         XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
     }
 }

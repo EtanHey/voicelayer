@@ -1,9 +1,12 @@
 import CoreGraphics
+import SwiftUI
 
 public struct VoiceBarNotchHitRegion: Equatable {
     public let rects: [CGRect]
+    private let geometry: VoiceBarNotchGeometry
 
     public init(geometry: VoiceBarNotchGeometry) {
+        self.geometry = geometry
         let topRect = CGRect(
             x: geometry.topOriginX,
             y: geometry.lowerSurfaceHeight,
@@ -28,6 +31,42 @@ public struct VoiceBarNotchHitRegion: Equatable {
     }
 
     public func contains(_ point: CGPoint) -> Bool {
-        rects.contains { $0.contains(point) }
+        guard bounds.contains(point) else { return false }
+
+        // AppKit reports window-local points from the lower-left while the
+        // SwiftUI shape contract renders from the upper-left. Hit-test the
+        // exact rendered path after flipping Y, then union the physical camera
+        // housing so hovering the real notch can still summon the launcher.
+        let renderedPoint = CGPoint(
+            x: point.x,
+            y: geometry.totalHeight - point.y
+        )
+        let layout = VoiceBarNotchShapeLayout(geometry: geometry)
+        if layout.coreRect.contains(renderedPoint) {
+            return true
+        }
+        return VoiceBarNotchContinuousShape(
+            geometry: geometry,
+            compactOuterCornerRadius: VoiceBarNotchContract.material
+                .compactOuterCornerRadius(for: visualState)
+        )
+        .path(in: CGRect(origin: .zero, size: layout.totalSize))
+        .contains(renderedPoint)
+    }
+
+    private var visualState: VoiceBarNotchVisualState {
+        if geometry.lowerSurfaceHeight > 0 {
+            return .teleprompter
+        }
+        if geometry.leadingWingWidth == 0, geometry.trailingWingWidth == 0 {
+            return .idle
+        }
+        if geometry.leadingWingWidth == VoiceBarNotchContract
+            .geometry(for: .hoverLauncher).leadingWingWidth,
+            geometry.trailingWingWidth == VoiceBarNotchContract
+            .geometry(for: .hoverLauncher).trailingWingWidth {
+            return .hoverLauncher
+        }
+        return .recording
     }
 }

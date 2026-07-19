@@ -24,8 +24,8 @@ Make the native notch teleprompter begin at the top, stay aligned with authorita
 - `TeleprompterContentModel` owns display-token construction and derives a monotonic resampled schedule only for mismatched timed boundaries.
 - `TeleprompterScrollPolicy` owns the top-first viewport contract.
 - `TeleprompterPlaybackPolicy` owns the zero startup-delay contract.
-- `VoiceBarNotchPresentationModel` owns the read-back hover grace task because it is the long-lived native presentation object. `BarView` supplies current read-back/hover state and the existing `VoiceState.dismissRetainedTeleprompter()` action.
-- W2 truth remains untouched: no changes to `VoiceState`, `PlaybackAmplitude`, `WaveformEnvelopeHistory`, socket protocol, ask archive/timeout code, `WaveformView`, or renderer mapping.
+- `RetainedReadbackDismissalCoordinator` is the sole owner of the read-back hover grace task and dismissal scheduling. The AppKit panel owner supplies pointer-in-surface observations and delegates dismissal through `VoiceState.dismissRetainedTeleprompter()`; `VoiceBarNotchPresentationModel` remains a visual-envelope adapter and owns no competing read-back timer.
+- W2 truth mechanisms remain untouched: `PlaybackAmplitude`, `WaveformEnvelopeHistory`, socket protocol, ask archive/timeout behavior, `WaveformView`, and renderer mapping stay authoritative. `VoiceState` may expose minimal UI-lifecycle hooks for collapse and retained read-back coordination, but those hooks do not replace or reinterpret W2's audio, archive, socket, or renderer truth.
 
 ## Tests
 
@@ -35,4 +35,3 @@ Make the native notch teleprompter begin at the top, stay aligned with authorita
 - Unattended read-back dismisses after the grace period.
 - Hover cancels a scheduled dismissal; leaving schedules a fresh full grace period.
 - Non-read-back states never schedule dismissal.
-

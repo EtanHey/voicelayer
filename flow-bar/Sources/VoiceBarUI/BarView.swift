@@ -50,11 +50,16 @@ public struct PulsingDot: View {
 public struct PulsingStatusLabel: View {
     public let text: String
     @State private var isPulsing = false
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     public var body: some View {
         Text(text)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(
+                VoiceBarNotchContrastPalette
+                    .resolve(for: notchAppearance)
+                    .primary.color
+            )
             .lineLimit(1)
             .truncationMode(.tail)
             .opacity(isPulsing ? 0.55 : 1.0)
@@ -96,17 +101,16 @@ public struct BarView: View {
     private let includesPanelOutsets: Bool
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isHistoryPresented = false
-    @State private var isVocabularyPresented = false
-    @FocusState private var isNotchKeyboardFocused: Bool
+    @State private var notchAppearance = VoiceBarNotchAppearance.dark
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public var body: some View {
         if includesPanelOutsets {
-            notchContent
+            appearanceAwareNotchContent
                 .padding(.horizontal, 12)
                 .padding(.bottom, 17)
         } else {
-            notchContent
+            appearanceAwareNotchContent
         }
     }
 
@@ -116,6 +120,11 @@ public struct BarView: View {
         presentationModel: VoiceBarNotchPresentationModel? = nil,
         includesPanelOutsets: Bool = false
     ) {
+        _notchAppearance = State(
+            initialValue: VoiceBarNotchAppearance(
+                effectiveAppearance: NSApplication.shared.effectiveAppearance
+            )
+        )
         self.state = state
         self.commandRouter = commandRouter
         self.presentationModel = presentationModel
@@ -124,10 +133,21 @@ public struct BarView: View {
 
     // MARK: - Native notch shell
 
+    private var appearanceAwareNotchContent: some View {
+        notchContent
+            .environment(\.voiceBarNotchAppearance, notchAppearance)
+            .background {
+                VoiceBarNotchAppearanceReader(appearance: $notchAppearance)
+                    .frame(width: 0, height: 0)
+                    .allowsHitTesting(false)
+            }
+    }
+
     private var notchContent: some View {
         VoiceBarNotchView(
             presentation: notchPresentation,
             onHoverChanged: { hovering in
+                guard !includesPanelOutsets else { return }
                 state.setHovering(hovering)
                 presentationModel?.setHovered(hovering)
             },
@@ -141,18 +161,10 @@ public struct BarView: View {
                 notchLowerContent
             }
         )
-        .focusable()
-        .focused($isNotchKeyboardFocused)
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
-        .onChange(of: isNotchKeyboardFocused) { _, _ in
-            synchronizeLauncherRetention()
-        }
         .onChange(of: isHistoryPresented) { _, _ in
-            synchronizeLauncherRetention()
-        }
-        .onChange(of: isVocabularyPresented) { _, _ in
             synchronizeLauncherRetention()
         }
         .onChange(of: accessibilityReduceMotion) { _, isEnabled in
@@ -166,16 +178,6 @@ public struct BarView: View {
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
                 isHistoryPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyTerms.count) { _, count in
-            if count == 0, state.transcriptionVocabularyAliases.isEmpty {
-                isVocabularyPresented = false
-            }
-        }
-        .onChange(of: state.transcriptionVocabularyAliases.count) { _, count in
-            if count == 0, state.transcriptionVocabularyTerms.isEmpty {
-                isVocabularyPresented = false
             }
         }
     }
@@ -199,13 +201,14 @@ public struct BarView: View {
                 hotkeyPhase: state.hotkeyPhase,
                 statusText: statusText,
                 isHovered: state.isHovering,
-                isKeyboardFocused: keepsLauncherMounted
+                isKeyboardFocused: keepsLauncherMounted,
+                isCollapsed: state.isCollapsed
             )
         )
     }
 
     private var keepsLauncherMounted: Bool {
-        isNotchKeyboardFocused || isHistoryPresented || isVocabularyPresented
+        isHistoryPresented
     }
 
     private func synchronizeLauncherRetention() {
@@ -225,24 +228,27 @@ public struct BarView: View {
                 commandRouter.handlePrimaryTap()
             }
         case .recording:
-            HStack(spacing: 4) {
+            HStack(spacing: VoiceBarNotchContract.material.recordingIndicatorSpacing) {
                 PulsingDot()
                 Image(systemName: "mic.fill")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.84))
+                    .foregroundStyle(notchPalette.secondary.color)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Recording")
         case .compactStatus:
             if state.mode == .transcribing {
-                ProcessingSpinner()
+                HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                    ProcessingSpinner()
+                    statusLabel
+                }
             } else {
                 statusIcon
             }
         case .teleprompter:
             Image(systemName: "book.closed")
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.84))
+                .foregroundStyle(notchPalette.secondary.color)
                 .accessibilityLabel("Teleprompter")
         }
     }
@@ -253,17 +259,10 @@ public struct BarView: View {
         case .idle:
             EmptyView()
         case .hoverLauncher:
-            HStack(spacing: 2) {
-                historyButton
-                vocabularyButton
-            }
+            historyButton
         case .recording:
-            HStack(spacing: 2) {
-                WaveformView(
-                    color: Theme.recordingColor,
-                    isListening: !state.speechDetected,
-                    currentLevel: { state.recordingWaveformLevel }
-                )
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                notchStableWaveform
                 if let recordingHoldControl {
                     notchButton(
                         icon: recordingHoldControl.iconName,
@@ -289,9 +288,7 @@ public struct BarView: View {
             notchCompactStatusContent
         case .teleprompter:
             if state.mode == .speaking {
-                WaveformView(color: Theme.speakingColor, currentLevel: {
-                    state.playbackAudioLevel()
-                })
+                notchStableWaveform
             }
         }
     }
@@ -300,9 +297,8 @@ public struct BarView: View {
     private var notchCompactStatusContent: some View {
         switch state.mode {
         case .transcribing:
-            HStack(spacing: 4) {
-                WaveformView(processingColor: Theme.stateColor(for: .transcribing))
-                statusLabel
+            HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                notchStableWaveform
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel transcription") {
                     commandRouter.handleCancel()
                 }
@@ -317,9 +313,7 @@ public struct BarView: View {
                         state.showTeleprompter()
                     }
                 }
-                WaveformView(color: Theme.speakingColor, currentLevel: {
-                    state.playbackAudioLevel()
-                })
+                notchStableWaveform
                 notchButton(
                     icon: "stop.fill",
                     isDestructive: true,
@@ -350,6 +344,26 @@ public struct BarView: View {
     }
 
     @ViewBuilder
+    private var notchStableWaveform: some View {
+        switch state.mode {
+        case .recording:
+            WaveformView(
+                color: Theme.recordingColor,
+                isListening: !state.speechDetected,
+                currentLevel: { state.recordingWaveformLevel }
+            )
+        case .transcribing:
+            WaveformView(processingColor: Theme.stateColor(for: .transcribing))
+        case .speaking:
+            WaveformView(color: Theme.speakingColor, currentLevel: {
+                state.playbackAudioLevel()
+            })
+        case .idle, .disconnected, .error:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
     private var notchLowerContent: some View {
         if notchPresentation.visualState == .teleprompter {
             VStack(spacing: 12) {
@@ -363,7 +377,10 @@ public struct BarView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 notchTeleprompterControls
             }
-            .padding(.horizontal, 20)
+            .padding(
+                .horizontal,
+                VoiceBarNotchContract.material.teleprompterBodyHorizontalInset
+            )
             .padding(.top, 16)
             .padding(.bottom, 14)
         }
@@ -377,7 +394,11 @@ public struct BarView: View {
                 TeleprompterView(
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
-                    isReadback: state.isTeleprompterReadback
+                    isReadback: state.isTeleprompterReadback,
+                    wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
+                        coreWidth: notchPresentation.geometry.coreWidth
+                    ),
+                    contentInset: VoiceBarNotchContract.material.teleprompterTextInnerInset
                 )
                 .opacity(
                     TeleprompterVisibilityPolicy.timelineOpacity(
@@ -388,7 +409,7 @@ public struct BarView: View {
 
                 Text("Teleprompter hidden")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.72))
+                    .foregroundStyle(notchPalette.tertiary.color)
                     .opacity(
                         TeleprompterVisibilityPolicy.hiddenLabelOpacity(
                             isDismissed: state.isTeleprompterDismissed
@@ -445,14 +466,13 @@ public struct BarView: View {
         if newMode != .idle,
            !(newMode == .transcribing && state.isHistoryRetranscriptionPending) {
             isHistoryPresented = false
-            isVocabularyPresented = false
         }
     }
 
     private var queueBadge: some View {
         Text("\(state.queueDepth)")
             .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(.white)
+            .foregroundStyle(notchPalette.primary.color)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Theme.speakingColor.opacity(0.22))
@@ -467,24 +487,24 @@ public struct BarView: View {
             HStack(spacing: 8) {
                 Text("Queue")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.62))
+                    .foregroundStyle(notchPalette.secondary.color)
                 if preview.overflowCount > 0 {
                     Text("+\(preview.overflowCount) more")
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(notchPalette.tertiary.color)
                 }
             }
 
             Text(preview.currentText)
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.96))
+                .foregroundStyle(notchPalette.primary.color)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(Color.white.opacity(0.12))
+                        .fill(notchPalette.subtleTrack.color)
                     Capsule()
                         .fill(Theme.speakingColor.opacity(0.95))
                         .frame(width: max(10, geometry.size.width * preview.progress))
@@ -497,10 +517,10 @@ public struct BarView: View {
                 HStack(spacing: 6) {
                     Text("Up next")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(notchPalette.tertiary.color)
                     Text(nextText)
                         .font(.system(size: 11))
-                        .foregroundStyle(.white.opacity(0.74))
+                        .foregroundStyle(notchPalette.secondary.color)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -555,7 +575,7 @@ public struct BarView: View {
     private var statusLabel: some View {
         Text(statusText)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(.white.opacity(0.9))
+            .foregroundStyle(notchPalette.primary.color)
             .lineLimit(1)
             .truncationMode(.tail)
             .contentTransition(.opacity)
@@ -595,6 +615,10 @@ public struct BarView: View {
             recordingMode: state.recordingMode,
             isEngaged: state.isRecordingHoldEngaged
         )
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
     private var historyButton: some View {
@@ -674,90 +698,6 @@ public struct BarView: View {
         .padding(14)
     }
 
-    private var vocabularyButton: some View {
-        notchButton(icon: "text.book.closed", accessibilityLabel: "Dictionary") {
-            isVocabularyPresented.toggle()
-        }
-        .popover(isPresented: $isVocabularyPresented, arrowEdge: .bottom) {
-            vocabularyPopover
-        }
-    }
-
-    private var vocabularyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Transcription Vocabulary")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-
-            Text("Built-ins plus Wispr-derived hints used by local STT cleanup.")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !state.transcriptionVocabularyTerms.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Preserved Terms (\(state.transcriptionVocabularyTerms.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyTerms.enumerated()),
-                                    id: \.offset) { index, item in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if index == 0 {
-                                        Text("Highest priority")
-                                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Text(item)
-                                        .font(.system(size: 12, weight: .medium))
-                                        .foregroundStyle(.primary)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyTerms.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-
-                    if !state.transcriptionVocabularyAliases.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Learned Corrections (\(state.transcriptionVocabularyAliases.count))")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(.secondary)
-
-                            ForEach(Array(state.transcriptionVocabularyAliases.enumerated()),
-                                    id: \.offset) { index, alias in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(alias.to)
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.primary)
-                                    Text(alias.from)
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(.secondary)
-                                        .textSelection(.enabled)
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.vertical, 6)
-
-                                if index < state.transcriptionVocabularyAliases.count - 1 {
-                                    Divider()
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            .frame(width: 320, height: 260)
-        }
-        .padding(14)
-    }
-
     private func historyActionButton(
         title: String,
         isDisabled: Bool = false,
@@ -790,8 +730,15 @@ public struct BarView: View {
         } label: {
             Image(systemName: icon)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.white.opacity(isSelected || isDestructive ? 1 : 0.84))
-                .frame(width: 18, height: 18)
+                .foregroundStyle(
+                    isDestructive
+                        ? notchPalette.destructiveForeground.color
+                        : notchPalette.secondary.color
+                )
+                .frame(
+                    width: VoiceBarNotchContract.material.compactControlSize,
+                    height: VoiceBarNotchContract.material.compactControlSize
+                )
                 .background {
                     if isSelected {
                         Circle().fill(Theme.recordingColor.opacity(0.30))

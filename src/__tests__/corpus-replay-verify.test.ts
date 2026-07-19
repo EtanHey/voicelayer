@@ -744,6 +744,64 @@ describe("corpus replay verification", () => {
     );
   });
 
+  test("does not manufacture terminal proofs when the default runtime runner omits the scenarios", async () => {
+    const root = makeTempRoot();
+    const workDir = join(root, "verify-work");
+    const binDir = join(root, "bin");
+    const swiftShim = join(binDir, "swift");
+    const normalProof = join(workDir, "f5-finish-paste-terminal.proof");
+    const veryLongProof = join(
+      workDir,
+      "f5-finish-paste-terminal-very-long.proof",
+    );
+    mkdirSync(workDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(swiftShim, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+    const previous = {
+      runner: process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER,
+      path: process.env.PATH,
+      normalProof: process.env.VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH,
+      veryLongProof:
+        process.env.VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH,
+    };
+    delete process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+    process.env.PATH = `${binDir}:${previous.path ?? "/usr/bin:/bin"}`;
+    process.env.VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH = normalProof;
+    process.env.VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH = veryLongProof;
+
+    try {
+      await runSwiftRuntimeInteractionLeg({
+        repoRoot: root,
+        workDir,
+        voiceBarSocketPath: join(workDir, "voicebar.sock"),
+        audioFixture: join(workDir, "audio.wav"),
+      });
+    } finally {
+      if (previous.runner === undefined) {
+        delete process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER;
+      } else {
+        process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER = previous.runner;
+      }
+      if (previous.path === undefined) delete process.env.PATH;
+      else process.env.PATH = previous.path;
+      if (previous.normalProof === undefined) {
+        delete process.env.VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH;
+      } else {
+        process.env.VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH = previous.normalProof;
+      }
+      if (previous.veryLongProof === undefined) {
+        delete process.env.VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH;
+      } else {
+        process.env.VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH =
+          previous.veryLongProof;
+      }
+    }
+
+    expect(await Bun.file(normalProof).exists()).toBe(false);
+    expect(await Bun.file(veryLongProof).exists()).toBe(false);
+  });
+
   test("drives record/cancel and record/stop transitions on the daemon NDJSON stream", async () => {
     const events: Record<string, unknown>[] = [];
     const commands: Record<string, unknown>[] = [];

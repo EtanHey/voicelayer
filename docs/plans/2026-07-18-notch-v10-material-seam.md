@@ -83,4 +83,4 @@ Capture hover, recording, compact status, and teleprompter in Dark, Light, and R
 
 **Step 4: Commit, push, and repin PR #352**
 
-Push the clean commit, update the standalone `Verified-Runtime:` marker and report, and explicitly post the three W2 carryover confirmations. Keep merge blocked until #351 merges and this branch is rebased onto merged main.
+Push the clean commit, update the standalone `Verified-Runtime:` marker and report, and explicitly post the three W2 carryover confirmations. Historical gate completed: #351 merged and this branch was rebased onto merged main before #352 landed.

@@ -132,6 +132,7 @@ public struct VoiceBarGlassContainer<Content: View>: View {
 public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     public let shape: SurfaceShape
     public let forceOpaqueFallback: Bool
+    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
     public init(shape: SurfaceShape, forceOpaqueFallback: Bool = false) {
         self.shape = shape
@@ -139,9 +140,10 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     }
 
     public func body(content: Content) -> some View {
-        materialBody(content: content)
+        materialBody(content: content.clipShape(shape))
             .overlay {
                 shape.stroke(.white.opacity(0.14), lineWidth: 0.7)
+                    .allowsHitTesting(false)
             }
             .overlay {
                 shape
@@ -149,26 +151,46 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                     .blur(radius: 0.35)
                     .offset(y: 0.5)
                     .mask(shape)
+                    .allowsHitTesting(false)
             }
-            .shadow(color: .black.opacity(0.24), radius: 12, y: 5)
     }
 
     @ViewBuilder
-    private func materialBody(content: Content) -> some View {
+    private func materialBody(content: some View) -> some View {
         if forceOpaqueFallback {
-            content.background(Color.black.opacity(0.88), in: shape)
+            content.background {
+                shape.fill(
+                    notchAppearance == .dark
+                        ? Color.black.opacity(0.88)
+                        : Color.white.opacity(0.84)
+                )
+            }
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(
-                .regular.tint(.white.opacity(0.06)),
-                in: shape
-            )
+            // Native glass is a backdrop modifier on the content-bearing view.
+            // Putting a transparent glass sibling beside the content inside a
+            // GlassEffectContainer makes the container sample and soften that
+            // sibling content on a nonactivating panel.
+            content
+                .background {
+                    shape.fill(notchPalette.surfaceOverlay.color)
+                        .allowsHitTesting(false)
+                }
+                .glassEffect(
+                    .regular.tint(notchPalette.surfaceTint.color),
+                    in: shape
+                )
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
-                .overlay {
-                    shape.fill(.white.opacity(0.055))
+                .background {
+                    shape.fill(notchPalette.surfaceOverlay.color)
+                        .allowsHitTesting(false)
                 }
         }
+    }
+
+    private var notchPalette: VoiceBarNotchContrastPalette {
+        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 }
 
@@ -216,14 +238,6 @@ public struct VoiceBarGlassWing<Content: View>: View {
         )
         content
             .modifier(VoiceBarGlassMaterial(shape: shape))
-            .overlay(alignment: seamAlignment) {
-                VoiceBarBlackToGlassFade(wing: side)
-                    .allowsHitTesting(false)
-            }
             .clipShape(shape)
-    }
-
-    private var seamAlignment: Alignment {
-        side == .leading ? .trailing : .leading
     }
 }

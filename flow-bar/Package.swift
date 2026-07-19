@@ -16,6 +16,11 @@ let package = Package(
             name: "VoiceBarUI",
             path: "Sources/VoiceBarUI"
         ),
+        .executableTarget(
+            name: "NotchCaptureContrastVerifier",
+            dependencies: ["VoiceBarUI"],
+            path: "Sources/NotchCaptureContrastVerifier"
+        ),
         .testTarget(
             name: "VoiceBarTests",
             dependencies: ["VoiceBar", "VoiceBarUI"],

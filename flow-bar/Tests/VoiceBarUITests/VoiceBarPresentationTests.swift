@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingNotchExpandsTrailingWingForTheUntruncatedStatusLabel() {
+    func testTranscribingNotchExpandsLeadingIndicatorWingForTheUntruncatedStatusLabel() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -71,16 +71,15 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
-            + Theme.pillWaveformWidth
-            + 18
-            + 8
+            + Theme.pillProcessingSpinnerWidth
+            + VoiceBarNotchContract.material.compactControlSpacing
             + VoiceBarNotchContract.material.blackToGlassFadeWidth
             + 2
 
         XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 409)
-        XCTAssertGreaterThan(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
-        XCTAssertGreaterThanOrEqual(warmup.geometry.trailingWingWidth, requiredWarmupWidth)
-        XCTAssertEqual(warmup.geometry.coreOriginX, baseline.geometry.coreOriginX)
+        XCTAssertGreaterThan(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
+        XCTAssertGreaterThanOrEqual(warmup.geometry.leadingWingWidth, requiredWarmupWidth)
+        XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
     }
 
     func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {
@@ -116,7 +115,47 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testNotchPresentationMapsIdleHoverAndKeyboardFocusWithoutOpeningTeleprompter() {
+    func testCollapsedIdleOverridesEveryTransientEnvelopeUntilActivityReturns() {
+        let inputs = [
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                confirmationText: "Pasted",
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                queueDepth: 1,
+                isCollapsed: true
+            ),
+            VoiceBarNotchOperationalInput(
+                mode: .idle,
+                keepsPasteFlowEnvelope: true,
+                isCollapsed: true
+            ),
+        ]
+
+        for input in inputs {
+            XCTAssertEqual(
+                VoiceBarPresentation.notchPresentation(from: input).visualState,
+                .idle
+            )
+        }
+    }
+
+    func testHoverActivityReopensAPreviouslyCollapsedIdlePresentation() {
+        XCTAssertEqual(
+            VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(
+                    mode: .idle,
+                    isHovered: true,
+                    isCollapsed: true
+                )
+            ).visualState,
+            .hoverLauncher
+        )
+    }
+
+    func testNotchPresentationHoldsPlainIdleThroughTheCollapseGraceWindow() {
         XCTAssertEqual(
             VoiceBarPresentation.notchPresentation(
                 from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
@@ -133,7 +172,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             VoiceBarPresentation.notchPresentation(
                 from: VoiceBarNotchOperationalInput(mode: .idle)
             ).visualState,
-            .idle
+            .hoverLauncher
         )
     }
 

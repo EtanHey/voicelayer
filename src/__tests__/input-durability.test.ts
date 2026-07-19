@@ -499,6 +499,38 @@ describe("input recording durability", () => {
     }
   });
 
+  it("returns captured silent PCM when voice_ask must archive a no-speech outcome", async () => {
+    let sawVadChunk!: () => void;
+    const vadStarted = new Promise<void>((resolve) => {
+      sawVadChunk = resolve;
+    });
+    onVadCall = sawVadChunk;
+    const silentChunk = makePcmChunk();
+    const recorder = installFakeRecorder([silentChunk], true);
+    const { recordToBuffer } = await import("../input");
+    const recording = recordToBuffer(
+      1_000,
+      "quick",
+      false,
+      undefined,
+      undefined,
+      true,
+    );
+
+    try {
+      await recorder.waitForSpawn();
+      await vadStarted;
+      writeFileSync(STOP_FILE, "stop");
+
+      const captured = await recording;
+      expect(captured).toBeInstanceOf(Uint8Array);
+      expect(captured).toEqual(silentChunk);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  });
+
   it("terminates an in-flight recorder when its abort signal fires", async () => {
     const recorder = installFakeRecorder([], true);
     const { getRecordingState, recordToBuffer } = await import("../input");
@@ -731,6 +763,7 @@ describe("input recording durability", () => {
     );
     const { waitForInput } = await import("../input");
     const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 4, 5, 6]);
+    let phaseChangeCount = 0;
 
     const response = await waitForInput(2_000, "standard", true, {
       archiveSource: "voice_ask",
@@ -742,9 +775,14 @@ describe("input recording durability", () => {
         agentTtsVoice: "etan-f5",
         createdAt: new Date("2026-07-16T20:30:00.000Z"),
       },
+      onPhaseChange: () => {
+        phaseChangeCount += 1;
+        throw new Error("progress observer failed");
+      },
     });
 
     expect(response).toBe("Retained transcript.");
+    expect(phaseChangeCount).toBe(1);
     const dayDir = join(tmpRoot, "recordings", "2026-07-16");
     const archiveIds = readdirSync(dayDir);
     expect(archiveIds).toHaveLength(1);
@@ -779,6 +817,89 @@ describe("input recording durability", () => {
           event.recording_path === join(archiveDir, "audio.wav"),
       ),
     ).toBe(true);
+  });
+
+  it("reports an archived exact-silence voice_ask capture as no speech", async () => {
+    vadProcessSpy.mockResolvedValue(0);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(0)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    let noSpeechCount = 0;
+
+    const response = await waitForInput(2_000, "standard", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 7, 8, 9]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Are you there?",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-AndrewNeural",
+        createdAt: new Date("2026-07-18T11:04:10.000Z"),
+      },
+      onNoSpeech: () => {
+        noSpeechCount += 1;
+        throw new Error("no-speech observer failed");
+      },
+    });
+
+    expect(response).toBeNull();
+    expect(noSpeechCount).toBe(1);
+    expect(backendTranscribeCalls).toBe(0);
+    const dayDir = join(tmpRoot, "recordings", "2026-07-18");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    expect(
+      JSON.parse(
+        readFileSync(join(dayDir, archiveIds[0], "metadata.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "captured",
+      retention_policy: "indefinite",
+    });
+  });
+
+  it("archives high-energy VAD no-speech without sending ambient PCM to STT", async () => {
+    vadProcessSpy.mockResolvedValue(0);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    let noSpeechCount = 0;
+
+    const response = await waitForInput(2_000, "standard", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33, 6, 5, 4]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Did you answer?",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-AndrewNeural",
+        createdAt: new Date("2026-07-18T11:04:20.000Z"),
+      },
+      onNoSpeech: () => {
+        noSpeechCount += 1;
+      },
+    });
+
+    expect(response).toBeNull();
+    expect(noSpeechCount).toBe(1);
+    expect(backendTranscribeCalls).toBe(0);
+    const dayDir = join(tmpRoot, "recordings", "2026-07-18");
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    expect(
+      JSON.parse(
+        readFileSync(join(dayDir, archiveIds[0], "metadata.json"), "utf8"),
+      ),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "captured",
+      retention_policy: "indefinite",
+    });
   });
 
   it("publishes the paired voice_ask capture before a timed-out STT can fail", async () => {

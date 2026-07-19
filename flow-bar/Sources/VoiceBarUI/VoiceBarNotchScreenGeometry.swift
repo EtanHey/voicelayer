@@ -32,16 +32,27 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
     public let trailingSeamError: CGFloat?
 
     public static func resolve(
-        metrics: VoiceBarNotchScreenMetrics
+        metrics: VoiceBarNotchScreenMetrics,
+        hardwareHorizontalCalibrationInset: CGFloat = VoiceBarNotchContract
+            .hardwareHorizontalCalibrationInset
     ) -> VoiceBarNotchScreenGeometry {
         if let left = metrics.auxiliaryTopLeftArea,
            let right = metrics.auxiliaryTopRightArea,
            right.minX > left.maxX {
-            let housingFrame = CGRect(
+            let appKitHousingFrame = CGRect(
                 x: left.maxX,
                 y: metrics.frame.maxY - VoiceBarNotchContract.topHeight,
                 width: right.minX - left.maxX,
                 height: VoiceBarNotchContract.topHeight
+            )
+            let maximumInset = max(0, (appKitHousingFrame.width - 1) / 2)
+            let calibrationInset = min(
+                max(0, hardwareHorizontalCalibrationInset),
+                maximumInset
+            )
+            let housingFrame = appKitHousingFrame.insetBy(
+                dx: calibrationInset,
+                dy: 0
             )
             return VoiceBarNotchScreenGeometry(
                 kind: .hardwareNotch,
@@ -73,6 +84,17 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
             y: screenFrame.maxY - geometry.totalHeight,
             width: geometry.totalWidth,
             height: geometry.totalHeight
+        )
+    }
+
+    /// Resolves every visual state against the same measured hardware core.
+    /// Flat displays deliberately retain the 185pt synthetic fallback.
+    public func geometry(
+        for visualState: VoiceBarNotchVisualState
+    ) -> VoiceBarNotchGeometry {
+        VoiceBarNotchContract.geometry(
+            for: visualState,
+            coreWidth: housingFrame.width
         )
     }
 }

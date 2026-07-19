@@ -41,7 +41,12 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
                 auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
             )
         )
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.teleprompter))
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(
+                .teleprompter,
+                coreWidth: screen.housingFrame.width
+            )
+        )
 
         let windowFrame = layout.windowFrame(anchoredTo: screen)
         let visibleFrame = CGRect(
@@ -51,8 +56,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             height: layout.visibleContentRect.height
         )
 
-        XCTAssertEqual(windowFrame, CGRect(x: 619, y: 872, width: 489, height: 245))
-        XCTAssertEqual(visibleFrame, CGRect(x: 631, y: 889, width: 465, height: 228))
+        XCTAssertEqual(windowFrame, CGRect(x: 627.5, y: 872, width: 472, height: 245))
+        XCTAssertEqual(visibleFrame, CGRect(x: 639.5, y: 889, width: 448, height: 228))
         XCTAssertEqual(visibleFrame.midX, screen.housingFrame.midX)
         XCTAssertEqual(visibleFrame.maxY, screen.screenFrame.maxY)
     }
@@ -66,14 +71,19 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
                 auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
             )
         )
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.recording))
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(
+                .recording,
+                coreWidth: screen.housingFrame.width
+            )
+        )
 
         let frame = layout.windowFrame(anchoredTo: screen)
         let renderedCoreMinX = frame.minX
             + layout.visibleContentRect.minX
             + layout.presentation.geometry.coreOriginX
 
-        XCTAssertEqual(frame, CGRect(x: 687, y: 1068, width: 433, height: 49))
+        XCTAssertEqual(frame, CGRect(x: 695.5, y: 1068, width: 416, height: 49))
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 
@@ -86,7 +96,12 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
                 auxiliaryTopRightArea: CGRect(x: 972, y: 1085, width: 756, height: 32)
             )
         )
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.recording))
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(
+                .recording,
+                coreWidth: screen.housingFrame.width
+            )
+        )
 
         let frame = layout.windowFrame(anchoredTo: screen)
         let renderedCoreMidX = frame.minX
@@ -94,7 +109,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             + layout.presentation.geometry.coreOriginX
             + (layout.presentation.geometry.coreWidth / 2)
 
-        XCTAssertEqual(screen.housingFrame.width, 201)
+        XCTAssertEqual(screen.housingFrame.width, 184)
         XCTAssertEqual(renderedCoreMidX, screen.housingFrame.midX)
     }
 
@@ -107,16 +122,34 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
-    private func presentation(_ state: VoiceBarNotchVisualState) -> VoiceBarNotchPresentation {
+    func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
+        let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
+        let justPastTrailingWing = CGPoint(
+            x: layout.activeHitRect.maxX + 8,
+            y: layout.activeHitRect.midY
+        )
+
+        XCTAssertFalse(layout.containsActiveContent(justPastTrailingWing))
+        XCTAssertTrue(layout.containsHoverRetention(justPastTrailingWing))
+        XCTAssertTrue(
+            CGRect(origin: .zero, size: layout.panelSize)
+                .contains(layout.hoverRetentionRect)
+        )
+    }
+
+    private func presentation(
+        _ state: VoiceBarNotchVisualState,
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+    ) -> VoiceBarNotchPresentation {
         VoiceBarNotchPresentation.resolve(
             hasTeleprompter: state == .teleprompter,
             isRecording: state == .recording,
             hasCompactStatus: state == .compactStatus,
             isHovered: state == .hoverLauncher,
-            isKeyboardFocused: false
+            isKeyboardFocused: false,
+            coreWidth: coreWidth
         )
     }
-
 
     func testRecordingEntryModesShareTheSameRedDotInset() {
         let askMetrics = Theme.pillMetrics(

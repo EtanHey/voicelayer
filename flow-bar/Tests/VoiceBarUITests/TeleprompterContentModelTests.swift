@@ -2,6 +2,19 @@
 import XCTest
 
 final class TeleprompterContentModelTests: XCTestCase {
+    func testWordFrameUsesCallerSuppliedWrapWidth() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/VoiceBarUI/TeleprompterView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains(".frame(maxWidth: wrapWidth, alignment: .leading)"))
+    }
+
     func testUsesDisplayTextWhilePreservingMatchingBoundaryTimings() {
         let words = TeleprompterContentModel.words(
             text: "This matches speech",

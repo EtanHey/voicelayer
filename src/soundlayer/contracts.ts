@@ -1,5 +1,9 @@
 import type { SilenceMode } from "../vad";
-import type { PlaybackPriority, WordBoundary } from "../socket-protocol";
+import type {
+  PlaybackOutcomeEvent,
+  PlaybackPriority,
+  WordBoundary,
+} from "../socket-protocol";
 
 export interface TranscriptionResult {
   text: string;
@@ -31,6 +35,7 @@ export interface TextToSpeechOptions {
   voice?: string;
   waitForPlayback?: boolean;
   onPlaybackStart?: (startedAtMs: number) => void;
+  onPlaybackComplete?: (outcome: PlaybackOutcomeEvent) => void;
   /**
    * Fail-closed gate: when true, a requested cloned voice that is not a
    * registered profile or that fails synthesis raises VoiceProfileUnavailableError
@@ -54,6 +59,8 @@ export interface TextToSpeechResult {
     bytes: Uint8Array;
     format: "mp3";
   };
+  playbackId?: string;
+  playbackOutcome?: PlaybackOutcomeEvent;
 }
 
 export type TextToSpeechEngine =
@@ -82,10 +89,12 @@ export interface PlaybackMetadata {
     source?: "tts" | "command";
   };
   onStarted?: (startedAtMs: number) => void;
+  onCompleted?: (outcome: PlaybackOutcomeEvent) => void;
 }
 
 export interface PlaybackHandle {
-  exited: Promise<void>;
+  id: string;
+  exited: Promise<PlaybackOutcomeEvent>;
 }
 
 export interface PlaybackController {

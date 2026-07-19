@@ -82,11 +82,21 @@ final class CommandModeAXHelperTests: XCTestCase {
         )
     }
 
-    func testLargeCmuxTerminalInsertionUsesSelectedTextStreamingPlan() {
+    func testVeryLongCmuxTerminalInsertionUsesSingleValueRewritePlan() {
         let strategy = CommandModeAXHelper.insertionStrategy(
-            text: String(repeating: "large transcript chunk ", count: 300),
+            text: String(repeating: "very long transcript chunk ", count: 500),
             focusedValueLength: 120_000,
             targetBundleIdentifier: "com.cmuxterm.app"
+        )
+
+        XCTAssertEqual(strategy, .valueRewrite)
+    }
+
+    func testVeryLongNonterminalInsertionKeepsSelectedTextStreamingPlan() {
+        let strategy = CommandModeAXHelper.insertionStrategy(
+            text: String(repeating: "very long transcript chunk ", count: 500),
+            focusedValueLength: 120_000,
+            targetBundleIdentifier: "com.example.document-editor"
         )
 
         XCTAssertEqual(

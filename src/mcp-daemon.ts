@@ -23,6 +23,11 @@ import {
 } from "./mcp-framing";
 import { handleMcpRequest, type ToolExecutor } from "./mcp-handler";
 import {
+  shouldSendMcpNotification,
+  type McpLoggingLevel,
+  type McpNotification,
+} from "./mcp-notifications";
+import {
   onConnect,
   onDisconnect,
   isPingRequest,
@@ -42,6 +47,7 @@ interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
   disconnected: boolean;
+  loggingLevel?: McpLoggingLevel;
 }
 
 /**
@@ -206,6 +212,26 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           params?: Record<string, unknown>;
         },
         toolExecutor,
+        {
+          sendNotification(notification: McpNotification) {
+            if (
+              !shouldSendMcpNotification(
+                notification,
+                socket.data.loggingLevel,
+              )
+            ) {
+              return;
+            }
+            const frame = serializeMcpFrame({
+              jsonrpc: "2.0",
+              ...notification,
+            });
+            socket.write(frame);
+          },
+          setLoggingLevel(level: McpLoggingLevel) {
+            socket.data.loggingLevel = level;
+          },
+        },
       )
         .then((response) => {
           if (response) {
@@ -277,6 +303,24 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
               params?: Record<string, unknown>;
             },
             toolExecutor,
+            {
+              sendNotification(notification: McpNotification) {
+                if (
+                  !shouldSendMcpNotification(
+                    notification,
+                    socket.data.loggingLevel,
+                  )
+                ) {
+                  return;
+                }
+                socket.write(
+                  `${JSON.stringify({ jsonrpc: "2.0", ...notification })}\n`,
+                );
+              },
+              setLoggingLevel(level: McpLoggingLevel) {
+                socket.data.loggingLevel = level;
+              },
+            },
           )
             .then((response) => {
               if (response) {
