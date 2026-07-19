@@ -16,7 +16,7 @@ Hover geometry remains exactly as approved. Recording and compact-status wings r
 
 ## W2 boundary
 
-This refinement is presentation-only. It consumes W2's `VoiceState`, `PlaybackAmplitudeEnvelope`, `recordingWaveformHistory`, socket/archive/timeout behavior, and the `WaveformView`/`BarView` renderer mapping as authoritative. It adds no waveform samples, smoothing, renderer, socket field, archive path, or lifetime state. PR #352 cannot land until #351 merges and #352 is rebased onto that merged main.
+This refinement is presentation-only. It consumes W2's `VoiceState`, `PlaybackAmplitudeEnvelope`, `recordingWaveformHistory`, socket/archive/timeout behavior, and the `WaveformView`/`BarView` renderer mapping as authoritative. It adds no waveform samples, smoothing, renderer, socket field, archive path, or lifetime state. Historical gate: #351 merged and #352 was rebased onto that merged main before #352 landed.
 
 ## Proof
 
@@ -25,4 +25,3 @@ This refinement is presentation-only. It consumes W2's `VoiceState`, `PlaybackAm
 - RED-first contract tests preserve the approved hover radius while requiring the rounder recording/status radius.
 - Focused and full Swift suites remain green.
 - Actual-notch Dark, Light, and Reduced Motion capture legs run ephemerally and terminate immediately after screenshots.
-
