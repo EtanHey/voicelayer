@@ -378,6 +378,12 @@ export async function handleConverse(
 
     // Wait for all queued playback to finish (P0-2: awaits full queue)
     await awaitCurrentPlayback();
+    if (timeoutSettled || inputAbortController.signal.aborted) {
+      return textResult(
+        "[converse] Request ended before recording could start.",
+        true,
+      );
+    }
 
     // Speak the question aloud — BLOCKING for converse
     const voiceName = validated.voice;
