@@ -68,6 +68,52 @@ async function mcpRequest(
   });
 }
 
+async function mcpExchange(
+  socketPath: string,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("MCP exchange timeout")),
+      5000,
+    );
+    let buffer = "";
+    const messages: Record<string, unknown>[] = [];
+
+    Bun.connect({
+      unix: socketPath,
+      socket: {
+        open(socket) {
+          socket.write(serializeMcpFrame(request));
+        },
+        data(_socket, raw) {
+          buffer += raw.toString("utf-8");
+          const parsed = parseMcpFrames(buffer);
+          buffer = parsed.remainder;
+          messages.push(...parsed.messages);
+          if (messages.some((message) => message.id === request.id)) {
+            clearTimeout(timeout);
+            resolve(messages);
+          }
+        },
+        close() {
+          clearTimeout(timeout);
+          reject(new Error("Socket closed before response"));
+        },
+        error(_socket, err) {
+          clearTimeout(timeout);
+          reject(err);
+        },
+        connectError(_socket, err) {
+          clearTimeout(timeout);
+          reject(err);
+        },
+        drain() {},
+      },
+    }).catch(reject);
+  });
+}
+
 // Helper: connect as NDJSON client and exchange messages
 async function ndjsonExchange(
   socketPath: string,
@@ -179,7 +225,7 @@ describe("mcp-daemon", () => {
 
     const result = response.result as Record<string, unknown>;
     expect(result.protocolVersion).toBe("2024-11-05");
-    expect(result.capabilities).toEqual({ tools: {} });
+    expect(result.capabilities).toEqual({ tools: {}, logging: {} });
     const serverInfo = result.serverInfo as Record<string, unknown>;
     expect(serverInfo.name).toBe("voicelayer");
     expect(serverInfo.version).toBe(packageJson.version);
@@ -229,6 +275,46 @@ describe("mcp-daemon", () => {
     const result = response.result as Record<string, unknown>;
     const content = result.content as Array<{ text: string }>;
     expect(content[0].text).toBe("Mock: voice_speak executed");
+  });
+
+  it("frames request-scoped progress before the final tool response", async () => {
+    const { createMcpDaemon } = await import("../mcp-daemon");
+    daemon = await createMcpDaemon({
+      socketPath: TEST_SOCKET,
+      toolExecutor: {
+        executeTool: async (_name: string, _args: Record<string, unknown>, context: any) => {
+          context.emit({
+            kind: "voice_ask_progress",
+            sequence: 1,
+            stage: "recording",
+            elapsedMs: 0,
+          });
+          return { content: [{ type: "text", text: "answer" }] };
+        },
+      } as any,
+    });
+
+    const messages = await mcpExchange(TEST_SOCKET, {
+      jsonrpc: "2.0",
+      id: 31,
+      method: "tools/call",
+      params: {
+        name: "voice_ask",
+        arguments: { message: "Question" },
+        _meta: { progressToken: 31 },
+      },
+    });
+
+    expect(messages[0]).toEqual({
+      jsonrpc: "2.0",
+      method: "notifications/progress",
+      params: {
+        progressToken: 31,
+        progress: 1,
+        message: "voice_ask recording — 0s elapsed",
+      },
+    });
+    expect(messages.at(-1)?.id).toBe(31);
   });
 
   it("handles multiple concurrent MCP clients", async () => {

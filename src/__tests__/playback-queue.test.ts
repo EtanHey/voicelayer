@@ -489,6 +489,52 @@ describe("playback queue — P0-1 sequential playback", () => {
     await critical.exited;
   });
 
+  it("reports the exact stopped-at position when the user interrupts playback", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+    let now = 10_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+    const completed: any[] = [];
+
+    try {
+      const playback = playAudioNonBlocking(
+        "/tmp/pq-interrupted-position.mp3",
+        {
+          text: "one two three",
+          voice: "TestVoice",
+          durationMs: 1_000,
+          wordBoundaries: [
+            { offset_ms: 0, duration_ms: 200, text: "one" },
+            { offset_ms: 400, duration_ms: 200, text: "two" },
+            { offset_ms: 800, duration_ms: 200, text: "three" },
+          ],
+          onCompleted: (outcome: unknown) => completed.push(outcome),
+        } as any,
+      );
+      await waitFor(() => playerMocks.length === 1, "interrupted player start");
+
+      now = 10_550;
+      expect(stopPlayback()).toBe(true);
+      const outcome = await playback.exited;
+
+      expect(playback.id).toMatch(/^playback-/);
+      expect(outcome).toEqual({
+        type: "playback_outcome",
+        playback_id: playback.id,
+        status: "interrupted",
+        reason: "stopped",
+        stopped_at_ms: 550,
+        duration_ms: 1_000,
+        progress: 0.55,
+        word_index: 1,
+        word_count: 3,
+      });
+      expect(completed).toEqual([outcome]);
+      expect(broadcasts).toContainEqual(outcome);
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("broadcasts idle only when queue fully drains, not between items", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 

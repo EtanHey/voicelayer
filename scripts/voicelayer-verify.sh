@@ -325,6 +325,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --repo-root "$REPO_ROOT"
   fi
   printf '[voicelayer-verify] F5 finish-paste terminal gate: PASS\n'
+  printf '[voicelayer-verify] F5 very-long finish-paste terminal gate: PASS\n'
 
   assert_corpus_tree_clean
 
@@ -339,6 +340,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'tester: %s\n' "$tester"
     printf 'verification_mode: corpus\n'
     printf 'f5_finish_paste_terminal: pass\n'
+    printf 'f5_finish_paste_terminal_very_long: pass\n'
     printf 'corpus_count: %s\n' "$CORPUS_COUNT"
     printf 'corpus_manifest: %s\n' "$corpus_manifest"
     printf 'daemon_files:\n'

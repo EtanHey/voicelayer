@@ -54,6 +54,11 @@ import {
   type ReplayArgs,
   type ToggleArgs,
 } from "./schemas/mcp-inputs";
+import {
+  VoiceAskProgressHeartbeat,
+  type VoiceToolContext,
+} from "./mcp-notifications";
+import type { TextToSpeechOptions } from "./soundlayer";
 
 // --- MCP result helper ---
 
@@ -132,7 +137,10 @@ function detectMode(
 
 // --- Unified handlers ---
 
-export async function handleVoiceSpeak(args: unknown): Promise<McpResult> {
+export async function handleVoiceSpeak(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   if (!args || typeof args !== "object") {
     return textResult("Missing arguments", true);
   }
@@ -170,77 +178,113 @@ export async function handleVoiceSpeak(args: unknown): Promise<McpResult> {
       return handleThink({ thought: message, category });
     }
     case "announce":
-      return handleAnnounce({ message, rate, voice });
+      return handleAnnounce({ message, rate, voice }, context);
     case "brief":
-      return handleBrief({ message, rate, voice });
+      return handleBrief({ message, rate, voice }, context);
     case "consult":
-      return handleConsult({ message, rate, voice });
+      return handleConsult({ message, rate, voice }, context);
     default:
-      return handleAnnounce({ message, rate, voice });
+      return handleAnnounce({ message, rate, voice }, context);
   }
 }
 
-export async function handleVoiceAsk(args: unknown): Promise<McpResult> {
+export async function handleVoiceAsk(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   if (!args || typeof args !== "object") {
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
-  return handleConverse({
-    message: a.message,
-    timeout_seconds: a.timeout_seconds,
-    silence_mode: a.silence_mode,
-    press_to_talk: a.press_to_talk,
-  });
+  return handleConverse(
+    {
+      message: a.message,
+      timeout_seconds: a.timeout_seconds,
+      silence_mode: a.silence_mode,
+      press_to_talk: a.press_to_talk,
+    },
+    context,
+  );
 }
 
 // --- Mode Handlers ---
 
-export async function handleAnnounce(args: unknown): Promise<McpResult> {
+function playbackTelemetryOptions(
+  context?: VoiceToolContext,
+): Pick<TextToSpeechOptions, "onPlaybackComplete"> {
+  if (!context) return {};
+  return {
+    onPlaybackComplete: (outcome) => {
+      context.emit({ kind: "playback_outcome", outcome });
+    },
+  };
+}
+
+export async function handleAnnounce(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning } = await speak(validated.message, {
+  const { warning, playbackId } = await speak(validated.message, {
     mode: "announce",
     rate: validated.rate,
     voice: validated.voice,
+    ...playbackTelemetryOptions(context),
   });
 
-  return textResult(formatSpeak("announce", validated.message, warning));
+  return textResult(
+    formatSpeak("announce", validated.message, warning, playbackId),
+  );
 }
 
-export async function handleBrief(args: unknown): Promise<McpResult> {
+export async function handleBrief(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning } = await speak(validated.message, {
+  const { warning, playbackId } = await speak(validated.message, {
     mode: "brief",
     rate: validated.rate,
     voice: validated.voice,
+    ...playbackTelemetryOptions(context),
   });
 
-  return textResult(formatSpeak("brief", validated.message, warning));
+  return textResult(formatSpeak("brief", validated.message, warning, playbackId));
 }
 
-export async function handleConsult(args: unknown): Promise<McpResult> {
+export async function handleConsult(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   const validated = validateTtsArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  const { warning } = await speak(validated.message, {
+  const { warning, playbackId } = await speak(validated.message, {
     mode: "consult",
     rate: validated.rate,
     voice: validated.voice,
+    ...playbackTelemetryOptions(context),
   });
 
-  return textResult(formatSpeak("consult", validated.message, warning));
+  return textResult(
+    formatSpeak("consult", validated.message, warning, playbackId),
+  );
 }
 
-export async function handleConverse(args: unknown): Promise<McpResult> {
+export async function handleConverse(
+  args: unknown,
+  context?: VoiceToolContext,
+): Promise<McpResult> {
   const validated = validateConverseArgs(args);
   if (!validated) {
     return textResult("Missing or empty required parameter: message", true);
@@ -287,6 +331,10 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
   const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
   const inputAbortController = new AbortController();
+  let noSpeech = false;
+  const progressHeartbeat = context
+    ? new VoiceAskProgressHeartbeat(context)
+    : null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let timeoutSettled = false;
   let resolveTimeout!: (result: McpResult) => void;
@@ -338,6 +386,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       waitForPlayback: true,
       voice: voiceName,
       captureAudioArtifact: true,
+      ...playbackTelemetryOptions(context),
     });
     if (
       !speech.audioArtifact ||
@@ -352,6 +401,7 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
 
     // Record mic audio, then transcribe with selected STT backend
     const pressToTalk = validated.press_to_talk ?? false;
+    progressHeartbeat?.start("recording");
     const response = await waitForInput(
       timeoutSeconds * 1000,
       silenceMode,
@@ -368,15 +418,30 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
         onCaptureEnd: () => {
           armTimeout(VOICE_ASK_RETURN_TIMEOUT_MS, "return");
         },
+        onPhaseChange: (phase) => {
+          progressHeartbeat?.setStage(phase);
+        },
+        onNoSpeech: () => {
+          noSpeech = true;
+        },
         signal: inputAbortController.signal,
       },
     );
 
     if (response === null) {
-      return textResult(formatAsk(null, { timeoutSeconds, pressToTalk }));
+      return textResult(
+        formatAsk(null, {
+          timeoutSeconds,
+          pressToTalk,
+          ...(noSpeech ? { outcome: "no-speech" as const } : {}),
+          promptPlayback: speech.playbackOutcome,
+        }),
+      );
     }
 
-    return textResult(formatAsk(response));
+    return textResult(
+      formatAsk(response, { promptPlayback: speech.playbackOutcome }),
+    );
   };
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
@@ -397,6 +462,8 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
     return textResult(`[converse] Error: ${message}`, true);
+  } finally {
+    progressHeartbeat?.stop();
   }
 }
 

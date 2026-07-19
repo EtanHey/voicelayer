@@ -30,6 +30,7 @@ import {
   evaluatePttSpeechGate,
   isChunkedSTTEnabled,
   isPttStopDrainComplete,
+  polishSurfaceForWaitOptions,
   retainLastCaptureForRecovery,
   selectChunksWithPreRoll,
   transcribeChunkSequence,
@@ -1328,7 +1329,14 @@ describe("input module", () => {
       ).toBe("BrainLayer.");
     });
 
-    it("routes polish only for VoiceBar dictation surfaces", async () => {
+    it("routes both VoiceBar dictation and voice_ask through polish", async () => {
+      expect(
+        polishSurfaceForWaitOptions({ archiveSource: "voicebar" }),
+      ).toBe("dictation");
+      expect(
+        polishSurfaceForWaitOptions({ archiveSource: "voice_ask" }),
+      ).toBe("voice_ask");
+
       const tempDir = mkdtempSync(join(tmpdir(), "voicelayer-input-polish-"));
       const socketPath = join(tempDir, "polish.sock");
       const logPath = join(tempDir, "polish.jsonl");

@@ -30,6 +30,9 @@ enum AXSelectedTextStreamingDisposition: Equatable {
 }
 
 final class CommandModeAXHelper {
+    private static let atomicValueRewriteBundleIdentifiers = Set([
+        "com.cmuxterm.app",
+    ])
     private static let selectedTextStreamingChunkMaxUTF16Length = 240
     private static let selectedTextStreamingInterChunkDelay: TimeInterval = 0.012
     private static let valueRewriteMaxTextUTF16Length = 2048
@@ -201,6 +204,10 @@ final class CommandModeAXHelper {
         focusedValueLength: Int,
         targetBundleIdentifier: String?
     ) -> AXInsertionStrategy {
+        if let targetBundleIdentifier,
+           atomicValueRewriteBundleIdentifiers.contains(targetBundleIdentifier) {
+            return .valueRewrite
+        }
         let textLength = (text as NSString).length
         if textLength > valueRewriteMaxTextUTF16Length ||
             focusedValueLength > valueRewriteMaxFocusedValueUTF16Length {

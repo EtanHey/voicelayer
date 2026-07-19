@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Close the four approved ask/speak substance residuals without changing VoiceBar visuals.
+**Goal:** Close the four approved ask/speak substance residuals and the very-long cmux paste incident without changing VoiceBar visuals.
 
 **Architecture:** Reuse the existing transcription polish and capture archive paths. Add a transport-neutral MCP event context for long-running progress and playback outcomes, and upgrade queue exits from untyped completion to structured telemetry.
 
@@ -77,7 +77,22 @@
 5. Include playback ID in immediate speak results and interrupted ask-prompt telemetry in blocking ask results.
 6. Re-run the targeted tests and verify they pass.
 
-### Task 5: Verify and publish the worker PR
+### Task 5: Make very-long cmux insertion atomic
+
+**Files:**
+- Modify: `flow-bar/Sources/VoiceBar/CommandModeAXHelper.swift`
+- Modify: `flow-bar/Tests/VoiceBarTests/CommandModeAXHelperTests.swift`
+- Modify: `flow-bar/Tests/VoiceBarTests/SocketServerTests.swift`
+- Modify: `scripts/voicelayer-verify.sh`
+- Test: `src/__tests__/voicelayer-verify-script.test.ts`
+
+1. Prove both sockets are worker-owned, then drive a 10k+ payload into a scratch cmux/Ghostty target through the isolated corpus daemon; post the observed result before implementation.
+2. Change the terminal strategy and corpus tests to require one value rewrite for a 10k+ cmux transcript while preserving nonterminal streaming.
+3. Run the focused tests RED and confirm the current strategy streams and the long corpus terminal remains empty.
+4. Short-circuit the cmux bundle to value rewrite before size thresholds; do not alter Shift+F5/manual paste.
+5. Re-run the strategy, verifier-contract, and isolated corpus runtime tests GREEN.
+
+### Task 6: Verify and publish the worker PR
 
 **Files:**
 - Modify: `orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md` (`### ask-residuals SEAM`)

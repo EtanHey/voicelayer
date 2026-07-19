@@ -29,6 +29,7 @@ import {
   handleReplay,
   handleToggle,
 } from "./handlers";
+import { createVoiceToolContext } from "./mcp-notifications";
 
 // --- Server setup ---
 
@@ -38,7 +39,7 @@ const server = new Server(
     version: PACKAGE_VERSION,
   },
   {
-    capabilities: { tools: {} },
+    capabilities: { tools: {}, logging: {} },
     instructions:
       "Voice I/O layer for Claude Code. 2 tools:\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
@@ -58,25 +59,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // --- Tool dispatch ---
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
   const { name, arguments: args } = request.params;
+  const progressToken = request.params._meta?.progressToken;
+  const context = createVoiceToolContext(progressToken, (notification) =>
+    extra.sendNotification(notification as never),
+  );
 
   try {
     switch (name) {
       // Consolidated tools
       case "voice_speak":
-        return await handleVoiceSpeak(args);
+        return await handleVoiceSpeak(args, context);
       case "voice_ask":
-        return await handleVoiceAsk(args);
+        return await handleVoiceAsk(args, context);
       // Backward-compat aliases
       case "qa_voice_announce":
-        return await handleAnnounce(args);
+        return await handleAnnounce(args, context);
       case "qa_voice_brief":
-        return await handleBrief(args);
+        return await handleBrief(args, context);
       case "qa_voice_consult":
-        return await handleConsult(args);
+        return await handleConsult(args, context);
       case "qa_voice_converse":
-        return await handleConverse(args);
+        return await handleConverse(args, context);
       case "qa_voice_think":
         return await handleThink(args);
       case "qa_voice_replay":
@@ -85,9 +90,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return await handleToggle(args);
       // Aliases
       case "qa_voice_say":
-        return await handleAnnounce(args);
+        return await handleAnnounce(args, context);
       case "qa_voice_ask":
-        return await handleConverse(args);
+        return await handleConverse(args, context);
       default:
         return {
           content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],

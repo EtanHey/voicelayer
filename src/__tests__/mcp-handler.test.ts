@@ -36,7 +36,10 @@ describe("mcp-handler", () => {
       expect(response.id).toBe(1);
       expect(response.result).toBeDefined();
       expect(response.result.protocolVersion).toBe("2024-11-05");
-      expect(response.result.capabilities).toEqual({ tools: {} });
+      expect(response.result.capabilities).toEqual({
+        tools: {},
+        logging: {},
+      });
       expect(response.result.serverInfo.name).toBe("voicelayer");
       expect(response.result.serverInfo.version).toBeDefined();
     });
@@ -273,6 +276,159 @@ describe("mcp-handler", () => {
         mode: "announce",
         rate: "+10%",
       });
+    });
+
+    it("maps request progress events to notifications/progress", async () => {
+      const notifications: Record<string, unknown>[] = [];
+      const response = await handleMcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 15,
+          method: "tools/call",
+          params: {
+            name: "voice_ask",
+            arguments: { message: "Still listening?" },
+            _meta: { progressToken: "ask-progress-15" },
+          },
+        },
+        {
+          executeTool: async (_name: string, _args: Record<string, unknown>, context: any) => {
+            context.emit({
+              kind: "voice_ask_progress",
+              sequence: 3,
+              stage: "recording",
+              elapsedMs: 30_000,
+            });
+            return { content: [{ type: "text" as const, text: "ok" }] };
+          },
+        } as any,
+        {
+          sendNotification: async (notification: Record<string, unknown>) => {
+            notifications.push(notification);
+          },
+        } as any,
+      );
+
+      expect(response?.result?.content[0].text).toBe("ok");
+      expect(notifications).toEqual([
+        {
+          method: "notifications/progress",
+          params: {
+            progressToken: "ask-progress-15",
+            progress: 3,
+            message: "voice_ask recording — 30s elapsed",
+          },
+        },
+      ]);
+    });
+
+    it("falls back to MCP logging notifications without a progress token", async () => {
+      const notifications: Record<string, unknown>[] = [];
+      await handleMcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 16,
+          method: "tools/call",
+          params: {
+            name: "voice_ask",
+            arguments: { message: "Still listening?" },
+          },
+        },
+        {
+          executeTool: async (_name: string, _args: Record<string, unknown>, context: any) => {
+            context.emit({
+              kind: "voice_ask_progress",
+              sequence: 2,
+              stage: "transcribing",
+              elapsedMs: 45_000,
+            });
+            return { content: [{ type: "text" as const, text: "ok" }] };
+          },
+        } as any,
+        {
+          sendNotification: async (notification: Record<string, unknown>) => {
+            notifications.push(notification);
+          },
+        } as any,
+      );
+
+      expect(notifications).toEqual([
+        {
+          method: "notifications/message",
+          params: {
+            level: "info",
+            logger: "voicelayer.voice_ask",
+            data: {
+              kind: "voice_ask_progress",
+              sequence: 2,
+              stage: "transcribing",
+              elapsed_ms: 45_000,
+              message: "voice_ask transcribing — 45s elapsed",
+            },
+          },
+        },
+      ]);
+    });
+
+    it("forwards playback outcomes as structured MCP logging notifications", async () => {
+      const notifications: Record<string, unknown>[] = [];
+      await handleMcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 17,
+          method: "tools/call",
+          params: {
+            name: "voice_speak",
+            arguments: { message: "Listen until interrupted" },
+          },
+        },
+        {
+          executeTool: async (_name: string, _args: Record<string, unknown>, context: any) => {
+            context.emit({
+              kind: "playback_outcome",
+              outcome: {
+                type: "playback_outcome",
+                playback_id: "playback-17",
+                status: "interrupted",
+                reason: "stopped",
+                stopped_at_ms: 550,
+                duration_ms: 1_000,
+                progress: 0.55,
+                word_index: 1,
+                word_count: 3,
+              },
+            });
+            return { content: [{ type: "text" as const, text: "queued" }] };
+          },
+        } as any,
+        {
+          sendNotification: async (notification: Record<string, unknown>) => {
+            notifications.push(notification);
+          },
+        } as any,
+      );
+
+      expect(notifications).toEqual([
+        {
+          method: "notifications/message",
+          params: {
+            level: "info",
+            logger: "voicelayer.playback",
+            data: {
+              kind: "playback_outcome",
+              type: "playback_outcome",
+              playback_id: "playback-17",
+              status: "interrupted",
+              reason: "stopped",
+              stopped_at_ms: 550,
+              duration_ms: 1_000,
+              progress: 0.55,
+              word_index: 1,
+              word_count: 3,
+            },
+          },
+        },
+      ]);
     });
   });
 

@@ -317,10 +317,12 @@ function transcriptionPolishMetadata(
   };
 }
 
-function polishSurfaceForWaitOptions(
+export function polishSurfaceForWaitOptions(
   options: WaitForInputOptions,
 ): STTPolishSurface | null {
-  return options.archiveSource === "voicebar" ? "dictation" : null;
+  if (options.archiveSource === "voicebar") return "dictation";
+  if (options.archiveSource === "voice_ask") return "voice_ask";
+  return null;
 }
 
 export function warmPolishEndpointAtRecordingStart(options: {
@@ -403,7 +405,28 @@ export interface WaitForInputOptions {
     createdAt?: Date;
   };
   onCaptureEnd?: () => void;
+  onPhaseChange?: (phase: "transcribing") => void;
+  onNoSpeech?: () => void;
   signal?: AbortSignal;
+}
+
+function invokeCaptureObserver(
+  observerName: "no_speech" | "phase_change",
+  observer: (() => void) | undefined,
+): void {
+  if (!observer) return;
+  try {
+    observer();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[voicelayer] Capture ${observerName} observer failed: ${detail}`,
+    );
+    appendControlLayerEvent("capture.observer_failed", {
+      observer: observerName,
+      error: detail,
+    });
+  }
 }
 
 function waitForInputAbortError(signal: AbortSignal): Error {
@@ -1710,6 +1733,7 @@ export async function recordToBuffer(
   pressToTalk: boolean = false,
   chunkedSession?: ChunkedRecordingSession,
   signal?: AbortSignal,
+  preserveNoSpeechCapture = false,
 ): Promise<Uint8Array | null> {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
@@ -1873,11 +1897,13 @@ export async function recordToBuffer(
 
       if (finishError) {
         reject(finishError);
-      } else if (totalPcmBytes === 0 || (!pressToTalk && !hasSpeech)) {
-        resolve(null); // No speech detected (PTT mode always returns audio)
+      } else if (totalPcmBytes === 0) {
+        resolve(null);
+      } else if (!pressToTalk && !hasSpeech && !preserveNoSpeechCapture) {
+        resolve(null);
       } else {
         const selectedChunks =
-          !pressToTalk && firstSpeechChunkIndex >= 0
+          !pressToTalk && hasSpeech && firstSpeechChunkIndex >= 0
             ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
             : pcmChunks;
         const selectedPcmBytes = selectedChunks.reduce(
@@ -2190,6 +2216,7 @@ export async function waitForInput(
       pressToTalk,
       chunkedSession,
       options.signal,
+      options.archiveSource === "voice_ask",
     );
   } catch (err) {
     appendControlLayerEvent("capture.recording_failed", {
@@ -2340,6 +2367,7 @@ export async function waitForInput(
         `dbfs=${Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs.toFixed(1) : "-inf"})`,
     );
     clearCancelSignal();
+    invokeCaptureObserver("no_speech", options.onNoSpeech);
     appendControlLayerEvent("capture.no_speech", {
       reason: noSpeechGate.reason ?? null,
       duration_ms: noSpeechGate.durationMs,
@@ -2377,6 +2405,7 @@ export async function waitForInput(
       );
       if (!pttSpeechGate.detected) {
         clearCancelSignal();
+        invokeCaptureObserver("no_speech", options.onNoSpeech);
         broadcast({ type: "state", state: "idle", source: "recording" });
         return null;
       }
@@ -2390,6 +2419,12 @@ export async function waitForInput(
 
   throwIfWaitForInputAborted(options.signal);
   // Broadcast transcribing state to Voice Bar
+  invokeCaptureObserver(
+    "phase_change",
+    options.onPhaseChange
+      ? () => options.onPhaseChange?.("transcribing")
+      : undefined,
+  );
   setRecordingState("transcribing");
   broadcast({ type: "state", state: "transcribing" });
   broadcast({

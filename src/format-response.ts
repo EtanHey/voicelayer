@@ -5,6 +5,8 @@
  * Pure functions — no I/O, no side effects.
  */
 
+import type { PlaybackOutcomeEvent } from "./socket-protocol";
+
 // ── Box-drawing helpers ──
 
 const TOP = "┌─";
@@ -32,6 +34,7 @@ export function formatSpeak(
   mode: string,
   message: string,
   warning?: string,
+  playbackId?: string,
 ): string {
   const icon = MODE_ICONS[mode] ?? "🔊";
   const lines = [`${icon} ${mode} → "${message}"`];
@@ -43,6 +46,9 @@ export function formatSpeak(
   if (warning) {
     lines.push(`⚠ ${warning}`);
   }
+  if (playbackId) {
+    lines.push(`↳ playback ${playbackId}; outcome follows via MCP notification.`);
+  }
 
   return boxed("voice_speak", lines);
 }
@@ -51,17 +57,48 @@ export function formatSpeak(
 
 export function formatAsk(
   transcript: string | null,
-  opts?: { timeoutSeconds?: number; pressToTalk?: boolean },
+  opts?: {
+    timeoutSeconds?: number;
+    pressToTalk?: boolean;
+    outcome?: "timeout" | "no-speech";
+    promptPlayback?: PlaybackOutcomeEvent;
+  },
 ): string {
+  const promptInterruption = formatPromptInterruption(opts?.promptPlayback);
   // Explicit null check to handle empty string "" as valid transcript
   if (transcript !== null && transcript !== undefined) {
-    return boxed("voice_ask", [`🎤 "${transcript}"`]);
+    return boxed("voice_ask", [
+      `🎤 "${transcript}"`,
+      ...(promptInterruption ? [promptInterruption] : []),
+    ]);
+  }
+
+  if (opts?.outcome === "no-speech") {
+    return boxed("voice_ask", [
+      "🎙 No speech detected — recording ended.",
+      ...(promptInterruption ? [promptInterruption] : []),
+    ]);
   }
 
   const secs = opts?.timeoutSeconds ?? 30;
   const ptt = opts?.pressToTalk ?? false;
   const prefix = ptt ? "PTT timeout" : "timeout";
-  return boxed("voice_ask", [`⏱ No response — ${prefix} after ${secs}s`]);
+  return boxed("voice_ask", [
+    `⏱ No response — ${prefix} after ${secs}s`,
+    ...(promptInterruption ? [promptInterruption] : []),
+  ]);
+}
+
+function formatPromptInterruption(
+  outcome: PlaybackOutcomeEvent | undefined,
+): string | null {
+  if (outcome?.status !== "interrupted") return null;
+  const percent = Math.round(outcome.progress * 100);
+  const wordPosition =
+    outcome.word_index !== undefined && outcome.word_count
+      ? ` at word ${outcome.word_index + 1}/${outcome.word_count}`
+      : "";
+  return `↳ Prompt interrupted${wordPosition} (${percent}%).`;
 }
 
 // ── Think ──

@@ -22,6 +22,7 @@ import {
   detectProtocol,
 } from "./mcp-framing";
 import { handleMcpRequest, type ToolExecutor } from "./mcp-handler";
+import type { McpNotification } from "./mcp-notifications";
 import {
   onConnect,
   onDisconnect,
@@ -206,6 +207,15 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           params?: Record<string, unknown>;
         },
         toolExecutor,
+        {
+          sendNotification(notification: McpNotification) {
+            const frame = serializeMcpFrame({
+              jsonrpc: "2.0",
+              ...notification,
+            });
+            socket.write(frame);
+          },
+        },
       )
         .then((response) => {
           if (response) {
@@ -277,6 +287,13 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
               params?: Record<string, unknown>;
             },
             toolExecutor,
+            {
+              sendNotification(notification: McpNotification) {
+                socket.write(
+                  `${JSON.stringify({ jsonrpc: "2.0", ...notification })}\n`,
+                );
+              },
+            },
           )
             .then((response) => {
               if (response) {
