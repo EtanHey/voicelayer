@@ -101,7 +101,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(layout.coreRect.width, resolved.housingFrame.width)
         XCTAssertEqual(renderedCoreFrame.minX, resolved.housingFrame.minX)
         XCTAssertEqual(renderedCoreFrame.maxX, resolved.housingFrame.maxX)
-        XCTAssertEqual(frame.width, 52.5 + 184 + 125.5)
+        XCTAssertEqual(frame.width, 47.5 + 184 + 125.5)
     }
 
     func testCompactFadeStartsAtTheCalibratedPhysicalBezelWithoutASecondKeepOut() {
@@ -126,9 +126,9 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
             visibleCoreOcclusionInset: resolved.visibleCoreOcclusionInset
         )
 
-        XCTAssertEqual(geometry.leadingWingWidth, 52.5)
+        XCTAssertEqual(geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(geometry.trailingWingWidth, 125.5)
-        XCTAssertEqual(geometry.totalWidth, 346)
+        XCTAssertEqual(geometry.totalWidth, 341)
         XCTAssertEqual(leadingFade.frame.maxX, layout.coreRect.minX)
         XCTAssertEqual(trailingFade.frame.minX, layout.coreRect.maxX)
         XCTAssertEqual(leadingFade.frame.width, 16)
