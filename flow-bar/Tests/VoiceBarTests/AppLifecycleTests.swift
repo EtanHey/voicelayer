@@ -733,6 +733,79 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertLessThan(clearHover.lowerBound, dismiss.lowerBound)
     }
 
+    func testEveryPanelLayoutInvalidatesThenRecertifiesBackingScale() throws {
+        let source = try voiceBarAppSource()
+        let layoutStart = try XCTUnwrap(
+            source.range(of: "private func applyPanelLayout(animated: Bool)")
+        )
+        let firstRenderStart = try XCTUnwrap(
+            source.range(
+                of: "private func completePanelFirstRender",
+                range: layoutStart.upperBound ..< source.endIndex
+            )
+        )
+        let layoutBody = source[layoutStart.lowerBound ..< firstRenderStart.lowerBound]
+
+        XCTAssertTrue(
+            layoutBody.contains("schedulePanelBackingScaleRecertification(reason: \"layout_changed\")"),
+            "every mode/layout render must replace the initial scale receipt"
+        )
+
+        let scheduleStart = try XCTUnwrap(
+            source.range(of: "private func schedulePanelBackingScaleRecertification")
+        )
+        let scheduler = source[scheduleStart.lowerBound...]
+        let invalidation = try XCTUnwrap(
+            scheduler.range(of: "writeFirstRenderScaleReceipt(ready: false")
+        )
+        let nextLayoutTurn = try XCTUnwrap(
+            scheduler.range(of: "DispatchQueue.main.async", range: invalidation.upperBound ..< scheduler.endIndex)
+        )
+        let recertification = try XCTUnwrap(
+            scheduler.range(
+                of: "completePanelBackingScaleRecertification(",
+                range: nextLayoutTurn.upperBound ..< scheduler.endIndex
+            )
+        )
+
+        XCTAssertLessThan(invalidation.lowerBound, nextLayoutTurn.lowerBound)
+        XCTAssertLessThan(nextLayoutTurn.lowerBound, recertification.lowerBound)
+    }
+
+    func testScreenAndBackingScaleChangesInvalidateThenRecertifyReceipt() throws {
+        let source = try voiceBarAppSource()
+        let backingStart = try XCTUnwrap(
+            source.range(of: "func windowDidChangeBackingProperties")
+        )
+        let screenStart = try XCTUnwrap(
+            source.range(
+                of: "func windowDidChangeScreen",
+                range: backingStart.upperBound ..< source.endIndex
+            )
+        )
+        let nextFunction = try XCTUnwrap(
+            source.range(
+                of: "private func currentPanelLayout",
+                range: screenStart.upperBound ..< source.endIndex
+            )
+        )
+        let backingBody = source[backingStart.lowerBound ..< screenStart.lowerBound]
+        let screenBody = source[screenStart.lowerBound ..< nextFunction.lowerBound]
+
+        XCTAssertTrue(
+            backingBody.contains(
+                "schedulePanelBackingScaleRecertification(reason: \"backing_properties_changed\")"
+            ),
+            "backing-scale changes must invalidate the prior display receipt before recertifying"
+        )
+        XCTAssertTrue(
+            screenBody.contains(
+                "schedulePanelBackingScaleRecertification(reason: \"screen_changed\")"
+            ),
+            "screen changes must invalidate the prior display receipt before recertifying"
+        )
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

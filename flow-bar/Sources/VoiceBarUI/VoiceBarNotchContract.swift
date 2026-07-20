@@ -77,6 +77,7 @@ public struct VoiceBarNotchMaterialContract: Equatable {
     public let blackToGlassFadeWidth: CGFloat
     public let fadeToContentGap: CGFloat
     public let outerContentInset: CGFloat
+    public let compactContentInset: CGFloat
     public let inverseJoinRadius: CGFloat
     public let waveformSlotWidth: CGFloat
     public let lowerSurfaceLayerCount: Int
@@ -123,6 +124,22 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         return teleprompterTextWidth(coreWidth: coreWidth) / bodyWidth
     }
 
+    public func wingContentLayout(
+        for side: VoiceBarNotchSide,
+        state: VoiceBarNotchVisualState,
+        visibleCoreOcclusionInset: CGFloat = 0
+    ) -> VoiceBarNotchWingContentLayout {
+        let isTeleprompter = state == .teleprompter
+        return VoiceBarNotchWingContentLayout(
+            side: side,
+            coreInset: isTeleprompter
+                ? visibleCoreOcclusionInset + blackToGlassFadeWidth + fadeToContentGap
+                : VoiceBarNotchContract.compactCoreContentInset,
+            outerInset: isTeleprompter ? outerContentInset : compactContentInset,
+            alignment: .center
+        )
+    }
+
     private var reservedWingInset: CGFloat {
         blackToGlassFadeWidth + fadeToContentGap + outerContentInset
     }
@@ -131,12 +148,25 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         for visualState: VoiceBarNotchVisualState
     ) -> CGFloat {
         switch visualState {
-        case .recording, .compactStatus:
+        case .hoverLauncher, .recording, .compactStatus:
             15
-        case .idle, .hoverLauncher, .teleprompter:
+        case .idle, .teleprompter:
             11
         }
     }
+}
+
+public enum VoiceBarNotchWingContentAlignment: Equatable {
+    case core
+    case center
+    case screenLeading
+}
+
+public struct VoiceBarNotchWingContentLayout: Equatable {
+    public let side: VoiceBarNotchSide
+    public let coreInset: CGFloat
+    public let outerInset: CGFloat
+    public let alignment: VoiceBarNotchWingContentAlignment
 }
 
 public struct VoiceBarNotchMotionContract: Equatable {
@@ -163,6 +193,7 @@ public enum VoiceBarNotchContentRole: Equatable {
 public struct VoiceBarNotchPresentation: Equatable {
     public let visualState: VoiceBarNotchVisualState
     public let geometry: VoiceBarNotchGeometry
+    public let visibleCoreOcclusionInset: CGFloat
     public let contentRoles: [VoiceBarNotchContentRole]
     public let accessibilityLabel: String
 
@@ -171,9 +202,12 @@ public struct VoiceBarNotchPresentation: Equatable {
         isRecording: Bool,
         hasCompactStatus: Bool,
         compactStatusLeadingWingWidth: CGFloat? = nil,
+        compactStatusTrailingWingWidth: CGFloat? = nil,
+        recordingTrailingWingWidth: CGFloat? = nil,
         isHovered: Bool,
         isKeyboardFocused: Bool,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         let visualState: VoiceBarNotchVisualState = if hasTeleprompter {
             .teleprompter
@@ -189,18 +223,26 @@ public struct VoiceBarNotchPresentation: Equatable {
 
         let baseGeometry = VoiceBarNotchContract.geometry(
             for: visualState,
-            coreWidth: coreWidth
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
         let geometry = if visualState == .compactStatus,
-                          let compactStatusLeadingWingWidth {
+                          compactStatusLeadingWingWidth != nil || compactStatusTrailingWingWidth != nil {
             VoiceBarNotchGeometry(
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
-                leadingWingWidth: max(
-                    baseGeometry.leadingWingWidth,
-                    compactStatusLeadingWingWidth
-                ),
-                trailingWingWidth: baseGeometry.trailingWingWidth,
+                leadingWingWidth: compactStatusLeadingWingWidth ?? baseGeometry.leadingWingWidth,
+                trailingWingWidth: compactStatusTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
+                bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
+                lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
+            )
+        } else if visualState == .recording, let recordingTrailingWingWidth {
+            VoiceBarNotchGeometry(
+                coreWidth: baseGeometry.coreWidth,
+                topHeight: baseGeometry.topHeight,
+                leadingWingWidth: baseGeometry.leadingWingWidth,
+                trailingWingWidth: recordingTrailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
@@ -212,6 +254,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         return VoiceBarNotchPresentation(
             visualState: visualState,
             geometry: geometry,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset,
             contentRoles: contentRoles(for: visualState),
             accessibilityLabel: accessibilityLabel(for: visualState)
         )
@@ -224,7 +267,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         case .idle:
             []
         case .hoverLauncher:
-            [.microphone, .history]
+            [.microphone, .history, .dictionary]
         case .recording:
             [.recordingStatus, .waveform, .recordingControls]
         case .compactStatus:
@@ -258,16 +301,20 @@ public enum VoiceBarNotchContract {
     /// outside the physical camera glass. Keep the measured center, then pull
     /// both software seams inward to meet the physical housing.
     public static let hardwareHorizontalCalibrationInset: CGFloat = 8.5
+    public static let compactCoreContentInset: CGFloat = 13.5
+    public static let compactIndicatorLaneWidth: CGFloat = compactCoreContentInset +
+        material.compactControlSize + material.compactContentInset
     public static let topHeight: CGFloat = 32
-    public static let teleprompterLeadingWingWidth: CGFloat = 76
-    public static let teleprompterTrailingWingWidth: CGFloat = 88
+    public static let teleprompterLeadingWingWidth: CGFloat = 82
+    public static let teleprompterTrailingWingWidth: CGFloat = 94
 
     public static let material = VoiceBarNotchMaterialContract(
-        blackToGlassFadeWidth: 10,
+        blackToGlassFadeWidth: 16,
         fadeToContentGap: 8,
         outerContentInset: 8,
+        compactContentInset: 14,
         inverseJoinRadius: 5,
-        waveformSlotWidth: 72,
+        waveformSlotWidth: 46,
         lowerSurfaceLayerCount: 1,
         teleprompterInsetFrameCount: 0,
         compactWingsHaveOuterEdgeTreatment: true,
@@ -291,20 +338,35 @@ public enum VoiceBarNotchContract {
 
     public static func geometry(
         for visualState: VoiceBarNotchVisualState,
-        coreWidth: CGFloat = coreWidth
+        coreWidth: CGFloat = coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchGeometry {
         switch visualState {
         case .idle:
             geometry(coreWidth: coreWidth, leadingWingWidth: 0, trailingWingWidth: 0)
         case .hoverLauncher:
-            geometry(coreWidth: coreWidth, leadingWingWidth: 36, trailingWingWidth: 64)
-        case .recording, .compactStatus:
-            geometry(coreWidth: coreWidth, leadingWingWidth: 72, trailingWingWidth: 152)
+            geometry(
+                coreWidth: coreWidth,
+                leadingWingWidth: compactIndicatorLaneWidth,
+                trailingWingWidth: 73.5
+            )
+        case .recording:
+            geometry(
+                coreWidth: coreWidth,
+                leadingWingWidth: compactIndicatorLaneWidth,
+                trailingWingWidth: 125.5
+            )
+        case .compactStatus:
+            geometry(
+                coreWidth: coreWidth,
+                leadingWingWidth: compactIndicatorLaneWidth,
+                trailingWingWidth: 99.5
+            )
         case .teleprompter:
             geometry(
                 coreWidth: coreWidth,
-                leadingWingWidth: teleprompterLeadingWingWidth,
-                trailingWingWidth: teleprompterTrailingWingWidth,
+                leadingWingWidth: teleprompterLeadingWingWidth + visibleCoreOcclusionInset,
+                trailingWingWidth: teleprompterTrailingWingWidth + visibleCoreOcclusionInset,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: 196

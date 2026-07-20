@@ -5,9 +5,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testPrimaryStatesUseApprovedVisibleGeometryInsideShadowSafeWindows() {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
-            (.hoverLauncher, CGSize(width: 285, height: 32)),
-            (.recording, CGSize(width: 409, height: 32)),
-            (.compactStatus, CGSize(width: 409, height: 32)),
+            (.hoverLauncher, CGSize(width: 306, height: 32)),
+            (.recording, CGSize(width: 358, height: 32)),
+            (.compactStatus, CGSize(width: 332, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
         ]
 
@@ -44,7 +44,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation(
                 .teleprompter,
-                coreWidth: screen.housingFrame.width
+                coreWidth: screen.housingFrame.width,
+                visibleCoreOcclusionInset: screen.visibleCoreOcclusionInset
             )
         )
 
@@ -74,7 +75,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation(
                 .recording,
-                coreWidth: screen.housingFrame.width
+                coreWidth: screen.housingFrame.width,
+                visibleCoreOcclusionInset: screen.visibleCoreOcclusionInset
             )
         )
 
@@ -83,7 +85,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             + layout.visibleContentRect.minX
             + layout.presentation.geometry.coreOriginX
 
-        XCTAssertEqual(frame, CGRect(x: 695.5, y: 1068, width: 416, height: 49))
+        XCTAssertEqual(frame, CGRect(x: 720, y: 1068, width: 365, height: 49))
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 
@@ -99,7 +101,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation(
                 .recording,
-                coreWidth: screen.housingFrame.width
+                coreWidth: screen.housingFrame.width,
+                visibleCoreOcclusionInset: screen.visibleCoreOcclusionInset
             )
         )
 
@@ -122,6 +125,26 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
+    func testIsolatedCapturePlacementRequiresParallelModeAndUsesANormalScreenCorner() {
+        let captureOnly = [
+            VoiceBarIsolatedCapturePlacement.environmentVariable: "1",
+        ]
+        let isolatedCapture = [
+            VoiceBarIsolatedCapturePlacement.environmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+
+        XCTAssertFalse(VoiceBarIsolatedCapturePlacement.isEnabled(environment: captureOnly))
+        XCTAssertTrue(VoiceBarIsolatedCapturePlacement.isEnabled(environment: isolatedCapture))
+        XCTAssertEqual(
+            VoiceBarIsolatedCapturePlacement.frame(
+                panelSize: CGSize(width: 370, height: 49),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084)
+            ),
+            CGRect(x: 24, y: 24, width: 370, height: 49)
+        )
+    }
+
     func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
         let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
         let justPastTrailingWing = CGPoint(
@@ -139,7 +162,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
     private func presentation(
         _ state: VoiceBarNotchVisualState,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         VoiceBarNotchPresentation.resolve(
             hasTeleprompter: state == .teleprompter,
@@ -147,7 +171,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             hasCompactStatus: state == .compactStatus,
             isHovered: state == .hoverLauncher,
             isKeyboardFocused: false,
-            coreWidth: coreWidth
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
     }
 

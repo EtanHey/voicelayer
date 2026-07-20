@@ -36,6 +36,7 @@ public struct VoiceBarTranscriptPreviewLayout: Equatable {
 
 public struct VoiceBarNotchOperationalInput: Equatable {
     public var mode: VoiceMode
+    public var showsRecordingHold: Bool
     public var hasTeleprompterText: Bool
     public var isTeleprompterDismissed: Bool
     public var isTeleprompterReadback: Bool
@@ -50,9 +51,11 @@ public struct VoiceBarNotchOperationalInput: Equatable {
     public var isKeyboardFocused: Bool
     public var isCollapsed: Bool
     public var coreWidth: CGFloat
+    public var visibleCoreOcclusionInset: CGFloat
 
     public init(
         mode: VoiceMode,
+        showsRecordingHold: Bool = false,
         hasTeleprompterText: Bool = false,
         isTeleprompterDismissed: Bool = false,
         isTeleprompterReadback: Bool = false,
@@ -66,9 +69,11 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         isHovered: Bool = false,
         isKeyboardFocused: Bool = false,
         isCollapsed: Bool = false,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) {
         self.mode = mode
+        self.showsRecordingHold = showsRecordingHold
         self.hasTeleprompterText = hasTeleprompterText
         self.isTeleprompterDismissed = isTeleprompterDismissed
         self.isTeleprompterReadback = isTeleprompterReadback
@@ -83,6 +88,7 @@ public struct VoiceBarNotchOperationalInput: Equatable {
         self.isKeyboardFocused = isKeyboardFocused
         self.isCollapsed = isCollapsed
         self.coreWidth = coreWidth
+        self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
     }
 }
 
@@ -126,26 +132,65 @@ public enum VoiceBarPresentation {
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
+                mode: input.mode
+            ),
+            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
+            recordingTrailingWingWidth: recordingTrailingWingWidth(
                 mode: input.mode,
-                statusText: input.statusText
+                showsRecordingHold: input.showsRecordingHold
             ),
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
-            coreWidth: input.coreWidth
+            coreWidth: input.coreWidth,
+            visibleCoreOcclusionInset: input.visibleCoreOcclusionInset
         )
     }
 
     private static func compactStatusLeadingWingWidth(
-        mode: VoiceMode,
-        statusText: String
+        mode _: VoiceMode
     ) -> CGFloat? {
-        guard mode == .transcribing else { return nil }
-        let contentWidth = Theme.pillProcessingSpinnerWidth
-            + Theme.intrinsicPillStatusWidth(for: statusText)
-            + VoiceBarNotchContract.material.compactControlSpacing
-        return VoiceBarNotchContract.material.blackToGlassFadeWidth
-            + 2
-            + contentWidth
+        VoiceBarNotchContract.compactIndicatorLaneWidth
+    }
+
+    private static func compactStatusTrailingWingWidth(
+        input: VoiceBarNotchOperationalInput
+    ) -> CGFloat? {
+        let material = VoiceBarNotchContract.material
+        let insets = VoiceBarNotchContract.compactCoreContentInset +
+            material.compactContentInset
+        switch input.mode {
+        case .transcribing:
+            return insets + material.waveformSlotWidth +
+                material.compactControlSpacing + material.compactControlSize
+        case .speaking:
+            let visibilityControl = input.isTeleprompterDismissed
+                ? material.compactControlSize + 4
+                : 0
+            return insets + visibilityControl + material.waveformSlotWidth +
+                4 + material.compactControlSize
+        case .error:
+            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+                3 + material.compactControlSize
+        case .idle:
+            let queueWidth = input.queueDepth > 0
+                ? Theme.intrinsicPillStatusWidth(for: "\(input.queueDepth)") + 16
+                : 0
+            return insets + queueWidth + Theme.intrinsicPillStatusWidth(for: input.statusText)
+        case .disconnected:
+            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText)
+        case .recording:
+            return nil
+        }
+    }
+
+    private static func recordingTrailingWingWidth(
+        mode: VoiceMode,
+        showsRecordingHold: Bool
+    ) -> CGFloat? {
+        guard mode == .recording, showsRecordingHold else { return nil }
+        return VoiceBarNotchContract.geometry(for: .recording).trailingWingWidth +
+            VoiceBarNotchContract.material.compactControlSpacing +
+            VoiceBarNotchContract.material.compactControlSize
     }
 
     public static func hotkeyPermissionHint(

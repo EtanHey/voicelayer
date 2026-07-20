@@ -24,16 +24,23 @@ enum VoiceBarNotchAppearanceDelivery {
 
 public final class VoiceBarEffectiveAppearanceView: NSView {
     var onAppearanceChange: ((VoiceBarNotchAppearance) -> Void)?
+    var effectiveAppearanceProvider: (() -> NSAppearance)?
     private var tracker = VoiceBarNotchAppearanceTracker(initial: .dark)
+    private var settledAppearanceTask: Task<Void, Never>?
 
     override public func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        reportEffectiveAppearance()
+        handleEffectiveAppearanceChange()
     }
 
     override public func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
+        handleEffectiveAppearanceChange()
+    }
+
+    func handleEffectiveAppearanceChange() {
         reportEffectiveAppearance()
+        scheduleSettledAppearanceRead()
     }
 
     override public func hitTest(_ point: NSPoint) -> NSView? {
@@ -41,8 +48,23 @@ public final class VoiceBarEffectiveAppearanceView: NSView {
     }
 
     func reportEffectiveAppearance() {
-        tracker.receive(effectiveAppearance: effectiveAppearance)
+        tracker.receive(
+            effectiveAppearance: effectiveAppearanceProvider?() ?? effectiveAppearance
+        )
         onAppearanceChange?(tracker.appearance)
+    }
+
+    private func scheduleSettledAppearanceRead() {
+        settledAppearanceTask?.cancel()
+        settledAppearanceTask = Task { @MainActor [weak self] in
+            // AppKit can invoke viewDidChangeEffectiveAppearance while the
+            // view still exposes the outgoing appearance. Re-read after the
+            // current main-actor turn so a live Light↔Dark toggle cannot leave
+            // the compact wings one event behind.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            self?.reportEffectiveAppearance()
+        }
     }
 }
 

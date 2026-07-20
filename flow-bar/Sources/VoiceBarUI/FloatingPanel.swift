@@ -6,6 +6,63 @@
 import AppKit
 import SwiftUI
 
+public enum VoiceBarBackingScaleReadiness: Equatable {
+    case waitingForScreen
+    case rerasterize(targetScale: CGFloat)
+    case ready(scale: CGFloat)
+
+    public static func evaluate(
+        screenScale: CGFloat?,
+        windowScale: CGFloat,
+        contentScale: CGFloat?,
+        descendantScales: [CGFloat] = []
+    ) -> Self {
+        guard let screenScale, screenScale > 0 else { return .waitingForScreen }
+        let tolerance: CGFloat = 0.01
+        guard abs(windowScale - screenScale) <= tolerance,
+              let contentScale,
+              abs(contentScale - screenScale) <= tolerance,
+              descendantScales.allSatisfy({ abs($0 - screenScale) <= tolerance })
+        else {
+            return .rerasterize(targetScale: screenScale)
+        }
+        return .ready(scale: screenScale)
+    }
+}
+
+public enum VoiceBarBackingScaleSynchronizer {
+    @discardableResult
+    public static func synchronize(_ view: NSView, to scale: CGFloat) -> CGFloat? {
+        guard scale > 0 else { return view.layer?.contentsScale }
+        view.wantsLayer = true
+        view.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        view.needsLayout = true
+        view.layoutSubtreeIfNeeded()
+        apply(scale, to: view.layer)
+        view.needsDisplay = true
+        view.displayIfNeeded()
+        return view.layer?.contentsScale
+    }
+
+    public static func layerScales(in view: NSView) -> [CGFloat] {
+        layerScales(in: view.layer)
+    }
+
+    private static func apply(_ scale: CGFloat, to layer: CALayer?) {
+        guard let layer else { return }
+        layer.contentsScale = scale
+        layer.sublayers?.forEach { apply(scale, to: $0) }
+        layer.setNeedsDisplay()
+    }
+
+    private static func layerScales(in layer: CALayer?) -> [CGFloat] {
+        guard let layer else { return [] }
+        return [layer.contentsScale] + (layer.sublayers ?? []).flatMap {
+            layerScales(in: $0)
+        }
+    }
+}
+
 public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitTestProvider: ((NSPoint) -> Bool)?
     public var hoverExpansionHitTestProvider: ((NSPoint) -> Bool)?
@@ -15,6 +72,11 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     private var hoverHysteresis = VoiceBarHoverHysteresis()
     private var hoverExitTask: Task<Void, Never>?
     private var hoverTrackingArea: NSTrackingArea?
+
+    @discardableResult
+    public func synchronizeBackingScale(to scale: CGFloat) -> CGFloat? {
+        VoiceBarBackingScaleSynchronizer.synchronize(self, to: scale)
+    }
 
     override public func hitTest(_ point: NSPoint) -> NSView? {
         if let activeHitTestProvider, !activeHitTestProvider(point) {

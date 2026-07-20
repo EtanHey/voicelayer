@@ -48,6 +48,15 @@ private struct RelaySetupStatus {
     }
 }
 
+private struct VoiceBarFirstRenderScaleReceipt: Codable {
+    let ready: Bool
+    let reason: String
+    let screenScale: Double?
+    let windowScale: Double
+    let contentScale: Double?
+    let layerScales: [Double]
+}
+
 // MARK: - App Delegate
 
 enum HotkeyInputSource {
@@ -104,11 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var currentVoiceMode: VoiceMode = .idle
     private lazy var notchPresentationModel = VoiceBarNotchPresentationModel(
         onLayoutInvalidated: { [weak self] in
-            self?.applyPanelLayout(animated: true)
+            self?.commitNotchContentThenApplyPanelLayout()
         }
     )
     private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
     private var lastLoggedNotchHousingWidth: CGFloat?
+    private var panelBackingScaleCertificationGeneration: UInt = 0
 
     /// Hotkey management — CGEventTap + gesture state machine.
     private var hotkeyManager: HotkeyManager?
@@ -455,6 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             width: initialLayout.panelSize.width,
             height: initialLayout.panelSize.height
         )
+        // A resized NSHostingView may otherwise draw one stale SwiftUI layer
+        // beyond its new window bounds. That leaked the teleprompter label for
+        // one captured frame after the material had already collapsed.
+        hosting.wantsLayer = true
+        hosting.layer?.masksToBounds = true
 
         // Load saved position
         if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
@@ -466,6 +481,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         anchorMode = anchorPreferences.loadAnchorMode()
 
         let pill = FloatingPillPanel(content: hosting)
+        if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            pill.level = .normal
+        }
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
@@ -473,12 +491,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.currentPanelLayout().containsActiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
+        pill.alphaValue = 0
+        pill.delegate = self
+        panel = pill
         positionPanel(pill, on: nil)
         pill.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
-        pill.orderFront(nil)
-        panel = pill
         applyPanelLayout(animated: false)
+        _ = synchronizePanelBackingScale(
+            reason: "pre_attach",
+            forceRerasterization: true
+        )
+        pill.orderFront(nil)
+        completePanelFirstRender()
         voiceState.beginIdleCollapseCountdown()
         if let panelScreen = pill.screen {
             currentScreenIndex = NSScreen.screens.firstIndex(of: panelScreen) ?? currentScreenIndex
@@ -823,10 +848,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        let collapsesConverseHandoff = previousVoiceMode == .speaking &&
+            mode == .idle && voiceState.isCollapsed
+        if collapsesConverseHandoff {
+            panel?.orderOut(nil)
+        }
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
         refreshNotchPresentationAndPanelLayout(animated: true)
+        if !collapsesConverseHandoff {
+            if VoiceBarIsolatedCapturePlacement.isEnabled() {
+                panel?.orderFrontRegardless()
+            } else if mode != .idle, panel?.isVisible == false {
+                panel?.orderFront(nil)
+            }
+        }
         synchronizeRetainedReadbackLifecycle()
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -873,7 +910,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let layout = currentPanelLayout()
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
-        let plan = if screenGeometry.kind == .hardwareNotch {
+        let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            PillResizePlan(
+                frame: VoiceBarIsolatedCapturePlacement.frame(
+                    panelSize: layout.panelSize,
+                    visibleFrame: visibleFrame
+                ),
+                animate: false
+            )
+        } else if screenGeometry.kind == .hardwareNotch {
             PillResizePlan(
                 frame: layout.windowFrame(anchoredTo: screenGeometry),
                 animate: false
@@ -893,6 +938,183 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
         configurePanelDragging(panel, for: screenGeometry)
+        schedulePanelBackingScaleRecertification(reason: "layout_changed")
+    }
+
+    /// SwiftUI must commit removal of teleprompter slots before AppKit shrinks
+    /// the panel. Resizing first exposes the app beneath while the old hosted
+    /// text remains drawable for one frame.
+    private func commitNotchContentThenApplyPanelLayout() {
+        panel?.contentView?.needsLayout = true
+        panel?.contentView?.layoutSubtreeIfNeeded()
+        panel?.contentView?.displayIfNeeded()
+        applyPanelLayout(animated: true)
+    }
+
+    private func schedulePanelBackingScaleRecertification(reason: String) {
+        guard let panel, panel.alphaValue > 0 else { return }
+        panelBackingScaleCertificationGeneration &+= 1
+        let generation = panelBackingScaleCertificationGeneration
+        writeFirstRenderScaleReceipt(ready: false, reason: "\(reason)_pending")
+
+        // Give Observation/SwiftUI one turn to mount the mode-specific view,
+        // then AppKit one turn to materialize its descendant layer tree.
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  generation == panelBackingScaleCertificationGeneration
+            else { return }
+            panel.contentView?.needsLayout = true
+            panel.contentView?.layoutSubtreeIfNeeded()
+            DispatchQueue.main.async { [weak self] in
+                self?.completePanelBackingScaleRecertification(
+                    reason: reason,
+                    generation: generation,
+                    attempt: 0
+                )
+            }
+        }
+    }
+
+    private func completePanelBackingScaleRecertification(
+        reason: String,
+        generation: UInt,
+        attempt: Int
+    ) {
+        guard generation == panelBackingScaleCertificationGeneration else { return }
+        let readiness = synchronizePanelBackingScale(
+            reason: "\(reason)_post_layout_\(attempt)",
+            forceRerasterization: true
+        )
+        switch readiness {
+        case .ready:
+            writeFirstRenderScaleReceipt(
+                ready: true,
+                reason: "\(reason)_post_layout_\(attempt)"
+            )
+        case .waitingForScreen, .rerasterize:
+            guard attempt < 3 else {
+                writeFirstRenderScaleReceipt(
+                    ready: false,
+                    reason: "\(reason)_post_layout_exhausted"
+                )
+                return
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.completePanelBackingScaleRecertification(
+                    reason: reason,
+                    generation: generation,
+                    attempt: attempt + 1
+                )
+            }
+        }
+    }
+
+    private func completePanelFirstRender(attempt: Int = 0) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let panel else { return }
+            let readiness = synchronizePanelBackingScale(
+                reason: "post_attach_\(attempt)",
+                forceRerasterization: true
+            )
+            switch readiness {
+            case .ready:
+                panel.alphaValue = 1
+                writeFirstRenderScaleReceipt(
+                    ready: true,
+                    reason: "post_attach_\(attempt)"
+                )
+            case .waitingForScreen, .rerasterize:
+                guard attempt < 3 else {
+                    panel.alphaValue = 1
+                    writeFirstRenderScaleReceipt(
+                        ready: false,
+                        reason: "post_attach_exhausted"
+                    )
+                    return
+                }
+                completePanelFirstRender(attempt: attempt + 1)
+            }
+        }
+    }
+
+    @discardableResult
+    private func synchronizePanelBackingScale(
+        reason: String,
+        forceRerasterization: Bool
+    ) -> VoiceBarBackingScaleReadiness {
+        guard let panel else { return .waitingForScreen }
+        let targetScreen = panel.screen ?? NSScreen.main
+        let screenScale = targetScreen?.backingScaleFactor
+        let before = VoiceBarBackingScaleReadiness.evaluate(
+            screenScale: screenScale,
+            windowScale: panel.backingScaleFactor,
+            contentScale: panel.contentView?.layer?.contentsScale,
+            descendantScales: panel.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0)
+            } ?? []
+        )
+        if forceRerasterization || before != .ready(scale: screenScale ?? 0),
+           let screenScale,
+           let contentView = panel.contentView {
+            VoiceBarBackingScaleSynchronizer.synchronize(contentView, to: screenScale)
+        }
+        let after = VoiceBarBackingScaleReadiness.evaluate(
+            screenScale: screenScale,
+            windowScale: panel.backingScaleFactor,
+            contentScale: panel.contentView?.layer?.contentsScale,
+            descendantScales: panel.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0)
+            } ?? []
+        )
+        logDiagnostic(event: "notch_backing_scale_check", details: [
+            "reason": reason,
+            "screenScale": screenScale.map { String(format: "%.2f", $0) } ?? "nil",
+            "windowScale": String(format: "%.2f", panel.backingScaleFactor),
+            "contentScale": panel.contentView?.layer.map {
+                String(format: "%.2f", $0.contentsScale)
+            } ?? "nil",
+            "ready": boolString({
+                if case .ready = after { return true }
+                return false
+            }()),
+        ])
+        return after
+    }
+
+    private func writeFirstRenderScaleReceipt(ready: Bool, reason: String) {
+        guard let path = ProcessInfo.processInfo.environment[
+            "QA_VOICEBAR_RENDER_SCALE_RECEIPT_PATH"
+        ], !path.isEmpty else { return }
+        let receipt = VoiceBarFirstRenderScaleReceipt(
+            ready: ready,
+            reason: reason,
+            screenScale: panel?.screen.map { Double($0.backingScaleFactor) },
+            windowScale: Double(panel?.backingScaleFactor ?? 0),
+            contentScale: panel?.contentView?.layer.map { Double($0.contentsScale) },
+            layerScales: panel?.contentView.map {
+                VoiceBarBackingScaleSynchronizer.layerScales(in: $0).map(Double.init)
+            } ?? []
+        )
+        do {
+            let data = try JSONEncoder().encode(receipt)
+            try data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        } catch {
+            NSLog(
+                "[VoiceBar] Could not write render-scale receipt at %@: %@",
+                path,
+                String(describing: error)
+            )
+        }
+    }
+
+    func windowDidChangeBackingProperties(_ notification: Notification) {
+        guard notification.object as? NSWindow === panel else { return }
+        schedulePanelBackingScaleRecertification(reason: "backing_properties_changed")
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard notification.object as? NSWindow === panel else { return }
+        schedulePanelBackingScaleRecertification(reason: "screen_changed")
     }
 
     private func currentPanelLayout() -> VoiceBarPanelLayout {
@@ -921,7 +1143,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     : "flatDisplayFallback",
             ])
         }
-        let resolved = Self.notchPresentation(for: voiceState, coreWidth: coreWidth)
+        let resolved = Self.notchPresentation(
+            for: voiceState,
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
+        )
         notchPresentationModel.updateOperationalEnvelope(
             hasTeleprompter: resolved.visualState == .teleprompter,
             isRecording: resolved.visualState == .recording,
@@ -929,22 +1155,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             compactStatusLeadingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.leadingWingWidth
                 : nil,
+            compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
+                ? resolved.geometry.trailingWingWidth
+                : nil,
+            recordingTrailingWingWidth: resolved.visualState == .recording
+                ? resolved.geometry.trailingWingWidth
+                : nil,
             keepsIdleExpanded: voiceState.mode == .idle && (
                 !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
             ),
-            coreWidth: coreWidth
+            coreWidth: coreWidth,
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
 
     private static func notchPresentation(
         for state: VoiceState?,
-        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth
+        coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
+        visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchPresentation {
         let mode = state?.mode ?? .idle
         return VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: mode,
+                showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
@@ -958,7 +1193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 isHovered: state?.isHovering ?? false,
                 isKeyboardFocused: false,
                 isCollapsed: state?.isCollapsed ?? false,
-                coreWidth: coreWidth
+                coreWidth: coreWidth,
+                visibleCoreOcclusionInset: visibleCoreOcclusionInset
             )
         )
     }
@@ -1140,6 +1376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reposition pill when the active screen changes. Anchored modes still move
     /// between screens; only their position within each screen is fixed.
     private func handleMouseMoved() {
+        guard !VoiceBarIsolatedCapturePlacement.isEnabled() else { return }
         guard let panel else { return }
 
         let screens = NSScreen.screens
@@ -1153,10 +1390,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
-        let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
+        let targetScreen = VoiceBarIsolatedCapturePlacement.isEnabled()
+            ? NSScreen.main
+            : (screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         refreshNotchPresentationModel(for: targetScreen)
+        if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            panel.setFrame(
+                VoiceBarIsolatedCapturePlacement.frame(
+                    panelSize: currentPanelLayout().panelSize,
+                    visibleFrame: targetScreen.visibleFrame
+                ),
+                display: true
+            )
+            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
         if screenGeometry.kind == .hardwareNotch {
             panel.setFrame(
                 currentPanelLayout().windowFrame(anchoredTo: screenGeometry),

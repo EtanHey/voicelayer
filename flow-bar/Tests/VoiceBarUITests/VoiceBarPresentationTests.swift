@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingNotchExpandsLeadingIndicatorWingForTheUntruncatedStatusLabel() {
+    func testTranscribingFitsItsActualPayloadWithoutChangingBetweenStatusStrings() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -70,16 +70,65 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "Loading speech model"
             )
         )
-        let requiredWarmupWidth = Theme.intrinsicPillStatusWidth(for: "Loading speech model")
-            + Theme.pillProcessingSpinnerWidth
-            + VoiceBarNotchContract.material.compactControlSpacing
-            + VoiceBarNotchContract.material.blackToGlassFadeWidth
-            + 2
-
-        XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 409)
-        XCTAssertGreaterThan(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
-        XCTAssertGreaterThanOrEqual(warmup.geometry.leadingWingWidth, requiredWarmupWidth)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 47.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(baseline.geometry.topHeight, 32)
+        XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
+    }
+
+    func testCompactStatesKeepOneLeadingIndicatorLaneAndFitTheRightPayload() {
+        let launcher = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+        )
+        let quickTap = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .idle,
+                hotkeyPhase: .awaitingSecondTap,
+                statusText: VoiceBarPresentation.tapAgainToLockHint
+            )
+        )
+        let recording = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .recording)
+        )
+        let processing = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .transcribing)
+        )
+
+        for presentation in [launcher, quickTap, recording, processing] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
+        }
+        XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(
+            quickTap.geometry.trailingWingWidth,
+            VoiceBarNotchContract.compactCoreContentInset +
+                VoiceBarNotchContract.material.compactContentInset +
+                Theme.intrinsicPillStatusWidth(for: VoiceBarPresentation.tapAgainToLockHint)
+        )
+        XCTAssertLessThan(processing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth)
+    }
+
+    func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
+        let pushToTalk = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .recording,
+                showsRecordingHold: false
+            )
+        )
+        let vad = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .recording,
+                showsRecordingHold: true
+            )
+        )
+
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 47.5)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, pushToTalk.geometry.leadingWingWidth)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 151.5)
+        XCTAssertEqual(vad.geometry.trailingWingWidth - pushToTalk.geometry.trailingWingWidth, 26)
     }
 
     func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {

@@ -1,7 +1,48 @@
+import AppKit
+import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
 final class WaveformViewTests: XCTestCase {
+    func testSharedWaveformViewportFitsExactlySevenBarsWithoutCompression() {
+        XCTAssertEqual(WaveformLayout.barCount, 7)
+        XCTAssertEqual(WaveformLayout.barWidth, 4)
+        XCTAssertEqual(WaveformLayout.barSpacing, 3)
+        XCTAssertEqual(WaveformLayout.viewportWidth, 46)
+        XCTAssertEqual(WaveformLayout.viewportHeight, 24)
+        XCTAssertEqual(
+            CGFloat(WaveformLayout.barCount) * WaveformLayout.barWidth
+                + CGFloat(WaveformLayout.barCount - 1) * WaveformLayout.barSpacing,
+            WaveformLayout.viewportWidth
+        )
+    }
+
+    func testRecordingSpeechUsesFullGainGoldMapping() throws {
+        let level = 0.82
+        let time = 0.63
+        let listening = WaveformMetrics.audioDrivenLevels(
+            level: level,
+            time: time,
+            barCount: 7,
+            isListening: true
+        )
+        let speech = WaveformMetrics.audioDrivenLevels(
+            level: level,
+            time: time,
+            barCount: 7,
+            isListening: false
+        )
+
+        XCTAssertGreaterThan(try XCTUnwrap(speech.max()), try XCTUnwrap(listening.max()))
+        let independentFullGainPeak = (0 ..< 7).map {
+            m1GoldLevel(level: level, time: time, index: $0, barCount: 7)
+        }.max()
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(speech.max()),
+            try XCTUnwrap(independentFullGainPeak) * 0.8
+        )
+    }
+
     func testAudioDrivenFormulaMatchesM1GoldForEveryBar() {
         for level in [0.1, 0.43, 0.8, 1.0] {
             for time in [0.0, 0.42, 1.7] {
@@ -179,10 +220,133 @@ final class WaveformViewTests: XCTestCase {
 
         XCTAssertTrue(leadingCompactStatusBranch?.contains("if state.mode == .transcribing") == true)
         XCTAssertTrue(leadingCompactStatusBranch?.contains("ProcessingSpinner()") == true)
+        XCTAssertFalse(leadingCompactStatusBranch?.contains("statusLabel") == true)
         XCTAssertFalse(leadingCompactStatusBranch?.contains("WaveformView(") == true)
         XCTAssertTrue(trailingBranch?.contains("notchStableWaveform") == true)
         XCTAssertTrue(source.contains("private var notchStableWaveform"))
         XCTAssertTrue(source.contains("WaveformView(processingColor:"))
+    }
+
+    func testEveryWaveformModeUsesTheSharedFixedViewport() throws {
+        let source = try waveformViewSource()
+
+        XCTAssertTrue(source.contains(".frame(width: WaveformLayout.viewportWidth"))
+        XCTAssertTrue(source.contains("height: WaveformLayout.viewportHeight"))
+        XCTAssertTrue(source.contains(".fixedSize(horizontal: true, vertical: true)"))
+        XCTAssertFalse(
+            source
+                .components(separatedBy: ".fixedSize(horizontal: true, vertical: true)")
+                .dropFirst()
+                .first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .hasPrefix(".clipped()") == true,
+            "the shared viewport must reserve bounds without clipping full-height bars or their antialiasing"
+        )
+        XCTAssertTrue(source.contains("WaveformBarGeometry.frame("))
+        XCTAssertTrue(source.contains("roundedRect: frame"))
+    }
+
+    func testProcessingAndAudioModesShareOneStableBarRendererHierarchy() throws {
+        let source = try waveformViewSource()
+
+        XCTAssertTrue(source.contains("private func normalizedLevels(time:"))
+        XCTAssertEqual(
+            source.components(separatedBy: "WaveformBars(").count - 1,
+            1,
+            "recording, processing, and speaking must feed one permanently mounted bar renderer"
+        )
+        XCTAssertFalse(
+            source.contains("private struct AudioDrivenBars"),
+            "a mode-specific wrapper changes the SwiftUI hierarchy during recording-to-processing"
+        )
+    }
+
+    func testAudioDrivenWaveformSamplesItsTruthSourceInsideTheAnimationTimeline() throws {
+        let source = try waveformViewSource()
+        let timeline = try XCTUnwrap(
+            source
+                .components(separatedBy: "TimelineView(.animation(minimumInterval: 1.0 / 60.0))")
+                .dropFirst()
+                .first?
+                .components(separatedBy: ".frame(width: WaveformLayout.viewportWidth")
+                .first
+        )
+
+        XCTAssertTrue(
+            timeline.contains("rawLevel: currentLevel()"),
+            "the animation tick must resample time-derived playback amplitude"
+        )
+    }
+
+    func testWaveformBarsRenderAsOneAtomicCanvasInsteadOfIndependentSubviews() throws {
+        let source = try waveformViewSource()
+        let barsStart = try XCTUnwrap(source.range(of: "private struct WaveformBars"))
+        let bars = source[barsStart.lowerBound ..< source.endIndex]
+
+        XCTAssertTrue(
+            bars.contains("Canvas { context, _ in"),
+            "glass must composite the waveform as one atomic raster surface"
+        )
+        XCTAssertFalse(
+            bars.contains("ForEach("),
+            "individual bar views can be independently relaid out or clipped during the compact-state morph"
+        )
+    }
+
+    func testBarGeometryPinsEveryBarCenterAndSpreadsBottomsAtAmplitudePeak() {
+        let levels = [0.15, 0.35, 0.65, 1.0, 0.65, 0.35, 0.15]
+        let frames = levels.enumerated().map { index, level in
+            WaveformBarGeometry.frame(
+                index: index,
+                normalizedLevel: level,
+                barWidth: WaveformLayout.barWidth,
+                barSpacing: WaveformLayout.barSpacing,
+                maxHeight: WaveformLayout.viewportHeight,
+                minHeight: 3
+            )
+        }
+
+        XCTAssertTrue(frames.allSatisfy { abs($0.midY - 12) < 0.001 })
+        XCTAssertGreaterThan(
+            try XCTUnwrap(frames.map(\.maxY).max()) -
+                XCTUnwrap(frames.map(\.maxY).min()),
+            2,
+            "varying bars must spread below the centerline instead of sharing one bottom floor"
+        )
+        XCTAssertTrue(frames.allSatisfy { $0.minY >= 0 && $0.maxY <= 24 })
+    }
+
+    @MainActor
+    func testRenderedWaveformsPassTheSevenBarCenteredCensus() throws {
+        let recording = try render(
+            WaveformView(
+                color: Theme.recordingColor,
+                isListening: false,
+                currentLevel: { 1 }
+            )
+        )
+        let transcribing = try render(
+            WaveformView(processingColor: Theme.stateColor(for: .transcribing))
+        )
+        let speaking = try render(
+            WaveformView(color: Theme.speakingColor, currentLevel: { 1 })
+        )
+
+        let result = VoiceBarNotchCaptureAudit.waveformCensus(
+            recordingFrames: [recording],
+            transcribingFrames: [transcribing],
+            speakingFrames: [speaking]
+        )
+
+        XCTAssertTrue(result.passed, "\(result)")
+        XCTAssertEqual(result.minimumRecordingBarCount, 7)
+        XCTAssertEqual(result.minimumTranscribingBarCount, 7)
+        XCTAssertEqual(result.minimumSpeakingBarCount, 7)
+        XCTAssertGreaterThanOrEqual(result.recordingToSpeakingPeakRatio, 0.8)
+        XCTAssertLessThanOrEqual(result.recordingMaximumCenterDeviation, 2)
+        XCTAssertLessThanOrEqual(result.transcribingMaximumCenterDeviation, 2)
+        XCTAssertGreaterThanOrEqual(result.transcribingMaximumBottomSpread, 2)
+        XCTAssertLessThanOrEqual(result.maximumSlotOffsetDelta, 2)
     }
 
     private func m1GoldLevel(
@@ -230,5 +394,56 @@ final class WaveformViewTests: XCTestCase {
             .appendingPathComponent("VoiceBarUI")
             .appendingPathComponent("BarView.swift")
         return try String(contentsOf: barViewURL, encoding: .utf8)
+    }
+
+    private func waveformViewSource() throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: repoRoot
+                .appendingPathComponent("flow-bar")
+                .appendingPathComponent("Sources")
+                .appendingPathComponent("VoiceBarUI")
+                .appendingPathComponent("WaveformView.swift"),
+            encoding: .utf8
+        )
+    }
+
+    @MainActor
+    private func render(_ waveform: WaveformView) throws -> VoiceBarRGBImage {
+        let size = CGSize(
+            width: WaveformLayout.viewportWidth,
+            height: WaveformLayout.viewportHeight
+        )
+        let host = NSHostingView(
+            rootView: waveform
+                .frame(width: size.width, height: size.height)
+                .background(Color(red: 0.08, green: 0.08, blue: 0.10))
+        )
+        host.frame = CGRect(origin: .zero, size: size)
+        host.layerContentsRedrawPolicy = .onSetNeedsDisplay
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else {
+            throw NSError(domain: "WaveformViewTests", code: 1)
+        }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let pixels = (0 ..< bitmap.pixelsHigh).flatMap { y in
+            (0 ..< bitmap.pixelsWide).map { x -> VoiceBarRGB in
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                    return VoiceBarRGB(red: 0, green: 0, blue: 0)
+                }
+                return VoiceBarRGB(
+                    red: color.redComponent,
+                    green: color.greenComponent,
+                    blue: color.blueComponent
+                )
+            }
+        }
+        return VoiceBarRGBImage(width: bitmap.pixelsWide, height: bitmap.pixelsHigh, pixels: pixels)
     }
 }

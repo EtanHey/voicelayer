@@ -31,6 +31,14 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
     public let leadingSeamError: CGFloat?
     public let trailingSeamError: CGFloat?
 
+    /// Software pixels between the calibrated core edge and the physical
+    /// bezel edge are hidden by the camera glass. Any visible seam treatment
+    /// must start beyond this inset, into the wing.
+    public var visibleCoreOcclusionInset: CGFloat {
+        guard kind == .hardwareNotch else { return 0 }
+        return max(abs(leadingSeamError ?? 0), abs(trailingSeamError ?? 0))
+    }
+
     public static func resolve(
         metrics: VoiceBarNotchScreenMetrics,
         hardwareHorizontalCalibrationInset: CGFloat = VoiceBarNotchContract
@@ -94,7 +102,8 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
     ) -> VoiceBarNotchGeometry {
         VoiceBarNotchContract.geometry(
             for: visualState,
-            coreWidth: housingFrame.width
+            coreWidth: housingFrame.width,
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset
         )
     }
 }

@@ -987,7 +987,11 @@ public final class VoiceState {
                 if idleSource == "recording", mode == .error, errorMessage != nil {
                     return
                 }
-                enterIdleState(clearQueue: idleSource == "playback")
+                if idleSource == "playback", event["next_state"] as? String == "recording" {
+                    enterPlaybackToRecordingTransition()
+                } else {
+                    enterIdleState(clearQueue: idleSource == "playback")
+                }
             case "speaking":
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
                 pendingRecordingIdleAfterFinal = false
@@ -1041,7 +1045,9 @@ public final class VoiceState {
                 mode = .recording
                 recordingMode = event["mode"] as? String
                 silenceMode = event["silence_mode"] as? String
-                speechDetected = false
+                if startsNewRecording {
+                    speechDetected = false
+                }
                 refreshAudioLevel()
                 if startsNewRecording {
                     appendRecordingWaveformSample()
@@ -1086,7 +1092,12 @@ public final class VoiceState {
 
         case "speech":
             if let detected = event["detected"] as? Bool {
-                speechDetected = detected
+                // The accepted gold damping is a pre-speech treatment. Once
+                // speech begins, keep the recording on the full-gain path
+                // until the recording state itself resolves.
+                speechDetected = mode == .recording
+                    ? speechDetected || detected
+                    : detected
             }
 
         case "transcription":
@@ -1614,6 +1625,30 @@ public final class VoiceState {
         hotkeyPhase = .idle
         onModeChange?(.idle)
         startCollapseTimer()
+    }
+
+    /// Ends a converse prompt at the playback-completion edge. The teleprompter
+    /// material and its slots derive from the same collapsed presentation, so
+    /// both disappear in one render transaction before recording is announced.
+    private func enterPlaybackToRecordingTransition() {
+        collapseTimer?.cancel()
+        clearRetainedTeleprompter()
+        statusText = ""
+        wordBoundaries = []
+        mode = .idle
+        speechDetected = false
+        recordingMode = nil
+        silenceMode = nil
+        errorMessage = nil
+        transcriptionTimeoutTask?.cancel()
+        transcribingStartedAt = nil
+        transcribingStatusText = nil
+        resetAudioLevels()
+        queueDepth = 0
+        queueItems = []
+        hotkeyPhase = .idle
+        isCollapsed = true
+        onModeChange?(.idle)
     }
 
     private func clearRetainedTeleprompter() {

@@ -147,6 +147,10 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let bodyCompactBranch = source[compactUse.lowerBound ..< fixedCoreUse.lowerBound]
 
         XCTAssertFalse(bodyCompactBranch.contains(".id(presentation.visualState)"))
+        XCTAssertTrue(
+            bodyCompactBranch.contains(".transition(.identity)"),
+            "a collapsed shell must not leave an animated detached wing alive in the resized panel"
+        )
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
@@ -169,6 +173,34 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
         XCTAssertFalse(surface.contains(".allowsHitTesting(false)"))
+    }
+
+    func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
+        let source = try notchViewSource()
+        let bodyStart = try XCTUnwrap(source.range(of: "public var body: some View"))
+        let layoutStart = try XCTUnwrap(
+            source.range(
+                of: "private var layout",
+                range: bodyStart.upperBound ..< source.endIndex
+            )
+        )
+        let body = source[bodyStart.lowerBound ..< layoutStart.lowerBound]
+        let unitStart = try XCTUnwrap(source.range(of: "private var teleprompterSurfaceUnit"))
+        let slotsStart = try XCTUnwrap(
+            source.range(
+                of: "private var teleprompterSlots: some View",
+                range: unitStart.upperBound ..< source.endIndex
+            )
+        )
+        let unit = source[unitStart.lowerBound ..< slotsStart.lowerBound]
+
+        XCTAssertTrue(body.contains("teleprompterSurfaceUnit"))
+        XCTAssertFalse(body.contains("teleprompterSurface\n"))
+        XCTAssertFalse(body.contains("teleprompterSlots\n"))
+        XCTAssertTrue(unit.contains("teleprompterSurface"))
+        XCTAssertTrue(unit.contains("teleprompterSlots"))
+        XCTAssertTrue(body.contains(".transition(.identity)"))
+        XCTAssertFalse(body.contains("teleprompterSurfaceUnit\n                    .transition(surfaceTransition("))
     }
 
     private func notchViewSource() throws -> String {

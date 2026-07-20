@@ -83,6 +83,8 @@ export interface PlaybackMetadata {
   priority?: PlaybackPriority;
   durationMs?: number;
   collapseKey?: string;
+  /** State that immediately follows a successfully completed playback item. */
+  nextState?: "recording";
   clipMarker?: {
     id: string;
     label: string;

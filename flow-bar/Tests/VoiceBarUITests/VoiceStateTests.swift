@@ -327,6 +327,26 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertGreaterThan(loudSpeech, quietSpeech)
     }
 
+    func testRecordingSpeechPhaseStaysFullGainAfterVoiceActivityDrops() {
+        let state = VoiceState()
+        state.handleEvent(["type": "state", "state": "recording"])
+
+        state.handleEvent(["type": "speech", "detected": true])
+        XCTAssertTrue(state.speechDetected)
+
+        state.handleEvent(["type": "state", "state": "recording"])
+        XCTAssertTrue(
+            state.speechDetected,
+            "a repeated recording snapshot must not restart the pre-speech damping phase"
+        )
+
+        state.handleEvent(["type": "speech", "detected": false])
+        XCTAssertTrue(
+            state.speechDetected,
+            "listening damping is pre-speech only and must not re-arm during the recording"
+        )
+    }
+
     func testRecordingWaveformUsesAdaptedLocalMeterWhenItIsStronger() {
         let state = VoiceState()
         state.handleEvent([
@@ -1271,6 +1291,27 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.teleprompterText, "Original Etan spelling")
         XCTAssertEqual(state.teleprompterWordBoundaries.map(\.text), ["Eh tahn", "spelling"])
         XCTAssertTrue(state.isTeleprompterReadback)
+    }
+
+    func testConversePlaybackCompletionRemovesTeleprompterAtTheCollapseEdge() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Question before recording",
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+            "next_state": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertTrue(state.isCollapsed)
     }
 
     func testPlaybackIdlePreservesTemporaryTeleprompterVisibility() {
