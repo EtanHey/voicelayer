@@ -22,17 +22,18 @@ if [[ $# -eq 2 ]]; then
   receipt_dir=$2
   mkdir -p "$receipt_dir"
 else
-  receipt_dir=$(mktemp -d "${TMPDIR:-/tmp}/notch-dismissal-receipts.XXXXXX")
+  receipt_dir=$(mktemp -d "${TMPDIR:-/tmp}/notch-glass-receipts.XXXXXX")
 fi
+mkdir -p "$receipt_dir/busy" "$receipt_dir/black" "$receipt_dir/bright"
 
-runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/notch-dismissal-runtime.XXXXXX")
+runtime_dir=$(mktemp -d "${TMPDIR:-/tmp}/notch-glass-runtime.XXXXXX")
 socket_path="$runtime_dir/voicelayer.sock"
 mcp_socket_path="$runtime_dir/voicelayer-mcp.sock"
 mcp_pid_path="$runtime_dir/voicelayer-mcp.pid"
 recording_path="$runtime_dir/retained.wav"
 disable_path="$runtime_dir/disabled"
 render_scale_receipt="$receipt_dir/render-scale.json"
-defaults_suite="com.voicelayer.qa.notch-dismissal.$$.${RANDOM}"
+defaults_suite="com.voicelayer.qa.notch-glass.$$.${RANDOM}"
 app_log="$receipt_dir/voicebar.log"
 fixture_log="$receipt_dir/fixture.log"
 app_pid=''
@@ -54,21 +55,11 @@ trap cleanup EXIT INT TERM
 
 swift build -c release --package-path "$repo_root/flow-bar" \
   --product NotchGlassBackdropFixture
+swift build -c release --package-path "$repo_root/flow-bar" \
+  --product NotchCaptureContrastVerifier
 bin_path=$(swift build -c release --package-path "$repo_root/flow-bar" --show-bin-path)
 fixture_binary="$bin_path/NotchGlassBackdropFixture"
-fixture_receipt="$runtime_dir/fixture-busy.json"
-"$fixture_binary" \
-  --mode busy \
-  --ready-receipt "$fixture_receipt" >"$fixture_log" 2>&1 &
-fixture_pid=$!
-for _ in {1..100}; do
-  [[ -f "$fixture_receipt" ]] && break
-  sleep 0.025
-done
-if [[ ! -f "$fixture_receipt" ]]; then
-  printf 'error: busy fixture did not become ready; see %s\n' "$fixture_log" >&2
-  exit 1
-fi
+verifier="$bin_path/NotchCaptureContrastVerifier"
 
 env \
   QA_VOICE_SOCKET_PATH="$socket_path" \
@@ -97,48 +88,63 @@ if [[ ! -S "$socket_path" || ! -f "$render_scale_receipt" ]]; then
   exit 1
 fi
 
-speaking_event=$(jq -cn '{type:"state",state:"speaking",text:"Atomic material and text must leave together"}')
-idle_event=$(jq -cn '{type:"state",state:"idle",source:"playback",next_state:"recording"}')
-printf '%s\n' "$speaking_event" | nc -U "$socket_path"
-sleep 0.35
-
 desktop_bounds=$(osascript -e 'tell application "Finder" to get bounds of window of desktop')
 screen_height=$(printf '%s\n' "$desktop_bounds" | awk -F ', *' '{print $4}')
 if [[ ! "$screen_height" =~ ^[0-9]+$ ]]; then
   printf 'error: could not resolve main-screen height from: %s\n' "$desktop_bounds" >&2
   exit 1
 fi
+capture_x=0
+capture_y=$((screen_height - 360))
+capture_width=700
+capture_height=360
 
-# Isolated capture placement pins the 472x245pt teleprompter panel at (24,24).
-# Capture only that surface and a narrow same-screen backdrop reference.
-capture_x=10
-capture_y=$((screen_height - 24 - 245 - 18))
-capture_width=520
-capture_height=287
+for fixture_mode in busy black bright; do
+  fixture_receipt="$runtime_dir/fixture-$fixture_mode.json"
+  "$fixture_binary" \
+    --mode "$fixture_mode" \
+    --ready-receipt "$fixture_receipt" >>"$fixture_log" 2>&1 &
+  fixture_pid=$!
+  for _ in {1..100}; do
+    [[ -f "$fixture_receipt" ]] && break
+    sleep 0.025
+  done
+  if [[ ! -f "$fixture_receipt" ]]; then
+    printf 'error: %s fixture did not become ready\n' "$fixture_mode" >&2
+    exit 1
+  fi
 
-(
+  if [[ "$fixture_mode" == busy ]]; then
+    state_event=$(jq -cn '{type:"state",state:"speaking",text:"Continuous liquid glass must frost every busy terminal row so this teleprompter remains calmly readable."}')
+  else
+    state_event=$(jq -cn '{type:"state",state:"recording"}')
+  fi
+  printf '%s\n' "$state_event" | nc -U "$socket_path"
   sleep 0.55
-  printf '%s\n' "$idle_event" | nc -U "$socket_path"
-) &
-event_pid=$!
 
-for frame_index in {1..18}; do
-  frame_path=$(printf '%s/frame-%03d.png' "$receipt_dir" "$frame_index")
-  screencapture -x -R"$capture_x,$capture_y,$capture_width,$capture_height" "$frame_path"
-  sleep 0.025
+  for frame_index in 1 2 3; do
+    frame_path=$(printf '%s/%s/frame-%03d.png' "$receipt_dir" "$fixture_mode" "$frame_index")
+    screencapture -x -R"$capture_x,$capture_y,$capture_width,$capture_height" "$frame_path"
+    sleep 0.10
+  done
+
+  kill "$fixture_pid" 2>/dev/null || true
+  wait "$fixture_pid" 2>/dev/null || true
+  fixture_pid=''
 done
-wait "$event_pid"
-
-verifier="$repo_root/flow-bar/.build/release/NotchCaptureContrastVerifier"
-if [[ ! -x "$verifier" ]]; then
-  swift build -c release --package-path "$repo_root/flow-bar" --product NotchCaptureContrastVerifier
-fi
 
 "$verifier" \
-  --teleprompter-dismissal-only \
-  --teleprompter-dismissal-frames "$receipt_dir" \
-  --teleprompter-dismissal-text-region 0.12,0.22,0.42,0.12 \
-  --teleprompter-dismissal-interior-region 0.05,0.50,0.45,0.30 \
+  --glass-readability-only \
+  --glass-teleprompter-frames "$receipt_dir/busy" \
+  --glass-black-frames "$receipt_dir/black" \
+  --glass-bright-frames "$receipt_dir/bright" \
+  --glass-teleprompter-interior-region 0.10,0.70,0.55,0.10 \
+  --glass-teleprompter-text-region 0.10,0.38,0.58,0.24 \
+  --glass-teleprompter-background-region 0.10,0.65,0.55,0.06 \
+  --glass-wing-foreground-region 0.455,0.81,0.035,0.09 \
+  --glass-wing-background-region 0.520,0.86,0.020,0.04 \
+  --glass-reference-foreground-region 0.835,0.80,0.065,0.12 \
+  --glass-reference-background-region 0.815,0.78,0.105,0.16 \
   | tee "$receipt_dir/metrics.txt"
 
-printf 'TELEPROMPTER_DISMISSAL_REAL_CAPTURE=%s\n' "$receipt_dir"
+printf 'NOTCH_GLASS_READABILITY_REAL_CAPTURE=%s\n' "$receipt_dir"

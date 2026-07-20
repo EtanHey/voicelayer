@@ -138,13 +138,6 @@ public struct VoiceBarNotchWaveformCensusAuditResult: Equatable {
     public let passed: Bool
 }
 
-public struct VoiceBarNotchSeamFadeAuditResult: Equatable {
-    public let brightnessRange: Double
-    public let progressingColumnCount: Int
-    public let progressionCorrelation: Double
-    public let passed: Bool
-}
-
 public struct VoiceBarNotchTeleprompterDismissalFrameSample: Equatable {
     public let textOpacity: Double
     public let materialOpacity: Double?
@@ -168,6 +161,80 @@ public struct VoiceBarNotchTeleprompterDismissalAuditResult: Equatable {
     public let passed: Bool
 }
 
+public struct VoiceBarNotchTeleprompterReadabilitySample: Equatable {
+    public let interiorBrightness: [Double]
+    public let textForegroundPixels: [VoiceBarRGB]
+    public let textBackgroundPixels: [VoiceBarRGB]
+
+    public init(
+        interiorBrightness: [Double],
+        textForegroundPixels: [VoiceBarRGB],
+        textBackgroundPixels: [VoiceBarRGB]
+    ) {
+        self.interiorBrightness = interiorBrightness
+        self.textForegroundPixels = textForegroundPixels
+        self.textBackgroundPixels = textBackgroundPixels
+    }
+}
+
+public struct VoiceBarNotchWingReadabilitySample: Equatable {
+    public let wingForegroundPixels: [VoiceBarRGB]
+    public let wingBackgroundPixels: [VoiceBarRGB]
+    public let referenceForegroundPixels: [VoiceBarRGB]
+    public let referenceBackgroundPixels: [VoiceBarRGB]
+
+    public init(
+        wingForegroundPixels: [VoiceBarRGB],
+        wingBackgroundPixels: [VoiceBarRGB],
+        referenceForegroundPixels: [VoiceBarRGB],
+        referenceBackgroundPixels: [VoiceBarRGB]
+    ) {
+        self.wingForegroundPixels = wingForegroundPixels
+        self.wingBackgroundPixels = wingBackgroundPixels
+        self.referenceForegroundPixels = referenceForegroundPixels
+        self.referenceBackgroundPixels = referenceBackgroundPixels
+    }
+}
+
+public struct VoiceBarNotchTeleprompterReadabilityMetric: Equatable {
+    public let interiorPixelCount: Int
+    public let textPixelCount: Int
+    public let interiorStandardDeviation: Double
+    public let textContrastRatio: Double
+    public let passed: Bool
+}
+
+public struct VoiceBarNotchWingReadabilityMetric: Equatable {
+    public let wingPixelCount: Int
+    public let nativeReferencePixelCount: Int
+    public let wingContrastRatio: Double
+    public let nativeReferenceContrastRatio: Double
+    public let passed: Bool
+}
+
+public struct VoiceBarNotchGlassReadabilityAuditResult: Equatable {
+    public let teleprompterMetrics: [VoiceBarNotchTeleprompterReadabilityMetric]
+    public let blackWingMetrics: [VoiceBarNotchWingReadabilityMetric]
+    public let brightWingMetrics: [VoiceBarNotchWingReadabilityMetric]
+    public let maximumInteriorStandardDeviation: Double
+    public let minimumTextContrastRatio: Double
+    public let minimumWingContrastRatio: Double
+    public let minimumNativeReferenceContrastRatio: Double
+    public let passed: Bool
+
+    public var teleprompterFrameCount: Int {
+        teleprompterMetrics.count
+    }
+
+    public var blackWingFrameCount: Int {
+        blackWingMetrics.count
+    }
+
+    public var brightWingFrameCount: Int {
+        brightWingMetrics.count
+    }
+}
+
 public enum VoiceBarNotchCaptureAudit {
     public static let referenceSize = CGSize(width: 800, height: 100)
     public static let birthmarkBrightnessOffset = 18.0
@@ -184,13 +251,14 @@ public enum VoiceBarNotchCaptureAudit {
     public static let maximumWaveformCenterDeviation = 2.0
     public static let maximumWaveformSlotOffsetDelta = 2.0
     public static let maximumCompactPaddingDelta = 2.0
-    public static let minimumSeamFadeBrightnessRange = 6.0
-    public static let minimumSeamFadeProgressingColumns = 4
-    public static let minimumSeamFadeCorrelation = 0.55
-    public static let maximumTeleprompterInteriorStandardDeviation = 15.0
+    public static let maximumTeleprompterInteriorStandardDeviation = 10.0
     public static let minimumOpaqueTeleprompterTextOpacity = 0.9
     public static let minimumVisibleTeleprompterTextOpacity = 0.5
     public static let maximumDismissedTeleprompterMaterialOpacity = 0.25
+    public static let maximumGlassInteriorStandardDeviation = 10.0
+    public static let minimumGlassSettledFrameCount = 3
+    public static let minimumGlassInteriorPixelCount = 1000
+    public static let minimumGlassForegroundPixelCount = 8
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -320,6 +388,89 @@ public enum VoiceBarNotchCaptureAudit {
                 .map(\.interiorStandardDeviation)
                 .max() ?? 0,
             passed: !frameSamples.isEmpty && violatingFrameIndices.isEmpty
+        )
+    }
+
+    public static func glassTeleprompterFrame(
+        _ sample: VoiceBarNotchTeleprompterReadabilitySample
+    ) -> VoiceBarNotchTeleprompterReadabilityMetric {
+        let interiorStandardDeviation = sample.interiorBrightness.isEmpty
+            ? .infinity
+            : standardDeviation(sample.interiorBrightness)
+        let textContrastRatio = strongestCoreContrast(
+            foregroundPixels: sample.textForegroundPixels,
+            backgroundPixels: sample.textBackgroundPixels
+        )
+        return VoiceBarNotchTeleprompterReadabilityMetric(
+            interiorPixelCount: sample.interiorBrightness.count,
+            textPixelCount: sample.textForegroundPixels.count,
+            interiorStandardDeviation: interiorStandardDeviation,
+            textContrastRatio: textContrastRatio,
+            passed: sample.interiorBrightness.count >= minimumGlassInteriorPixelCount &&
+                sample.textForegroundPixels.count >= minimumGlassForegroundPixelCount &&
+                !sample.textBackgroundPixels.isEmpty &&
+                interiorStandardDeviation <= maximumGlassInteriorStandardDeviation &&
+                textContrastRatio >= VoiceBarContrast.minimumTextRatio
+        )
+    }
+
+    public static func glassWingFrame(
+        _ sample: VoiceBarNotchWingReadabilitySample
+    ) -> VoiceBarNotchWingReadabilityMetric {
+        let wingContrastRatio = strongestCoreContrast(
+            foregroundPixels: sample.wingForegroundPixels,
+            backgroundPixels: sample.wingBackgroundPixels
+        )
+        let nativeReferenceContrastRatio = strongestCoreContrast(
+            foregroundPixels: sample.referenceForegroundPixels,
+            backgroundPixels: sample.referenceBackgroundPixels
+        )
+        return VoiceBarNotchWingReadabilityMetric(
+            wingPixelCount: sample.wingForegroundPixels.count,
+            nativeReferencePixelCount: sample.referenceForegroundPixels.count,
+            wingContrastRatio: wingContrastRatio,
+            nativeReferenceContrastRatio: nativeReferenceContrastRatio,
+            passed: sample.wingForegroundPixels.count >= minimumGlassForegroundPixelCount &&
+                !sample.wingBackgroundPixels.isEmpty &&
+                sample.referenceForegroundPixels.count >= minimumGlassForegroundPixelCount &&
+                !sample.referenceBackgroundPixels.isEmpty &&
+                wingContrastRatio >= VoiceBarContrast.minimumControlRatio &&
+                wingContrastRatio >= nativeReferenceContrastRatio
+        )
+    }
+
+    public static func glassReadability(
+        teleprompterFrames: [VoiceBarNotchTeleprompterReadabilitySample],
+        blackWingFrames: [VoiceBarNotchWingReadabilitySample],
+        brightWingFrames: [VoiceBarNotchWingReadabilitySample]
+    ) -> VoiceBarNotchGlassReadabilityAuditResult {
+        let teleprompterMetrics = teleprompterFrames.map(glassTeleprompterFrame)
+        let blackWingMetrics = blackWingFrames.map(glassWingFrame)
+        let brightWingMetrics = brightWingFrames.map(glassWingFrame)
+        let wingMetrics = blackWingMetrics + brightWingMetrics
+        let enoughFrames = teleprompterMetrics.count >= minimumGlassSettledFrameCount &&
+            blackWingMetrics.count >= minimumGlassSettledFrameCount &&
+            brightWingMetrics.count >= minimumGlassSettledFrameCount
+        return VoiceBarNotchGlassReadabilityAuditResult(
+            teleprompterMetrics: teleprompterMetrics,
+            blackWingMetrics: blackWingMetrics,
+            brightWingMetrics: brightWingMetrics,
+            maximumInteriorStandardDeviation: teleprompterMetrics
+                .map(\.interiorStandardDeviation)
+                .max() ?? .infinity,
+            minimumTextContrastRatio: teleprompterMetrics
+                .map(\.textContrastRatio)
+                .min() ?? 0,
+            minimumWingContrastRatio: wingMetrics
+                .map(\.wingContrastRatio)
+                .min() ?? 0,
+            minimumNativeReferenceContrastRatio: wingMetrics
+                .map(\.nativeReferenceContrastRatio)
+                .min() ?? 0,
+            passed: enoughFrames &&
+                teleprompterMetrics.allSatisfy(\.passed) &&
+                blackWingMetrics.allSatisfy(\.passed) &&
+                brightWingMetrics.allSatisfy(\.passed)
         )
     }
 
@@ -495,37 +646,6 @@ public enum VoiceBarNotchCaptureAudit {
         )
     }
 
-    public static func seamFade(
-        in image: VoiceBarLumaImage,
-        blackEdge: VoiceBarNotchSide
-    ) -> VoiceBarNotchSeamFadeAuditResult {
-        var columns = (0 ..< image.width).map { x -> Double in
-            let values = (0 ..< image.height).map { y in
-                image.brightness[y * image.width + x]
-            }
-            return mean(values)
-        }
-        if blackEdge == .trailing {
-            columns.reverse()
-        }
-        let brightnessRange = (columns.max() ?? 0) - (columns.min() ?? 0)
-        let progressingColumns = zip(columns, columns.dropFirst()).filter {
-            $1 - $0 >= 0.5
-        }.count
-        let correlation = pearsonCorrelation(
-            Array(columns.indices).map(Double.init),
-            columns
-        )
-        return VoiceBarNotchSeamFadeAuditResult(
-            brightnessRange: brightnessRange,
-            progressingColumnCount: progressingColumns,
-            progressionCorrelation: correlation,
-            passed: brightnessRange >= minimumSeamFadeBrightnessRange &&
-                progressingColumns >= minimumSeamFadeProgressingColumns &&
-                correlation >= minimumSeamFadeCorrelation
-        )
-    }
-
     private static func birthmarkRegions(
         for side: VoiceBarNotchSide
     ) -> (audit: CGRect, baseline: CGRect, brightInterior: CGRect) {
@@ -590,6 +710,27 @@ public enum VoiceBarNotchCaptureAudit {
             green: median(values.map(\.green)),
             blue: median(values.map(\.blue))
         )
+    }
+
+    private static func strongestCoreContrast(
+        foregroundPixels: [VoiceBarRGB],
+        backgroundPixels: [VoiceBarRGB]
+    ) -> Double {
+        guard foregroundPixels.count >= minimumGlassForegroundPixelCount,
+              !backgroundPixels.isEmpty
+        else { return 0 }
+        let background = medianColor(backgroundPixels)
+        let ratios = foregroundPixels.map {
+            VoiceBarContrast.ratio(foreground: $0, background: background)
+        }.sorted(by: >)
+        let sampleCount = min(
+            ratios.count,
+            max(
+                minimumGlassForegroundPixelCount,
+                Int(ceil(Double(ratios.count) * 0.08))
+            )
+        )
+        return median(Array(ratios.prefix(sampleCount)))
     }
 
     private static func percentile(_ values: [Double], percentile: Double) -> Double {
@@ -726,19 +867,6 @@ public enum VoiceBarNotchCaptureAudit {
                 zip(referenceOffsets, offsets).map { abs($0 - $1) }.max() ?? .infinity
             )
         }
-    }
-
-    private static func pearsonCorrelation(_ lhs: [Double], _ rhs: [Double]) -> Double {
-        guard lhs.count == rhs.count, lhs.count >= 2 else { return 0 }
-        let lhsMean = mean(lhs)
-        let rhsMean = mean(rhs)
-        let numerator = zip(lhs, rhs).reduce(0) {
-            $0 + ($1.0 - lhsMean) * ($1.1 - rhsMean)
-        }
-        let lhsScale = sqrt(lhs.reduce(0) { $0 + pow($1 - lhsMean, 2) })
-        let rhsScale = sqrt(rhs.reduce(0) { $0 + pow($1 - rhsMean, 2) })
-        guard lhsScale > 0, rhsScale > 0 else { return 0 }
-        return numerator / (lhsScale * rhsScale)
     }
 
     private static func largestConnectedComponent(

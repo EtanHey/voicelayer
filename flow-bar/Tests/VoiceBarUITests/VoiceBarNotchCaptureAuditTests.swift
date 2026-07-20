@@ -186,16 +186,21 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(source.contains("--waveform-recording-frames"))
         XCTAssertTrue(source.contains("--waveform-transcribing-frames"))
         XCTAssertTrue(source.contains("--waveform-speaking-frames"))
-        XCTAssertTrue(source.contains("--fade-leading-frame"))
-        XCTAssertTrue(source.contains("--fade-trailing-frame"))
         XCTAssertTrue(source.contains("WAVEFORM-CENSUS"))
-        XCTAssertTrue(source.contains("SEAM-FADE"))
         XCTAssertTrue(source.contains("GLYPH-CONTRAST-PARITY"))
         XCTAssertTrue(source.contains("COMPACT-PADDING"))
         XCTAssertTrue(source.contains("layerScales"))
         XCTAssertTrue(source.contains("--teleprompter-dismissal-frames"))
         XCTAssertTrue(source.contains("TELEPROMPTER-DISMISSAL"))
         XCTAssertTrue(source.contains("VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples:"))
+        XCTAssertTrue(source.contains("--glass-readability-only"))
+        XCTAssertTrue(source.contains("--glass-teleprompter-frames"))
+        XCTAssertTrue(source.contains("--glass-black-frames"))
+        XCTAssertTrue(source.contains("--glass-bright-frames"))
+        XCTAssertTrue(source.contains("GLASS-READABILITY"))
+        XCTAssertFalse(source.contains("--fade-leading-frame"))
+        XCTAssertFalse(source.contains("--fade-trailing-frame"))
+        XCTAssertFalse(source.contains("SEAM-FADE"))
     }
 
     func testRealDismissalCaptureRunnerFeedsIsolatedAppFramesIntoThePixelAudit() throws {
@@ -211,6 +216,15 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         )
 
         XCTAssertTrue(source.contains("VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE=1"))
+        XCTAssertTrue(source.contains("VOICEBAR_USER_DEFAULTS_SUITE"))
+        XCTAssertTrue(source.contains("QA_VOICEBAR_RENDER_SCALE_RECEIPT_PATH"))
+        XCTAssertTrue(source.contains("VOICEBAR_QA_SKIP_LS_REGISTER=1"))
+        XCTAssertTrue(source.contains("VOICEBAR_QA_SKIP_PERMISSION_PROMPTS=1"))
+        XCTAssertTrue(source.contains("VOICEBAR_QA_SKIP_HOTKEY=1"))
+        XCTAssertTrue(source.contains("NotchGlassBackdropFixture"))
+        XCTAssertTrue(source.contains("--mode busy"))
+        XCTAssertTrue(source.contains("fixture_pid"))
+        XCTAssertTrue(source.contains("kill \"$fixture_pid\""))
         XCTAssertTrue(source.contains("screencapture -x"))
         XCTAssertTrue(source.contains("--teleprompter-dismissal-frames \"$receipt_dir\""))
         XCTAssertTrue(source.contains("trap cleanup EXIT INT TERM"))
@@ -227,7 +241,7 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(source.contains("maximumTeleprompterInteriorStandardDeviation = 15.0"))
+        XCTAssertTrue(source.contains("maximumTeleprompterInteriorStandardDeviation = 10.0"))
         XCTAssertTrue(source.contains("teleprompterDismissal("))
         XCTAssertTrue(source.contains("frameSamples: [VoiceBarNotchTeleprompterDismissalFrameSample]"))
         XCTAssertTrue(source.contains("minimumOpaqueTeleprompterTextOpacity"))
@@ -266,7 +280,7 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
 
         XCTAssertTrue(result.passed)
         XCTAssertTrue(result.violatingFrameIndices.isEmpty)
-        XCTAssertLessThan(result.maximumOpaqueTextInteriorStandardDeviation, 15)
+        XCTAssertLessThan(result.maximumOpaqueTextInteriorStandardDeviation, 10)
     }
 
     func testTeleprompterDismissalRejectsVisibleTextAfterRealFrameMaterialDeltaIsGone() {
@@ -325,6 +339,113 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
 
         XCTAssertFalse(result.passed)
         XCTAssertEqual(result.violatingFrameIndices, [0])
+    }
+
+    func testGlassTeleprompterFrameLocksTenPointInteriorDeviationAndTextContrast() {
+        let atLimit = VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: Array(repeating: 0.0, count: 500) +
+                Array(repeating: 20.0, count: 500),
+            textForegroundPixels: Array(repeating: gray(0.50), count: 8),
+            textBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+        let aboveLimit = VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: Array(repeating: 0.0, count: 500) +
+                Array(repeating: 20.02, count: 500),
+            textForegroundPixels: Array(repeating: gray(0.50), count: 8),
+            textBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+        let weakText = VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: Array(repeating: 10.0, count: 1000),
+            textForegroundPixels: Array(repeating: gray(0.40), count: 8),
+            textBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+
+        let atLimitMetric = VoiceBarNotchCaptureAudit.glassTeleprompterFrame(atLimit)
+        let aboveLimitMetric = VoiceBarNotchCaptureAudit.glassTeleprompterFrame(aboveLimit)
+        let weakTextMetric = VoiceBarNotchCaptureAudit.glassTeleprompterFrame(weakText)
+
+        XCTAssertTrue(atLimitMetric.passed)
+        XCTAssertEqual(atLimitMetric.interiorStandardDeviation, 10, accuracy: 0.001)
+        XCTAssertFalse(aboveLimitMetric.passed)
+        XCTAssertEqual(aboveLimitMetric.interiorStandardDeviation, 10.01, accuracy: 0.001)
+        XCTAssertFalse(weakTextMetric.passed)
+        XCTAssertLessThan(weakTextMetric.textContrastRatio, VoiceBarContrast.minimumTextRatio)
+    }
+
+    func testGlassWingFrameRequiresControlFloorAndSameFrameNativeParity() {
+        let parityPass = VoiceBarNotchWingReadabilitySample(
+            wingForegroundPixels: Array(repeating: gray(1), count: 8),
+            wingBackgroundPixels: Array(repeating: gray(0), count: 40),
+            referenceForegroundPixels: Array(repeating: gray(0.90), count: 8),
+            referenceBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+        let parityFail = VoiceBarNotchWingReadabilitySample(
+            wingForegroundPixels: Array(repeating: gray(0.70), count: 8),
+            wingBackgroundPixels: Array(repeating: gray(0), count: 40),
+            referenceForegroundPixels: Array(repeating: gray(1), count: 8),
+            referenceBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+        let floorFail = VoiceBarNotchWingReadabilitySample(
+            wingForegroundPixels: Array(repeating: gray(0.30), count: 8),
+            wingBackgroundPixels: Array(repeating: gray(0), count: 40),
+            referenceForegroundPixels: Array(repeating: gray(0.20), count: 8),
+            referenceBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+
+        let passMetric = VoiceBarNotchCaptureAudit.glassWingFrame(parityPass)
+        let parityFailMetric = VoiceBarNotchCaptureAudit.glassWingFrame(parityFail)
+        let floorFailMetric = VoiceBarNotchCaptureAudit.glassWingFrame(floorFail)
+
+        XCTAssertTrue(passMetric.passed)
+        XCTAssertFalse(parityFailMetric.passed)
+        XCTAssertGreaterThan(parityFailMetric.wingContrastRatio, VoiceBarContrast.minimumControlRatio)
+        XCTAssertLessThan(
+            parityFailMetric.wingContrastRatio,
+            parityFailMetric.nativeReferenceContrastRatio
+        )
+        XCTAssertFalse(floorFailMetric.passed)
+        XCTAssertLessThan(floorFailMetric.wingContrastRatio, VoiceBarContrast.minimumControlRatio)
+    }
+
+    func testGlassReadabilityRequiresThreeFailClosedFramesPerBackdrop() {
+        let teleprompter = VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: Array(repeating: 10.0, count: 1000),
+            textForegroundPixels: Array(repeating: gray(1), count: 8),
+            textBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+        let wing = VoiceBarNotchWingReadabilitySample(
+            wingForegroundPixels: Array(repeating: gray(1), count: 8),
+            wingBackgroundPixels: Array(repeating: gray(0), count: 40),
+            referenceForegroundPixels: Array(repeating: gray(0.90), count: 8),
+            referenceBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+
+        let enough = VoiceBarNotchCaptureAudit.glassReadability(
+            teleprompterFrames: Array(repeating: teleprompter, count: 3),
+            blackWingFrames: Array(repeating: wing, count: 3),
+            brightWingFrames: Array(repeating: wing, count: 3)
+        )
+        let missingBright = VoiceBarNotchCaptureAudit.glassReadability(
+            teleprompterFrames: Array(repeating: teleprompter, count: 3),
+            blackWingFrames: Array(repeating: wing, count: 3),
+            brightWingFrames: []
+        )
+        let emptyROI = VoiceBarNotchCaptureAudit.glassReadability(
+            teleprompterFrames: [VoiceBarNotchTeleprompterReadabilitySample(
+                interiorBrightness: [],
+                textForegroundPixels: [],
+                textBackgroundPixels: []
+            )],
+            blackWingFrames: Array(repeating: wing, count: 3),
+            brightWingFrames: Array(repeating: wing, count: 3)
+        )
+
+        XCTAssertTrue(enough.passed)
+        XCTAssertEqual(enough.teleprompterFrameCount, 3)
+        XCTAssertEqual(enough.blackWingFrameCount, 3)
+        XCTAssertEqual(enough.brightWingFrameCount, 3)
+        XCTAssertFalse(missingBright.passed)
+        XCTAssertFalse(emptyROI.passed)
     }
 
     func testWaveformCensusRejectsMissingSlotsAndOffCenterRecordingGrowth() {
@@ -551,28 +672,6 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertLessThan(lightFail.wingContrastRatio, lightFail.referenceContrastRatio)
     }
 
-    func testSeamFadeRequiresVisibleGradualBlackToGlassProgression() {
-        let gradual = VoiceBarLumaImage(
-            width: 16,
-            height: 4,
-            brightness: (0 ..< 4).flatMap { _ in (0 ..< 16).map { Double($0) * 2 } }
-        )
-        let abrupt = VoiceBarLumaImage(
-            width: 16,
-            height: 4,
-            brightness: (0 ..< 4).flatMap { _ in
-                (0 ..< 16).map { $0 < 15 ? 0 : 30 }
-            }
-        )
-
-        XCTAssertTrue(
-            VoiceBarNotchCaptureAudit.seamFade(in: gradual, blackEdge: .leading).passed
-        )
-        XCTAssertFalse(
-            VoiceBarNotchCaptureAudit.seamFade(in: abrupt, blackEdge: .leading).passed
-        )
-    }
-
     private func fill(
         _ brightness: inout [Double],
         width: Int,
@@ -659,5 +758,9 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
                 )
             }
         }
+    }
+
+    private func gray(_ value: Double) -> VoiceBarRGB {
+        VoiceBarRGB(red: value, green: value, blue: value)
     }
 }

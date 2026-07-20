@@ -462,6 +462,179 @@ private func teleprompterDismissalAudit(
     return VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: frameSamples)
 }
 
+private func contrastingPixels(
+    in image: VoiceBarRGBImage,
+    foregroundRect: CGRect,
+    backgroundRect: CGRect
+) -> (foreground: [VoiceBarRGB], background: [VoiceBarRGB]) {
+    let background = pixels(in: image, rect: backgroundRect)
+    let backgroundColor = medianColor(background)
+    let backgroundLuminance = VoiceBarContrast.relativeLuminance(backgroundColor)
+    let foreground = pixels(in: image, rect: foregroundRect).filter {
+        abs(VoiceBarContrast.relativeLuminance($0) - backgroundLuminance) >=
+            VoiceBarContrast.minimumForegroundLuminanceDelta
+    }
+    return (foreground, background)
+}
+
+private func glassReadabilityAudit(
+    teleprompterFramesDirectory: String,
+    blackFramesDirectory: String,
+    brightFramesDirectory: String,
+    teleprompterInteriorRegionValue: String,
+    teleprompterTextRegionValue: String,
+    teleprompterBackgroundRegionValue: String,
+    wingForegroundRegionValue: String,
+    wingBackgroundRegionValue: String,
+    referenceForegroundRegionValue: String,
+    referenceBackgroundRegionValue: String
+) throws -> VoiceBarNotchGlassReadabilityAuditResult {
+    let teleprompterInteriorRect = try normalizedRect(
+        argument: teleprompterInteriorRegionValue,
+        name: "--glass-teleprompter-interior-region"
+    )
+    let teleprompterTextRect = try normalizedRect(
+        argument: teleprompterTextRegionValue,
+        name: "--glass-teleprompter-text-region"
+    )
+    let teleprompterBackgroundRect = try normalizedRect(
+        argument: teleprompterBackgroundRegionValue,
+        name: "--glass-teleprompter-background-region"
+    )
+    let wingForegroundRect = try normalizedRect(
+        argument: wingForegroundRegionValue,
+        name: "--glass-wing-foreground-region"
+    )
+    let wingBackgroundRect = try normalizedRect(
+        argument: wingBackgroundRegionValue,
+        name: "--glass-wing-background-region"
+    )
+    let referenceForegroundRect = try normalizedRect(
+        argument: referenceForegroundRegionValue,
+        name: "--glass-reference-foreground-region"
+    )
+    let referenceBackgroundRect = try normalizedRect(
+        argument: referenceBackgroundRegionValue,
+        name: "--glass-reference-background-region"
+    )
+
+    let teleprompterSamples = try idleHoldFrameURLs(in: teleprompterFramesDirectory).map { url in
+        let luma = try lumaImage(at: url)
+        let rgb = try rgbImage(at: url)
+        let text = contrastingPixels(
+            in: rgb,
+            foregroundRect: teleprompterTextRect,
+            backgroundRect: teleprompterBackgroundRect
+        )
+        return VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: lumaPixels(in: luma, rect: teleprompterInteriorRect),
+            textForegroundPixels: text.foreground,
+            textBackgroundPixels: text.background
+        )
+    }
+
+    func wingSamples(in directory: String) throws -> [VoiceBarNotchWingReadabilitySample] {
+        try idleHoldFrameURLs(in: directory).map { url in
+            let image = try rgbImage(at: url)
+            let wing = contrastingPixels(
+                in: image,
+                foregroundRect: wingForegroundRect,
+                backgroundRect: wingBackgroundRect
+            )
+            let reference = contrastingPixels(
+                in: image,
+                foregroundRect: referenceForegroundRect,
+                backgroundRect: referenceBackgroundRect
+            )
+            return VoiceBarNotchWingReadabilitySample(
+                wingForegroundPixels: wing.foreground,
+                wingBackgroundPixels: wing.background,
+                referenceForegroundPixels: reference.foreground,
+                referenceBackgroundPixels: reference.background
+            )
+        }
+    }
+
+    return try VoiceBarNotchCaptureAudit.glassReadability(
+        teleprompterFrames: teleprompterSamples,
+        blackWingFrames: wingSamples(in: blackFramesDirectory),
+        brightWingFrames: wingSamples(in: brightFramesDirectory)
+    )
+}
+
+private func printGlassReadability(_ result: VoiceBarNotchGlassReadabilityAuditResult) {
+    for (index, metric) in result.teleprompterMetrics.enumerated() {
+        print(
+            "\(metric.passed ? "PASS" : "FAIL") GLASS-TELEPROMPTER/\(index + 1) " +
+                "pixels=\(metric.interiorPixelCount) " +
+                "interiorSD=\(String(format: "%.2f", metric.interiorStandardDeviation)) " +
+                "textContrast=\(String(format: "%.2f", metric.textContrastRatio))"
+        )
+    }
+    for (backdrop, metrics) in [
+        ("black", result.blackWingMetrics),
+        ("bright", result.brightWingMetrics),
+    ] {
+        for (index, metric) in metrics.enumerated() {
+            print(
+                "\(metric.passed ? "PASS" : "FAIL") GLASS-WING/\(backdrop)/\(index + 1) " +
+                    "wing=\(String(format: "%.2f", metric.wingContrastRatio)) " +
+                    "reference=\(String(format: "%.2f", metric.nativeReferenceContrastRatio))"
+            )
+        }
+    }
+    print(
+        "\(result.passed ? "PASS" : "FAIL") GLASS-READABILITY " +
+            "frames=\(result.teleprompterFrameCount)/" +
+            "\(result.blackWingFrameCount)/\(result.brightWingFrameCount) " +
+            "maxInteriorSD=\(String(format: "%.2f", result.maximumInteriorStandardDeviation)) " +
+            "minText=\(String(format: "%.2f", result.minimumTextContrastRatio)) " +
+            "minWing=\(String(format: "%.2f", result.minimumWingContrastRatio)) " +
+            "minReference=\(String(format: "%.2f", result.minimumNativeReferenceContrastRatio))"
+    )
+}
+
+if CommandLine.arguments.contains("--glass-readability-only") {
+    guard let teleprompterFramesDirectory = argument(named: "--glass-teleprompter-frames"),
+          let blackFramesDirectory = argument(named: "--glass-black-frames"),
+          let brightFramesDirectory = argument(named: "--glass-bright-frames"),
+          let teleprompterInteriorRegionValue = argument(named: "--glass-teleprompter-interior-region"),
+          let teleprompterTextRegionValue = argument(named: "--glass-teleprompter-text-region"),
+          let teleprompterBackgroundRegionValue = argument(named: "--glass-teleprompter-background-region"),
+          let wingForegroundRegionValue = argument(named: "--glass-wing-foreground-region"),
+          let wingBackgroundRegionValue = argument(named: "--glass-wing-background-region"),
+          let referenceForegroundRegionValue = argument(named: "--glass-reference-foreground-region"),
+          let referenceBackgroundRegionValue = argument(named: "--glass-reference-background-region")
+    else {
+        fputs(
+            "usage: NotchCaptureContrastVerifier --glass-readability-only " +
+                "--glass-teleprompter-frames <png-dir> --glass-black-frames <png-dir> " +
+                "--glass-bright-frames <png-dir> plus all normalized glass regions\n",
+            stderr
+        )
+        exit(2)
+    }
+    do {
+        let result = try glassReadabilityAudit(
+            teleprompterFramesDirectory: teleprompterFramesDirectory,
+            blackFramesDirectory: blackFramesDirectory,
+            brightFramesDirectory: brightFramesDirectory,
+            teleprompterInteriorRegionValue: teleprompterInteriorRegionValue,
+            teleprompterTextRegionValue: teleprompterTextRegionValue,
+            teleprompterBackgroundRegionValue: teleprompterBackgroundRegionValue,
+            wingForegroundRegionValue: wingForegroundRegionValue,
+            wingBackgroundRegionValue: wingBackgroundRegionValue,
+            referenceForegroundRegionValue: referenceForegroundRegionValue,
+            referenceBackgroundRegionValue: referenceBackgroundRegionValue
+        )
+        printGlassReadability(result)
+        exit(result.passed ? 0 : 1)
+    } catch {
+        fputs("glass readability verification error: \(error.localizedDescription)\n", stderr)
+        exit(2)
+    }
+}
+
 if CommandLine.arguments.contains("--teleprompter-dismissal-only") {
     guard let framesDirectory = argument(named: "--teleprompter-dismissal-frames"),
           let textRegionValue = argument(named: "--teleprompter-dismissal-text-region"),
@@ -532,8 +705,6 @@ guard let darkDirectory = argument(named: "--dark"),
       let waveformRecordingFramesDirectory = argument(named: "--waveform-recording-frames"),
       let waveformTranscribingFramesDirectory = argument(named: "--waveform-transcribing-frames"),
       let waveformSpeakingFramesDirectory = argument(named: "--waveform-speaking-frames"),
-      let fadeLeadingFramePath = argument(named: "--fade-leading-frame"),
-      let fadeTrailingFramePath = argument(named: "--fade-trailing-frame"),
       let darkLiveFramePath = argument(named: "--dark-live-frame"),
       let lightLiveFramePath = argument(named: "--light-live-frame"),
       let glyphWingForegroundRegionValue = argument(named: "--glyph-wing-foreground-region"),
@@ -555,8 +726,6 @@ else {
             "--waveform-recording-frames <cropped-png-dir> " +
             "--waveform-transcribing-frames <cropped-png-dir> " +
             "--waveform-speaking-frames <cropped-png-dir> " +
-            "--fade-leading-frame <inner-seam-crop-png> " +
-            "--fade-trailing-frame <inner-seam-crop-png> " +
             "--dark-live-frame <same-frame-dark-png> " +
             "--light-live-frame <same-frame-light-png> " +
             "--glyph-wing-foreground-region <normalized-x,y,w,h> " +
@@ -753,31 +922,6 @@ do {
             String(format: "%.2f", waveformCensus.maximumSlotOffsetDelta)
     )
 
-    let fadeResults = try [
-        (
-            "leading",
-            VoiceBarNotchCaptureAudit.seamFade(
-                in: lumaImage(at: URL(fileURLWithPath: fadeLeadingFramePath)),
-                blackEdge: .trailing
-            )
-        ),
-        (
-            "trailing",
-            VoiceBarNotchCaptureAudit.seamFade(
-                in: lumaImage(at: URL(fileURLWithPath: fadeTrailingFramePath)),
-                blackEdge: .leading
-            )
-        ),
-    ]
-    for (side, result) in fadeResults {
-        print(
-            "\(result.passed ? "PASS" : "FAIL") SEAM-FADE/\(side) " +
-                "range=\(String(format: "%.1f", result.brightnessRange)) " +
-                "steps=\(result.progressingColumnCount) " +
-                "correlation=\(String(format: "%.2f", result.progressionCorrelation))"
-        )
-    }
-
     let paddingFrame = try rgbImage(at: URL(fileURLWithPath: paddingFramePath))
     let compactPadding = try VoiceBarNotchCaptureAudit.compactPadding(
         in: paddingFrame,
@@ -806,8 +950,7 @@ do {
         !idleHoldResult.passed ||
         !cursorAbsencePassed ||
         !waveformCensus.passed ||
-        !compactPadding.passed ||
-        fadeResults.contains(where: { !$0.1.passed }) {
+        !compactPadding.passed {
         exit(1)
     }
 } catch {
