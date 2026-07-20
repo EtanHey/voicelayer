@@ -261,6 +261,23 @@ final class WaveformViewTests: XCTestCase {
         )
     }
 
+    func testAudioDrivenWaveformSamplesItsTruthSourceInsideTheAnimationTimeline() throws {
+        let source = try waveformViewSource()
+        let timeline = try XCTUnwrap(
+            source
+                .components(separatedBy: "TimelineView(.animation(minimumInterval: 1.0 / 60.0))")
+                .dropFirst()
+                .first?
+                .components(separatedBy: ".frame(width: WaveformLayout.viewportWidth")
+                .first
+        )
+
+        XCTAssertTrue(
+            timeline.contains("rawLevel: currentLevel()"),
+            "the animation tick must resample time-derived playback amplitude"
+        )
+    }
+
     func testWaveformBarsRenderAsOneAtomicCanvasInsteadOfIndependentSubviews() throws {
         let source = try waveformViewSource()
         let barsStart = try XCTUnwrap(source.range(of: "private struct WaveformBars"))

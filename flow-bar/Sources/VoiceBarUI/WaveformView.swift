@@ -37,7 +37,6 @@ public struct WaveformView: View {
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
-    @State private var envelopeLevel = 0.0
 
     private let barCount = WaveformLayout.barCount
     private let barWidth = WaveformLayout.barWidth
@@ -66,8 +65,45 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
+            TimelineSample(
+                rawLevel: currentLevel(),
+                time: now,
+                color: color,
+                isListening: isListening,
+                mode: mode,
+                barCount: barCount,
+                barWidth: barWidth,
+                barSpacing: barSpacing,
+                maxHeight: maxHeight,
+                minHeight: minHeight
+            )
+        }
+        .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
+        .fixedSize(horizontal: true, vertical: true)
+        .layoutPriority(1)
+    }
+
+    private enum RenderMode {
+        case audioDriven
+        case processing
+    }
+
+    private struct TimelineSample: View {
+        let rawLevel: Double?
+        let time: Double
+        let color: Color
+        let isListening: Bool
+        let mode: RenderMode
+        let barCount: Int
+        let barWidth: CGFloat
+        let barSpacing: CGFloat
+        let maxHeight: CGFloat
+        let minHeight: CGFloat
+        @State private var envelopeLevel = 0.0
+
+        var body: some View {
             WaveformBars(
-                normalizedLevels: normalizedLevels(time: now),
+                normalizedLevels: normalizedLevels(time: time),
                 color: color,
                 barWidth: barWidth,
                 barSpacing: barSpacing,
@@ -76,69 +112,61 @@ public struct WaveformView: View {
                 glowOpacity: glowOpacity,
                 glowRadius: glowRadius
             )
+            .onAppear {
+                updateEnvelope(to: rawLevel, animated: false)
+            }
+            .onChange(of: rawLevel) { _, newLevel in
+                updateEnvelope(to: newLevel, animated: mode == .audioDriven)
+            }
         }
-        .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
-        .fixedSize(horizontal: true, vertical: true)
-        .layoutPriority(1)
-        .onAppear {
-            updateEnvelope(to: currentLevel(), animated: false)
-        }
-        .onChange(of: currentLevel()) { _, newLevel in
-            updateEnvelope(to: newLevel, animated: mode == .audioDriven)
-        }
-    }
 
-    private func normalizedLevels(time: Double) -> [Double] {
-        switch mode {
-        case .audioDriven:
-            WaveformMetrics.audioDrivenLevels(
-                level: envelopeLevel,
-                time: time,
-                barCount: barCount,
-                isListening: isListening
+        private func normalizedLevels(time: Double) -> [Double] {
+            switch mode {
+            case .audioDriven:
+                WaveformMetrics.audioDrivenLevels(
+                    level: envelopeLevel,
+                    time: time,
+                    barCount: barCount,
+                    isListening: isListening
+                )
+            case .processing:
+                WaveformMetrics.processingLevels(time: time, barCount: barCount)
+            }
+        }
+
+        private var glowOpacity: Double {
+            switch mode {
+            case .audioDriven: isListening ? 0.25 : 0.45
+            case .processing: 0.35
+            }
+        }
+
+        private var glowRadius: CGFloat {
+            switch mode {
+            case .audioDriven: isListening ? 3 : 5
+            case .processing: 4
+            }
+        }
+
+        private func updateEnvelope(to rawLevel: Double?, animated: Bool) {
+            let target = if let rawLevel, rawLevel.isFinite {
+                min(1, max(0, rawLevel))
+            } else {
+                0.0
+            }
+            guard animated else {
+                envelopeLevel = target
+                return
+            }
+
+            let duration = WaveformMetrics.envelopeTransitionDuration(
+                from: envelopeLevel,
+                to: target
             )
-        case .processing:
-            WaveformMetrics.processingLevels(time: time, barCount: barCount)
+            withAnimation(.easeOut(duration: duration)) {
+                envelopeLevel = target
+            }
         }
-    }
-
-    private var glowOpacity: Double {
-        switch mode {
-        case .audioDriven: isListening ? 0.25 : 0.45
-        case .processing: 0.35
-        }
-    }
-
-    private var glowRadius: CGFloat {
-        switch mode {
-        case .audioDriven: isListening ? 3 : 5
-        case .processing: 4
-        }
-    }
-
-    private func updateEnvelope(to rawLevel: Double?, animated: Bool) {
-        let target = if let rawLevel, rawLevel.isFinite {
-            min(1, max(0, rawLevel))
-        } else {
-            0.0
-        }
-        guard animated else {
-            envelopeLevel = target
-            return
-        }
-
-        let duration = WaveformMetrics.envelopeTransitionDuration(
-            from: envelopeLevel,
-            to: target
-        )
-        withAnimation(.easeOut(duration: duration)) {
-            envelopeLevel = target
-        }
-    }
-
-    private enum RenderMode {
-        case audioDriven
-        case processing
     }
 }
 
