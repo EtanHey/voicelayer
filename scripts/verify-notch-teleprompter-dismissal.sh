@@ -69,6 +69,16 @@ if [[ ! -f "$fixture_receipt" ]]; then
   printf 'error: busy fixture did not become ready; see %s\n' "$fixture_log" >&2
   exit 1
 fi
+capture_values=$(jq -er '.capture_rect | map(round) | @tsv' "$fixture_receipt")
+read -r fixture_capture_x fixture_capture_y fixture_capture_width fixture_capture_height \
+  <<<"$capture_values"
+if [[ ! "$fixture_capture_x" =~ ^-?[0-9]+$ ||
+      ! "$fixture_capture_y" =~ ^-?[0-9]+$ ||
+      ! "$fixture_capture_width" =~ ^[1-9][0-9]*$ ||
+      ! "$fixture_capture_height" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'error: invalid capture_rect in %s\n' "$fixture_receipt" >&2
+  exit 1
+fi
 
 env \
   QA_VOICE_SOCKET_PATH="$socket_path" \
@@ -102,17 +112,10 @@ idle_event=$(jq -cn '{type:"state",state:"idle",source:"playback",next_state:"re
 printf '%s\n' "$speaking_event" | nc -U "$socket_path"
 sleep 0.35
 
-desktop_bounds=$(osascript -e 'tell application "Finder" to get bounds of window of desktop')
-screen_height=$(printf '%s\n' "$desktop_bounds" | awk -F ', *' '{print $4}')
-if [[ ! "$screen_height" =~ ^[0-9]+$ ]]; then
-  printf 'error: could not resolve main-screen height from: %s\n' "$desktop_bounds" >&2
-  exit 1
-fi
-
 # Isolated capture placement pins the 472x245pt teleprompter panel at (24,24).
 # Capture only that surface and a narrow same-screen backdrop reference.
-capture_x=10
-capture_y=$((screen_height - 24 - 245 - 18))
+capture_x=$((fixture_capture_x + 10))
+capture_y=$((fixture_capture_y + fixture_capture_height - 24 - 245 - 18))
 capture_width=520
 capture_height=287
 
@@ -138,7 +141,7 @@ fi
   --teleprompter-dismissal-only \
   --teleprompter-dismissal-frames "$receipt_dir" \
   --teleprompter-dismissal-text-region 0.12,0.22,0.42,0.12 \
-  --teleprompter-dismissal-interior-region 0.05,0.50,0.45,0.30 \
+  --teleprompter-dismissal-interior-region 0.12,0.62,0.74,0.13 \
   | tee "$receipt_dir/metrics.txt"
 
 printf 'TELEPROMPTER_DISMISSAL_REAL_CAPTURE=%s\n' "$receipt_dir"

@@ -52,9 +52,40 @@ describe("verify-notch-glass-readability.sh", () => {
     expect(fixture).toContain("NSApp.activate(ignoringOtherApps: true)");
   });
 
+  test("captures the exact fixture window bounds across Docks and displays", () => {
+    const source = readFileSync(scriptPath, "utf8");
+    const dismissalSource = readFileSync(dismissalScriptPath, "utf8");
+    const fixture = readFileSync(fixturePath, "utf8");
+
+    expect(fixture).toContain("CGWindowListCopyWindowInfo");
+    expect(fixture).toContain('"capture_rect"');
+    expect(source).toContain("capture_rect");
+    expect(source).not.toContain("bounds of window of desktop");
+    expect(dismissalSource).toContain("capture_rect");
+    expect(dismissalSource).not.toContain("bounds of window of desktop");
+  });
+
+  test("audits only the exact frame names produced by the current run", () => {
+    const verifier = readFileSync(
+      join(
+        repoRoot,
+        "flow-bar",
+        "Sources",
+        "NotchCaptureContrastVerifier",
+        "main.swift",
+      ),
+      "utf8",
+    );
+
+    expect(verifier).toContain("VoiceBarNotchCaptureAudit.captureFrameNames");
+  });
+
   test("persists the dismissal verifier output with the captured frames", () => {
     const source = readFileSync(dismissalScriptPath, "utf8");
 
     expect(source).toContain('tee "$receipt_dir/metrics.txt"');
+    expect(source).toContain(
+      "--teleprompter-dismissal-interior-region 0.12,0.62,0.74,0.13",
+    );
   });
 });

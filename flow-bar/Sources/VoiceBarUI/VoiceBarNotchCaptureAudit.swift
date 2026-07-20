@@ -201,6 +201,7 @@ public struct VoiceBarNotchTeleprompterReadabilityMetric: Equatable {
     public let textPixelCount: Int
     public let interiorStandardDeviation: Double
     public let textContrastRatio: Double
+    public let readableForegroundFraction: Double
     public let passed: Bool
 }
 
@@ -209,6 +210,7 @@ public struct VoiceBarNotchWingReadabilityMetric: Equatable {
     public let nativeReferencePixelCount: Int
     public let wingContrastRatio: Double
     public let nativeReferenceContrastRatio: Double
+    public let readableForegroundFraction: Double
     public let passed: Bool
 }
 
@@ -259,6 +261,12 @@ public enum VoiceBarNotchCaptureAudit {
     public static let minimumGlassSettledFrameCount = 3
     public static let minimumGlassInteriorPixelCount = 1000
     public static let minimumGlassForegroundPixelCount = 8
+    public static let minimumGlassReadableForegroundFraction = 0.10
+
+    public static func captureFrameNames(count: Int) -> [String] {
+        guard count > 0 else { return [] }
+        return (1 ... count).map { String(format: "frame-%03d.png", $0) }
+    }
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -397,45 +405,52 @@ public enum VoiceBarNotchCaptureAudit {
         let interiorStandardDeviation = sample.interiorBrightness.isEmpty
             ? .infinity
             : standardDeviation(sample.interiorBrightness)
-        let textContrastRatio = strongestCoreContrast(
+        let textContrast = coreContrast(
             foregroundPixels: sample.textForegroundPixels,
-            backgroundPixels: sample.textBackgroundPixels
+            backgroundPixels: sample.textBackgroundPixels,
+            readableRatio: VoiceBarContrast.minimumTextRatio
         )
         return VoiceBarNotchTeleprompterReadabilityMetric(
             interiorPixelCount: sample.interiorBrightness.count,
             textPixelCount: sample.textForegroundPixels.count,
             interiorStandardDeviation: interiorStandardDeviation,
-            textContrastRatio: textContrastRatio,
+            textContrastRatio: textContrast.ratio,
+            readableForegroundFraction: textContrast.readableFraction,
             passed: sample.interiorBrightness.count >= minimumGlassInteriorPixelCount &&
                 sample.textForegroundPixels.count >= minimumGlassForegroundPixelCount &&
                 !sample.textBackgroundPixels.isEmpty &&
                 interiorStandardDeviation <= maximumGlassInteriorStandardDeviation &&
-                textContrastRatio >= VoiceBarContrast.minimumTextRatio
+                textContrast.ratio >= VoiceBarContrast.minimumTextRatio &&
+                textContrast.readableFraction >= minimumGlassReadableForegroundFraction
         )
     }
 
     public static func glassWingFrame(
         _ sample: VoiceBarNotchWingReadabilitySample
     ) -> VoiceBarNotchWingReadabilityMetric {
-        let wingContrastRatio = strongestCoreContrast(
+        let wingContrast = coreContrast(
             foregroundPixels: sample.wingForegroundPixels,
-            backgroundPixels: sample.wingBackgroundPixels
+            backgroundPixels: sample.wingBackgroundPixels,
+            readableRatio: VoiceBarContrast.minimumControlRatio
         )
-        let nativeReferenceContrastRatio = strongestCoreContrast(
+        let nativeReferenceContrast = coreContrast(
             foregroundPixels: sample.referenceForegroundPixels,
-            backgroundPixels: sample.referenceBackgroundPixels
+            backgroundPixels: sample.referenceBackgroundPixels,
+            readableRatio: VoiceBarContrast.minimumControlRatio
         )
         return VoiceBarNotchWingReadabilityMetric(
             wingPixelCount: sample.wingForegroundPixels.count,
             nativeReferencePixelCount: sample.referenceForegroundPixels.count,
-            wingContrastRatio: wingContrastRatio,
-            nativeReferenceContrastRatio: nativeReferenceContrastRatio,
+            wingContrastRatio: wingContrast.ratio,
+            nativeReferenceContrastRatio: nativeReferenceContrast.ratio,
+            readableForegroundFraction: wingContrast.readableFraction,
             passed: sample.wingForegroundPixels.count >= minimumGlassForegroundPixelCount &&
                 !sample.wingBackgroundPixels.isEmpty &&
                 sample.referenceForegroundPixels.count >= minimumGlassForegroundPixelCount &&
                 !sample.referenceBackgroundPixels.isEmpty &&
-                wingContrastRatio >= VoiceBarContrast.minimumControlRatio &&
-                wingContrastRatio >= nativeReferenceContrastRatio
+                wingContrast.ratio >= VoiceBarContrast.minimumControlRatio &&
+                wingContrast.ratio >= nativeReferenceContrast.ratio &&
+                wingContrast.readableFraction >= minimumGlassReadableForegroundFraction
         )
     }
 
@@ -712,13 +727,14 @@ public enum VoiceBarNotchCaptureAudit {
         )
     }
 
-    private static func strongestCoreContrast(
+    private static func coreContrast(
         foregroundPixels: [VoiceBarRGB],
-        backgroundPixels: [VoiceBarRGB]
-    ) -> Double {
+        backgroundPixels: [VoiceBarRGB],
+        readableRatio: Double
+    ) -> (ratio: Double, readableFraction: Double) {
         guard foregroundPixels.count >= minimumGlassForegroundPixelCount,
               !backgroundPixels.isEmpty
-        else { return 0 }
+        else { return (0, 0) }
         let background = medianColor(backgroundPixels)
         let ratios = foregroundPixels.map {
             VoiceBarContrast.ratio(foreground: $0, background: background)
@@ -730,7 +746,11 @@ public enum VoiceBarNotchCaptureAudit {
                 Int(ceil(Double(ratios.count) * 0.08))
             )
         )
-        return median(Array(ratios.prefix(sampleCount)))
+        let readableCount = ratios.lazy.filter { $0 >= readableRatio }.count
+        return (
+            median(Array(ratios.prefix(sampleCount))),
+            Double(readableCount) / Double(ratios.count)
+        )
     }
 
     private static func percentile(_ values: [Double], percentile: Double) -> Double {

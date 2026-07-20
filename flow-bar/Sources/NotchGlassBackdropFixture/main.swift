@@ -7,6 +7,20 @@ private enum FixtureMode: String {
     case bright
 }
 
+private func screenCaptureBounds(for window: NSWindow) -> CGRect? {
+    guard let windowInfo = CGWindowListCopyWindowInfo(
+        [.optionIncludingWindow],
+        CGWindowID(window.windowNumber)
+    ) as? [[String: Any]],
+        let bounds = windowInfo.first?[kCGWindowBounds as String] as? [String: Any],
+        let x = (bounds["X"] as? NSNumber)?.doubleValue,
+        let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+        let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+        let height = (bounds["Height"] as? NSNumber)?.doubleValue
+    else { return nil }
+    return CGRect(x: x, y: y, width: width, height: height)
+}
+
 private final class BackdropView: NSView {
     let mode: FixtureMode
 
@@ -145,11 +159,22 @@ private final class FixtureDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         self.panel = panel
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [readyReceiptPath, mode] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [readyReceiptPath, mode, panel] in
+            guard let captureRect = screenCaptureBounds(for: panel) else {
+                fputs("NotchGlassBackdropFixture: could not resolve window capture bounds\n", stderr)
+                NSApp.terminate(nil)
+                return
+            }
             let receipt: [String: Any] = [
                 "pid": ProcessInfo.processInfo.processIdentifier,
                 "mode": mode.rawValue,
                 "frame": [frame.origin.x, frame.origin.y, frame.width, frame.height],
+                "capture_rect": [
+                    captureRect.origin.x,
+                    captureRect.origin.y,
+                    captureRect.width,
+                    captureRect.height,
+                ],
             ]
             do {
                 let data = try JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys])

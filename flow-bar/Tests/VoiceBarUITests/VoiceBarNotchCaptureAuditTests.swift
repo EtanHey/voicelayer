@@ -372,6 +372,21 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertLessThan(weakTextMetric.textContrastRatio, VoiceBarContrast.minimumTextRatio)
     }
 
+    func testGlassTeleprompterRejectsSparseReadablePixelsInsideMostlyWeakForeground() {
+        let sparseText = VoiceBarNotchTeleprompterReadabilitySample(
+            interiorBrightness: Array(repeating: 10.0, count: 1000),
+            textForegroundPixels: Array(repeating: gray(1), count: 80) +
+                Array(repeating: gray(0.10), count: 920),
+            textBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+
+        let metric = VoiceBarNotchCaptureAudit.glassTeleprompterFrame(sparseText)
+
+        XCTAssertGreaterThan(metric.textContrastRatio, VoiceBarContrast.minimumTextRatio)
+        XCTAssertEqual(metric.readableForegroundFraction, 0.08, accuracy: 0.001)
+        XCTAssertFalse(metric.passed)
+    }
+
     func testGlassWingFrameRequiresControlFloorAndSameFrameNativeParity() {
         let parityPass = VoiceBarNotchWingReadabilitySample(
             wingForegroundPixels: Array(repeating: gray(1), count: 8),
@@ -405,6 +420,30 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         )
         XCTAssertFalse(floorFailMetric.passed)
         XCTAssertLessThan(floorFailMetric.wingContrastRatio, VoiceBarContrast.minimumControlRatio)
+    }
+
+    func testGlassWingRejectsSparseReadablePixelsInsideMostlyWeakForeground() {
+        let sparseWing = VoiceBarNotchWingReadabilitySample(
+            wingForegroundPixels: Array(repeating: gray(1), count: 80) +
+                Array(repeating: gray(0.10), count: 920),
+            wingBackgroundPixels: Array(repeating: gray(0), count: 40),
+            referenceForegroundPixels: Array(repeating: gray(0.90), count: 8),
+            referenceBackgroundPixels: Array(repeating: gray(0), count: 40)
+        )
+
+        let metric = VoiceBarNotchCaptureAudit.glassWingFrame(sparseWing)
+
+        XCTAssertGreaterThan(metric.wingContrastRatio, metric.nativeReferenceContrastRatio)
+        XCTAssertEqual(metric.readableForegroundFraction, 0.08, accuracy: 0.001)
+        XCTAssertFalse(metric.passed)
+    }
+
+    func testCaptureFrameNamesAreExactSoStalePNGsCannotJoinTheAudit() {
+        XCTAssertEqual(
+            VoiceBarNotchCaptureAudit.captureFrameNames(count: 3),
+            ["frame-001.png", "frame-002.png", "frame-003.png"]
+        )
+        XCTAssertTrue(VoiceBarNotchCaptureAudit.captureFrameNames(count: 0).isEmpty)
     }
 
     func testGlassReadabilityRequiresThreeFailClosedFramesPerBackdrop() {

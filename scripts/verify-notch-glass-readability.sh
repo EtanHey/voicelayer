@@ -88,17 +88,6 @@ if [[ ! -S "$socket_path" || ! -f "$render_scale_receipt" ]]; then
   exit 1
 fi
 
-desktop_bounds=$(osascript -e 'tell application "Finder" to get bounds of window of desktop')
-screen_height=$(printf '%s\n' "$desktop_bounds" | awk -F ', *' '{print $4}')
-if [[ ! "$screen_height" =~ ^[0-9]+$ ]]; then
-  printf 'error: could not resolve main-screen height from: %s\n' "$desktop_bounds" >&2
-  exit 1
-fi
-capture_x=0
-capture_y=$((screen_height - 360))
-capture_width=700
-capture_height=360
-
 for fixture_mode in busy black bright; do
   fixture_receipt="$runtime_dir/fixture-$fixture_mode.json"
   "$fixture_binary" \
@@ -111,6 +100,15 @@ for fixture_mode in busy black bright; do
   done
   if [[ ! -f "$fixture_receipt" ]]; then
     printf 'error: %s fixture did not become ready\n' "$fixture_mode" >&2
+    exit 1
+  fi
+  capture_values=$(jq -er '.capture_rect | map(round) | @tsv' "$fixture_receipt")
+  read -r capture_x capture_y capture_width capture_height <<<"$capture_values"
+  if [[ ! "$capture_x" =~ ^-?[0-9]+$ ||
+        ! "$capture_y" =~ ^-?[0-9]+$ ||
+        ! "$capture_width" =~ ^[1-9][0-9]*$ ||
+        ! "$capture_height" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'error: invalid capture_rect in %s\n' "$fixture_receipt" >&2
     exit 1
   fi
 

@@ -392,6 +392,12 @@ private func idleHoldFrameURLs(in directory: String) throws -> [URL] {
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
+private func captureFrameURLs(in directory: String, count: Int) -> [URL] {
+    VoiceBarNotchCaptureAudit.captureFrameNames(count: count).map {
+        URL(fileURLWithPath: directory).appendingPathComponent($0)
+    }
+}
+
 private func lumaPixels(in image: VoiceBarLumaImage, rect: CGRect) -> [Double] {
     let minX = max(0, min(image.width, Int((rect.minX * CGFloat(image.width)).rounded(.down))))
     let maxX = max(minX, min(image.width, Int((rect.maxX * CGFloat(image.width)).rounded(.up))))
@@ -435,7 +441,7 @@ private func teleprompterDismissalAudit(
         argument: interiorRegionValue,
         name: "--teleprompter-dismissal-interior-region"
     )
-    let frames = try idleHoldFrameURLs(in: framesDirectory).map(lumaImage)
+    let frames = try captureFrameURLs(in: framesDirectory, count: 18).map(lumaImage)
     guard let dismissedReference = frames.last else {
         throw NSError(
             domain: "NotchCaptureContrastVerifier",
@@ -518,7 +524,10 @@ private func glassReadabilityAudit(
         name: "--glass-reference-background-region"
     )
 
-    let teleprompterSamples = try idleHoldFrameURLs(in: teleprompterFramesDirectory).map { url in
+    let teleprompterSamples = try captureFrameURLs(
+        in: teleprompterFramesDirectory,
+        count: 3
+    ).map { url in
         let luma = try lumaImage(at: url)
         let rgb = try rgbImage(at: url)
         let text = contrastingPixels(
@@ -534,7 +543,7 @@ private func glassReadabilityAudit(
     }
 
     func wingSamples(in directory: String) throws -> [VoiceBarNotchWingReadabilitySample] {
-        try idleHoldFrameURLs(in: directory).map { url in
+        try captureFrameURLs(in: directory, count: 3).map { url in
             let image = try rgbImage(at: url)
             let wing = contrastingPixels(
                 in: image,
@@ -567,8 +576,10 @@ private func printGlassReadability(_ result: VoiceBarNotchGlassReadabilityAuditR
         print(
             "\(metric.passed ? "PASS" : "FAIL") GLASS-TELEPROMPTER/\(index + 1) " +
                 "pixels=\(metric.interiorPixelCount) " +
+                "textPixels=\(metric.textPixelCount) " +
                 "interiorSD=\(String(format: "%.2f", metric.interiorStandardDeviation)) " +
-                "textContrast=\(String(format: "%.2f", metric.textContrastRatio))"
+                "textContrast=\(String(format: "%.2f", metric.textContrastRatio)) " +
+                "readableFraction=\(String(format: "%.2f", metric.readableForegroundFraction))"
         )
     }
     for (backdrop, metrics) in [
@@ -578,8 +589,11 @@ private func printGlassReadability(_ result: VoiceBarNotchGlassReadabilityAuditR
         for (index, metric) in metrics.enumerated() {
             print(
                 "\(metric.passed ? "PASS" : "FAIL") GLASS-WING/\(backdrop)/\(index + 1) " +
+                    "wingPixels=\(metric.wingPixelCount) " +
+                    "referencePixels=\(metric.nativeReferencePixelCount) " +
                     "wing=\(String(format: "%.2f", metric.wingContrastRatio)) " +
-                    "reference=\(String(format: "%.2f", metric.nativeReferenceContrastRatio))"
+                    "reference=\(String(format: "%.2f", metric.nativeReferenceContrastRatio)) " +
+                    "readableFraction=\(String(format: "%.2f", metric.readableForegroundFraction))"
             )
         }
     }
