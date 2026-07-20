@@ -113,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var currentVoiceMode: VoiceMode = .idle
     private lazy var notchPresentationModel = VoiceBarNotchPresentationModel(
         onLayoutInvalidated: { [weak self] in
-            self?.applyPanelLayout(animated: true)
+            self?.commitNotchContentThenApplyPanelLayout()
         }
     )
     private let retainedReadbackDismissalCoordinator = RetainedReadbackDismissalCoordinator()
@@ -465,6 +465,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             width: initialLayout.panelSize.width,
             height: initialLayout.panelSize.height
         )
+        // A resized NSHostingView may otherwise draw one stale SwiftUI layer
+        // beyond its new window bounds. That leaked the teleprompter label for
+        // one captured frame after the material had already collapsed.
+        hosting.wantsLayer = true
+        hosting.layer?.masksToBounds = true
 
         // Load saved position
         if let saved = defaults.object(forKey: Self.horizontalOffsetKey) as? Double {
@@ -843,10 +848,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
+        let collapsesConverseHandoff = previousVoiceMode == .speaking &&
+            mode == .idle && voiceState.isCollapsed
+        if collapsesConverseHandoff {
+            panel?.orderOut(nil)
+        }
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
         refreshNotchPresentationAndPanelLayout(animated: true)
+        if !collapsesConverseHandoff {
+            if VoiceBarIsolatedCapturePlacement.isEnabled() {
+                panel?.orderFrontRegardless()
+            } else if mode != .idle, panel?.isVisible == false {
+                panel?.orderFront(nil)
+            }
+        }
         synchronizeRetainedReadbackLifecycle()
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
@@ -922,6 +939,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
         configurePanelDragging(panel, for: screenGeometry)
         schedulePanelBackingScaleRecertification(reason: "layout_changed")
+    }
+
+    /// SwiftUI must commit removal of teleprompter slots before AppKit shrinks
+    /// the panel. Resizing first exposes the app beneath while the old hosted
+    /// text remains drawable for one frame.
+    private func commitNotchContentThenApplyPanelLayout() {
+        panel?.contentView?.needsLayout = true
+        panel?.contentView?.layoutSubtreeIfNeeded()
+        panel?.contentView?.displayIfNeeded()
+        applyPanelLayout(animated: true)
     }
 
     private func schedulePanelBackingScaleRecertification(reason: String) {
@@ -1349,6 +1376,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Reposition pill when the active screen changes. Anchored modes still move
     /// between screens; only their position within each screen is fixed.
     private func handleMouseMoved() {
+        guard !VoiceBarIsolatedCapturePlacement.isEnabled() else { return }
         guard let panel else { return }
 
         let screens = NSScreen.screens
@@ -1362,7 +1390,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {
-        let targetScreen = screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main
+        let targetScreen = VoiceBarIsolatedCapturePlacement.isEnabled()
+            ? NSScreen.main
+            : (screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         refreshNotchPresentationModel(for: targetScreen)

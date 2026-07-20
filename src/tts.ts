@@ -76,9 +76,14 @@ export function isSpeakerOutputRefusedError(error: unknown): boolean {
   );
 }
 
-function broadcastPlaybackIdleIfSpeakerClear(): void {
+function broadcastPlaybackIdleIfSpeakerClear(nextState?: "recording"): void {
   if (getEffectiveRecordingState() !== "idle") return;
-  broadcast({ type: "state", state: "idle", source: "playback" });
+  broadcast({
+    type: "state",
+    state: "idle",
+    source: "playback",
+    ...(nextState ? { next_state: nextState } : {}),
+  });
 }
 
 // --- Voice Profiles ---
@@ -627,6 +632,7 @@ async function playClonedAudio(
       voice: resolvedVoice,
       priority: playbackPriorityForMode(options?.mode),
       durationMs,
+      nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onCompleted: options?.onPlaybackComplete,
     });
@@ -1041,7 +1047,9 @@ class PlaybackQueueManager {
       this.stopProgressTimer();
       this.current = null;
       if (this.depth() === 0) {
-        broadcastPlaybackIdleIfSpeakerClear();
+        broadcastPlaybackIdleIfSpeakerClear(
+          succeeded ? job.metadata?.nextState : undefined,
+        );
       }
       this.emitQueueSnapshot();
       this.resolveIfIdle();
@@ -1582,6 +1590,7 @@ async function speakWithEdgeTTS(
         wordBoundaries.length > 0
           ? inferBoundaryEndMs(wordBoundaries)
           : undefined,
+      nextState: options?.mode === "converse" ? "recording" : undefined,
       onStarted: options?.onPlaybackStart,
       onCompleted: options?.onPlaybackComplete,
     });

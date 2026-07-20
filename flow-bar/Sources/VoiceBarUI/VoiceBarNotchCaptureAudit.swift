@@ -147,10 +147,16 @@ public struct VoiceBarNotchSeamFadeAuditResult: Equatable {
 
 public struct VoiceBarNotchTeleprompterDismissalFrameSample: Equatable {
     public let textOpacity: Double
+    public let materialOpacity: Double?
     public let interiorBrightness: [Double]
 
-    public init(textOpacity: Double, interiorBrightness: [Double]) {
+    public init(
+        textOpacity: Double,
+        materialOpacity: Double? = nil,
+        interiorBrightness: [Double]
+    ) {
         self.textOpacity = textOpacity
+        self.materialOpacity = materialOpacity
         self.interiorBrightness = interiorBrightness
     }
 }
@@ -183,6 +189,8 @@ public enum VoiceBarNotchCaptureAudit {
     public static let minimumSeamFadeCorrelation = 0.55
     public static let maximumTeleprompterInteriorStandardDeviation = 15.0
     public static let minimumOpaqueTeleprompterTextOpacity = 0.9
+    public static let minimumVisibleTeleprompterTextOpacity = 0.5
+    public static let maximumDismissedTeleprompterMaterialOpacity = 0.25
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -281,9 +289,12 @@ public enum VoiceBarNotchCaptureAudit {
     public static func teleprompterDismissal(
         frameSamples: [VoiceBarNotchTeleprompterDismissalFrameSample]
     ) -> VoiceBarNotchTeleprompterDismissalAuditResult {
-        let opaqueTextStandardDeviations = frameSamples.enumerated().compactMap {
+        let visibleTextObservations = frameSamples.enumerated().compactMap {
             index, sample -> (index: Int, interiorStandardDeviation: Double)? in
-            guard sample.textOpacity >= minimumOpaqueTeleprompterTextOpacity else {
+            let minimumTextOpacity = sample.materialOpacity == nil
+                ? minimumOpaqueTeleprompterTextOpacity
+                : minimumVisibleTeleprompterTextOpacity
+            guard sample.textOpacity >= minimumTextOpacity else {
                 return nil
             }
             return (
@@ -293,16 +304,19 @@ public enum VoiceBarNotchCaptureAudit {
                     : standardDeviation(sample.interiorBrightness)
             )
         }
-        let violatingFrameIndices = opaqueTextStandardDeviations.compactMap {
-            observation in
-            observation.interiorStandardDeviation > maximumTeleprompterInteriorStandardDeviation
-                ? observation.index
-                : nil
+        let violatingFrameIndices = visibleTextObservations.compactMap { observation in
+            let sample = frameSamples[observation.index]
+            let materialIsGone = sample.materialOpacity.map {
+                $0 <= maximumDismissedTeleprompterMaterialOpacity
+            }
+            let appShowsThrough = materialIsGone == true ||
+                observation.interiorStandardDeviation > maximumTeleprompterInteriorStandardDeviation
+            return appShowsThrough ? observation.index : nil
         }
         return VoiceBarNotchTeleprompterDismissalAuditResult(
             frameCount: frameSamples.count,
             violatingFrameIndices: violatingFrameIndices,
-            maximumOpaqueTextInteriorStandardDeviation: opaqueTextStandardDeviations
+            maximumOpaqueTextInteriorStandardDeviation: visibleTextObservations
                 .map(\.interiorStandardDeviation)
                 .max() ?? 0,
             passed: !frameSamples.isEmpty && violatingFrameIndices.isEmpty

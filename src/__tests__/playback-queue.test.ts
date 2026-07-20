@@ -348,6 +348,29 @@ describe("playback queue — P0-1 sequential playback", () => {
     await playback.exited;
   });
 
+  it("announces the recording follow-up on the playback-finished idle edge", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    const playback = playAudioNonBlocking("/tmp/pq-converse.mp3", {
+      text: "Ask prompt",
+      voice: "TestVoice",
+      nextState: "recording",
+    });
+    await waitFor(() => playerMocks.length === 1, "converse player creation");
+
+    playerMocks[0].resolveExit();
+    await playback.exited;
+
+    const finalIdle = broadcasts.findLast(
+      (event: any) => event.type === "state" && event.state === "idle",
+    ) as any;
+    expect(finalIdle).toEqual({
+      type: "state",
+      state: "idle",
+      source: "playback",
+      next_state: "recording",
+    });
+  });
+
   it("returns before asynchronous envelope preparation completes", async () => {
     const { playAudioNonBlocking } = await import("../tts");
     holdDecoderExits = true;

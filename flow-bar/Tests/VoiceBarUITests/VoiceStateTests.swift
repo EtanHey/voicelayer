@@ -1293,6 +1293,27 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertTrue(state.isTeleprompterReadback)
     }
 
+    func testConversePlaybackCompletionRemovesTeleprompterAtTheCollapseEdge() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Question before recording",
+        ])
+
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "playback",
+            "next_state": "recording",
+        ])
+
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertNil(state.teleprompterText)
+        XCTAssertFalse(state.isTeleprompterReadback)
+        XCTAssertTrue(state.isCollapsed)
+    }
+
     func testPlaybackIdlePreservesTemporaryTeleprompterVisibility() {
         let state = VoiceState()
         state.handleEvent([

@@ -59,7 +59,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         ZStack(alignment: .topLeading) {
             if presentation.visualState == .teleprompter {
                 teleprompterSurfaceUnit
-                    .transition(surfaceTransition(delay: VoiceBarNotchContract.motion.panelDelay))
+                    .transition(.identity)
             } else if presentation.visualState != .idle {
                 compactSurface
                     .transition(.identity)

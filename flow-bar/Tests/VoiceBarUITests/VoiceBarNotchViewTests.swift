@@ -175,7 +175,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(surface.contains(".allowsHitTesting(false)"))
     }
 
-    func testTeleprompterMaterialAndContentDismissAsOneTransitionUnit() throws {
+    func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
         let source = try notchViewSource()
         let bodyStart = try XCTUnwrap(source.range(of: "public var body: some View"))
         let layoutStart = try XCTUnwrap(
@@ -199,11 +199,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(body.contains("teleprompterSlots\n"))
         XCTAssertTrue(unit.contains("teleprompterSurface"))
         XCTAssertTrue(unit.contains("teleprompterSlots"))
-        XCTAssertEqual(
-            body.components(separatedBy: ".transition(surfaceTransition(").count - 1,
-            1,
-            "one transition must own both the frosted backing and opaque text"
-        )
+        XCTAssertTrue(body.contains(".transition(.identity)"))
+        XCTAssertFalse(body.contains("teleprompterSurfaceUnit\n                    .transition(surfaceTransition("))
     }
 
     private func notchViewSource() throws -> String {

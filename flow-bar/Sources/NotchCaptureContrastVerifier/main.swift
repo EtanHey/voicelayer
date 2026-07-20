@@ -392,6 +392,110 @@ private func idleHoldFrameURLs(in directory: String) throws -> [URL] {
         .sorted { $0.lastPathComponent < $1.lastPathComponent }
 }
 
+private func lumaPixels(in image: VoiceBarLumaImage, rect: CGRect) -> [Double] {
+    let minX = max(0, min(image.width, Int((rect.minX * CGFloat(image.width)).rounded(.down))))
+    let maxX = max(minX, min(image.width, Int((rect.maxX * CGFloat(image.width)).rounded(.up))))
+    let minY = max(0, min(image.height, Int((rect.minY * CGFloat(image.height)).rounded(.down))))
+    let maxY = max(minY, min(image.height, Int((rect.maxY * CGFloat(image.height)).rounded(.up))))
+    return (minY ..< maxY).flatMap { y in
+        (minX ..< maxX).map { x in image.brightness[y * image.width + x] }
+    }
+}
+
+private func meanAbsoluteDifference(
+    _ lhs: VoiceBarLumaImage,
+    _ rhs: VoiceBarLumaImage,
+    rect: CGRect
+) throws -> Double {
+    guard lhs.width == rhs.width, lhs.height == rhs.height else {
+        throw NSError(
+            domain: "NotchCaptureContrastVerifier",
+            code: 21,
+            userInfo: [NSLocalizedDescriptionKey: "dismissal frames must have identical dimensions"]
+        )
+    }
+    let lhsPixels = lumaPixels(in: lhs, rect: rect)
+    let rhsPixels = lumaPixels(in: rhs, rect: rect)
+    guard !lhsPixels.isEmpty, lhsPixels.count == rhsPixels.count else { return 0 }
+    return zip(lhsPixels, rhsPixels).reduce(0) { result, values in
+        result + abs(values.0 - values.1)
+    } / Double(lhsPixels.count)
+}
+
+private func teleprompterDismissalAudit(
+    framesDirectory: String,
+    textRegionValue: String,
+    interiorRegionValue: String
+) throws -> VoiceBarNotchTeleprompterDismissalAuditResult {
+    let textRect = try normalizedRect(
+        argument: textRegionValue,
+        name: "--teleprompter-dismissal-text-region"
+    )
+    let interiorRect = try normalizedRect(
+        argument: interiorRegionValue,
+        name: "--teleprompter-dismissal-interior-region"
+    )
+    let frames = try idleHoldFrameURLs(in: framesDirectory).map(lumaImage)
+    guard let dismissedReference = frames.last else {
+        throw NSError(
+            domain: "NotchCaptureContrastVerifier",
+            code: 22,
+            userInfo: [NSLocalizedDescriptionKey: "dismissal capture has no PNG frames"]
+        )
+    }
+    let textDeltas = try frames.map {
+        try meanAbsoluteDifference($0, dismissedReference, rect: textRect)
+    }
+    let materialDeltas = try frames.map {
+        try meanAbsoluteDifference($0, dismissedReference, rect: interiorRect)
+    }
+    let textReference = textDeltas.max() ?? 0
+    let materialReference = materialDeltas.max() ?? 0
+    let frameSamples = zip(zip(frames, textDeltas), materialDeltas).map { values, materialDelta in
+        let (frame, textDelta) = values
+        return VoiceBarNotchTeleprompterDismissalFrameSample(
+            textOpacity: textReference > 0 ? textDelta / textReference : 0,
+            materialOpacity: materialReference > 0 ? materialDelta / materialReference : 0,
+            interiorBrightness: lumaPixels(in: frame, rect: interiorRect)
+        )
+    }
+    return VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: frameSamples)
+}
+
+if CommandLine.arguments.contains("--teleprompter-dismissal-only") {
+    guard let framesDirectory = argument(named: "--teleprompter-dismissal-frames"),
+          let textRegionValue = argument(named: "--teleprompter-dismissal-text-region"),
+          let interiorRegionValue = argument(named: "--teleprompter-dismissal-interior-region")
+    else {
+        fputs(
+            "usage: NotchCaptureContrastVerifier --teleprompter-dismissal-only " +
+                "--teleprompter-dismissal-frames <real-capture-png-dir> " +
+                "--teleprompter-dismissal-text-region <normalized-x,y,w,h> " +
+                "--teleprompter-dismissal-interior-region <normalized-x,y,w,h>\n",
+            stderr
+        )
+        exit(2)
+    }
+    do {
+        let result = try teleprompterDismissalAudit(
+            framesDirectory: framesDirectory,
+            textRegionValue: textRegionValue,
+            interiorRegionValue: interiorRegionValue
+        )
+        let verdict = result.passed ? "PASS" : "FAIL"
+        print(
+            "\(verdict) TELEPROMPTER-DISMISSAL " +
+                "frames=\(result.frameCount) violations=\(result.violatingFrameIndices) " +
+                "maxOpaqueInteriorSD=" +
+                String(format: "%.2f", result.maximumOpaqueTextInteriorStandardDeviation)
+        )
+        exit(result.passed ? 0 : 1)
+    } catch {
+        fputs("teleprompter dismissal verification error: \(error.localizedDescription)\n", stderr)
+        exit(2)
+    }
+}
+
 guard let sharpnessFramePath = argument(named: "--sharpness-frame"),
       let sharpnessWingRegionValue = argument(named: "--sharpness-wing-region"),
       let sharpnessReferenceRegionValue = argument(named: "--sharpness-reference-region")

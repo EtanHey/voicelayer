@@ -193,6 +193,27 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(source.contains("GLYPH-CONTRAST-PARITY"))
         XCTAssertTrue(source.contains("COMPACT-PADDING"))
         XCTAssertTrue(source.contains("layerScales"))
+        XCTAssertTrue(source.contains("--teleprompter-dismissal-frames"))
+        XCTAssertTrue(source.contains("TELEPROMPTER-DISMISSAL"))
+        XCTAssertTrue(source.contains("VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples:"))
+    }
+
+    func testRealDismissalCaptureRunnerFeedsIsolatedAppFramesIntoThePixelAudit() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .deletingLastPathComponent()
+                .appendingPathComponent("scripts/verify-notch-teleprompter-dismissal.sh"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE=1"))
+        XCTAssertTrue(source.contains("screencapture -x"))
+        XCTAssertTrue(source.contains("--teleprompter-dismissal-frames \"$receipt_dir\""))
+        XCTAssertTrue(source.contains("trap cleanup EXIT INT TERM"))
     }
 
     func testCaptureAuditCodifiesTheRouteQAGhostTextThreshold() throws {
@@ -209,7 +230,9 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(source.contains("maximumTeleprompterInteriorStandardDeviation = 15.0"))
         XCTAssertTrue(source.contains("teleprompterDismissal("))
         XCTAssertTrue(source.contains("frameSamples: [VoiceBarNotchTeleprompterDismissalFrameSample]"))
-        XCTAssertTrue(source.contains("textOpacity >= minimumOpaqueTeleprompterTextOpacity"))
+        XCTAssertTrue(source.contains("minimumOpaqueTeleprompterTextOpacity"))
+        XCTAssertTrue(source.contains("minimumVisibleTeleprompterTextOpacity"))
+        XCTAssertTrue(source.contains("maximumDismissedTeleprompterMaterialOpacity"))
         XCTAssertTrue(source.contains("interiorStandardDeviation > maximumTeleprompterInteriorStandardDeviation"))
     }
 
@@ -244,6 +267,52 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(result.passed)
         XCTAssertTrue(result.violatingFrameIndices.isEmpty)
         XCTAssertLessThan(result.maximumOpaqueTextInteriorStandardDeviation, 15)
+    }
+
+    func testTeleprompterDismissalRejectsVisibleTextAfterRealFrameMaterialDeltaIsGone() {
+        let result = VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: [
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 1,
+                materialOpacity: 1,
+                interiorBrightness: [37, 39, 40, 41]
+            ),
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 0.78,
+                materialOpacity: 0.04,
+                interiorBrightness: [0, 0, 32, 32]
+            ),
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 0,
+                materialOpacity: 0,
+                interiorBrightness: [0, 0, 32, 32]
+            ),
+        ])
+
+        XCTAssertFalse(result.passed)
+        XCTAssertEqual(result.violatingFrameIndices, [1])
+    }
+
+    func testTeleprompterDismissalAllowsTextAndMaterialToLeaveInLockstep() {
+        let result = VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: [
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 1,
+                materialOpacity: 1,
+                interiorBrightness: [37, 39, 40, 41]
+            ),
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 0.42,
+                materialOpacity: 0.44,
+                interiorBrightness: [16, 17, 18, 19]
+            ),
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 0,
+                materialOpacity: 0,
+                interiorBrightness: [0, 0, 32, 32]
+            ),
+        ])
+
+        XCTAssertTrue(result.passed)
+        XCTAssertTrue(result.violatingFrameIndices.isEmpty)
     }
 
     func testTeleprompterDismissalFailsClosedWithoutInteriorPixelsBehindOpaqueText() {

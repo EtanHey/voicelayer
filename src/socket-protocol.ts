@@ -40,6 +40,8 @@ export interface StateEvent {
    * recording resets barInitiatedRecording before the transcription arrives, killing paste.
    */
   source?: "playback" | "recording";
+  /** Immediate follow-up after playback completion (voice_ask converse flow). */
+  next_state?: "recording";
 }
 
 export interface SpeechEvent {
