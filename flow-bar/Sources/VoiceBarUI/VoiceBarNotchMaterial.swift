@@ -113,15 +113,14 @@ public struct VoiceBarNotchCoreSeamPlacement: Equatable {
     public static func resolve(
         for wing: VoiceBarNotchSide,
         coreRect: CGRect,
-        visibleCoreOcclusionInset: CGFloat
+        visibleCoreOcclusionInset _: CGFloat
     ) -> Self {
         let width = VoiceBarNotchContract.material.blackToGlassFadeWidth
-        let occlusion = max(0, visibleCoreOcclusionInset)
         let originX = switch wing {
         case .leading:
-            coreRect.minX - occlusion - width
+            coreRect.minX - width
         case .trailing:
-            coreRect.maxX + occlusion
+            coreRect.maxX
         }
         return VoiceBarNotchCoreSeamPlacement(
             frame: CGRect(

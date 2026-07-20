@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingNotchKeepsTheSpinnerInPlaceWithoutDuplicatingStatusText() {
+    func testTranscribingNotchFitsSpinnerAndWaveformControlsWithoutDeadTail() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -70,14 +70,31 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "Loading speech model"
             )
         )
-        let requiredSpinnerWidth = Theme.pillProcessingSpinnerWidth
-            + VoiceBarNotchContract.material.blackToGlassFadeWidth
-            + VoiceBarNotchContract.material.compactContentInset
-
-        XCTAssertGreaterThanOrEqual(baseline.geometry.topWidth, 394)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 41.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 99.5)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
-        XCTAssertGreaterThanOrEqual(warmup.geometry.leadingWingWidth, requiredSpinnerWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
+    }
+
+    func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
+        let pushToTalk = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .recording,
+                showsRecordingHold: false
+            )
+        )
+        let vad = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .recording,
+                showsRecordingHold: true
+            )
+        )
+
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 52.5)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, pushToTalk.geometry.leadingWingWidth)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 151.5)
+        XCTAssertEqual(vad.geometry.trailingWingWidth - pushToTalk.geometry.trailingWingWidth, 26)
     }
 
     func testNotchPresentationMapsIdleTransientSurfacesToCompactStatus() {

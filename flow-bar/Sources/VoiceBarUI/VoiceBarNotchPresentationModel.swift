@@ -18,6 +18,8 @@ public final class VoiceBarNotchPresentationModel {
     private var hasCompactStatus = false
     private var keepsIdleExpanded = false
     private var compactStatusLeadingWingWidth: CGFloat?
+    private var compactStatusTrailingWingWidth: CGFloat?
+    private var recordingTrailingWingWidth: CGFloat?
     private var coreWidth = VoiceBarNotchContract.coreWidth
     private var visibleCoreOcclusionInset: CGFloat = 0
     @ObservationIgnored private let onLayoutInvalidated: () -> Void
@@ -48,6 +50,8 @@ public final class VoiceBarNotchPresentationModel {
         isRecording: Bool,
         hasCompactStatus: Bool,
         compactStatusLeadingWingWidth: CGFloat? = nil,
+        compactStatusTrailingWingWidth: CGFloat? = nil,
+        recordingTrailingWingWidth: CGFloat? = nil,
         keepsIdleExpanded: Bool = false,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
         visibleCoreOcclusionInset: CGFloat = 0
@@ -56,6 +60,8 @@ public final class VoiceBarNotchPresentationModel {
         self.isRecording = isRecording
         self.hasCompactStatus = hasCompactStatus
         self.compactStatusLeadingWingWidth = compactStatusLeadingWingWidth
+        self.compactStatusTrailingWingWidth = compactStatusTrailingWingWidth
+        self.recordingTrailingWingWidth = recordingTrailingWingWidth
         self.keepsIdleExpanded = keepsIdleExpanded
         self.coreWidth = coreWidth
         self.visibleCoreOcclusionInset = visibleCoreOcclusionInset
@@ -84,6 +90,8 @@ public final class VoiceBarNotchPresentationModel {
             isRecording: isRecording,
             hasCompactStatus: hasCompactStatus,
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth,
+            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth,
+            recordingTrailingWingWidth: recordingTrailingWingWidth,
             isHovered: isHovered || keepsIdleExpanded,
             isKeyboardFocused: isKeyboardFocused,
             coreWidth: coreWidth,

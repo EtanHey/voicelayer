@@ -251,7 +251,37 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertEqual(result.minimumTranscribingBarCount, 7)
         XCTAssertGreaterThanOrEqual(result.recordingToSpeakingPeakRatio, 0.8)
         XCTAssertLessThanOrEqual(result.recordingMaximumCenterDeviation, 1)
+        XCTAssertLessThanOrEqual(result.transcribingMaximumCenterDeviation, 1)
+        XCTAssertGreaterThanOrEqual(result.transcribingMaximumBottomSpread, 2)
         XCTAssertLessThanOrEqual(result.maximumSlotOffsetDelta, 1)
+    }
+
+    func testTranscribingCensusRejectsSevenBarsPinnedToOneBottomFloor() {
+        let centered = waveformFrame(
+            color: .blue,
+            heights: [10, 14, 18, 22, 18, 14, 10],
+            verticalOffset: 0
+        )
+        let bottomPinned = waveformBottomPinnedFrame(
+            color: .blue,
+            heights: [10, 14, 18, 22, 18, 14, 10],
+            bottomY: 21
+        )
+        let recording = waveformFrame(
+            color: .red,
+            heights: [10, 14, 18, 22, 18, 14, 10],
+            verticalOffset: 0
+        )
+
+        let result = VoiceBarNotchCaptureAudit.waveformCensus(
+            recordingFrames: [recording],
+            transcribingFrames: [bottomPinned],
+            speakingFrames: [centered]
+        )
+
+        XCTAssertFalse(result.passed)
+        XCTAssertGreaterThan(result.transcribingMaximumCenterDeviation, 2)
+        XCTAssertEqual(result.transcribingMaximumBottomSpread, 0, accuracy: 0.001)
     }
 
     func testTranscribingCensusRequiresCompleteSevenBarsInAtLeastNinetyFivePercentOfFrames() {
@@ -286,6 +316,42 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertEqual(passing.transcribingCompleteFraction, 0.95, accuracy: 0.001)
         XCTAssertFalse(failing.passed)
         XCTAssertEqual(failing.transcribingCompleteFraction, 0.90, accuracy: 0.001)
+    }
+
+    func testWaveformCensusIgnoresNativeGlassGlowBridgesBetweenSolidBars() {
+        let centered = waveformFrame(
+            color: .blue,
+            heights: [10, 14, 18, 22, 18, 14, 10],
+            verticalOffset: 0
+        )
+        var glowPixels = centered.pixels
+        for x in 0 ..< centered.width {
+            glowPixels[12 * centered.width + x] = VoiceBarRGB(
+                red: 0.12,
+                green: 0.31,
+                blue: 0.42
+            )
+        }
+        let nativeGlassTranscribing = VoiceBarRGBImage(
+            width: centered.width,
+            height: centered.height,
+            pixels: glowPixels
+        )
+        let recording = waveformFrame(
+            color: .red,
+            heights: [10, 14, 18, 22, 18, 14, 10],
+            verticalOffset: 0
+        )
+
+        let result = VoiceBarNotchCaptureAudit.waveformCensus(
+            recordingFrames: [recording],
+            transcribingFrames: [nativeGlassTranscribing],
+            speakingFrames: [centered]
+        )
+
+        XCTAssertTrue(result.passed, "the gate must grade solid bar cores, not connected glow")
+        XCTAssertEqual(result.minimumTranscribingBarCount, 7)
+        XCTAssertGreaterThanOrEqual(result.transcribingMaximumBottomSpread, 2)
     }
 
     func testCompactPaddingRejectsTheMeasuredNineTimesSpinnerAsymmetry() {
@@ -411,6 +477,31 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
             let minY = max(0, centerY - barHeight / 2)
             let maxY = min(height, minY + barHeight)
             for y in minY ..< maxY {
+                for x in minX ..< min(width, minX + 4) {
+                    pixels[y * width + x] = color == .red
+                        ? VoiceBarRGB(red: 0.95, green: 0.20, blue: 0.22)
+                        : VoiceBarRGB(red: 0.20, green: 0.55, blue: 0.98)
+                }
+            }
+        }
+        return VoiceBarRGBImage(width: width, height: height, pixels: pixels)
+    }
+
+    private func waveformBottomPinnedFrame(
+        color: TestWaveformColor,
+        heights: [Int],
+        bottomY: Int
+    ) -> VoiceBarRGBImage {
+        let width = 46
+        let height = 24
+        var pixels = Array(
+            repeating: VoiceBarRGB(red: 0.08, green: 0.08, blue: 0.10),
+            count: width * height
+        )
+        for (index, barHeight) in heights.enumerated() {
+            let minX = index * 7
+            let minY = max(0, bottomY - barHeight + 1)
+            for y in minY ... min(height - 1, bottomY) {
                 for x in minX ..< min(width, minX + 4) {
                     pixels[y * width + x] = color == .red
                         ? VoiceBarRGB(red: 0.95, green: 0.20, blue: 0.22)

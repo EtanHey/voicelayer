@@ -641,6 +641,10 @@ do {
             String(format: "%.3f", waveformCensus.transcribingCompleteFraction) +
             " centerDeviation=" +
             String(format: "%.2f", waveformCensus.recordingMaximumCenterDeviation) +
+            " transcribingCenterDeviation=" +
+            String(format: "%.2f", waveformCensus.transcribingMaximumCenterDeviation) +
+            " transcribingBottomSpread=" +
+            String(format: "%.2f", waveformCensus.transcribingMaximumBottomSpread) +
             " slotDelta=" +
             String(format: "%.2f", waveformCensus.maximumSlotOffsetDelta)
     )

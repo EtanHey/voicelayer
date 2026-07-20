@@ -10,6 +10,28 @@ public enum WaveformLayout {
     public static let viewportHeight: CGFloat = 24
 }
 
+public enum WaveformBarGeometry {
+    public static func frame(
+        index: Int,
+        normalizedLevel: Double,
+        barWidth: CGFloat,
+        barSpacing: CGFloat,
+        maxHeight: CGFloat,
+        minHeight: CGFloat
+    ) -> CGRect {
+        let level = normalizedLevel.isFinite
+            ? min(1, max(0, normalizedLevel))
+            : 0
+        let height = minHeight + (maxHeight - minHeight) * CGFloat(level)
+        return CGRect(
+            x: CGFloat(index) * (barWidth + barSpacing),
+            y: (maxHeight - height) / 2,
+            width: barWidth,
+            height: height
+        )
+    }
+}
+
 public struct WaveformView: View {
     public let color: Color
     private let currentLevel: () -> Double?
@@ -238,16 +260,21 @@ private struct WaveformBars: View {
     let glowRadius: CGFloat
 
     var body: some View {
-        HStack(spacing: barSpacing) {
+        ZStack(alignment: .topLeading) {
             ForEach(normalizedLevels.indices, id: \.self) { index in
+                let frame = WaveformBarGeometry.frame(
+                    index: index,
+                    normalizedLevel: normalizedLevels[index],
+                    barWidth: barWidth,
+                    barSpacing: barSpacing,
+                    maxHeight: maxHeight,
+                    minHeight: minHeight
+                )
                 RoundedRectangle(cornerRadius: barWidth / 2)
                     .fill(color)
-                    .frame(
-                        width: barWidth,
-                        height: minHeight +
-                            (maxHeight - minHeight) * CGFloat(normalizedLevels[index])
-                    )
+                    .frame(width: frame.width, height: frame.height)
                     .shadow(color: color.opacity(glowOpacity), radius: glowRadius, y: 0)
+                    .position(x: frame.midX, y: frame.midY)
             }
         }
         .frame(

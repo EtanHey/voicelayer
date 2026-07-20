@@ -5,8 +5,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
     func testPrimaryStatesUseApprovedVisibleGeometryInsideShadowSafeWindows() {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
-            (.hoverLauncher, CGSize(width: 311, height: 32)),
-            (.recording, CGSize(width: 394, height: 32)),
+            (.hoverLauncher, CGSize(width: 306, height: 32)),
+            (.recording, CGSize(width: 363, height: 32)),
             (.compactStatus, CGSize(width: 394, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
         ]
@@ -85,7 +85,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             + layout.visibleContentRect.minX
             + layout.presentation.geometry.coreOriginX
 
-        XCTAssertEqual(frame, CGRect(x: 704, y: 1068, width: 418, height: 49))
+        XCTAssertEqual(frame, CGRect(x: 715, y: 1068, width: 370, height: 49))
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 
@@ -123,6 +123,26 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
             XCTAssertTrue(panelBounds.contains(layout.activeHitRect), "state=\(state)")
         }
+    }
+
+    func testIsolatedCapturePlacementRequiresParallelModeAndUsesANormalScreenCorner() {
+        let captureOnly = [
+            VoiceBarIsolatedCapturePlacement.environmentVariable: "1",
+        ]
+        let isolatedCapture = [
+            VoiceBarIsolatedCapturePlacement.environmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+
+        XCTAssertFalse(VoiceBarIsolatedCapturePlacement.isEnabled(environment: captureOnly))
+        XCTAssertTrue(VoiceBarIsolatedCapturePlacement.isEnabled(environment: isolatedCapture))
+        XCTAssertEqual(
+            VoiceBarIsolatedCapturePlacement.frame(
+                panelSize: CGSize(width: 370, height: 49),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084)
+            ),
+            CGRect(x: 24, y: 24, width: 370, height: 49)
+        )
     }
 
     func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {

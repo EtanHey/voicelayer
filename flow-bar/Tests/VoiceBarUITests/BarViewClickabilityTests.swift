@@ -45,14 +45,15 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("commandRouter.handleCancel()"))
     }
 
-    func testNotchControlsUseOneBareLanguageWithCentralizedOpticalCorrections() throws {
+    func testStopControlRestoresTheCircularContainerAndCentersTheSquare() throws {
         let stop = VoiceBarNotchControlOptics.resolve(for: "stop.fill")
         let replay = VoiceBarNotchControlOptics.resolve(for: "arrow.counterclockwise")
         let eye = VoiceBarNotchControlOptics.resolve(for: "eye")
         let eyeSlash = VoiceBarNotchControlOptics.resolve(for: "eye.slash")
 
-        XCTAssertEqual(stop.offsetX, 0.5)
-        XCTAssertEqual(stop.offsetY, 0.5)
+        XCTAssertEqual(stop.pointSize, 8)
+        XCTAssertEqual(stop.offsetX, 0)
+        XCTAssertEqual(stop.offsetY, 0)
         XCTAssertEqual(eye.pointSize, eyeSlash.pointSize)
         XCTAssertLessThan(eye.pointSize, replay.pointSize)
 
@@ -60,10 +61,12 @@ final class BarViewClickabilityTests: XCTestCase {
         let buttonStart = try XCTUnwrap(source.range(of: "private func notchButton"))
         let buttonSource = source[buttonStart.lowerBound...]
         XCTAssertTrue(buttonSource.contains("VoiceBarNotchControlOptics.resolve(for: icon)"))
-        XCTAssertTrue(source.contains("Color(nsColor: .labelColor)"))
         XCTAssertTrue(buttonSource.contains(": notchPrimaryLabelColor"))
-        XCTAssertFalse(buttonSource.contains(": notchPalette.primary.color"))
-        XCTAssertFalse(buttonSource.contains(".background"))
+        XCTAssertTrue(source.contains("notchPalette.primary.color"))
+        XCTAssertFalse(source.contains("Color(nsColor: .labelColor)"))
+        XCTAssertTrue(buttonSource.contains("icon == \"stop.fill\""))
+        XCTAssertTrue(buttonSource.contains("Circle()"))
+        XCTAssertTrue(buttonSource.contains("compactControlSize"))
     }
 
     func testNativeNotchShellUsesApprovedBoundsForPrimaryStates() {
@@ -73,7 +76,7 @@ final class BarViewClickabilityTests: XCTestCase {
         idle.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: idle, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 311, height: 32),
+            NSSize(width: 306, height: 32),
             "visible idle must hold the launcher envelope through its collapse grace window"
         )
 
@@ -90,7 +93,7 @@ final class BarViewClickabilityTests: XCTestCase {
         hover.isHovering = true
         XCTAssertEqual(
             makeHost(state: hover, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 311, height: 32)
+            NSSize(width: 306, height: 32)
         )
 
         let recording = VoiceState()
@@ -100,7 +103,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 394, height: 32)
+            NSSize(width: 389, height: 32)
         )
 
         let teleprompter = VoiceState()

@@ -54,6 +54,27 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         XCTAssertEqual(observed.last, .dark)
     }
 
+    @MainActor
+    func testAppearanceChangeRereadsAfterAppKitSettlesInsteadOfLaggingOneToggle() async throws {
+        let aqua = try XCTUnwrap(NSAppearance(named: .aqua))
+        let darkAqua = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        let probe = VoiceBarEffectiveAppearanceView(frame: .zero)
+        var reads = [darkAqua, aqua]
+        probe.effectiveAppearanceProvider = {
+            reads.count > 1 ? reads.removeFirst() : reads[0]
+        }
+        var observed: [VoiceBarNotchAppearance] = []
+        probe.onAppearanceChange = { observed.append($0) }
+
+        probe.handleEffectiveAppearanceChange()
+        XCTAssertEqual(observed.first, .dark, "AppKit may still expose the outgoing appearance in its callback")
+        for _ in 0 ..< 10 where observed.last != .light {
+            await Task.yield()
+        }
+
+        XCTAssertEqual(observed.last, .light, "the settled reread must publish the current appearance")
+    }
+
     func testNotchContrastKeysOffEffectiveAppearanceInsteadOfSwiftUIColorScheme() throws {
         let flowBarRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -82,7 +103,8 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         )
         XCTAssertTrue(readerSource.contains("viewDidChangeEffectiveAppearance"))
         XCTAssertTrue(readerSource.contains("effectiveAppearance"))
-        XCTAssertFalse(readerSource.contains("DispatchQueue.main.async"))
+        XCTAssertTrue(readerSource.contains("scheduleSettledAppearanceRead"))
+        XCTAssertTrue(readerSource.contains("await Task.yield()"))
     }
 
     func testLightAppearanceUsesDarkForegroundsAboveReadableContrast() {
@@ -234,6 +256,73 @@ final class VoiceBarNotchContrastTests: XCTestCase {
                 isSelected: true
             ),
             .stateAccent
+        )
+    }
+
+    func testEveryDrivenCompactStatusUsesTheLivePrimaryLabelForeground() throws {
+        let tapAgain = VoiceBarPresentation.idleStatusText(
+            transcript: "",
+            confirmationText: nil,
+            hotkeyPhase: .awaitingSecondTap,
+            hotkeyEnabled: true
+        )
+        let transcribing = VoiceBarPresentation.liveStatusText(
+            mode: .transcribing,
+            transcript: "",
+            confirmationText: nil,
+            hotkeyPhase: .idle,
+            hotkeyEnabled: true,
+            errorMessage: nil,
+            transcribingStatusText: nil,
+            commandModeState: nil,
+            activeClipMarker: nil
+        )
+        let modelLoad = VoiceBarPresentation.liveStatusText(
+            mode: .transcribing,
+            transcript: "",
+            confirmationText: nil,
+            hotkeyPhase: .idle,
+            hotkeyEnabled: true,
+            errorMessage: nil,
+            transcribingStatusText: "Loading speech model",
+            commandModeState: nil,
+            activeClipMarker: nil
+        )
+
+        XCTAssertEqual(tapAgain, "Tap again to lock")
+        XCTAssertEqual(transcribing, "Transcribing...")
+        XCTAssertEqual(modelLoad, "Loading speech model")
+
+        let source = try barViewSource()
+        let statusStart = try XCTUnwrap(source.range(of: "private var statusLabel"))
+        let textStart = try XCTUnwrap(
+            source.range(of: "private var statusText", range: statusStart.upperBound ..< source.endIndex)
+        )
+        let statusLabel = source[statusStart.lowerBound ..< textStart.lowerBound]
+        XCTAssertTrue(statusLabel.contains(".foregroundStyle(notchPrimaryLabelColor)"))
+    }
+
+    @MainActor
+    func testNotchPalettePrimaryLabelContrastsInBothAppearancesWithoutRelaunch() throws {
+        let light = VoiceBarNotchContrastPalette.resolve(for: .light).primary
+        let dark = VoiceBarNotchContrastPalette.resolve(for: .dark).primary
+
+        XCTAssertLessThan(light.red, 0.2)
+        XCTAssertGreaterThan(dark.red, 0.8)
+
+        let source = try barViewSource()
+        XCTAssertTrue(source.contains("notchPalette.primary.color"))
+        XCTAssertFalse(source.contains("Color(nsColor: .labelColor)"))
+    }
+
+    private func barViewSource() throws -> String {
+        let flowBarRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        return try String(
+            contentsOf: flowBarRoot.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
         )
     }
 }

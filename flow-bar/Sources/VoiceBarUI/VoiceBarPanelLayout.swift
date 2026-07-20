@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 public struct VoiceBarNotchShadowOutsets: Equatable, Sendable {
     public let leading: CGFloat
@@ -91,6 +92,31 @@ public struct VoiceBarPanelLayout: Equatable {
                 - visibleContentRect.minX
                 - presentation.geometry.coreOriginX,
             y: screenGeometry.screenFrame.maxY - panelSize.height,
+            width: panelSize.width,
+            height: panelSize.height
+        )
+    }
+}
+
+public enum VoiceBarIsolatedCapturePlacement {
+    public static let environmentVariable = "QA_VOICEBAR_CAPTURE_BOTTOM_LEFT"
+    public static let parallelInstanceEnvironmentVariable = "VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"
+    public static let cornerInset: CGFloat = 24
+
+    public static func isEnabled(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment[environmentVariable] == "1" &&
+            environment[parallelInstanceEnvironmentVariable] == "1"
+    }
+
+    public static func frame(
+        panelSize: CGSize,
+        visibleFrame: CGRect
+    ) -> CGRect {
+        CGRect(
+            x: visibleFrame.minX + cornerInset,
+            y: visibleFrame.minY + cornerInset,
             width: panelSize.width,
             height: panelSize.height
         )

@@ -476,6 +476,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         anchorMode = anchorPreferences.loadAnchorMode()
 
         let pill = FloatingPillPanel(content: hosting)
+        if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            pill.level = .normal
+        }
         pill.contextMenuProvider = { [weak self] in
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
@@ -890,7 +893,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let layout = currentPanelLayout()
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
-        let plan = if screenGeometry.kind == .hardwareNotch {
+        let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            PillResizePlan(
+                frame: VoiceBarIsolatedCapturePlacement.frame(
+                    panelSize: layout.panelSize,
+                    visibleFrame: visibleFrame
+                ),
+                animate: false
+            )
+        } else if screenGeometry.kind == .hardwareNotch {
             PillResizePlan(
                 frame: layout.windowFrame(anchoredTo: screenGeometry),
                 animate: false
@@ -1117,6 +1128,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             compactStatusLeadingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.leadingWingWidth
                 : nil,
+            compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
+                ? resolved.geometry.trailingWingWidth
+                : nil,
+            recordingTrailingWingWidth: resolved.visualState == .recording
+                ? resolved.geometry.trailingWingWidth
+                : nil,
             keepsIdleExpanded: voiceState.mode == .idle && (
                 !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
             ),
@@ -1135,6 +1152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: mode,
+                showsRecordingHold: mode == .recording && state?.recordingMode == "vad",
                 hasTeleprompterText: state?.teleprompterText != nil,
                 isTeleprompterDismissed: state?.isTeleprompterDismissed ?? false,
                 isTeleprompterReadback: state?.isTeleprompterReadback ?? false,
@@ -1348,6 +1366,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         refreshNotchPresentationModel(for: targetScreen)
+        if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            panel.setFrame(
+                VoiceBarIsolatedCapturePlacement.frame(
+                    panelSize: currentPanelLayout().panelSize,
+                    visibleFrame: targetScreen.visibleFrame
+                ),
+                display: true
+            )
+            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
+                currentScreenIndex = index
+            }
+            return
+        }
         if screenGeometry.kind == .hardwareNotch {
             panel.setFrame(
                 currentPanelLayout().windowFrame(anchoredTo: screenGeometry),

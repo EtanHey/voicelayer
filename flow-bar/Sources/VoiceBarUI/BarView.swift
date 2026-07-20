@@ -104,7 +104,7 @@ public struct VoiceBarNotchControlOptics: Equatable {
         case "arrow.counterclockwise":
             VoiceBarNotchControlOptics(pointSize: 9.5, offsetX: 0, offsetY: 0)
         case "stop.fill":
-            VoiceBarNotchControlOptics(pointSize: 9.5, offsetX: 0.5, offsetY: 0.5)
+            VoiceBarNotchControlOptics(pointSize: 8, offsetX: 0, offsetY: 0)
         default:
             VoiceBarNotchControlOptics(pointSize: 10, offsetX: 0, offsetY: 0)
         }
@@ -223,6 +223,7 @@ public struct BarView: View {
         return VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: state.mode,
+                showsRecordingHold: recordingHoldControl != nil,
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
@@ -507,7 +508,7 @@ public struct BarView: View {
     private var queueBadge: some View {
         Text("\(state.queueDepth)")
             .font(.system(size: 10, weight: .bold, design: .rounded))
-            .foregroundStyle(notchPalette.primary.color)
+            .foregroundStyle(notchPrimaryLabelColor)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(Theme.speakingColor.opacity(0.22))
@@ -610,7 +611,7 @@ public struct BarView: View {
     private var statusLabel: some View {
         Text(statusText)
             .font(.system(size: 12, weight: .medium))
-            .foregroundStyle(notchPalette.primary.color)
+            .foregroundStyle(notchPrimaryLabelColor)
             .lineLimit(1)
             .truncationMode(.tail)
             .contentTransition(.opacity)
@@ -656,10 +657,11 @@ public struct BarView: View {
         VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
     }
 
-    /// Native dynamic label color resolves in the hosting view's live AppKit
-    /// appearance. It must not inherit the glass tint's polarity.
+    /// Resolve the foreground from the same settled appearance signal as the
+    /// compact glass. NSColor.labelColor can retain the hosting panel's prior
+    /// appearance for one frame, camouflaging controls after a live toggle.
     private var notchPrimaryLabelColor: Color {
-        Color(nsColor: .labelColor)
+        notchPalette.primary.color
     }
 
     private var historyButton: some View {
@@ -850,6 +852,7 @@ public struct BarView: View {
         action: @escaping () -> Void
     ) -> some View {
         let optics = VoiceBarNotchControlOptics.resolve(for: icon)
+        let hasStopContainer = isDestructive && icon == "stop.fill"
         let foregroundRole = VoiceBarNotchGlyphForegroundRole.resolve(
             isDestructive: isDestructive,
             isSelected: isSelected
@@ -861,7 +864,9 @@ public struct BarView: View {
             Image(systemName: icon)
                 .font(.system(size: optics.pointSize, weight: .semibold))
                 .foregroundStyle(
-                    foregroundRole == .stateAccent
+                    hasStopContainer
+                        ? Color.white
+                        : foregroundRole == .stateAccent
                         ? Theme.recordingColor
                         : notchPrimaryLabelColor
                 )
@@ -870,6 +875,15 @@ public struct BarView: View {
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize
                 )
+                .background {
+                    if hasStopContainer {
+                        Circle()
+                            .fill(Theme.recordingColor)
+                    } else if isSelected {
+                        Circle()
+                            .fill(Theme.recordingColor.opacity(0.30))
+                    }
+                }
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

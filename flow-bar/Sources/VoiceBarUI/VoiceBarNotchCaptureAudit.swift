@@ -132,6 +132,8 @@ public struct VoiceBarNotchWaveformCensusAuditResult: Equatable {
     public let transcribingCompleteFraction: Double
     public let recordingToSpeakingPeakRatio: Double
     public let recordingMaximumCenterDeviation: Double
+    public let transcribingMaximumCenterDeviation: Double
+    public let transcribingMaximumBottomSpread: Double
     public let maximumSlotOffsetDelta: Double
     public let passed: Bool
 }
@@ -385,6 +387,18 @@ public enum VoiceBarNotchCaptureAudit {
                 return bars.map { abs($0.centerY - center) }
             }
             .max() ?? .infinity
+        let transcribingCenterDeviation = zip(transcribingFrames, transcribing)
+            .flatMap { image, bars in
+                let center = Double(image.height - 1) / 2
+                return bars.map { abs($0.centerY - center) }
+            }
+            .max() ?? .infinity
+        let transcribingBottomSpread = transcribing
+            .filter { $0.count == waveformBarCount }
+            .map { bars in
+                (bars.map(\.maxY).max() ?? 0) - (bars.map(\.maxY).min() ?? 0)
+            }
+            .max() ?? 0
         let slotOffsetDelta = maximumSlotOffsetDelta(
             observations: recording + transcribing + speaking
         )
@@ -396,6 +410,8 @@ public enum VoiceBarNotchCaptureAudit {
             speakingMinimum == waveformBarCount &&
             peakRatio >= minimumRecordingToSpeakingPeakRatio &&
             recordingCenterDeviation <= maximumWaveformCenterDeviation &&
+            transcribingCenterDeviation <= maximumWaveformCenterDeviation &&
+            transcribingBottomSpread >= maximumWaveformCenterDeviation &&
             slotOffsetDelta <= maximumWaveformSlotOffsetDelta
 
         return VoiceBarNotchWaveformCensusAuditResult(
@@ -408,6 +424,8 @@ public enum VoiceBarNotchCaptureAudit {
             transcribingCompleteFraction: transcribingCompleteFraction,
             recordingToSpeakingPeakRatio: peakRatio,
             recordingMaximumCenterDeviation: recordingCenterDeviation,
+            transcribingMaximumCenterDeviation: transcribingCenterDeviation,
+            transcribingMaximumBottomSpread: transcribingBottomSpread,
             maximumSlotOffsetDelta: slotOffsetDelta,
             passed: passed
         )
@@ -519,6 +537,7 @@ public enum VoiceBarNotchCaptureAudit {
         let centerX: Double
         let centerY: Double
         let height: Double
+        let maxY: Double
     }
 
     private static func waveformBars(
@@ -553,7 +572,8 @@ public enum VoiceBarNotchCaptureAudit {
             return WaveformBarObservation(
                 centerX: Double(group.lowerBound + group.upperBound) / 2,
                 centerY: Double(minY + maxY) / 2,
-                height: Double(maxY - minY + 1)
+                height: Double(maxY - minY + 1),
+                maxY: Double(maxY)
             )
         }
     }
@@ -564,9 +584,9 @@ public enum VoiceBarNotchCaptureAudit {
     ) -> Bool {
         switch color {
         case .red:
-            pixel.red > 0.35 && pixel.red - max(pixel.green, pixel.blue) >= 0.10
+            pixel.red > 0.50 && pixel.red - max(pixel.green, pixel.blue) >= 0.18
         case .blue:
-            pixel.blue > 0.35 && pixel.blue - pixel.red >= 0.10 &&
+            pixel.blue > 0.50 && pixel.blue - pixel.red >= 0.18 &&
                 pixel.blue - pixel.green >= 0.08
         }
     }

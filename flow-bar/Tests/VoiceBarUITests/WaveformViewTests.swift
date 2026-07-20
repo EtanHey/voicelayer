@@ -242,6 +242,31 @@ final class WaveformViewTests: XCTestCase {
                 .hasPrefix(".clipped()") == true,
             "the shared viewport must reserve bounds without clipping full-height bars or their antialiasing"
         )
+        XCTAssertTrue(source.contains("WaveformBarGeometry.frame("))
+        XCTAssertTrue(source.contains(".position(x: frame.midX, y: frame.midY)"))
+    }
+
+    func testBarGeometryPinsEveryBarCenterAndSpreadsBottomsAtAmplitudePeak() {
+        let levels = [0.15, 0.35, 0.65, 1.0, 0.65, 0.35, 0.15]
+        let frames = levels.enumerated().map { index, level in
+            WaveformBarGeometry.frame(
+                index: index,
+                normalizedLevel: level,
+                barWidth: WaveformLayout.barWidth,
+                barSpacing: WaveformLayout.barSpacing,
+                maxHeight: WaveformLayout.viewportHeight,
+                minHeight: 3
+            )
+        }
+
+        XCTAssertTrue(frames.allSatisfy { abs($0.midY - 12) < 0.001 })
+        XCTAssertGreaterThan(
+            try XCTUnwrap(frames.map(\.maxY).max()) -
+                XCTUnwrap(frames.map(\.maxY).min()),
+            2,
+            "varying bars must spread below the centerline instead of sharing one bottom floor"
+        )
+        XCTAssertTrue(frames.allSatisfy { $0.minY >= 0 && $0.maxY <= 24 })
     }
 
     @MainActor
@@ -272,6 +297,8 @@ final class WaveformViewTests: XCTestCase {
         XCTAssertEqual(result.minimumSpeakingBarCount, 7)
         XCTAssertGreaterThanOrEqual(result.recordingToSpeakingPeakRatio, 0.8)
         XCTAssertLessThanOrEqual(result.recordingMaximumCenterDeviation, 2)
+        XCTAssertLessThanOrEqual(result.transcribingMaximumCenterDeviation, 2)
+        XCTAssertGreaterThanOrEqual(result.transcribingMaximumBottomSpread, 2)
         XCTAssertLessThanOrEqual(result.maximumSlotOffsetDelta, 2)
     }
 
