@@ -87,4 +87,27 @@ final class VoiceBarNotchMotionTests: XCTestCase {
         })
         XCTAssertTrue((opening.steps + closing.steps).allSatisfy { $0.animation == .opacity })
     }
+
+    func testPlaybackEdgeCommitsContentBeforeRemovingNativeGlass() {
+        XCTAssertTrue(
+            VoiceBarNotchPlaybackEdgeCommitPolicy.stagesContentBeforeGlass(
+                from: .speaking,
+                to: .idle
+            )
+        )
+        XCTAssertFalse(
+            VoiceBarNotchPlaybackEdgeCommitPolicy.stagesContentBeforeGlass(
+                from: .recording,
+                to: .idle
+            )
+        )
+        XCTAssertGreaterThanOrEqual(
+            VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay,
+            1.0 / 60.0
+        )
+        XCTAssertLessThanOrEqual(
+            VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay,
+            0.08
+        )
+    }
 }

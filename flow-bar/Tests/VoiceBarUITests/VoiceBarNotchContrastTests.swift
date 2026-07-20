@@ -147,6 +147,41 @@ final class VoiceBarNotchContrastTests: XCTestCase {
         )
     }
 
+    func testGlyphHaloUsesTheOppositePolaritySoControlsSurviveEitherBackdrop() {
+        let lightHalo = VoiceBarNotchGlyphContrastTreatment.resolve(for: .light)
+        let darkHalo = VoiceBarNotchGlyphContrastTreatment.resolve(for: .dark)
+
+        XCTAssertGreaterThan(lightHalo.red, 0.9)
+        XCTAssertGreaterThan(lightHalo.alpha, 0.9)
+        XCTAssertLessThan(darkHalo.red, 0.1)
+        XCTAssertGreaterThan(darkHalo.alpha, 0.9)
+        XCTAssertGreaterThanOrEqual(
+            VoiceBarContrast.ratio(
+                foreground: lightHalo.composited(over: VoiceBarRGB(red: 0, green: 0, blue: 0)),
+                background: VoiceBarRGB(red: 0, green: 0, blue: 0)
+            ),
+            VoiceBarContrast.minimumControlRatio
+        )
+        XCTAssertGreaterThanOrEqual(
+            VoiceBarContrast.ratio(
+                foreground: darkHalo.composited(over: VoiceBarRGB(red: 1, green: 1, blue: 1)),
+                background: VoiceBarRGB(red: 1, green: 1, blue: 1)
+            ),
+            VoiceBarContrast.minimumControlRatio
+        )
+    }
+
+    func testPrimaryWingGlyphsRenderTheAdaptiveOpposingHalo() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("notchGlyphContrastHaloColor"))
+        XCTAssertTrue(source.contains(".notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)"))
+        XCTAssertTrue(source.contains("radius: 0, x: -0.75, y: 0"))
+        XCTAssertTrue(source.contains("radius: 0, x: 0.75, y: 0"))
+        XCTAssertTrue(source.contains("radius: 0, x: 0, y: -0.75"))
+        XCTAssertTrue(source.contains("radius: 0, x: 0, y: 0.75"))
+    }
+
     func testDarkAppearanceMaterialKeepsLightTextReadableOverBrightMenuBarContent() {
         let palette = VoiceBarNotchContrastPalette.resolve(for: .dark)
         let brightMenuBarBackdrop = VoiceBarRGB(red: 0.50, green: 0.52, blue: 0.55)

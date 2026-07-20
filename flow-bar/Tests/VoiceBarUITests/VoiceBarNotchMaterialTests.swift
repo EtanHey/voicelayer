@@ -75,10 +75,11 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
             XCTAssertEqual(recipe.tint, expectedTint)
             XCTAssertNil(recipe.nativeOverlay)
             XCTAssertEqual(recipe.fallbackOverlay, expectedFallbackOverlay)
+            XCTAssertEqual(recipe.nativeHost, .appKitGlassEffectView)
         }
     }
 
-    func testNativeAndFallbackBranchesStayInsideSwiftUIMaterialSystem() throws {
+    func testNativeBranchBypassesSwiftUIGlassThroughOneAppKitGlassHost() throws {
         let source = try notchMaterialSource()
         let nativeStart = try XCTUnwrap(source.range(of: "else if #available(macOS 26.0, *)"))
         let fallbackStart = try XCTUnwrap(
@@ -90,30 +91,46 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         let nativeBranch = source[nativeStart.lowerBound ..< fallbackStart.lowerBound]
         let fallbackBranch = source[fallbackStart.lowerBound ..< source.endIndex]
 
-        XCTAssertTrue(nativeBranch.contains(".regular.tint(recipe.tint.color)"))
-        XCTAssertEqual(nativeBranch.components(separatedBy: ".glassEffect(").count - 1, 1)
-        XCTAssertFalse(nativeBranch.contains(".background {"))
-        XCTAssertFalse(nativeBranch.contains("surfaceOverlay"))
+        XCTAssertTrue(nativeBranch.contains("VoiceBarAppKitGlassHost"))
+        XCTAssertTrue(nativeBranch.contains("tint: recipe.tint"))
+        XCTAssertFalse(nativeBranch.contains(".glassEffect("))
+        XCTAssertFalse(nativeBranch.contains(".ultraThinMaterial"))
         XCTAssertTrue(fallbackBranch.contains(".background(.ultraThinMaterial, in: shape)"))
         XCTAssertTrue(fallbackBranch.contains("recipe.fallbackOverlay.color"))
         XCTAssertTrue(fallbackBranch.contains(".allowsHitTesting(false)"))
+        XCTAssertTrue(source.contains("NSViewRepresentable"))
+        XCTAssertTrue(source.contains("NSGlassEffectView"))
         XCTAssertFalse(source.contains("NSVisualEffectView"))
     }
 
-    func testNativeGlassStaysOnTheContentBearingViewAndDoesNotShadowItsGlyphAlpha() throws {
+    func testAppKitGlassEmbedsTheContentAndMasksOutTheOpaqueHardwareCore() throws {
         let material = try glassMaterialSource()
 
         XCTAssertTrue(material.contains("content.clipShape(shape)"))
-        XCTAssertTrue(material.contains(".glassEffect("))
-        XCTAssertFalse(material.contains("shape.fill(.clear).glassEffect("))
+        XCTAssertTrue(material.contains("VoiceBarAppKitGlassHost"))
+        XCTAssertTrue(material.contains("contentView = hostingView"))
+        XCTAssertTrue(material.contains("CAShapeLayer"))
+        XCTAssertTrue(material.contains("shape.path(in: rect).cgPath"))
+        XCTAssertFalse(material.contains(".glassEffect("))
         XCTAssertFalse(material.contains(".shadow("))
     }
 
-    func testCompactContentChangesDoNotMaterializeTheGlassSurfaceAgain() throws {
-        let material = try glassMaterialSource()
+    func testNativeGlassTracksPointerWhileThePanelRemainsInactive() throws {
+        let source = try notchMaterialSource()
 
-        XCTAssertTrue(material.contains(".glassEffectTransition(.identity)"))
-        XCTAssertFalse(material.contains(".glassEffectTransition(.materialize)"))
+        XCTAssertTrue(source.contains("NSTrackingArea"))
+        XCTAssertTrue(source.contains(".mouseEnteredAndExited"))
+        XCTAssertTrue(source.contains(".activeInActiveApp"))
+        XCTAssertTrue(source.contains("override func mouseEntered"))
+        XCTAssertTrue(source.contains("override func mouseExited"))
+    }
+
+    func testNativeGlassDisablesImplicitAppKitOrderOutUntilTheExplicitMorphRound() throws {
+        let source = try notchMaterialSource()
+
+        XCTAssertTrue(source.contains("override func animation(forKey"))
+        XCTAssertTrue(source.contains("NSAnimatablePropertyKey"))
+        XCTAssertTrue(source.contains("-> Any? {\n        nil\n    }"))
     }
 
     func testGlassMaterialConsumesTheSettledAppearanceExplicitly() throws {

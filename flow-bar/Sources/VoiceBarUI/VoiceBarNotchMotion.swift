@@ -13,6 +13,21 @@ public enum VoiceBarNotchAnimationKind: Equatable, Sendable {
     case opacity
 }
 
+/// `NSGlassEffectView` performs its own WindowServer order-out treatment. At
+/// the playback edge, give SwiftUI one committed frame to clear the hosted
+/// subtitle before removing that glass so no readable text is ever composited
+/// over an already exposed application.
+public enum VoiceBarNotchPlaybackEdgeCommitPolicy {
+    public static let glassRemovalDelay: TimeInterval = 0.05
+
+    public static func stagesContentBeforeGlass(
+        from source: VoiceMode,
+        to destination: VoiceMode
+    ) -> Bool {
+        source == .speaking && destination == .idle
+    }
+}
+
 public struct VoiceBarNotchMotionStep: Equatable, Sendable {
     public let component: VoiceBarNotchMotionComponent
     public let targetVisible: Bool

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 public enum VoiceBarNotchGlassTopology: Equatable {
@@ -21,6 +22,10 @@ public enum VoiceBarNotchMaterialStrategy: Equatable {
             .opaque
         }
     }
+}
+
+public enum VoiceBarNotchNativeGlassHost: Equatable {
+    case appKitGlassEffectView
 }
 
 public struct VoiceBarNotchMaterialDescriptor: Equatable {
@@ -60,12 +65,14 @@ public struct VoiceBarNotchGlassRecipe: Equatable {
     public let tint: VoiceBarRGBA
     public let nativeOverlay: VoiceBarRGBA?
     public let fallbackOverlay: VoiceBarRGBA
+    public let nativeHost: VoiceBarNotchNativeGlassHost
 
     public static func resolve(for _: VoiceBarNotchAppearance) -> Self {
         VoiceBarNotchGlassRecipe(
             tint: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06),
             nativeOverlay: nil,
-            fallbackOverlay: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06)
+            fallbackOverlay: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06),
+            nativeHost: .appKitGlassEffectView
         )
     }
 }
@@ -80,13 +87,7 @@ public struct VoiceBarGlassContainer<Content: View>: View {
     }
 
     public var body: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: 0) {
-                content
-            }
-        } else {
-            content
-        }
+        content
     }
 }
 
@@ -135,15 +136,12 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                 )
             }
         } else if #available(macOS 26.0, *) {
-            // Native glass stays directly on the content-bearing view. A
-            // separate filled overlay turns this into a tint and defeats its
-            // adaptive frosting over black and bright backdrops.
-            content
-                .glassEffect(
-                    .regular.tint(recipe.tint.color),
-                    in: shape
-                )
-                .glassEffectTransition(.identity)
+            VoiceBarAppKitGlassHost(
+                shape: shape,
+                tint: recipe.tint
+            ) {
+                content
+            }
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
@@ -152,5 +150,128 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                         .allowsHitTesting(false)
                 }
         }
+    }
+}
+
+@available(macOS 26.0, *)
+private struct VoiceBarAppKitGlassHost<SurfaceShape: Shape, HostedContent: View>: NSViewRepresentable {
+    let shape: SurfaceShape
+    let tint: VoiceBarRGBA
+    @ViewBuilder let content: HostedContent
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(content: content)
+    }
+
+    func makeNSView(context: Context) -> VoiceBarTrackedGlassEffectView {
+        let glassView = VoiceBarTrackedGlassEffectView()
+        glassView.style = .regular
+        glassView.cornerRadius = 0
+
+        let hostingView = context.coordinator.hostingView
+        hostingView.frame = glassView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        glassView.contentView = hostingView
+        configure(glassView, context: context)
+        return glassView
+    }
+
+    func updateNSView(_ glassView: VoiceBarTrackedGlassEffectView, context: Context) {
+        context.coordinator.hostingView.rootView = content
+        configure(glassView, context: context)
+    }
+
+    private func configure(
+        _ glassView: VoiceBarTrackedGlassEffectView,
+        context _: Context
+    ) {
+        glassView.tintColor = NSColor(
+            srgbRed: tint.red,
+            green: tint.green,
+            blue: tint.blue,
+            alpha: tint.alpha
+        )
+        glassView.maskPathProvider = { rect in
+            shape.path(in: rect).cgPath
+        }
+        glassView.needsLayout = true
+    }
+
+    final class Coordinator {
+        let hostingView: NSHostingView<HostedContent>
+
+        init(content: HostedContent) {
+            hostingView = NSHostingView(rootView: content)
+        }
+    }
+}
+
+@available(macOS 26.0, *)
+private final class VoiceBarTrackedGlassEffectView: NSGlassEffectView {
+    var maskPathProvider: ((CGRect) -> CGPath)?
+
+    private let glassMaskLayer = CAShapeLayer()
+    private var glassTrackingArea: NSTrackingArea?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.mask = glassMaskLayer
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override func animation(forKey _: NSAnimatablePropertyKey) -> Any? {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.backgroundColor = .clear
+    }
+
+    override func layout() {
+        super.layout()
+        contentView?.frame = bounds
+        updateGlassMask()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let glassTrackingArea {
+            removeTrackingArea(glassTrackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
+            owner: self
+        )
+        addTrackingArea(trackingArea)
+        glassTrackingArea = trackingArea
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+    }
+
+    private func updateGlassMask() {
+        guard let path = maskPathProvider?(bounds) else {
+            glassMaskLayer.path = nil
+            return
+        }
+        var transform = CGAffineTransform(translationX: 0, y: bounds.height)
+        transform = transform.scaledBy(x: 1, y: -1)
+        glassMaskLayer.frame = bounds
+        glassMaskLayer.path = path.copy(using: &transform)
+        glassMaskLayer.fillColor = NSColor.black.cgColor
     }
 }

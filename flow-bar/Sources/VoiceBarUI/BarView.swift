@@ -111,6 +111,15 @@ public struct VoiceBarNotchControlOptics: Equatable {
     }
 }
 
+private extension View {
+    func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
+        shadow(color: color, radius: 0, x: -0.75, y: 0)
+            .shadow(color: color, radius: 0, x: 0.75, y: 0)
+            .shadow(color: color, radius: 0, x: 0, y: -0.75)
+            .shadow(color: color, radius: 0, x: 0, y: 0.75)
+    }
+}
+
 // MARK: - Bar View
 
 public struct BarView: View {
@@ -267,6 +276,7 @@ public struct BarView: View {
             Image(systemName: "mic.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(notchPrimaryLabelColor)
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize
@@ -282,6 +292,7 @@ public struct BarView: View {
             Image(systemName: "book.closed")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(notchPrimaryLabelColor)
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .accessibilityLabel("Teleprompter")
         }
     }
@@ -591,6 +602,7 @@ public struct BarView: View {
             .foregroundStyle(
                 state.mode == .idle ? notchPrimaryLabelColor : Theme.stateColor(for: state.mode)
             )
+            .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .offset(x: optics.offsetX, y: optics.offsetY)
             .frame(
                 width: VoiceBarNotchContract.material.compactControlSize,
@@ -667,6 +679,10 @@ public struct BarView: View {
     /// appearance for one frame, camouflaging controls after a live toggle.
     private var notchPrimaryLabelColor: Color {
         notchPalette.primary.color
+    }
+
+    private var notchGlyphContrastHaloColor: Color {
+        VoiceBarNotchGlyphContrastTreatment.resolve(for: notchAppearance).color
     }
 
     private var historyButton: some View {
@@ -875,6 +891,7 @@ public struct BarView: View {
                         ? Theme.recordingColor
                         : notchPrimaryLabelColor
                 )
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .offset(x: optics.offsetX, y: optics.offsetY)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,

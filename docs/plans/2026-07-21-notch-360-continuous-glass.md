@@ -4,9 +4,9 @@
 
 **Goal:** Ship one adaptive, readable, continuous notch glass system that remains ready for a later compact-to-panel morph without changing #359's accepted behavior.
 
-**Architecture:** Put one content-bearing `VoiceBarNotchContinuousShape` under a persistent `GlassEffectContainer` for every non-idle state. Remove the empty expanded material sibling, the fixed dark native-glass fill, and the painted `VoiceBarNotchCoreSeamStop` ramp so real SwiftUI glass owns the entire panel-to-notch join. Prove the change with a separate test-only backdrop fixture and captured VoiceBar pixels before accepting any visual claim.
+**Architecture:** Put one content-bearing `VoiceBarNotchContinuousShape` under a persistent SwiftUI wrapper for every non-idle state. On macOS 26 that wrapper embeds one `NSGlassEffectView` through `NSViewRepresentable`, uses the SwiftUI shape as its mask, hosts the SwiftUI slots as its content, clears the containing window background, and installs active-in-app pointer tracking. Remove the empty expanded material sibling, the fixed dark fill, and the painted `VoiceBarNotchCoreSeamStop` ramp so one real glass surface owns the external wing-to-below-bezel-panel join while the hardware core remains opaque black. Prove the change with a separate test-only backdrop fixture and captured VoiceBar pixels before accepting any visual claim.
 
-**Tech Stack:** Swift 6, SwiftUI `.glassEffect` on macOS 26, SwiftUI `.ultraThinMaterial` on macOS 14–25, AppKit only for window/capture fixtures, XCTest, Bun, shell capture harness, Apple notarization. `NSVisualEffectView` is forbidden.
+**Tech Stack:** Swift 6, AppKit `NSGlassEffectView` bridged into SwiftUI on macOS 26, SwiftUI `.ultraThinMaterial` on macOS 14–25, XCTest, Bun, shell capture harness, Apple notarization. `NSVisualEffectView` is forbidden.
 
 ---
 
@@ -76,7 +76,7 @@ git add flow-bar/Sources/VoiceBarUI/VoiceBarNotchView.swift \
 git commit -m "refactor(voicebar): unify notch glass ownership"
 ```
 
-### Task 2: Replace the fixed tint with the proven adaptive recipe
+### Task 2: Replace degraded SwiftUI glass with the proven AppKit glass host
 
 **Files:**
 - Modify: `flow-bar/Tests/VoiceBarUITests/VoiceBarNotchMaterialTests.swift`
@@ -84,7 +84,7 @@ git commit -m "refactor(voicebar): unify notch glass ownership"
 
 **Step 1: Write the failing material-recipe tests**
 
-Add a pure descriptor for native glass tint and overlay policy. Require both appearances to use a neutral white tint with alpha `0.06`, and native glass to use no fixed filled overlay:
+Add a pure descriptor for native glass tint and host policy. Require both appearances to use a neutral white tint with alpha `0.06`, no fixed filled overlay, and the AppKit host on macOS 26:
 
 ```swift
 for appearance in [VoiceBarNotchAppearance.dark, .light] {
@@ -96,7 +96,7 @@ for appearance in [VoiceBarNotchAppearance.dark, .light] {
 
 Keep the opaque accessibility fallback and the guarded macOS 14 material fallback.
 
-Add focused source-slice coverage for `VoiceBarGlassMaterial.body`: the macOS 26 slice must pass `recipe.tint` into the single native `.glassEffect`, apply no native filled overlay, and retain `.glassEffectTransition(.identity)`. The fallback slice must retain `.background(.ultraThinMaterial, in: shape)`. The entire notch material source must not contain `NSVisualEffectView`.
+Add focused source-slice coverage for `VoiceBarGlassMaterial.body`: the macOS 26 slice must use exactly one `VoiceBarAppKitGlassHost`; the representable must create `NSGlassEffectView`, host the SwiftUI content as `contentView`, set the containing window background to clear, mask with `VoiceBarNotchContinuousShape`, and install an `NSTrackingArea` containing `.mouseEnteredAndExited` and `.activeInActiveApp`. The fallback slice must retain `.background(.ultraThinMaterial, in: shape)`. The entire notch material source must not contain `NSVisualEffectView` or SwiftUI `.glassEffect` in the Phase 1 product path.
 
 **Step 2: Run the focused test and verify RED**
 
@@ -106,19 +106,19 @@ Run:
 swift test --package-path flow-bar --filter VoiceBarNotchMaterialTests
 ```
 
-Expected: FAIL because Dark currently resolves to a black 0.22 tint plus black 0.14 overlay.
+Expected: FAIL because the current macOS 26 implementation uses SwiftUI `.glassEffect`, which degrades inside the production `.nonactivatingPanel`, and Dark also resolves to a black 0.22 tint plus black 0.14 overlay.
 
 **Step 3: Implement the minimal recipe**
 
-Add `VoiceBarNotchGlassRecipe` and make the macOS 26 path use:
+Add `VoiceBarNotchGlassRecipe` and make the macOS 26 path use a generic representable:
 
 ```swift
-content
-    .glassEffect(.regular.tint(recipe.tint.color), in: shape)
-    .glassEffectTransition(.identity)
+VoiceBarAppKitGlassHost(shape: shape, tint: recipe.tint) {
+    content
+}
 ```
 
-Do not add a native filled overlay or any `NSVisualEffectView` path. Preserve the SwiftUI `.ultraThinMaterial` fallback and its readability veil until it can be runtime-graded on macOS 14–25.
+Its `NSGlassEffectView` must use `.regular`, a shape mask, hosted SwiftUI content, a clear containing-window background, and active-in-app tracking. Do not add a native filled overlay or any `NSVisualEffectView` path. Preserve the SwiftUI `.ultraThinMaterial` fallback and its readability veil until it can be runtime-graded on macOS 14–25.
 
 **Step 4: Run the focused tests and verify GREEN**
 
@@ -131,6 +131,8 @@ git add flow-bar/Sources/VoiceBarUI/VoiceBarNotchMaterial.swift \
   flow-bar/Tests/VoiceBarUITests/VoiceBarNotchMaterialTests.swift
 git commit -m "fix(voicebar): restore adaptive notch glass"
 ```
+
+If real dismissal frames show the WindowServer glass fade outliving hosted text, add a content-first playback-edge commit policy: clear/flush the hosted content, yield one frame, and order the panel out after a bounded 50 ms delay. This delay is only an atomic-dismissal safeguard; it must not become the compact↔teleprompter morph mechanism.
 
 ### Task 3: Add deterministic readability and wing-contrast pixel audits
 

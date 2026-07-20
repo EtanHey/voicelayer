@@ -76,6 +76,8 @@ final class VoiceBarPositionLockTests: XCTestCase {
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
         XCTAssertEqual(panel.level, .statusBar)
+        XCTAssertFalse(panel.isOpaque)
+        XCTAssertEqual(panel.backgroundColor, .clear)
         XCTAssertFalse(panel.hasShadow)
         XCTAssertFalse(panel.canBecomeMain)
     }

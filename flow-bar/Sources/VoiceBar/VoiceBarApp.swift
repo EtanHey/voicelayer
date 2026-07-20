@@ -97,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
+    private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
     /// Saved offsets (0.0-1.0) for pill center positioning on screen.
@@ -848,15 +849,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        let collapsesConverseHandoff = previousVoiceMode == .speaking &&
-            mode == .idle && voiceState.isCollapsed
-        if collapsesConverseHandoff {
-            panel?.orderOut(nil)
-        }
+        let collapsesConverseHandoff = VoiceBarNotchPlaybackEdgeCommitPolicy
+            .stagesContentBeforeGlass(from: previousVoiceMode, to: mode) &&
+            voiceState.isCollapsed
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
-        refreshNotchPresentationAndPanelLayout(animated: true)
+        playbackEdgeLayoutTask?.cancel()
+        if collapsesConverseHandoff {
+            playbackEdgeLayoutTask = Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self, !Task.isCancelled, currentVoiceMode == .idle else { return }
+                panel?.contentView?.needsLayout = true
+                panel?.contentView?.layoutSubtreeIfNeeded()
+                panel?.contentView?.displayIfNeeded()
+                do {
+                    try await Task.sleep(
+                        for: .seconds(VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay)
+                    )
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, currentVoiceMode == .idle else { return }
+                refreshNotchPresentationAndPanelLayout(animated: true)
+                panel?.orderOut(nil)
+            }
+        } else {
+            refreshNotchPresentationAndPanelLayout(animated: true)
+        }
         if !collapsesConverseHandoff {
             if VoiceBarIsolatedCapturePlacement.isEnabled() {
                 panel?.orderFrontRegardless()
