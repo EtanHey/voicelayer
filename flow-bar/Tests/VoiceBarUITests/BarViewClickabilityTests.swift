@@ -103,7 +103,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 389, height: 32)
+            NSSize(width: 384, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -278,6 +278,47 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 1)
         XCTAssertEqual(router.cancelCount, 0)
         XCTAssertEqual(router.stopCount, 0)
+    }
+
+    func testIdleStatusMicReusesLauncherMicOpticsAndPrimaryForeground() throws {
+        let source = try barViewSource()
+        let statusStart = try XCTUnwrap(source.range(of: "private var statusIcon"))
+        let imageStart = try XCTUnwrap(source.range(of: "private var statusIconImage"))
+        let iconNameStart = try XCTUnwrap(
+            source.range(of: "private var iconName", range: imageStart.upperBound ..< source.endIndex)
+        )
+        let statusIconImage = source[imageStart.lowerBound ..< iconNameStart.lowerBound]
+
+        XCTAssertTrue(
+            statusIconImage.contains("VoiceBarNotchControlOptics.resolve(for: iconName)"),
+            "the hotkey-transition mic must use the same optical sizing contract as the launcher mic"
+        )
+        XCTAssertTrue(
+            statusIconImage.contains("state.mode == .idle ? notchPrimaryLabelColor"),
+            "the neutral hotkey-transition mic must use the same appearance-aware primary foreground as the launcher mic"
+        )
+        let statusIcon = source[statusStart.lowerBound ..< imageStart.lowerBound]
+        XCTAssertTrue(
+            statusIcon.contains("notchButton("),
+            "launcher and quick-F5 must mount the same 20pt mic control instead of 20pt and 26pt variants"
+        )
+    }
+
+    func testRecordingKeepsOneMicIndicatorAndDropsTheRedundantDot() throws {
+        let source = try barViewSource()
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
+        let trailingStart = try XCTUnwrap(
+            source.range(of: "private var notchTrailingContent", range: leadingStart.upperBound ..< source.endIndex)
+        )
+        let leading = source[leadingStart.lowerBound ..< trailingStart.lowerBound]
+        let recordingStart = try XCTUnwrap(leading.range(of: "case .recording:"))
+        let statusStart = try XCTUnwrap(
+            leading.range(of: "case .compactStatus:", range: recordingStart.upperBound ..< leading.endIndex)
+        )
+        let recording = leading[recordingStart.lowerBound ..< statusStart.lowerBound]
+
+        XCTAssertTrue(recording.contains("Image(systemName: \"mic.fill\")"))
+        XCTAssertFalse(recording.contains("PulsingDot()"))
     }
 
     func testTranscribingNotchDropsTheRedundantDefaultLabel() throws {

@@ -147,6 +147,10 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let bodyCompactBranch = source[compactUse.lowerBound ..< fixedCoreUse.lowerBound]
 
         XCTAssertFalse(bodyCompactBranch.contains(".id(presentation.visualState)"))
+        XCTAssertTrue(
+            bodyCompactBranch.contains(".transition(.identity)"),
+            "a collapsed shell must not leave an animated detached wing alive in the resized panel"
+        )
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {

@@ -166,6 +166,7 @@ public struct BarView: View {
     private var notchContent: some View {
         VoiceBarNotchView(
             presentation: notchPresentation,
+            appearance: notchAppearance,
             onHoverChanged: { hovering in
                 guard !includesPanelOutsets else { return }
                 state.setHovering(hovering)
@@ -263,14 +264,14 @@ public struct BarView: View {
                 commandRouter.handlePrimaryTap()
             }
         case .recording:
-            HStack(spacing: VoiceBarNotchContract.material.recordingIndicatorSpacing) {
-                PulsingDot()
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(notchPrimaryLabelColor)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Recording")
+            Image(systemName: "mic.fill")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(notchPrimaryLabelColor)
+                .frame(
+                    width: VoiceBarNotchContract.material.compactControlSize,
+                    height: VoiceBarNotchContract.material.compactControlSize
+                )
+                .accessibilityLabel("Recording")
         case .compactStatus:
             if state.mode == .transcribing {
                 ProcessingSpinner()
@@ -570,27 +571,31 @@ public struct BarView: View {
     @ViewBuilder
     private var statusIcon: some View {
         if state.mode == .idle || state.mode == .error {
-            Button {
-                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+            notchButton(
+                icon: iconName,
+                accessibilityLabel: state.mode == .error
+                    ? "Retry voice recording"
+                    : "Start voice recording"
+            ) {
                 commandRouter.handlePrimaryTap()
-            } label: {
-                statusIconImage
-                    .frame(width: 26, height: 26)
-                    .contentShape(Circle())
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(state.mode == .error ? "Retry voice recording" : "Start voice recording")
         } else {
             statusIconImage
         }
     }
 
     private var statusIconImage: some View {
-        Image(systemName: iconName)
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(Theme.stateColor(for: state.mode))
-            .frame(width: 18)
-            .fixedSize()
+        let optics = VoiceBarNotchControlOptics.resolve(for: iconName)
+        return Image(systemName: iconName)
+            .font(.system(size: optics.pointSize, weight: .semibold))
+            .foregroundStyle(
+                state.mode == .idle ? notchPrimaryLabelColor : Theme.stateColor(for: state.mode)
+            )
+            .offset(x: optics.offsetX, y: optics.offsetY)
+            .frame(
+                width: VoiceBarNotchContract.material.compactControlSize,
+                height: VoiceBarNotchContract.material.compactControlSize
+            )
             .layoutPriority(2)
             .contentTransition(.interpolate)
     }

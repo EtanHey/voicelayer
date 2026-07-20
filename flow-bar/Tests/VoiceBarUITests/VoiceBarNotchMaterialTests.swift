@@ -127,6 +127,43 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertFalse(material.contains(".shadow("))
     }
 
+    func testCompactContentChangesDoNotMaterializeTheGlassSurfaceAgain() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
+            encoding: .utf8
+        )
+        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
+        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
+        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+
+        XCTAssertTrue(material.contains(".glassEffectTransition(.identity)"))
+        XCTAssertFalse(material.contains(".glassEffectTransition(.materialize)"))
+    }
+
+    func testGlassMaterialConsumesTheSettledAppearanceExplicitly() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
+            encoding: .utf8
+        )
+        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
+        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
+        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+
+        XCTAssertTrue(material.contains("public let appearance: VoiceBarNotchAppearance"))
+        XCTAssertFalse(material.contains("@Environment(\\.voiceBarNotchAppearance)"))
+        XCTAssertTrue(material.contains("VoiceBarNotchContrastPalette.resolve(for: appearance)"))
+    }
+
     @MainActor
     func testRenderedCoreSeamsCarryAVisibleGradualSixteenPointFade() throws {
         let leading = try renderFade(.leading)

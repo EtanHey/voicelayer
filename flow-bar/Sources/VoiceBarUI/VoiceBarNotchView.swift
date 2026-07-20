@@ -32,6 +32,7 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
 
 public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, LowerContent: View>: View {
     public let presentation: VoiceBarNotchPresentation
+    public let appearance: VoiceBarNotchAppearance
     private let leadingContent: LeadingContent
     private let trailingContent: TrailingContent
     private let lowerContent: LowerContent
@@ -40,12 +41,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     public init(
         presentation: VoiceBarNotchPresentation,
+        appearance: VoiceBarNotchAppearance = .dark,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
         @ViewBuilder trailingContent: () -> TrailingContent,
         @ViewBuilder lowerContent: () -> LowerContent
     ) {
         self.presentation = presentation
+        self.appearance = appearance
         self.onHoverChanged = onHoverChanged
         self.leadingContent = leadingContent()
         self.trailingContent = trailingContent()
@@ -64,7 +67,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     .transition(.identity)
             } else if presentation.visualState != .idle {
                 compactSurface
-                    .transition(surfaceTransition(delay: 0))
+                    .transition(.identity)
             }
 
             fixedHardwareCore
@@ -146,7 +149,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 if layout.leadingWingRect.width > 0 {
                     VoiceBarGlassWing(
                         side: .leading,
-                        outerCornerRadius: compactOuterCornerRadius
+                        outerCornerRadius: compactOuterCornerRadius,
+                        appearance: appearance
                     ) {
                         wingSlot(leadingContent, side: .leading)
                     }
@@ -163,7 +167,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 if layout.trailingWingRect.width > 0 {
                     VoiceBarGlassWing(
                         side: .trailing,
-                        outerCornerRadius: compactOuterCornerRadius
+                        outerCornerRadius: compactOuterCornerRadius,
+                        appearance: appearance
                     ) {
                         wingSlot(trailingContent, side: .trailing)
                     }
@@ -196,7 +201,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             )
             .modifier(
                 VoiceBarGlassMaterial(
-                    shape: shape
+                    shape: shape,
+                    appearance: appearance
                 )
             )
             .contentShape(shape)

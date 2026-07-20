@@ -157,11 +157,16 @@ public struct VoiceBarGlassContainer<Content: View>: View {
 /// teleprompter surface. It deliberately never wraps the black hardware core.
 public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     public let shape: SurfaceShape
+    public let appearance: VoiceBarNotchAppearance
     public let forceOpaqueFallback: Bool
-    @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
-    public init(shape: SurfaceShape, forceOpaqueFallback: Bool = false) {
+    public init(
+        shape: SurfaceShape,
+        appearance: VoiceBarNotchAppearance = .dark,
+        forceOpaqueFallback: Bool = false
+    ) {
         self.shape = shape
+        self.appearance = appearance
         self.forceOpaqueFallback = forceOpaqueFallback
     }
 
@@ -186,7 +191,7 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
         if forceOpaqueFallback {
             content.background {
                 shape.fill(
-                    notchAppearance == .dark
+                    appearance == .dark
                         ? Color.black.opacity(0.88)
                         : Color.white.opacity(0.84)
                 )
@@ -205,6 +210,7 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                     .regular.tint(notchPalette.surfaceTint.color),
                     in: shape
                 )
+                .glassEffectTransition(.identity)
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
@@ -216,7 +222,7 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     }
 
     private var notchPalette: VoiceBarNotchContrastPalette {
-        VoiceBarNotchContrastPalette.resolve(for: notchAppearance)
+        VoiceBarNotchContrastPalette.resolve(for: appearance)
     }
 }
 
@@ -245,15 +251,18 @@ public struct VoiceBarBlackToGlassFade: View {
 public struct VoiceBarGlassWing<Content: View>: View {
     public let side: VoiceBarNotchSide
     public let outerCornerRadius: CGFloat
+    public let appearance: VoiceBarNotchAppearance
     private let content: Content
 
     public init(
         side: VoiceBarNotchSide,
         outerCornerRadius: CGFloat = 11,
+        appearance: VoiceBarNotchAppearance = .dark,
         @ViewBuilder content: () -> Content
     ) {
         self.side = side
         self.outerCornerRadius = outerCornerRadius
+        self.appearance = appearance
         self.content = content()
     }
 
@@ -263,7 +272,7 @@ public struct VoiceBarGlassWing<Content: View>: View {
             outerCornerRadius: outerCornerRadius
         )
         content
-            .modifier(VoiceBarGlassMaterial(shape: shape))
+            .modifier(VoiceBarGlassMaterial(shape: shape, appearance: appearance))
             .clipShape(shape)
     }
 }

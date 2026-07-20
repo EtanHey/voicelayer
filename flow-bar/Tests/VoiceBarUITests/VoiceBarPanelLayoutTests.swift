@@ -6,8 +6,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
             (.hoverLauncher, CGSize(width: 306, height: 32)),
-            (.recording, CGSize(width: 363, height: 32)),
-            (.compactStatus, CGSize(width: 394, height: 32)),
+            (.recording, CGSize(width: 358, height: 32)),
+            (.compactStatus, CGSize(width: 332, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
         ]
 
@@ -85,7 +85,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             + layout.visibleContentRect.minX
             + layout.presentation.geometry.coreOriginX
 
-        XCTAssertEqual(frame, CGRect(x: 715, y: 1068, width: 370, height: 49))
+        XCTAssertEqual(frame, CGRect(x: 720, y: 1068, width: 365, height: 49))
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 

@@ -37,6 +37,7 @@ public struct WaveformView: View {
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
+    @State private var envelopeLevel = 0.0
 
     private let barCount = WaveformLayout.barCount
     private let barWidth = WaveformLayout.barWidth
@@ -65,40 +66,74 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
-            switch mode {
-            case .audioDriven:
-                AudioDrivenBars(
-                    targetLevel: currentLevel(),
-                    isListening: isListening,
-                    time: now,
-                    color: color,
-                    barCount: barCount,
-                    barWidth: barWidth,
-                    barSpacing: barSpacing,
-                    maxHeight: maxHeight,
-                    minHeight: minHeight,
-                    glowOpacity: isListening ? 0.25 : 0.45,
-                    glowRadius: isListening ? 3 : 5
-                )
-            case .processing:
-                WaveformBars(
-                    normalizedLevels: WaveformMetrics.processingLevels(
-                        time: now,
-                        barCount: barCount
-                    ),
-                    color: color,
-                    barWidth: barWidth,
-                    barSpacing: barSpacing,
-                    maxHeight: maxHeight,
-                    minHeight: minHeight,
-                    glowOpacity: 0.35,
-                    glowRadius: 4
-                )
-            }
+            WaveformBars(
+                normalizedLevels: normalizedLevels(time: now),
+                color: color,
+                barWidth: barWidth,
+                barSpacing: barSpacing,
+                maxHeight: maxHeight,
+                minHeight: minHeight,
+                glowOpacity: glowOpacity,
+                glowRadius: glowRadius
+            )
         }
         .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
         .fixedSize(horizontal: true, vertical: true)
         .layoutPriority(1)
+        .onAppear {
+            updateEnvelope(to: currentLevel(), animated: false)
+        }
+        .onChange(of: currentLevel()) { _, newLevel in
+            updateEnvelope(to: newLevel, animated: mode == .audioDriven)
+        }
+    }
+
+    private func normalizedLevels(time: Double) -> [Double] {
+        switch mode {
+        case .audioDriven:
+            WaveformMetrics.audioDrivenLevels(
+                level: envelopeLevel,
+                time: time,
+                barCount: barCount,
+                isListening: isListening
+            )
+        case .processing:
+            WaveformMetrics.processingLevels(time: time, barCount: barCount)
+        }
+    }
+
+    private var glowOpacity: Double {
+        switch mode {
+        case .audioDriven: isListening ? 0.25 : 0.45
+        case .processing: 0.35
+        }
+    }
+
+    private var glowRadius: CGFloat {
+        switch mode {
+        case .audioDriven: isListening ? 3 : 5
+        case .processing: 4
+        }
+    }
+
+    private func updateEnvelope(to rawLevel: Double?, animated: Bool) {
+        let target = if let rawLevel, rawLevel.isFinite {
+            min(1, max(0, rawLevel))
+        } else {
+            0.0
+        }
+        guard animated else {
+            envelopeLevel = target
+            return
+        }
+
+        let duration = WaveformMetrics.envelopeTransitionDuration(
+            from: envelopeLevel,
+            to: target
+        )
+        withAnimation(.easeOut(duration: duration)) {
+            envelopeLevel = target
+        }
     }
 
     private enum RenderMode {
@@ -190,65 +225,6 @@ public enum WaveformMetrics {
     }
 }
 
-private struct AudioDrivenBars: View {
-    let targetLevel: Double?
-    let isListening: Bool
-    let time: Double
-    let color: Color
-    let barCount: Int
-    let barWidth: CGFloat
-    let barSpacing: CGFloat
-    let maxHeight: CGFloat
-    let minHeight: CGFloat
-    let glowOpacity: Double
-    let glowRadius: CGFloat
-    @State private var envelopeLevel = 0.0
-
-    var body: some View {
-        WaveformBars(
-            normalizedLevels: WaveformMetrics.audioDrivenLevels(
-                level: envelopeLevel,
-                time: time,
-                barCount: barCount,
-                isListening: isListening
-            ),
-            color: color,
-            barWidth: barWidth,
-            barSpacing: barSpacing,
-            maxHeight: maxHeight,
-            minHeight: minHeight,
-            glowOpacity: glowOpacity,
-            glowRadius: glowRadius
-        )
-        .onAppear {
-            updateEnvelope(to: targetLevel, animated: false)
-        }
-        .onChange(of: targetLevel) { _, newLevel in
-            updateEnvelope(to: newLevel, animated: true)
-        }
-    }
-
-    private func updateEnvelope(to rawLevel: Double?, animated: Bool) {
-        let target = if let rawLevel, rawLevel.isFinite {
-            min(1, max(0, rawLevel))
-        } else {
-            0.0
-        }
-        guard animated else {
-            envelopeLevel = target
-            return
-        }
-
-        let duration = WaveformMetrics.envelopeTransitionDuration(
-            from: envelopeLevel,
-            to: target
-        )
-        withAnimation(.easeOut(duration: duration)) {
-            envelopeLevel = target
-        }
-    }
-}
-
 private struct WaveformBars: View {
     let normalizedLevels: [Double]
     let color: Color
@@ -260,8 +236,16 @@ private struct WaveformBars: View {
     let glowRadius: CGFloat
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(normalizedLevels.indices, id: \.self) { index in
+        Canvas { context, _ in
+            context.addFilter(
+                .shadow(
+                    color: color.opacity(glowOpacity),
+                    radius: glowRadius,
+                    x: 0,
+                    y: 0
+                )
+            )
+            for index in normalizedLevels.indices {
                 let frame = WaveformBarGeometry.frame(
                     index: index,
                     normalizedLevel: normalizedLevels[index],
@@ -270,11 +254,13 @@ private struct WaveformBars: View {
                     maxHeight: maxHeight,
                     minHeight: minHeight
                 )
-                RoundedRectangle(cornerRadius: barWidth / 2)
-                    .fill(color)
-                    .frame(width: frame.width, height: frame.height)
-                    .shadow(color: color.opacity(glowOpacity), radius: glowRadius, y: 0)
-                    .position(x: frame.midX, y: frame.midY)
+                context.fill(
+                    Path(
+                        roundedRect: frame,
+                        cornerRadius: barWidth / 2
+                    ),
+                    with: .color(color)
+                )
             }
         }
         .frame(

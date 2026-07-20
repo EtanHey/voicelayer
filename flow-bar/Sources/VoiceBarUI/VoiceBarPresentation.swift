@@ -134,9 +134,7 @@ public enum VoiceBarPresentation {
             compactStatusLeadingWingWidth: compactStatusLeadingWingWidth(
                 mode: input.mode
             ),
-            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(
-                mode: input.mode
-            ),
+            compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
             recordingTrailingWingWidth: recordingTrailingWingWidth(
                 mode: input.mode,
                 showsRecordingHold: input.showsRecordingHold
@@ -149,22 +147,40 @@ public enum VoiceBarPresentation {
     }
 
     private static func compactStatusLeadingWingWidth(
-        mode: VoiceMode
+        mode _: VoiceMode
     ) -> CGFloat? {
-        guard mode == .transcribing else { return nil }
-        return VoiceBarNotchContract.compactCoreContentInset +
-            VoiceBarNotchContract.material.compactContentInset +
-            Theme.pillProcessingSpinnerWidth
+        VoiceBarNotchContract.compactIndicatorLaneWidth
     }
 
     private static func compactStatusTrailingWingWidth(
-        mode: VoiceMode
+        input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
-        guard mode == .transcribing else { return nil }
         let material = VoiceBarNotchContract.material
-        return VoiceBarNotchContract.compactCoreContentInset + material.waveformSlotWidth +
-            material.compactControlSpacing + material.compactControlSize +
+        let insets = VoiceBarNotchContract.compactCoreContentInset +
             material.compactContentInset
+        switch input.mode {
+        case .transcribing:
+            return insets + material.waveformSlotWidth +
+                material.compactControlSpacing + material.compactControlSize
+        case .speaking:
+            let visibilityControl = input.isTeleprompterDismissed
+                ? material.compactControlSize + 4
+                : 0
+            return insets + visibilityControl + material.waveformSlotWidth +
+                4 + material.compactControlSize
+        case .error:
+            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+                3 + material.compactControlSize
+        case .idle:
+            let queueWidth = input.queueDepth > 0
+                ? Theme.intrinsicPillStatusWidth(for: "\(input.queueDepth)") + 16
+                : 0
+            return insets + queueWidth + Theme.intrinsicPillStatusWidth(for: input.statusText)
+        case .disconnected:
+            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText)
+        case .recording:
+            return nil
+        }
     }
 
     private static func recordingTrailingWingWidth(

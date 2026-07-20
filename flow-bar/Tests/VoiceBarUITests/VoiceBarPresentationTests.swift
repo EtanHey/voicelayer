@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingNotchFitsSpinnerAndWaveformControlsWithoutDeadTail() {
+    func testTranscribingFitsItsActualPayloadWithoutChangingBetweenStatusStrings() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -70,10 +70,44 @@ final class VoiceBarPresentationTests: XCTestCase {
                 statusText: "Loading speech model"
             )
         )
-        XCTAssertEqual(baseline.geometry.leadingWingWidth, 41.5)
+        XCTAssertEqual(baseline.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(baseline.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
+    }
+
+    func testCompactStatesKeepOneLeadingIndicatorLaneAndFitTheRightPayload() {
+        let launcher = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+        )
+        let quickTap = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .idle,
+                hotkeyPhase: .awaitingSecondTap,
+                statusText: VoiceBarPresentation.tapAgainToLockHint
+            )
+        )
+        let recording = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .recording)
+        )
+        let processing = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .transcribing)
+        )
+
+        for presentation in [launcher, quickTap, recording, processing] {
+            XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
+        }
+        XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(
+            quickTap.geometry.trailingWingWidth,
+            VoiceBarNotchContract.compactCoreContentInset +
+                VoiceBarNotchContract.material.compactContentInset +
+                Theme.intrinsicPillStatusWidth(for: VoiceBarPresentation.tapAgainToLockHint)
+        )
+        XCTAssertLessThan(processing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth)
     }
 
     func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
@@ -90,7 +124,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 52.5)
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 125.5)
         XCTAssertEqual(vad.geometry.leadingWingWidth, pushToTalk.geometry.leadingWingWidth)
         XCTAssertEqual(vad.geometry.trailingWingWidth, 151.5)

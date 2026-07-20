@@ -32,7 +32,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 52.5,
+                leadingWingWidth: 47.5,
                 trailingWingWidth: 125.5,
                 bodyLeadingExtent: 0,
                 bodyTrailingExtent: 0,
@@ -64,12 +64,30 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(idle.totalHeight, 32)
         XCTAssertEqual(hover.topWidth, 306)
         XCTAssertEqual(hover.totalWidth, 306)
-        XCTAssertEqual(recording.topWidth, 363)
-        XCTAssertEqual(recording.totalWidth, 363)
+        XCTAssertEqual(recording.topWidth, 358)
+        XCTAssertEqual(recording.totalWidth, 358)
         XCTAssertEqual(teleprompter.topWidth, 361)
         XCTAssertEqual(teleprompter.bodyWidth, 465)
         XCTAssertEqual(teleprompter.totalWidth, 465)
         XCTAssertEqual(teleprompter.totalHeight, 228)
+    }
+
+    func testCompactStatesKeepOneLeadingIndicatorLaneAndOneGlassShape() {
+        let hover = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let recording = VoiceBarNotchContract.geometry(for: .recording)
+        let status = VoiceBarNotchContract.geometry(for: .compactStatus)
+
+        XCTAssertEqual(hover.leadingWingWidth, 47.5)
+        XCTAssertEqual(recording.leadingWingWidth, 47.5)
+        XCTAssertEqual(status.leadingWingWidth, 47.5)
+        XCTAssertEqual(
+            VoiceBarNotchContract.material.compactOuterCornerRadius(for: .hoverLauncher),
+            VoiceBarNotchContract.material.compactOuterCornerRadius(for: .recording)
+        )
+        XCTAssertEqual(
+            VoiceBarNotchContract.material.compactOuterCornerRadius(for: .compactStatus),
+            VoiceBarNotchContract.material.compactOuterCornerRadius(for: .recording)
+        )
     }
 
     func testMaterialContractLocksFadeSafeContentAndOneSurfaceRules() {
@@ -88,7 +106,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(material.teleprompterInsetFrameCount, 0)
         XCTAssertTrue(material.compactWingsHaveOuterEdgeTreatment)
         XCTAssertFalse(material.coreUsesBackdropMaterial)
-        XCTAssertEqual(material.compactOuterCornerRadius(for: .hoverLauncher), 11)
+        XCTAssertEqual(material.compactOuterCornerRadius(for: .hoverLauncher), 15)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .recording), 15)
         XCTAssertEqual(material.compactOuterCornerRadius(for: .compactStatus), 15)
         XCTAssertEqual(material.recordingIndicatorSpacing, 7)
@@ -116,8 +134,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
             XCTAssertEqual(trailing.coreInset, 13.5)
             XCTAssertEqual(leading.outerInset, 14)
             XCTAssertEqual(trailing.outerInset, 14)
-            XCTAssertEqual(leading.alignment, .core)
-            XCTAssertEqual(trailing.alignment, .core)
+            XCTAssertEqual(leading.alignment, .center)
+            XCTAssertEqual(trailing.alignment, .center)
         }
 
         let teleprompter = material.wingContentLayout(
@@ -138,7 +156,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
 
         XCTAssertEqual(layout.coreInset, 13.5)
         XCTAssertEqual(layout.outerInset, 14)
-        XCTAssertEqual(layout.alignment, .core)
+        XCTAssertEqual(layout.alignment, .center)
     }
 
     func testTeleprompterTextWidthTracksTheMeasuredHardwareCoreWidth() {

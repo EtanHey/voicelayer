@@ -243,7 +243,37 @@ final class WaveformViewTests: XCTestCase {
             "the shared viewport must reserve bounds without clipping full-height bars or their antialiasing"
         )
         XCTAssertTrue(source.contains("WaveformBarGeometry.frame("))
-        XCTAssertTrue(source.contains(".position(x: frame.midX, y: frame.midY)"))
+        XCTAssertTrue(source.contains("roundedRect: frame"))
+    }
+
+    func testProcessingAndAudioModesShareOneStableBarRendererHierarchy() throws {
+        let source = try waveformViewSource()
+
+        XCTAssertTrue(source.contains("private func normalizedLevels(time:"))
+        XCTAssertEqual(
+            source.components(separatedBy: "WaveformBars(").count - 1,
+            1,
+            "recording, processing, and speaking must feed one permanently mounted bar renderer"
+        )
+        XCTAssertFalse(
+            source.contains("private struct AudioDrivenBars"),
+            "a mode-specific wrapper changes the SwiftUI hierarchy during recording-to-processing"
+        )
+    }
+
+    func testWaveformBarsRenderAsOneAtomicCanvasInsteadOfIndependentSubviews() throws {
+        let source = try waveformViewSource()
+        let barsStart = try XCTUnwrap(source.range(of: "private struct WaveformBars"))
+        let bars = source[barsStart.lowerBound ..< source.endIndex]
+
+        XCTAssertTrue(
+            bars.contains("Canvas { context, _ in"),
+            "glass must composite the waveform as one atomic raster surface"
+        )
+        XCTAssertFalse(
+            bars.contains("ForEach("),
+            "individual bar views can be independently relaid out or clipped during the compact-state morph"
+        )
     }
 
     func testBarGeometryPinsEveryBarCenterAndSpreadsBottomsAtAmplitudePeak() {
