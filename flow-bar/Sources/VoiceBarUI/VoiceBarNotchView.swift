@@ -4,7 +4,6 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     public let shellIdentity: String
     public let fixedCoreCount: Int
     public let reusableWingSlotCount: Int
-    public let coreEdgeVeilCount: Int
     public let lowerSurfaceCount: Int
     public let clipsContentToVisibleSurfaces: Bool
     public let coreUsesMaterial: Bool
@@ -19,7 +18,6 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
             shellIdentity: "VoiceBarNotchShell",
             fixedCoreCount: presentation.visualState == .idle ? 0 : 1,
             reusableWingSlotCount: 2,
-            coreEdgeVeilCount: presentation.visualState == .idle ? 0 : 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
             coreUsesMaterial: VoiceBarNotchContract.material.coreUsesBackdropMaterial,
@@ -57,12 +55,11 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            if presentation.visualState == .teleprompter {
-                teleprompterSurfaceUnit
-                    .transition(.identity)
-            } else if presentation.visualState != .idle {
-                compactSurface
-                    .transition(.identity)
+            VoiceBarGlassContainer {
+                if presentation.visualState != .idle {
+                    notchSurface
+                        .transition(.identity)
+                }
             }
 
             fixedHardwareCore
@@ -131,68 +128,16 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         }
     }
 
-    private var compactSurface: some View {
-        ZStack(alignment: .topLeading) {
-            compactWings
-            coreEdgeVeils
-        }
-    }
-
-    private var compactWings: some View {
-        VoiceBarGlassContainer {
-            ZStack(alignment: .topLeading) {
-                if layout.leadingWingRect.width > 0 {
-                    VoiceBarGlassWing(
-                        side: .leading,
-                        outerCornerRadius: compactOuterCornerRadius,
-                        appearance: appearance
-                    ) {
-                        wingSlot(leadingContent, side: .leading)
-                    }
-                    .frame(
-                        width: layout.leadingWingRect.width,
-                        height: layout.leadingWingRect.height
-                    )
-                    .position(
-                        x: layout.leadingWingRect.midX,
-                        y: layout.leadingWingRect.midY
-                    )
-                }
-
-                if layout.trailingWingRect.width > 0 {
-                    VoiceBarGlassWing(
-                        side: .trailing,
-                        outerCornerRadius: compactOuterCornerRadius,
-                        appearance: appearance
-                    ) {
-                        wingSlot(trailingContent, side: .trailing)
-                    }
-                    .frame(
-                        width: layout.trailingWingRect.width,
-                        height: layout.trailingWingRect.height
-                    )
-                    .position(
-                        x: layout.trailingWingRect.midX,
-                        y: layout.trailingWingRect.midY
-                    )
-                }
-            }
-            .frame(
-                width: presentation.geometry.totalWidth,
-                height: presentation.geometry.topHeight,
-                alignment: .topLeading
-            )
-        }
-    }
-
-    private var teleprompterSurface: some View {
+    private var notchSurface: some View {
         let shape = VoiceBarNotchContinuousShape(
-            geometry: presentation.geometry
+            geometry: presentation.geometry,
+            compactOuterCornerRadius: compactOuterCornerRadius
         )
-        return Color.clear
+        return notchSlots
             .frame(
                 width: presentation.geometry.totalWidth,
-                height: presentation.geometry.totalHeight
+                height: presentation.geometry.totalHeight,
+                alignment: .topLeading
             )
             .modifier(
                 VoiceBarGlassMaterial(
@@ -201,49 +146,6 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 )
             )
             .contentShape(shape)
-            .overlay(alignment: .topLeading) {
-                coreEdgeVeils
-            }
-    }
-
-    private var coreEdgeVeils: some View {
-        let leadingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .leading,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
-        )
-        let trailingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .trailing,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
-        )
-        return ZStack(alignment: .topLeading) {
-            VoiceBarBlackToGlassFade(wing: .leading)
-                .frame(
-                    width: leadingPlacement.frame.width,
-                    height: leadingPlacement.frame.height
-                )
-                .position(
-                    x: leadingPlacement.frame.midX,
-                    y: leadingPlacement.frame.midY
-                )
-            VoiceBarBlackToGlassFade(wing: .trailing)
-                .frame(
-                    width: trailingPlacement.frame.width,
-                    height: trailingPlacement.frame.height
-                )
-                .position(
-                    x: trailingPlacement.frame.midX,
-                    y: trailingPlacement.frame.midY
-                )
-        }
-        .frame(
-            width: presentation.geometry.totalWidth,
-            height: presentation.geometry.topHeight,
-            alignment: .topLeading
-        )
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 
     private var compactOuterCornerRadius: CGFloat {
@@ -252,45 +154,44 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         )
     }
 
-    private var teleprompterSurfaceUnit: some View {
+    private var notchSlots: some View {
         ZStack(alignment: .topLeading) {
-            teleprompterSurface
-            teleprompterSlots
-        }
-    }
+            if layout.leadingWingRect.width > 0 {
+                wingSlot(leadingContent, side: .leading)
+                    .frame(
+                        width: layout.leadingWingRect.width,
+                        height: layout.leadingWingRect.height
+                    )
+                    .position(
+                        x: layout.leadingWingRect.midX,
+                        y: layout.leadingWingRect.midY
+                    )
+            }
 
-    private var teleprompterSlots: some View {
-        ZStack(alignment: .topLeading) {
-            wingSlot(leadingContent, side: .leading)
-                .frame(
-                    width: layout.leadingWingRect.width,
-                    height: layout.leadingWingRect.height
-                )
-                .position(
-                    x: layout.leadingWingRect.midX,
-                    y: layout.leadingWingRect.midY
-                )
+            if layout.trailingWingRect.width > 0 {
+                wingSlot(trailingContent, side: .trailing)
+                    .frame(
+                        width: layout.trailingWingRect.width,
+                        height: layout.trailingWingRect.height
+                    )
+                    .position(
+                        x: layout.trailingWingRect.midX,
+                        y: layout.trailingWingRect.midY
+                    )
+            }
 
-            wingSlot(trailingContent, side: .trailing)
-                .frame(
-                    width: layout.trailingWingRect.width,
-                    height: layout.trailingWingRect.height
-                )
-                .position(
-                    x: layout.trailingWingRect.midX,
-                    y: layout.trailingWingRect.midY
-                )
-
-            lowerContent
-                .frame(
-                    width: layout.bodyRect.width,
-                    height: layout.bodyRect.height
-                )
-                .clipped()
-                .position(
-                    x: layout.bodyRect.midX,
-                    y: layout.bodyRect.midY
-                )
+            if !layout.bodyRect.isEmpty {
+                lowerContent
+                    .frame(
+                        width: layout.bodyRect.width,
+                        height: layout.bodyRect.height
+                    )
+                    .clipped()
+                    .position(
+                        x: layout.bodyRect.midX,
+                        y: layout.bodyRect.midY
+                    )
+            }
         }
     }
 

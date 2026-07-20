@@ -104,7 +104,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(frame.width, 47.5 + 184 + 125.5)
     }
 
-    func testCompactFadeStartsAtTheCalibratedPhysicalBezelWithoutASecondKeepOut() {
+    func testCompactGlassMeetsTheCalibratedPhysicalBezelWithoutASecondKeepOut() {
         let resolved = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
@@ -115,23 +115,15 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         )
         let geometry = resolved.geometry(for: .recording)
         let layout = VoiceBarNotchShapeLayout(geometry: geometry)
-        let leadingFade = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .leading,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: resolved.visibleCoreOcclusionInset
-        )
-        let trailingFade = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .trailing,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: resolved.visibleCoreOcclusionInset
+        let path = VoiceBarNotchContinuousShape(geometry: geometry).path(
+            in: CGRect(origin: .zero, size: layout.totalSize)
         )
 
         XCTAssertEqual(geometry.leadingWingWidth, 47.5)
         XCTAssertEqual(geometry.trailingWingWidth, 125.5)
         XCTAssertEqual(geometry.totalWidth, 341)
-        XCTAssertEqual(leadingFade.frame.maxX, layout.coreRect.minX)
-        XCTAssertEqual(trailingFade.frame.minX, layout.coreRect.maxX)
-        XCTAssertEqual(leadingFade.frame.width, 16)
-        XCTAssertEqual(trailingFade.frame.width, 16)
+        XCTAssertTrue(path.contains(CGPoint(x: layout.coreRect.minX - 0.5, y: 16)))
+        XCTAssertTrue(path.contains(CGPoint(x: layout.coreRect.maxX + 0.5, y: 16)))
+        XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
     }
 }

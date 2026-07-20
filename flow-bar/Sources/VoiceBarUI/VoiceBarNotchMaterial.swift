@@ -1,7 +1,6 @@
 import SwiftUI
 
 public enum VoiceBarNotchGlassTopology: Equatable {
-    case compactSiblingContainer
     case directContinuousSurface
 }
 
@@ -37,98 +36,22 @@ public struct VoiceBarNotchMaterialDescriptor: Equatable {
     ) -> VoiceBarNotchMaterialDescriptor {
         switch state {
         case .idle:
-            compact(surfaceCount: 0)
+            continuous(surfaceCount: 0)
         case .hoverLauncher, .recording, .compactStatus:
-            compact(surfaceCount: 2)
+            continuous(surfaceCount: 1)
         case .teleprompter:
-            VoiceBarNotchMaterialDescriptor(
-                topology: .directContinuousSurface,
-                surfaceCount: VoiceBarNotchContract.material.lowerSurfaceLayerCount,
-                insetFrameCount: VoiceBarNotchContract.material.teleprompterInsetFrameCount,
-                usesFilledBackdropMaterial: true,
-                hasOuterTopAndBottomEdgeTreatment: true,
-                usesTransparentBorderOnlyShell: false
-            )
+            continuous(surfaceCount: VoiceBarNotchContract.material.lowerSurfaceLayerCount)
         }
     }
 
-    private static func compact(surfaceCount: Int) -> VoiceBarNotchMaterialDescriptor {
+    private static func continuous(surfaceCount: Int) -> VoiceBarNotchMaterialDescriptor {
         VoiceBarNotchMaterialDescriptor(
-            topology: .compactSiblingContainer,
+            topology: .directContinuousSurface,
             surfaceCount: surfaceCount,
-            insetFrameCount: 0,
+            insetFrameCount: VoiceBarNotchContract.material.teleprompterInsetFrameCount,
             usesFilledBackdropMaterial: surfaceCount > 0,
             hasOuterTopAndBottomEdgeTreatment: VoiceBarNotchContract.material.compactWingsHaveOuterEdgeTreatment,
             usesTransparentBorderOnlyShell: false
-        )
-    }
-}
-
-public struct VoiceBarNotchCoreSeamDescriptor: Equatable {
-    public let width: CGFloat
-    public let opaqueEdge: VoiceBarNotchSide
-    public let stops: [VoiceBarNotchCoreSeamStop]
-
-    public static func resolve(
-        for wing: VoiceBarNotchSide
-    ) -> VoiceBarNotchCoreSeamDescriptor {
-        let glassToCoreStops = [
-            VoiceBarNotchCoreSeamStop(location: 0, opacity: 0),
-            VoiceBarNotchCoreSeamStop(location: 0.34, opacity: 0.06),
-            VoiceBarNotchCoreSeamStop(location: 0.70, opacity: 0.52),
-            VoiceBarNotchCoreSeamStop(location: 1, opacity: 1),
-        ]
-        let stops = switch wing {
-        case .leading:
-            glassToCoreStops
-        case .trailing:
-            glassToCoreStops.reversed().map {
-                VoiceBarNotchCoreSeamStop(
-                    location: 1 - $0.location,
-                    opacity: $0.opacity
-                )
-            }
-        }
-        return VoiceBarNotchCoreSeamDescriptor(
-            width: VoiceBarNotchContract.material.blackToGlassFadeWidth,
-            opaqueEdge: wing == .leading ? .trailing : .leading,
-            stops: stops
-        )
-    }
-}
-
-public struct VoiceBarNotchCoreSeamStop: Equatable {
-    public let location: CGFloat
-    public let opacity: Double
-
-    public init(location: CGFloat, opacity: Double) {
-        self.location = location
-        self.opacity = opacity
-    }
-}
-
-public struct VoiceBarNotchCoreSeamPlacement: Equatable {
-    public let frame: CGRect
-
-    public static func resolve(
-        for wing: VoiceBarNotchSide,
-        coreRect: CGRect,
-        visibleCoreOcclusionInset _: CGFloat
-    ) -> Self {
-        let width = VoiceBarNotchContract.material.blackToGlassFadeWidth
-        let originX = switch wing {
-        case .leading:
-            coreRect.minX - width
-        case .trailing:
-            coreRect.maxX
-        }
-        return VoiceBarNotchCoreSeamPlacement(
-            frame: CGRect(
-                x: originX,
-                y: coreRect.minY,
-                width: width,
-                height: coreRect.height
-            )
         )
     }
 }
@@ -223,28 +146,6 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
 
     private var notchPalette: VoiceBarNotchContrastPalette {
         VoiceBarNotchContrastPalette.resolve(for: appearance)
-    }
-}
-
-public struct VoiceBarBlackToGlassFade: View {
-    public let wing: VoiceBarNotchSide
-
-    public init(wing: VoiceBarNotchSide) {
-        self.wing = wing
-    }
-
-    public var body: some View {
-        let descriptor = VoiceBarNotchCoreSeamDescriptor.resolve(for: wing)
-        let stops = descriptor.stops.map {
-            Gradient.Stop(
-                color: .black.opacity($0.opacity),
-                location: $0.location
-            )
-        }
-
-        LinearGradient(stops: stops, startPoint: .leading, endPoint: .trailing)
-            .frame(width: descriptor.width)
-            .accessibilityHidden(true)
     }
 }
 
