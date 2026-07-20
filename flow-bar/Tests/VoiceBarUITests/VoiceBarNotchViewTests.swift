@@ -175,6 +175,37 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(surface.contains(".allowsHitTesting(false)"))
     }
 
+    func testTeleprompterMaterialAndContentDismissAsOneTransitionUnit() throws {
+        let source = try notchViewSource()
+        let bodyStart = try XCTUnwrap(source.range(of: "public var body: some View"))
+        let layoutStart = try XCTUnwrap(
+            source.range(
+                of: "private var layout",
+                range: bodyStart.upperBound ..< source.endIndex
+            )
+        )
+        let body = source[bodyStart.lowerBound ..< layoutStart.lowerBound]
+        let unitStart = try XCTUnwrap(source.range(of: "private var teleprompterSurfaceUnit"))
+        let slotsStart = try XCTUnwrap(
+            source.range(
+                of: "private var teleprompterSlots: some View",
+                range: unitStart.upperBound ..< source.endIndex
+            )
+        )
+        let unit = source[unitStart.lowerBound ..< slotsStart.lowerBound]
+
+        XCTAssertTrue(body.contains("teleprompterSurfaceUnit"))
+        XCTAssertFalse(body.contains("teleprompterSurface\n"))
+        XCTAssertFalse(body.contains("teleprompterSlots\n"))
+        XCTAssertTrue(unit.contains("teleprompterSurface"))
+        XCTAssertTrue(unit.contains("teleprompterSlots"))
+        XCTAssertEqual(
+            body.components(separatedBy: ".transition(surfaceTransition(").count - 1,
+            1,
+            "one transition must own both the frosted backing and opaque text"
+        )
+    }
+
     private func notchViewSource() throws -> String {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

@@ -145,6 +145,23 @@ public struct VoiceBarNotchSeamFadeAuditResult: Equatable {
     public let passed: Bool
 }
 
+public struct VoiceBarNotchTeleprompterDismissalFrameSample: Equatable {
+    public let textOpacity: Double
+    public let interiorBrightness: [Double]
+
+    public init(textOpacity: Double, interiorBrightness: [Double]) {
+        self.textOpacity = textOpacity
+        self.interiorBrightness = interiorBrightness
+    }
+}
+
+public struct VoiceBarNotchTeleprompterDismissalAuditResult: Equatable {
+    public let frameCount: Int
+    public let violatingFrameIndices: [Int]
+    public let maximumOpaqueTextInteriorStandardDeviation: Double
+    public let passed: Bool
+}
+
 public enum VoiceBarNotchCaptureAudit {
     public static let referenceSize = CGSize(width: 800, height: 100)
     public static let birthmarkBrightnessOffset = 18.0
@@ -164,6 +181,8 @@ public enum VoiceBarNotchCaptureAudit {
     public static let minimumSeamFadeBrightnessRange = 6.0
     public static let minimumSeamFadeProgressingColumns = 4
     public static let minimumSeamFadeCorrelation = 0.55
+    public static let maximumTeleprompterInteriorStandardDeviation = 15.0
+    public static let minimumOpaqueTeleprompterTextOpacity = 0.9
 
     public static func birthmark(
         in image: VoiceBarLumaImage,
@@ -256,6 +275,37 @@ public enum VoiceBarNotchCaptureAudit {
             passed: frameBrightnesses.count >= minimumIdleHoldFrames &&
                 transitions == 0 &&
                 expandedFrameCount == frameBrightnesses.count
+        )
+    }
+
+    public static func teleprompterDismissal(
+        frameSamples: [VoiceBarNotchTeleprompterDismissalFrameSample]
+    ) -> VoiceBarNotchTeleprompterDismissalAuditResult {
+        let opaqueTextStandardDeviations = frameSamples.enumerated().compactMap {
+            index, sample -> (index: Int, interiorStandardDeviation: Double)? in
+            guard sample.textOpacity >= minimumOpaqueTeleprompterTextOpacity else {
+                return nil
+            }
+            return (
+                index: index,
+                interiorStandardDeviation: sample.interiorBrightness.isEmpty
+                    ? .infinity
+                    : standardDeviation(sample.interiorBrightness)
+            )
+        }
+        let violatingFrameIndices = opaqueTextStandardDeviations.compactMap {
+            observation in
+            observation.interiorStandardDeviation > maximumTeleprompterInteriorStandardDeviation
+                ? observation.index
+                : nil
+        }
+        return VoiceBarNotchTeleprompterDismissalAuditResult(
+            frameCount: frameSamples.count,
+            violatingFrameIndices: violatingFrameIndices,
+            maximumOpaqueTextInteriorStandardDeviation: opaqueTextStandardDeviations
+                .map(\.interiorStandardDeviation)
+                .max() ?? 0,
+            passed: !frameSamples.isEmpty && violatingFrameIndices.isEmpty
         )
     }
 
@@ -498,6 +548,16 @@ public enum VoiceBarNotchCaptureAudit {
     private static func mean(_ values: [Double]) -> Double {
         guard !values.isEmpty else { return 0 }
         return values.reduce(0, +) / Double(values.count)
+    }
+
+    private static func standardDeviation(_ values: [Double]) -> Double {
+        guard !values.isEmpty else { return 0 }
+        let average = mean(values)
+        let variance = values.reduce(0) { total, value in
+            let distance = value - average
+            return total + distance * distance
+        } / Double(values.count)
+        return variance.squareRoot()
     }
 
     private static func median(_ values: [Double]) -> Double {

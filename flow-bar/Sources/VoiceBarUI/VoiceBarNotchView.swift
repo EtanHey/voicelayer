@@ -58,13 +58,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     public var body: some View {
         ZStack(alignment: .topLeading) {
             if presentation.visualState == .teleprompter {
-                teleprompterSurface
+                teleprompterSurfaceUnit
                     .transition(surfaceTransition(delay: VoiceBarNotchContract.motion.panelDelay))
-                teleprompterSlots
-                    // Never composite stale words over the destination state.
-                    // The filled surface carries the closing motion; content
-                    // is replaced atomically before the next surface appears.
-                    .transition(.identity)
             } else if presentation.visualState != .idle {
                 compactSurface
                     .transition(.identity)
@@ -255,6 +250,13 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         VoiceBarNotchContract.material.compactOuterCornerRadius(
             for: presentation.visualState
         )
+    }
+
+    private var teleprompterSurfaceUnit: some View {
+        ZStack(alignment: .topLeading) {
+            teleprompterSurface
+            teleprompterSlots
+        }
     }
 
     private var teleprompterSlots: some View {

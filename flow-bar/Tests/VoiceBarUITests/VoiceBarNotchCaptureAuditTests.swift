@@ -195,6 +195,69 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertTrue(source.contains("layerScales"))
     }
 
+    func testCaptureAuditCodifiesTheRouteQAGhostTextThreshold() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: packageRoot
+                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchCaptureAudit.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("maximumTeleprompterInteriorStandardDeviation = 15.0"))
+        XCTAssertTrue(source.contains("teleprompterDismissal("))
+        XCTAssertTrue(source.contains("frameSamples: [VoiceBarNotchTeleprompterDismissalFrameSample]"))
+        XCTAssertTrue(source.contains("textOpacity >= minimumOpaqueTeleprompterTextOpacity"))
+        XCTAssertTrue(source.contains("interiorStandardDeviation > maximumTeleprompterInteriorStandardDeviation"))
+    }
+
+    func testTeleprompterDismissalRejectsOpaqueTextOverExposedAppPixels() {
+        let exposedTerminal = [0.0, 0.0, 32.0, 32.0]
+        let result = VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: [
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 1,
+                interiorBrightness: exposedTerminal
+            ),
+        ])
+
+        XCTAssertFalse(result.passed)
+        XCTAssertEqual(result.violatingFrameIndices, [0])
+        XCTAssertEqual(result.maximumOpaqueTextInteriorStandardDeviation, 16, accuracy: 0.001)
+    }
+
+    func testTeleprompterDismissalAllowsFrostedBackingUntilTextIsGone() {
+        let frostedInterior = [37.0, 39.0, 40.0, 41.0]
+        let exposedTerminal = [0.0, 0.0, 32.0, 32.0]
+        let result = VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: [
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 1,
+                interiorBrightness: frostedInterior
+            ),
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 0,
+                interiorBrightness: exposedTerminal
+            ),
+        ])
+
+        XCTAssertTrue(result.passed)
+        XCTAssertTrue(result.violatingFrameIndices.isEmpty)
+        XCTAssertLessThan(result.maximumOpaqueTextInteriorStandardDeviation, 15)
+    }
+
+    func testTeleprompterDismissalFailsClosedWithoutInteriorPixelsBehindOpaqueText() {
+        let result = VoiceBarNotchCaptureAudit.teleprompterDismissal(frameSamples: [
+            VoiceBarNotchTeleprompterDismissalFrameSample(
+                textOpacity: 1,
+                interiorBrightness: []
+            ),
+        ])
+
+        XCTAssertFalse(result.passed)
+        XCTAssertEqual(result.violatingFrameIndices, [0])
+    }
+
     func testWaveformCensusRejectsMissingSlotsAndOffCenterRecordingGrowth() {
         let speaking = waveformFrame(
             color: .blue,
