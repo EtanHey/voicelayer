@@ -56,8 +56,22 @@ public struct VoiceBarNotchMaterialDescriptor: Equatable {
     }
 }
 
-/// Groups the two compact wing materials on macOS 26 so their native glass
-/// samples as siblings. Older systems preserve the exact same geometry.
+public struct VoiceBarNotchGlassRecipe: Equatable {
+    public let tint: VoiceBarRGBA
+    public let nativeOverlay: VoiceBarRGBA?
+    public let fallbackOverlay: VoiceBarRGBA
+
+    public static func resolve(for _: VoiceBarNotchAppearance) -> Self {
+        VoiceBarNotchGlassRecipe(
+            tint: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06),
+            nativeOverlay: nil,
+            fallbackOverlay: VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06)
+        )
+    }
+}
+
+/// Keeps one native-glass ownership boundary stable while the notch geometry
+/// changes between compact wing subpaths and the connected teleprompter body.
 public struct VoiceBarGlassContainer<Content: View>: View {
     private let content: Content
 
@@ -76,8 +90,8 @@ public struct VoiceBarGlassContainer<Content: View>: View {
     }
 }
 
-/// Shared filled material primitive for compact wings and the direct
-/// teleprompter surface. It deliberately never wraps the black hardware core.
+/// Shared filled material primitive for the persistent notch surface. It
+/// deliberately never wraps the black hardware core.
 public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     public let shape: SurfaceShape
     public let appearance: VoiceBarNotchAppearance
@@ -111,6 +125,7 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
 
     @ViewBuilder
     private func materialBody(content: some View) -> some View {
+        let recipe = VoiceBarNotchGlassRecipe.resolve(for: appearance)
         if forceOpaqueFallback {
             content.background {
                 shape.fill(
@@ -120,17 +135,12 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                 )
             }
         } else if #available(macOS 26.0, *) {
-            // Native glass is a backdrop modifier on the content-bearing view.
-            // Putting a transparent glass sibling beside the content inside a
-            // GlassEffectContainer makes the container sample and soften that
-            // sibling content on a nonactivating panel.
+            // Native glass stays directly on the content-bearing view. A
+            // separate filled overlay turns this into a tint and defeats its
+            // adaptive frosting over black and bright backdrops.
             content
-                .background {
-                    shape.fill(notchPalette.surfaceOverlay.color)
-                        .allowsHitTesting(false)
-                }
                 .glassEffect(
-                    .regular.tint(notchPalette.surfaceTint.color),
+                    .regular.tint(recipe.tint.color),
                     in: shape
                 )
                 .glassEffectTransition(.identity)
@@ -138,42 +148,9 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
             content
                 .background(.ultraThinMaterial, in: shape)
                 .background {
-                    shape.fill(notchPalette.surfaceOverlay.color)
+                    shape.fill(recipe.fallbackOverlay.color)
                         .allowsHitTesting(false)
                 }
         }
-    }
-
-    private var notchPalette: VoiceBarNotchContrastPalette {
-        VoiceBarNotchContrastPalette.resolve(for: appearance)
-    }
-}
-
-public struct VoiceBarGlassWing<Content: View>: View {
-    public let side: VoiceBarNotchSide
-    public let outerCornerRadius: CGFloat
-    public let appearance: VoiceBarNotchAppearance
-    private let content: Content
-
-    public init(
-        side: VoiceBarNotchSide,
-        outerCornerRadius: CGFloat = 11,
-        appearance: VoiceBarNotchAppearance = .dark,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.side = side
-        self.outerCornerRadius = outerCornerRadius
-        self.appearance = appearance
-        self.content = content()
-    }
-
-    public var body: some View {
-        let shape = VoiceBarNotchWingShape(
-            side: side,
-            outerCornerRadius: outerCornerRadius
-        )
-        content
-            .modifier(VoiceBarGlassMaterial(shape: shape, appearance: appearance))
-            .clipShape(shape)
     }
 }

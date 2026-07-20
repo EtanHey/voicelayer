@@ -65,42 +65,43 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         )
     }
 
-    func testAppearanceOverlayNeverInterceptsNotchControlClicks() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: packageRoot
-                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
-            encoding: .utf8
-        )
-        let materialStart = try XCTUnwrap(source.range(of: "private func materialBody"))
-        let paletteStart = try XCTUnwrap(
+    func testNativeGlassRecipeUsesNeutralTintWithoutAFilledOverlay() {
+        let expectedTint = VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06)
+        let expectedFallbackOverlay = VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.06)
+
+        for appearance in [VoiceBarNotchAppearance.light, .dark] {
+            let recipe = VoiceBarNotchGlassRecipe.resolve(for: appearance)
+
+            XCTAssertEqual(recipe.tint, expectedTint)
+            XCTAssertNil(recipe.nativeOverlay)
+            XCTAssertEqual(recipe.fallbackOverlay, expectedFallbackOverlay)
+        }
+    }
+
+    func testNativeAndFallbackBranchesStayInsideSwiftUIMaterialSystem() throws {
+        let source = try notchMaterialSource()
+        let nativeStart = try XCTUnwrap(source.range(of: "else if #available(macOS 26.0, *)"))
+        let fallbackStart = try XCTUnwrap(
             source.range(
-                of: "private var notchPalette",
-                range: materialStart.upperBound ..< source.endIndex
+                of: "} else {",
+                range: nativeStart.upperBound ..< source.endIndex
             )
         )
-        let materialBody = source[materialStart.lowerBound ..< paletteStart.lowerBound]
+        let nativeBranch = source[nativeStart.lowerBound ..< fallbackStart.lowerBound]
+        let fallbackBranch = source[fallbackStart.lowerBound ..< source.endIndex]
 
-        XCTAssertTrue(materialBody.contains("shape.fill(notchPalette.surfaceOverlay.color)"))
-        XCTAssertTrue(materialBody.contains(".allowsHitTesting(false)"))
+        XCTAssertTrue(nativeBranch.contains(".regular.tint(recipe.tint.color)"))
+        XCTAssertEqual(nativeBranch.components(separatedBy: ".glassEffect(").count - 1, 1)
+        XCTAssertFalse(nativeBranch.contains(".background {"))
+        XCTAssertFalse(nativeBranch.contains("surfaceOverlay"))
+        XCTAssertTrue(fallbackBranch.contains(".background(.ultraThinMaterial, in: shape)"))
+        XCTAssertTrue(fallbackBranch.contains("recipe.fallbackOverlay.color"))
+        XCTAssertTrue(fallbackBranch.contains(".allowsHitTesting(false)"))
+        XCTAssertFalse(source.contains("NSVisualEffectView"))
     }
 
     func testNativeGlassStaysOnTheContentBearingViewAndDoesNotShadowItsGlyphAlpha() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: packageRoot
-                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
-            encoding: .utf8
-        )
-        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
-        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
-        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+        let material = try glassMaterialSource()
 
         XCTAssertTrue(material.contains("content.clipShape(shape)"))
         XCTAssertTrue(material.contains(".glassEffect("))
@@ -109,40 +110,18 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
     }
 
     func testCompactContentChangesDoNotMaterializeTheGlassSurfaceAgain() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: packageRoot
-                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
-            encoding: .utf8
-        )
-        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
-        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
-        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+        let material = try glassMaterialSource()
 
         XCTAssertTrue(material.contains(".glassEffectTransition(.identity)"))
         XCTAssertFalse(material.contains(".glassEffectTransition(.materialize)"))
     }
 
     func testGlassMaterialConsumesTheSettledAppearanceExplicitly() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: packageRoot
-                .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
-            encoding: .utf8
-        )
-        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
-        let wingStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassWing"))
-        let material = source[materialStart.lowerBound ..< wingStart.lowerBound]
+        let material = try glassMaterialSource()
 
         XCTAssertTrue(material.contains("public let appearance: VoiceBarNotchAppearance"))
         XCTAssertFalse(material.contains("@Environment(\\.voiceBarNotchAppearance)"))
-        XCTAssertTrue(material.contains("VoiceBarNotchContrastPalette.resolve(for: appearance)"))
+        XCTAssertTrue(material.contains("VoiceBarNotchGlassRecipe.resolve(for: appearance)"))
     }
 
     private func notchMaterialSource() throws -> String {
@@ -155,5 +134,11 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchMaterial.swift"),
             encoding: .utf8
         )
+    }
+
+    private func glassMaterialSource() throws -> Substring {
+        let source = try notchMaterialSource()
+        let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
+        return source[materialStart.lowerBound...]
     }
 }
