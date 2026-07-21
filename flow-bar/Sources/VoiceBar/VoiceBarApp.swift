@@ -51,6 +51,8 @@ private struct RelaySetupStatus {
 private struct VoiceBarFirstRenderScaleReceipt: Codable {
     let ready: Bool
     let reason: String
+    let frameX: Double?
+    let frameY: Double?
     let screenScale: Double?
     let windowScale: Double
     let contentScale: Double?
@@ -188,30 +190,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func enforceCanonicalSingleInstance() -> Bool {
         let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
         guard defaultsEnforceSingleton else {
-            NSLog("[VoiceBar] Singleton guard skipped by explicit QA override")
-            return true
+            guard !VoiceLayerPaths.enforcesSingletonInstance else {
+                NSLog("[VoiceBar] Parallel QA requires an isolated socket path")
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
+                }
+                return false
+            }
+            do {
+                try VoiceBarInstanceElectionLock.withExclusiveLock {
+                    try registerCurrentIsolatedInstance()
+                }
+                NSLog(
+                    "[VoiceBar] Registered parallel QA transport at %@",
+                    VoiceLayerPaths.socketPath
+                )
+                return true
+            } catch {
+                return rejectFailedIsolatedInstanceRegistration(error)
+            }
         }
 
         if !VoiceLayerPaths.enforcesSingletonInstance {
             do {
                 return try VoiceBarInstanceElectionLock.withExclusiveLock {
-                    let myPID = ProcessInfo.processInfo.processIdentifier
-                    guard let launchDate = NSRunningApplication(
-                        processIdentifier: myPID
-                    )?.launchDate else {
-                        throw VoiceBarInstanceIsolationRegistryError
-                            .launchDateUnavailable(pid: myPID)
-                    }
-                    try VoiceBarInstanceIsolationRegistry.register(
-                        pid: myPID,
-                        launchDate: launchDate,
-                        socketPath: VoiceLayerPaths.socketPath
-                    )
-                    isolatedInstanceMarkerPID = myPID
+                    try registerCurrentIsolatedInstance()
                     NSLog(
                         "[VoiceBar] Registered isolated transport before visible-surface election at %@",
                         VoiceLayerPaths.socketPath
                     )
+                    let myPID = ProcessInfo.processInfo.processIdentifier
                     let accepted = performCanonicalSingleInstanceElection(
                         currentIsIsolated: true
                     )
@@ -222,14 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return accepted
                 }
             } catch {
-                NSLog(
-                    "[VoiceBar] Isolated-instance registration failed: %@",
-                    String(describing: error)
-                )
-                DispatchQueue.main.async { [weak self] in
-                    self?.requestTermination(.internalFailure)
-                }
-                return false
+                return rejectFailedIsolatedInstanceRegistration(error)
             }
         }
 
@@ -244,6 +245,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return false
         }
+    }
+
+    private func registerCurrentIsolatedInstance() throws {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let observedLaunchDate = NSRunningApplication(
+            processIdentifier: myPID
+        )?.launchDate
+        if observedLaunchDate == nil {
+            NSLog(
+                "[VoiceBar] Workspace launch date unavailable for PID %d; using immediate fallback",
+                myPID
+            )
+        }
+        let launchDate = VoiceBarInstanceLaunchDate.resolve(observed: observedLaunchDate)
+        try VoiceBarInstanceIsolationRegistry.register(
+            pid: myPID,
+            launchDate: launchDate,
+            socketPath: VoiceLayerPaths.socketPath
+        )
+        isolatedInstanceMarkerPID = myPID
+    }
+
+    private func rejectFailedIsolatedInstanceRegistration(_ error: Error) -> Bool {
+        NSLog(
+            "[VoiceBar] Isolated-instance registration failed: %@",
+            String(describing: error)
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.requestTermination(.internalFailure)
+        }
+        return false
     }
 
     private func performCanonicalSingleInstanceElection(
@@ -465,10 +497,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
         }
         hosting.hoverExpansionHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsHoverExpansion(point) ?? false
         }
         hosting.hoverRetentionHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsHoverRetention(point) ?? false
@@ -512,7 +544,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         pill.alphaValue = 0
@@ -956,7 +988,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             screenPoint: NSEvent.mouseLocation,
             panelFrame: panel.frame,
             convertFromScreen: { panel.convertPoint(fromScreen: $0) },
-            containsLocalPoint: { layout.containsActiveContent($0) }
+            containsLocalPoint: { layout.containsVisibleSurface($0) }
         )
     }
 
@@ -1155,6 +1187,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let receipt = VoiceBarFirstRenderScaleReceipt(
             ready: ready,
             reason: reason,
+            frameX: panel.map { Double($0.frame.minX) },
+            frameY: panel.map { Double($0.frame.minY) },
             screenScale: panel?.screen.map { Double($0.backingScaleFactor) },
             windowScale: Double(panel?.backingScaleFactor ?? 0),
             contentScale: panel?.contentView?.layer.map { Double($0.contentsScale) },
@@ -1189,8 +1223,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(
             presentation: presentation,
+            interactionConfiguration: Self.notchInteractionConfiguration(
+                for: voiceState,
+                visualState: presentation.visualState
+            ),
             canvasGeometry: canvas.canvasGeometry
         )
+    }
+
+    static func notchInteractionConfiguration(
+        for state: VoiceState,
+        visualState: VoiceBarNotchVisualState
+    ) -> VoiceBarNotchInteractionConfiguration {
+        switch visualState {
+        case .idle:
+            return .none
+        case .hoverLauncher:
+            return VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        case .recording:
+            return VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: state.recordingMode == "vad" ? 3 : 2
+            )
+        case .compactStatus:
+            switch state.mode {
+            case .transcribing:
+                return VoiceBarNotchInteractionConfiguration(
+                    trailingControlCountFromOuter: 1,
+                    trailingOuterInset: WaveformLayout.outerInset
+                )
+            case .speaking:
+                return VoiceBarNotchInteractionConfiguration(
+                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1,
+                    trailingOuterInset: WaveformLayout.outerInset
+                )
+            case .error:
+                return VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: 1,
+                    trailingControlCountFromOuter: 1,
+                    trailingOuterInset: WaveformLayout.outerInset
+                )
+            case .idle:
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+            case .disconnected, .recording:
+                return .none
+            }
+        case .teleprompter:
+            var lowerControlCount = 1
+            if state.canReplay {
+                lowerControlCount += 1
+            }
+            if state.mode == .speaking {
+                lowerControlCount += 1
+            }
+            if state.isTeleprompterReadback {
+                lowerControlCount += 1
+            }
+            return VoiceBarNotchInteractionConfiguration(
+                lowerControlCount: lowerControlCount
+            )
+        }
     }
 
     private func refreshNotchPresentationAndPanelLayout(animated: Bool) {
@@ -1229,6 +1323,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil,
             compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.trailingWingWidth
+                : nil,
+            recordingLeadingWingWidth: resolved.visualState == .recording
+                ? resolved.geometry.leadingWingWidth
                 : nil,
             recordingTrailingWingWidth: resolved.visualState == .recording
                 ? resolved.geometry.trailingWingWidth
@@ -1492,7 +1589,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pointer: NSPoint,
         isIsolatedCapture: Bool
     ) {
-        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsActiveContent(pointer)
+        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsInteractiveContent(pointer)
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {

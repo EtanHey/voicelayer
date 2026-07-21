@@ -6,8 +6,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
             (.hoverLauncher, CGSize(width: 306, height: 32)),
-            (.recording, CGSize(width: 374, height: 32)),
-            (.compactStatus, CGSize(width: 332, height: 32)),
+            (.recording, CGSize(width: 336.5, height: 32)),
+            (.compactStatus, CGSize(width: 336.5, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
         ]
 
@@ -22,14 +22,20 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
-    func testTeleprompterUsesUnionHitTestingInsteadOfItsRectangularWindowBounds() {
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.teleprompter))
+    func testTeleprompterCapturesOnlyItsMountedBottomControls() {
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(.teleprompter),
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                lowerControlCount: 3
+            )
+        )
 
-        XCTAssertTrue(layout.containsActiveContent(CGPoint(x: 12 + 232.5, y: 17 + 212)))
-        XCTAssertTrue(layout.containsActiveContent(CGPoint(x: 12 + 10, y: 17 + 190)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 12 + 10, y: 17 + 212)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 12 + 455, y: 17 + 212)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 202.5, y: 17 + 24)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 262.5, y: 17 + 24)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 232.5, y: 17 + 120)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 108, y: 17 + 212)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(layout.containsVisibleSurface(CGPoint(x: 12 + 232.5, y: 17 + 120)))
     }
 
     func testWindowFrameKeepsVisibleCoreCenteredOnPhysicalHousingAndFlushToScreenTop() {
@@ -122,7 +128,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             let layout = VoiceBarPanelLayout.make(presentation: presentation(state))
             let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
 
-            XCTAssertTrue(panelBounds.contains(layout.activeHitRect), "state=\(state)")
+            XCTAssertTrue(panelBounds.contains(layout.interactiveHitRect), "state=\(state)")
         }
     }
 
@@ -163,6 +169,48 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             ),
             CGRect(x: 1232, y: 815, width: 472, height: 245)
         )
+    }
+
+    func testExplicitOffscreenQAPlacementRequiresParallelModeAndStaysBeyondNegativeTwentyThousand() {
+        let panelSize = CGSize(width: 472, height: 245)
+        let environment = [
+            VoiceBarIsolatedCapturePlacement.offscreenEnvironmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+
+        XCTAssertTrue(VoiceBarIsolatedCapturePlacement.isEnabled(environment: environment))
+        XCTAssertEqual(
+            VoiceBarIsolatedCapturePlacement.frame(
+                panelSize: panelSize,
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084),
+                environment: environment
+            ),
+            CGRect(x: -20496, y: -20269, width: 472, height: 245)
+        )
+    }
+
+    func testEveryDynamicOffscreenFrameStaysEntirelyBeyondNegativeTwentyThousand() {
+        let environment = [
+            VoiceBarIsolatedCapturePlacement.offscreenEnvironmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+        for state in VoiceBarNotchVisualState.allCases {
+            let presentation = presentation(state)
+            let layout = VoiceBarPanelLayout.make(
+                presentation: presentation,
+                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                    for: presentation
+                ).canvasGeometry
+            )
+            let frame = VoiceBarIsolatedCapturePlacement.frame(
+                layout: layout,
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084),
+                environment: environment
+            )
+
+            XCTAssertLessThanOrEqual(frame.maxX, -20000, "state=\(state)")
+            XCTAssertLessThanOrEqual(frame.maxY, -20000, "state=\(state)")
+        }
     }
 
     func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {
@@ -214,19 +262,69 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
-    func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
+    func testHoverExpansionAndRetentionDoNotExtendClickInterception() {
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(.hoverLauncher),
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
         let justPastTrailingWing = CGPoint(
-            x: layout.activeHitRect.maxX + 8,
-            y: layout.activeHitRect.midY
+            x: layout.interactiveHitRect.maxX + 8,
+            y: layout.interactiveHitRect.midY
+        )
+        let coreCenter = CGPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
+            y: layout.visibleContentRect.minY + 16
         )
 
-        XCTAssertFalse(layout.containsActiveContent(justPastTrailingWing))
+        XCTAssertFalse(layout.containsInteractiveContent(coreCenter))
+        XCTAssertTrue(layout.containsHoverExpansion(coreCenter))
+        XCTAssertFalse(layout.containsInteractiveContent(justPastTrailingWing))
         XCTAssertTrue(layout.containsHoverRetention(justPastTrailingWing))
         XCTAssertTrue(
             CGRect(origin: .zero, size: layout.panelSize)
                 .contains(layout.hoverRetentionRect)
         )
+    }
+
+    func testEmptyInteractionConfigurationKeepsHoverExpansionOnTheCore() {
+        let presentation = presentation(.compactStatus)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let expectedCoreRect = CGRect(
+            x: layout.visibleContentRect.minX + presentation.geometry.coreOriginX,
+            y: layout.visibleContentRect.minY + presentation.geometry.lowerSurfaceHeight,
+            width: presentation.geometry.coreWidth,
+            height: presentation.geometry.topHeight
+        )
+
+        XCTAssertEqual(layout.hoverExpansionRect, expectedCoreRect)
+    }
+
+    func testInstallingANewLayoutDropsOldInteractiveGeometryImmediately() {
+        let presentation = presentation(.hoverLauncher)
+        let launcher = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
+        let idle = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let oldDictionaryCenter = CGPoint(
+            x: launcher.visibleContentRect.minX + 282,
+            y: launcher.visibleContentRect.minY + 16
+        )
+
+        XCTAssertTrue(launcher.containsInteractiveContent(oldDictionaryCenter))
+        XCTAssertFalse(idle.containsInteractiveContent(oldDictionaryCenter))
     }
 
     private func presentation(

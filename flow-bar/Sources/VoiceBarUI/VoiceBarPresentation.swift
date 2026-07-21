@@ -135,10 +135,13 @@ public enum VoiceBarPresentation {
                 mode: input.mode
             ),
             compactStatusTrailingWingWidth: compactStatusTrailingWingWidth(input: input),
-            recordingTrailingWingWidth: recordingTrailingWingWidth(
+            recordingLeadingWingWidth: recordingLeadingWingWidth(
                 mode: input.mode,
                 showsRecordingHold: input.showsRecordingHold
             ),
+            recordingTrailingWingWidth: input.mode == .recording
+                ? VoiceBarNotchContract.waveformWingWidth
+                : nil,
             isHovered: input.isHovered || keepsIdleExpanded,
             isKeyboardFocused: input.isKeyboardFocused,
             coreWidth: input.coreWidth,
@@ -156,20 +159,18 @@ public enum VoiceBarPresentation {
         input: VoiceBarNotchOperationalInput
     ) -> CGFloat? {
         let material = VoiceBarNotchContract.material
-        let insets = VoiceBarNotchContract.compactCoreContentInset +
-            material.compactContentInset
+        let insets = WaveformLayout.coreGap + WaveformLayout.outerInset
         switch input.mode {
         case .transcribing:
-            let accessoryReserve = material.compactControlSpacing +
-                material.compactControlSize
-            return insets + accessoryReserve + material.waveformSlotWidth +
-                accessoryReserve
+            return insets + material.waveformSlotWidth +
+                material.compactControlSpacing + material.compactControlSize
         case .speaking:
             let visibilityControl = input.isTeleprompterDismissed
-                ? material.compactControlSize + 4
+                ? material.compactControlSpacing + material.compactControlSize
                 : 0
-            return insets + visibilityControl + material.waveformSlotWidth +
-                4 + material.compactControlSize
+            return insets + material.waveformSlotWidth +
+                material.compactControlSpacing + material.compactControlSize +
+                visibilityControl
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
                 3 + material.compactControlSize +
@@ -188,12 +189,14 @@ public enum VoiceBarPresentation {
         }
     }
 
-    private static func recordingTrailingWingWidth(
+    private static func recordingLeadingWingWidth(
         mode: VoiceMode,
         showsRecordingHold: Bool
     ) -> CGFloat? {
-        guard mode == .recording, showsRecordingHold else { return nil }
-        return VoiceBarNotchContract.recordingWingWidthWithHoldControl
+        guard mode == .recording else { return nil }
+        return showsRecordingHold
+            ? VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl
+            : VoiceBarNotchContract.recordingLeadingWingWidth
     }
 
     public static func hotkeyPermissionHint(

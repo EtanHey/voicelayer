@@ -121,8 +121,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         let recordingCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
         let teleprompterCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: teleprompter)
 
-        XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 520)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 520)
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 465)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 465)
         XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32)
         XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228)
         XCTAssertEqual(
@@ -140,7 +140,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
             hasTeleprompter: false,
             isRecording: true,
             hasCompactStatus: false,
-            recordingTrailingWingWidth: VoiceBarNotchContract.recordingWingWidthWithHoldControl,
+            recordingLeadingWingWidth: VoiceBarNotchContract.recordingLeadingWingWidthWithHoldControl,
+            recordingTrailingWingWidth: VoiceBarNotchContract.waveformWingWidth,
             isHovered: false,
             isKeyboardFocused: false
         )
@@ -151,11 +152,11 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         )
         let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
 
-        XCTAssertEqual(recording.geometry.totalWidth, 400)
-        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 520)
+        XCTAssertEqual(recording.geometry.totalWidth, 362.5)
+        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 465)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
         XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, 0)
-        XCTAssertTrue(panelBounds.contains(layout.activeHitRect))
+        XCTAssertTrue(panelBounds.contains(layout.interactiveHitRect))
     }
 
     func testStateSizedWindowsKeepTheCoreAndTopEdgeInvariant() {
@@ -197,7 +198,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
         XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
         XCTAssertFalse(
-            recordingLayout.containsActiveContent(
+            recordingLayout.containsInteractiveContent(
                 CGPoint(
                     x: recordingLayout.panelSize.width / 2,
                     y: VoiceBarNotchShadowOutsets.material.bottom + 100

@@ -28,13 +28,30 @@ public struct VoiceBarPanelLayout: Equatable {
     public let presentation: VoiceBarNotchPresentation
     public let panelSize: CGSize
     public let visibleContentRect: CGRect
-    public let activeHitRect: CGRect
+    public let interactiveHitRect: CGRect
+    public let hoverExpansionRect: CGRect
     public let hoverRetentionRect: CGRect
 
-    private let hitRegion: VoiceBarNotchHitRegion
+    private let interactionRegion: VoiceBarNotchHitRegion
+    private let visibleRegion: VoiceBarNotchVisibleRegion
+    private let localHoverCoreRect: CGRect
 
     public static func make(
         presentation: VoiceBarNotchPresentation,
+        canvasGeometry: VoiceBarNotchGeometry? = nil,
+        shadowOutsets: VoiceBarNotchShadowOutsets = .material
+    ) -> VoiceBarPanelLayout {
+        make(
+            presentation: presentation,
+            interactionConfiguration: .fallback(for: presentation),
+            canvasGeometry: canvasGeometry,
+            shadowOutsets: shadowOutsets
+        )
+    }
+
+    public static func make(
+        presentation: VoiceBarNotchPresentation,
+        interactionConfiguration: VoiceBarNotchInteractionConfiguration,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
         shadowOutsets: VoiceBarNotchShadowOutsets = .material
     ) -> VoiceBarPanelLayout {
@@ -48,16 +65,31 @@ public struct VoiceBarPanelLayout: Equatable {
             width: geometry.totalWidth,
             height: geometry.totalHeight
         )
-        let hitRegion = VoiceBarNotchHitRegion(geometry: geometry)
-        let activeHitRect = hitRegion.bounds.offsetBy(
+        let interactionRegion = VoiceBarNotchHitRegion(
+            geometry: geometry,
+            configuration: interactionConfiguration
+        )
+        let interactiveHitRect = interactionRegion.bounds.offsetBy(
             dx: visibleContentRect.minX,
             dy: visibleContentRect.minY
         )
+        let visibleRegion = VoiceBarNotchVisibleRegion(presentation: presentation)
+        let localHoverCoreRect = CGRect(
+            x: geometry.coreOriginX,
+            y: geometry.lowerSurfaceHeight,
+            width: geometry.coreWidth,
+            height: geometry.topHeight
+        )
+        let interactionBounds = interactionRegion.bounds
+        let hoverExpansionRect = (interactionBounds.isEmpty
+            ? localHoverCoreRect
+            : localHoverCoreRect.union(interactionBounds))
+            .offsetBy(dx: visibleContentRect.minX, dy: visibleContentRect.minY)
         let panelSize = CGSize(
             width: canvasGeometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
             height: canvasGeometry.totalHeight + shadowOutsets.bottom
         )
-        let hoverRetentionRect = activeHitRect
+        let hoverRetentionRect = hoverExpansionRect
             .insetBy(
                 dx: -Self.hoverRetentionPadding,
                 dy: -Self.hoverRetentionPadding
@@ -68,14 +100,34 @@ public struct VoiceBarPanelLayout: Equatable {
             presentation: presentation,
             panelSize: panelSize,
             visibleContentRect: visibleContentRect,
-            activeHitRect: activeHitRect,
+            interactiveHitRect: interactiveHitRect,
+            hoverExpansionRect: hoverExpansionRect,
             hoverRetentionRect: hoverRetentionRect,
-            hitRegion: hitRegion
+            interactionRegion: interactionRegion,
+            visibleRegion: visibleRegion,
+            localHoverCoreRect: localHoverCoreRect
         )
     }
 
-    public func containsActiveContent(_ point: CGPoint) -> Bool {
-        hitRegion.contains(
+    public func containsInteractiveContent(_ point: CGPoint) -> Bool {
+        interactionRegion.contains(
+            CGPoint(
+                x: point.x - visibleContentRect.minX,
+                y: point.y - visibleContentRect.minY
+            )
+        )
+    }
+
+    public func containsHoverExpansion(_ point: CGPoint) -> Bool {
+        let localPoint = CGPoint(
+            x: point.x - visibleContentRect.minX,
+            y: point.y - visibleContentRect.minY
+        )
+        return localHoverCoreRect.contains(localPoint) || interactionRegion.contains(localPoint)
+    }
+
+    public func containsVisibleSurface(_ point: CGPoint) -> Bool {
+        visibleRegion.contains(
             CGPoint(
                 x: point.x - visibleContentRect.minX,
                 y: point.y - visibleContentRect.minY
@@ -105,14 +157,17 @@ public struct VoiceBarPanelLayout: Equatable {
 public enum VoiceBarIsolatedCapturePlacement {
     public static let environmentVariable = "QA_VOICEBAR_CAPTURE_BOTTOM_LEFT"
     public static let topRightEnvironmentVariable = "QA_VOICEBAR_CAPTURE_TOP_RIGHT"
+    public static let offscreenEnvironmentVariable = "QA_VOICEBAR_CAPTURE_OFFSCREEN"
     public static let parallelInstanceEnvironmentVariable = "VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"
     public static let cornerInset: CGFloat = 24
+    public static let offscreenOrigin: CGFloat = -20000
 
     public static func isEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
         (environment[environmentVariable] == "1" ||
-            environment[topRightEnvironmentVariable] == "1") &&
+            environment[topRightEnvironmentVariable] == "1" ||
+            environment[offscreenEnvironmentVariable] == "1") &&
             environment[parallelInstanceEnvironmentVariable] == "1"
     }
 
@@ -121,6 +176,14 @@ public enum VoiceBarIsolatedCapturePlacement {
         visibleFrame: CGRect,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> CGRect {
+        if environment[offscreenEnvironmentVariable] == "1" {
+            return CGRect(
+                x: offscreenOrigin - cornerInset - panelSize.width,
+                y: offscreenOrigin - cornerInset - panelSize.height,
+                width: panelSize.width,
+                height: panelSize.height
+            )
+        }
         if environment[topRightEnvironmentVariable] == "1" {
             return CGRect(
                 x: visibleFrame.maxX - cornerInset - panelSize.width,

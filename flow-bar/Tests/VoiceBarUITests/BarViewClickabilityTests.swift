@@ -35,10 +35,10 @@ final class BarViewClickabilityTests: XCTestCase {
     func testBarViewKeepsTheMergedW2WaveformTruthCallSites() throws {
         let source = try barViewSource()
 
-        XCTAssertTrue(source.contains("currentLevel: { state.recordingWaveformLevel }"))
+        XCTAssertTrue(source.contains("recordingLevel: { state.recordingWaveformLevel }"))
         XCTAssertTrue(source.contains("isListening: !state.speechDetected"))
         XCTAssertEqual(source.components(separatedBy: "state.playbackAudioLevel()").count - 1, 1)
-        XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+        XCTAssertEqual(source.components(separatedBy: "VoiceBarNotchWaveform(").count - 1, 1)
         XCTAssertFalse(source.contains("recordingWaveformLevels"))
         XCTAssertFalse(source.contains("transcribingWaveformLevels"))
         XCTAssertTrue(source.contains("case .transcribing:"))
@@ -103,7 +103,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 400, height: 32)
+            NSSize(width: 363, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -304,7 +304,7 @@ final class BarViewClickabilityTests: XCTestCase {
         )
     }
 
-    func testRecordingKeepsOneMicIndicatorAndDropsTheRedundantDot() throws {
+    func testRecordingLeadingWingOwnsProminentStopCancelAndOptionalHold() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(
@@ -317,8 +317,36 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         let recording = leading[recordingStart.lowerBound ..< statusStart.lowerBound]
 
-        XCTAssertTrue(recording.contains("Image(systemName: \"mic.fill\")"))
+        XCTAssertTrue(recording.contains("HStack(spacing:"))
+        let stop = try XCTUnwrap(recording.range(of: "accessibilityLabel: \"Stop recording\""))
+        let cancel = try XCTUnwrap(recording.range(of: "accessibilityLabel: \"Cancel recording\""))
+        let hold = try XCTUnwrap(recording.range(of: "if let recordingHoldControl"))
+        XCTAssertLessThan(stop.lowerBound, cancel.lowerBound)
+        XCTAssertLessThan(cancel.lowerBound, hold.lowerBound)
+        XCTAssertTrue(recording.contains("isDestructive: true"))
+        XCTAssertFalse(recording.contains("Image(systemName: \"mic.fill\")"))
         XCTAssertFalse(recording.contains("PulsingDot()"))
+    }
+
+    func testRecordingTrailingWingContainsOnlyTheSharedWaveform() throws {
+        let source = try barViewSource()
+        let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
+        let compactStart = try XCTUnwrap(
+            source.range(
+                of: "private var notchCompactStatusContent",
+                range: trailingStart.upperBound ..< source.endIndex
+            )
+        )
+        let trailing = source[trailingStart.lowerBound ..< compactStart.lowerBound]
+        let recordingStart = try XCTUnwrap(trailing.range(of: "case .recording:"))
+        let statusStart = try XCTUnwrap(
+            trailing.range(of: "case .compactStatus:", range: recordingStart.upperBound ..< trailing.endIndex)
+        )
+        let recording = trailing[recordingStart.lowerBound ..< statusStart.lowerBound]
+
+        XCTAssertTrue(recording.contains("notchWaveform"))
+        XCTAssertFalse(recording.contains("notchButton"))
+        XCTAssertFalse(recording.contains("recordingHoldControl"))
     }
 
     func testTeleprompterContentFadesWithTheMorphInsteadOfHoldingAHollowShell() throws {
@@ -392,8 +420,8 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(leading.contains("ProcessingSpinner()"))
         XCTAssertFalse(leading.contains("WaveformView("))
-        XCTAssertTrue(trailing.contains("notchStableWaveform"))
-        XCTAssertTrue(source.contains("WaveformView(processingColor: Theme.stateColor(for: .transcribing))"))
+        XCTAssertTrue(trailing.contains("notchWaveform"))
+        XCTAssertTrue(source.contains("VoiceBarNotchWaveform("))
     }
 
     func testQueuedSpeechUsesTheExistingQueuePreviewInTheNativeShell() throws {
@@ -413,7 +441,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 
-    func testDictionaryButtonMountsInHoveredLauncherAndTeleprompterLeadingWing() throws {
+    func testDictionaryButtonMountsOnlyInHoveredLauncher() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
@@ -438,8 +466,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(hover.contains("vocabularyButton"))
         XCTAssertFalse(active.contains("historyButton"))
         XCTAssertFalse(active.contains("vocabularyButton"))
-        XCTAssertTrue(teleprompterLeading.contains("vocabularyButton"))
-        XCTAssertFalse(teleprompterLeading.contains("Image(systemName: \"book.closed\")"))
+        XCTAssertTrue(teleprompterLeading.contains("EmptyView()"))
+        XCTAssertFalse(teleprompterLeading.contains("vocabularyButton"))
+        XCTAssertFalse(teleprompterLeading.contains("Dictionary"))
     }
 
     func testDictionaryPopoverOpensBelowTheTopEdgeNotch() throws {
@@ -503,6 +532,78 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
+    func testPanelAppKitMouseEventsHitOnlyMountedControls() {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "vad"
+        state.isConnected = true
+        state.isCollapsed = false
+        var sentCommand: [String: Any]?
+        state.sendCommand = { sentCommand = $0 }
+        let router = SpyCommandRouter()
+        let (host, panel, layout, controlRects) = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+        )
+
+        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertFalse(panel.canBecomeMain)
+        click(host, at: controlRects[2].center)
+        click(host, at: controlRects[1].center)
+        click(host, at: controlRects[0].center)
+
+        XCTAssertEqual(router.stopCount, 1)
+        XCTAssertEqual(router.cancelCount, 1)
+        XCTAssertEqual(sentCommand?["cmd"] as? String, "set_recording_hold")
+        XCTAssertEqual(sentCommand?["engaged"] as? Bool, true)
+
+        let gapBesideStop = NSPoint(x: controlRects[2].maxX + 3, y: controlRects[2].midY)
+        let belowStop = NSPoint(x: controlRects[2].midX, y: controlRects[2].minY - 2)
+        let waveform = NSPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
+                + layout.presentation.geometry.coreWidth + WaveformLayout.coreGap + 10,
+            y: controlRects[2].midY
+        )
+        XCTAssertNil(host.hitTest(gapBesideStop))
+        XCTAssertNil(host.hitTest(belowStop))
+        XCTAssertNil(host.hitTest(waveform))
+        XCTAssertFalse(panel.startsDrag(at: gapBesideStop))
+        XCTAssertFalse(panel.shouldHandleContextMenu(at: waveform))
+    }
+
+    func testTeleprompterAppKitMouseEventsPassThroughItsBody() {
+        let state = VoiceState()
+        state.isConnected = true
+        state.isCollapsed = false
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "The terminal remains interactive behind this read-along surface.",
+        ])
+        let router = SpyCommandRouter()
+        let (host, panel, layout, controlRects) = makeInteractivePanelHost(
+            state: state,
+            router: router,
+            configuration: VoiceBarNotchInteractionConfiguration(lowerControlCount: 3)
+        )
+        let bodyPoint = NSPoint(
+            x: layout.visibleContentRect.midX,
+            y: layout.visibleContentRect.minY + 120
+        )
+        let formerDictionaryLane = NSPoint(
+            x: layout.visibleContentRect.minX + 108,
+            y: layout.visibleContentRect.minY + 212
+        )
+
+        XCTAssertFalse(controlRects.isEmpty)
+        XCTAssertNotNil(host.hitTest(controlRects[0].center))
+        XCTAssertNil(host.hitTest(bodyPoint))
+        XCTAssertNil(host.hitTest(formerDictionaryLane))
+        XCTAssertFalse(panel.startsDrag(at: bodyPoint))
+        XCTAssertFalse(panel.shouldHandleContextMenu(at: formerDictionaryLane))
+    }
+
     private func makeHost(
         state: VoiceState,
         router: SpyCommandRouter,
@@ -530,33 +631,70 @@ final class BarViewClickabilityTests: XCTestCase {
         return host
     }
 
+    private func makeInteractivePanelHost(
+        state: VoiceState,
+        router: SpyCommandRouter,
+        configuration: VoiceBarNotchInteractionConfiguration
+    ) -> (
+        host: PillHostingView<BarView>,
+        panel: FloatingPillPanel,
+        layout: VoiceBarPanelLayout,
+        controlRects: [CGRect]
+    ) {
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: state.mode,
+                showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
+                hasTeleprompterText: state.teleprompterText != nil,
+                isTeleprompterDismissed: state.isTeleprompterDismissed,
+                isTeleprompterReadback: state.isTeleprompterReadback,
+                isCollapsed: state.isCollapsed
+            )
+        )
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: configuration,
+            canvasGeometry: canvas.canvasGeometry
+        )
+        let host = PillHostingView(
+            rootView: BarView(
+                state: state,
+                commandRouter: router,
+                includesPanelOutsets: true
+            )
+        )
+        host.frame = NSRect(origin: .zero, size: layout.panelSize)
+        host.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        let panel = FloatingPillPanel(content: host)
+        panel.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        panel.orderBack(nil)
+        windows.append(panel)
+        host.layoutSubtreeIfNeeded()
+        let region = VoiceBarNotchHitRegion(
+            geometry: presentation.geometry,
+            configuration: configuration
+        )
+        let controlRects = region.rects.map {
+            $0.offsetBy(dx: layout.visibleContentRect.minX, dy: layout.visibleContentRect.minY)
+        }
+        return (host, panel, layout, controlRects)
+    }
+
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
         NSPoint(
-            x: recordingTrailingContentOriginX(in: host) +
-                WaveformLayout.recordingSlotWidth +
-                VoiceBarNotchContract.material.compactControlSpacing +
-                VoiceBarNotchContract.material.compactControlSize / 2,
+            x: host.bounds.minX + 50,
             y: host.bounds.midY
         )
     }
 
     private func recordingHoldButtonCenter(in host: NSView) -> NSPoint {
-        recordingCancelButtonCenter(in: host)
+        NSPoint(x: host.bounds.minX + 76, y: host.bounds.midY)
     }
 
     private func recordingStopButtonCenter(in host: NSView) -> NSPoint {
-        NSPoint(
-            x: recordingCancelButtonCenter(in: host).x +
-                VoiceBarNotchContract.material.compactControlSize +
-                VoiceBarNotchContract.material.compactControlSpacing,
-            y: host.bounds.midY
-        )
-    }
-
-    private func recordingTrailingContentOriginX(in _: NSView) -> CGFloat {
-        VoiceBarNotchContract.compactIndicatorLaneWidth +
-            VoiceBarNotchContract.coreWidth +
-            VoiceBarNotchContract.compactCoreContentInset
+        NSPoint(x: host.bounds.minX + 24, y: host.bounds.midY)
     }
 
     private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {
@@ -662,5 +800,11 @@ final class BarViewClickabilityTests: XCTestCase {
                 .appendingPathComponent("BarView.swift"),
             encoding: .utf8
         )
+    }
+}
+
+private extension CGRect {
+    var center: CGPoint {
+        CGPoint(x: midX, y: midY)
     }
 }

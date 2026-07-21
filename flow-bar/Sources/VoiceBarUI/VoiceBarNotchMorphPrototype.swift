@@ -102,25 +102,25 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
             coreWidth: presentation.geometry.coreWidth,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
         )
-        let maximumRecordingWingWidth = VoiceBarNotchContract.recordingWingWidthWithHoldControl
+        let maximumCompactWingWidth = VoiceBarNotchContract.morphCanvasWingCapacity
         let canvasGeometry = VoiceBarNotchGeometry(
             coreWidth: teleprompterGeometry.coreWidth,
             topHeight: teleprompterGeometry.topHeight,
             leadingWingWidth: max(
                 teleprompterGeometry.leadingWingWidth,
-                maximumRecordingWingWidth
+                maximumCompactWingWidth
             ),
             trailingWingWidth: max(
                 teleprompterGeometry.trailingWingWidth,
-                maximumRecordingWingWidth
+                maximumCompactWingWidth
             ),
             bodyLeadingExtent: max(
                 teleprompterGeometry.bodyLeadingExtent,
-                maximumRecordingWingWidth
+                maximumCompactWingWidth
             ),
             bodyTrailingExtent: max(
                 teleprompterGeometry.bodyTrailingExtent,
-                maximumRecordingWingWidth
+                maximumCompactWingWidth
             ),
             lowerSurfaceHeight: presentation.geometry.lowerSurfaceHeight
         )

@@ -989,13 +989,13 @@ private func clickRecordingStop(
     in window: NSWindow,
     state: VoiceState
 ) throws {
-    var x = host.bounds.maxX - 10
-    while x >= host.bounds.midX {
+    var x = host.bounds.minX + 10
+    while x <= host.bounds.midX {
         try click(host, at: NSPoint(x: x, y: host.bounds.midY), in: window)
         if waitForCondition(timeout: 0.15, condition: { state.mode == .transcribing }) {
             return
         }
-        x -= 3
+        x += 3
     }
     throw NSError(domain: "SocketServerTests", code: 5)
 }

@@ -8,8 +8,12 @@ public enum WaveformLayout {
     public static let barSpacing: CGFloat = 3
     public static let viewportWidth: CGFloat = 46
     public static let viewportHeight: CGFloat = 24
-    public static let recordingHorizontalPadding: CGFloat = 8
-    public static let recordingSlotWidth = viewportWidth + 2 * recordingHorizontalPadding
+    public static let coreGap: CGFloat = 24
+    public static let outerInset: CGFloat = 8
+
+    public static func leadingX(coreMaxX: CGFloat) -> CGFloat {
+        coreMaxX + coreGap
+    }
 }
 
 public struct WaveformEnvelopeFollower {
@@ -114,7 +118,6 @@ public struct WaveformView: View {
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
-    private let horizontalPadding: CGFloat
     @StateObject private var envelopeStore = WaveformEnvelopeStore()
 
     private let barCount = WaveformLayout.barCount
@@ -126,20 +129,18 @@ public struct WaveformView: View {
     public init(
         color: Color,
         isListening: Bool = false,
-        horizontalPadding: CGFloat = 0,
+        isProcessing: Bool = false,
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
         self.isListening = isListening
-        self.horizontalPadding = max(0, horizontalPadding)
         self.currentLevel = currentLevel
-        mode = .audioDriven
+        mode = isProcessing ? .processing : .audioDriven
     }
 
     public init(processingColor color: Color) {
         self.color = color
         isListening = false
-        horizontalPadding = 0
         currentLevel = { nil }
         mode = .processing
     }
@@ -164,7 +165,6 @@ public struct WaveformView: View {
             )
         }
         .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
-        .padding(.horizontal, horizontalPadding)
         .fixedSize(horizontal: true, vertical: true)
         .layoutPriority(1)
     }
@@ -225,6 +225,58 @@ public struct WaveformView: View {
             case .audioDriven: isListening ? 3 : 5
             case .processing: 4
             }
+        }
+    }
+}
+
+public struct VoiceBarNotchWaveform: View {
+    public let mode: VoiceMode
+    public let isListening: Bool
+    private let recordingLevel: () -> Double?
+    private let playbackLevel: () -> Double?
+
+    public init(
+        mode: VoiceMode,
+        isListening: Bool,
+        recordingLevel: @escaping () -> Double?,
+        playbackLevel: @escaping () -> Double?
+    ) {
+        self.mode = mode
+        self.isListening = isListening
+        self.recordingLevel = recordingLevel
+        self.playbackLevel = playbackLevel
+    }
+
+    public var body: some View {
+        WaveformView(
+            color: color,
+            isListening: mode == .recording && isListening,
+            isProcessing: mode == .transcribing,
+            currentLevel: currentLevel
+        )
+    }
+
+    private var color: Color {
+        switch mode {
+        case .recording:
+            Theme.recordingColor
+        case .transcribing:
+            Theme.stateColor(for: .transcribing)
+        case .speaking:
+            Theme.speakingColor
+        case .idle, .error, .disconnected:
+            .clear
+        }
+    }
+
+    private func currentLevel() -> Double? {
+        switch mode {
+        case .recording:
+            recordingLevel()
+        case .speaking:
+            playbackLevel()
+        case .idle, .transcribing, .error, .disconnected:
+            nil
         }
     }
 }

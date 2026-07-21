@@ -72,8 +72,14 @@ enum VoiceBarInstanceGuard {
     }
 }
 
-enum VoiceBarInstanceIsolationRegistryError: Error {
-    case launchDateUnavailable(pid: pid_t)
+enum VoiceBarInstanceLaunchDate {
+    /// A directly executed app bundle can briefly be absent from the workspace
+    /// launch-date cache during `applicationDidFinishLaunching`. The current
+    /// wall clock is within the registry's one-second observation tolerance and
+    /// still binds the marker to the exact PID.
+    static func resolve(observed: Date?, fallback: Date = Date()) -> Date {
+        observed ?? fallback
+    }
 }
 
 enum VoiceBarInstanceIsolationRegistry {

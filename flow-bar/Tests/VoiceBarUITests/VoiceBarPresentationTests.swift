@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingKeepsItsCenteredWaveformEnvelopeAcrossStatusStrings() {
+    func testTranscribingKeepsItsSharedWaveformEnvelopeAcrossStatusStrings() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -71,7 +71,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         XCTAssertEqual(baseline.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 104)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -99,17 +99,19 @@ final class VoiceBarPresentationTests: XCTestCase {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
         }
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(recording.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(recording.geometry.trailingWingWidth, 141.5)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, 78)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 104)
         XCTAssertEqual(
             quickTap.geometry.trailingWingWidth,
-            VoiceBarNotchContract.compactCoreContentInset +
-                VoiceBarNotchContract.material.compactContentInset +
-                Theme.intrinsicPillStatusWidth(for: VoiceBarPresentation.tapAgainToLockHint) +
-                VoiceBarNotchContract.compactStatusTrailingSafetyInset
+            min(
+                WaveformLayout.coreGap + WaveformLayout.outerInset +
+                    Theme.intrinsicPillStatusWidth(for: VoiceBarPresentation.tapAgainToLockHint) +
+                    VoiceBarNotchContract.compactStatusTrailingSafetyInset,
+                VoiceBarNotchContract.morphCanvasWingCapacity
+            )
         )
-        XCTAssertLessThan(processing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth)
+        XCTAssertGreaterThan(processing.geometry.trailingWingWidth, recording.geometry.trailingWingWidth)
     }
 
     func testRecordingWingFitsMountedControlsInsteadOfKeepingAGhostTail() {
@@ -126,11 +128,11 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 141.5)
-        XCTAssertEqual(vad.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(vad.geometry.trailingWingWidth, 167.5)
-        XCTAssertEqual(vad.geometry.trailingWingWidth - pushToTalk.geometry.trailingWingWidth, 26)
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 73.5)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 78)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, 99.5)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 78)
+        XCTAssertEqual(vad.geometry.leadingWingWidth - pushToTalk.geometry.leadingWingWidth, 26)
     }
 
     func testTextBearingCompactStatusKeepsTrailingSafetyPaddingInsideStableCanvas() {
