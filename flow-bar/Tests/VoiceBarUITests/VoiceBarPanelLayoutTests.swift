@@ -185,8 +185,32 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
                 visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084),
                 environment: environment
             ),
-            CGRect(x: -20000, y: -20000, width: 472, height: 245)
+            CGRect(x: -20496, y: -20269, width: 472, height: 245)
         )
+    }
+
+    func testEveryDynamicOffscreenFrameStaysEntirelyBeyondNegativeTwentyThousand() {
+        let environment = [
+            VoiceBarIsolatedCapturePlacement.offscreenEnvironmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+        for state in VoiceBarNotchVisualState.allCases {
+            let presentation = presentation(state)
+            let layout = VoiceBarPanelLayout.make(
+                presentation: presentation,
+                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                    for: presentation
+                ).canvasGeometry
+            )
+            let frame = VoiceBarIsolatedCapturePlacement.frame(
+                layout: layout,
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084),
+                environment: environment
+            )
+
+            XCTAssertLessThanOrEqual(frame.maxX, -20000, "state=\(state)")
+            XCTAssertLessThanOrEqual(frame.maxY, -20000, "state=\(state)")
+        }
     }
 
     func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {

@@ -176,8 +176,8 @@ public enum VoiceBarIsolatedCapturePlacement {
     ) -> CGRect {
         if environment[offscreenEnvironmentVariable] == "1" {
             return CGRect(
-                x: offscreenOrigin,
-                y: offscreenOrigin,
+                x: offscreenOrigin - cornerInset - panelSize.width,
+                y: offscreenOrigin - cornerInset - panelSize.height,
                 width: panelSize.width,
                 height: panelSize.height
             )
