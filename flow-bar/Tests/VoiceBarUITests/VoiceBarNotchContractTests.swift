@@ -90,6 +90,63 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
     }
 
+    func testGeneralStateWingsFitTheirOwnContentWhileRecordingAloneIsSymmetric() {
+        let material = VoiceBarNotchContract.material
+        let hover = VoiceBarNotchContract.geometry(for: .hoverLauncher)
+        let recording = VoiceBarNotchContract.geometry(for: .recording)
+        let teleprompter = VoiceBarNotchContract.geometry(for: .teleprompter)
+
+        XCTAssertEqual(
+            hover.leadingWingWidth,
+            VoiceBarNotchContract.compactContentFitWingWidth(
+                contentWidth: material.compactControlSize
+            )
+        )
+        XCTAssertEqual(
+            hover.trailingWingWidth,
+            VoiceBarNotchContract.compactContentFitWingWidth(
+                contentWidth: 2 * material.compactControlSize +
+                    material.compactControlSpacing
+            )
+        )
+        XCTAssertNotEqual(hover.leadingWingWidth, hover.trailingWingWidth)
+
+        XCTAssertEqual(
+            teleprompter.leadingWingWidth,
+            VoiceBarNotchContract.teleprompterContentFitWingWidth(
+                contentWidth: VoiceBarNotchContract.teleprompterLeadingContentWidth
+            )
+        )
+        XCTAssertEqual(
+            teleprompter.trailingWingWidth,
+            VoiceBarNotchContract.teleprompterContentFitWingWidth(
+                contentWidth: VoiceBarNotchContract.teleprompterTrailingContentWidth
+            )
+        )
+        XCTAssertNotEqual(teleprompter.leadingWingWidth, teleprompter.trailingWingWidth)
+
+        XCTAssertEqual(recording.leadingWingWidth, recording.trailingWingWidth)
+    }
+
+    func testCompactStatusOverridesPreserveIndependentContentFitWidths() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: true,
+            compactStatusLeadingWingWidth: 61,
+            compactStatusTrailingWingWidth: 137,
+            isHovered: false,
+            isKeyboardFocused: false
+        )
+
+        XCTAssertEqual(presentation.geometry.leadingWingWidth, 61)
+        XCTAssertEqual(presentation.geometry.trailingWingWidth, 137)
+        XCTAssertNotEqual(
+            presentation.geometry.leadingWingWidth,
+            presentation.geometry.trailingWingWidth
+        )
+    }
+
     func testMaterialContractLocksFadeSafeContentAndOneSurfaceRules() {
         let material = VoiceBarNotchContract.material
 

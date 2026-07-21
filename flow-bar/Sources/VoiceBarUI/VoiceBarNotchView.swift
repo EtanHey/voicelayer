@@ -271,7 +271,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             .allowsHitTesting(false)
         }
         .mask {
-            VoiceBarNotchSymmetricRevealMask(
+            VoiceBarNotchCoreAnchoredRevealMask(
                 progress: surfaceRevealProgress,
                 coreRect: CGRect(
                     x: resolvedCanvasGeometry.coreOriginX,
@@ -386,7 +386,26 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     }
 }
 
-private struct VoiceBarNotchSymmetricRevealMask: Shape {
+enum VoiceBarNotchCoreAnchoredRevealLayout {
+    static func rect(
+        progress: CGFloat,
+        in canvas: CGRect,
+        coreRect: CGRect
+    ) -> CGRect {
+        let fraction = min(1, max(0, progress))
+        let leading = coreRect.minX - (coreRect.minX - canvas.minX) * fraction
+        let trailing = coreRect.maxX + (canvas.maxX - coreRect.maxX) * fraction
+        let bottom = coreRect.maxY + (canvas.maxY - coreRect.maxY) * fraction
+        return CGRect(
+            x: leading,
+            y: canvas.minY,
+            width: max(0, trailing - leading),
+            height: max(0, bottom - canvas.minY)
+        )
+    }
+}
+
+private struct VoiceBarNotchCoreAnchoredRevealMask: Shape {
     var progress: CGFloat
     let coreRect: CGRect
 
@@ -396,16 +415,11 @@ private struct VoiceBarNotchSymmetricRevealMask: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let fraction = min(1, max(0, progress))
-        let leading = coreRect.minX - (coreRect.minX - rect.minX) * fraction
-        let trailing = coreRect.maxX + (rect.maxX - coreRect.maxX) * fraction
-        let bottom = coreRect.maxY + (rect.maxY - coreRect.maxY) * fraction
-        return Path(
-            CGRect(
-                x: leading,
-                y: rect.minY,
-                width: max(0, trailing - leading),
-                height: max(0, bottom - rect.minY)
+        Path(
+            VoiceBarNotchCoreAnchoredRevealLayout.rect(
+                progress: progress,
+                in: rect,
+                coreRect: coreRect
             )
         )
     }

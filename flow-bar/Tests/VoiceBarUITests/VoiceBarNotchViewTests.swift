@@ -149,7 +149,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
     }
 
-    func testEveryVisibleTransitionRearmsOneCoreCenteredRevealForBothWings() throws {
+    func testEveryVisibleTransitionRearmsOneCoreAnchoredRevealForBothWings() throws {
         let source = try notchViewSource()
         let surface = try bracedScope(after: "private var notchSurface", in: source)
 
@@ -158,8 +158,24 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains("surfaceRevealProgress = 0"))
         XCTAssertTrue(source.contains("await Task.yield()"))
         XCTAssertTrue(source.contains("surfaceRevealProgress = 1"))
-        XCTAssertTrue(surface.contains("VoiceBarNotchSymmetricRevealMask"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))
         XCTAssertTrue(surface.contains(".mask"))
+    }
+
+    func testCoreAnchoredRevealPreservesIndependentContentFitExtents() {
+        let canvas = CGRect(x: 0, y: 0, width: 500, height: 228)
+        let core = CGRect(x: 120, y: 0, width: 185, height: 32)
+
+        let halfway = VoiceBarNotchCoreAnchoredRevealLayout.rect(
+            progress: 0.5,
+            in: canvas,
+            coreRect: core
+        )
+
+        XCTAssertEqual(core.minX - halfway.minX, 60)
+        XCTAssertEqual(halfway.maxX - core.maxX, 97.5)
+        XCTAssertNotEqual(core.minX - halfway.minX, halfway.maxX - core.maxX)
+        XCTAssertEqual(halfway.maxY, 130)
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
