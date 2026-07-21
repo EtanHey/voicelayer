@@ -4,7 +4,6 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     public let shellIdentity: String
     public let fixedCoreCount: Int
     public let reusableWingSlotCount: Int
-    public let coreEdgeVeilCount: Int
     public let lowerSurfaceCount: Int
     public let clipsContentToVisibleSurfaces: Bool
     public let coreUsesMaterial: Bool
@@ -19,7 +18,6 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
             shellIdentity: "VoiceBarNotchShell",
             fixedCoreCount: presentation.visualState == .idle ? 0 : 1,
             reusableWingSlotCount: 2,
-            coreEdgeVeilCount: presentation.visualState == .idle ? 0 : 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
             coreUsesMaterial: VoiceBarNotchContract.material.coreUsesBackdropMaterial,
@@ -37,11 +35,17 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let trailingContent: TrailingContent
     private let lowerContent: LowerContent
     private let onHoverChanged: (Bool) -> Void
+    private let morphVariant: VoiceBarNotchMorphVariant
+    private let canvasGeometry: VoiceBarNotchGeometry?
+    @State private var renderedGeometry: VoiceBarNotchGeometry
+    @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public init(
         presentation: VoiceBarNotchPresentation,
         appearance: VoiceBarNotchAppearance = .dark,
+        morphVariant: VoiceBarNotchMorphVariant = .p1Matched,
+        canvasGeometry: VoiceBarNotchGeometry? = nil,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
         @ViewBuilder trailingContent: () -> TrailingContent,
@@ -49,6 +53,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     ) {
         self.presentation = presentation
         self.appearance = appearance
+        self.morphVariant = morphVariant
+        self.canvasGeometry = canvasGeometry
+        _renderedGeometry = State(initialValue: presentation.geometry)
         self.onHoverChanged = onHoverChanged
         self.leadingContent = leadingContent()
         self.trailingContent = trailingContent()
@@ -57,19 +64,18 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            if presentation.visualState == .teleprompter {
-                teleprompterSurfaceUnit
-                    .transition(.identity)
-            } else if presentation.visualState != .idle {
-                compactSurface
-                    .transition(.identity)
+            VoiceBarGlassContainer(variant: morphVariant) {
+                if presentation.visualState != .idle {
+                    morphingNotchSurface
+                        .transition(.identity)
+                }
             }
 
             fixedHardwareCore
         }
         .frame(
-            width: presentation.geometry.totalWidth,
-            height: presentation.geometry.totalHeight,
+            width: resolvedCanvasGeometry.totalWidth,
+            height: resolvedCanvasGeometry.totalHeight,
             alignment: .topLeading
         )
         // The collapsed state draws no software pixels, but the physical
@@ -80,38 +86,100 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
         .onHover(perform: onHoverChanged)
+        .onAppear {
+            renderedGeometry = presentation.geometry
+        }
+        .onChange(of: presentation.geometry) { _, nextGeometry in
+            let closingGeometryDelay = renderedGeometry.lowerSurfaceHeight > 0
+                && nextGeometry.lowerSurfaceHeight == 0
+                ? VoiceBarNotchContract.motion.contentExitDuration
+                : 0
+            withAnimation(shellAnimation.delay(closingGeometryDelay)) {
+                renderedGeometry = nextGeometry
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var morphingNotchSurface: some View {
+        if presentation.visualState == .teleprompter {
+            notchSurface
+                .matchedGeometryEffect(
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
+                    in: morphNamespace,
+                    properties: .frame,
+                    anchor: .top
+                )
+                .offset(x: surfaceOffsetX)
+        } else {
+            notchSurface
+                .matchedGeometryEffect(
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
+                    in: morphNamespace,
+                    properties: .frame,
+                    anchor: .top
+                )
+                .offset(x: surfaceOffsetX)
+        }
+    }
+
+    private var resolvedCanvasGeometry: VoiceBarNotchGeometry {
+        canvasGeometry ?? presentation.geometry
+    }
+
+    private var surfaceOffsetX: CGFloat {
+        resolvedCanvasGeometry.coreOriginX - renderedGeometry.coreOriginX
+    }
+
+    private var shellAnimation: Animation {
+        if accessibilityReduceMotion {
+            return .easeOut(duration: 0.18)
+        }
+        let descriptor = morphDescriptor
+        if descriptor.effectiveVariant == .p3SpringDelight {
+            return .spring(
+                response: descriptor.totalDuration,
+                dampingFraction: descriptor.heroDampingFraction
+            )
+        }
+        return .interpolatingSpring(
+            mass: descriptor.mass,
+            stiffness: descriptor.stiffness,
+            damping: descriptor.damping
+        )
+    }
+
+    private var morphDescriptor: VoiceBarNotchMorphDescriptor {
+        if #available(macOS 26.0, *) {
+            morphVariant.descriptor(
+                nativeGlassAvailable: true,
+                reducedMotion: accessibilityReduceMotion
+            )
+        } else {
+            morphVariant.descriptor(
+                nativeGlassAvailable: false,
+                reducedMotion: accessibilityReduceMotion
+            )
+        }
     }
 
     private func surfaceTransition(delay: TimeInterval) -> AnyTransition {
-        let insertionAnimation: Animation = if accessibilityReduceMotion {
-            .easeOut(duration: 0.18).delay(delay)
-        } else {
-            .interpolatingSpring(
-                mass: VoiceBarNotchContract.motion.mass,
-                stiffness: VoiceBarNotchContract.motion.stiffness,
-                damping: VoiceBarNotchContract.motion.damping
-            )
-            .delay(delay)
-        }
+        let insertionAnimation = Animation.easeOut(
+            duration: accessibilityReduceMotion ? 0.18 : 0.12
+        )
+        .delay(delay)
         let removalAnimation = Animation.easeOut(
             duration: VoiceBarNotchContract.motion.contentExitDuration
         )
-        let insertion: AnyTransition = if accessibilityReduceMotion {
-            .opacity.animation(insertionAnimation)
-        } else {
-            .scale(scale: 0.97, anchor: .top)
-                .combined(with: .opacity)
-                .animation(insertionAnimation)
-        }
 
         return .asymmetric(
-            insertion: insertion,
+            insertion: .opacity.animation(insertionAnimation),
             removal: .opacity.animation(removalAnimation)
         )
     }
 
     private var layout: VoiceBarNotchShapeLayout {
-        VoiceBarNotchShapeLayout(geometry: presentation.geometry)
+        VoiceBarNotchShapeLayout(geometry: renderedGeometry)
     }
 
     @ViewBuilder
@@ -121,8 +189,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
             )
             .fill(.black)
-            .frame(width: layout.coreRect.width, height: layout.coreRect.height)
-            .position(x: layout.coreRect.midX, y: layout.coreRect.midY)
+            .frame(
+                width: resolvedCanvasGeometry.coreWidth,
+                height: resolvedCanvasGeometry.topHeight
+            )
+            .position(
+                x: resolvedCanvasGeometry.coreOriginX + resolvedCanvasGeometry.coreWidth / 2,
+                y: resolvedCanvasGeometry.topHeight / 2
+            )
             .accessibilityHidden(true)
             .transaction { transaction in
                 transaction.animation = nil
@@ -131,119 +205,34 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         }
     }
 
-    private var compactSurface: some View {
-        ZStack(alignment: .topLeading) {
-            compactWings
-            coreEdgeVeils
-        }
-    }
-
-    private var compactWings: some View {
-        VoiceBarGlassContainer {
-            ZStack(alignment: .topLeading) {
-                if layout.leadingWingRect.width > 0 {
-                    VoiceBarGlassWing(
-                        side: .leading,
-                        outerCornerRadius: compactOuterCornerRadius,
-                        appearance: appearance
-                    ) {
-                        wingSlot(leadingContent, side: .leading)
-                    }
-                    .frame(
-                        width: layout.leadingWingRect.width,
-                        height: layout.leadingWingRect.height
-                    )
-                    .position(
-                        x: layout.leadingWingRect.midX,
-                        y: layout.leadingWingRect.midY
-                    )
-                }
-
-                if layout.trailingWingRect.width > 0 {
-                    VoiceBarGlassWing(
-                        side: .trailing,
-                        outerCornerRadius: compactOuterCornerRadius,
-                        appearance: appearance
-                    ) {
-                        wingSlot(trailingContent, side: .trailing)
-                    }
-                    .frame(
-                        width: layout.trailingWingRect.width,
-                        height: layout.trailingWingRect.height
-                    )
-                    .position(
-                        x: layout.trailingWingRect.midX,
-                        y: layout.trailingWingRect.midY
-                    )
-                }
-            }
-            .frame(
-                width: presentation.geometry.totalWidth,
-                height: presentation.geometry.topHeight,
-                alignment: .topLeading
-            )
-        }
-    }
-
-    private var teleprompterSurface: some View {
+    private var notchSurface: some View {
         let shape = VoiceBarNotchContinuousShape(
-            geometry: presentation.geometry
+            geometry: renderedGeometry,
+            compactOuterCornerRadius: compactOuterCornerRadius
         )
-        return Color.clear
+        return notchSlots
             .frame(
-                width: presentation.geometry.totalWidth,
-                height: presentation.geometry.totalHeight
+                width: renderedGeometry.totalWidth,
+                height: renderedGeometry.totalHeight,
+                alignment: .topLeading
             )
             .modifier(
                 VoiceBarGlassMaterial(
                     shape: shape,
-                    appearance: appearance
+                    appearance: appearance,
+                    morphVariant: morphVariant
                 )
             )
-            .contentShape(shape)
-            .overlay(alignment: .topLeading) {
-                coreEdgeVeils
+            .overlay {
+                VoiceBarNotchMorphDelightEdge(
+                    shape: shape,
+                    trigger: presentation.visualState,
+                    descriptor: morphDescriptor,
+                    reducedMotion: accessibilityReduceMotion
+                )
+                .allowsHitTesting(false)
             }
-    }
-
-    private var coreEdgeVeils: some View {
-        let leadingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .leading,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
-        )
-        let trailingPlacement = VoiceBarNotchCoreSeamPlacement.resolve(
-            for: .trailing,
-            coreRect: layout.coreRect,
-            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
-        )
-        return ZStack(alignment: .topLeading) {
-            VoiceBarBlackToGlassFade(wing: .leading)
-                .frame(
-                    width: leadingPlacement.frame.width,
-                    height: leadingPlacement.frame.height
-                )
-                .position(
-                    x: leadingPlacement.frame.midX,
-                    y: leadingPlacement.frame.midY
-                )
-            VoiceBarBlackToGlassFade(wing: .trailing)
-                .frame(
-                    width: trailingPlacement.frame.width,
-                    height: trailingPlacement.frame.height
-                )
-                .position(
-                    x: trailingPlacement.frame.midX,
-                    y: trailingPlacement.frame.midY
-                )
-        }
-        .frame(
-            width: presentation.geometry.totalWidth,
-            height: presentation.geometry.topHeight,
-            alignment: .topLeading
-        )
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+            .contentShape(shape)
     }
 
     private var compactOuterCornerRadius: CGFloat {
@@ -252,45 +241,49 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         )
     }
 
-    private var teleprompterSurfaceUnit: some View {
+    private var notchSlots: some View {
         ZStack(alignment: .topLeading) {
-            teleprompterSurface
-            teleprompterSlots
-        }
-    }
+            if layout.leadingWingRect.width > 0 {
+                wingSlot(leadingContent, side: .leading)
+                    .frame(
+                        width: layout.leadingWingRect.width,
+                        height: layout.leadingWingRect.height
+                    )
+                    .position(
+                        x: layout.leadingWingRect.midX,
+                        y: layout.leadingWingRect.midY
+                    )
+            }
 
-    private var teleprompterSlots: some View {
-        ZStack(alignment: .topLeading) {
-            wingSlot(leadingContent, side: .leading)
-                .frame(
-                    width: layout.leadingWingRect.width,
-                    height: layout.leadingWingRect.height
-                )
-                .position(
-                    x: layout.leadingWingRect.midX,
-                    y: layout.leadingWingRect.midY
-                )
+            if layout.trailingWingRect.width > 0 {
+                wingSlot(trailingContent, side: .trailing)
+                    .frame(
+                        width: layout.trailingWingRect.width,
+                        height: layout.trailingWingRect.height
+                    )
+                    .position(
+                        x: layout.trailingWingRect.midX,
+                        y: layout.trailingWingRect.midY
+                    )
+            }
 
-            wingSlot(trailingContent, side: .trailing)
-                .frame(
-                    width: layout.trailingWingRect.width,
-                    height: layout.trailingWingRect.height
-                )
-                .position(
-                    x: layout.trailingWingRect.midX,
-                    y: layout.trailingWingRect.midY
-                )
-
-            lowerContent
-                .frame(
-                    width: layout.bodyRect.width,
-                    height: layout.bodyRect.height
-                )
-                .clipped()
-                .position(
-                    x: layout.bodyRect.midX,
-                    y: layout.bodyRect.midY
-                )
+            if !layout.bodyRect.isEmpty {
+                lowerContent
+                    .transition(
+                        surfaceTransition(
+                            delay: VoiceBarNotchContract.motion.panelDelay * 2
+                        )
+                    )
+                    .frame(
+                        width: layout.bodyRect.width,
+                        height: layout.bodyRect.height
+                    )
+                    .clipped()
+                    .position(
+                        x: layout.bodyRect.midX,
+                        y: layout.bodyRect.midY
+                    )
+            }
         }
     }
 
@@ -341,5 +334,35 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         case .core:
             slot.side == .leading ? .trailing : .leading
         }
+    }
+}
+
+private struct VoiceBarNotchMorphDelightEdge<SurfaceShape: Shape>: View {
+    let shape: SurfaceShape
+    let trigger: VoiceBarNotchVisualState
+    let descriptor: VoiceBarNotchMorphDescriptor
+    let reducedMotion: Bool
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        shape
+            .stroke(.white.opacity(descriptor.maximumMaterialScaleDelta > 0 ? 0.18 : 0), lineWidth: 0.8)
+            .scaleEffect(scale, anchor: .top)
+            .onChange(of: trigger) { _, _ in
+                guard descriptor.maximumMaterialScaleDelta > 0, !reducedMotion else {
+                    scale = 1
+                    return
+                }
+                scale = 1 - descriptor.maximumMaterialScaleDelta
+                withAnimation(
+                    .spring(
+                        response: descriptor.totalDuration,
+                        dampingFraction: descriptor.heroDampingFraction
+                    )
+                    .delay(descriptor.childStagger)
+                ) {
+                    scale = 1
+                }
+            }
     }
 }

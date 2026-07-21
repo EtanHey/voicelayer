@@ -111,14 +111,26 @@ public struct VoiceBarNotchControlOptics: Equatable {
     }
 }
 
+private extension View {
+    func notchAdaptiveGlyphEdge(_ color: Color) -> some View {
+        shadow(color: color, radius: 0, x: -0.75, y: 0)
+            .shadow(color: color, radius: 0, x: 0.75, y: 0)
+            .shadow(color: color, radius: 0, x: 0, y: -0.75)
+            .shadow(color: color, radius: 0, x: 0, y: 0.75)
+    }
+}
+
 // MARK: - Bar View
 
 public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
     private let presentationModel: VoiceBarNotchPresentationModel?
+    private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
     @State private var errorDismissTask: Task<Void, Never>?
+    @State private var morphTeleprompterContentTask: Task<Void, Never>?
+    @State private var isMorphTeleprompterContentPresented = false
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
     @State private var notchAppearance = VoiceBarNotchAppearance.dark
@@ -126,7 +138,13 @@ public struct BarView: View {
 
     public var body: some View {
         if includesPanelOutsets {
+            let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: notchPresentation)
             appearanceAwareNotchContent
+                .frame(
+                    width: canvas.canvasGeometry.totalWidth,
+                    height: canvas.canvasGeometry.totalHeight,
+                    alignment: .topLeading
+                )
                 .padding(.horizontal, 12)
                 .padding(.bottom, 17)
         } else {
@@ -138,6 +156,7 @@ public struct BarView: View {
         state: VoiceState,
         commandRouter: BarCommandRouting,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
+        morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
     ) {
         _notchAppearance = State(
@@ -148,6 +167,7 @@ public struct BarView: View {
         self.state = state
         self.commandRouter = commandRouter
         self.presentationModel = presentationModel
+        self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
     }
 
@@ -164,9 +184,12 @@ public struct BarView: View {
     }
 
     private var notchContent: some View {
-        VoiceBarNotchView(
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: notchPresentation)
+        return VoiceBarNotchView(
             presentation: notchPresentation,
             appearance: notchAppearance,
+            morphVariant: morphSelection?.variant ?? .p1Matched,
+            canvasGeometry: includesPanelOutsets ? canvas.canvasGeometry : nil,
             onHoverChanged: { hovering in
                 guard !includesPanelOutsets else { return }
                 state.setHovering(hovering)
@@ -185,6 +208,9 @@ public struct BarView: View {
         .onChange(of: state.mode) { _, newMode in
             handleModeChange(newMode)
         }
+        .onChange(of: notchPresentation.visualState) { _, visualState in
+            scheduleMorphTeleprompterContent(for: visualState)
+        }
         .onChange(of: isHistoryPresented) { _, _ in
             synchronizeLauncherRetention()
         }
@@ -198,6 +224,10 @@ public struct BarView: View {
             presentationModel?.setHovered(state.isHovering)
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
+            isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
+        }
+        .onDisappear {
+            morphTeleprompterContentTask?.cancel()
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -267,6 +297,7 @@ public struct BarView: View {
             Image(systemName: "mic.fill")
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(notchPrimaryLabelColor)
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,
                     height: VoiceBarNotchContract.material.compactControlSize
@@ -282,6 +313,7 @@ public struct BarView: View {
             Image(systemName: "book.closed")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(notchPrimaryLabelColor)
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .accessibilityLabel("Teleprompter")
         }
     }
@@ -401,7 +433,7 @@ public struct BarView: View {
 
     @ViewBuilder
     private var notchLowerContent: some View {
-        if notchPresentation.visualState == .teleprompter {
+        if isMorphTeleprompterContentPresented {
             VStack(spacing: 12) {
                 Group {
                     if state.queueItems.count > 1 {
@@ -419,6 +451,7 @@ public struct BarView: View {
             )
             .padding(.top, 16)
             .padding(.bottom, 14)
+            .transition(.opacity)
         }
     }
 
@@ -506,6 +539,50 @@ public struct BarView: View {
         }
     }
 
+    private func scheduleMorphTeleprompterContent(
+        for visualState: VoiceBarNotchVisualState
+    ) {
+        morphTeleprompterContentTask?.cancel()
+        guard visualState == .teleprompter else {
+            withAnimation(
+                .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
+            ) {
+                isMorphTeleprompterContentPresented = false
+            }
+            return
+        }
+
+        var resetTransaction = Transaction()
+        resetTransaction.animation = nil
+        withTransaction(resetTransaction) {
+            isMorphTeleprompterContentPresented = false
+        }
+
+        let morphContentDelay = morphDescriptor.totalDuration
+        let revealDuration = max(0.03, min(0.07, 0.35 - morphContentDelay))
+        morphTeleprompterContentTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(morphContentDelay))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: revealDuration)) {
+                isMorphTeleprompterContentPresented = true
+            }
+        }
+    }
+
+    private var morphDescriptor: VoiceBarNotchMorphDescriptor {
+        let variant = morphSelection?.variant ?? .p1Matched
+        if #available(macOS 26.0, *) {
+            return variant.descriptor(
+                nativeGlassAvailable: true,
+                reducedMotion: accessibilityReduceMotion
+            )
+        }
+        return variant.descriptor(
+            nativeGlassAvailable: false,
+            reducedMotion: accessibilityReduceMotion
+        )
+    }
+
     private var queueBadge: some View {
         Text("\(state.queueDepth)")
             .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -591,6 +668,7 @@ public struct BarView: View {
             .foregroundStyle(
                 state.mode == .idle ? notchPrimaryLabelColor : Theme.stateColor(for: state.mode)
             )
+            .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
             .offset(x: optics.offsetX, y: optics.offsetY)
             .frame(
                 width: VoiceBarNotchContract.material.compactControlSize,
@@ -667,6 +745,10 @@ public struct BarView: View {
     /// appearance for one frame, camouflaging controls after a live toggle.
     private var notchPrimaryLabelColor: Color {
         notchPalette.primary.color
+    }
+
+    private var notchGlyphContrastHaloColor: Color {
+        VoiceBarNotchGlyphContrastTreatment.resolve(for: notchAppearance).color
     }
 
     private var historyButton: some View {
@@ -875,6 +957,7 @@ public struct BarView: View {
                         ? Theme.recordingColor
                         : notchPrimaryLabelColor
                 )
+                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
                 .offset(x: optics.offsetX, y: optics.offsetY)
                 .frame(
                     width: VoiceBarNotchContract.material.compactControlSize,

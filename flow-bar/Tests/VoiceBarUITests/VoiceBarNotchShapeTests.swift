@@ -64,6 +64,27 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertTrue(path.contains(CGPoint(x: 8, y: 24)))
         XCTAssertTrue(path.contains(CGPoint(x: 177, y: 24)))
     }
+
+    func testContinuousShapeExposesEveryGeometryDimensionForMorphInterpolation() {
+        let compact = VoiceBarNotchContract.geometry(for: .recording)
+        let expanded = VoiceBarNotchContract.geometry(for: .teleprompter)
+        var midpoint = VoiceBarNotchGeometryAnimatableData(geometry: compact)
+        midpoint += VoiceBarNotchGeometryAnimatableData(geometry: expanded)
+        midpoint.scale(by: 0.5)
+        var shape = VoiceBarNotchContinuousShape(geometry: compact)
+
+        shape.animatableData = midpoint
+
+        XCTAssertEqual(shape.geometry.coreWidth, (compact.coreWidth + expanded.coreWidth) / 2)
+        XCTAssertEqual(shape.geometry.leadingWingWidth, (compact.leadingWingWidth + expanded.leadingWingWidth) / 2)
+        XCTAssertEqual(shape.geometry.trailingWingWidth, (compact.trailingWingWidth + expanded.trailingWingWidth) / 2)
+        XCTAssertEqual(shape.geometry.bodyLeadingExtent, (compact.bodyLeadingExtent + expanded.bodyLeadingExtent) / 2)
+        XCTAssertEqual(
+            shape.geometry.bodyTrailingExtent,
+            (compact.bodyTrailingExtent + expanded.bodyTrailingExtent) / 2
+        )
+        XCTAssertEqual(shape.geometry.lowerSurfaceHeight, expanded.lowerSurfaceHeight / 2)
+    }
 }
 
 private extension Path {

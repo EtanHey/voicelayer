@@ -95,10 +95,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(idle.fixedCoreCount, 0)
         XCTAssertEqual(recording.fixedCoreCount, 1)
         XCTAssertEqual(recording.reusableWingSlotCount, 2)
-        XCTAssertEqual(recording.coreEdgeVeilCount, 2)
         XCTAssertEqual(recording.lowerSurfaceCount, 0)
         XCTAssertEqual(teleprompter.lowerSurfaceCount, 1)
-        XCTAssertEqual(teleprompter.coreEdgeVeilCount, 2)
         XCTAssertTrue(teleprompter.clipsContentToVisibleSurfaces)
         XCTAssertFalse(teleprompter.coreUsesMaterial)
         XCTAssertTrue(teleprompter.usesSequencedSurfaceTransitions)
@@ -106,51 +104,47 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(teleprompter.accessibilityLabel, "VoiceBar teleprompter")
     }
 
-    func testCompactWingsRemainSeparateBehindTheFixedCoreForRoundThreeSliding() throws {
+    func testPersistentContainerOwnsOneContentBearingSurfaceAcrossVisibleStates() throws {
         let source = try notchViewSource()
-        let compactStart = try XCTUnwrap(source.range(of: "private var compactSurface"))
-        let teleprompterStart = try XCTUnwrap(
-            source.range(
-                of: "private var teleprompterSurface",
-                range: compactStart.upperBound ..< source.endIndex
-            )
-        )
-        let compact = source[compactStart.lowerBound ..< teleprompterStart.lowerBound]
+        let body = try bracedScope(after: "public var body: some View", in: source)
+        let container = try bracedScope(after: "VoiceBarGlassContainer", in: body)
+        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        let slots = try bracedScope(after: "private var notchSlots", in: source)
 
-        XCTAssertTrue(compact.contains("compactWings"))
-        XCTAssertTrue(compact.contains("VoiceBarGlassWing("))
-        XCTAssertFalse(compact.contains("fixedHardwareCore"))
+        XCTAssertTrue(container.contains("presentation.visualState != .idle"))
+        XCTAssertTrue(container.contains("morphingNotchSurface"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchContinuousShape"))
+        XCTAssertTrue(surface.contains("notchSlots"))
+        XCTAssertTrue(surface.contains(".contentShape(shape)"))
+        XCTAssertFalse(surface.contains("Color.clear"))
+        XCTAssertEqual(surface.components(separatedBy: "VoiceBarGlassMaterial(").count - 1, 1)
+        XCTAssertTrue(slots.contains("wingSlot(leadingContent"))
+        XCTAssertTrue(slots.contains("wingSlot(trailingContent"))
+        XCTAssertTrue(slots.contains("lowerContent"))
+        XCTAssertEqual(source.components(separatedBy: "VoiceBarGlassMaterial(").count - 1, 1)
+        XCTAssertFalse(source.contains("compactSurface"))
+        XCTAssertFalse(source.contains("compactWings"))
+        XCTAssertFalse(source.contains("teleprompterSurface"))
+        XCTAssertFalse(source.contains("coreEdgeVeils"))
+        XCTAssertFalse(source.contains("VoiceBarBlackToGlassFade"))
+        XCTAssertFalse(source.contains("coreEdgeVeilCount"))
         XCTAssertTrue(source.contains("fixedHardwareCore"))
         XCTAssertTrue(source.contains(".zIndex(10)"))
     }
 
-    func testCompactStatesReuseTheTeleprompterCoreEdgeVeils() throws {
+    func testHeroBranchesShareOneMatchedGeometryShellWithoutStateIDs() throws {
         let source = try notchViewSource()
-        let compactStart = try XCTUnwrap(source.range(of: "private var compactSurface"))
-        let compactEnd = try XCTUnwrap(
-            source.range(
-                of: "private var compactWings",
-                range: compactStart.upperBound ..< source.endIndex
-            )
-        )
-        let compactSurface = source[compactStart.lowerBound ..< compactEnd.lowerBound]
+        let hero = try bracedScope(after: "private var morphingNotchSurface", in: source)
 
-        XCTAssertTrue(compactSurface.contains("coreEdgeVeils"))
-    }
-
-    func testCompactSurfaceKeepsOneIdentityForInPlaceIndicatorAndWaveformTransforms() throws {
-        let source = try notchViewSource()
-        let compactUse = try XCTUnwrap(source.range(of: "compactSurface"))
-        let fixedCoreUse = try XCTUnwrap(
-            source.range(of: "fixedHardwareCore", range: compactUse.upperBound ..< source.endIndex)
-        )
-        let bodyCompactBranch = source[compactUse.lowerBound ..< fixedCoreUse.lowerBound]
-
-        XCTAssertFalse(bodyCompactBranch.contains(".id(presentation.visualState)"))
-        XCTAssertTrue(
-            bodyCompactBranch.contains(".transition(.identity)"),
-            "a collapsed shell must not leave an animated detached wing alive in the resized panel"
-        )
+        XCTAssertTrue(hero.contains("presentation.visualState == .teleprompter"))
+        XCTAssertEqual(hero.components(separatedBy: ".matchedGeometryEffect(").count - 1, 2)
+        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 2)
+        XCTAssertTrue(hero.contains("properties: .frame"))
+        XCTAssertTrue(hero.contains("anchor: .top"))
+        XCTAssertFalse(hero.contains(".id(presentation.visualState)"))
+        XCTAssertTrue(source.contains("@State private var renderedGeometry"))
+        XCTAssertTrue(source.contains("withAnimation(shellAnimation.delay("))
+        XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
@@ -160,47 +154,55 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains("presentation.visualState != .idle"))
     }
 
-    func testContinuousGlassBackingKeepsBlankSurfaceInsideTheHoverRegion() throws {
+    func testContinuousContentBearingGlassOwnsTheHoverRegion() throws {
         let source = try notchViewSource()
-        let surfaceStart = try XCTUnwrap(source.range(of: "private var teleprompterSurface"))
-        let surfaceEnd = try XCTUnwrap(
-            source.range(
-                of: "private var coreEdgeVeils",
-                range: surfaceStart.upperBound ..< source.endIndex
-            )
-        )
-        let surface = source[surfaceStart.lowerBound ..< surfaceEnd.lowerBound]
+        let surface = try bracedScope(after: "private var notchSurface", in: source)
+        let interactiveSurface = try XCTUnwrap(surface.components(separatedBy: ".overlay").first)
 
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
-        XCTAssertFalse(surface.contains(".allowsHitTesting(false)"))
+        XCTAssertFalse(interactiveSurface.contains(".allowsHitTesting(false)"))
+        XCTAssertFalse(interactiveSurface.contains("Color.clear"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchMorphDelightEdge"))
+        XCTAssertTrue(surface.contains(".allowsHitTesting(false)"))
     }
 
     func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
         let source = try notchViewSource()
-        let bodyStart = try XCTUnwrap(source.range(of: "public var body: some View"))
-        let layoutStart = try XCTUnwrap(
-            source.range(
-                of: "private var layout",
-                range: bodyStart.upperBound ..< source.endIndex
-            )
-        )
-        let body = source[bodyStart.lowerBound ..< layoutStart.lowerBound]
-        let unitStart = try XCTUnwrap(source.range(of: "private var teleprompterSurfaceUnit"))
-        let slotsStart = try XCTUnwrap(
-            source.range(
-                of: "private var teleprompterSlots: some View",
-                range: unitStart.upperBound ..< source.endIndex
-            )
-        )
-        let unit = source[unitStart.lowerBound ..< slotsStart.lowerBound]
+        let body = try bracedScope(after: "public var body: some View", in: source)
+        let surface = try bracedScope(after: "private var notchSurface", in: source)
 
-        XCTAssertTrue(body.contains("teleprompterSurfaceUnit"))
-        XCTAssertFalse(body.contains("teleprompterSurface\n"))
-        XCTAssertFalse(body.contains("teleprompterSlots\n"))
-        XCTAssertTrue(unit.contains("teleprompterSurface"))
-        XCTAssertTrue(unit.contains("teleprompterSlots"))
+        XCTAssertTrue(body.contains("morphingNotchSurface"))
+        XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(body.contains(".transition(.identity)"))
-        XCTAssertFalse(body.contains("teleprompterSurfaceUnit\n                    .transition(surfaceTransition("))
+        XCTAssertFalse(source.contains("teleprompterSurfaceUnit"))
+    }
+
+    func testFixedCoreAndContentAvoidPrototypeTransformEffects() throws {
+        let source = try notchViewSource()
+        let core = try bracedScope(after: "private var fixedHardwareCore", in: source)
+        let slots = try bracedScope(after: "private var notchSlots", in: source)
+
+        XCTAssertFalse(core.contains("matchedGeometryEffect"))
+        XCTAssertFalse(core.contains("scaleEffect"))
+        XCTAssertFalse(slots.contains("scaleEffect"))
+        XCTAssertFalse(slots.contains("blur"))
+        XCTAssertFalse(slots.contains("distortionEffect"))
+        XCTAssertFalse(slots.contains("layerEffect"))
+        XCTAssertTrue(core.contains("resolvedCanvasGeometry.coreOriginX"))
+    }
+
+    func testTeleprompterContentIsSequencedInsideTheMorphingShell() throws {
+        let source = try notchViewSource()
+        let slots = try bracedScope(after: "private var notchSlots", in: source)
+        let transition = try bracedScope(after: "private func surfaceTransition", in: source)
+
+        XCTAssertTrue(slots.contains(".transition("))
+        XCTAssertTrue(slots.contains("surfaceTransition("))
+        XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.panelDelay * 2"))
+        XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.contentExitDuration"))
+        XCTAssertTrue(source.contains("shellAnimation.delay(closingGeometryDelay"))
+        XCTAssertTrue(transition.contains(".opacity"))
+        XCTAssertFalse(transition.contains(".scale"))
     }
 
     private func notchViewSource() throws -> String {
@@ -213,5 +215,34 @@ final class VoiceBarNotchViewTests: XCTestCase {
                 .appendingPathComponent("Sources/VoiceBarUI/VoiceBarNotchView.swift"),
             encoding: .utf8
         )
+    }
+
+    private func bracedScope(
+        after marker: String,
+        in source: some StringProtocol
+    ) throws -> Substring {
+        let source = String(source)
+        let markerRange = try XCTUnwrap(source.range(of: marker))
+        let openingBrace = try XCTUnwrap(
+            source[markerRange.upperBound...].firstIndex(of: "{")
+        )
+        var depth = 0
+        var cursor = openingBrace
+        while cursor < source.endIndex {
+            switch source[cursor] {
+            case "{":
+                depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 {
+                    return source[openingBrace ... cursor]
+                }
+            default:
+                break
+            }
+            cursor = source.index(after: cursor)
+        }
+        XCTFail("Unbalanced scope after \(marker)")
+        return source[openingBrace...]
     }
 }

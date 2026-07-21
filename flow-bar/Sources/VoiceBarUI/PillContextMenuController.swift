@@ -21,6 +21,7 @@ public final class PillContextMenuController: NSObject {
     public var availableDevicesProvider: () -> [MicrophoneDevice] = { [] }
     public var selectedDeviceIDProvider: () -> String? = { nil }
     public var anchorModeProvider: () -> VoiceBarAnchorMode = { .follow }
+    public var morphPrototypeProvider: () -> VoiceBarNotchMorphVariant = { .p1Matched }
 
     public var onOpenSettings: () -> Void = {}
     public var onSnooze: () -> Void = {}
@@ -33,6 +34,7 @@ public final class PillContextMenuController: NSObject {
     public var onCopyLastTranscript: () -> Void = {}
     public var onPasteTranscript: (String) -> Void = { _ in }
     public var onSelectAnchorMode: (VoiceBarAnchorMode) -> Void = { _ in }
+    public var onSelectMorphPrototype: (VoiceBarNotchMorphVariant) -> Void = { _ in }
 
     public func makeMenu() -> NSMenu {
         let menu = NSMenu()
@@ -133,6 +135,10 @@ public final class PillContextMenuController: NSObject {
         microphoneItem.submenu = makeMicrophoneSubmenu()
         menu.addItem(microphoneItem)
 
+        let morphItem = NSMenuItem(title: "Morph Prototype", action: nil, keyEquivalent: "")
+        morphItem.submenu = makeMorphPrototypeSubmenu()
+        menu.addItem(morphItem)
+
         return menu
     }
 
@@ -148,6 +154,23 @@ public final class PillContextMenuController: NSObject {
             item.target = self
             item.representedObject = mode.rawValue
             item.state = mode == selectedMode ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    public func makeMorphPrototypeSubmenu() -> NSMenu {
+        let menu = NSMenu()
+        let selectedVariant = morphPrototypeProvider()
+        for variant in VoiceBarNotchMorphVariant.allCases {
+            let item = NSMenuItem(
+                title: variant.menuTitle,
+                action: #selector(handleSelectMorphPrototype(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = variant.rawValue
+            item.state = variant == selectedVariant ? .on : .off
             menu.addItem(item)
         }
         return menu
@@ -331,6 +354,13 @@ public final class PillContextMenuController: NSObject {
               let mode = VoiceBarAnchorMode(rawValue: rawValue)
         else { return }
         onSelectAnchorMode(mode)
+    }
+
+    @objc private func handleSelectMorphPrototype(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let variant = VoiceBarNotchMorphVariant(rawValue: rawValue)
+        else { return }
+        onSelectMorphPrototype(variant)
     }
 
     @objc private func handleAddSelectionToDictionary() {

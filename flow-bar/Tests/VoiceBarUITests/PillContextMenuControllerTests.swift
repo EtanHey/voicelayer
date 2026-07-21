@@ -63,6 +63,7 @@ final class PillContextMenuControllerTests: XCTestCase {
         XCTAssertEqual(preferencesSubmenu.items.map(\.title), [
             "Anchor",
             "Microphone",
+            "Morph Prototype",
         ])
 
         let anchorItem = try XCTUnwrap(preferencesSubmenu.items.first { $0.title == "Anchor" })
@@ -220,6 +221,31 @@ final class PillContextMenuControllerTests: XCTestCase {
             ])
             XCTAssertEqual(checkedItems.map(\.title), [mode.anchorMenuTitle])
         }
+    }
+
+    func testMorphPrototypeSubmenuIsLiveSelectableWithExactlyOneCheckmark() throws {
+        let controller = PillContextMenuController()
+        controller.morphPrototypeProvider = { .p2NativeGlass }
+        var selected: [VoiceBarNotchMorphVariant] = []
+        controller.onSelectMorphPrototype = { selected.append($0) }
+
+        let preferences = try XCTUnwrap(
+            controller.makeMenu().items.first { $0.title == "Preferences" }?.submenu
+        )
+        let morph = try XCTUnwrap(
+            preferences.items.first { $0.title == "Morph Prototype" }?.submenu
+        )
+
+        XCTAssertEqual(morph.items.map(\.title), VoiceBarNotchMorphVariant.allCases.map(\.menuTitle))
+        XCTAssertEqual(morph.items.filter { $0.state == .on }.map(\.title), [
+            VoiceBarNotchMorphVariant.p2NativeGlass.menuTitle,
+        ])
+
+        let p3 = try XCTUnwrap(
+            morph.items.first { $0.title == VoiceBarNotchMorphVariant.p3SpringDelight.menuTitle }
+        )
+        _ = p3.target?.perform(p3.action, with: p3)
+        XCTAssertEqual(selected, [.p3SpringDelight])
     }
 
     func testTranscribeLatestRecordingActionCallsHandler() throws {

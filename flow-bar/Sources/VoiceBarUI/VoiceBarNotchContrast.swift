@@ -120,6 +120,21 @@ public struct VoiceBarNotchContrastPalette: Equatable {
     }
 }
 
+/// Keeps compact wing symbols legible when the menu-bar content beneath the
+/// glass has the opposite polarity from the app's settled appearance. The
+/// primary symbol keeps its semantic foreground while a tight, opposite-tone
+/// edge supplies local contrast over either black or bright pixels.
+public enum VoiceBarNotchGlyphContrastTreatment {
+    public static func resolve(for appearance: VoiceBarNotchAppearance) -> VoiceBarRGBA {
+        switch appearance {
+        case .light:
+            VoiceBarRGBA(red: 1, green: 1, blue: 1, alpha: 0.96)
+        case .dark:
+            VoiceBarRGBA(red: 0, green: 0, blue: 0, alpha: 0.96)
+        }
+    }
+}
+
 public enum VoiceBarContrast {
     public static let minimumTextRatio = 4.5
     public static let minimumControlRatio = 3.0

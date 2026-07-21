@@ -86,6 +86,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private let defaults = VoiceBarDefaults.make()
     private let pillContextMenuController = PillContextMenuController()
+    private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
+        environment: ProcessInfo.processInfo.environment,
+        defaults: defaults
+    )
     private let daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
@@ -97,6 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
     private var snoozeTask: Task<Void, Never>?
+    private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
     /// Saved offsets (0.0-1.0) for pill center positioning on screen.
@@ -443,6 +448,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state: voiceState,
             commandRouter: commandRouter,
             presentationModel: notchPresentationModel,
+            morphSelection: notchMorphSelection,
             includesPanelOutsets: true
         )
         let hosting = PillHostingView(rootView: barView)
@@ -582,6 +588,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.anchorModeProvider = { [weak self] in
             self?.currentAnchorMode() ?? .follow
         }
+        pillContextMenuController.morphPrototypeProvider = { [weak self] in
+            self?.notchMorphSelection.variant ?? .p1Matched
+        }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
         }
@@ -621,6 +630,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
+        }
+        pillContextMenuController.onSelectMorphPrototype = { [weak self] variant in
+            self?.notchMorphSelection.select(variant)
+            self?.logDiagnostic(event: "notch_morph_prototype_selected", details: [
+                "variant": variant.rawValue,
+            ])
         }
     }
 
@@ -848,15 +863,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleVoiceModeChange(_ mode: VoiceMode) {
         previousVoiceMode = currentVoiceMode
         currentVoiceMode = mode
-        let collapsesConverseHandoff = previousVoiceMode == .speaking &&
-            mode == .idle && voiceState.isCollapsed
-        if collapsesConverseHandoff {
-            panel?.orderOut(nil)
-        }
+        let collapsesConverseHandoff = VoiceBarNotchPlaybackEdgeCommitPolicy
+            .stagesContentBeforeGlass(from: previousVoiceMode, to: mode) &&
+            voiceState.isCollapsed
         panel?.isMovableByWindowBackground = anchorMode.allowsFreeDrag &&
             VoiceBarPresentation.isPanelDraggable(mode: mode)
         panel?.isPillDragEnabled = anchorMode.allowsFreeDrag
-        refreshNotchPresentationAndPanelLayout(animated: true)
+        playbackEdgeLayoutTask?.cancel()
+        if collapsesConverseHandoff {
+            playbackEdgeLayoutTask = Task { @MainActor [weak self] in
+                await Task.yield()
+                guard let self, !Task.isCancelled, currentVoiceMode == .idle else { return }
+                panel?.contentView?.needsLayout = true
+                panel?.contentView?.layoutSubtreeIfNeeded()
+                panel?.contentView?.displayIfNeeded()
+                do {
+                    try await Task.sleep(
+                        for: .seconds(VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay)
+                    )
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, currentVoiceMode == .idle else { return }
+                refreshNotchPresentationAndPanelLayout(animated: true)
+                panel?.orderOut(nil)
+            }
+        } else {
+            refreshNotchPresentationAndPanelLayout(animated: true)
+        }
         if !collapsesConverseHandoff {
             if VoiceBarIsolatedCapturePlacement.isEnabled() {
                 panel?.orderFrontRegardless()
@@ -945,6 +979,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// the panel. Resizing first exposes the app beneath while the old hosted
     /// text remains drawable for one frame.
     private func commitNotchContentThenApplyPanelLayout() {
+        let layout = currentPanelLayout()
+        if notchPresentationModel.presentation.visualState != .idle,
+           panel?.frame.size == layout.panelSize {
+            // Compact and teleprompter prototype states share one stable
+            // canvas. Forcing an immediate AppKit display pass here commits
+            // the destination before SwiftUI can interpolate the shared
+            // shell, recreating the hard cut this round exists to replace.
+            return
+        }
         panel?.contentView?.needsLayout = true
         panel?.contentView?.layoutSubtreeIfNeeded()
         panel?.contentView?.displayIfNeeded()
@@ -1118,7 +1161,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func currentPanelLayout() -> VoiceBarPanelLayout {
-        VoiceBarPanelLayout.make(presentation: notchPresentationModel.presentation)
+        let presentation = notchPresentationModel.presentation
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        return VoiceBarPanelLayout.make(
+            presentation: presentation,
+            canvasGeometry: canvas.canvasGeometry
+        )
     }
 
     private func refreshNotchPresentationAndPanelLayout(animated: Bool) {
@@ -1230,10 +1278,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for screenGeometry: VoiceBarNotchScreenGeometry
     ) {
         let usesPhysicalHousing = screenGeometry.kind == .hardwareNotch
-        panel.isPillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
-        panel.isMovableByWindowBackground = !usesPhysicalHousing
+        let pillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
+        let movableByWindowBackground = !usesPhysicalHousing
             && anchorMode.allowsFreeDrag
             && VoiceBarPresentation.isPanelDraggable(mode: voiceState.mode)
+        if panel.isPillDragEnabled != pillDragEnabled {
+            panel.isPillDragEnabled = pillDragEnabled
+        }
+        if panel.isMovableByWindowBackground != movableByWindowBackground {
+            panel.isMovableByWindowBackground = movableByWindowBackground
+        }
     }
 
     private func logDiagnostic(event: String, details: [String: String] = [:]) {

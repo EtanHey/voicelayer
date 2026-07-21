@@ -806,6 +806,16 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testPlaybackEdgeFlushesEmptyContentBeforeCollapsingTheGlassHost() throws {
+        let source = try voiceBarAppSource()
+
+        XCTAssertTrue(source.contains(".stagesContentBeforeGlass(from: previousVoiceMode, to: mode)"))
+        XCTAssertTrue(source.contains("await Task.yield()"))
+        XCTAssertTrue(source.contains("contentView?.displayIfNeeded()"))
+        XCTAssertTrue(source.contains("VoiceBarNotchPlaybackEdgeCommitPolicy.glassRemovalDelay"))
+        XCTAssertTrue(source.contains("playbackEdgeLayoutTask?.cancel()"))
+    }
+
     private func voiceBarAppSource() throws -> String {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
