@@ -225,6 +225,7 @@ public final class VoiceState {
     private var localRecordingLevel: Double?
     public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
     private var playbackAmplitudeStartedAt: TimeInterval?
+    private var playbackStartedAt: TimeInterval?
     private var recordingWaveformHistory = WaveformEnvelopeHistory()
     private var transcribingWaveformReplayStartedAt: TimeInterval?
     private var recordCommandUptimeMs: Int?
@@ -737,6 +738,14 @@ public final class VoiceState {
         playbackAudioLevel(atSystemUptime: playbackAmplitudeClock())
     }
 
+    public func playbackElapsedMilliseconds() -> Int {
+        guard mode == .speaking, let playbackStartedAt else { return 0 }
+        return max(
+            0,
+            Int(((playbackAmplitudeClock() - playbackStartedAt) * 1000).rounded())
+        )
+    }
+
     func playbackAudioLevel(atSystemUptime systemUptime: TimeInterval) -> Double {
         guard let envelope = playbackAmplitudeEnvelope,
               let startedAt = playbackAmplitudeStartedAt
@@ -1001,8 +1010,10 @@ public final class VoiceState {
                 clearRecordStartLateRecovery(clearPasteTarget: true)
                 transcribingStartedAt = nil
                 resetAudioLevels()
+                let playbackStart = playbackAmplitudeClock()
+                playbackStartedAt = playbackStart
                 playbackAmplitudeEnvelope = playbackAmplitude
-                playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackAmplitudeClock() }
+                playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()
                 // A speaking event precedes the fresh subtitle payload. Do not let
                 // timings from the previous utterance animate a similar new one.
@@ -1478,6 +1489,7 @@ public final class VoiceState {
     private func resetPlaybackAmplitude() {
         playbackAmplitudeEnvelope = nil
         playbackAmplitudeStartedAt = nil
+        playbackStartedAt = nil
     }
 
     private func appendRecordingWaveformSample() {

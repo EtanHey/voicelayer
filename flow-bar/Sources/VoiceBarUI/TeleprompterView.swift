@@ -337,6 +337,40 @@ public enum TeleprompterVisibilityPolicy {
 public enum TeleprompterPlaybackPolicy {
     public static let startupDelay: Duration = .zero
 
+    public static func currentWordIndex(
+        in words: [TeleprompterWord],
+        elapsedMilliseconds: Int
+    ) -> Int {
+        guard let firstWord = words.first else { return 0 }
+        let elapsedMilliseconds = max(0, elapsedMilliseconds)
+        var currentWordID = firstWord.id
+        for index in words.indices {
+            guard playbackOffsetMilliseconds(forWordAt: index, in: words) <= elapsedMilliseconds else {
+                break
+            }
+            currentWordID = words[index].id
+        }
+        return currentWordID
+    }
+
+    public static func playbackOffsetMilliseconds(
+        forWordAt index: Int,
+        in words: [TeleprompterWord]
+    ) -> Int {
+        guard words.indices.contains(index) else { return 0 }
+        if usesServerTimestamps(in: words) {
+            return words[index].offsetMs ?? 0
+        }
+        let seconds = words[..<index].reduce(0.0) { partialResult, word in
+            partialResult + TeleprompterPacePolicy.estimatedDelay(for: word.text)
+        }
+        return Int((seconds * 1000).rounded())
+    }
+
+    public static func usesServerTimestamps(in words: [TeleprompterWord]) -> Bool {
+        !words.isEmpty && words.allSatisfy { $0.offsetMs != nil }
+    }
+
     public static func animatesTimeline(isReadback: Bool) -> Bool {
         !isReadback
     }
@@ -357,6 +391,7 @@ public struct TeleprompterView: View {
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
+    public let playbackElapsedMilliseconds: () -> Int
     public var wrapWidth = Theme.teleprompterWrapWidth
     public var viewportHeight = Theme.teleprompterViewportHeight
     public var contentInset = Theme.teleprompterContentInset
@@ -365,6 +400,7 @@ public struct TeleprompterView: View {
         text: String,
         wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
         isReadback: Bool = false,
+        playbackElapsedMilliseconds: @escaping () -> Int,
         wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
         viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
         contentInset: CGFloat = Theme.teleprompterContentInset
@@ -372,14 +408,32 @@ public struct TeleprompterView: View {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
+        self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.wrapWidth = wrapWidth
         self.viewportHeight = viewportHeight
         self.contentInset = contentInset
+        let initialWords = TeleprompterContentModel.words(
+            text: text,
+            wordBoundaries: wordBoundaries.map {
+                TeleprompterBoundary(
+                    offsetMs: $0.offsetMs,
+                    durationMs: $0.durationMs,
+                    text: $0.text
+                )
+            }
+        )
+        let initialWordIndex = isReadback
+            ? 0
+            : TeleprompterPlaybackPolicy.currentWordIndex(
+                in: initialWords,
+                elapsedMilliseconds: playbackElapsedMilliseconds()
+            )
+        _currentIndex = State(initialValue: initialWordIndex)
     }
 
     private static let scrollAnimation: Animation = .smooth(duration: 0.18)
 
-    @State private var currentIndex: Int = 0
+    @State private var currentIndex: Int
     @State private var animationTask: Task<Void, Never>?
     @Environment(\.voiceBarNotchAppearance) private var notchAppearance
 
@@ -491,12 +545,17 @@ public struct TeleprompterView: View {
     // MARK: - Animation
 
     private var hasServerTimestamps: Bool {
-        !timedWords.isEmpty
+        TeleprompterPlaybackPolicy.usesServerTimestamps(in: teleprompterWords)
     }
 
     private func startAnimating() {
         guard TeleprompterPlaybackPolicy.animatesTimeline(isReadback: isReadback) else { return }
         guard teleprompterWords.count > 1 else { return }
+
+        currentIndex = TeleprompterPlaybackPolicy.currentWordIndex(
+            in: teleprompterWords,
+            elapsedMilliseconds: playbackElapsedMilliseconds()
+        )
 
         if hasServerTimestamps {
             startTimestampAnimation()
@@ -509,22 +568,20 @@ public struct TeleprompterView: View {
     /// Each word is highlighted at its exact offset_ms from audio start.
     private func startTimestampAnimation() {
         let words = timedWords
+        let startingWordID = currentIndex
 
         animationTask = Task { @MainActor in
             try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
 
-            let startTime = ContinuousClock.now
-
             for word in words {
                 guard let targetOffsetMs = word.offsetMs else { continue }
-                // Calculate when this word should be highlighted
-                let targetOffset = Duration.milliseconds(targetOffsetMs)
-                let elapsed = ContinuousClock.now - startTime
+                guard word.id > startingWordID else { continue }
+                let remainingMilliseconds = targetOffsetMs - playbackElapsedMilliseconds()
 
                 // Wait until the word's offset time
-                if targetOffset > elapsed {
-                    try? await Task.sleep(for: targetOffset - elapsed)
+                if remainingMilliseconds > 0 {
+                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
                 }
 
                 if Task.isCancelled { break }
@@ -535,16 +592,24 @@ public struct TeleprompterView: View {
 
     /// Client-side estimated animation (fallback for non-edge-tts engines).
     private func startEstimatedAnimation() {
+        let words = teleprompterWords
+        let startingWordID = currentIndex
         animationTask = Task { @MainActor in
             try? await Task.sleep(for: TeleprompterPlaybackPolicy.startupDelay)
             if Task.isCancelled { return }
-            for i in 0 ..< teleprompterWords.count {
-                currentIndex = i
-                let delay = TeleprompterPacePolicy.estimatedDelay(
-                    for: teleprompterWords[i].text
+            for index in words.indices {
+                let word = words[index]
+                guard word.id > startingWordID else { continue }
+                let targetOffsetMilliseconds = TeleprompterPlaybackPolicy.playbackOffsetMilliseconds(
+                    forWordAt: index,
+                    in: words
                 )
-                try? await Task.sleep(for: .seconds(delay))
+                let remainingMilliseconds = targetOffsetMilliseconds - playbackElapsedMilliseconds()
+                if remainingMilliseconds > 0 {
+                    try? await Task.sleep(for: .milliseconds(remainingMilliseconds))
+                }
                 if Task.isCancelled { break }
+                currentIndex = word.id
             }
         }
     }

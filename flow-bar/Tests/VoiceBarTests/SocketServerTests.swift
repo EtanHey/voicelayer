@@ -172,6 +172,44 @@ final class SocketServerTests: XCTestCase {
     }
 
     @MainActor
+    func testRealSpeakingReplayButtonRoutesReplayToCommandOwner() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Replay the active teleprompter output"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        windows.append(window)
+        host.layoutSubtreeIfNeeded()
+
+        try click(
+            host,
+            at: NSPoint(x: host.bounds.midX - 28, y: 23),
+            in: window
+        )
+
+        let replayCommand = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
+        XCTAssertTrue(replayCommand.contains(#""id":"#))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
+    }
+
+    @MainActor
     func testF18AndEscapeEventsDriveProductionDispatcherToPlaybackStopAndIdle() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }

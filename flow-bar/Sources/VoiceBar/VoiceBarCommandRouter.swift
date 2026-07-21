@@ -100,7 +100,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     }
 
     func handleReplay() {
-        guard voiceState.mode == .idle else { return }
+        guard voiceState.mode == .idle || voiceState.mode == .speaking else { return }
         voiceState.replay()
     }
 

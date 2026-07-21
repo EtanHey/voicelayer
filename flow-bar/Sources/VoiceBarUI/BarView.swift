@@ -465,6 +465,7 @@ public struct BarView: View {
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
                     isReadback: state.isTeleprompterReadback,
+                    playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),

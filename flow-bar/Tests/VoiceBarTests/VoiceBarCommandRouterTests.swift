@@ -58,6 +58,24 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(showCount, 1)
     }
 
+    func testReplayControlRestartsActivePlaybackThroughSocketIntent() {
+        let state = VoiceState()
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Replay this active output",
+        ])
+        let router = VoiceBarCommandRouter(voiceState: state)
+        var commands: [[String: Any]] = []
+        state.sendCommand = { commands.append($0) }
+
+        router.handleReplay()
+
+        XCTAssertEqual(commands.count, 1)
+        XCTAssertEqual(commands.first?["cmd"] as? String, "replay")
+        XCTAssertNotNil(commands.first?["id"] as? String)
+    }
+
     func testToggleStopsRecordingWhenAlreadyRecording() throws {
         let state = VoiceState()
         state.mode = .recording
