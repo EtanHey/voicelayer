@@ -289,6 +289,22 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
+    func testEmptyInteractionConfigurationKeepsHoverExpansionOnTheCore() {
+        let presentation = presentation(.compactStatus)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let expectedCoreRect = CGRect(
+            x: layout.visibleContentRect.minX + presentation.geometry.coreOriginX,
+            y: layout.visibleContentRect.minY + presentation.geometry.lowerSurfaceHeight,
+            width: presentation.geometry.coreWidth,
+            height: presentation.geometry.topHeight
+        )
+
+        XCTAssertEqual(layout.hoverExpansionRect, expectedCoreRect)
+    }
+
     func testInstallingANewLayoutDropsOldInteractiveGeometryImmediately() {
         let presentation = presentation(.hoverLauncher)
         let launcher = VoiceBarPanelLayout.make(

@@ -80,8 +80,10 @@ public struct VoiceBarPanelLayout: Equatable {
             width: geometry.coreWidth,
             height: geometry.topHeight
         )
-        let hoverExpansionRect = localHoverCoreRect
-            .union(interactionRegion.bounds)
+        let interactionBounds = interactionRegion.bounds
+        let hoverExpansionRect = (interactionBounds.isEmpty
+            ? localHoverCoreRect
+            : localHoverCoreRect.union(interactionBounds))
             .offsetBy(dx: visibleContentRect.minX, dy: visibleContentRect.minY)
         let panelSize = CGSize(
             width: canvasGeometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
