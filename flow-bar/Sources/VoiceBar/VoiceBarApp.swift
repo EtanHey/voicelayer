@@ -97,6 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var socketServer: SocketServer?
     private var panel: FloatingPillPanel?
     private var mouseMonitor: Any?
+    private var panelPointerMovementHandler: ((NSPoint) -> Void)?
     private var moveObserver: Any?
     private var displayObserver: Any?
     private var workspaceNotificationObservers: [Any] = []
@@ -466,6 +467,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             voiceState.setHoveringFromDebouncedPointer(hovering)
             notchPresentationModel.setHovered(hovering)
         }
+        hosting.onPointerMoved = { [weak self] point in
+            self?.synchronizePanelMouseEventPassthrough(localPoint: point)
+        }
+        panelPointerMovementHandler = { [weak hosting] point in
+            hosting?.handlePointerMovement(at: point)
+        }
         hosting.frame = NSRect(
             x: 0, y: 0,
             width: initialLayout.panelSize.width,
@@ -554,6 +561,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
         }
+        panelPointerMovementHandler = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -971,6 +979,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
         panel.setFrame(plan.frame, display: true, animate: animated && plan.animate)
+        synchronizePanelMouseEventPassthrough()
         configurePanelDragging(panel, for: screenGeometry)
         schedulePanelBackingScaleRecertification(reason: "layout_changed")
     }
@@ -1433,13 +1442,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel else { return }
 
         let screens = NSScreen.screens
-        guard let targetScreen = Self.screenIndexContainingMouse(in: screens) else { return }
-
-        // Only reposition when the screen actually changes
-        if targetScreen != currentScreenIndex {
+        if let targetScreen = Self.screenIndexContainingMouse(in: screens),
+           targetScreen != currentScreenIndex {
             currentScreenIndex = targetScreen
             positionPanel(panel, on: screens[targetScreen])
         }
+
+        let localPoint = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        if let panelPointerMovementHandler {
+            panelPointerMovementHandler(localPoint)
+        } else {
+            synchronizePanelMouseEventPassthrough(localPoint: localPoint)
+        }
+    }
+
+    private func synchronizePanelMouseEventPassthrough(
+        localPoint: NSPoint? = nil
+    ) {
+        guard let panel else { return }
+        let layout = currentPanelLayout()
+        let point = localPoint ?? panel.convertPoint(fromScreen: NSEvent.mouseLocation)
+        Self.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: point,
+            isIsolatedCapture: VoiceBarIsolatedCapturePlacement.isEnabled()
+        )
+    }
+
+    static func applyPanelMouseEventPassthrough(
+        _ panel: NSPanel,
+        layout: VoiceBarPanelLayout,
+        pointer: NSPoint,
+        isIsolatedCapture: Bool
+    ) {
+        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsActiveContent(pointer)
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {

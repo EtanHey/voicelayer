@@ -114,15 +114,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 return
             }
 
-            // AppKit installs the destination-sized host before SwiftUI can
-            // interpolate its material. Re-arm a zero-width source for every
-            // visible state change, yield one render turn, then reveal both
-            // sides from the fixed hardware core in the same animation.
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) {
-                surfaceRevealProgress = 0
-            }
+            // Visible-to-visible changes keep the shared surface mounted and
+            // interpolate its geometry directly. Only an actually collapsed
+            // surface needs to reveal outward from the fixed hardware core.
+            guard surfaceRevealProgress == 0 else { return }
             await Task.yield()
             guard !Task.isCancelled else { return }
             withAnimation(shellAnimation) {

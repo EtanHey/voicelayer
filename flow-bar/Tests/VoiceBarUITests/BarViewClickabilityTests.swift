@@ -103,7 +103,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 520, height: 32)
+            NSSize(width: 400, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -321,16 +321,45 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(recording.contains("PulsingDot()"))
     }
 
-    func testTeleprompterContentMountsOnlyAfterTheMorphingShellCanContainIt() throws {
+    func testTeleprompterContentFadesWithTheMorphInsteadOfHoldingAHollowShell() throws {
         let source = try barViewSource()
+        let lowerContentStart = try XCTUnwrap(source.range(of: "private var notchLowerContent"))
+        let scheduleStart = try XCTUnwrap(
+            source.range(
+                of: "private func scheduleMorphTeleprompterContent",
+                range: lowerContentStart.upperBound ..< source.endIndex
+            )
+        )
+        let queueBadgeStart = try XCTUnwrap(
+            source.range(
+                of: "private var queueBadge",
+                range: scheduleStart.upperBound ..< source.endIndex
+            )
+        )
+        let lowerContent = source[lowerContentStart.lowerBound ..< scheduleStart.lowerBound]
+        let schedule = source[scheduleStart.lowerBound ..< queueBadgeStart.lowerBound]
 
-        XCTAssertTrue(source.contains("@State private var morphTeleprompterContentTask"))
         XCTAssertTrue(source.contains("@State private var isMorphTeleprompterContentPresented"))
-        XCTAssertTrue(source.contains("scheduleMorphTeleprompterContent(for:"))
-        XCTAssertTrue(source.contains("Task.sleep(for: .seconds(morphContentDelay))"))
-        XCTAssertTrue(source.contains("morphDescriptor.totalDuration"))
-        XCTAssertTrue(source.contains("if isMorphTeleprompterContentPresented"))
-        XCTAssertTrue(source.contains(".transition(.opacity)"))
+        XCTAssertTrue(schedule.contains("scheduleMorphTeleprompterContent"))
+        XCTAssertFalse(source.contains("@State private var morphTeleprompterContentTask"))
+        XCTAssertFalse(schedule.contains("Task.sleep"))
+        XCTAssertFalse(schedule.contains("morphDescriptor.totalDuration"))
+        XCTAssertTrue(schedule.contains("VoiceBarNotchContract.motion.panelDelay"))
+        XCTAssertTrue(lowerContent.contains("if isMorphTeleprompterContentPresented"))
+        XCTAssertTrue(lowerContent.contains(".transition(.opacity)"))
+    }
+
+    func testStatusLabelDoesNotCrossFadeOldAndNewTextInTheSameFrame() throws {
+        let source = try barViewSource()
+        let statusStart = try XCTUnwrap(source.range(of: "private var statusLabel"))
+        let textStart = try XCTUnwrap(
+            source.range(of: "private var statusText", range: statusStart.upperBound ..< source.endIndex)
+        )
+        let statusLabel = source[statusStart.lowerBound ..< textStart.lowerBound]
+
+        XCTAssertFalse(statusLabel.contains(".contentTransition(.opacity)"))
+        XCTAssertTrue(statusLabel.contains(".transaction"))
+        XCTAssertTrue(statusLabel.contains("transaction.animation = nil"))
     }
 
     func testTranscribingNotchDropsTheRedundantDefaultLabel() throws {
@@ -524,8 +553,9 @@ final class BarViewClickabilityTests: XCTestCase {
         )
     }
 
-    private func recordingTrailingContentOriginX(in host: NSView) -> CGFloat {
-        host.bounds.midX + VoiceBarNotchContract.coreWidth / 2 +
+    private func recordingTrailingContentOriginX(in _: NSView) -> CGFloat {
+        VoiceBarNotchContract.compactIndicatorLaneWidth +
+            VoiceBarNotchContract.coreWidth +
             VoiceBarNotchContract.compactCoreContentInset
     }
 

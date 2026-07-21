@@ -80,7 +80,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     func handleEscape() {
         switch voiceState.mode {
         case .speaking:
-            voiceState.stop()
+            handleStop()
         case .recording, .transcribing:
             handleCancel()
         default:
@@ -91,6 +91,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     func handleStop() {
         switch voiceState.mode {
         case .recording, .speaking:
+            resetHotkeyState()
             voiceState.stop()
         case .transcribing:
             handleCancel()
@@ -137,7 +138,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
     func handleHotkeySingleTap() {
         switch voiceState.mode {
         case .recording, .speaking:
-            voiceState.stop()
+            handleStop()
         case .transcribing:
             handleCancel()
         default:
@@ -149,7 +150,7 @@ class VoiceBarCommandRouter: BarCommandRouting {
         if voiceState.mode == .idle || voiceState.mode == .error {
             voiceState.record(pressToTalk: true)
         } else if voiceState.mode == .recording {
-            voiceState.stop()
+            handleStop()
         } else if voiceState.mode == .transcribing {
             handleCancel()
         }

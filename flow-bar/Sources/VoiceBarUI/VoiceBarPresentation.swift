@@ -178,9 +178,11 @@ public enum VoiceBarPresentation {
             let queueWidth = input.queueDepth > 0
                 ? Theme.intrinsicPillStatusWidth(for: "\(input.queueDepth)") + 16
                 : 0
-            return insets + queueWidth + Theme.intrinsicPillStatusWidth(for: input.statusText)
+            return insets + queueWidth + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+                VoiceBarNotchContract.compactStatusTrailingSafetyInset
         case .disconnected:
-            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText)
+            return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
+                VoiceBarNotchContract.compactStatusTrailingSafetyInset
         case .recording:
             return nil
         }

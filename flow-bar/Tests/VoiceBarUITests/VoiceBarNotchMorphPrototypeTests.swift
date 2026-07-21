@@ -151,7 +151,8 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         )
         let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
 
-        XCTAssertEqual(recording.geometry.totalWidth, 520)
+        XCTAssertEqual(recording.geometry.totalWidth, 400)
+        XCTAssertEqual(canvas.canvasGeometry.totalWidth, 520)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
         XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, 0)
         XCTAssertTrue(panelBounds.contains(layout.activeHitRect))

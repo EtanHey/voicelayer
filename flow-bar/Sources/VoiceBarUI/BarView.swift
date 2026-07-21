@@ -129,7 +129,6 @@ public struct BarView: View {
     private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
     @State private var errorDismissTask: Task<Void, Never>?
-    @State private var morphTeleprompterContentTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
     @State private var isHistoryPresented = false
     @State private var isVocabularyPresented = false
@@ -225,9 +224,6 @@ public struct BarView: View {
             synchronizeLauncherRetention()
             presentationModel?.setReducedMotion(accessibilityReduceMotion)
             isMorphTeleprompterContentPresented = notchPresentation.visualState == .teleprompter
-        }
-        .onDisappear {
-            morphTeleprompterContentTask?.cancel()
         }
         .onChange(of: state.recentTranscriptionEntries.count) { _, count in
             if count == 0 {
@@ -546,7 +542,6 @@ public struct BarView: View {
     private func scheduleMorphTeleprompterContent(
         for visualState: VoiceBarNotchVisualState
     ) {
-        morphTeleprompterContentTask?.cancel()
         guard visualState == .teleprompter else {
             withAnimation(
                 .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
@@ -556,35 +551,12 @@ public struct BarView: View {
             return
         }
 
-        var resetTransaction = Transaction()
-        resetTransaction.animation = nil
-        withTransaction(resetTransaction) {
-            isMorphTeleprompterContentPresented = false
+        withAnimation(
+            .easeOut(duration: VoiceBarNotchContract.motion.contentExitDuration)
+                .delay(VoiceBarNotchContract.motion.panelDelay)
+        ) {
+            isMorphTeleprompterContentPresented = true
         }
-
-        let morphContentDelay = morphDescriptor.totalDuration
-        let revealDuration = max(0.03, min(0.07, 0.35 - morphContentDelay))
-        morphTeleprompterContentTask = Task { @MainActor in
-            try? await Task.sleep(for: .seconds(morphContentDelay))
-            guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: revealDuration)) {
-                isMorphTeleprompterContentPresented = true
-            }
-        }
-    }
-
-    private var morphDescriptor: VoiceBarNotchMorphDescriptor {
-        let variant = morphSelection?.variant ?? .p1Matched
-        if #available(macOS 26.0, *) {
-            return variant.descriptor(
-                nativeGlassAvailable: true,
-                reducedMotion: accessibilityReduceMotion
-            )
-        }
-        return variant.descriptor(
-            nativeGlassAvailable: false,
-            reducedMotion: accessibilityReduceMotion
-        )
     }
 
     private var queueBadge: some View {
@@ -701,8 +673,10 @@ public struct BarView: View {
             .foregroundStyle(notchPrimaryLabelColor)
             .lineLimit(1)
             .truncationMode(.tail)
-            .contentTransition(.opacity)
             .layoutPriority(1)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
     }
 
     private var statusText: String {

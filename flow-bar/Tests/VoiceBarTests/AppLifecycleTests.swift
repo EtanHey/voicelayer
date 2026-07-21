@@ -1,3 +1,4 @@
+import AppKit
 @testable import VoiceBar
 @testable import VoiceBarUI
 import XCTest
@@ -5,6 +6,69 @@ import XCTest
 final class AppLifecycleTests: XCTestCase {
     private final class PointerProbe: @unchecked Sendable {
         var isInside = true
+    }
+
+    @MainActor
+    func testPanelMousePassthroughLeavesCanvasMarginsAndReentersRenderedContent() {
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .recording)
+        )
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            canvasGeometry: canvas.canvasGeometry
+        )
+        let panel = NSPanel(
+            contentRect: CGRect(origin: .zero, size: layout.panelSize),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: CGPoint(x: 1, y: 1),
+            isIsolatedCapture: false
+        )
+        XCTAssertTrue(panel.ignoresMouseEvents)
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: CGPoint(
+                x: layout.visibleContentRect.minX + 10,
+                y: layout.visibleContentRect.minY + 16
+            ),
+            isIsolatedCapture: false
+        )
+        XCTAssertFalse(panel.ignoresMouseEvents)
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: CGPoint(x: 1, y: 1),
+            isIsolatedCapture: true
+        )
+        XCTAssertFalse(panel.ignoresMouseEvents)
+    }
+
+    func testGlobalPointerProcessingRepositionsBeforeEvaluatingLocalHitState() throws {
+        let source = try voiceBarAppSource()
+        let handlerStart = try XCTUnwrap(source.range(of: "private func handleMouseMoved()"))
+        let handlerEnd = try XCTUnwrap(
+            source.range(
+                of: "private func synchronizePanelMouseEventPassthrough",
+                range: handlerStart.upperBound ..< source.endIndex
+            )
+        )
+        let handler = source[handlerStart.lowerBound ..< handlerEnd.lowerBound]
+        let reposition = try XCTUnwrap(handler.range(of: "positionPanel(panel, on:"))
+        let localPoint = try XCTUnwrap(handler.range(of: "panel.convertPoint(fromScreen:"))
+        let pointerUpdate = try XCTUnwrap(handler.range(of: "panelPointerMovementHandler(localPoint)"))
+
+        XCTAssertLessThan(reposition.lowerBound, localPoint.lowerBound)
+        XCTAssertLessThan(localPoint.lowerBound, pointerUpdate.lowerBound)
     }
 
     func testProductSurfaceControlsCannotReachApplicationTermination() throws {

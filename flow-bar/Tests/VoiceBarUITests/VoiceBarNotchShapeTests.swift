@@ -15,12 +15,12 @@ final class VoiceBarNotchShapeTests: XCTestCase {
             in: CGRect(origin: .zero, size: layout.totalSize)
         )
 
-        XCTAssertEqual(layout.coreRect, CGRect(x: 141.5, y: 0, width: 185, height: 32))
+        XCTAssertEqual(layout.coreRect, CGRect(x: 47.5, y: 0, width: 185, height: 32))
         XCTAssertTrue(path.contains(CGPoint(x: 20, y: 16)))
-        XCTAssertTrue(path.contains(CGPoint(x: 448, y: 16)))
+        XCTAssertTrue(path.contains(CGPoint(x: 354, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
         XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 15, y: 32)))
-        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 453, y: 32)))
+        XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 359, y: 32)))
     }
 
     func testTeleprompterKeepsTheHousingCenteredInsideAnAsymmetricTopBar() {
