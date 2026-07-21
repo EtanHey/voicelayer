@@ -1,9 +1,18 @@
 import AppKit
+import Darwin
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
 
 final class WaveformViewTests: XCTestCase {
+    private final class NoOpCommandRouter: BarCommandRouting {
+        func handlePrimaryTap() {}
+        func handleCancel() {}
+        func handleStop() {}
+        func handleReplay() {}
+        func handleRetranscribeHistoryEntry(recordingPath: String) {}
+    }
+
     func testSharedWaveformViewportFitsExactlySevenBarsWithoutCompression() {
         XCTAssertEqual(WaveformLayout.barCount, 7)
         XCTAssertEqual(WaveformLayout.barWidth, 4)
@@ -27,6 +36,124 @@ final class WaveformViewTests: XCTestCase {
             (WaveformLayout.recordingSlotWidth - WaveformLayout.viewportWidth) / 2,
             WaveformLayout.recordingHorizontalPadding
         )
+    }
+
+    func testBlueWaveformHostsReserveEqualHorizontalSpaceInEveryState() {
+        let material = VoiceBarNotchContract.material
+        let processing = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Transcribing"
+            )
+        )
+        let processingAccessoryReserve = material.compactControlSpacing +
+            material.compactControlSize
+        let expectedProcessingWidth = VoiceBarNotchContract.compactCoreContentInset +
+            processingAccessoryReserve + material.waveformSlotWidth +
+            processingAccessoryReserve + material.compactContentInset
+
+        XCTAssertEqual(
+            processing.geometry.trailingWingWidth,
+            expectedProcessingWidth,
+            "the cancel control needs an equal invisible reserve opposite it so the processing waveform stays centered"
+        )
+
+        let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
+        let speaking = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .speaking,
+                hasTeleprompterText: true,
+                statusText: "Speaking",
+                visibleCoreOcclusionInset: calibratedInset
+            )
+        )
+        let speakingSlot = material.wingContentLayout(
+            for: .trailing,
+            state: .teleprompter,
+            visibleCoreOcclusionInset: calibratedInset
+        )
+
+        XCTAssertEqual(speakingSlot.coreInset, speakingSlot.outerInset)
+        XCTAssertEqual(
+            speaking.geometry.trailingWingWidth,
+            speakingSlot.coreInset + material.waveformSlotWidth + speakingSlot.outerInset,
+            "the live speaking waveform needs equal responsive padding even when the calibrated core occlusion changes"
+        )
+    }
+
+    @MainActor
+    func testRenderedProcessingAndSpeakingWaveformsHaveEqualWingPadding() throws {
+        let calibratedInset = VoiceBarNotchContract.hardwareHorizontalCalibrationInset
+
+        let processingState = VoiceState()
+        processingState.mode = .transcribing
+        processingState.isConnected = true
+        processingState.isCollapsed = false
+        let processingPresentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .transcribing,
+                statusText: "Transcribing",
+                visibleCoreOcclusionInset: calibratedInset
+            )
+        )
+
+        let speakingState = VoiceState()
+        speakingState.isConnected = true
+        speakingState.isCollapsed = false
+        speakingState.handleEvent(
+            [
+                "type": "state",
+                "state": "speaking",
+                "text": "Centered waveform verification",
+            ],
+            playbackAmplitude: PlaybackAmplitudeEnvelope(
+                source: .decodedRMS,
+                sampleIntervalMilliseconds: 50,
+                samples: Array(repeating: 0.8, count: 200)
+            )
+        )
+        let speakingPresentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .speaking,
+                hasTeleprompterText: true,
+                statusText: "Speaking",
+                visibleCoreOcclusionInset: calibratedInset
+            )
+        )
+
+        for (state, presentation, label) in [
+            (processingState, processingPresentation, "processing"),
+            (speakingState, speakingPresentation, "speaking"),
+        ] {
+            let image = try renderBar(
+                state: state,
+                presentation: presentation
+            )
+            let scale = CGFloat(image.width) / presentation.geometry.totalWidth
+            let wingMinX = Int(
+                ((presentation.geometry.coreOriginX + presentation.geometry.coreWidth) * scale)
+                    .rounded()
+            )
+            let wingMaxX = Int(
+                ((presentation.geometry.coreOriginX + presentation.geometry.coreWidth +
+                        presentation.geometry.trailingWingWidth) * scale).rounded()
+            )
+            let blueBounds = try XCTUnwrap(
+                blueHorizontalBounds(
+                    in: image,
+                    xRange: wingMinX ..< min(wingMaxX, image.width)
+                ),
+                "expected blue waveform pixels in the \(label) trailing wing"
+            )
+            let leadingPadding = blueBounds.lowerBound - wingMinX
+            let trailingPadding = wingMaxX - blueBounds.upperBound
+
+            XCTAssertLessThanOrEqual(
+                abs(leadingPadding - trailingPadding),
+                max(2, Int((2 * scale).rounded())),
+                "\(label) waveform padding must be equal within two rendered points"
+            )
+        }
     }
 
     func testEnvelopeFollowerUsesLightAttackAndA200MillisecondRelease() {
@@ -470,6 +597,124 @@ final class WaveformViewTests: XCTestCase {
                 .appendingPathComponent("WaveformView.swift"),
             encoding: .utf8
         )
+    }
+
+    @MainActor
+    private func renderBar(
+        state: VoiceState,
+        presentation: VoiceBarNotchPresentation
+    ) throws -> VoiceBarRGBImage {
+        let model = VoiceBarNotchPresentationModel()
+        model.setReducedMotion(true)
+        model.updateOperationalEnvelope(
+            hasTeleprompter: presentation.visualState == .teleprompter,
+            isRecording: presentation.visualState == .recording,
+            hasCompactStatus: presentation.visualState == .compactStatus,
+            compactStatusLeadingWingWidth: presentation.visualState == .compactStatus
+                ? presentation.geometry.leadingWingWidth
+                : nil,
+            compactStatusTrailingWingWidth: presentation.visualState == .compactStatus
+                ? presentation.geometry.trailingWingWidth
+                : nil,
+            visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+        )
+        let size = CGSize(
+            width: presentation.geometry.totalWidth,
+            height: presentation.geometry.totalHeight
+        )
+        let host = NSHostingView(
+            rootView: BarView(
+                state: state,
+                commandRouter: NoOpCommandRouter(),
+                presentationModel: model
+            )
+            .frame(width: size.width, height: size.height)
+        )
+        let window = NSWindow(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.contentView = host
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        host.layoutSubtreeIfNeeded()
+        guard let cgImage = captureWindowImage(windowNumber: window.windowNumber) else {
+            throw NSError(domain: "WaveformViewTests", code: 2)
+        }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        let pixels = (0 ..< bitmap.pixelsHigh).flatMap { y in
+            (0 ..< bitmap.pixelsWide).map { x -> VoiceBarRGB in
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else {
+                    return VoiceBarRGB(red: 0, green: 0, blue: 0)
+                }
+                return VoiceBarRGB(
+                    red: color.redComponent,
+                    green: color.greenComponent,
+                    blue: color.blueComponent
+                )
+            }
+        }
+        return VoiceBarRGBImage(
+            width: bitmap.pixelsWide,
+            height: bitmap.pixelsHigh,
+            pixels: pixels
+        )
+    }
+
+    private func captureWindowImage(windowNumber: Int) -> CGImage? {
+        // The compositor is the only reliable way to capture native glass in an
+        // entirely offscreen window. Resolve the legacy symbol dynamically so
+        // this pixel regression stays warning-free on the macOS 14 SDK.
+        typealias CaptureFunction = @convention(c) (
+            CGRect,
+            UInt32,
+            UInt32,
+            UInt32
+        ) -> Unmanaged<CGImage>?
+        guard let defaultLookup = UnsafeMutableRawPointer(bitPattern: -2),
+              let symbol = dlsym(defaultLookup, "CGWindowListCreateImage") else {
+            return nil
+        }
+        let capture = unsafeBitCast(symbol, to: CaptureFunction.self)
+        let options = CGWindowImageOption.boundsIgnoreFraming.union(.bestResolution)
+        return capture(
+            CGRect.null,
+            CGWindowListOption.optionIncludingWindow.rawValue,
+            UInt32(windowNumber),
+            options.rawValue
+        )?.takeRetainedValue()
+    }
+
+    private func blueHorizontalBounds(
+        in image: VoiceBarRGBImage,
+        xRange: Range<Int>
+    ) -> Range<Int>? {
+        var minX = Int.max
+        var maxX = Int.min
+        for y in 0 ..< image.height {
+            for x in xRange {
+                let pixel = image.pixels[y * image.width + x]
+                if pixel.blue > 0.50,
+                   pixel.blue - pixel.red >= 0.18,
+                   pixel.blue - pixel.green >= 0.08 {
+                    minX = min(minX, x)
+                    maxX = max(maxX, x)
+                }
+            }
+        }
+        return minX <= maxX ? minX ..< (maxX + 1) : nil
     }
 
     @MainActor

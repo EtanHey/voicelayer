@@ -119,8 +119,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
         XCTAssertEqual(
             teleprompter.trailingWingWidth,
-            VoiceBarNotchContract.teleprompterContentFitWingWidth(
-                contentWidth: VoiceBarNotchContract.teleprompterTrailingContentWidth
+            VoiceBarNotchContract.teleprompterWaveformWingWidth(
+                visibleCoreOcclusionInset: 0
             )
         )
         XCTAssertNotEqual(teleprompter.leadingWingWidth, teleprompter.trailingWingWidth)
@@ -156,7 +156,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(material.outerContentInset, 8)
         XCTAssertEqual(material.compactContentInset, 14)
         XCTAssertEqual(material.leadingTeleprompterContentWidth, 50)
-        XCTAssertEqual(material.trailingTeleprompterContentWidth, 62)
+        XCTAssertEqual(material.trailingTeleprompterContentWidth, 46)
         XCTAssertEqual(material.inverseJoinRadius, 5)
         XCTAssertEqual(material.waveformSlotWidth, 46)
         XCTAssertEqual(material.lowerSurfaceLayerCount, 1)

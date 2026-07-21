@@ -362,6 +362,12 @@ public struct BarView: View {
         switch state.mode {
         case .transcribing:
             HStack(spacing: VoiceBarNotchContract.material.compactControlSpacing) {
+                Color.clear
+                    .frame(
+                        width: VoiceBarNotchContract.material.compactControlSize,
+                        height: VoiceBarNotchContract.material.compactControlSize
+                    )
+                    .accessibilityHidden(true)
                 notchStableWaveform
                 notchButton(icon: "xmark", accessibilityLabel: "Cancel transcription") {
                     commandRouter.handleCancel()
