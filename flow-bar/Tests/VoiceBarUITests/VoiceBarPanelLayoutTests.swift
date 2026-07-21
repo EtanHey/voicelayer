@@ -146,6 +146,25 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
+    func testExplicitTopRightQAPlacementNeverUsesTheBottomLeftAgentPaneArea() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1084)
+        let panelSize = CGSize(width: 472, height: 245)
+        let environment = [
+            VoiceBarIsolatedCapturePlacement.topRightEnvironmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+
+        XCTAssertTrue(VoiceBarIsolatedCapturePlacement.isEnabled(environment: environment))
+        XCTAssertEqual(
+            VoiceBarIsolatedCapturePlacement.frame(
+                panelSize: panelSize,
+                visibleFrame: visibleFrame,
+                environment: environment
+            ),
+            CGRect(x: 1232, y: 815, width: 472, height: 245)
+        )
+    }
+
     func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1084)
         let recordingPresentation = presentation(.recording)

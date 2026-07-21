@@ -50,6 +50,12 @@ private struct ClientConnection {
     }
 }
 
+private struct ReplayStopBarrier {
+    let id: String
+    var pendingClientFDs: Set<Int32>
+    var deferredReplayCommand: [String: Any]?
+}
+
 final class SocketServer {
     private let socketPath: String
     private let queue = DispatchQueue(label: "com.voicelayer.voicebar.server", qos: .userInitiated)
@@ -66,6 +72,10 @@ final class SocketServer {
 
     /// Connected clients: fd → read source, NDJSON buffer, and command eligibility.
     private var clients: [Int32: ClientConnection] = [:]
+    /// Active replay waits until every playback-capable client confirms that
+    /// its local audio process has fully exited.
+    private var replayStopBarrier: ReplayStopBarrier?
+    private var blockedReplayReason: String?
 
     // MARK: - Lifecycle
 
@@ -252,6 +262,8 @@ final class SocketServer {
             return
         }
 
+        handleReplayStopAcknowledgement(dict, from: fd)
+
         let playbackAmplitude = SocketPlaybackAmplitudeParser.parse(event: dict)
 
         DispatchQueue.main.async { [weak self] in
@@ -299,84 +311,144 @@ final class SocketServer {
     /// active playback process.
     func sendCommandToOwner(command: [String: Any]) {
         queue.async { [weak self] in
-            guard let self else { return }
-            guard let jsonData = try? JSONSerialization.data(withJSONObject: command),
-                  var jsonString = String(data: jsonData, encoding: .utf8)
-            else { return }
-            jsonString.append("\n")
-            let bytes = Array(jsonString.utf8)
+            self?.sendCommandToOwnerOnQueue(command: command)
+        }
+    }
 
-            let commandFDs = clients
-                .filter(\.value.acceptsCommands)
-                .map(\.key)
-                .sorted()
-
-            let commandName = command["cmd"] as? String
-            let isInterrupt = commandName == "stop" || commandName == "cancel"
-            let legacyPlaybackFDs = isInterrupt
-                ? clients.filter { $0.value.role == "mcp-server" }.map(\.key)
-                : []
-            let targetFDs = Array(Set(
-                isInterrupt ? commandFDs + legacyPlaybackFDs : Array(commandFDs.prefix(1))
-            )).sorted()
-
-            guard !targetFDs.isEmpty else {
-                NSLog(
-                    "[VoiceBar] No command client registered; dropping command %@",
-                    jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
-                )
-                notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is starting")
+    private func sendCommandToOwnerOnQueue(command: [String: Any]) {
+        let commandName = command["cmd"] as? String
+        if commandName == "replay" {
+            if let reason = blockedReplayReason {
+                blockedReplayReason = nil
+                notifyCommandDeliveryFailed(command: command, reason: reason)
                 return
             }
-
-            if isInterrupt, targetFDs.count > 1 {
-                NSLog("[VoiceBar] Broadcasting interrupt to %d playback-capable clients", targetFDs.count)
+            if var barrier = replayStopBarrier {
+                barrier.deferredReplayCommand = command
+                replayStopBarrier = barrier
+                return
             }
+        }
 
-            var deadFDs: [Int32] = []
-            var deliveredCount = 0
-            for targetFD in targetFDs {
-                var totalWritten = 0
-                var transientRetryCount = 0
-                var deliveryFailed = false
-                while totalWritten < bytes.count {
-                    switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
-                    case let .wrote(count):
-                        totalWritten += count
-                        transientRetryCount = 0
-                    case .retry:
-                        transientRetryCount += 1
-                        if transientRetryCount >= 3 {
-                            NSLog(
-                                "[VoiceBar] Socket write stalled (fd: %d) after %d retries",
-                                targetFD,
-                                transientRetryCount
-                            )
-                            deadFDs.append(targetFD)
-                            deliveryFailed = true
-                            totalWritten = bytes.count
-                        }
-                    case let .peerClosed(errnoCode):
-                        NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
-                        deadFDs.append(targetFD)
-                        deliveryFailed = true
-                        totalWritten = bytes.count
-                    case let .failed(errnoCode):
-                        NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: command),
+              var jsonString = String(data: jsonData, encoding: .utf8)
+        else { return }
+        jsonString.append("\n")
+        let bytes = Array(jsonString.utf8)
+
+        let commandFDs = clients
+            .filter(\.value.acceptsCommands)
+            .map(\.key)
+            .sorted()
+
+        let isInterrupt = commandName == "stop" || commandName == "cancel"
+        let legacyPlaybackFDs = isInterrupt
+            ? clients.filter { $0.value.role == "mcp-server" }.map(\.key)
+            : []
+        let targetFDs = Array(Set(
+            isInterrupt ? commandFDs + legacyPlaybackFDs : Array(commandFDs.prefix(1))
+        )).sorted()
+
+        guard !targetFDs.isEmpty else {
+            NSLog(
+                "[VoiceBar] No command client registered; dropping command %@",
+                jsonString.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is starting")
+            return
+        }
+
+        let startsReplayBarrier = commandName == "stop" && command["before_replay"] as? Bool == true
+        if startsReplayBarrier, let id = command["id"] as? String {
+            blockedReplayReason = nil
+            replayStopBarrier = ReplayStopBarrier(
+                id: id,
+                pendingClientFDs: Set(targetFDs),
+                deferredReplayCommand: nil
+            )
+            queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+                guard self?.replayStopBarrier?.id == id else { return }
+                self?.abortReplayBarrier(reason: "Playback did not stop")
+            }
+        }
+
+        if isInterrupt, targetFDs.count > 1 {
+            NSLog("[VoiceBar] Broadcasting interrupt to %d playback-capable clients", targetFDs.count)
+        }
+
+        var deadFDs: [Int32] = []
+        var deliveredCount = 0
+        for targetFD in targetFDs {
+            var totalWritten = 0
+            var transientRetryCount = 0
+            var deliveryFailed = false
+            while totalWritten < bytes.count {
+                switch writeToClient(fd: targetFD, bytes: bytes, offset: totalWritten) {
+                case let .wrote(count):
+                    totalWritten += count
+                    transientRetryCount = 0
+                case .retry:
+                    transientRetryCount += 1
+                    if transientRetryCount >= 3 {
+                        NSLog(
+                            "[VoiceBar] Socket write stalled (fd: %d) after %d retries",
+                            targetFD,
+                            transientRetryCount
+                        )
                         deadFDs.append(targetFD)
                         deliveryFailed = true
                         totalWritten = bytes.count
                     }
+                case let .peerClosed(errnoCode):
+                    NSLog("[VoiceBar] Socket peer closed during write (fd: %d, errno: %d)", targetFD, errnoCode)
+                    deadFDs.append(targetFD)
+                    deliveryFailed = true
+                    totalWritten = bytes.count
+                case let .failed(errnoCode):
+                    NSLog("[VoiceBar] Socket write failed (fd: %d, errno: %d)", targetFD, errnoCode)
+                    deadFDs.append(targetFD)
+                    deliveryFailed = true
+                    totalWritten = bytes.count
                 }
-                if !deliveryFailed { deliveredCount += 1 }
             }
-            // Clean up clients that failed on write
-            for fd in deadFDs {
-                clients[fd]?.source.cancel()
-            }
-            if deliveredCount == 0 {
-                notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is reconnecting")
-            }
+            if !deliveryFailed { deliveredCount += 1 }
+        }
+        // Clean up clients that failed on write
+        for fd in deadFDs {
+            clients[fd]?.source.cancel()
+        }
+        if startsReplayBarrier, deliveredCount != targetFDs.count {
+            abortReplayBarrier(reason: "VoiceLayer is reconnecting")
+        } else if deliveredCount == 0 {
+            notifyCommandDeliveryFailed(command: command, reason: "VoiceLayer is reconnecting")
+        }
+    }
+
+    private func handleReplayStopAcknowledgement(_ payload: [String: Any], from fd: Int32?) {
+        guard let fd,
+              payload["type"] as? String == "ack",
+              payload["command"] as? String == "stop",
+              let id = payload["id"] as? String,
+              var barrier = replayStopBarrier,
+              barrier.id == id,
+              barrier.pendingClientFDs.remove(fd) != nil
+        else { return }
+
+        replayStopBarrier = barrier
+        guard barrier.pendingClientFDs.isEmpty else { return }
+        replayStopBarrier = nil
+        if let replay = barrier.deferredReplayCommand {
+            sendCommandToOwnerOnQueue(command: replay)
+        }
+    }
+
+    private func abortReplayBarrier(reason: String) {
+        guard let barrier = replayStopBarrier else { return }
+        replayStopBarrier = nil
+        if let replay = barrier.deferredReplayCommand {
+            notifyCommandDeliveryFailed(command: replay, reason: reason)
+        } else {
+            blockedReplayReason = reason
         }
     }
 
@@ -397,6 +469,9 @@ final class SocketServer {
     // MARK: - Client management
 
     private func removeClient(fd: Int32) {
+        if replayStopBarrier?.pendingClientFDs.contains(fd) == true {
+            abortReplayBarrier(reason: "VoiceLayer is reconnecting")
+        }
         clients.removeValue(forKey: fd)
         NSLog("[VoiceBar] Client removed (fd: %d, remaining: %d)", fd, clients.count)
         updateConnectionState()

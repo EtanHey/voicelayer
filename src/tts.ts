@@ -696,6 +696,12 @@ interface PlaybackJob {
   exited: Promise<PlaybackOutcomeEvent>;
 }
 
+interface ActivePlayback {
+  job: PlaybackJob;
+  proc: ReturnType<typeof Bun.spawn>;
+  startedAt: number;
+}
+
 const PRIORITY_ORDER: Record<PlaybackPriority, number> = {
   critical: 0,
   high: 1,
@@ -806,11 +812,8 @@ function completeJob(job: PlaybackJob, outcome: PlaybackOutcomeEvent) {
 class PlaybackQueueManager {
   private pending: PlaybackJob[] = [];
   private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
-  private current: {
-    job: PlaybackJob;
-    proc: ReturnType<typeof Bun.spawn>;
-    startedAt: number;
-  } | null = null;
+  private current: ActivePlayback | null = null;
+  private terminating = new Map<number, ActivePlayback>();
   private drainWaiters = new Set<() => void>();
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -857,9 +860,10 @@ class PlaybackQueueManager {
   }
 
   stop(): boolean {
-    const hadActivity = this.depth() > 0;
     const active = this.current;
     const preparing = this.preparing;
+    const hadActivity =
+      this.pending.length > 0 || preparing !== null || active !== null;
     this.current = null;
     this.preparing = null;
     preparing?.cancel();
@@ -881,9 +885,7 @@ class PlaybackQueueManager {
         "stopped",
         Date.now() - active.startedAt,
       );
-      try {
-        active.proc.kill("SIGTERM");
-      } catch {}
+      this.terminate(active);
       completeJob(active.job, outcome);
     }
 
@@ -912,7 +914,7 @@ class PlaybackQueueManager {
   }
 
   private processNext() {
-    if (this.current || this.preparing) return;
+    if (this.current || this.preparing || this.terminating.size > 0) return;
 
     while (this.pending.length > 0) {
       const next = this.pending.shift()!;
@@ -1092,9 +1094,7 @@ class PlaybackQueueManager {
         "barge-in",
         Date.now() - active.startedAt,
       );
-      try {
-        active.proc.kill("SIGTERM");
-      } catch {}
+      this.terminate(active);
       completeJob(active.job, outcome);
     }
 
@@ -1139,13 +1139,23 @@ class PlaybackQueueManager {
   private emitQueueSnapshot() {
     const items: QueueItemSnapshot[] = [];
 
+    for (const active of this.terminating.values()) {
+      items.push({
+        text: active.job.metadata?.text ?? "",
+        voice: active.job.metadata?.voice ?? "",
+        priority: active.job.priority,
+        is_current: true,
+        progress: this.playbackProgress(active),
+      });
+    }
+
     if (this.current) {
       items.push({
         text: this.current.job.metadata?.text ?? "",
         voice: this.current.job.metadata?.voice ?? "",
         priority: this.current.job.priority,
         is_current: true,
-        progress: this.currentProgress(),
+        progress: this.playbackProgress(this.current),
       });
     }
 
@@ -1195,7 +1205,8 @@ class PlaybackQueueManager {
     return (
       this.pending.length +
       (this.preparing ? 1 : 0) +
-      (this.current ? 1 : 0)
+      (this.current ? 1 : 0) +
+      this.terminating.size
     );
   }
 
@@ -1218,13 +1229,31 @@ class PlaybackQueueManager {
     this.progressTimer = null;
   }
 
-  private currentProgress(): number {
-    const current = this.current;
-    if (!current) return 0;
-    const durationMs = current.job.metadata?.durationMs ?? 0;
+  private playbackProgress(active: ActivePlayback): number {
+    const durationMs = active.job.metadata?.durationMs ?? 0;
     if (durationMs <= 0) return 0;
-    const elapsedMs = Date.now() - current.startedAt;
+    const elapsedMs = Date.now() - active.startedAt;
     return Math.max(0, Math.min(1, elapsedMs / durationMs));
+  }
+
+  private terminate(active: ActivePlayback): void {
+    const pid = active.proc.pid;
+    this.terminating.set(pid, active);
+    try {
+      active.proc.kill("SIGTERM");
+    } catch {}
+    void active.proc.exited.then(
+      () => this.finishTermination(pid, active),
+      () => this.finishTermination(pid, active),
+    );
+  }
+
+  private finishTermination(pid: number, active: ActivePlayback): void {
+    if (this.terminating.get(pid) !== active) return;
+    this.terminating.delete(pid);
+    this.emitQueueSnapshot();
+    this.resolveIfIdle();
+    this.processNext();
   }
 }
 

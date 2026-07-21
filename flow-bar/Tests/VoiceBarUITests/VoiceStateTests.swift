@@ -64,6 +64,22 @@ final class VoiceStateTests: XCTestCase {
         XCTAssertEqual(state.playbackAudioLevel(), 0.7, accuracy: 0.0001)
     }
 
+    func testPlaybackElapsedClockSurvivesTeleprompterHideShowWhileSpeaking() {
+        var now = 100.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Keep the highlight aligned after remount",
+        ])
+
+        now = 102.45
+        state.dismissTeleprompter()
+        state.showTeleprompter()
+
+        XCTAssertEqual(state.playbackElapsedMilliseconds(), 2450)
+    }
+
     func testSpeakingPresentsTheSameIndependentTimeOffsetShapeAsF5() {
         var now = 10.0
         let state = VoiceState(playbackAmplitudeClock: { now })

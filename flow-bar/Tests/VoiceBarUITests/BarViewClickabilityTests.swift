@@ -384,8 +384,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 
-    func testManagementButtonsMountOnlyInHoveredLauncherTrailingWing() throws {
+    func testDictionaryButtonMountsInHoveredLauncherAndTeleprompterLeadingWing() throws {
         let source = try barViewSource()
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
         let compactStart = try XCTUnwrap(
             source.range(
@@ -399,11 +400,29 @@ final class BarViewClickabilityTests: XCTestCase {
                 .components(separatedBy: "case .recording:").first
         )
         let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
+        let leading = String(source[leadingStart.lowerBound ..< trailingStart.lowerBound])
+        let teleprompterLeading = try XCTUnwrap(
+            leading.components(separatedBy: "case .teleprompter:").dropFirst().first
+        )
 
         XCTAssertTrue(hover.contains("historyButton"))
         XCTAssertTrue(hover.contains("vocabularyButton"))
         XCTAssertFalse(active.contains("historyButton"))
         XCTAssertFalse(active.contains("vocabularyButton"))
+        XCTAssertTrue(teleprompterLeading.contains("vocabularyButton"))
+        XCTAssertFalse(teleprompterLeading.contains("Image(systemName: \"book.closed\")"))
+    }
+
+    func testDictionaryPopoverOpensBelowTheTopEdgeNotch() throws {
+        let source = try barViewSource()
+        let buttonStart = try XCTUnwrap(source.range(of: "private var vocabularyButton"))
+        let popoverStart = try XCTUnwrap(
+            source.range(of: "private var vocabularyPopover", range: buttonStart.upperBound ..< source.endIndex)
+        )
+        let button = source[buttonStart.lowerBound ..< popoverStart.lowerBound]
+
+        XCTAssertTrue(button.contains(".popover(isPresented: $isVocabularyPresented, arrowEdge: .top)"))
+        XCTAssertFalse(button.contains("arrowEdge: .bottom"))
     }
 
     func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
@@ -475,7 +494,8 @@ final class BarViewClickabilityTests: XCTestCase {
             defer: false
         )
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
+        window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        window.orderBack(nil)
         windows.append(window)
         host.layoutSubtreeIfNeeded()
         return host

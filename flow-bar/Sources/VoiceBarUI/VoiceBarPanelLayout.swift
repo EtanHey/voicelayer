@@ -104,21 +104,32 @@ public struct VoiceBarPanelLayout: Equatable {
 
 public enum VoiceBarIsolatedCapturePlacement {
     public static let environmentVariable = "QA_VOICEBAR_CAPTURE_BOTTOM_LEFT"
+    public static let topRightEnvironmentVariable = "QA_VOICEBAR_CAPTURE_TOP_RIGHT"
     public static let parallelInstanceEnvironmentVariable = "VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"
     public static let cornerInset: CGFloat = 24
 
     public static func isEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
-        environment[environmentVariable] == "1" &&
+        (environment[environmentVariable] == "1" ||
+            environment[topRightEnvironmentVariable] == "1") &&
             environment[parallelInstanceEnvironmentVariable] == "1"
     }
 
     public static func frame(
         panelSize: CGSize,
-        visibleFrame: CGRect
+        visibleFrame: CGRect,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> CGRect {
-        CGRect(
+        if environment[topRightEnvironmentVariable] == "1" {
+            return CGRect(
+                x: visibleFrame.maxX - cornerInset - panelSize.width,
+                y: visibleFrame.maxY - cornerInset - panelSize.height,
+                width: panelSize.width,
+                height: panelSize.height
+            )
+        }
+        return CGRect(
             x: visibleFrame.minX + cornerInset,
             y: visibleFrame.minY + cornerInset,
             width: panelSize.width,
@@ -131,7 +142,8 @@ public enum VoiceBarIsolatedCapturePlacement {
     /// top edge and hardware-core center stay invariant across the resize.
     public static func frame(
         layout: VoiceBarPanelLayout,
-        visibleFrame: CGRect
+        visibleFrame: CGRect,
+        environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> CGRect {
         let referencePresentation = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: true,
@@ -151,7 +163,8 @@ public enum VoiceBarIsolatedCapturePlacement {
         )
         let referenceFrame = frame(
             panelSize: referenceLayout.panelSize,
-            visibleFrame: visibleFrame
+            visibleFrame: visibleFrame,
+            environment: environment
         )
         let referenceCoreMidX = referenceFrame.minX +
             referenceLayout.visibleContentRect.minX +

@@ -271,6 +271,61 @@ describe("playback queue — P0-1 sequential playback", () => {
     await Bun.sleep(50);
   });
 
+  it("waits for killed playback to exit and collapses rapid restart attempts", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+
+    playAudioNonBlocking("/tmp/pq-replay-original.mp3");
+    await waitFor(() => playerMocks.length === 1, "original player creation");
+
+    stopPlayback();
+    playAudioNonBlocking("/tmp/pq-replay-superseded.mp3");
+    stopPlayback();
+    playAudioNonBlocking("/tmp/pq-replay-final.mp3");
+
+    // SIGTERM is asynchronous. A replacement must not spawn while the old
+    // afplay process is still alive, even across rapid repeated Replay clicks.
+    expect(playerMocks).toHaveLength(1);
+
+    playerMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "final replay player creation");
+
+    expect(playerMocks[1].cmd).toContain("/tmp/pq-replay-final.mp3");
+    expect(
+      playerMocks.some((player) =>
+        player.cmd.includes("/tmp/pq-replay-superseded.mp3"),
+      ),
+    ).toBe(false);
+
+    playerMocks[1].resolveExit();
+    await Bun.sleep(10);
+  });
+
+  it("does not acknowledge socket stop until the killed player has exited", async () => {
+    const { playAudioNonBlocking } = await import("../tts");
+    const { handleSocketCommand } = await import("../socket-handlers");
+
+    playAudioNonBlocking("/tmp/pq-stop-ack-original.mp3");
+    await waitFor(() => playerMocks.length === 1, "stop-ack player creation");
+
+    let acknowledged = false;
+    const responsePromise = Promise.resolve(
+      handleSocketCommand({ cmd: "stop", id: "stop-after-exit" }),
+    ).then((response) => {
+      acknowledged = true;
+      return response;
+    });
+    await Bun.sleep(10);
+    expect(acknowledged).toBe(false);
+
+    playerMocks[0].resolveExit();
+    expect(await responsePromise).toEqual({
+      type: "ack",
+      command: "stop",
+      outcome: "accept",
+      id: "stop-after-exit",
+    });
+  });
+
   it("broadcasts speaking via metadata when playback actually starts, not when queued", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
@@ -518,6 +573,10 @@ describe("playback queue — P0-1 sequential playback", () => {
       priority: "critical",
     });
     await current.exited;
+    expect(playerMocks).toHaveLength(1);
+    expect(queueEvents).toEqual(["kill:/tmp/pq-barge-current.mp3"]);
+
+    playerMocks[0].resolveExit();
     await waitFor(
       () => playerMocks.length === 2,
       "critical speaking player",

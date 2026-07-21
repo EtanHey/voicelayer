@@ -155,7 +155,7 @@ final class SocketServerTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
+        presentOffscreenForInteraction(window)
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
@@ -169,6 +169,121 @@ final class SocketServerTests: XCTestCase {
         _ = try readLine(from: fixture.commandClient, timeout: 1)
         try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+    }
+
+    @MainActor
+    func testRealSpeakingReplayButtonRoutesReplayToCommandOwner() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Replay the active teleprompter output"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        let host = NSHostingView(rootView: BarView(state: fixture.state, commandRouter: router))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        presentOffscreenForInteraction(window)
+        windows.append(window)
+        host.layoutSubtreeIfNeeded()
+
+        try click(
+            host,
+            at: NSPoint(x: host.bounds.midX - 28, y: 23),
+            in: window
+        )
+
+        let legacyStop = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
+        let ownerBeforeAck = try readLines(from: fixture.commandClient, count: 2, timeout: 0.2)
+        XCTAssertEqual(ownerBeforeAck.count, 1)
+        let ownerStop = try XCTUnwrap(ownerBeforeAck.first)
+        XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
+        XCTAssertTrue(ownerStop.contains(#""cmd":"stop""#))
+
+        let stopPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStop.utf8)) as? [String: Any]
+        )
+        let stopID = try XCTUnwrap(stopPayload["id"] as? String)
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
+            to: fixture.commandClient
+        )
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
+            to: fixture.legacyClient
+        )
+
+        let replayCommand = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
+        XCTAssertTrue(replayCommand.contains(#""id":"#))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
+    }
+
+    @MainActor
+    func testRapidActiveReplayCollapsesToOneRestartAfterLatestStopBarrier() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Rapid replay must not echo"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        router.handleReplay()
+        router.handleReplay()
+
+        let legacyStops = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
+        let ownerStops = try readLines(from: fixture.commandClient, count: 3, timeout: 0.2)
+        XCTAssertEqual(legacyStops.count, 2)
+        XCTAssertEqual(ownerStops.count, 2)
+        XCTAssertTrue(legacyStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
+        XCTAssertTrue(ownerStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
+
+        let firstPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStops[0].utf8)) as? [String: Any]
+        )
+        let secondPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStops[1].utf8)) as? [String: Any]
+        )
+        let firstID = try XCTUnwrap(firstPayload["id"] as? String)
+        let secondID = try XCTUnwrap(secondPayload["id"] as? String)
+        XCTAssertNotEqual(firstID, secondID)
+
+        for client in [fixture.commandClient, fixture.legacyClient] {
+            try writeLine(
+                #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(firstID)"}"#,
+                to: client
+            )
+        }
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
+            to: fixture.commandClient
+        )
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
+            to: fixture.legacyClient
+        )
+
+        let replay = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        XCTAssertTrue(replay.contains(#""cmd":"replay""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
     }
 
     @MainActor
@@ -353,7 +468,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let server = SocketServer(state: state, socketPath: rawSocketPath)
         state.sendCommand = { server.sendCommandToOwner(command: $0) }
         server.start()
-        defer { server.stop() }
+        defer {
+            state.sendCommand = nil
+            state.onModeChange = nil
+            server.stop()
+        }
 
         guard waitForSocket(at: rawSocketPath, timeout: 10) else {
             XCTFail("runtime VoiceBar socket was not created")
@@ -416,8 +535,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             defer: false
         )
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
-        defer { window.close() }
+        presentOffscreenForInteraction(window)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+            window.close()
+        }
         host.layoutSubtreeIfNeeded()
 
         try clickRecordingStop(host, in: window, state: state)
@@ -487,11 +610,19 @@ private struct ConnectedServerFixture {
     let commandClient: Int32
 
     func cleanup() {
+        state.sendCommand = nil
+        state.onModeChange = nil
         close(legacyClient)
         close(commandClient)
         server.stop()
         try? FileManager.default.removeItem(at: directory)
     }
+}
+
+@MainActor
+private func presentOffscreenForInteraction(_ window: NSWindow) {
+    window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+    window.orderBack(nil)
 }
 
 private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
@@ -736,4 +867,31 @@ private func readLine(from fd: Int32, timeout: TimeInterval) throws -> String? {
     }
 
     return nil
+}
+
+private func readLines(from fd: Int32, count expectedCount: Int, timeout: TimeInterval) throws -> [String] {
+    let deadline = Date().addingTimeInterval(timeout)
+    var bytes: [UInt8] = []
+    var lines: [String] = []
+    var buffer = [UInt8](repeating: 0, count: 1024)
+
+    while Date() < deadline, lines.count < expectedCount {
+        let count = read(fd, &buffer, buffer.count)
+        if count > 0 {
+            bytes.append(contentsOf: buffer[0 ..< count])
+            while let newlineIndex = bytes.firstIndex(of: 10) {
+                if let line = String(bytes: bytes[0 ..< newlineIndex], encoding: .utf8) {
+                    lines.append(line)
+                }
+                bytes.removeSubrange(...newlineIndex)
+            }
+        } else if count == -1, errno != EAGAIN, errno != EWOULDBLOCK, errno != EINTR {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        if lines.count < expectedCount {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
+    return lines
 }

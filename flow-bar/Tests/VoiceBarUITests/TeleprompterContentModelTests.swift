@@ -162,6 +162,80 @@ final class TeleprompterContentModelTests: XCTestCase {
         XCTAssertEqual(TeleprompterPlaybackPolicy.startupDelay, .zero)
     }
 
+    func testRemountedTimelineProjectsHighlightFromCurrentPlaybackPosition() {
+        let words = [
+            TeleprompterWord(id: 0, text: "zero", offsetMs: 0, durationMs: 300),
+            TeleprompterWord(id: 1, text: "one", offsetMs: 400, durationMs: 300),
+            TeleprompterWord(id: 2, text: "two", offsetMs: 800, durationMs: 300),
+            TeleprompterWord(id: 3, text: "three", offsetMs: 1200, durationMs: 300),
+        ]
+
+        XCTAssertEqual(
+            TeleprompterPlaybackPolicy.currentWordIndex(
+                in: words,
+                elapsedMilliseconds: 1250
+            ),
+            3
+        )
+    }
+
+    func testRemountedEstimatedTimelineAlsoProjectsFromElapsedPlayback() {
+        let words = [
+            TeleprompterWord(id: 0, text: "one", offsetMs: nil, durationMs: nil),
+            TeleprompterWord(id: 1, text: "two", offsetMs: nil, durationMs: nil),
+            TeleprompterWord(id: 2, text: "three", offsetMs: nil, durationMs: nil),
+        ]
+        let firstTwoWordsMilliseconds = Int(
+            ((TeleprompterPacePolicy.estimatedDelay(for: "one") +
+                    TeleprompterPacePolicy.estimatedDelay(for: "two")) * 1000).rounded()
+        )
+
+        XCTAssertEqual(
+            TeleprompterPlaybackPolicy.currentWordIndex(
+                in: words,
+                elapsedMilliseconds: firstTwoWordsMilliseconds + 1
+            ),
+            2
+        )
+    }
+
+    func testPartialTimestampPayloadUsesOneEstimatedTimeline() {
+        let words = [
+            TeleprompterWord(id: 0, text: "one", offsetMs: 0, durationMs: 200),
+            TeleprompterWord(id: 1, text: "two", offsetMs: nil, durationMs: nil),
+            TeleprompterWord(id: 2, text: "three", offsetMs: 700, durationMs: 200),
+        ]
+
+        XCTAssertFalse(TeleprompterPlaybackPolicy.usesServerTimestamps(in: words))
+        XCTAssertEqual(
+            TeleprompterPlaybackPolicy.currentWordIndex(
+                in: words,
+                elapsedMilliseconds: 660
+            ),
+            2
+        )
+    }
+
+    func testTeleprompterMountConsumesVoiceStatesAbsolutePlaybackClock() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let teleprompterSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/VoiceBarUI/TeleprompterView.swift"),
+            encoding: .utf8
+        )
+        let barViewSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(teleprompterSource.contains("public let playbackElapsedMilliseconds: () -> Int"))
+        XCTAssertTrue(teleprompterSource.contains("elapsedMilliseconds: playbackElapsedMilliseconds()"))
+        XCTAssertTrue(teleprompterSource.contains("_currentIndex = State(initialValue: initialWordIndex)"))
+        XCTAssertTrue(barViewSource.contains("playbackElapsedMilliseconds: state.playbackElapsedMilliseconds"))
+    }
+
     func testSpeakingContentRemovesImmediatelyAndIdleContentAppearsImmediately() {
         XCTAssertFalse(
             VoiceBarContentTransitionPolicy.insertionUsesCrossFade(from: .speaking, to: .idle)

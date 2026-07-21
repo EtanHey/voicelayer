@@ -310,11 +310,7 @@ public struct BarView: View {
                 statusIcon
             }
         case .teleprompter:
-            Image(systemName: "book.closed")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(notchPrimaryLabelColor)
-                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-                .accessibilityLabel("Teleprompter")
+            vocabularyButton
         }
     }
 
@@ -465,6 +461,7 @@ public struct BarView: View {
                     text: text,
                     wordBoundaries: state.teleprompterWordBoundaries,
                     isReadback: state.isTeleprompterReadback,
+                    playbackElapsedMilliseconds: state.playbackElapsedMilliseconds,
                     wrapWidth: VoiceBarNotchContract.material.teleprompterTextWidth(
                         coreWidth: notchPresentation.geometry.coreWidth
                     ),
@@ -833,7 +830,7 @@ public struct BarView: View {
         notchButton(icon: "text.book.closed", accessibilityLabel: "Dictionary") {
             isVocabularyPresented.toggle()
         }
-        .popover(isPresented: $isVocabularyPresented, arrowEdge: .bottom) {
+        .popover(isPresented: $isVocabularyPresented, arrowEdge: .top) {
             vocabularyPopover
         }
     }
