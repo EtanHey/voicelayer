@@ -656,6 +656,16 @@ public final class VoiceState {
     }
 
     public func replay() {
+        if mode == .speaking {
+            // A passive legacy MCP client may own the audible process even
+            // though the standalone daemon owns normal commands. Interrupt
+            // every playback-capable client before the owner starts replay.
+            sendIntent(
+                command: .stop,
+                payload: ["cmd": "stop"],
+                trackPending: false
+            )
+        }
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 

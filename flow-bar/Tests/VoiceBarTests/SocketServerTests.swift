@@ -203,7 +203,12 @@ final class SocketServerTests: XCTestCase {
             in: window
         )
 
-        let replayCommand = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        let legacyStop = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
+        let ownerCommands = try readLines(from: fixture.commandClient, count: 2, timeout: 1)
+        let ownerStop = try XCTUnwrap(ownerCommands.first)
+        let replayCommand = try XCTUnwrap(ownerCommands.dropFirst().first)
+        XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
+        XCTAssertTrue(ownerStop.contains(#""cmd":"stop""#))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
         XCTAssertTrue(replayCommand.contains(#""id":"#))
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
@@ -774,4 +779,31 @@ private func readLine(from fd: Int32, timeout: TimeInterval) throws -> String? {
     }
 
     return nil
+}
+
+private func readLines(from fd: Int32, count expectedCount: Int, timeout: TimeInterval) throws -> [String] {
+    let deadline = Date().addingTimeInterval(timeout)
+    var bytes: [UInt8] = []
+    var lines: [String] = []
+    var buffer = [UInt8](repeating: 0, count: 1024)
+
+    while Date() < deadline, lines.count < expectedCount {
+        let count = read(fd, &buffer, buffer.count)
+        if count > 0 {
+            bytes.append(contentsOf: buffer[0 ..< count])
+            while let newlineIndex = bytes.firstIndex(of: 10) {
+                if let line = String(bytes: bytes[0 ..< newlineIndex], encoding: .utf8) {
+                    lines.append(line)
+                }
+                bytes.removeSubrange(...newlineIndex)
+            }
+        } else if count == -1, errno != EAGAIN, errno != EWOULDBLOCK, errno != EINTR {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        if lines.count < expectedCount {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+    }
+
+    return lines
 }

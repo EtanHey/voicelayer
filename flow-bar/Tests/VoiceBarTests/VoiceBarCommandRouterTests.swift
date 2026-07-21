@@ -71,9 +71,12 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
         router.handleReplay()
 
-        XCTAssertEqual(commands.count, 1)
-        XCTAssertEqual(commands.first?["cmd"] as? String, "replay")
-        XCTAssertNotNil(commands.first?["id"] as? String)
+        XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["stop", "replay"])
+        let ids = commands.compactMap { $0["id"] as? String }
+        XCTAssertEqual(ids.count, 2)
+        if ids.count == 2 {
+            XCTAssertNotEqual(ids[0], ids[1])
+        }
     }
 
     func testToggleStopsRecordingWhenAlreadyRecording() throws {
