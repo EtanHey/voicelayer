@@ -160,8 +160,10 @@ public enum VoiceBarPresentation {
             material.compactContentInset
         switch input.mode {
         case .transcribing:
-            return insets + material.waveformSlotWidth +
-                material.compactControlSpacing + material.compactControlSize
+            let accessoryReserve = material.compactControlSpacing +
+                material.compactControlSize
+            return insets + accessoryReserve + material.waveformSlotWidth +
+                accessoryReserve
         case .speaking:
             let visibilityControl = input.isTeleprompterDismissed
                 ? material.compactControlSize + 4

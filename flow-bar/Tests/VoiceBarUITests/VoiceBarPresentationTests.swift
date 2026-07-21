@@ -57,7 +57,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         }
     }
 
-    func testTranscribingFitsItsActualPayloadWithoutChangingBetweenStatusStrings() {
+    func testTranscribingKeepsItsCenteredWaveformEnvelopeAcrossStatusStrings() {
         let baseline = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: .transcribing,
@@ -71,7 +71,7 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
         XCTAssertEqual(baseline.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(baseline.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(baseline.geometry.trailingWingWidth, 125.5)
         XCTAssertEqual(baseline.geometry.topHeight, 32)
         XCTAssertEqual(warmup.geometry.leadingWingWidth, baseline.geometry.leadingWingWidth)
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
@@ -101,7 +101,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
         XCTAssertEqual(recording.geometry.leadingWingWidth, 141.5)
         XCTAssertEqual(recording.geometry.trailingWingWidth, 141.5)
-        XCTAssertEqual(processing.geometry.trailingWingWidth, 99.5)
+        XCTAssertEqual(processing.geometry.trailingWingWidth, 125.5)
         XCTAssertEqual(
             quickTap.geometry.trailingWingWidth,
             VoiceBarNotchContract.compactCoreContentInset +

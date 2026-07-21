@@ -130,12 +130,15 @@ public struct VoiceBarNotchMaterialContract: Equatable {
         visibleCoreOcclusionInset: CGFloat = 0
     ) -> VoiceBarNotchWingContentLayout {
         let isTeleprompter = state == .teleprompter
+        let coreInset = isTeleprompter
+            ? visibleCoreOcclusionInset + blackToGlassFadeWidth + fadeToContentGap
+            : VoiceBarNotchContract.compactCoreContentInset
         return VoiceBarNotchWingContentLayout(
             side: side,
-            coreInset: isTeleprompter
-                ? visibleCoreOcclusionInset + blackToGlassFadeWidth + fadeToContentGap
-                : VoiceBarNotchContract.compactCoreContentInset,
-            outerInset: isTeleprompter ? outerContentInset : compactContentInset,
+            coreInset: coreInset,
+            outerInset: isTeleprompter && side == .trailing
+                ? coreInset
+                : (isTeleprompter ? outerContentInset : compactContentInset),
             alignment: .center
         )
     }
@@ -325,14 +328,14 @@ public enum VoiceBarNotchContract {
 
     public static let topHeight: CGFloat = 32
     public static let teleprompterLeadingContentWidth: CGFloat = 50
-    public static let teleprompterTrailingContentWidth: CGFloat = 62
+    public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 
     public static let teleprompterLeadingWingWidth = teleprompterContentFitWingWidth(
         contentWidth: teleprompterLeadingContentWidth
     )
 
-    public static let teleprompterTrailingWingWidth = teleprompterContentFitWingWidth(
-        contentWidth: teleprompterTrailingContentWidth
+    public static let teleprompterTrailingWingWidth = teleprompterWaveformWingWidth(
+        visibleCoreOcclusionInset: 0
     )
 
     public static let material = VoiceBarNotchMaterialContract(
@@ -375,6 +378,14 @@ public enum VoiceBarNotchContract {
             material.fadeToContentGap + contentWidth + material.outerContentInset
     }
 
+    public static func teleprompterWaveformWingWidth(
+        visibleCoreOcclusionInset: CGFloat
+    ) -> CGFloat {
+        let safeInset = visibleCoreOcclusionInset + material.blackToGlassFadeWidth +
+            material.fadeToContentGap
+        return safeInset + material.waveformSlotWidth + safeInset
+    }
+
     public static func geometry(
         for visualState: VoiceBarNotchVisualState,
         coreWidth: CGFloat = coreWidth,
@@ -408,8 +419,7 @@ public enum VoiceBarNotchContract {
                     contentWidth: teleprompterLeadingContentWidth,
                     visibleCoreOcclusionInset: visibleCoreOcclusionInset
                 ),
-                trailingWingWidth: teleprompterContentFitWingWidth(
-                    contentWidth: teleprompterTrailingContentWidth,
+                trailingWingWidth: teleprompterWaveformWingWidth(
                     visibleCoreOcclusionInset: visibleCoreOcclusionInset
                 ),
                 bodyLeadingExtent: 140,
