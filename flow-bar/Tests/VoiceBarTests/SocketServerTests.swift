@@ -469,7 +469,13 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         state.minimumTranscribingDisplayDuration = 0
         state.barInitiatedTranscriptionTimeout = .seconds(240)
         let server = SocketServer(state: state, socketPath: rawSocketPath)
-        state.sendCommand = { server.sendCommandToOwner(command: $0) }
+        var replayIntentCount = 0
+        state.sendCommand = { command in
+            if command["cmd"] as? String == "replay" {
+                replayIntentCount += 1
+            }
+            server.sendCommandToOwner(command: command)
+        }
         server.start()
         defer {
             state.sendCommand = nil
@@ -629,11 +635,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         window.setContentSize(host.frame.size)
         host.layoutSubtreeIfNeeded()
         let finishedReplayStartEpoch = state.playbackEpoch
+        let finishedReplayIntentCount = replayIntentCount
         try click(
             host,
             at: NSPoint(x: host.bounds.midX - 28, y: 23),
             in: window
         )
+        XCTAssertTrue(waitForCondition(timeout: 1) {
+            replayIntentCount == finishedReplayIntentCount + 1
+        })
         XCTAssertTrue(waitForCondition(timeout: 15) {
             state.playbackEpoch > finishedReplayStartEpoch && state.mode == .speaking
         })
@@ -667,14 +677,32 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         })
         let originalAskEpoch = state.playbackEpoch
 
-        host.frame.size = host.fittingSize
-        window.setContentSize(host.frame.size)
-        host.layoutSubtreeIfNeeded()
-        try click(host, at: NSPoint(x: host.bounds.midX - 28, y: 23), in: window)
-        try click(host, at: NSPoint(x: host.bounds.midX - 28, y: 23), in: window)
+        let askHost = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+        askHost.frame = NSRect(origin: .zero, size: askHost.fittingSize)
+        let askWindow = NSWindow(
+            contentRect: askHost.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        askWindow.contentView = askHost
+        presentOffscreenForInteraction(askWindow)
+        defer {
+            askWindow.orderOut(nil)
+            askWindow.contentView = nil
+            askWindow.close()
+        }
+        askHost.layoutSubtreeIfNeeded()
+        let askReplayIntentCount = replayIntentCount
+        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        XCTAssertTrue(waitForCondition(timeout: 1) {
+            replayIntentCount == askReplayIntentCount + 2
+        })
 
         var maxConcurrentAfplay = directChildProcessCount(named: "afplay", parentPID: daemonPID)
         var sawRestartedAsk = false
+        var enteredRecordingBeforeReplay = false
         let restartDeadline = Date().addingTimeInterval(20)
         while Date() < restartDeadline {
             let concurrent = directChildProcessCount(named: "afplay", parentPID: daemonPID)
@@ -684,10 +712,22 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
                 sawRestartedAsk = true
                 break
             }
-            XCTAssertNotEqual(state.mode, .recording, "voice_ask advanced before replay started")
+            if state.mode == .recording {
+                enteredRecordingBeforeReplay = true
+                break
+            }
             RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        XCTAssertTrue(sawRestartedAsk)
+        if enteredRecordingBeforeReplay || !sawRestartedAsk {
+            router.handleCancel()
+            _ = waitForMode(state, mode: .idle, timeout: 15)
+            XCTFail(
+                enteredRecordingBeforeReplay
+                    ? "voice_ask advanced before replay started"
+                    : "voice_ask never emitted the restarted speaking epoch"
+            )
+            return
+        }
         XCTAssertEqual(state.teleprompterText, askReplayPhrase)
 
         let recordingDeadline = Date().addingTimeInterval(60)
