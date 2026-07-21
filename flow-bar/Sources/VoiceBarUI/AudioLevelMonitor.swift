@@ -34,7 +34,7 @@ private final class AVAudioLevelMonitoringEngine: AudioLevelMonitoringEngine {
         try engine.start()
     }
 
-    public func stop() {
+    func stop() {
         engine.stop()
     }
 }
@@ -136,9 +136,20 @@ public final class AudioLevelMonitor {
         }
     }
 
+    /// Final teardown releases even a prepared-but-not-running input node.
+    public func shutdown() {
+        inputNode?.removeTap()
+        engine.stop()
+        inputNode = nil
+        isRunning = false
+        isPrepared = false
+        DispatchQueue.main.async {
+            self.onLevel(nil)
+        }
+    }
+
     deinit {
-        // Ensure tap + engine are torn down even if caller forgets stop()
-        if isRunning {
+        if isRunning || isPrepared {
             inputNode?.removeTap()
             engine.stop()
         }

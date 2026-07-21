@@ -13,6 +13,7 @@ const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 describe("socket handler idempotency matrix", () => {
   let stopPlaybackSpy: ReturnType<typeof spyOn>;
+  let restartPlaybackSpy: ReturnType<typeof spyOn>;
   let waitForInputSpy: ReturnType<typeof spyOn>;
   let broadcastSpy: ReturnType<typeof spyOn>;
   let setCancelSignalSpy: ReturnType<typeof spyOn>;
@@ -28,6 +29,9 @@ describe("socket handler idempotency matrix", () => {
 
   beforeEach(() => {
     stopPlaybackSpy = spyOn(tts, "stopPlayback").mockImplementation(() => true);
+    restartPlaybackSpy = spyOn(tts, "restartPlayback").mockImplementation(
+      () => true,
+    );
     waitForInputSpy = spyOn(input, "waitForInput").mockResolvedValue("");
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
@@ -74,6 +78,7 @@ describe("socket handler idempotency matrix", () => {
 
   afterEach(() => {
     stopPlaybackSpy.mockRestore();
+    restartPlaybackSpy.mockRestore();
     waitForInputSpy.mockRestore();
     broadcastSpy.mockRestore();
     setCancelSignalSpy.mockRestore();
@@ -309,7 +314,8 @@ describe("socket handler idempotency matrix", () => {
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
 
-  it("marks accepted replay to remount when playback starts", () => {
+  it("restarts active replay atomically without stopping the blocking playback", () => {
+    queueDepthSpy.mockReturnValue(1);
     const response = handleSocketCommand({ cmd: "replay", id: "replay-idle" });
 
     expect(response).toEqual({
@@ -318,8 +324,23 @@ describe("socket handler idempotency matrix", () => {
       outcome: "accept",
       id: "replay-idle",
     });
+    expect(stopPlaybackSpy).not.toHaveBeenCalled();
+    expect(restartPlaybackSpy).toHaveBeenCalledTimes(1);
+    expect(playAudioSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it("starts finished replay without a pre-start idle flicker", () => {
+    const response = handleSocketCommand({ cmd: "replay", id: "replay-finished" });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "replay",
+      outcome: "accept",
+      id: "replay-finished",
+    });
     expect(playAudioSpy).toHaveBeenCalledTimes(1);
-    expect((playAudioSpy.mock.calls[0][1] as any).preStartIdle).toBe(true);
+    expect((playAudioSpy.mock.calls[0][1] as any).preStartIdle).toBeUndefined();
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
 

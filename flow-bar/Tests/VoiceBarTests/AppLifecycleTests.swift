@@ -130,6 +130,24 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(policy.reply(enforcesSingleton: true), .terminateNow)
     }
 
+    func testAppTerminationUsesPreparedMicShutdownAndIsolatedDeregistration() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(
+            contentsOf: repoRoot.appendingPathComponent("flow-bar/Sources/VoiceBar/VoiceBarApp.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(source.contains("private func performTerminationCleanup()"))
+        XCTAssertTrue(source.contains("VoiceBarInstanceIsolationRegistry.unregister"))
+        XCTAssertTrue(source.contains("audioLevelMonitor.shutdown()"))
+        XCTAssertTrue(source.contains("signal(SIGTERM, SIG_IGN)"))
+        XCTAssertTrue(source.contains("requestTermination(.internalFailure)"))
+    }
+
     // MARK: - Context menu snooze toggle
 
     func testContextMenuShowsHideWhenNotSnoozed() {

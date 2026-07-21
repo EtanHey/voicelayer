@@ -226,6 +226,8 @@ public final class VoiceState {
     public private(set) var playbackAmplitudeEnvelope: PlaybackAmplitudeEnvelope?
     private var playbackAmplitudeStartedAt: TimeInterval?
     private var playbackStartedAt: TimeInterval?
+    /// Advances for every speaking receipt, including same-text replay.
+    public private(set) var playbackEpoch = 0
     private var recordingWaveformHistory = WaveformEnvelopeHistory()
     private var transcribingWaveformReplayStartedAt: TimeInterval?
     private var recordCommandUptimeMs: Int?
@@ -551,7 +553,11 @@ public final class VoiceState {
     public func stop() {
         let shouldShowTranscribing = mode == .recording
         let shouldExitInterruptedPlayback = mode == .speaking
-        sendIntent(command: .stop, payload: ["cmd": "stop"])
+        var payload: [String: Any] = ["cmd": "stop"]
+        if shouldExitInterruptedPlayback {
+            payload["playback_elapsed_ms"] = playbackElapsedMilliseconds()
+        }
+        sendIntent(command: .stop, payload: payload)
         if shouldShowTranscribing {
             enterTranscribingMode()
         } else if shouldExitInterruptedPlayback {
@@ -656,16 +662,6 @@ public final class VoiceState {
     }
 
     public func replay() {
-        if mode == .idle || mode == .speaking {
-            // A passive legacy MCP client may own the audible process even
-            // when state delivery has already raced ahead to idle. Interrupt
-            // every playback-capable client before the owner starts replay.
-            sendIntent(
-                command: .stop,
-                payload: ["cmd": "stop", "before_replay": true],
-                trackPending: false
-            )
-        }
         sendIntent(command: .replay, payload: ["cmd": "replay"])
     }
 
@@ -1022,6 +1018,7 @@ public final class VoiceState {
                 resetAudioLevels()
                 let playbackStart = playbackAmplitudeClock()
                 playbackStartedAt = playbackStart
+                playbackEpoch += 1
                 playbackAmplitudeEnvelope = playbackAmplitude
                 playbackAmplitudeStartedAt = playbackAmplitude.map { _ in playbackStart }
                 clearRetainedTeleprompter()

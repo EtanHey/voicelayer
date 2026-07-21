@@ -675,7 +675,6 @@ export interface PlaybackMetadata extends SoundLayerPlaybackMetadata {
   priority?: PlaybackPriority;
   durationMs?: number;
   collapseKey?: string;
-  preStartIdle?: boolean;
   clipMarker?: {
     id: string;
     label: string;
@@ -814,6 +813,7 @@ class PlaybackQueueManager {
   private preparing: { job: PlaybackJob; cancel: () => void } | null = null;
   private current: ActivePlayback | null = null;
   private terminating = new Map<number, ActivePlayback>();
+  private restartAfterTermination: PlaybackJob | null = null;
   private drainWaiters = new Set<() => void>();
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -859,13 +859,18 @@ class PlaybackQueueManager {
     });
   }
 
-  stop(): boolean {
+  stop(playbackElapsedMs?: number): boolean {
     const active = this.current;
     const preparing = this.preparing;
+    const restarting = this.restartAfterTermination;
     const hadActivity =
-      this.pending.length > 0 || preparing !== null || active !== null;
+      this.pending.length > 0 ||
+      preparing !== null ||
+      active !== null ||
+      restarting !== null;
     this.current = null;
     this.preparing = null;
+    this.restartAfterTermination = null;
     preparing?.cancel();
 
     for (const job of this.pending.splice(0)) {
@@ -883,10 +888,28 @@ class PlaybackQueueManager {
         active.job,
         "interrupted",
         "stopped",
-        Date.now() - active.startedAt,
+        this.normalizedPlaybackElapsed(playbackElapsedMs) ??
+          Date.now() - active.startedAt,
       );
       this.terminate(active);
       completeJob(active.job, outcome);
+    }
+    if (restarting) {
+      const terminatingActive = Array.from(this.terminating.values()).find(
+        (candidate) => candidate.job === restarting,
+      );
+      completeJob(
+        restarting,
+        buildPlaybackOutcome(
+          restarting,
+          "interrupted",
+          "stopped",
+          this.normalizedPlaybackElapsed(playbackElapsedMs) ??
+            (terminatingActive
+              ? Date.now() - terminatingActive.startedAt
+              : 0),
+        ),
+      );
     }
 
     if (hadActivity) {
@@ -897,6 +920,27 @@ class PlaybackQueueManager {
     }
 
     return hadActivity;
+  }
+
+  restart(): boolean {
+    if (this.restartAfterTermination) return true;
+    // The replacement has already reset to the beginning once it reaches
+    // preparation. Collapse another rapid Replay into that same job so a
+    // blocking voice_ask cannot resolve while a duplicate replay stays queued.
+    if (this.preparing) return true;
+    const active = this.current;
+    if (!active) return false;
+
+    this.current = null;
+    for (const job of this.pending.splice(0)) {
+      completeJob(job, buildPlaybackOutcome(job, "skipped", "collapsed"));
+    }
+
+    this.restartAfterTermination = active.job;
+    this.stopProgressTimer();
+    this.terminate(active);
+    this.emitQueueSnapshot();
+    return true;
   }
 
   private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
@@ -976,9 +1020,6 @@ class PlaybackQueueManager {
       this.processNext();
       return;
     }
-    if (next.metadata?.preStartIdle) {
-      broadcast({ type: "state", state: "idle" });
-    }
     if (next.metadata?.wordBoundaries?.length) {
       broadcast({ type: "subtitle", words: next.metadata.wordBoundaries });
     }
@@ -1043,20 +1084,18 @@ class PlaybackQueueManager {
   }
 
   private finish(job: PlaybackJob, pid: number, succeeded: boolean) {
-    let elapsedMs = 0;
-    if (this.current?.proc.pid === pid) {
-      elapsedMs = Date.now() - this.current.startedAt;
-      this.stopProgressTimer();
-      this.current = null;
-      if (this.depth() === 0) {
-        broadcastPlaybackIdleIfSpeakerClear(
-          succeeded ? job.metadata?.nextState : undefined,
-        );
-      }
-      this.emitQueueSnapshot();
-      this.resolveIfIdle();
-      this.processNext();
+    if (this.current?.proc.pid !== pid) return;
+    const elapsedMs = Date.now() - this.current.startedAt;
+    this.stopProgressTimer();
+    this.current = null;
+    if (this.depth() === 0) {
+      broadcastPlaybackIdleIfSpeakerClear(
+        succeeded ? job.metadata?.nextState : undefined,
+      );
     }
+    this.emitQueueSnapshot();
+    this.resolveIfIdle();
+    this.processNext();
     completeJob(
       job,
       succeeded
@@ -1070,8 +1109,10 @@ class PlaybackQueueManager {
     // result can attempt to start playback.
     const active = this.current;
     const preparing = this.preparing;
+    const restarting = this.restartAfterTermination;
     this.current = null;
     this.preparing = null;
+    this.restartAfterTermination = null;
     preparing?.cancel();
 
     for (const queued of this.pending.splice(0)) {
@@ -1096,6 +1137,12 @@ class PlaybackQueueManager {
       );
       this.terminate(active);
       completeJob(active.job, outcome);
+    }
+    if (restarting) {
+      completeJob(
+        restarting,
+        buildPlaybackOutcome(restarting, "interrupted", "barge-in"),
+      );
     }
 
     this.pending = [job];
@@ -1251,9 +1298,20 @@ class PlaybackQueueManager {
   private finishTermination(pid: number, active: ActivePlayback): void {
     if (this.terminating.get(pid) !== active) return;
     this.terminating.delete(pid);
+    if (this.restartAfterTermination === active.job && !active.job.completed) {
+      this.restartAfterTermination = null;
+      active.job.enqueuedAt = Date.now();
+      active.job.expiresAt = Date.now() + ttlForPriority(active.job.priority);
+      this.pending.unshift(active.job);
+    }
     this.emitQueueSnapshot();
     this.resolveIfIdle();
     this.processNext();
+  }
+
+  private normalizedPlaybackElapsed(value?: number): number | undefined {
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    return Math.max(0, Math.round(value));
   }
 }
 
@@ -1286,8 +1344,13 @@ export function getPlaybackQueueDepth(): number {
 }
 
 /** Stop current playback if any. */
-export function stopPlayback(): boolean {
-  return playbackQueueManager.stop();
+export function stopPlayback(playbackElapsedMs?: number): boolean {
+  return playbackQueueManager.stop(playbackElapsedMs);
+}
+
+/** Restart the active audio job without resolving its blocking playback handle. */
+export function restartPlayback(): boolean {
+  return playbackQueueManager.restart();
 }
 
 export class QueuedPlaybackController implements PlaybackController {

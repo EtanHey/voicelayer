@@ -242,10 +242,14 @@ interface SocketCommandBase {
 
 export interface StopCommand extends SocketCommandBase {
   cmd: "stop";
+  /** VoiceBar's teleprompter clock at the stop edge. */
+  playback_elapsed_ms?: number;
 }
 
 export interface CancelCommand extends SocketCommandBase {
   cmd: "cancel";
+  /** VoiceBar's teleprompter clock at the cancel edge. */
+  playback_elapsed_ms?: number;
 }
 
 export interface ReplayCommand extends SocketCommandBase {
@@ -484,11 +488,33 @@ export function parseCommand(line: string): SocketCommand | null {
       return null;
     }
     const id = parseCommandId(parsed);
+    const playbackElapsedMs =
+      typeof parsed.playback_elapsed_ms === "number" &&
+      Number.isFinite(parsed.playback_elapsed_ms) &&
+      parsed.playback_elapsed_ms >= 0
+        ? Math.round(parsed.playback_elapsed_ms)
+        : undefined;
     switch (parsed.cmd) {
       case "stop":
-        return withCommandId<StopCommand>({ cmd: "stop" }, id);
+        return withCommandId<StopCommand>(
+          {
+            cmd: "stop",
+            ...(playbackElapsedMs !== undefined
+              ? { playback_elapsed_ms: playbackElapsedMs }
+              : {}),
+          },
+          id,
+        );
       case "cancel":
-        return withCommandId<CancelCommand>({ cmd: "cancel" }, id);
+        return withCommandId<CancelCommand>(
+          {
+            cmd: "cancel",
+            ...(playbackElapsedMs !== undefined
+              ? { playback_elapsed_ms: playbackElapsedMs }
+              : {}),
+          },
+          id,
+        );
       case "replay":
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
       case "retranscribe_last":

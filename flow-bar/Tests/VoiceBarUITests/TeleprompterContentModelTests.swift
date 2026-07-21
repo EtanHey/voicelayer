@@ -141,6 +141,25 @@ final class TeleprompterContentModelTests: XCTestCase {
         )
     }
 
+    func testReplayEpochRestartsTheMountedTimelineWithoutReplacingItsTextIdentity() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let teleprompterSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/VoiceBarUI/TeleprompterView.swift"),
+            encoding: .utf8
+        )
+        let barViewSource = try String(
+            contentsOf: packageRoot.appendingPathComponent("Sources/VoiceBarUI/BarView.swift"),
+            encoding: .utf8
+        )
+
+        XCTAssertTrue(teleprompterSource.contains("public var playbackEpoch"))
+        XCTAssertTrue(teleprompterSource.contains(".onChange(of: playbackEpoch)"))
+        XCTAssertTrue(barViewSource.contains("playbackEpoch: state.playbackEpoch"))
+    }
+
     func testDismissingTeleprompterKeepsTimelineMountedButVisuallyHidden() {
         XCTAssertTrue(TeleprompterVisibilityPolicy.keepsTimelineMounted(hasText: true))
         XCTAssertEqual(TeleprompterVisibilityPolicy.timelineOpacity(isDismissed: true), 0)

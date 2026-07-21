@@ -58,7 +58,7 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(showCount, 1)
     }
 
-    func testReplayControlRestartsPlaybackThroughStopBarrierFromIdleOrSpeakingState() {
+    func testReplayControlSendsOneAtomicReplayIntentFromIdleOrSpeakingState() {
         for mode in [VoiceMode.idle, .speaking] {
             let state = VoiceState()
             if mode == .speaking {
@@ -74,13 +74,9 @@ final class VoiceBarCommandRouterTests: XCTestCase {
 
             router.handleReplay()
 
-            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["stop", "replay"], "\(mode)")
-            XCTAssertEqual(commands.first?["before_replay"] as? Bool, true, "\(mode)")
+            XCTAssertEqual(commands.compactMap { $0["cmd"] as? String }, ["replay"], "\(mode)")
             let ids = commands.compactMap { $0["id"] as? String }
-            XCTAssertEqual(ids.count, 2, "\(mode)")
-            if ids.count == 2 {
-                XCTAssertNotEqual(ids[0], ids[1], "\(mode)")
-            }
+            XCTAssertEqual(ids.count, 1, "\(mode)")
         }
     }
 

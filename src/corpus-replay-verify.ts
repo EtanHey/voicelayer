@@ -638,6 +638,8 @@ export async function runSwiftRuntimeInteractionLeg(options: {
   repoRoot: string;
   workDir: string;
   voiceBarSocketPath: string;
+  mcpSocketPath: string;
+  daemonPid: number;
   audioFixture: string;
 }): Promise<void> {
   const customRunner = process.env.VOICELAYER_VERIFY_INTERACTION_RUNNER?.trim();
@@ -665,6 +667,8 @@ export async function runSwiftRuntimeInteractionLeg(options: {
       CORPUS_RUNNER_ACTIVE: "1",
       VOICELAYER_VERIFY_WORK_DIR: options.workDir,
       VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH: options.voiceBarSocketPath,
+      VOICELAYER_VERIFY_MCP_SOCKET_PATH: options.mcpSocketPath,
+      VOICELAYER_VERIFY_DAEMON_PID: String(options.daemonPid),
       VOICELAYER_VERIFY_AUDIO_FIXTURE: options.audioFixture,
     },
   });
@@ -833,6 +837,8 @@ async function runCorpusReplay(options: {
       repoRoot: options.repoRoot,
       workDir: options.workDir,
       voiceBarSocketPath,
+      mcpSocketPath,
+      daemonPid: daemonProcess.pid,
       audioFixture: staged[0].audioPath,
     });
     console.log(

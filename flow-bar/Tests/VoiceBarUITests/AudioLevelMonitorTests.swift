@@ -59,16 +59,29 @@ final class AudioLevelMonitorTests: XCTestCase {
         XCTAssertEqual(engine.stopCallCount, 1)
     }
 
-    func testDeinitSkipsCleanupWhenNotRunning() {
+    func testDeinitReleasesPreparedInputEvenWhenNotRunning() {
         let engine = AudioLevelMonitorEngineSpy()
         var monitor: AudioLevelMonitor? = AudioLevelMonitor(engine: engine) { _ in }
         monitor?.prepare()
 
         monitor = nil
 
-        // Should NOT attempt to remove tap or stop if never started
-        XCTAssertEqual(engine.inputNode.removeTapCallCount, 0)
-        XCTAssertEqual(engine.stopCallCount, 0)
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, 1)
+        XCTAssertEqual(engine.stopCallCount, 1)
+    }
+
+    func testShutdownReleasesAPreparedButIdleInputAndAllowsFreshPreparation() {
+        let engine = AudioLevelMonitorEngineSpy()
+        let monitor = AudioLevelMonitor(engine: engine) { _ in }
+
+        monitor.prepare()
+        monitor.shutdown()
+        monitor.prepare()
+
+        XCTAssertEqual(engine.inputNode.removeTapCallCount, 1)
+        XCTAssertEqual(engine.stopCallCount, 1)
+        XCTAssertEqual(engine.inputNodeAccessCount, 2)
+        XCTAssertEqual(engine.prepareCallCount, 2)
     }
 
     func testStartFailureRemovesTapAndStopsEngineDefensively() {

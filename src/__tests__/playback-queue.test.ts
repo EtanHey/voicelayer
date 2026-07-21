@@ -300,6 +300,92 @@ describe("playback queue — P0-1 sequential playback", () => {
     await Bun.sleep(10);
   });
 
+  it("atomically restarts active playback without resolving its blocking handle", async () => {
+    const { playAudioNonBlocking, restartPlayback } = await import("../tts");
+
+    const playback = playAudioNonBlocking("/tmp/pq-atomic-replay.mp3", {
+      text: "Question remains blocking until replay finishes",
+      voice: "TestVoice",
+      nextState: "recording",
+    });
+    let resolved = false;
+    playback.exited.then(() => {
+      resolved = true;
+    });
+    await waitFor(() => playerMocks.length === 1, "original replay player");
+
+    expect(restartPlayback()).toBe(true);
+    expect(restartPlayback()).toBe(true);
+    expect(playerMocks).toHaveLength(1);
+    expect(resolved).toBe(false);
+
+    playerMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "replacement replay player");
+    expect(playerMocks[1].cmd).toContain("/tmp/pq-atomic-replay.mp3");
+    expect(resolved).toBe(false);
+    expect(
+      broadcasts.filter(
+        (event: any) => event.type === "state" && event.state === "idle",
+      ),
+    ).toHaveLength(0);
+
+    playerMocks[1].resolveExit();
+    expect(await playback.exited).toMatchObject({
+      playback_id: playback.id,
+      status: "completed",
+    });
+    const speaking = broadcasts.filter(
+      (event: any) => event.type === "state" && event.state === "speaking",
+    );
+    expect(speaking).toHaveLength(2);
+    const idles = broadcasts.filter(
+      (event: any) => event.type === "state" && event.state === "idle",
+    );
+    expect(idles).toHaveLength(1);
+    expect(
+      broadcasts.filter((event: any) => event.type === "playback_outcome"),
+    ).toEqual([
+      expect.objectContaining({
+        playback_id: playback.id,
+        status: "completed",
+      }),
+    ]);
+  });
+
+  it("collapses rapid replay while the replacement is still preparing", async () => {
+    const { playAudioNonBlocking, restartPlayback } = await import("../tts");
+
+    const playback = playAudioNonBlocking("/tmp/pq-preparing-replay.mp3", {
+      text: "Keep the blocking turn attached to one replacement",
+      voice: "TestVoice",
+      nextState: "recording",
+    });
+    await waitFor(() => playerMocks.length === 1, "original replay player");
+
+    holdDecoderExits = true;
+    expect(restartPlayback()).toBe(true);
+    playerMocks[0].resolveExit();
+    await waitFor(
+      () => decoderMocks.length === 2,
+      "replacement amplitude preparation",
+    );
+
+    expect(playerMocks).toHaveLength(1);
+    expect(restartPlayback()).toBe(true);
+    decoderMocks[1].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "prepared replacement player");
+    playerMocks[1].resolveExit();
+
+    expect(await playback.exited).toMatchObject({
+      playback_id: playback.id,
+      status: "completed",
+    });
+    expect(playerMocks).toHaveLength(2);
+    expect(
+      broadcasts.filter((event: any) => event.type === "playback_outcome"),
+    ).toHaveLength(1);
+  });
+
   it("does not acknowledge socket stop until the killed player has exited", async () => {
     const { playAudioNonBlocking } = await import("../tts");
     const { handleSocketCommand } = await import("../socket-handlers");
@@ -380,7 +466,6 @@ describe("playback queue — P0-1 sequential playback", () => {
     const playback = playAudioNonBlocking("/tmp/pq-replay-corrupt.mp3", {
       text: "Cached replay",
       voice: "TestVoice",
-      preStartIdle: true,
     });
     await waitFor(
       () => broadcasts.some(
@@ -637,6 +722,39 @@ describe("playback queue — P0-1 sequential playback", () => {
     }
   });
 
+  it("uses the teleprompter elapsed clock for interrupt word telemetry", async () => {
+    const { playAudioNonBlocking, stopPlayback } = await import("../tts");
+    let now = 20_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      const playback = playAudioNonBlocking("/tmp/pq-visual-cut-position.mp3", {
+        text: "one two three four",
+        voice: "TestVoice",
+        durationMs: 1_600,
+        wordBoundaries: [
+          { offset_ms: 0, duration_ms: 200, text: "one" },
+          { offset_ms: 400, duration_ms: 200, text: "two" },
+          { offset_ms: 800, duration_ms: 200, text: "three" },
+          { offset_ms: 1_200, duration_ms: 200, text: "four" },
+        ],
+      });
+      await waitFor(() => playerMocks.length === 1, "visual-clock player start");
+
+      now = 21_200;
+      expect((stopPlayback as (elapsedMs?: number) => boolean)(800)).toBe(true);
+      const outcome = await playback.exited;
+
+      expect(outcome).toMatchObject({
+        stopped_at_ms: 800,
+        word_index: 2,
+        word_count: 4,
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("broadcasts idle only when queue fully drains, not between items", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
@@ -717,7 +835,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     }
   });
 
-  it("does not emit replay pre-start idle or spawn when recording starts after the queue gate", async () => {
+  it("does not emit idle or spawn when recording starts after the queue gate", async () => {
     const { playAudioNonBlocking } = await import("../tts");
     let stateCalls = 0;
     const stateSpy = spyOn(
@@ -732,7 +850,6 @@ describe("playback queue — P0-1 sequential playback", () => {
       playAudioNonBlocking("/tmp/pq-replay-late-recording.mp3", {
         text: "Replay",
         voice: "TestVoice",
-        preStartIdle: true,
       });
       await Bun.sleep(50);
 

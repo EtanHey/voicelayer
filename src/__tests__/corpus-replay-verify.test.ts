@@ -656,6 +656,8 @@ describe("corpus replay verification", () => {
           repoRoot: root,
           workDir,
           voiceBarSocketPath: join(workDir, "voicebar.sock"),
+          mcpSocketPath: join(workDir, "mcp.sock"),
+          daemonPid: process.pid,
           audioFixture: join(workDir, "audio.wav"),
         }),
       ).rejects.toThrow("runtime interaction leg timed out after 1000ms");
@@ -712,8 +714,10 @@ describe("corpus replay verification", () => {
         ': "${CORPUS_RUNNER_ACTIVE:?}"',
         ': "${VOICELAYER_VERIFY_WORK_DIR:?}"',
         ': "${VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH:?}"',
+        ': "${VOICELAYER_VERIFY_MCP_SOCKET_PATH:?}"',
+        ': "${VOICELAYER_VERIFY_DAEMON_PID:?}"',
         ': "${VOICELAYER_VERIFY_AUDIO_FIXTURE:?}"',
-        'printf "%s\\n%s\\n%s\\n" "$VOICELAYER_VERIFY_WORK_DIR" "$VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH" "$VOICELAYER_VERIFY_AUDIO_FIXTURE" > "$VERIFY_RECEIPT"',
+        'printf "%s\\n%s\\n%s\\n%s\\n%s\\n" "$VOICELAYER_VERIFY_WORK_DIR" "$VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH" "$VOICELAYER_VERIFY_MCP_SOCKET_PATH" "$VOICELAYER_VERIFY_DAEMON_PID" "$VOICELAYER_VERIFY_AUDIO_FIXTURE" > "$VERIFY_RECEIPT"',
         "",
       ].join("\n"),
       { mode: 0o755 },
@@ -727,6 +731,8 @@ describe("corpus replay verification", () => {
         repoRoot: root,
         workDir,
         voiceBarSocketPath: join(workDir, "voicebar.sock"),
+        mcpSocketPath: join(workDir, "mcp.sock"),
+        daemonPid: 4242,
         audioFixture: join(workDir, "audio.wav"),
       });
     } finally {
@@ -740,7 +746,7 @@ describe("corpus replay verification", () => {
     }
 
     expect(await Bun.file(receipt).text()).toBe(
-      `${workDir}\n${join(workDir, "voicebar.sock")}\n${join(workDir, "audio.wav")}\n`,
+      `${workDir}\n${join(workDir, "voicebar.sock")}\n${join(workDir, "mcp.sock")}\n4242\n${join(workDir, "audio.wav")}\n`,
     );
   });
 
@@ -775,6 +781,8 @@ describe("corpus replay verification", () => {
         repoRoot: root,
         workDir,
         voiceBarSocketPath: join(workDir, "voicebar.sock"),
+        mcpSocketPath: join(workDir, "mcp.sock"),
+        daemonPid: process.pid,
         audioFixture: join(workDir, "audio.wav"),
       });
     } finally {
