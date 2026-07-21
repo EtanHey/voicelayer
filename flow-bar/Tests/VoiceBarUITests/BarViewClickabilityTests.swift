@@ -482,7 +482,8 @@ final class BarViewClickabilityTests: XCTestCase {
             defer: false
         )
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
+        window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+        window.orderBack(nil)
         windows.append(window)
         host.layoutSubtreeIfNeeded()
         return host

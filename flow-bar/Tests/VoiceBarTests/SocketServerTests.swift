@@ -155,7 +155,7 @@ final class SocketServerTests: XCTestCase {
         host.frame = NSRect(origin: .zero, size: host.fittingSize)
         let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
+        presentOffscreenForInteraction(window)
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
@@ -193,7 +193,7 @@ final class SocketServerTests: XCTestCase {
             defer: false
         )
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
+        presentOffscreenForInteraction(window)
         windows.append(window)
         host.layoutSubtreeIfNeeded()
 
@@ -468,7 +468,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let server = SocketServer(state: state, socketPath: rawSocketPath)
         state.sendCommand = { server.sendCommandToOwner(command: $0) }
         server.start()
-        defer { server.stop() }
+        defer {
+            state.sendCommand = nil
+            state.onModeChange = nil
+            server.stop()
+        }
 
         guard waitForSocket(at: rawSocketPath, timeout: 10) else {
             XCTFail("runtime VoiceBar socket was not created")
@@ -531,8 +535,12 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             defer: false
         )
         window.contentView = host
-        window.makeKeyAndOrderFront(nil)
-        defer { window.close() }
+        presentOffscreenForInteraction(window)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+            window.close()
+        }
         host.layoutSubtreeIfNeeded()
 
         try clickRecordingStop(host, in: window, state: state)
@@ -602,11 +610,19 @@ private struct ConnectedServerFixture {
     let commandClient: Int32
 
     func cleanup() {
+        state.sendCommand = nil
+        state.onModeChange = nil
         close(legacyClient)
         close(commandClient)
         server.stop()
         try? FileManager.default.removeItem(at: directory)
     }
+}
+
+@MainActor
+private func presentOffscreenForInteraction(_ window: NSWindow) {
+    window.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
+    window.orderBack(nil)
 }
 
 private func makeConnectedServerFixture() throws -> ConnectedServerFixture {
