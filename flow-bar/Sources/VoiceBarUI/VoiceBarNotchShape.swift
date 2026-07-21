@@ -237,13 +237,16 @@ public struct VoiceBarNotchGeometryAnimatableData: VectorArithmetic, Sendable {
 public struct VoiceBarNotchContinuousShape: Shape {
     public var geometry: VoiceBarNotchGeometry
     public var compactOuterCornerRadius: CGFloat
+    public var coreAnchorX: CGFloat?
 
     public init(
         geometry: VoiceBarNotchGeometry,
-        compactOuterCornerRadius: CGFloat = 11
+        compactOuterCornerRadius: CGFloat = 11,
+        coreAnchorX: CGFloat? = nil
     ) {
         self.geometry = geometry
         self.compactOuterCornerRadius = compactOuterCornerRadius
+        self.coreAnchorX = coreAnchorX
     }
 
     public var animatableData: VoiceBarNotchGeometryAnimatableData {
@@ -267,13 +270,14 @@ public struct VoiceBarNotchContinuousShape: Shape {
             continuousBodyPath(layout: layout)
         }
 
+        // Geometry values are already expressed in screen points. During a
+        // morph AppKit can commit the destination host bounds before SwiftUI
+        // finishes interpolating this path; scaling to those bounds pins one
+        // edge and stretches the other. Preserve point-space dimensions so
+        // the caller's core-alignment offset can grow both sides together.
         let transform = CGAffineTransform(
-            a: rect.width / layout.totalSize.width,
-            b: 0,
-            c: 0,
-            d: rect.height / layout.totalSize.height,
-            tx: rect.minX,
-            ty: rect.minY
+            translationX: rect.minX + (coreAnchorX ?? geometry.coreOriginX) - geometry.coreOriginX,
+            y: rect.minY
         )
         return path.applying(transform)
     }

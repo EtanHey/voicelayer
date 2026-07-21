@@ -170,7 +170,8 @@ public enum VoiceBarPresentation {
                 4 + material.compactControlSize
         case .error:
             return insets + Theme.intrinsicPillStatusWidth(for: input.statusText) +
-                3 + material.compactControlSize
+                3 + material.compactControlSize +
+                VoiceBarNotchContract.compactStatusTrailingSafetyInset
         case .idle:
             let queueWidth = input.queueDepth > 0
                 ? Theme.intrinsicPillStatusWidth(for: "\(input.queueDepth)") + 16

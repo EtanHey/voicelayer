@@ -125,4 +125,45 @@ public enum VoiceBarIsolatedCapturePlacement {
             height: panelSize.height
         )
     }
+
+    /// Keep every state inside one teleprompter-sized capture envelope while
+    /// allowing the real AppKit window to shrink to the visible state. The
+    /// top edge and hardware-core center stay invariant across the resize.
+    public static func frame(
+        layout: VoiceBarPanelLayout,
+        visibleFrame: CGRect
+    ) -> CGRect {
+        let referencePresentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: true,
+            isRecording: false,
+            hasCompactStatus: false,
+            isHovered: false,
+            isKeyboardFocused: false,
+            coreWidth: layout.presentation.geometry.coreWidth,
+            visibleCoreOcclusionInset: layout.presentation.visibleCoreOcclusionInset
+        )
+        let referenceCanvas = VoiceBarNotchMorphCanvasLayout.resolve(
+            for: referencePresentation
+        )
+        let referenceLayout = VoiceBarPanelLayout.make(
+            presentation: referencePresentation,
+            canvasGeometry: referenceCanvas.canvasGeometry
+        )
+        let referenceFrame = frame(
+            panelSize: referenceLayout.panelSize,
+            visibleFrame: visibleFrame
+        )
+        let referenceCoreMidX = referenceFrame.minX +
+            referenceLayout.visibleContentRect.minX +
+            referencePresentation.geometry.coreMidX
+        let localCoreMidX = layout.visibleContentRect.minX +
+            layout.presentation.geometry.coreMidX
+
+        return CGRect(
+            x: referenceCoreMidX - localCoreMidX,
+            y: referenceFrame.maxY - layout.panelSize.height,
+            width: layout.panelSize.width,
+            height: layout.panelSize.height
+        )
+    }
 }

@@ -111,8 +111,9 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let surface = try bracedScope(after: "private var notchSurface", in: source)
         let slots = try bracedScope(after: "private var notchSlots", in: source)
 
-        XCTAssertTrue(container.contains("presentation.visualState != .idle"))
+        XCTAssertFalse(container.contains("if presentation.visualState != .idle"))
         XCTAssertTrue(container.contains("morphingNotchSurface"))
+        XCTAssertTrue(container.contains("presentation.visualState == .idle ? 0 : 1"))
         XCTAssertTrue(surface.contains("VoiceBarNotchContinuousShape"))
         XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
@@ -141,10 +142,40 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 2)
         XCTAssertTrue(hero.contains("properties: .frame"))
         XCTAssertTrue(hero.contains("anchor: .top"))
+        XCTAssertFalse(hero.contains("anchor: .topLeading"))
         XCTAssertFalse(hero.contains(".id(presentation.visualState)"))
         XCTAssertTrue(source.contains("@State private var renderedGeometry"))
         XCTAssertTrue(source.contains("withAnimation(shellAnimation.delay("))
         XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
+    }
+
+    func testEveryVisibleTransitionRearmsOneCoreAnchoredRevealForBothWings() throws {
+        let source = try notchViewSource()
+        let surface = try bracedScope(after: "private var notchSurface", in: source)
+
+        XCTAssertTrue(source.contains("@State private var surfaceRevealProgress"))
+        XCTAssertTrue(source.contains(".task(id: presentation.visualState)"))
+        XCTAssertTrue(source.contains("surfaceRevealProgress = 0"))
+        XCTAssertTrue(source.contains("await Task.yield()"))
+        XCTAssertTrue(source.contains("surfaceRevealProgress = 1"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))
+        XCTAssertTrue(surface.contains(".mask"))
+    }
+
+    func testCoreAnchoredRevealPreservesIndependentContentFitExtents() {
+        let canvas = CGRect(x: 0, y: 0, width: 500, height: 228)
+        let core = CGRect(x: 120, y: 0, width: 185, height: 32)
+
+        let halfway = VoiceBarNotchCoreAnchoredRevealLayout.rect(
+            progress: 0.5,
+            in: canvas,
+            coreRect: core
+        )
+
+        XCTAssertEqual(core.minX - halfway.minX, 60)
+        XCTAssertEqual(halfway.maxX - core.maxX, 97.5)
+        XCTAssertNotEqual(core.minX - halfway.minX, halfway.maxX - core.maxX)
+        XCTAssertEqual(halfway.maxY, 130)
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {

@@ -122,7 +122,7 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
                 teleprompterGeometry.bodyTrailingExtent,
                 maximumRecordingWingWidth
             ),
-            lowerSurfaceHeight: teleprompterGeometry.lowerSurfaceHeight
+            lowerSurfaceHeight: presentation.geometry.lowerSurfaceHeight
         )
         return VoiceBarNotchMorphCanvasLayout(
             canvasGeometry: canvasGeometry,

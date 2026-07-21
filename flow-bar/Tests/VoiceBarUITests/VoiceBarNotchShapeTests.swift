@@ -85,6 +85,33 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         )
         XCTAssertEqual(shape.geometry.lowerSurfaceHeight, expanded.lowerSurfaceHeight / 2)
     }
+
+    func testIntermediateMorphGeometryStaysInPointSpaceInsideDestinationBounds() {
+        let collapsed = VoiceBarNotchContract.geometry(for: .idle)
+        let expanded = VoiceBarNotchContract.geometry(for: .teleprompter)
+        var midpoint = VoiceBarNotchGeometryAnimatableData(geometry: collapsed)
+        midpoint += VoiceBarNotchGeometryAnimatableData(geometry: expanded)
+        midpoint.scale(by: 0.5)
+        let geometry = midpoint.geometry
+        let path = VoiceBarNotchContinuousShape(
+            geometry: geometry,
+            coreAnchorX: expanded.coreOriginX
+        ).path(
+            in: CGRect(origin: .zero, size: CGSize(
+                width: expanded.totalWidth,
+                height: expanded.totalHeight
+            ))
+        )
+        let screenBounds = path.boundingRect
+
+        XCTAssertEqual(screenBounds.width, geometry.totalWidth, accuracy: 0.000_001)
+        XCTAssertEqual(screenBounds.height, geometry.totalHeight, accuracy: 0.000_001)
+        XCTAssertEqual(
+            expanded.coreOriginX - screenBounds.minX,
+            screenBounds.maxX - (expanded.coreOriginX + expanded.coreWidth),
+            accuracy: 0.000_001
+        )
+    }
 }
 
 private extension Path {

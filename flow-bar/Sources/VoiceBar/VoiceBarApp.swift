@@ -947,7 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
             PillResizePlan(
                 frame: VoiceBarIsolatedCapturePlacement.frame(
-                    panelSize: layout.panelSize,
+                    layout: layout,
                     visibleFrame: visibleFrame
                 ),
                 animate: false
@@ -982,10 +982,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let layout = currentPanelLayout()
         if notchPresentationModel.presentation.visualState != .idle,
            panel?.frame.size == layout.panelSize {
-            // Compact and teleprompter prototype states share one stable
-            // canvas. Forcing an immediate AppKit display pass here commits
-            // the destination before SwiftUI can interpolate the shared
-            // shell, recreating the hard cut this round exists to replace.
+            // When the window already matches the destination, forcing an
+            // immediate AppKit display pass commits the SwiftUI destination
+            // before the shared shell can interpolate, recreating a hard cut.
             return
         }
         panel?.contentView?.needsLayout = true
@@ -1451,9 +1450,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
         refreshNotchPresentationModel(for: targetScreen)
         if VoiceBarIsolatedCapturePlacement.isEnabled() {
+            let layout = currentPanelLayout()
             panel.setFrame(
                 VoiceBarIsolatedCapturePlacement.frame(
-                    panelSize: currentPanelLayout().panelSize,
+                    layout: layout,
                     visibleFrame: targetScreen.visibleFrame
                 ),
                 display: true

@@ -146,6 +146,55 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
+    func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {
+        let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1084)
+        let recordingPresentation = presentation(.recording)
+        let teleprompterPresentation = presentation(.teleprompter)
+        let recordingLayout = VoiceBarPanelLayout.make(
+            presentation: recordingPresentation,
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                for: recordingPresentation
+            ).canvasGeometry
+        )
+        let teleprompterLayout = VoiceBarPanelLayout.make(
+            presentation: teleprompterPresentation,
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                for: teleprompterPresentation
+            ).canvasGeometry
+        )
+        let recordingFrame = VoiceBarIsolatedCapturePlacement.frame(
+            layout: recordingLayout,
+            visibleFrame: visibleFrame
+        )
+        let teleprompterFrame = VoiceBarIsolatedCapturePlacement.frame(
+            layout: teleprompterLayout,
+            visibleFrame: visibleFrame
+        )
+        let recordingCoreMidX = recordingFrame.minX
+            + recordingLayout.visibleContentRect.minX
+            + recordingLayout.presentation.geometry.coreMidX
+        let teleprompterCoreMidX = teleprompterFrame.minX
+            + teleprompterLayout.visibleContentRect.minX
+            + teleprompterLayout.presentation.geometry.coreMidX
+
+        XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
+        XCTAssertEqual(recordingCoreMidX, teleprompterCoreMidX)
+        XCTAssertTrue(visibleFrame.contains(recordingFrame))
+        XCTAssertTrue(visibleFrame.contains(teleprompterFrame))
+        XCTAssertEqual(recordingFrame.height, 49)
+        XCTAssertEqual(teleprompterFrame.height, 245)
+        XCTAssertFalse(
+            recordingFrame.contains(
+                CGPoint(x: recordingCoreMidX, y: teleprompterFrame.minY + 24)
+            )
+        )
+        XCTAssertTrue(
+            teleprompterFrame.contains(
+                CGPoint(x: teleprompterCoreMidX, y: teleprompterFrame.minY + 24)
+            )
+        )
+    }
+
     func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
         let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
         let justPastTrailingWing = CGPoint(
