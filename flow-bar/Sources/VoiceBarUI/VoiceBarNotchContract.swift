@@ -435,10 +435,7 @@ public enum VoiceBarNotchContract {
         case .teleprompter:
             geometry(
                 coreWidth: coreWidth,
-                leadingWingWidth: teleprompterContentFitWingWidth(
-                    contentWidth: teleprompterLeadingContentWidth,
-                    visibleCoreOcclusionInset: visibleCoreOcclusionInset
-                ),
+                leadingWingWidth: 0,
                 trailingWingWidth: teleprompterWaveformWingWidth(
                     visibleCoreOcclusionInset: visibleCoreOcclusionInset
                 ),
