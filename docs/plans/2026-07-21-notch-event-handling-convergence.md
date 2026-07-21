@@ -113,7 +113,7 @@ Run both filtered suites; then review and commit only these files.
 
 Assert:
 
-- VAD leading content order is stop/cancel/hold; PTT is stop/cancel;
+- VAD leading content order is prominent destructive stop/cancel/hold; PTT is prominent destructive stop/cancel;
 - recording trailing content contains only the shared waveform;
 - the interaction centers match the rendered HStack order and 20/6-point metrics;
 - teleprompter leading content contains no `vocabularyButton`, dictionary role, or hidden placeholder;

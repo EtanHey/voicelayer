@@ -40,7 +40,7 @@ public struct VoiceBarNotchInteractionConfiguration: Equatable, Sendable {
             )
         case .recording:
             VoiceBarNotchInteractionConfiguration(
-                trailingControlCountFromOuter: 2
+                leadingControlCount: 2
             )
         case .compactStatus:
             .none

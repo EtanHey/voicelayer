@@ -6,7 +6,7 @@
 
 The product window currently uses `VoiceBarNotchHitRegion`, the full rendered glass path, as the predicate for SwiftUI hosting hits, hover expansion, panel drags/context menus, and `NSPanel.ignoresMouseEvents`. This solved transparent window-corner interception, but it still classifies every visible wing pixel and the whole teleprompter body as interactive. The result is a large invisible input surface around the glyphs and above the terminal.
 
-The recording actions also occupy the same right-side menu-bar band as macOS screen-recording and microphone indicators. Because both applications draw black chrome and square-stop affordances at the same coordinates, intent cannot be recovered after the controls overlap; the VoiceBar controls must move away from that OS band.
+The recording actions also occupy the same right-side menu-bar band as macOS screen-recording and microphone indicators. The refined click-visible QA frames confirm repeated clicks clustered on the macOS screen-recording STOP around x2140. In the affected recording presentation, VoiceBar's own stop was not prominent enough to read as the intended target beside the red waveform and cancel glyph. Because both applications draw black chrome in the same band, intent cannot be recovered after the controls overlap; VoiceBar needs its own prominent stop affordance away from the OS band.
 
 Waveforms already share the same renderer, but not the same placement contract. Recording adds internal padding, transcribing reserves a leading invisible control, and speaking uses the teleprompter fade inset. Those independent spacers produce different core-to-waveform gaps.
 
@@ -28,7 +28,7 @@ Waveforms already share the same renderer, but not the same placement contract. 
 
 The hosting view, panel context menu/drag gate, and `NSPanel.ignoresMouseEvents` use only `containsInteractiveContent`. Global pointer observation continues to drive hover without requiring the panel to capture the pointer. Retained-readback dismissal uses visible-surface/retention geometry, not the click predicate. The `.nonactivatingPanel` style and no-`makeKey` behavior remain unchanged.
 
-Recording keeps its red waveform immediately to the right of the fixed hardware core. Hold, cancel, and stop move into a leading-wing action group, away from macOS screen recording, the Control Center microphone indicator, and neighboring menu extras. PTT omits hold without leaving a hittable placeholder. The existing continuous material, fixed black core, and morph sequencing remain intact.
+Recording keeps its red waveform immediately to the right of the fixed hardware core. A prominent red VoiceBar stop, cancel, and optional hold move into a leading-wing action group, away from macOS screen recording, the Control Center microphone indicator, and neighboring menu extras. The stop remains the existing destructive red-circle/white-square treatment but is now spatially unmistakable as part of VoiceBar's screen-left action group. PTT omits hold without leaving a hittable placeholder. The existing continuous material, fixed black core, and morph sequencing remain intact.
 
 The rendered layout and hit rectangles use the same formulas (`controlSize = 20`, compact control spacing `= 6`, leading core inset `= 13.5`, leading outer inset `= 14`, shared waveform core gap `= 24`, waveform viewport `= 46`, waveform outer inset `= 8`):
 

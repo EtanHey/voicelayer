@@ -36,12 +36,6 @@ public struct VoiceBarPanelLayout: Equatable {
     private let visibleRegion: VoiceBarNotchVisibleRegion
     private let localHoverCoreRect: CGRect
 
-    /// Compatibility while AppKit call sites migrate to the explicit
-    /// interaction predicate.
-    public var activeHitRect: CGRect {
-        interactiveHitRect
-    }
-
     public static func make(
         presentation: VoiceBarNotchPresentation,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
@@ -137,12 +131,6 @@ public struct VoiceBarPanelLayout: Equatable {
                 y: point.y - visibleContentRect.minY
             )
         )
-    }
-
-    /// Compatibility while AppKit call sites migrate to the explicit
-    /// interaction predicate.
-    public func containsActiveContent(_ point: CGPoint) -> Bool {
-        containsInteractiveContent(point)
     }
 
     public func containsHoverRetention(_ point: CGPoint) -> Bool {

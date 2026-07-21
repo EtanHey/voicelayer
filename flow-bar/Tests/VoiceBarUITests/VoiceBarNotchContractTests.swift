@@ -32,8 +32,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 47.5,
-                trailingWingWidth: 141.5,
+                leadingWingWidth: 73.5,
+                trailingWingWidth: 78,
                 bodyLeadingExtent: 0,
                 bodyTrailingExtent: 0,
                 lowerSurfaceHeight: 0
@@ -45,7 +45,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 coreWidth: 185,
                 topHeight: 32,
                 leadingWingWidth: 82,
-                trailingWingWidth: 94,
+                trailingWingWidth: 78,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
                 lowerSurfaceHeight: 196
@@ -64,9 +64,9 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(idle.totalHeight, 32)
         XCTAssertEqual(hover.topWidth, 306)
         XCTAssertEqual(hover.totalWidth, 306)
-        XCTAssertEqual(recording.topWidth, 374)
-        XCTAssertEqual(recording.totalWidth, 374)
-        XCTAssertEqual(teleprompter.topWidth, 361)
+        XCTAssertEqual(recording.topWidth, 336.5)
+        XCTAssertEqual(recording.totalWidth, 336.5)
+        XCTAssertEqual(teleprompter.topWidth, 345)
         XCTAssertEqual(teleprompter.bodyWidth, 465)
         XCTAssertEqual(teleprompter.totalWidth, 465)
         XCTAssertEqual(teleprompter.totalHeight, 228)
@@ -78,8 +78,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         let status = VoiceBarNotchContract.geometry(for: .compactStatus)
 
         XCTAssertEqual(hover.leadingWingWidth, 47.5)
-        XCTAssertEqual(recording.leadingWingWidth, 47.5)
-        XCTAssertEqual(recording.trailingWingWidth, 141.5)
+        XCTAssertEqual(recording.leadingWingWidth, 73.5)
+        XCTAssertEqual(recording.trailingWingWidth, 78)
         XCTAssertEqual(status.leadingWingWidth, 47.5)
         XCTAssertEqual(
             VoiceBarNotchContract.material.compactOuterCornerRadius(for: .hoverLauncher),
@@ -126,13 +126,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
         XCTAssertNotEqual(teleprompter.leadingWingWidth, teleprompter.trailingWingWidth)
 
-        XCTAssertEqual(
-            recording.leadingWingWidth,
-            VoiceBarNotchContract.compactContentFitWingWidth(
-                contentWidth: material.compactControlSize
-            )
-        )
-        XCTAssertEqual(recording.trailingWingWidth, VoiceBarNotchContract.recordingWingWidth)
+        XCTAssertEqual(recording.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidth)
+        XCTAssertEqual(recording.trailingWingWidth, VoiceBarNotchContract.waveformWingWidth)
         XCTAssertNotEqual(recording.leadingWingWidth, recording.trailingWingWidth)
     }
 
@@ -142,13 +137,13 @@ final class VoiceBarNotchContractTests: XCTestCase {
             isRecording: false,
             hasCompactStatus: true,
             compactStatusLeadingWingWidth: 61,
-            compactStatusTrailingWingWidth: 137,
+            compactStatusTrailingWingWidth: 127,
             isHovered: false,
             isKeyboardFocused: false
         )
 
         XCTAssertEqual(presentation.geometry.leadingWingWidth, 61)
-        XCTAssertEqual(presentation.geometry.trailingWingWidth, 137)
+        XCTAssertEqual(presentation.geometry.trailingWingWidth, 127)
         XCTAssertNotEqual(
             presentation.geometry.leadingWingWidth,
             presentation.geometry.trailingWingWidth
@@ -187,11 +182,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
     func testCompactStatesShareOneCoreGutterAndCoreFacingSlotGeometry() {
         let material = VoiceBarNotchContract.material
 
-        for state in [
-            VoiceBarNotchVisualState.hoverLauncher,
-            .recording,
-            .compactStatus,
-        ] {
+        for state in [VoiceBarNotchVisualState.hoverLauncher] {
             let leading = material.wingContentLayout(for: .leading, state: state)
             let trailing = material.wingContentLayout(for: .trailing, state: state)
 
@@ -201,6 +192,16 @@ final class VoiceBarNotchContractTests: XCTestCase {
             XCTAssertEqual(trailing.outerInset, 14)
             XCTAssertEqual(leading.alignment, .center)
             XCTAssertEqual(trailing.alignment, .center)
+        }
+
+        for state in [VoiceBarNotchVisualState.recording, .compactStatus] {
+            let leading = material.wingContentLayout(for: .leading, state: state)
+            let trailing = material.wingContentLayout(for: .trailing, state: state)
+
+            XCTAssertEqual(leading.coreInset, 13.5)
+            XCTAssertEqual(leading.outerInset, 14)
+            XCTAssertEqual(trailing.coreInset, 24)
+            XCTAssertEqual(trailing.outerInset, 8)
         }
 
         let teleprompter = material.wingContentLayout(
@@ -219,8 +220,8 @@ final class VoiceBarNotchContractTests: XCTestCase {
             visibleCoreOcclusionInset: 8.5
         )
 
-        XCTAssertEqual(layout.coreInset, 13.5)
-        XCTAssertEqual(layout.outerInset, 14)
+        XCTAssertEqual(layout.coreInset, 24)
+        XCTAssertEqual(layout.outerInset, 8)
         XCTAssertEqual(layout.alignment, .center)
     }
 
@@ -356,7 +357,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
     }
 
-    func testManagementRolesKeepDictionaryFunctionalInTeleprompter() {
+    func testDictionaryRoleExistsOnlyInTheHoverLauncher() {
         let states: [VoiceBarNotchVisualState] = [
             .idle, .recording, .compactStatus, .teleprompter,
         ]
@@ -370,11 +371,16 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 isKeyboardFocused: false
             )
             XCTAssertFalse(presentation.contentRoles.contains(.history), "\(visualState)")
-            XCTAssertEqual(
-                presentation.contentRoles.contains(.dictionary),
-                visualState == .teleprompter,
-                "\(visualState)"
-            )
+            XCTAssertFalse(presentation.contentRoles.contains(.dictionary), "\(visualState)")
         }
+
+        let launcher = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            isHovered: true,
+            isKeyboardFocused: false
+        )
+        XCTAssertTrue(launcher.contentRoles.contains(.dictionary))
     }
 }

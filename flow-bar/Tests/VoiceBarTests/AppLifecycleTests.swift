@@ -132,18 +132,21 @@ final class AppLifecycleTests: XCTestCase {
         state.recordingMode = "ptt"
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 2)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 2)
         )
         state.recordingMode = "vad"
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
-            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 3)
+            VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
         )
 
         state.mode = .transcribing
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
-            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 1)
+            VoiceBarNotchInteractionConfiguration(
+                trailingControlCountFromOuter: 1,
+                trailingOuterInset: WaveformLayout.outerInset
+            )
         )
 
         state.mode = .speaking
@@ -151,7 +154,6 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(
             AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
             VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
                 lowerControlCount: 3
             )
         )

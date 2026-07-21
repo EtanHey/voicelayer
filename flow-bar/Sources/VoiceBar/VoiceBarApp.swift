@@ -1211,20 +1211,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
         case .recording:
             return VoiceBarNotchInteractionConfiguration(
-                trailingControlCountFromOuter: state.recordingMode == "vad" ? 3 : 2
+                leadingControlCount: state.recordingMode == "vad" ? 3 : 2
             )
         case .compactStatus:
             switch state.mode {
             case .transcribing:
-                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 1)
+                return VoiceBarNotchInteractionConfiguration(
+                    trailingControlCountFromOuter: 1,
+                    trailingOuterInset: WaveformLayout.outerInset
+                )
             case .speaking:
                 return VoiceBarNotchInteractionConfiguration(
-                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1
+                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1,
+                    trailingOuterInset: WaveformLayout.outerInset
                 )
             case .error:
                 return VoiceBarNotchInteractionConfiguration(
                     leadingControlCount: 1,
-                    trailingControlCountFromOuter: 1
+                    trailingControlCountFromOuter: 1,
+                    trailingOuterInset: WaveformLayout.outerInset
                 )
             case .idle:
                 return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
@@ -1243,7 +1248,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 lowerControlCount += 1
             }
             return VoiceBarNotchInteractionConfiguration(
-                leadingControlCount: 1,
                 lowerControlCount: lowerControlCount
             )
         }
@@ -1285,6 +1289,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 : nil,
             compactStatusTrailingWingWidth: resolved.visualState == .compactStatus
                 ? resolved.geometry.trailingWingWidth
+                : nil,
+            recordingLeadingWingWidth: resolved.visualState == .recording
+                ? resolved.geometry.leadingWingWidth
                 : nil,
             recordingTrailingWingWidth: resolved.visualState == .recording
                 ? resolved.geometry.trailingWingWidth
