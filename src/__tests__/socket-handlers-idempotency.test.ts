@@ -330,6 +330,26 @@ describe("socket handler idempotency matrix", () => {
     expect(broadcastSpy).not.toHaveBeenCalled();
   });
 
+  it("rejects active replay when an unrelated preparation cannot be restarted", () => {
+    queueDepthSpy.mockReturnValue(1);
+    restartPlaybackSpy.mockReturnValue(false);
+
+    const response = handleSocketCommand({
+      cmd: "replay",
+      id: "replay-unowned-preparation",
+    });
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "replay",
+      outcome: "reject",
+      id: "replay-unowned-preparation",
+      reason: "busy",
+    });
+    expect(restartPlaybackSpy).toHaveBeenCalledTimes(1);
+    expect(playAudioSpy).not.toHaveBeenCalled();
+  });
+
   it("starts finished replay without a pre-start idle flicker", () => {
     const response = handleSocketCommand({ cmd: "replay", id: "replay-finished" });
 

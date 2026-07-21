@@ -101,8 +101,11 @@ export function handleSocketCommand(
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");
       }
-      if (isSpeaking && restartPlayback()) {
-        return buildAck(command, "accept");
+      if (isSpeaking) {
+        if (restartPlayback()) {
+          return buildAck(command, "accept");
+        }
+        return buildAck(command, "reject", "busy");
       }
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {

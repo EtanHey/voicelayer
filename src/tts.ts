@@ -1150,9 +1150,17 @@ class PlaybackQueueManager {
       completeJob(active.job, outcome);
     }
     if (restarting) {
+      const terminatingActive = Array.from(this.terminating.values()).find(
+        (candidate) => candidate.job === restarting,
+      );
       completeJob(
         restarting,
-        buildPlaybackOutcome(restarting, "interrupted", "barge-in"),
+        buildPlaybackOutcome(
+          restarting,
+          "interrupted",
+          "barge-in",
+          terminatingActive ? Date.now() - terminatingActive.startedAt : 0,
+        ),
       );
     }
 

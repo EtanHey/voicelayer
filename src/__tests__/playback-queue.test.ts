@@ -702,6 +702,57 @@ describe("playback queue — P0-1 sequential playback", () => {
     await critical.exited;
   });
 
+  it("preserves elapsed telemetry when a critical barge-in interrupts restart termination", async () => {
+    const { playAudioNonBlocking, restartPlayback } = await import("../tts");
+    let now = 10_000;
+    const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
+
+    try {
+      const playback = playAudioNonBlocking(
+        "/tmp/pq-barge-restarting.mp3",
+        {
+          text: "one two three",
+          voice: "TestVoice",
+          durationMs: 1_000,
+          wordBoundaries: [
+            { offset_ms: 0, duration_ms: 200, text: "one" },
+            { offset_ms: 400, duration_ms: 200, text: "two" },
+            { offset_ms: 800, duration_ms: 200, text: "three" },
+          ],
+        } as any,
+      );
+      await waitFor(() => playerMocks.length === 1, "restarting barge player");
+
+      now = 10_300;
+      expect(restartPlayback()).toBe(true);
+      now = 10_550;
+      const critical = playAudioNonBlocking("/tmp/pq-barge-after-replay.mp3", {
+        text: "Critical",
+        voice: "TestVoice",
+        priority: "critical",
+      });
+
+      expect(await playback.exited).toEqual({
+        type: "playback_outcome",
+        playback_id: playback.id,
+        status: "interrupted",
+        reason: "barge-in",
+        stopped_at_ms: 550,
+        duration_ms: 1_000,
+        progress: 0.55,
+        word_index: 1,
+        word_count: 3,
+      });
+
+      playerMocks[0].resolveExit();
+      await waitFor(() => playerMocks.length === 2, "post-replay critical player");
+      playerMocks[1].resolveExit();
+      await critical.exited;
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("reports the exact stopped-at position when the user interrupts playback", async () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
     let now = 10_000;
