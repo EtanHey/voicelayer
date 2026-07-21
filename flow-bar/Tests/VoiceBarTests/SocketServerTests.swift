@@ -249,6 +249,7 @@ final class SocketServerTests: XCTestCase {
         let ownerStops = try readLines(from: fixture.commandClient, count: 3, timeout: 0.2)
         XCTAssertEqual(legacyStops.count, 2)
         XCTAssertEqual(ownerStops.count, 2)
+        XCTAssertTrue(legacyStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
         XCTAssertTrue(ownerStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
 
         let firstPayload = try XCTUnwrap(
