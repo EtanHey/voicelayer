@@ -188,9 +188,7 @@ public enum VoiceBarPresentation {
         showsRecordingHold: Bool
     ) -> CGFloat? {
         guard mode == .recording, showsRecordingHold else { return nil }
-        return VoiceBarNotchContract.geometry(for: .recording).trailingWingWidth +
-            VoiceBarNotchContract.material.compactControlSpacing +
-            VoiceBarNotchContract.material.compactControlSize
+        return VoiceBarNotchContract.recordingWingWidthWithHoldControl
     }
 
     public static func hotkeyPermissionHint(

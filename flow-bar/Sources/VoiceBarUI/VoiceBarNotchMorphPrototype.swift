@@ -97,10 +97,32 @@ public struct VoiceBarNotchMorphCanvasLayout: Equatable, Sendable {
                 contentOffsetX: 0
             )
         }
-        let canvasGeometry = VoiceBarNotchContract.geometry(
+        let teleprompterGeometry = VoiceBarNotchContract.geometry(
             for: .teleprompter,
             coreWidth: presentation.geometry.coreWidth,
             visibleCoreOcclusionInset: presentation.visibleCoreOcclusionInset
+        )
+        let maximumRecordingWingWidth = VoiceBarNotchContract.recordingWingWidthWithHoldControl
+        let canvasGeometry = VoiceBarNotchGeometry(
+            coreWidth: teleprompterGeometry.coreWidth,
+            topHeight: teleprompterGeometry.topHeight,
+            leadingWingWidth: max(
+                teleprompterGeometry.leadingWingWidth,
+                maximumRecordingWingWidth
+            ),
+            trailingWingWidth: max(
+                teleprompterGeometry.trailingWingWidth,
+                maximumRecordingWingWidth
+            ),
+            bodyLeadingExtent: max(
+                teleprompterGeometry.bodyLeadingExtent,
+                maximumRecordingWingWidth
+            ),
+            bodyTrailingExtent: max(
+                teleprompterGeometry.bodyTrailingExtent,
+                maximumRecordingWingWidth
+            ),
+            lowerSurfaceHeight: teleprompterGeometry.lowerSurfaceHeight
         )
         return VoiceBarNotchMorphCanvasLayout(
             canvasGeometry: canvasGeometry,
