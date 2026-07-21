@@ -465,10 +465,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let hosting = PillHostingView(rootView: barView)
         hosting.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
         }
         hosting.hoverExpansionHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsHoverExpansion(point) ?? false
         }
         hosting.hoverRetentionHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsHoverRetention(point) ?? false
@@ -512,7 +512,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.pillContextMenuController.makeMenu() ?? NSMenu()
         }
         pill.activeHitTestProvider = { [weak self] point in
-            self?.currentPanelLayout().containsActiveContent(point) ?? false
+            self?.currentPanelLayout().containsInteractiveContent(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         pill.alphaValue = 0
@@ -956,7 +956,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             screenPoint: NSEvent.mouseLocation,
             panelFrame: panel.frame,
             convertFromScreen: { panel.convertPoint(fromScreen: $0) },
-            containsLocalPoint: { layout.containsActiveContent($0) }
+            containsLocalPoint: { layout.containsVisibleSurface($0) }
         )
     }
 
@@ -1189,8 +1189,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(
             presentation: presentation,
+            interactionConfiguration: Self.notchInteractionConfiguration(
+                for: voiceState,
+                visualState: presentation.visualState
+            ),
             canvasGeometry: canvas.canvasGeometry
         )
+    }
+
+    static func notchInteractionConfiguration(
+        for state: VoiceState,
+        visualState: VoiceBarNotchVisualState
+    ) -> VoiceBarNotchInteractionConfiguration {
+        switch visualState {
+        case .idle:
+            return .none
+        case .hoverLauncher:
+            return VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        case .recording:
+            return VoiceBarNotchInteractionConfiguration(
+                trailingControlCountFromOuter: state.recordingMode == "vad" ? 3 : 2
+            )
+        case .compactStatus:
+            switch state.mode {
+            case .transcribing:
+                return VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 1)
+            case .speaking:
+                return VoiceBarNotchInteractionConfiguration(
+                    trailingControlCountFromOuter: state.isTeleprompterDismissed ? 2 : 1
+                )
+            case .error:
+                return VoiceBarNotchInteractionConfiguration(
+                    leadingControlCount: 1,
+                    trailingControlCountFromOuter: 1
+                )
+            case .idle:
+                return VoiceBarNotchInteractionConfiguration(leadingControlCount: 1)
+            case .disconnected, .recording:
+                return .none
+            }
+        case .teleprompter:
+            var lowerControlCount = 1
+            if state.canReplay {
+                lowerControlCount += 1
+            }
+            if state.mode == .speaking {
+                lowerControlCount += 1
+            }
+            if state.isTeleprompterReadback {
+                lowerControlCount += 1
+            }
+            return VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                lowerControlCount: lowerControlCount
+            )
+        }
     }
 
     private func refreshNotchPresentationAndPanelLayout(animated: Bool) {
@@ -1492,7 +1548,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pointer: NSPoint,
         isIsolatedCapture: Bool
     ) {
-        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsActiveContent(pointer)
+        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsInteractiveContent(pointer)
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {

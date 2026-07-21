@@ -9,13 +9,17 @@ final class AppLifecycleTests: XCTestCase {
     }
 
     @MainActor
-    func testPanelMousePassthroughLeavesCanvasMarginsAndReentersRenderedContent() {
+    func testPanelMousePassthroughCapturesControlsButNotGlassOrCanvasMargins() {
         let presentation = VoiceBarPresentation.notchPresentation(
-            from: VoiceBarNotchOperationalInput(mode: .recording)
+            from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
         )
         let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation,
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            ),
             canvasGeometry: canvas.canvasGeometry
         )
         let panel = NSPanel(
@@ -37,7 +41,7 @@ final class AppLifecycleTests: XCTestCase {
             panel,
             layout: layout,
             pointer: CGPoint(
-                x: layout.visibleContentRect.minX + 10,
+                x: layout.visibleContentRect.minX + 24,
                 y: layout.visibleContentRect.minY + 16
             ),
             isIsolatedCapture: false
@@ -47,10 +51,140 @@ final class AppLifecycleTests: XCTestCase {
         AppDelegate.applyPanelMouseEventPassthrough(
             panel,
             layout: layout,
+            pointer: CGPoint(
+                x: layout.visibleContentRect.minX + presentation.geometry.coreMidX,
+                y: layout.visibleContentRect.minY + 16
+            ),
+            isIsolatedCapture: false
+        )
+        XCTAssertTrue(panel.ignoresMouseEvents)
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
             pointer: CGPoint(x: 1, y: 1),
             isIsolatedCapture: true
         )
         XCTAssertFalse(panel.ignoresMouseEvents)
+    }
+
+    @MainActor
+    func testPanelMousePassthroughDropsAStationaryPointersStaleControlImmediately() {
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+        )
+        let controlLayout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
+        let idleLayout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let pointer = CGPoint(
+            x: controlLayout.visibleContentRect.minX + 282,
+            y: controlLayout.visibleContentRect.minY + 16
+        )
+        let panel = NSPanel(
+            contentRect: CGRect(origin: .zero, size: controlLayout.panelSize),
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: controlLayout,
+            pointer: pointer,
+            isIsolatedCapture: false
+        )
+        XCTAssertFalse(panel.ignoresMouseEvents)
+
+        AppDelegate.applyPanelMouseEventPassthrough(
+            panel,
+            layout: idleLayout,
+            pointer: pointer,
+            isIsolatedCapture: false
+        )
+        XCTAssertTrue(panel.ignoresMouseEvents)
+    }
+
+    func testInteractionConfigurationTracksMountedOperationalControls() {
+        let state = VoiceState()
+
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .idle),
+            .none
+        )
+
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .hoverLauncher),
+            VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
+
+        state.mode = .recording
+        state.recordingMode = "ptt"
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
+            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 2)
+        )
+        state.recordingMode = "vad"
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .recording),
+            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 3)
+        )
+
+        state.mode = .transcribing
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .compactStatus),
+            VoiceBarNotchInteractionConfiguration(trailingControlCountFromOuter: 1)
+        )
+
+        state.mode = .speaking
+        state.canReplay = true
+        XCTAssertEqual(
+            AppDelegate.notchInteractionConfiguration(for: state, visualState: .teleprompter),
+            VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                lowerControlCount: 3
+            )
+        )
+    }
+
+    @MainActor
+    func testPanelContextMenuAndDragUseTheExactInteractionPredicate() {
+        let layout = VoiceBarPanelLayout.make(
+            presentation: VoiceBarPresentation.notchPresentation(
+                from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
+            ),
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
+        let panel = FloatingPillPanel(content: NSView(frame: CGRect(origin: .zero, size: layout.panelSize)))
+        panel.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        let mic = CGPoint(
+            x: layout.visibleContentRect.minX + 24,
+            y: layout.visibleContentRect.minY + 16
+        )
+        let glass = CGPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
+            y: layout.visibleContentRect.minY + 16
+        )
+
+        XCTAssertTrue(panel.startsDrag(at: mic))
+        XCTAssertTrue(panel.shouldHandleContextMenu(at: mic))
+        XCTAssertFalse(panel.startsDrag(at: glass))
+        XCTAssertFalse(panel.shouldHandleContextMenu(at: glass))
+        XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
+        XCTAssertFalse(panel.canBecomeMain)
     }
 
     func testGlobalPointerProcessingRepositionsBeforeEvaluatingLocalHitState() throws {
@@ -760,14 +894,24 @@ final class AppLifecycleTests: XCTestCase {
         let panelSource = try voiceBarUISource(named: "FloatingPanel.swift")
 
         XCTAssertTrue(appSource.contains("hosting.hoverExpansionHitTestProvider"))
-        XCTAssertTrue(appSource.contains("containsActiveContent(point)"))
+        XCTAssertTrue(appSource.contains("containsHoverExpansion(point)"))
         XCTAssertTrue(appSource.contains("hosting.hoverRetentionHitTestProvider"))
         XCTAssertTrue(appSource.contains("containsHoverRetention(point)"))
+        XCTAssertTrue(appSource.contains("containsInteractiveContent(point)"))
+        XCTAssertTrue(appSource.contains("containsVisibleSurface($0)"))
+        XCTAssertFalse(appSource.contains("containsActiveContent("))
         XCTAssertTrue(appSource.contains("hosting.onHoverChanged"))
         XCTAssertTrue(appSource.contains("voiceState.setHoveringFromDebouncedPointer(hovering)"))
         XCTAssertTrue(barSource.contains("guard !includesPanelOutsets else { return }"))
         XCTAssertTrue(panelSource.contains("VoiceBarHoverHysteresis"))
         XCTAssertTrue(panelSource.contains("acceptsMouseMovedEvents = true"))
+        XCTAssertTrue(panelSource.contains(".nonactivatingPanel"))
+        XCTAssertFalse(
+            panelSource.split(separator: "\n").contains { line in
+                let code = line.trimmingCharacters(in: .whitespaces)
+                return !code.hasPrefix("//") && code.contains("makeKey(")
+            }
+        )
     }
 
     func testFlatDisplayIdleKeepsAVisibleFallbackInsteadOfAnInvisibleClickTarget() throws {
