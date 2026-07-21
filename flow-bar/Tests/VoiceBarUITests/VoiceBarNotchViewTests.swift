@@ -149,13 +149,15 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
     }
 
-    func testEveryVisibleTransitionRearmsOneCoreAnchoredRevealForBothWings() throws {
+    func testOnlyIdleToVisibleTransitionRearmsOneCoreAnchoredRevealForBothWings() throws {
         let source = try notchViewSource()
         let surface = try bracedScope(after: "private var notchSurface", in: source)
+        let revealTask = try bracedScope(after: ".task(id: presentation.visualState)", in: source)
 
         XCTAssertTrue(source.contains("@State private var surfaceRevealProgress"))
         XCTAssertTrue(source.contains(".task(id: presentation.visualState)"))
-        XCTAssertTrue(source.contains("surfaceRevealProgress = 0"))
+        XCTAssertTrue(revealTask.contains("guard surfaceRevealProgress == 0 else { return }"))
+        XCTAssertEqual(revealTask.components(separatedBy: "surfaceRevealProgress = 0").count - 1, 1)
         XCTAssertTrue(source.contains("await Task.yield()"))
         XCTAssertTrue(source.contains("surfaceRevealProgress = 1"))
         XCTAssertTrue(surface.contains("VoiceBarNotchCoreAnchoredRevealMask"))

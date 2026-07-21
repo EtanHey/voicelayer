@@ -231,7 +231,10 @@ public struct VoiceBarNotchPresentation: Equatable {
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
                 leadingWingWidth: compactStatusLeadingWingWidth ?? baseGeometry.leadingWingWidth,
-                trailingWingWidth: compactStatusTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                trailingWingWidth: min(
+                    compactStatusTrailingWingWidth ?? baseGeometry.trailingWingWidth,
+                    VoiceBarNotchContract.morphCanvasWingCapacity
+                ),
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
                 lowerSurfaceHeight: baseGeometry.lowerSurfaceHeight
@@ -240,7 +243,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             VoiceBarNotchGeometry(
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
-                leadingWingWidth: recordingTrailingWingWidth,
+                leadingWingWidth: baseGeometry.leadingWingWidth,
                 trailingWingWidth: recordingTrailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
@@ -326,6 +329,13 @@ public enum VoiceBarNotchContract {
         material.compactControlSpacing +
         material.compactControlSize
 
+    /// The fixed morph canvas reserves this much space on either side of the
+    /// hardware core. Dynamic content must lay itself out inside this bound so
+    /// SwiftUI truncates it before the canvas edge clips it.
+    public static var morphCanvasWingCapacity: CGFloat {
+        recordingWingWidthWithHoldControl
+    }
+
     public static let topHeight: CGFloat = 32
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
@@ -403,7 +413,7 @@ public enum VoiceBarNotchContract {
         case .recording:
             geometry(
                 coreWidth: coreWidth,
-                leadingWingWidth: recordingWingWidth,
+                leadingWingWidth: compactIndicatorLaneWidth,
                 trailingWingWidth: recordingWingWidth
             )
         case .compactStatus:

@@ -68,6 +68,7 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var hoverExpansionHitTestProvider: ((NSPoint) -> Bool)?
     public var hoverRetentionHitTestProvider: ((NSPoint) -> Bool)?
     public var onHoverChanged: ((Bool) -> Void)?
+    public var onPointerMoved: ((NSPoint) -> Void)?
 
     private var hoverHysteresis = VoiceBarHoverHysteresis()
     private var hoverExitTask: Task<Void, Never>?
@@ -100,11 +101,16 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override public func mouseEntered(with event: NSEvent) {
-        updateHover(at: convert(event.locationInWindow, from: nil))
+        handlePointerMovement(at: convert(event.locationInWindow, from: nil))
     }
 
     override public func mouseMoved(with event: NSEvent) {
-        updateHover(at: convert(event.locationInWindow, from: nil))
+        handlePointerMovement(at: convert(event.locationInWindow, from: nil))
+    }
+
+    public func handlePointerMovement(at point: NSPoint) {
+        onPointerMoved?(point)
+        updateHover(at: point)
     }
 
     override public func mouseExited(with _: NSEvent) {

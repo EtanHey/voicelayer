@@ -395,6 +395,77 @@ final class VoiceBarCommandRouterTests: XCTestCase {
         XCTAssertEqual(commands.first?["cmd"] as? String, "cancel")
     }
 
+    func testEveryStopEntryPointRunsGestureResetBeforeStopIntent() throws {
+        let stopRoutes: [(String, VoiceMode, (VoiceBarCommandRouter) throws -> Void)] = [
+            ("stop", .recording, { $0.handleStop() }),
+            ("escape", .speaking, { $0.handleEscape() }),
+            ("single-tap", .recording, { $0.handleHotkeySingleTap() }),
+            ("toggle", .recording, {
+                try $0.handle(url: XCTUnwrap(URL(string: "voicebar://toggle")))
+            }),
+        ]
+
+        for (name, mode, invoke) in stopRoutes {
+            let state = VoiceState()
+            state.mode = mode
+            var resetCount = 0
+            var commands: [[String: Any]] = []
+            var events: [String] = []
+            let router = VoiceBarCommandRouter(voiceState: state, resetHotkeyState: {
+                resetCount += 1
+                events.append("reset")
+            })
+            state.sendCommand = { command in
+                commands.append(command)
+                events.append(command["cmd"] as? String ?? "unknown")
+            }
+
+            try invoke(router)
+
+            XCTAssertEqual(resetCount, 1, "route=\(name)")
+            XCTAssertEqual(commands.count, 1, "route=\(name)")
+            XCTAssertEqual(commands.first?["cmd"] as? String, "stop", "route=\(name)")
+            XCTAssertEqual(events, ["reset", "stop"], "route=\(name)")
+        }
+    }
+
+    func testMouseLockedStopThenPlainF5TapSettlesOnePreviewSequence() {
+        let gesture = GestureStateMachine()
+        gesture.handleMouseButtonDown()
+        gesture.handleMouseButtonUp()
+        XCTAssertEqual(gesture.state, .locked)
+
+        let state = VoiceState()
+        state.mode = .recording
+        state.sendCommand = { _ in }
+        let router = VoiceBarCommandRouter(
+            voiceState: state,
+            resetHotkeyState: { gesture.reset() }
+        )
+        router.handleStop()
+        XCTAssertEqual(gesture.state, .idle)
+
+        var phases: [HotkeyPhase] = []
+        var singleTapCount = 0
+        var holdStartCount = 0
+        gesture.onPreviewPhaseChange = { phases.append($0) }
+        gesture.onSingleTap = { singleTapCount += 1 }
+        gesture.onHoldStart = { holdStartCount += 1 }
+
+        gesture.handleKeyDown()
+        gesture.handleKeyUp()
+        RunLoop.main.run(
+            until: Date().addingTimeInterval(
+                Double(GestureStateMachine.doubleTapWindowMs + 100) / 1000
+            )
+        )
+
+        XCTAssertEqual(gesture.state, .idle)
+        XCTAssertEqual(phases, [.pressing, .awaitingSecondTap, .idle])
+        XCTAssertEqual(singleTapCount, 1)
+        XCTAssertEqual(holdStartCount, 0)
+    }
+
     func testIgnoresUnknownOrNonVoiceBarUrls() throws {
         let state = VoiceState()
         let router = VoiceBarCommandRouter(voiceState: state)
