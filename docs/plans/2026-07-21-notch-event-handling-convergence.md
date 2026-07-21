@@ -216,7 +216,7 @@ swift test --package-path flow-bar
 bun test
 bun run typecheck
 bash flow-bar/build-app.sh --install-path "$isolated_root/VoiceBar.app" --no-stop --no-relaunch
-bash scripts/verify-notch-event-handling.sh --app "$isolated_root/VoiceBar.app"
+bash scripts/verify-notch-event-handling.sh "$isolated_root/VoiceBar.app"
 bash scripts/verify-notch-glass-readability.sh "$isolated_root/VoiceBar.app"
 bash scripts/verify-notch-teleprompter-dismissal.sh "$isolated_root/VoiceBar.app"
 ```
