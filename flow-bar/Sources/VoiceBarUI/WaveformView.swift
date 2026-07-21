@@ -8,6 +8,83 @@ public enum WaveformLayout {
     public static let barSpacing: CGFloat = 3
     public static let viewportWidth: CGFloat = 46
     public static let viewportHeight: CGFloat = 24
+    public static let recordingHorizontalPadding: CGFloat = 8
+    public static let recordingSlotWidth = viewportWidth + 2 * recordingHorizontalPadding
+}
+
+public struct WaveformEnvelopeFollower {
+    public private(set) var level = 0.0
+    private var lastSampleTime: Double?
+    private var releaseStartTime: Double?
+    private var releaseStartLevel = 0.0
+
+    public init() {}
+
+    @discardableResult
+    public mutating func sample(rawLevel: Double?, at time: Double) -> Double {
+        let target = if let rawLevel, rawLevel.isFinite {
+            min(1, max(0, rawLevel))
+        } else {
+            0.0
+        }
+        guard time.isFinite else { return level }
+        guard let lastSampleTime else {
+            lastSampleTime = time
+            level = target
+            return level
+        }
+
+        let previousSampleTime = lastSampleTime
+        let elapsed = max(0, time - previousSampleTime)
+        self.lastSampleTime = time
+        guard elapsed > 0 else { return level }
+
+        if target == 0 {
+            guard level > 0 else {
+                releaseStartTime = nil
+                releaseStartLevel = 0
+                return 0
+            }
+            if releaseStartTime == nil {
+                releaseStartTime = previousSampleTime
+                releaseStartLevel = level
+            }
+            let releaseElapsed = max(0, time - (releaseStartTime ?? previousSampleTime))
+            let releaseProgress = min(
+                1,
+                releaseElapsed / WaveformMetrics.envelopeReleaseDuration
+            )
+            level = releaseStartLevel * (1 - releaseProgress)
+            if releaseProgress >= 1 {
+                releaseStartTime = nil
+                releaseStartLevel = 0
+            }
+            return level
+        }
+
+        releaseStartTime = nil
+        releaseStartLevel = 0
+
+        let duration = WaveformMetrics.envelopeTransitionDuration(
+            from: level,
+            to: target
+        )
+        let progress = 1 - exp(-3 * elapsed / duration)
+        level += (target - level) * progress
+
+        if abs(target - level) <= 0.01 {
+            level = target
+        }
+        return level
+    }
+}
+
+private final class WaveformEnvelopeStore: ObservableObject {
+    private var follower = WaveformEnvelopeFollower()
+
+    func sample(rawLevel: Double?, at time: Double) -> Double {
+        follower.sample(rawLevel: rawLevel, at: time)
+    }
 }
 
 public enum WaveformBarGeometry {
@@ -37,6 +114,8 @@ public struct WaveformView: View {
     private let currentLevel: () -> Double?
     private let isListening: Bool
     private let mode: RenderMode
+    private let horizontalPadding: CGFloat
+    @StateObject private var envelopeStore = WaveformEnvelopeStore()
 
     private let barCount = WaveformLayout.barCount
     private let barWidth = WaveformLayout.barWidth
@@ -47,10 +126,12 @@ public struct WaveformView: View {
     public init(
         color: Color,
         isListening: Bool = false,
+        horizontalPadding: CGFloat = 0,
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
         self.isListening = isListening
+        self.horizontalPadding = max(0, horizontalPadding)
         self.currentLevel = currentLevel
         mode = .audioDriven
     }
@@ -58,6 +139,7 @@ public struct WaveformView: View {
     public init(processingColor color: Color) {
         self.color = color
         isListening = false
+        horizontalPadding = 0
         currentLevel = { nil }
         mode = .processing
     }
@@ -65,8 +147,11 @@ public struct WaveformView: View {
     public var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
+            let envelopeLevel = mode == .audioDriven
+                ? envelopeStore.sample(rawLevel: currentLevel(), at: now)
+                : 0
             TimelineSample(
-                rawLevel: currentLevel(),
+                envelopeLevel: envelopeLevel,
                 time: now,
                 color: color,
                 isListening: isListening,
@@ -79,17 +164,18 @@ public struct WaveformView: View {
             )
         }
         .frame(width: WaveformLayout.viewportWidth, height: WaveformLayout.viewportHeight)
+        .padding(.horizontal, horizontalPadding)
         .fixedSize(horizontal: true, vertical: true)
         .layoutPriority(1)
     }
 
-    private enum RenderMode {
+    private enum RenderMode: Equatable {
         case audioDriven
         case processing
     }
 
     private struct TimelineSample: View {
-        let rawLevel: Double?
+        let envelopeLevel: Double
         let time: Double
         let color: Color
         let isListening: Bool
@@ -99,7 +185,6 @@ public struct WaveformView: View {
         let barSpacing: CGFloat
         let maxHeight: CGFloat
         let minHeight: CGFloat
-        @State private var envelopeLevel = 0.0
 
         var body: some View {
             WaveformBars(
@@ -112,12 +197,6 @@ public struct WaveformView: View {
                 glowOpacity: glowOpacity,
                 glowRadius: glowRadius
             )
-            .onAppear {
-                updateEnvelope(to: rawLevel, animated: false)
-            }
-            .onChange(of: rawLevel) { _, newLevel in
-                updateEnvelope(to: newLevel, animated: mode == .audioDriven)
-            }
         }
 
         private func normalizedLevels(time: Double) -> [Double] {
@@ -147,34 +226,14 @@ public struct WaveformView: View {
             case .processing: 4
             }
         }
-
-        private func updateEnvelope(to rawLevel: Double?, animated: Bool) {
-            let target = if let rawLevel, rawLevel.isFinite {
-                min(1, max(0, rawLevel))
-            } else {
-                0.0
-            }
-            guard animated else {
-                envelopeLevel = target
-                return
-            }
-
-            let duration = WaveformMetrics.envelopeTransitionDuration(
-                from: envelopeLevel,
-                to: target
-            )
-            withAnimation(.easeOut(duration: duration)) {
-                envelopeLevel = target
-            }
-        }
     }
 }
 
 public enum WaveformMetrics {
     // Keep room tone flat until real speech pushes the local meter above -50 dBFS.
     public static let recordingSilenceFloor = AudioLevelMonitor.normalizeAveragePower(-50)
-    public static let envelopeAttackDuration = 0.06
-    public static let envelopeReleaseDuration = 0.40
+    public static let envelopeAttackDuration = 0.08
+    public static let envelopeReleaseDuration = 0.20
     public static let listeningDamping = 0.7
 
     public static func recordingLevel(from audioLevel: Double?) -> Double {

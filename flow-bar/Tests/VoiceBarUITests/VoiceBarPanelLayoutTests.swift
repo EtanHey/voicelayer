@@ -6,7 +6,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let cases: [(VoiceBarNotchVisualState, CGSize)] = [
             (.idle, CGSize(width: 185, height: 32)),
             (.hoverLauncher, CGSize(width: 306, height: 32)),
-            (.recording, CGSize(width: 358, height: 32)),
+            (.recording, CGSize(width: 468, height: 32)),
             (.compactStatus, CGSize(width: 332, height: 32)),
             (.teleprompter, CGSize(width: 465, height: 228)),
         ]
@@ -63,7 +63,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(visibleFrame.maxY, screen.screenFrame.maxY)
     }
 
-    func testAsymmetricRecordingWingsStillKeepTheHardwareCoreAtZeroTranslation() {
+    func testSymmetricRecordingWingsKeepTheHardwareCoreAtZeroTranslation() {
         let screen = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
@@ -85,7 +85,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             + layout.visibleContentRect.minX
             + layout.presentation.geometry.coreOriginX
 
-        XCTAssertEqual(frame, CGRect(x: 720, y: 1068, width: 365, height: 49))
+        XCTAssertEqual(frame.size, layout.panelSize)
+        XCTAssertEqual(frame.maxY, screen.screenFrame.maxY)
         XCTAssertEqual(renderedCoreMinX, screen.housingFrame.minX)
     }
 

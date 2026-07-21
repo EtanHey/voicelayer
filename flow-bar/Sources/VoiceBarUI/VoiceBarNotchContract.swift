@@ -241,7 +241,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             VoiceBarNotchGeometry(
                 coreWidth: baseGeometry.coreWidth,
                 topHeight: baseGeometry.topHeight,
-                leadingWingWidth: baseGeometry.leadingWingWidth,
+                leadingWingWidth: recordingTrailingWingWidth,
                 trailingWingWidth: recordingTrailingWingWidth,
                 bodyLeadingExtent: baseGeometry.bodyLeadingExtent,
                 bodyTrailingExtent: baseGeometry.bodyTrailingExtent,
@@ -304,6 +304,11 @@ public enum VoiceBarNotchContract {
     public static let compactCoreContentInset: CGFloat = 13.5
     public static let compactIndicatorLaneWidth: CGFloat = compactCoreContentInset +
         material.compactControlSize + material.compactContentInset
+    public static let recordingWingWidth: CGFloat = compactCoreContentInset +
+        WaveformLayout.recordingSlotWidth +
+        2 * material.compactControlSpacing +
+        2 * material.compactControlSize +
+        material.compactContentInset
     public static let topHeight: CGFloat = 32
     public static let teleprompterLeadingWingWidth: CGFloat = 82
     public static let teleprompterTrailingWingWidth: CGFloat = 94
@@ -353,8 +358,8 @@ public enum VoiceBarNotchContract {
         case .recording:
             geometry(
                 coreWidth: coreWidth,
-                leadingWingWidth: compactIndicatorLaneWidth,
-                trailingWingWidth: 125.5
+                leadingWingWidth: recordingWingWidth,
+                trailingWingWidth: recordingWingWidth
             )
         case .compactStatus:
             geometry(
