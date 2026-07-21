@@ -138,6 +138,61 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#))
     }
 
+    func testStopInterruptReachesEveryPlaybackClientWhenLatestSpeakingOwnerOverlapsAnEarlierOwner() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+
+        let earlierPlaybackClient = try connectUnixSocket(path: socketURL.path)
+        let latestPlaybackClient = try connectUnixSocket(path: socketURL.path)
+        let commandClient = try connectUnixSocket(path: socketURL.path)
+        defer {
+            close(earlierPlaybackClient)
+            close(latestPlaybackClient)
+            close(commandClient)
+        }
+
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#,
+            to: earlierPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":222,"accepts_commands":false}"#,
+            to: latestPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":333,"accepts_commands":true}"#,
+            to: commandClient
+        )
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Earlier overlapping playback"}"#,
+            to: earlierPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Latest visible playback"}"#,
+            to: latestPlaybackClient
+        )
+        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 1))
+
+        server.sendCommandToOwner(command: ["cmd": "stop"])
+
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
+        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+    }
+
     @MainActor
     func testReplayAfterFinishedPlaybackRoutesToTheClientThatOwnedTheLastSpeak() throws {
         let fixture = try makeConnectedServerFixture()
@@ -212,7 +267,9 @@ final class SocketServerTests: XCTestCase {
             JSONSerialization.jsonObject(with: Data(legacyStop.utf8)) as? [String: Any]
         )
         XCTAssertNotNil(stopPayload["playback_elapsed_ms"] as? Int)
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
         try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
     }
@@ -314,7 +371,9 @@ final class SocketServerTests: XCTestCase {
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
         try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
     }

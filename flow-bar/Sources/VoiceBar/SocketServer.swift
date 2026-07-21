@@ -339,18 +339,14 @@ final class SocketServer {
         let legacyPlaybackFDs = isInterrupt
             ? clients.filter { $0.value.role == "mcp-server" }.map(\.key)
             : []
-        let targetFDs: [Int32] = if isInterrupt,
-                                    let playbackFD = activePlaybackClientFD,
-                                    clients[playbackFD] != nil {
-            [playbackFD]
+        let targetFDs: [Int32] = if isInterrupt {
+            Array(Set(commandFDs + legacyPlaybackFDs)).sorted()
         } else if commandName == "replay",
                   let playbackFD = lastPlaybackClientFD,
                   clients[playbackFD] != nil {
             [playbackFD]
         } else {
-            Array(Set(
-                isInterrupt ? commandFDs + legacyPlaybackFDs : Array(commandFDs.prefix(1))
-            )).sorted()
+            Array(commandFDs.prefix(1))
         }
 
         guard !targetFDs.isEmpty else {
