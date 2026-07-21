@@ -284,6 +284,23 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("requestTermination(.internalFailure)"))
     }
 
+    func testParallelQARegistersItsExactPIDBeforeShowingAnOffscreenSurface() throws {
+        let source = try voiceBarAppSource()
+        let guardStart = try XCTUnwrap(source.range(of: "private func enforceCanonicalSingleInstance()"))
+        let electionStart = try XCTUnwrap(
+            source.range(
+                of: "private func performCanonicalSingleInstanceElection",
+                range: guardStart.upperBound ..< source.endIndex
+            )
+        )
+        let guardSource = source[guardStart.lowerBound ..< electionStart.lowerBound]
+
+        XCTAssertTrue(guardSource.contains("registerCurrentIsolatedInstance()"))
+        XCTAssertTrue(guardSource.contains("guard defaultsEnforceSingleton else"))
+        XCTAssertTrue(source.contains("VoiceBarInstanceIsolationRegistry.register("))
+        XCTAssertTrue(source.contains("isolatedInstanceMarkerPID = myPID"))
+    }
+
     // MARK: - Context menu snooze toggle
 
     func testContextMenuShowsHideWhenNotSnoozed() {

@@ -155,14 +155,17 @@ public struct VoiceBarPanelLayout: Equatable {
 public enum VoiceBarIsolatedCapturePlacement {
     public static let environmentVariable = "QA_VOICEBAR_CAPTURE_BOTTOM_LEFT"
     public static let topRightEnvironmentVariable = "QA_VOICEBAR_CAPTURE_TOP_RIGHT"
+    public static let offscreenEnvironmentVariable = "QA_VOICEBAR_CAPTURE_OFFSCREEN"
     public static let parallelInstanceEnvironmentVariable = "VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE"
     public static let cornerInset: CGFloat = 24
+    public static let offscreenOrigin: CGFloat = -20000
 
     public static func isEnabled(
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> Bool {
         (environment[environmentVariable] == "1" ||
-            environment[topRightEnvironmentVariable] == "1") &&
+            environment[topRightEnvironmentVariable] == "1" ||
+            environment[offscreenEnvironmentVariable] == "1") &&
             environment[parallelInstanceEnvironmentVariable] == "1"
     }
 
@@ -171,6 +174,14 @@ public enum VoiceBarIsolatedCapturePlacement {
         visibleFrame: CGRect,
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> CGRect {
+        if environment[offscreenEnvironmentVariable] == "1" {
+            return CGRect(
+                x: offscreenOrigin,
+                y: offscreenOrigin,
+                width: panelSize.width,
+                height: panelSize.height
+            )
+        }
         if environment[topRightEnvironmentVariable] == "1" {
             return CGRect(
                 x: visibleFrame.maxX - cornerInset - panelSize.width,

@@ -171,6 +171,24 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
+    func testExplicitOffscreenQAPlacementRequiresParallelModeAndStaysBeyondNegativeTwentyThousand() {
+        let panelSize = CGSize(width: 472, height: 245)
+        let environment = [
+            VoiceBarIsolatedCapturePlacement.offscreenEnvironmentVariable: "1",
+            VoiceBarIsolatedCapturePlacement.parallelInstanceEnvironmentVariable: "1",
+        ]
+
+        XCTAssertTrue(VoiceBarIsolatedCapturePlacement.isEnabled(environment: environment))
+        XCTAssertEqual(
+            VoiceBarIsolatedCapturePlacement.frame(
+                panelSize: panelSize,
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1084),
+                environment: environment
+            ),
+            CGRect(x: -20000, y: -20000, width: 472, height: 245)
+        )
+    }
+
     func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1084)
         let recordingPresentation = presentation(.recording)

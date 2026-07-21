@@ -51,6 +51,8 @@ private struct RelaySetupStatus {
 private struct VoiceBarFirstRenderScaleReceipt: Codable {
     let ready: Bool
     let reason: String
+    let frameX: Double?
+    let frameY: Double?
     let screenScale: Double?
     let windowScale: Double
     let contentScale: Double?
@@ -188,30 +190,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func enforceCanonicalSingleInstance() -> Bool {
         let defaultsEnforceSingleton = VoiceBarDefaults.shouldEnforceSingleton()
         guard defaultsEnforceSingleton else {
-            NSLog("[VoiceBar] Singleton guard skipped by explicit QA override")
-            return true
+            guard !VoiceLayerPaths.enforcesSingletonInstance else {
+                NSLog("[VoiceBar] Parallel QA requires an isolated socket path")
+                DispatchQueue.main.async { [weak self] in
+                    self?.requestTermination(.internalFailure)
+                }
+                return false
+            }
+            do {
+                try VoiceBarInstanceElectionLock.withExclusiveLock {
+                    try registerCurrentIsolatedInstance()
+                }
+                NSLog(
+                    "[VoiceBar] Registered parallel QA transport at %@",
+                    VoiceLayerPaths.socketPath
+                )
+                return true
+            } catch {
+                return rejectFailedIsolatedInstanceRegistration(error)
+            }
         }
 
         if !VoiceLayerPaths.enforcesSingletonInstance {
             do {
                 return try VoiceBarInstanceElectionLock.withExclusiveLock {
-                    let myPID = ProcessInfo.processInfo.processIdentifier
-                    guard let launchDate = NSRunningApplication(
-                        processIdentifier: myPID
-                    )?.launchDate else {
-                        throw VoiceBarInstanceIsolationRegistryError
-                            .launchDateUnavailable(pid: myPID)
-                    }
-                    try VoiceBarInstanceIsolationRegistry.register(
-                        pid: myPID,
-                        launchDate: launchDate,
-                        socketPath: VoiceLayerPaths.socketPath
-                    )
-                    isolatedInstanceMarkerPID = myPID
+                    try registerCurrentIsolatedInstance()
                     NSLog(
                         "[VoiceBar] Registered isolated transport before visible-surface election at %@",
                         VoiceLayerPaths.socketPath
                     )
+                    let myPID = ProcessInfo.processInfo.processIdentifier
                     let accepted = performCanonicalSingleInstanceElection(
                         currentIsIsolated: true
                     )
@@ -222,14 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     return accepted
                 }
             } catch {
-                NSLog(
-                    "[VoiceBar] Isolated-instance registration failed: %@",
-                    String(describing: error)
-                )
-                DispatchQueue.main.async { [weak self] in
-                    self?.requestTermination(.internalFailure)
-                }
-                return false
+                return rejectFailedIsolatedInstanceRegistration(error)
             }
         }
 
@@ -244,6 +245,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return false
         }
+    }
+
+    private func registerCurrentIsolatedInstance() throws {
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        guard let launchDate = NSRunningApplication(
+            processIdentifier: myPID
+        )?.launchDate else {
+            throw VoiceBarInstanceIsolationRegistryError
+                .launchDateUnavailable(pid: myPID)
+        }
+        try VoiceBarInstanceIsolationRegistry.register(
+            pid: myPID,
+            launchDate: launchDate,
+            socketPath: VoiceLayerPaths.socketPath
+        )
+        isolatedInstanceMarkerPID = myPID
+    }
+
+    private func rejectFailedIsolatedInstanceRegistration(_ error: Error) -> Bool {
+        NSLog(
+            "[VoiceBar] Isolated-instance registration failed: %@",
+            String(describing: error)
+        )
+        DispatchQueue.main.async { [weak self] in
+            self?.requestTermination(.internalFailure)
+        }
+        return false
     }
 
     private func performCanonicalSingleInstanceElection(
@@ -1155,6 +1183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let receipt = VoiceBarFirstRenderScaleReceipt(
             ready: ready,
             reason: reason,
+            frameX: panel.map { Double($0.frame.minX) },
+            frameY: panel.map { Double($0.frame.minY) },
             screenScale: panel?.screen.map { Double($0.backingScaleFactor) },
             windowScale: Double(panel?.backingScaleFactor ?? 0),
             contentScale: panel?.contentView?.layer.map { Double($0.contentsScale) },

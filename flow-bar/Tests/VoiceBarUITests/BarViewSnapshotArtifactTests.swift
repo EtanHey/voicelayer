@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import SwiftUI
 @testable import VoiceBarUI
 import XCTest
@@ -13,13 +14,9 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         func handleRetranscribeHistoryEntry(recordingPath: String) {}
     }
 
-    func testWritesImageRendererArtifactsForAllPrimaryVoiceModes() throws {
+    func testWritesOffscreenAppKitArtifactsForAllPrimaryVoiceModes() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
-        let outputDirectory = repoRoot()
-            .appendingPathComponent("docs.local")
-            .appendingPathComponent("phase1")
-            .appendingPathComponent("visual-qa")
-            .appendingPathComponent("after")
+        let outputDirectory = artifactOutputDirectory()
         try FileManager.default.createDirectory(
             at: outputDirectory,
             withIntermediateDirectories: true
@@ -27,34 +24,8 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
 
         for mode in [VoiceMode.idle, .recording, .transcribing, .speaking, .error] {
             let state = snapshotState(for: mode)
-            let layout = VoiceBarPanelLayout.make(
-                presentation: notchPresentation(for: state)
-            )
-            let view = BarView(state: state, commandRouter: SnapshotCommandRouter())
-                .frame(
-                    width: layout.visibleContentRect.width,
-                    height: layout.visibleContentRect.height
-                )
-                .padding(.horizontal, 12)
-                .padding(.bottom, 17)
-
-            let renderer = ImageRenderer(content: view)
-            renderer.proposedSize = ProposedViewSize(layout.panelSize)
-            renderer.scale = 2
-
-            guard let cgImage = renderer.cgImage else {
-                XCTFail("ImageRenderer did not produce a CGImage for \(mode.rawValue)")
-                continue
-            }
-
-            let bitmap = NSBitmapImageRep(cgImage: cgImage)
-            guard let data = bitmap.representation(using: .png, properties: [:]) else {
-                XCTFail("Could not encode PNG for \(mode.rawValue)")
-                continue
-            }
-
             let outputURL = outputDirectory.appendingPathComponent("\(mode.rawValue).png")
-            try data.write(to: outputURL, options: .atomic)
+            try writeOffscreenWindowPNG(state: state, to: outputURL)
             XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
             XCTAssertGreaterThan(
                 try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0,
@@ -65,11 +36,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
 
     func testWritesPronunciationDisplayTeleprompterArtifact() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
-        let outputDirectory = repoRoot()
-            .appendingPathComponent("docs.local")
-            .appendingPathComponent("phase1")
-            .appendingPathComponent("visual-qa")
-            .appendingPathComponent("after")
+        let outputDirectory = artifactOutputDirectory()
         try FileManager.default.createDirectory(
             at: outputDirectory,
             withIntermediateDirectories: true
@@ -148,6 +115,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         case .idle:
             state.transcript = ""
         case .recording:
+            state.recordingMode = "vad"
             state.handleEvent(["type": "audio_level", "rms": 0.75])
         case .transcribing:
             state.transcript = "Draft transcript"
@@ -183,6 +151,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(
                 mode: state.mode,
+                showsRecordingHold: state.mode == .recording && state.recordingMode == "vad",
                 hasTeleprompterText: state.teleprompterText != nil,
                 isTeleprompterDismissed: state.isTeleprompterDismissed,
                 isTeleprompterReadback: state.isTeleprompterReadback,
@@ -198,11 +167,89 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         )
     }
 
+    private func writeOffscreenWindowPNG(state: VoiceState, to outputURL: URL) throws {
+        let presentation = notchPresentation(for: state)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            canvasGeometry: canvas.canvasGeometry
+        )
+        let host = NSHostingView(
+            rootView: BarView(
+                state: state,
+                commandRouter: SnapshotCommandRouter(),
+                includesPanelOutsets: true
+            )
+        )
+        host.frame = CGRect(origin: .zero, size: layout.panelSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        host.layoutSubtreeIfNeeded()
+        guard let cgImage = captureWindowImage(windowNumber: window.windowNumber) else {
+            throw NSError(domain: "BarViewSnapshotArtifactTests", code: 1)
+        }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "BarViewSnapshotArtifactTests", code: 2)
+        }
+        try data.write(to: outputURL, options: .atomic)
+    }
+
+    private func captureWindowImage(windowNumber: Int) -> CGImage? {
+        typealias CaptureFunction = @convention(c) (
+            CGRect,
+            UInt32,
+            UInt32,
+            UInt32
+        ) -> Unmanaged<CGImage>?
+        guard let defaultLookup = UnsafeMutableRawPointer(bitPattern: -2),
+              let symbol = dlsym(defaultLookup, "CGWindowListCreateImage") else {
+            return nil
+        }
+        let capture = unsafeBitCast(symbol, to: CaptureFunction.self)
+        let options = CGWindowImageOption.boundsIgnoreFraming.union(.bestResolution)
+        return capture(
+            CGRect.null,
+            CGWindowListOption.optionIncludingWindow.rawValue,
+            UInt32(windowNumber),
+            options.rawValue
+        )?.takeRetainedValue()
+    }
+
     private func repoRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
+    }
+
+    private func artifactOutputDirectory() -> URL {
+        if let path = ProcessInfo.processInfo.environment["VOICEBAR_VISUAL_ARTIFACT_OUTPUT"],
+           !path.isEmpty {
+            return URL(fileURLWithPath: path, isDirectory: true)
+        }
+        return repoRoot()
+            .appendingPathComponent("docs.local")
+            .appendingPathComponent("phase1")
+            .appendingPathComponent("visual-qa")
+            .appendingPathComponent("after")
     }
 }
