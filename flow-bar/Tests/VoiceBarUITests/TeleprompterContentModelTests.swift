@@ -12,7 +12,8 @@ final class TeleprompterContentModelTests: XCTestCase {
             encoding: .utf8
         )
 
-        XCTAssertTrue(source.contains(".frame(maxWidth: wrapWidth, alignment: .leading)"))
+        XCTAssertTrue(source.contains(".frame(width: wrapWidth, alignment: .leading)"))
+        XCTAssertTrue(source.contains(".padding(.horizontal, contentInset)"))
     }
 
     func testUsesDisplayTextWhilePreservingMatchingBoundaryTimings() {

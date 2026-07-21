@@ -266,6 +266,25 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(presentation.accessibilityLabel, "VoiceBar launcher")
     }
 
+    func testBootStatusReservesEightPointsBeyondStandardTrailingContentFit() {
+        let text = "VoiceLayer is starting"
+        let presentation = VoiceBarPresentation.notchPresentation(
+            from: VoiceBarNotchOperationalInput(
+                mode: .error,
+                statusText: text,
+                isCollapsed: false
+            )
+        )
+        let material = VoiceBarNotchContract.material
+        let standardContentFit = VoiceBarNotchContract.compactCoreContentInset +
+            material.compactContentInset +
+            Theme.intrinsicPillStatusWidth(for: text) +
+            3 +
+            material.compactControlSize
+
+        XCTAssertEqual(presentation.geometry.trailingWingWidth, standardContentFit + 8)
+    }
+
     func testManagementRolesExistOnlyInTheHoveredLauncher() {
         let states: [VoiceBarNotchVisualState] = [
             .idle, .recording, .compactStatus, .teleprompter,

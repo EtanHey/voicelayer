@@ -38,6 +38,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let morphVariant: VoiceBarNotchMorphVariant
     private let canvasGeometry: VoiceBarNotchGeometry?
     @State private var renderedGeometry: VoiceBarNotchGeometry
+    @State private var surfaceRevealProgress: CGFloat
     @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
@@ -56,6 +57,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         self.morphVariant = morphVariant
         self.canvasGeometry = canvasGeometry
         _renderedGeometry = State(initialValue: presentation.geometry)
+        _surfaceRevealProgress = State(
+            initialValue: presentation.visualState == .idle ? 0 : 1
+        )
         self.onHoverChanged = onHoverChanged
         self.leadingContent = leadingContent()
         self.trailingContent = trailingContent()
@@ -65,10 +69,13 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     public var body: some View {
         ZStack(alignment: .topLeading) {
             VoiceBarGlassContainer(variant: morphVariant) {
-                if presentation.visualState != .idle {
-                    morphingNotchSurface
-                        .transition(.identity)
-                }
+                // Keep the zero-path idle source mounted so the first visible
+                // frame can interpolate from the hardware core on both sides.
+                // Opacity zero plus an empty idle mask still paints no glass.
+                morphingNotchSurface
+                    .opacity(presentation.visualState == .idle ? 0 : 1)
+                    .allowsHitTesting(presentation.visualState != .idle)
+                    .transition(.identity)
             }
 
             fixedHardwareCore
@@ -88,6 +95,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .onHover(perform: onHoverChanged)
         .onAppear {
             renderedGeometry = presentation.geometry
+            surfaceRevealProgress = presentation.visualState == .idle ? 0 : 1
         }
         .onChange(of: presentation.geometry) { _, nextGeometry in
             let closingGeometryDelay = renderedGeometry.lowerSurfaceHeight > 0
@@ -96,6 +104,29 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 : 0
             withAnimation(shellAnimation.delay(closingGeometryDelay)) {
                 renderedGeometry = nextGeometry
+            }
+        }
+        .task(id: presentation.visualState) {
+            guard presentation.visualState != .idle else {
+                withAnimation(shellAnimation) {
+                    surfaceRevealProgress = 0
+                }
+                return
+            }
+
+            // AppKit installs the destination-sized host before SwiftUI can
+            // interpolate its material. Re-arm a zero-width source for every
+            // visible state change, yield one render turn, then reveal both
+            // sides from the fixed hardware core in the same animation.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                surfaceRevealProgress = 0
+            }
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            withAnimation(shellAnimation) {
+                surfaceRevealProgress = 1
             }
         }
     }
@@ -110,7 +141,6 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     properties: .frame,
                     anchor: .top
                 )
-                .offset(x: surfaceOffsetX)
         } else {
             notchSurface
                 .matchedGeometryEffect(
@@ -119,7 +149,6 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     properties: .frame,
                     anchor: .top
                 )
-                .offset(x: surfaceOffsetX)
         }
     }
 
@@ -208,31 +237,51 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private var notchSurface: some View {
         let shape = VoiceBarNotchContinuousShape(
             geometry: renderedGeometry,
-            compactOuterCornerRadius: compactOuterCornerRadius
+            compactOuterCornerRadius: compactOuterCornerRadius,
+            coreAnchorX: resolvedCanvasGeometry.coreOriginX
         )
-        return notchSlots
-            .frame(
-                width: renderedGeometry.totalWidth,
-                height: renderedGeometry.totalHeight,
-                alignment: .topLeading
+        return ZStack(alignment: .topLeading) {
+            notchSlots
+                .frame(
+                    width: renderedGeometry.totalWidth,
+                    height: renderedGeometry.totalHeight,
+                    alignment: .topLeading
+                )
+                .offset(x: surfaceOffsetX)
+        }
+        .frame(
+            width: resolvedCanvasGeometry.totalWidth,
+            height: resolvedCanvasGeometry.totalHeight,
+            alignment: .topLeading
+        )
+        .modifier(
+            VoiceBarGlassMaterial(
+                shape: shape,
+                appearance: appearance,
+                morphVariant: morphVariant
             )
-            .modifier(
-                VoiceBarGlassMaterial(
-                    shape: shape,
-                    appearance: appearance,
-                    morphVariant: morphVariant
+        )
+        .overlay {
+            VoiceBarNotchMorphDelightEdge(
+                shape: shape,
+                trigger: presentation.visualState,
+                descriptor: morphDescriptor,
+                reducedMotion: accessibilityReduceMotion
+            )
+            .allowsHitTesting(false)
+        }
+        .mask {
+            VoiceBarNotchSymmetricRevealMask(
+                progress: surfaceRevealProgress,
+                coreRect: CGRect(
+                    x: resolvedCanvasGeometry.coreOriginX,
+                    y: 0,
+                    width: resolvedCanvasGeometry.coreWidth,
+                    height: resolvedCanvasGeometry.topHeight
                 )
             )
-            .overlay {
-                VoiceBarNotchMorphDelightEdge(
-                    shape: shape,
-                    trigger: presentation.visualState,
-                    descriptor: morphDescriptor,
-                    reducedMotion: accessibilityReduceMotion
-                )
-                .allowsHitTesting(false)
-            }
-            .contentShape(shape)
+        }
+        .contentShape(shape)
     }
 
     private var compactOuterCornerRadius: CGFloat {
@@ -334,6 +383,31 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         case .core:
             slot.side == .leading ? .trailing : .leading
         }
+    }
+}
+
+private struct VoiceBarNotchSymmetricRevealMask: Shape {
+    var progress: CGFloat
+    let coreRect: CGRect
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let fraction = min(1, max(0, progress))
+        let leading = coreRect.minX - (coreRect.minX - rect.minX) * fraction
+        let trailing = coreRect.maxX + (rect.maxX - coreRect.maxX) * fraction
+        let bottom = coreRect.maxY + (rect.maxY - coreRect.maxY) * fraction
+        return Path(
+            CGRect(
+                x: leading,
+                y: rect.minY,
+                width: max(0, trailing - leading),
+                height: max(0, bottom - rect.minY)
+            )
+        )
     }
 }
 

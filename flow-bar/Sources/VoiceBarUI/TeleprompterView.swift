@@ -411,8 +411,8 @@ public struct TeleprompterView: View {
                 FlowLayout(spacing: 5, maxWidth: wrapWidth) {
                     wordViews
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 4)
+                .frame(width: wrapWidth, alignment: .leading)
+                .padding(.horizontal, contentInset)
                 .padding(.vertical, contentInset)
                 .frame(
                     maxWidth: .infinity,

@@ -302,6 +302,7 @@ public enum VoiceBarNotchContract {
     /// both software seams inward to meet the physical housing.
     public static let hardwareHorizontalCalibrationInset: CGFloat = 8.5
     public static let compactCoreContentInset: CGFloat = 13.5
+    public static let compactStatusTrailingSafetyInset: CGFloat = 8
     public static let compactIndicatorLaneWidth: CGFloat = compactCoreContentInset +
         material.compactControlSize + material.compactContentInset
     public static let recordingWingWidth: CGFloat = compactCoreContentInset +

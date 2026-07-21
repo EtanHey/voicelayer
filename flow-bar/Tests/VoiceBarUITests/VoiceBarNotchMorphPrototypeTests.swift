@@ -115,16 +115,19 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         )
     }
 
-    func testVisiblePrototypeStatesShareAStableCanvasAndCoreCoordinate() {
+    func testPrototypeCanvasKeepsStableMaximumWidthAndStateSizedHeight() {
         let recording = presentation(.recording)
         let teleprompter = presentation(.teleprompter)
         let recordingCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
         let teleprompterCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: teleprompter)
 
-        XCTAssertEqual(recordingCanvas.canvasGeometry, teleprompterCanvas.canvasGeometry)
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalWidth, 520)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalWidth, 520)
+        XCTAssertEqual(recordingCanvas.canvasGeometry.totalHeight, 32)
+        XCTAssertEqual(teleprompterCanvas.canvasGeometry.totalHeight, 228)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
-            teleprompterCanvas.canvasGeometry.coreOriginX
+            recordingCanvas.canvasGeometry.coreOriginX
         )
         XCTAssertEqual(
             teleprompter.geometry.coreOriginX + teleprompterCanvas.contentOffsetX,
@@ -150,10 +153,11 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
 
         XCTAssertEqual(recording.geometry.totalWidth, 520)
         XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
+        XCTAssertEqual(canvas.canvasGeometry.lowerSurfaceHeight, 0)
         XCTAssertTrue(panelBounds.contains(layout.activeHitRect))
     }
 
-    func testStableCanvasKeepsCompactHitTestingExactAndCoreScreenPositionInvariant() {
+    func testStateSizedWindowsKeepTheCoreAndTopEdgeInvariant() {
         let recording = presentation(.recording)
         let teleprompter = presentation(.teleprompter)
         let recordingCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
@@ -183,10 +187,14 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
             + teleprompterLayout.visibleContentRect.minX
             + teleprompter.geometry.coreMidX
 
-        XCTAssertEqual(recordingLayout.panelSize, teleprompterLayout.panelSize)
-        XCTAssertEqual(recordingFrame, teleprompterFrame)
+        XCTAssertEqual(recordingLayout.panelSize.height, 49)
+        XCTAssertEqual(teleprompterLayout.panelSize.height, 245)
+        XCTAssertNotEqual(recordingFrame, teleprompterFrame)
+        XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, screen.housingFrame.midX)
         XCTAssertEqual(teleprompterCoreMidX, screen.housingFrame.midX)
+        XCTAssertFalse(recordingFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
+        XCTAssertTrue(teleprompterFrame.contains(CGPoint(x: screen.housingFrame.midX, y: 1060)))
         XCTAssertFalse(
             recordingLayout.containsActiveContent(
                 CGPoint(
