@@ -121,13 +121,36 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         let recordingCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
         let teleprompterCanvas = VoiceBarNotchMorphCanvasLayout.resolve(for: teleprompter)
 
-        XCTAssertEqual(recordingCanvas.canvasGeometry, teleprompter.geometry)
-        XCTAssertEqual(teleprompterCanvas.canvasGeometry, teleprompter.geometry)
+        XCTAssertEqual(recordingCanvas.canvasGeometry, teleprompterCanvas.canvasGeometry)
         XCTAssertEqual(
             recording.geometry.coreOriginX + recordingCanvas.contentOffsetX,
-            teleprompter.geometry.coreOriginX
+            teleprompterCanvas.canvasGeometry.coreOriginX
         )
-        XCTAssertEqual(teleprompterCanvas.contentOffsetX, 0)
+        XCTAssertEqual(
+            teleprompter.geometry.coreOriginX + teleprompterCanvas.contentOffsetX,
+            teleprompterCanvas.canvasGeometry.coreOriginX
+        )
+    }
+
+    func testStableCanvasContainsRecordingGeometryWithTheVADHoldControl() {
+        let recording = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: true,
+            hasCompactStatus: false,
+            recordingTrailingWingWidth: VoiceBarNotchContract.recordingWingWidthWithHoldControl,
+            isHovered: false,
+            isKeyboardFocused: false
+        )
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: recording)
+        let layout = VoiceBarPanelLayout.make(
+            presentation: recording,
+            canvasGeometry: canvas.canvasGeometry
+        )
+        let panelBounds = CGRect(origin: .zero, size: layout.panelSize)
+
+        XCTAssertEqual(recording.geometry.totalWidth, 520)
+        XCTAssertGreaterThanOrEqual(canvas.canvasGeometry.totalWidth, recording.geometry.totalWidth)
+        XCTAssertTrue(panelBounds.contains(layout.activeHitRect))
     }
 
     func testStableCanvasKeepsCompactHitTestingExactAndCoreScreenPositionInvariant() {

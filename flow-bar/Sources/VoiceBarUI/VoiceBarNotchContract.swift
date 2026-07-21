@@ -309,6 +309,9 @@ public enum VoiceBarNotchContract {
         2 * material.compactControlSpacing +
         2 * material.compactControlSize +
         material.compactContentInset
+    public static let recordingWingWidthWithHoldControl: CGFloat = recordingWingWidth +
+        material.compactControlSpacing +
+        material.compactControlSize
     public static let topHeight: CGFloat = 32
     public static let teleprompterLeadingWingWidth: CGFloat = 82
     public static let teleprompterTrailingWingWidth: CGFloat = 94
