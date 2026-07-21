@@ -413,6 +413,18 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(teleprompterLeading.contains("Image(systemName: \"book.closed\")"))
     }
 
+    func testDictionaryPopoverOpensBelowTheTopEdgeNotch() throws {
+        let source = try barViewSource()
+        let buttonStart = try XCTUnwrap(source.range(of: "private var vocabularyButton"))
+        let popoverStart = try XCTUnwrap(
+            source.range(of: "private var vocabularyPopover", range: buttonStart.upperBound ..< source.endIndex)
+        )
+        let button = source[buttonStart.lowerBound ..< popoverStart.lowerBound]
+
+        XCTAssertTrue(button.contains(".popover(isPresented: $isVocabularyPresented, arrowEdge: .top)"))
+        XCTAssertFalse(button.contains("arrowEdge: .bottom"))
+    }
+
     func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {
         let source = try barViewSource()
 

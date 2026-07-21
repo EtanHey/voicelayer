@@ -830,7 +830,7 @@ public struct BarView: View {
         notchButton(icon: "text.book.closed", accessibilityLabel: "Dictionary") {
             isVocabularyPresented.toggle()
         }
-        .popover(isPresented: $isVocabularyPresented, arrowEdge: .bottom) {
+        .popover(isPresented: $isVocabularyPresented, arrowEdge: .top) {
             vocabularyPopover
         }
     }
