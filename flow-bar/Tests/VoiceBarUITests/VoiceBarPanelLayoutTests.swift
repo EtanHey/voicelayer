@@ -22,14 +22,20 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
-    func testTeleprompterUsesUnionHitTestingInsteadOfItsRectangularWindowBounds() {
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.teleprompter))
+    func testTeleprompterCapturesOnlyItsMountedBottomControls() {
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(.teleprompter),
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                lowerControlCount: 3
+            )
+        )
 
-        XCTAssertTrue(layout.containsActiveContent(CGPoint(x: 12 + 232.5, y: 17 + 212)))
-        XCTAssertTrue(layout.containsActiveContent(CGPoint(x: 12 + 10, y: 17 + 190)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 12 + 10, y: 17 + 212)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 12 + 455, y: 17 + 212)))
-        XCTAssertFalse(layout.containsActiveContent(CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 202.5, y: 17 + 24)))
+        XCTAssertTrue(layout.containsInteractiveContent(CGPoint(x: 12 + 262.5, y: 17 + 24)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 232.5, y: 17 + 120)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 12 + 108, y: 17 + 212)))
+        XCTAssertFalse(layout.containsInteractiveContent(CGPoint(x: 2, y: 2)))
+        XCTAssertTrue(layout.containsVisibleSurface(CGPoint(x: 12 + 232.5, y: 17 + 120)))
     }
 
     func testWindowFrameKeepsVisibleCoreCenteredOnPhysicalHousingAndFlushToScreenTop() {
@@ -214,19 +220,53 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         )
     }
 
-    func testHoverRetentionExtendsPastWingIconsWithoutExtendingClickInterception() {
-        let layout = VoiceBarPanelLayout.make(presentation: presentation(.hoverLauncher))
+    func testHoverExpansionAndRetentionDoNotExtendClickInterception() {
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation(.hoverLauncher),
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
         let justPastTrailingWing = CGPoint(
-            x: layout.activeHitRect.maxX + 8,
-            y: layout.activeHitRect.midY
+            x: layout.interactiveHitRect.maxX + 8,
+            y: layout.interactiveHitRect.midY
+        )
+        let coreCenter = CGPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
+            y: layout.visibleContentRect.minY + 16
         )
 
-        XCTAssertFalse(layout.containsActiveContent(justPastTrailingWing))
+        XCTAssertFalse(layout.containsInteractiveContent(coreCenter))
+        XCTAssertTrue(layout.containsHoverExpansion(coreCenter))
+        XCTAssertFalse(layout.containsInteractiveContent(justPastTrailingWing))
         XCTAssertTrue(layout.containsHoverRetention(justPastTrailingWing))
         XCTAssertTrue(
             CGRect(origin: .zero, size: layout.panelSize)
                 .contains(layout.hoverRetentionRect)
         )
+    }
+
+    func testInstallingANewLayoutDropsOldInteractiveGeometryImmediately() {
+        let presentation = presentation(.hoverLauncher)
+        let launcher = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: VoiceBarNotchInteractionConfiguration(
+                leadingControlCount: 1,
+                trailingControlCountFromCore: 2
+            )
+        )
+        let idle = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let oldDictionaryCenter = CGPoint(
+            x: launcher.visibleContentRect.minX + 282,
+            y: launcher.visibleContentRect.minY + 16
+        )
+
+        XCTAssertTrue(launcher.containsInteractiveContent(oldDictionaryCenter))
+        XCTAssertFalse(idle.containsInteractiveContent(oldDictionaryCenter))
     }
 
     private func presentation(

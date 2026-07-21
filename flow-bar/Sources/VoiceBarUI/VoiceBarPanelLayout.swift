@@ -28,13 +28,36 @@ public struct VoiceBarPanelLayout: Equatable {
     public let presentation: VoiceBarNotchPresentation
     public let panelSize: CGSize
     public let visibleContentRect: CGRect
-    public let activeHitRect: CGRect
+    public let interactiveHitRect: CGRect
+    public let hoverExpansionRect: CGRect
     public let hoverRetentionRect: CGRect
 
-    private let hitRegion: VoiceBarNotchHitRegion
+    private let interactionRegion: VoiceBarNotchHitRegion
+    private let visibleRegion: VoiceBarNotchVisibleRegion
+    private let localHoverCoreRect: CGRect
+
+    /// Compatibility while AppKit call sites migrate to the explicit
+    /// interaction predicate.
+    public var activeHitRect: CGRect {
+        interactiveHitRect
+    }
 
     public static func make(
         presentation: VoiceBarNotchPresentation,
+        canvasGeometry: VoiceBarNotchGeometry? = nil,
+        shadowOutsets: VoiceBarNotchShadowOutsets = .material
+    ) -> VoiceBarPanelLayout {
+        make(
+            presentation: presentation,
+            interactionConfiguration: .fallback(for: presentation),
+            canvasGeometry: canvasGeometry,
+            shadowOutsets: shadowOutsets
+        )
+    }
+
+    public static func make(
+        presentation: VoiceBarNotchPresentation,
+        interactionConfiguration: VoiceBarNotchInteractionConfiguration,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
         shadowOutsets: VoiceBarNotchShadowOutsets = .material
     ) -> VoiceBarPanelLayout {
@@ -48,16 +71,29 @@ public struct VoiceBarPanelLayout: Equatable {
             width: geometry.totalWidth,
             height: geometry.totalHeight
         )
-        let hitRegion = VoiceBarNotchHitRegion(geometry: geometry)
-        let activeHitRect = hitRegion.bounds.offsetBy(
+        let interactionRegion = VoiceBarNotchHitRegion(
+            geometry: geometry,
+            configuration: interactionConfiguration
+        )
+        let interactiveHitRect = interactionRegion.bounds.offsetBy(
             dx: visibleContentRect.minX,
             dy: visibleContentRect.minY
         )
+        let visibleRegion = VoiceBarNotchVisibleRegion(presentation: presentation)
+        let localHoverCoreRect = CGRect(
+            x: geometry.coreOriginX,
+            y: geometry.lowerSurfaceHeight,
+            width: geometry.coreWidth,
+            height: geometry.topHeight
+        )
+        let hoverExpansionRect = localHoverCoreRect
+            .union(interactionRegion.bounds)
+            .offsetBy(dx: visibleContentRect.minX, dy: visibleContentRect.minY)
         let panelSize = CGSize(
             width: canvasGeometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
             height: canvasGeometry.totalHeight + shadowOutsets.bottom
         )
-        let hoverRetentionRect = activeHitRect
+        let hoverRetentionRect = hoverExpansionRect
             .insetBy(
                 dx: -Self.hoverRetentionPadding,
                 dy: -Self.hoverRetentionPadding
@@ -68,19 +104,45 @@ public struct VoiceBarPanelLayout: Equatable {
             presentation: presentation,
             panelSize: panelSize,
             visibleContentRect: visibleContentRect,
-            activeHitRect: activeHitRect,
+            interactiveHitRect: interactiveHitRect,
+            hoverExpansionRect: hoverExpansionRect,
             hoverRetentionRect: hoverRetentionRect,
-            hitRegion: hitRegion
+            interactionRegion: interactionRegion,
+            visibleRegion: visibleRegion,
+            localHoverCoreRect: localHoverCoreRect
         )
     }
 
-    public func containsActiveContent(_ point: CGPoint) -> Bool {
-        hitRegion.contains(
+    public func containsInteractiveContent(_ point: CGPoint) -> Bool {
+        interactionRegion.contains(
             CGPoint(
                 x: point.x - visibleContentRect.minX,
                 y: point.y - visibleContentRect.minY
             )
         )
+    }
+
+    public func containsHoverExpansion(_ point: CGPoint) -> Bool {
+        let localPoint = CGPoint(
+            x: point.x - visibleContentRect.minX,
+            y: point.y - visibleContentRect.minY
+        )
+        return localHoverCoreRect.contains(localPoint) || interactionRegion.contains(localPoint)
+    }
+
+    public func containsVisibleSurface(_ point: CGPoint) -> Bool {
+        visibleRegion.contains(
+            CGPoint(
+                x: point.x - visibleContentRect.minX,
+                y: point.y - visibleContentRect.minY
+            )
+        )
+    }
+
+    /// Compatibility while AppKit call sites migrate to the explicit
+    /// interaction predicate.
+    public func containsActiveContent(_ point: CGPoint) -> Bool {
+        containsInteractiveContent(point)
     }
 
     public func containsHoverRetention(_ point: CGPoint) -> Bool {
