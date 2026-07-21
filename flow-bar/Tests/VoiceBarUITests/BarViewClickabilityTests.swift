@@ -103,7 +103,7 @@ final class BarViewClickabilityTests: XCTestCase {
         recording.isCollapsed = false
         XCTAssertEqual(
             makeHost(state: recording, router: SpyCommandRouter()).bounds.size,
-            NSSize(width: 384, height: 32)
+            NSSize(width: 520, height: 32)
         )
 
         let teleprompter = VoiceState()
@@ -483,8 +483,8 @@ final class BarViewClickabilityTests: XCTestCase {
 
     private func recordingCancelButtonCenter(in host: NSView) -> NSPoint {
         NSPoint(
-            x: recordingTrailingContentOriginX +
-                VoiceBarNotchContract.material.waveformSlotWidth +
+            x: recordingTrailingContentOriginX(in: host) +
+                WaveformLayout.recordingSlotWidth +
                 VoiceBarNotchContract.material.compactControlSpacing +
                 VoiceBarNotchContract.material.compactControlSize / 2,
             y: host.bounds.midY
@@ -504,10 +504,9 @@ final class BarViewClickabilityTests: XCTestCase {
         )
     }
 
-    private var recordingTrailingContentOriginX: CGFloat {
-        let geometry = VoiceBarNotchContract.geometry(for: .recording)
-        return geometry.coreOriginX + geometry.coreWidth +
-            VoiceBarNotchContract.material.blackToGlassFadeWidth
+    private func recordingTrailingContentOriginX(in host: NSView) -> CGFloat {
+        host.bounds.midX + VoiceBarNotchContract.coreWidth / 2 +
+            VoiceBarNotchContract.compactCoreContentInset
     }
 
     private func readbackReplayButtonCenter(in host: NSView) -> NSPoint {

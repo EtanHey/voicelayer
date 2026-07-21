@@ -418,6 +418,7 @@ public struct BarView: View {
             WaveformView(
                 color: Theme.recordingColor,
                 isListening: !state.speechDetected,
+                horizontalPadding: WaveformLayout.recordingHorizontalPadding,
                 currentLevel: { state.recordingWaveformLevel }
             )
         case .transcribing:

@@ -17,6 +17,66 @@ final class WaveformViewTests: XCTestCase {
         )
     }
 
+    func testRecordingWaveformViewportIsCenteredInsideAnEqualPaddingSlot() {
+        XCTAssertEqual(WaveformLayout.recordingHorizontalPadding, 8)
+        XCTAssertEqual(
+            WaveformLayout.recordingSlotWidth,
+            WaveformLayout.viewportWidth + 2 * WaveformLayout.recordingHorizontalPadding
+        )
+        XCTAssertEqual(
+            (WaveformLayout.recordingSlotWidth - WaveformLayout.viewportWidth) / 2,
+            WaveformLayout.recordingHorizontalPadding
+        )
+    }
+
+    func testEnvelopeFollowerUsesLightAttackAndA200MillisecondRelease() {
+        var envelope = WaveformEnvelopeFollower()
+
+        XCTAssertEqual(envelope.sample(rawLevel: 0, at: 0), 0)
+        let firstSpeechFrame = envelope.sample(rawLevel: 1, at: 0.016)
+        XCTAssertGreaterThan(firstSpeechFrame, 0)
+        XCTAssertLessThan(firstSpeechFrame, 1)
+        XCTAssertGreaterThan(envelope.sample(rawLevel: 1, at: 0.080), 0.9)
+
+        let firstSilentFrame = envelope.sample(rawLevel: 0, at: 0.097)
+        XCTAssertGreaterThan(
+            firstSilentFrame,
+            0.5,
+            "silence must retain a visible tail after one 120fps/60fps frame"
+        )
+        XCTAssertGreaterThan(envelope.sample(rawLevel: 0, at: 0.197), 0)
+        XCTAssertGreaterThan(envelope.sample(rawLevel: 0, at: 0.247), 0)
+        XCTAssertEqual(envelope.sample(rawLevel: 0, at: 0.280), 0, accuracy: 0.0001)
+    }
+
+    func testEnvelopeReleaseDurationDoesNotShrinkForQuietUtteranceEndings() {
+        for startingLevel in [0.2, 0.4, 1.0] {
+            var envelope = WaveformEnvelopeFollower()
+            XCTAssertEqual(envelope.sample(rawLevel: startingLevel, at: 0), startingLevel)
+            XCTAssertGreaterThan(envelope.sample(rawLevel: 0, at: 0.150), 0)
+            XCTAssertGreaterThan(envelope.sample(rawLevel: 0, at: 0.199), 0)
+            XCTAssertEqual(envelope.sample(rawLevel: 0, at: 0.200), 0, accuracy: 0.0001)
+        }
+    }
+
+    func testEnvelopeFollowerSmoothsSpeechWithoutDependingOnFrameRate() {
+        var sixtyFPS = WaveformEnvelopeFollower()
+        var oneTwentyFPS = WaveformEnvelopeFollower()
+        _ = sixtyFPS.sample(rawLevel: 0, at: 0)
+        _ = oneTwentyFPS.sample(rawLevel: 0, at: 0)
+
+        for frame in 1 ... 6 {
+            _ = sixtyFPS.sample(rawLevel: 0.8, at: Double(frame) / 60)
+        }
+        for frame in 1 ... 12 {
+            _ = oneTwentyFPS.sample(rawLevel: 0.8, at: Double(frame) / 120)
+        }
+
+        XCTAssertEqual(sixtyFPS.level, oneTwentyFPS.level, accuracy: 0.0001)
+        XCTAssertGreaterThan(sixtyFPS.level, 0.75)
+        XCTAssertLessThanOrEqual(sixtyFPS.level, 0.8)
+    }
+
     func testRecordingSpeechUsesFullGainGoldMapping() throws {
         let level = 0.82
         let time = 0.63
@@ -89,18 +149,18 @@ final class WaveformViewTests: XCTestCase {
         }
     }
 
-    func testSharedEnvelopeUsesM1GoldAttackAndRelease() {
-        XCTAssertEqual(WaveformMetrics.envelopeAttackDuration, 0.06, accuracy: 0.0001)
-        XCTAssertEqual(WaveformMetrics.envelopeReleaseDuration, 0.40, accuracy: 0.0001)
+    func testSharedEnvelopeUsesBoundedAttackAndA200MillisecondRelease() {
+        XCTAssertEqual(WaveformMetrics.envelopeAttackDuration, 0.08, accuracy: 0.0001)
+        XCTAssertEqual(WaveformMetrics.envelopeReleaseDuration, 0.20, accuracy: 0.0001)
         XCTAssertEqual(WaveformMetrics.listeningDamping, 0.7, accuracy: 0.0001)
         XCTAssertEqual(
             WaveformMetrics.envelopeTransitionDuration(from: 0.2, to: 0.8),
-            0.06,
+            0.08,
             accuracy: 0.0001
         )
         XCTAssertEqual(
             WaveformMetrics.envelopeTransitionDuration(from: 0.8, to: 0.2),
-            0.40,
+            0.20,
             accuracy: 0.0001
         )
     }

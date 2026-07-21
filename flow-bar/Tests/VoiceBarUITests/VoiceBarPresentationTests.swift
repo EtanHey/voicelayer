@@ -77,7 +77,7 @@ final class VoiceBarPresentationTests: XCTestCase {
         XCTAssertEqual(warmup.geometry.trailingWingWidth, baseline.geometry.trailingWingWidth)
     }
 
-    func testCompactStatesKeepOneLeadingIndicatorLaneAndFitTheRightPayload() {
+    func testCompactStatesFitTheirPayloadAndRecordingBalancesItsWings() {
         let launcher = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
         )
@@ -95,11 +95,12 @@ final class VoiceBarPresentationTests: XCTestCase {
             from: VoiceBarNotchOperationalInput(mode: .transcribing)
         )
 
-        for presentation in [launcher, quickTap, recording, processing] {
+        for presentation in [launcher, quickTap, processing] {
             XCTAssertEqual(presentation.geometry.leadingWingWidth, 47.5)
         }
         XCTAssertEqual(launcher.geometry.trailingWingWidth, 73.5)
-        XCTAssertEqual(recording.geometry.trailingWingWidth, 125.5)
+        XCTAssertEqual(recording.geometry.leadingWingWidth, 141.5)
+        XCTAssertEqual(recording.geometry.trailingWingWidth, 141.5)
         XCTAssertEqual(processing.geometry.trailingWingWidth, 99.5)
         XCTAssertEqual(
             quickTap.geometry.trailingWingWidth,
@@ -124,10 +125,10 @@ final class VoiceBarPresentationTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 47.5)
-        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 125.5)
-        XCTAssertEqual(vad.geometry.leadingWingWidth, pushToTalk.geometry.leadingWingWidth)
-        XCTAssertEqual(vad.geometry.trailingWingWidth, 151.5)
+        XCTAssertEqual(pushToTalk.geometry.leadingWingWidth, 141.5)
+        XCTAssertEqual(pushToTalk.geometry.trailingWingWidth, 141.5)
+        XCTAssertEqual(vad.geometry.leadingWingWidth, 167.5)
+        XCTAssertEqual(vad.geometry.trailingWingWidth, 167.5)
         XCTAssertEqual(vad.geometry.trailingWingWidth - pushToTalk.geometry.trailingWingWidth, 26)
     }
 
