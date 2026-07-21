@@ -138,6 +138,103 @@ final class SocketServerTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#))
     }
 
+    func testStopInterruptReachesEveryPlaybackClientWhenLatestSpeakingOwnerOverlapsAnEarlierOwner() throws {
+        let directory = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("vbs-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let socketURL = directory.appendingPathComponent("voicelayer.sock")
+        let state = VoiceState()
+        let server = SocketServer(state: state, socketPath: socketURL.path)
+        server.start()
+        defer { server.stop() }
+        XCTAssertTrue(waitForSocket(at: socketURL.path))
+
+        let earlierPlaybackClient = try connectUnixSocket(path: socketURL.path)
+        let latestPlaybackClient = try connectUnixSocket(path: socketURL.path)
+        let commandClient = try connectUnixSocket(path: socketURL.path)
+        defer {
+            close(earlierPlaybackClient)
+            close(latestPlaybackClient)
+            close(commandClient)
+        }
+
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":111,"accepts_commands":false}"#,
+            to: earlierPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-server","pid":222,"accepts_commands":false}"#,
+            to: latestPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"client_hello","role":"mcp-daemon","pid":333,"accepts_commands":true}"#,
+            to: commandClient
+        )
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Earlier overlapping playback"}"#,
+            to: earlierPlaybackClient
+        )
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Latest visible playback"}"#,
+            to: latestPlaybackClient
+        )
+        XCTAssertTrue(waitForMode(state, mode: .speaking, timeout: 1))
+
+        server.sendCommandToOwner(command: ["cmd": "stop"])
+
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: earlierPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: latestPlaybackClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
+        XCTAssertTrue(try XCTUnwrap(readLine(from: commandClient, timeout: 1)).contains(#""cmd":"stop""#))
+    }
+
+    @MainActor
+    func testReplayAfterFinishedPlaybackRoutesToTheClientThatOwnedTheLastSpeak() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Replay survives playback idle"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+        try writeLine(
+            #"{"type":"state","state":"idle","source":"playback"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
+
+        fixture.server.sendCommandToOwner(command: ["cmd": "replay", "id": "finished-replay"])
+
+        let replay = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
+        XCTAssertTrue(replay.contains(#""cmd":"replay""#))
+        XCTAssertTrue(replay.contains(#""id":"finished-replay""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+    }
+
+    @MainActor
+    func testReplayDuringVoiceAskRoutesOnlyToTheActivePlaybackOwner() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Question playback remains blocking"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        fixture.server.sendCommandToOwner(command: ["cmd": "replay", "id": "active-replay"])
+
+        let replay = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
+        XCTAssertTrue(replay.contains(#""cmd":"replay""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+    }
+
     @MainActor
     func testRealSpeakingStopButtonInterruptsPlaybackOwnerThroughSocketThenReachesIdle() throws {
         let fixture = try makeConnectedServerFixture()
@@ -166,13 +263,19 @@ final class SocketServerTests: XCTestCase {
         )
 
         XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
-        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        let stopPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(legacyStop.utf8)) as? [String: Any]
+        )
+        XCTAssertNotNil(stopPayload["playback_elapsed_ms"] as? Int)
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
         try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
     }
 
     @MainActor
-    func testRealSpeakingReplayButtonRoutesReplayToCommandOwner() throws {
+    func testRealSpeakingReplayButtonRoutesAtomicReplayToPlaybackOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
@@ -203,35 +306,14 @@ final class SocketServerTests: XCTestCase {
             in: window
         )
 
-        let legacyStop = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
-        let ownerBeforeAck = try readLines(from: fixture.commandClient, count: 2, timeout: 0.2)
-        XCTAssertEqual(ownerBeforeAck.count, 1)
-        let ownerStop = try XCTUnwrap(ownerBeforeAck.first)
-        XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
-        XCTAssertTrue(ownerStop.contains(#""cmd":"stop""#))
-
-        let stopPayload = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(ownerStop.utf8)) as? [String: Any]
-        )
-        let stopID = try XCTUnwrap(stopPayload["id"] as? String)
-        try writeLine(
-            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
-            to: fixture.commandClient
-        )
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
-        try writeLine(
-            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
-            to: fixture.legacyClient
-        )
-
-        let replayCommand = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        let replayCommand = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
         XCTAssertTrue(replayCommand.contains(#""id":"#))
-        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
     }
 
     @MainActor
-    func testRapidActiveReplayCollapsesToOneRestartAfterLatestStopBarrier() throws {
+    func testRapidActiveReplayForwardsOnlyReplayIntentsToPlaybackOwner() throws {
         let fixture = try makeConnectedServerFixture()
         defer { fixture.cleanup() }
         fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
@@ -245,45 +327,11 @@ final class SocketServerTests: XCTestCase {
         router.handleReplay()
         router.handleReplay()
 
-        let legacyStops = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
-        let ownerStops = try readLines(from: fixture.commandClient, count: 3, timeout: 0.2)
-        XCTAssertEqual(legacyStops.count, 2)
-        XCTAssertEqual(ownerStops.count, 2)
-        XCTAssertTrue(legacyStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
-        XCTAssertTrue(ownerStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
-
-        let firstPayload = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(ownerStops[0].utf8)) as? [String: Any]
-        )
-        let secondPayload = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: Data(ownerStops[1].utf8)) as? [String: Any]
-        )
-        let firstID = try XCTUnwrap(firstPayload["id"] as? String)
-        let secondID = try XCTUnwrap(secondPayload["id"] as? String)
-        XCTAssertNotEqual(firstID, secondID)
-
-        for client in [fixture.commandClient, fixture.legacyClient] {
-            try writeLine(
-                #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(firstID)"}"#,
-                to: client
-            )
-        }
+        let replays = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
+        XCTAssertEqual(replays.count, 2)
+        XCTAssertTrue(replays.allSatisfy { $0.contains(#""cmd":"replay""#) })
+        XCTAssertTrue(replays.allSatisfy { !$0.contains(#""cmd":"stop""#) })
         XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
-
-        try writeLine(
-            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
-            to: fixture.commandClient
-        )
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
-        try writeLine(
-            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
-            to: fixture.legacyClient
-        )
-
-        let replay = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
-        XCTAssertTrue(replay.contains(#""cmd":"replay""#))
-        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
-        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
     }
 
     @MainActor
@@ -323,7 +371,9 @@ final class SocketServerTests: XCTestCase {
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
 
         XCTAssertTrue(try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1)).contains(#""cmd":"stop""#))
-        _ = try readLine(from: fixture.commandClient, timeout: 1)
+        XCTAssertTrue(
+            try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1)).contains(#""cmd":"stop""#)
+        )
         try writeLine(#"{"type":"state","state":"idle","source":"playback"}"#, to: fixture.legacyClient)
         XCTAssertTrue(waitForMode(fixture.state, mode: .idle, timeout: 1))
     }
@@ -438,6 +488,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let environment = ProcessInfo.processInfo.environment
         guard let rawSocketPath = environment["VOICELAYER_VERIFY_VOICEBAR_SOCKET_PATH"],
               !rawSocketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawMCPSocketPath = environment["VOICELAYER_VERIFY_MCP_SOCKET_PATH"],
+              !rawMCPSocketPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let rawDaemonPID = environment["VOICELAYER_VERIFY_DAEMON_PID"],
+              let daemonPID = Int32(rawDaemonPID),
+              daemonPID > 0,
               let rawWorkDirectory = environment["VOICELAYER_VERIFY_WORK_DIR"],
               !rawWorkDirectory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let audioFixture = environment["VOICELAYER_VERIFY_AUDIO_FIXTURE"],
@@ -457,8 +512,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         let expectedSocketPath = URL(fileURLWithPath: workDirectory, isDirectory: true)
             .appendingPathComponent("voicebar.sock")
             .path
-        guard socketPath == expectedSocketPath else {
-            XCTFail("runtime VoiceBar socket is outside the verifier work directory")
+        let mcpSocketPath = URL(fileURLWithPath: rawMCPSocketPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        let expectedMCPSocketPath = URL(fileURLWithPath: workDirectory, isDirectory: true)
+            .appendingPathComponent("mcp.sock")
+            .path
+        guard socketPath == expectedSocketPath, mcpSocketPath == expectedMCPSocketPath else {
+            XCTFail("runtime sockets are outside the verifier work directory")
             return
         }
 
@@ -466,7 +528,13 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         state.minimumTranscribingDisplayDuration = 0
         state.barInitiatedTranscriptionTimeout = .seconds(240)
         let server = SocketServer(state: state, socketPath: rawSocketPath)
-        state.sendCommand = { server.sendCommandToOwner(command: $0) }
+        var replayIntentCount = 0
+        state.sendCommand = { command in
+            if command["cmd"] as? String == "replay" {
+                replayIntentCount += 1
+            }
+            server.sendCommandToOwner(command: command)
+        }
         server.start()
         defer {
             state.sendCommand = nil
@@ -599,7 +667,205 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             environment: environment,
             workDirectory: workDirectory
         )
+
+        let finishedReplayPhrase = "Finished speech replay must start this exact audio again from the beginning."
+        let finishedSpeakStartEpoch = state.playbackEpoch
+        let finishedSpeakClient = try sendMCPToolCall(
+            socketPath: mcpSocketPath,
+            id: "runtime-finished-speak",
+            name: "voice_speak",
+            arguments: [
+                "message": finishedReplayPhrase,
+                "mode": "announce",
+                "rate": "-10%",
+            ]
+        )
+        defer { close(finishedSpeakClient) }
+        XCTAssertTrue(waitForCondition(timeout: 60) {
+            state.playbackEpoch > finishedSpeakStartEpoch && state.mode == .speaking
+        })
+        XCTAssertEqual(state.teleprompterText, finishedReplayPhrase)
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            directChildProcessCount(named: "afplay", parentPID: daemonPID) == 1
+        })
+        XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 60))
+
+        host.frame.size = host.fittingSize
+        window.setContentSize(host.frame.size)
+        host.layoutSubtreeIfNeeded()
+        let finishedReplayStartEpoch = state.playbackEpoch
+        let finishedReplayIntentCount = replayIntentCount
+        try click(
+            host,
+            at: NSPoint(x: host.bounds.midX - 28, y: 23),
+            in: window
+        )
+        XCTAssertTrue(waitForCondition(timeout: 1) {
+            replayIntentCount == finishedReplayIntentCount + 1
+        })
+        XCTAssertTrue(waitForCondition(timeout: 15) {
+            state.playbackEpoch > finishedReplayStartEpoch && state.mode == .speaking
+        })
+        XCTAssertEqual(state.teleprompterText, finishedReplayPhrase)
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            directChildProcessCount(named: "afplay", parentPID: daemonPID) == 1
+        })
+        XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 60))
+        print("[replay-runtime] finished replay click fired a fresh afplay process")
+
+        let askReplayPhrase = "Replay this blocking voice ask prompt without entering recording early."
+        let askStartEpoch = state.playbackEpoch
+        let askClient = try sendMCPToolCall(
+            socketPath: mcpSocketPath,
+            id: "runtime-active-ask",
+            name: "voice_ask",
+            arguments: [
+                "message": askReplayPhrase,
+                "timeout_seconds": 30,
+                "silence_mode": "quick",
+                "press_to_talk": true,
+            ]
+        )
+        defer { close(askClient) }
+        XCTAssertTrue(waitForCondition(timeout: 60) {
+            state.playbackEpoch > askStartEpoch && state.mode == .speaking
+        })
+        XCTAssertEqual(state.teleprompterText, askReplayPhrase)
+        XCTAssertTrue(waitForCondition(timeout: 10) {
+            directChildProcessCount(named: "afplay", parentPID: daemonPID) == 1
+        })
+        let originalAskEpoch = state.playbackEpoch
+
+        let askHost = NSHostingView(rootView: BarView(state: state, commandRouter: router))
+        askHost.frame = NSRect(origin: .zero, size: askHost.fittingSize)
+        let askWindow = NSWindow(
+            contentRect: askHost.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        askWindow.contentView = askHost
+        presentOffscreenForInteraction(askWindow)
+        defer {
+            askWindow.orderOut(nil)
+            askWindow.contentView = nil
+            askWindow.close()
+        }
+        askHost.layoutSubtreeIfNeeded()
+        let askReplayIntentCount = replayIntentCount
+        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        try click(askHost, at: NSPoint(x: askHost.bounds.midX - 28, y: 23), in: askWindow)
+        XCTAssertTrue(waitForCondition(timeout: 1) {
+            replayIntentCount == askReplayIntentCount + 2
+        })
+
+        var maxConcurrentAfplay = directChildProcessCount(named: "afplay", parentPID: daemonPID)
+        var sawRestartedAsk = false
+        var enteredRecordingBeforeReplay = false
+        let restartDeadline = Date().addingTimeInterval(20)
+        while Date() < restartDeadline {
+            let concurrent = directChildProcessCount(named: "afplay", parentPID: daemonPID)
+            maxConcurrentAfplay = max(maxConcurrentAfplay, concurrent)
+            XCTAssertLessThanOrEqual(concurrent, 1)
+            if state.playbackEpoch > originalAskEpoch {
+                sawRestartedAsk = true
+                break
+            }
+            if state.mode == .recording {
+                enteredRecordingBeforeReplay = true
+                break
+            }
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        if enteredRecordingBeforeReplay || !sawRestartedAsk {
+            router.handleCancel()
+            _ = waitForMode(state, mode: .idle, timeout: 15)
+            XCTFail(
+                enteredRecordingBeforeReplay
+                    ? "voice_ask advanced before replay started"
+                    : "voice_ask never emitted the restarted speaking epoch"
+            )
+            return
+        }
+        XCTAssertEqual(state.teleprompterText, askReplayPhrase)
+
+        let recordingDeadline = Date().addingTimeInterval(60)
+        while Date() < recordingDeadline, state.mode != .recording {
+            let concurrent = directChildProcessCount(named: "afplay", parentPID: daemonPID)
+            maxConcurrentAfplay = max(maxConcurrentAfplay, concurrent)
+            XCTAssertLessThanOrEqual(concurrent, 1)
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertEqual(maxConcurrentAfplay, 1)
+        router.handleCancel()
+        XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
+        print("[replay-runtime] active voice_ask replay stayed blocking; maxConcurrentAfplay=1")
     }
+}
+
+private func sendMCPToolCall(
+    socketPath: String,
+    id: String,
+    name: String,
+    arguments: [String: Any]
+) throws -> Int32 {
+    let fd = try connectUnixSocket(path: socketPath, timeout: 10)
+    do {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": [
+                "name": name,
+                "arguments": arguments,
+            ],
+        ])
+        var frame = Data("Content-Length: \(body.count)\r\n\r\n".utf8)
+        frame.append(body)
+        try writeData(frame, to: fd)
+        return fd
+    } catch {
+        close(fd)
+        throw error
+    }
+}
+
+private func writeData(_ data: Data, to fd: Int32) throws {
+    try data.withUnsafeBytes { rawBuffer in
+        guard let baseAddress = rawBuffer.baseAddress else { return }
+        var offset = 0
+        while offset < rawBuffer.count {
+            let written = write(fd, baseAddress.advanced(by: offset), rawBuffer.count - offset)
+            if written > 0 {
+                offset += written
+                continue
+            }
+            if written == -1, errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK {
+                Thread.sleep(forTimeInterval: 0.01)
+                continue
+            }
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+    }
+}
+
+private func directChildProcessCount(named name: String, parentPID: Int32) -> Int {
+    let process = Process()
+    let output = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+    process.arguments = ["-P", String(parentPID), "-x", name]
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+        process.waitUntilExit()
+    } catch {
+        return 0
+    }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    guard let text = String(data: data, encoding: .utf8) else { return 0 }
+    return text.split(whereSeparator: \Character.isNewline).count
 }
 
 private struct ConnectedServerFixture {

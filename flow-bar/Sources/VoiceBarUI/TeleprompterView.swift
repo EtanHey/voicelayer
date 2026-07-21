@@ -388,6 +388,7 @@ public enum TeleprompterPlaybackPolicy {
 
 public struct TeleprompterView: View {
     public let text: String
+    public var playbackEpoch = 0
     /// Server-provided word boundary timestamps (ms offsets from audio start).
     public var wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = []
     public var isReadback = false
@@ -400,6 +401,7 @@ public struct TeleprompterView: View {
         text: String,
         wordBoundaries: [(offsetMs: Int, durationMs: Int, text: String)] = [],
         isReadback: Bool = false,
+        playbackEpoch: Int = 0,
         playbackElapsedMilliseconds: @escaping () -> Int,
         wrapWidth: CGFloat = Theme.teleprompterWrapWidth,
         viewportHeight: CGFloat = Theme.teleprompterViewportHeight,
@@ -408,6 +410,7 @@ public struct TeleprompterView: View {
         self.text = text
         self.wordBoundaries = wordBoundaries
         self.isReadback = isReadback
+        self.playbackEpoch = playbackEpoch
         self.playbackElapsedMilliseconds = playbackElapsedMilliseconds
         self.wrapWidth = wrapWidth
         self.viewportHeight = viewportHeight
@@ -488,6 +491,10 @@ public struct TeleprompterView: View {
                 scrollToCurrentWord(with: proxy, animated: false)
             }
             .onChange(of: wordBoundaries.count) { _, _ in
+                restart()
+                scrollToCurrentWord(with: proxy, animated: false)
+            }
+            .onChange(of: playbackEpoch) { _, _ in
                 restart()
                 scrollToCurrentWord(with: proxy, animated: false)
             }

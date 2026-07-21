@@ -112,6 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var dictionarySheetWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var isolatedInstanceMarkerPID: pid_t?
+    private var terminationSignalSource: DispatchSourceSignal?
 
     /// Last transition seen by the panel resize path. Used to decide whether a
     /// given geometry change should tween instead of snap.
@@ -360,6 +361,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         signal(SIGPIPE, SIG_IGN)
         NSLog("[VoiceBar] SIGPIPE ignored process-wide")
+        signal(SIGTERM, SIG_IGN)
+        let terminationSignalSource = DispatchSource.makeSignalSource(
+            signal: SIGTERM,
+            queue: .main
+        )
+        terminationSignalSource.setEventHandler { [weak self] in
+            self?.requestTermination(.internalFailure)
+        }
+        terminationSignalSource.resume()
+        self.terminationSignalSource = terminationSignalSource
 
         // Register Apple Event handler for voicebar:// URL scheme.
         // Must happen after SwiftUI scene setup completes, so we defer
@@ -547,6 +558,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        performTerminationCleanup()
+    }
+
+    private func performTerminationCleanup() {
         if let isolatedInstanceMarkerPID {
             VoiceBarInstanceIsolationRegistry.unregister(pid: isolatedInstanceMarkerPID)
             self.isolatedInstanceMarkerPID = nil
@@ -555,23 +570,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         dictionarySheetWindow?.close()
         settingsWindow?.close()
         hotkeyManager?.stop()
-        audioLevelMonitor.stop()
+        audioLevelMonitor.shutdown()
         daemonController.stop()
         socketServer?.stop()
         if let monitor = mouseMonitor {
             NSEvent.removeMonitor(monitor)
+            mouseMonitor = nil
         }
         panelPointerMovementHandler = nil
         if let observer = moveObserver {
             NotificationCenter.default.removeObserver(observer)
+            moveObserver = nil
         }
         if let observer = displayObserver {
             NotificationCenter.default.removeObserver(observer)
+            displayObserver = nil
         }
         for observer in workspaceNotificationObservers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         workspaceNotificationObservers.removeAll()
+        terminationSignalSource?.cancel()
+        terminationSignalSource = nil
     }
 
     private func configurePillContextMenu() {
@@ -679,11 +699,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         // Clean shutdown — exit code 0 so launchd KeepAlive.SuccessfulExit:false
         // does NOT respawn. Only crashes (non-zero) trigger restart.
-        snoozeTask?.cancel()
-        hotkeyManager?.stop()
-        audioLevelMonitor.stop()
-        daemonController.stop()
-        socketServer?.stop()
+        performTerminationCleanup()
         return reply
     }
 

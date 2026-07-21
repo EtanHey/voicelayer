@@ -17,6 +17,7 @@ import {
   awaitCurrentPlayback,
   getHistoryEntry,
   playAudioNonBlocking,
+  restartPlayback,
   stopPlayback,
 } from "./tts";
 import {
@@ -79,7 +80,7 @@ export function handleSocketCommand(
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
-      stopPlayback();
+      stopPlayback(command.playback_elapsed_ms);
       return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
     case "cancel":
       if (recordingState === "idle" && playbackQueueDepth === 0) {
@@ -94,24 +95,24 @@ export function handleSocketCommand(
       );
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
-      stopPlayback();
+      stopPlayback(command.playback_elapsed_ms);
       return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
     case "replay": {
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");
       }
+      if (isSpeaking) {
+        if (restartPlayback()) {
+          return buildAck(command, "accept");
+        }
+        return buildAck(command, "reject", "busy");
+      }
       const entry = getHistoryEntry(0);
       if (entry && existsSync(entry.file)) {
-        if (isSpeaking) {
-          stopPlayback();
-        }
         try {
           playAudioNonBlocking(entry.file, {
             text: entry.text.slice(0, 2000),
             voice: entry.voice,
-            // Idle forces VoiceBar remount for same-text replay, but the queue
-            // must emit it only after the speaker gate accepts playback.
-            preStartIdle: true,
           });
         } catch (err) {
           return buildAck(

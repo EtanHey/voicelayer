@@ -2,6 +2,43 @@
 import XCTest
 
 final class VoiceStateTests: XCTestCase {
+    func testRepeatedSpeakingReceiptAdvancesPlaybackEpochForInPlaceReplay() {
+        let state = VoiceState()
+
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Replay the same words",
+        ])
+        let firstEpoch = state.playbackEpoch
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Replay the same words",
+        ])
+
+        XCTAssertEqual(state.mode, .speaking)
+        XCTAssertEqual(state.playbackEpoch, firstEpoch + 1)
+    }
+
+    func testSpeakingStopCarriesTeleprompterElapsedClockForExactTelemetry() {
+        var now = 50.0
+        let state = VoiceState(playbackAmplitudeClock: { now })
+        var sent: [String: Any]?
+        state.sendCommand = { sent = $0 }
+        state.handleEvent([
+            "type": "state",
+            "state": "speaking",
+            "text": "Report the highlighted word",
+        ])
+
+        now = 50.8
+        state.stop()
+
+        XCTAssertEqual(sent?["cmd"] as? String, "stop")
+        XCTAssertEqual(sent?["playback_elapsed_ms"] as? Int, 800)
+    }
+
     func testNewSpeakingStateClearsStaleSubtitleBoundariesBeforeFreshPayloadArrives() {
         let state = VoiceState()
         state.handleEvent([
