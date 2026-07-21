@@ -112,7 +112,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let slots = try bracedScope(after: "private var notchSlots", in: source)
 
         XCTAssertTrue(container.contains("presentation.visualState != .idle"))
-        XCTAssertTrue(container.contains("notchSurface"))
+        XCTAssertTrue(container.contains("morphingNotchSurface"))
         XCTAssertTrue(surface.contains("VoiceBarNotchContinuousShape"))
         XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
@@ -132,19 +132,19 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(source.contains(".zIndex(10)"))
     }
 
-    func testCompactSurfaceKeepsOneIdentityForInPlaceIndicatorAndWaveformTransforms() throws {
+    func testHeroBranchesShareOneMatchedGeometryShellWithoutStateIDs() throws {
         let source = try notchViewSource()
-        let compactUse = try XCTUnwrap(source.range(of: "notchSurface"))
-        let fixedCoreUse = try XCTUnwrap(
-            source.range(of: "fixedHardwareCore", range: compactUse.upperBound ..< source.endIndex)
-        )
-        let bodyCompactBranch = source[compactUse.lowerBound ..< fixedCoreUse.lowerBound]
+        let hero = try bracedScope(after: "private var morphingNotchSurface", in: source)
 
-        XCTAssertFalse(bodyCompactBranch.contains(".id(presentation.visualState)"))
-        XCTAssertTrue(
-            bodyCompactBranch.contains(".transition(.identity)"),
-            "a collapsed shell must not leave an animated detached wing alive in the resized panel"
-        )
+        XCTAssertTrue(hero.contains("presentation.visualState == .teleprompter"))
+        XCTAssertEqual(hero.components(separatedBy: ".matchedGeometryEffect(").count - 1, 2)
+        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 2)
+        XCTAssertTrue(hero.contains("properties: .frame"))
+        XCTAssertTrue(hero.contains("anchor: .top"))
+        XCTAssertFalse(hero.contains(".id(presentation.visualState)"))
+        XCTAssertTrue(source.contains("@State private var renderedGeometry"))
+        XCTAssertTrue(source.contains("withAnimation(shellAnimation.delay("))
+        XCTAssertTrue(source.contains("renderedGeometry = nextGeometry"))
     }
 
     func testCollapsedShellKeepsThePhysicalCoreAsAnInvisibleHoverTarget() throws {
@@ -157,10 +157,13 @@ final class VoiceBarNotchViewTests: XCTestCase {
     func testContinuousContentBearingGlassOwnsTheHoverRegion() throws {
         let source = try notchViewSource()
         let surface = try bracedScope(after: "private var notchSurface", in: source)
+        let interactiveSurface = try XCTUnwrap(surface.components(separatedBy: ".overlay").first)
 
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
-        XCTAssertFalse(surface.contains(".allowsHitTesting(false)"))
-        XCTAssertFalse(surface.contains("Color.clear"))
+        XCTAssertFalse(interactiveSurface.contains(".allowsHitTesting(false)"))
+        XCTAssertFalse(interactiveSurface.contains("Color.clear"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchMorphDelightEdge"))
+        XCTAssertTrue(surface.contains(".allowsHitTesting(false)"))
     }
 
     func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
@@ -168,10 +171,38 @@ final class VoiceBarNotchViewTests: XCTestCase {
         let body = try bracedScope(after: "public var body: some View", in: source)
         let surface = try bracedScope(after: "private var notchSurface", in: source)
 
-        XCTAssertTrue(body.contains("notchSurface"))
+        XCTAssertTrue(body.contains("morphingNotchSurface"))
         XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(body.contains(".transition(.identity)"))
         XCTAssertFalse(source.contains("teleprompterSurfaceUnit"))
+    }
+
+    func testFixedCoreAndContentAvoidPrototypeTransformEffects() throws {
+        let source = try notchViewSource()
+        let core = try bracedScope(after: "private var fixedHardwareCore", in: source)
+        let slots = try bracedScope(after: "private var notchSlots", in: source)
+
+        XCTAssertFalse(core.contains("matchedGeometryEffect"))
+        XCTAssertFalse(core.contains("scaleEffect"))
+        XCTAssertFalse(slots.contains("scaleEffect"))
+        XCTAssertFalse(slots.contains("blur"))
+        XCTAssertFalse(slots.contains("distortionEffect"))
+        XCTAssertFalse(slots.contains("layerEffect"))
+        XCTAssertTrue(core.contains("resolvedCanvasGeometry.coreOriginX"))
+    }
+
+    func testTeleprompterContentIsSequencedInsideTheMorphingShell() throws {
+        let source = try notchViewSource()
+        let slots = try bracedScope(after: "private var notchSlots", in: source)
+        let transition = try bracedScope(after: "private func surfaceTransition", in: source)
+
+        XCTAssertTrue(slots.contains(".transition("))
+        XCTAssertTrue(slots.contains("surfaceTransition("))
+        XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.panelDelay * 2"))
+        XCTAssertTrue(source.contains("VoiceBarNotchContract.motion.contentExitDuration"))
+        XCTAssertTrue(source.contains("shellAnimation.delay(closingGeometryDelay"))
+        XCTAssertTrue(transition.contains(".opacity"))
+        XCTAssertFalse(transition.contains(".scale"))
     }
 
     private func notchViewSource() throws -> String {

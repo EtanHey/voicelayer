@@ -321,6 +321,18 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertFalse(recording.contains("PulsingDot()"))
     }
 
+    func testTeleprompterContentMountsOnlyAfterTheMorphingShellCanContainIt() throws {
+        let source = try barViewSource()
+
+        XCTAssertTrue(source.contains("@State private var morphTeleprompterContentTask"))
+        XCTAssertTrue(source.contains("@State private var isMorphTeleprompterContentPresented"))
+        XCTAssertTrue(source.contains("scheduleMorphTeleprompterContent(for:"))
+        XCTAssertTrue(source.contains("Task.sleep(for: .seconds(morphContentDelay))"))
+        XCTAssertTrue(source.contains("morphDescriptor.totalDuration"))
+        XCTAssertTrue(source.contains("if isMorphTeleprompterContentPresented"))
+        XCTAssertTrue(source.contains(".transition(.opacity)"))
+    }
+
     func testTranscribingNotchDropsTheRedundantDefaultLabel() throws {
         let source = try barViewSource()
         let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))

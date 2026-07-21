@@ -134,8 +134,108 @@ public struct VoiceBarNotchHardwareCoreShape: Shape {
 
 /// One material mask containing the two top wings and, when present, the lower body.
 /// The physical camera housing is intentionally absent from the path.
+public struct VoiceBarNotchGeometryAnimatableData: VectorArithmetic, Sendable {
+    public var coreWidth: CGFloat
+    public var topHeight: CGFloat
+    public var leadingWingWidth: CGFloat
+    public var trailingWingWidth: CGFloat
+    public var bodyLeadingExtent: CGFloat
+    public var bodyTrailingExtent: CGFloat
+    public var lowerSurfaceHeight: CGFloat
+
+    public init(geometry: VoiceBarNotchGeometry) {
+        coreWidth = geometry.coreWidth
+        topHeight = geometry.topHeight
+        leadingWingWidth = geometry.leadingWingWidth
+        trailingWingWidth = geometry.trailingWingWidth
+        bodyLeadingExtent = geometry.bodyLeadingExtent
+        bodyTrailingExtent = geometry.bodyTrailingExtent
+        lowerSurfaceHeight = geometry.lowerSurfaceHeight
+    }
+
+    public static let zero = VoiceBarNotchGeometryAnimatableData(
+        geometry: VoiceBarNotchGeometry(
+            coreWidth: 0,
+            topHeight: 0,
+            leadingWingWidth: 0,
+            trailingWingWidth: 0,
+            bodyLeadingExtent: 0,
+            bodyTrailingExtent: 0,
+            lowerSurfaceHeight: 0
+        )
+    )
+
+    public static func + (
+        lhs: VoiceBarNotchGeometryAnimatableData,
+        rhs: VoiceBarNotchGeometryAnimatableData
+    ) -> VoiceBarNotchGeometryAnimatableData {
+        VoiceBarNotchGeometryAnimatableData(
+            geometry: VoiceBarNotchGeometry(
+                coreWidth: lhs.coreWidth + rhs.coreWidth,
+                topHeight: lhs.topHeight + rhs.topHeight,
+                leadingWingWidth: lhs.leadingWingWidth + rhs.leadingWingWidth,
+                trailingWingWidth: lhs.trailingWingWidth + rhs.trailingWingWidth,
+                bodyLeadingExtent: lhs.bodyLeadingExtent + rhs.bodyLeadingExtent,
+                bodyTrailingExtent: lhs.bodyTrailingExtent + rhs.bodyTrailingExtent,
+                lowerSurfaceHeight: lhs.lowerSurfaceHeight + rhs.lowerSurfaceHeight
+            )
+        )
+    }
+
+    public static func - (
+        lhs: VoiceBarNotchGeometryAnimatableData,
+        rhs: VoiceBarNotchGeometryAnimatableData
+    ) -> VoiceBarNotchGeometryAnimatableData {
+        VoiceBarNotchGeometryAnimatableData(
+            geometry: VoiceBarNotchGeometry(
+                coreWidth: lhs.coreWidth - rhs.coreWidth,
+                topHeight: lhs.topHeight - rhs.topHeight,
+                leadingWingWidth: lhs.leadingWingWidth - rhs.leadingWingWidth,
+                trailingWingWidth: lhs.trailingWingWidth - rhs.trailingWingWidth,
+                bodyLeadingExtent: lhs.bodyLeadingExtent - rhs.bodyLeadingExtent,
+                bodyTrailingExtent: lhs.bodyTrailingExtent - rhs.bodyTrailingExtent,
+                lowerSurfaceHeight: lhs.lowerSurfaceHeight - rhs.lowerSurfaceHeight
+            )
+        )
+    }
+
+    public mutating func scale(by rhs: Double) {
+        coreWidth *= rhs
+        topHeight *= rhs
+        leadingWingWidth *= rhs
+        trailingWingWidth *= rhs
+        bodyLeadingExtent *= rhs
+        bodyTrailingExtent *= rhs
+        lowerSurfaceHeight *= rhs
+    }
+
+    public var magnitudeSquared: Double {
+        Double(
+            coreWidth * coreWidth +
+                topHeight * topHeight +
+                leadingWingWidth * leadingWingWidth +
+                trailingWingWidth * trailingWingWidth +
+                bodyLeadingExtent * bodyLeadingExtent +
+                bodyTrailingExtent * bodyTrailingExtent +
+                lowerSurfaceHeight * lowerSurfaceHeight
+        )
+    }
+
+    public var geometry: VoiceBarNotchGeometry {
+        VoiceBarNotchGeometry(
+            coreWidth: coreWidth,
+            topHeight: topHeight,
+            leadingWingWidth: leadingWingWidth,
+            trailingWingWidth: trailingWingWidth,
+            bodyLeadingExtent: bodyLeadingExtent,
+            bodyTrailingExtent: bodyTrailingExtent,
+            lowerSurfaceHeight: lowerSurfaceHeight
+        )
+    }
+}
+
 public struct VoiceBarNotchContinuousShape: Shape {
-    public let geometry: VoiceBarNotchGeometry
+    public var geometry: VoiceBarNotchGeometry
     public var compactOuterCornerRadius: CGFloat
 
     public init(
@@ -144,6 +244,11 @@ public struct VoiceBarNotchContinuousShape: Shape {
     ) {
         self.geometry = geometry
         self.compactOuterCornerRadius = compactOuterCornerRadius
+    }
+
+    public var animatableData: VoiceBarNotchGeometryAnimatableData {
+        get { VoiceBarNotchGeometryAnimatableData(geometry: geometry) }
+        set { geometry = newValue.geometry }
     }
 
     public func path(in rect: CGRect) -> Path {

@@ -35,11 +35,17 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let trailingContent: TrailingContent
     private let lowerContent: LowerContent
     private let onHoverChanged: (Bool) -> Void
+    private let morphVariant: VoiceBarNotchMorphVariant
+    private let canvasGeometry: VoiceBarNotchGeometry?
+    @State private var renderedGeometry: VoiceBarNotchGeometry
+    @Namespace private var morphNamespace
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     public init(
         presentation: VoiceBarNotchPresentation,
         appearance: VoiceBarNotchAppearance = .dark,
+        morphVariant: VoiceBarNotchMorphVariant = .p1Matched,
+        canvasGeometry: VoiceBarNotchGeometry? = nil,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
         @ViewBuilder trailingContent: () -> TrailingContent,
@@ -47,6 +53,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     ) {
         self.presentation = presentation
         self.appearance = appearance
+        self.morphVariant = morphVariant
+        self.canvasGeometry = canvasGeometry
+        _renderedGeometry = State(initialValue: presentation.geometry)
         self.onHoverChanged = onHoverChanged
         self.leadingContent = leadingContent()
         self.trailingContent = trailingContent()
@@ -55,9 +64,9 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            VoiceBarGlassContainer {
+            VoiceBarGlassContainer(variant: morphVariant) {
                 if presentation.visualState != .idle {
-                    notchSurface
+                    morphingNotchSurface
                         .transition(.identity)
                 }
             }
@@ -65,8 +74,8 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             fixedHardwareCore
         }
         .frame(
-            width: presentation.geometry.totalWidth,
-            height: presentation.geometry.totalHeight,
+            width: resolvedCanvasGeometry.totalWidth,
+            height: resolvedCanvasGeometry.totalHeight,
             alignment: .topLeading
         )
         // The collapsed state draws no software pixels, but the physical
@@ -77,38 +86,100 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
         .onHover(perform: onHoverChanged)
+        .onAppear {
+            renderedGeometry = presentation.geometry
+        }
+        .onChange(of: presentation.geometry) { _, nextGeometry in
+            let closingGeometryDelay = renderedGeometry.lowerSurfaceHeight > 0
+                && nextGeometry.lowerSurfaceHeight == 0
+                ? VoiceBarNotchContract.motion.contentExitDuration
+                : 0
+            withAnimation(shellAnimation.delay(closingGeometryDelay)) {
+                renderedGeometry = nextGeometry
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var morphingNotchSurface: some View {
+        if presentation.visualState == .teleprompter {
+            notchSurface
+                .matchedGeometryEffect(
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
+                    in: morphNamespace,
+                    properties: .frame,
+                    anchor: .top
+                )
+                .offset(x: surfaceOffsetX)
+        } else {
+            notchSurface
+                .matchedGeometryEffect(
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
+                    in: morphNamespace,
+                    properties: .frame,
+                    anchor: .top
+                )
+                .offset(x: surfaceOffsetX)
+        }
+    }
+
+    private var resolvedCanvasGeometry: VoiceBarNotchGeometry {
+        canvasGeometry ?? presentation.geometry
+    }
+
+    private var surfaceOffsetX: CGFloat {
+        resolvedCanvasGeometry.coreOriginX - renderedGeometry.coreOriginX
+    }
+
+    private var shellAnimation: Animation {
+        if accessibilityReduceMotion {
+            return .easeOut(duration: 0.18)
+        }
+        let descriptor = morphDescriptor
+        if descriptor.effectiveVariant == .p3SpringDelight {
+            return .spring(
+                response: descriptor.totalDuration,
+                dampingFraction: descriptor.heroDampingFraction
+            )
+        }
+        return .interpolatingSpring(
+            mass: descriptor.mass,
+            stiffness: descriptor.stiffness,
+            damping: descriptor.damping
+        )
+    }
+
+    private var morphDescriptor: VoiceBarNotchMorphDescriptor {
+        if #available(macOS 26.0, *) {
+            morphVariant.descriptor(
+                nativeGlassAvailable: true,
+                reducedMotion: accessibilityReduceMotion
+            )
+        } else {
+            morphVariant.descriptor(
+                nativeGlassAvailable: false,
+                reducedMotion: accessibilityReduceMotion
+            )
+        }
     }
 
     private func surfaceTransition(delay: TimeInterval) -> AnyTransition {
-        let insertionAnimation: Animation = if accessibilityReduceMotion {
-            .easeOut(duration: 0.18).delay(delay)
-        } else {
-            .interpolatingSpring(
-                mass: VoiceBarNotchContract.motion.mass,
-                stiffness: VoiceBarNotchContract.motion.stiffness,
-                damping: VoiceBarNotchContract.motion.damping
-            )
-            .delay(delay)
-        }
+        let insertionAnimation = Animation.easeOut(
+            duration: accessibilityReduceMotion ? 0.18 : 0.12
+        )
+        .delay(delay)
         let removalAnimation = Animation.easeOut(
             duration: VoiceBarNotchContract.motion.contentExitDuration
         )
-        let insertion: AnyTransition = if accessibilityReduceMotion {
-            .opacity.animation(insertionAnimation)
-        } else {
-            .scale(scale: 0.97, anchor: .top)
-                .combined(with: .opacity)
-                .animation(insertionAnimation)
-        }
 
         return .asymmetric(
-            insertion: insertion,
+            insertion: .opacity.animation(insertionAnimation),
             removal: .opacity.animation(removalAnimation)
         )
     }
 
     private var layout: VoiceBarNotchShapeLayout {
-        VoiceBarNotchShapeLayout(geometry: presentation.geometry)
+        VoiceBarNotchShapeLayout(geometry: renderedGeometry)
     }
 
     @ViewBuilder
@@ -118,8 +189,14 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                 lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
             )
             .fill(.black)
-            .frame(width: layout.coreRect.width, height: layout.coreRect.height)
-            .position(x: layout.coreRect.midX, y: layout.coreRect.midY)
+            .frame(
+                width: resolvedCanvasGeometry.coreWidth,
+                height: resolvedCanvasGeometry.topHeight
+            )
+            .position(
+                x: resolvedCanvasGeometry.coreOriginX + resolvedCanvasGeometry.coreWidth / 2,
+                y: resolvedCanvasGeometry.topHeight / 2
+            )
             .accessibilityHidden(true)
             .transaction { transaction in
                 transaction.animation = nil
@@ -130,21 +207,31 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     private var notchSurface: some View {
         let shape = VoiceBarNotchContinuousShape(
-            geometry: presentation.geometry,
+            geometry: renderedGeometry,
             compactOuterCornerRadius: compactOuterCornerRadius
         )
         return notchSlots
             .frame(
-                width: presentation.geometry.totalWidth,
-                height: presentation.geometry.totalHeight,
+                width: renderedGeometry.totalWidth,
+                height: renderedGeometry.totalHeight,
                 alignment: .topLeading
             )
             .modifier(
                 VoiceBarGlassMaterial(
                     shape: shape,
-                    appearance: appearance
+                    appearance: appearance,
+                    morphVariant: morphVariant
                 )
             )
+            .overlay {
+                VoiceBarNotchMorphDelightEdge(
+                    shape: shape,
+                    trigger: presentation.visualState,
+                    descriptor: morphDescriptor,
+                    reducedMotion: accessibilityReduceMotion
+                )
+                .allowsHitTesting(false)
+            }
             .contentShape(shape)
     }
 
@@ -182,6 +269,11 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
             if !layout.bodyRect.isEmpty {
                 lowerContent
+                    .transition(
+                        surfaceTransition(
+                            delay: VoiceBarNotchContract.motion.panelDelay * 2
+                        )
+                    )
                     .frame(
                         width: layout.bodyRect.width,
                         height: layout.bodyRect.height
@@ -242,5 +334,35 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         case .core:
             slot.side == .leading ? .trailing : .leading
         }
+    }
+}
+
+private struct VoiceBarNotchMorphDelightEdge<SurfaceShape: Shape>: View {
+    let shape: SurfaceShape
+    let trigger: VoiceBarNotchVisualState
+    let descriptor: VoiceBarNotchMorphDescriptor
+    let reducedMotion: Bool
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        shape
+            .stroke(.white.opacity(descriptor.maximumMaterialScaleDelta > 0 ? 0.18 : 0), lineWidth: 0.8)
+            .scaleEffect(scale, anchor: .top)
+            .onChange(of: trigger) { _, _ in
+                guard descriptor.maximumMaterialScaleDelta > 0, !reducedMotion else {
+                    scale = 1
+                    return
+                }
+                scale = 1 - descriptor.maximumMaterialScaleDelta
+                withAnimation(
+                    .spring(
+                        response: descriptor.totalDuration,
+                        dampingFraction: descriptor.heroDampingFraction
+                    )
+                    .delay(descriptor.childStagger)
+                ) {
+                    scale = 1
+                }
+            }
     }
 }

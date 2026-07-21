@@ -133,6 +133,35 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertTrue(source.contains("-> Any? {\n        nil\n    }"))
     }
 
+    func testP2WrapsTheProvenAppKitHostWithoutRestoringSwiftUIGlassMaterial() throws {
+        let source = try notchMaterialSource()
+
+        XCTAssertTrue(source.contains("GlassEffectContainer(spacing:"))
+        XCTAssertTrue(source.contains(".glassEffectID("))
+        XCTAssertTrue(source.contains("NSGlassEffectContainerView"))
+        XCTAssertTrue(source.contains("VoiceBarAppKitGlassHost"))
+        XCTAssertTrue(source.contains("useNativeContainer: nativeContainerEnabled"))
+        XCTAssertTrue(source.contains("if useNativeContainer"))
+        XCTAssertFalse(source.contains(".glassEffect(.regular"))
+        XCTAssertFalse(source.contains("NSVisualEffectView"))
+    }
+
+    func testP1AndP3KeepTheDirectPhaseOneGlassHost() throws {
+        let source = try notchMaterialSource()
+        let host = try bracedScope(after: "private struct VoiceBarAppKitGlassHost", in: source)
+
+        XCTAssertTrue(host.contains("let useNativeContainer: Bool"))
+        XCTAssertTrue(host.contains("return glassView"))
+        XCTAssertTrue(host.contains("VoiceBarTrackedGlassContainerView"))
+        XCTAssertTrue(source.contains("private var nativeContainerEnabled: Bool"))
+    }
+
+    func testLiveVariantSelectionRebuildsTheAppKitHostTopology() throws {
+        let material = try glassMaterialSource()
+
+        XCTAssertTrue(material.contains(".id(morphVariant.rawValue)"))
+    }
+
     func testGlassMaterialConsumesTheSettledAppearanceExplicitly() throws {
         let material = try glassMaterialSource()
 
@@ -157,5 +186,29 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         let source = try notchMaterialSource()
         let materialStart = try XCTUnwrap(source.range(of: "public struct VoiceBarGlassMaterial"))
         return source[materialStart.lowerBound...]
+    }
+
+    private func bracedScope(after marker: String, in source: String) throws -> Substring {
+        let markerRange = try XCTUnwrap(source.range(of: marker))
+        let openingBrace = try XCTUnwrap(
+            source[markerRange.upperBound...].firstIndex(of: "{")
+        )
+        var depth = 0
+        var cursor = openingBrace
+        while cursor < source.endIndex {
+            switch source[cursor] {
+            case "{":
+                depth += 1
+            case "}":
+                depth -= 1
+                if depth == 0 {
+                    return source[openingBrace ... cursor]
+                }
+            default:
+                break
+            }
+            cursor = source.index(after: cursor)
+        }
+        throw NSError(domain: "VoiceBarNotchMaterialTests", code: 1)
     }
 }

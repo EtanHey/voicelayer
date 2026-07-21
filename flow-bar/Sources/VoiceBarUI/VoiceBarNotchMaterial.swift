@@ -80,14 +80,38 @@ public struct VoiceBarNotchGlassRecipe: Equatable {
 /// Keeps one native-glass ownership boundary stable while the notch geometry
 /// changes between compact wing subpaths and the connected teleprompter body.
 public struct VoiceBarGlassContainer<Content: View>: View {
+    public let variant: VoiceBarNotchMorphVariant
     private let content: Content
+    @Namespace private var nativeGlassNamespace
 
-    public init(@ViewBuilder content: () -> Content) {
+    public init(
+        variant: VoiceBarNotchMorphVariant = .p1Matched,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.variant = variant
         self.content = content()
     }
 
     public var body: some View {
-        content
+        if #available(macOS 26.0, *),
+           variant.descriptor(
+               nativeGlassAvailable: true,
+               reducedMotion: false
+           ).usesNativeGlassContainer {
+            let descriptor = variant.descriptor(
+                nativeGlassAvailable: true,
+                reducedMotion: false
+            )
+            GlassEffectContainer(spacing: descriptor.nativeGlassSpacing) {
+                content
+                    .glassEffectID(
+                        VoiceBarNotchMorphVariant.sharedGlassID,
+                        in: nativeGlassNamespace
+                    )
+            }
+        } else {
+            content
+        }
     }
 }
 
@@ -97,15 +121,18 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
     public let shape: SurfaceShape
     public let appearance: VoiceBarNotchAppearance
     public let forceOpaqueFallback: Bool
+    public let morphVariant: VoiceBarNotchMorphVariant
 
     public init(
         shape: SurfaceShape,
         appearance: VoiceBarNotchAppearance = .dark,
-        forceOpaqueFallback: Bool = false
+        forceOpaqueFallback: Bool = false,
+        morphVariant: VoiceBarNotchMorphVariant = .p1Matched
     ) {
         self.shape = shape
         self.appearance = appearance
         self.forceOpaqueFallback = forceOpaqueFallback
+        self.morphVariant = morphVariant
     }
 
     public func body(content: Content) -> some View {
@@ -138,10 +165,13 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
         } else if #available(macOS 26.0, *) {
             VoiceBarAppKitGlassHost(
                 shape: shape,
-                tint: recipe.tint
+                tint: recipe.tint,
+                useNativeContainer: nativeContainerEnabled,
+                containerSpacing: nativeContainerSpacing
             ) {
                 content
             }
+            .id(morphVariant.rawValue)
         } else {
             content
                 .background(.ultraThinMaterial, in: shape)
@@ -151,19 +181,35 @@ public struct VoiceBarGlassMaterial<SurfaceShape: Shape>: ViewModifier {
                 }
         }
     }
+
+    private var nativeContainerSpacing: CGFloat {
+        morphVariant.descriptor(
+            nativeGlassAvailable: true,
+            reducedMotion: false
+        ).nativeGlassSpacing
+    }
+
+    private var nativeContainerEnabled: Bool {
+        morphVariant.descriptor(
+            nativeGlassAvailable: true,
+            reducedMotion: false
+        ).usesNativeGlassContainer
+    }
 }
 
 @available(macOS 26.0, *)
 private struct VoiceBarAppKitGlassHost<SurfaceShape: Shape, HostedContent: View>: NSViewRepresentable {
     let shape: SurfaceShape
     let tint: VoiceBarRGBA
+    let useNativeContainer: Bool
+    let containerSpacing: CGFloat
     @ViewBuilder let content: HostedContent
 
     func makeCoordinator() -> Coordinator {
         Coordinator(content: content)
     }
 
-    func makeNSView(context: Context) -> VoiceBarTrackedGlassEffectView {
+    func makeNSView(context: Context) -> NSView {
         let glassView = VoiceBarTrackedGlassEffectView()
         glassView.style = .regular
         glassView.cornerRadius = 0
@@ -175,12 +221,23 @@ private struct VoiceBarAppKitGlassHost<SurfaceShape: Shape, HostedContent: View>
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         glassView.contentView = hostingView
         configure(glassView, context: context)
+
+        if useNativeContainer {
+            let containerView = VoiceBarTrackedGlassContainerView(glassView: glassView)
+            containerView.spacing = containerSpacing
+            return containerView
+        }
         return glassView
     }
 
-    func updateNSView(_ glassView: VoiceBarTrackedGlassEffectView, context: Context) {
+    func updateNSView(_ rootView: NSView, context: Context) {
         context.coordinator.hostingView.rootView = content
-        configure(glassView, context: context)
+        if let containerView = rootView as? VoiceBarTrackedGlassContainerView {
+            containerView.spacing = containerSpacing
+            configure(containerView.glassView, context: context)
+        } else if let glassView = rootView as? VoiceBarTrackedGlassEffectView {
+            configure(glassView, context: context)
+        }
     }
 
     private func configure(
@@ -205,6 +262,34 @@ private struct VoiceBarAppKitGlassHost<SurfaceShape: Shape, HostedContent: View>
         init(content: HostedContent) {
             hostingView = NSHostingView(rootView: content)
         }
+    }
+}
+
+@available(macOS 26.0, *)
+private final class VoiceBarTrackedGlassContainerView: NSGlassEffectContainerView {
+    let glassView: VoiceBarTrackedGlassEffectView
+
+    init(glassView: VoiceBarTrackedGlassEffectView) {
+        self.glassView = glassView
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        contentView = glassView
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.backgroundColor = .clear
+    }
+
+    override func layout() {
+        super.layout()
+        glassView.frame = bounds
     }
 }
 

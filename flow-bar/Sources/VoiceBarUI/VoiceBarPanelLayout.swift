@@ -35,12 +35,16 @@ public struct VoiceBarPanelLayout: Equatable {
 
     public static func make(
         presentation: VoiceBarNotchPresentation,
+        canvasGeometry: VoiceBarNotchGeometry? = nil,
         shadowOutsets: VoiceBarNotchShadowOutsets = .material
     ) -> VoiceBarPanelLayout {
         let geometry = presentation.geometry
+        let canvasGeometry = canvasGeometry ?? geometry
+        let contentOffsetX = canvasGeometry.coreOriginX - geometry.coreOriginX
+        let contentOffsetY = canvasGeometry.totalHeight - geometry.totalHeight
         let visibleContentRect = CGRect(
-            x: shadowOutsets.leading,
-            y: shadowOutsets.bottom,
+            x: shadowOutsets.leading + contentOffsetX,
+            y: shadowOutsets.bottom + contentOffsetY,
             width: geometry.totalWidth,
             height: geometry.totalHeight
         )
@@ -50,8 +54,8 @@ public struct VoiceBarPanelLayout: Equatable {
             dy: visibleContentRect.minY
         )
         let panelSize = CGSize(
-            width: geometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
-            height: geometry.totalHeight + shadowOutsets.bottom
+            width: canvasGeometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
+            height: canvasGeometry.totalHeight + shadowOutsets.bottom
         )
         let hoverRetentionRect = activeHitRect
             .insetBy(

@@ -139,8 +139,8 @@ done
   --glass-teleprompter-interior-region 0.10,0.70,0.55,0.10 \
   --glass-teleprompter-text-region 0.10,0.38,0.58,0.24 \
   --glass-teleprompter-background-region 0.10,0.65,0.55,0.06 \
-  --glass-wing-foreground-region 0.455,0.81,0.035,0.09 \
-  --glass-wing-background-region 0.520,0.86,0.020,0.04 \
+  --glass-wing-foreground-region 0.205,0.275,0.025,0.055 \
+  --glass-wing-background-region 0.185,0.265,0.015,0.035 \
   --glass-reference-foreground-region 0.835,0.80,0.065,0.12 \
   --glass-reference-background-region 0.815,0.78,0.105,0.16 \
   | tee "$receipt_dir/metrics.txt"
