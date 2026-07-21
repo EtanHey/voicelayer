@@ -386,6 +386,32 @@ describe("playback queue — P0-1 sequential playback", () => {
     ).toHaveLength(1);
   });
 
+  it("does not acknowledge replay while an unrelated queued job is preparing", async () => {
+    const { playAudioNonBlocking, restartPlayback } = await import("../tts");
+
+    const first = playAudioNonBlocking("/tmp/pq-unrelated-first.mp3");
+    await waitFor(() => playerMocks.length === 1, "first queued player");
+
+    holdDecoderExits = true;
+    const second = playAudioNonBlocking("/tmp/pq-unrelated-preparing.mp3", {
+      text: "This preparation was not created by Replay",
+      voice: "TestVoice",
+    });
+    playerMocks[0].resolveExit();
+    await first.exited;
+    await waitFor(
+      () => decoderMocks.length === 1,
+      "unrelated queued amplitude preparation",
+    );
+
+    expect(restartPlayback()).toBe(false);
+    decoderMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "second queued player");
+    expect(playerMocks[1].cmd).toContain("/tmp/pq-unrelated-preparing.mp3");
+    playerMocks[1].resolveExit();
+    expect(await second.exited).toMatchObject({ status: "completed" });
+  });
+
   it("does not acknowledge socket stop until the killed player has exited", async () => {
     const { playAudioNonBlocking } = await import("../tts");
     const { handleSocketCommand } = await import("../socket-handlers");

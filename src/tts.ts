@@ -814,6 +814,7 @@ class PlaybackQueueManager {
   private current: ActivePlayback | null = null;
   private terminating = new Map<number, ActivePlayback>();
   private restartAfterTermination: PlaybackJob | null = null;
+  private replayPreparingJob: PlaybackJob | null = null;
   private drainWaiters = new Set<() => void>();
   private progressTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -871,6 +872,7 @@ class PlaybackQueueManager {
     this.current = null;
     this.preparing = null;
     this.restartAfterTermination = null;
+    this.replayPreparingJob = null;
     preparing?.cancel();
 
     for (const job of this.pending.splice(0)) {
@@ -927,7 +929,9 @@ class PlaybackQueueManager {
     // The replacement has already reset to the beginning once it reaches
     // preparation. Collapse another rapid Replay into that same job so a
     // blocking voice_ask cannot resolve while a duplicate replay stays queued.
-    if (this.preparing) return true;
+    if (this.preparing) {
+      return this.preparing.job === this.replayPreparingJob;
+    }
     const active = this.current;
     if (!active) return false;
 
@@ -944,6 +948,9 @@ class PlaybackQueueManager {
   }
 
   private refuseQueuedPlayback(job: PlaybackJob, error: unknown): void {
+    if (this.replayPreparingJob === job) {
+      this.replayPreparingJob = null;
+    }
     broadcast({
       type: "error",
       message: error instanceof Error ? error.message : String(error),
@@ -1005,6 +1012,9 @@ class PlaybackQueueManager {
   ) {
     if (this.preparing?.job !== next) return;
     this.preparing = null;
+    if (this.replayPreparingJob === next) {
+      this.replayPreparingJob = null;
+    }
     if (next.completed) {
       this.processNext();
       return;
@@ -1113,6 +1123,7 @@ class PlaybackQueueManager {
     this.current = null;
     this.preparing = null;
     this.restartAfterTermination = null;
+    this.replayPreparingJob = null;
     preparing?.cancel();
 
     for (const queued of this.pending.splice(0)) {
@@ -1300,6 +1311,7 @@ class PlaybackQueueManager {
     this.terminating.delete(pid);
     if (this.restartAfterTermination === active.job && !active.job.completed) {
       this.restartAfterTermination = null;
+      this.replayPreparingJob = active.job;
       active.job.enqueuedAt = Date.now();
       active.job.expiresAt = Date.now() + ttlForPriority(active.job.priority);
       this.pending.unshift(active.job);
