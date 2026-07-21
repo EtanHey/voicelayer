@@ -342,7 +342,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(presentation.geometry.trailingWingWidth, standardContentFit + 8)
     }
 
-    func testManagementRolesExistOnlyInTheHoveredLauncher() {
+    func testManagementRolesKeepDictionaryFunctionalInTeleprompter() {
         let states: [VoiceBarNotchVisualState] = [
             .idle, .recording, .compactStatus, .teleprompter,
         ]
@@ -356,7 +356,11 @@ final class VoiceBarNotchContractTests: XCTestCase {
                 isKeyboardFocused: false
             )
             XCTAssertFalse(presentation.contentRoles.contains(.history), "\(visualState)")
-            XCTAssertFalse(presentation.contentRoles.contains(.dictionary), "\(visualState)")
+            XCTAssertEqual(
+                presentation.contentRoles.contains(.dictionary),
+                visualState == .teleprompter,
+                "\(visualState)"
+            )
         }
     }
 }

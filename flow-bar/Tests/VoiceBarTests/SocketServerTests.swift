@@ -204,13 +204,84 @@ final class SocketServerTests: XCTestCase {
         )
 
         let legacyStop = try XCTUnwrap(readLine(from: fixture.legacyClient, timeout: 1))
-        let ownerCommands = try readLines(from: fixture.commandClient, count: 2, timeout: 1)
-        let ownerStop = try XCTUnwrap(ownerCommands.first)
-        let replayCommand = try XCTUnwrap(ownerCommands.dropFirst().first)
+        let ownerBeforeAck = try readLines(from: fixture.commandClient, count: 2, timeout: 0.2)
+        XCTAssertEqual(ownerBeforeAck.count, 1)
+        let ownerStop = try XCTUnwrap(ownerBeforeAck.first)
         XCTAssertTrue(legacyStop.contains(#""cmd":"stop""#))
         XCTAssertTrue(ownerStop.contains(#""cmd":"stop""#))
+
+        let stopPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStop.utf8)) as? [String: Any]
+        )
+        let stopID = try XCTUnwrap(stopPayload["id"] as? String)
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
+            to: fixture.commandClient
+        )
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(stopID)"}"#,
+            to: fixture.legacyClient
+        )
+
+        let replayCommand = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
         XCTAssertTrue(replayCommand.contains(#""cmd":"replay""#))
         XCTAssertTrue(replayCommand.contains(#""id":"#))
+        XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
+    }
+
+    @MainActor
+    func testRapidActiveReplayCollapsesToOneRestartAfterLatestStopBarrier() throws {
+        let fixture = try makeConnectedServerFixture()
+        defer { fixture.cleanup() }
+        fixture.state.sendCommand = { fixture.server.sendCommandToOwner(command: $0) }
+        try writeLine(
+            #"{"type":"state","state":"speaking","text":"Rapid replay must not echo"}"#,
+            to: fixture.legacyClient
+        )
+        XCTAssertTrue(waitForMode(fixture.state, mode: .speaking, timeout: 1))
+
+        let router = VoiceBarCommandRouter(voiceState: fixture.state)
+        router.handleReplay()
+        router.handleReplay()
+
+        let legacyStops = try readLines(from: fixture.legacyClient, count: 3, timeout: 0.2)
+        let ownerStops = try readLines(from: fixture.commandClient, count: 3, timeout: 0.2)
+        XCTAssertEqual(legacyStops.count, 2)
+        XCTAssertEqual(ownerStops.count, 2)
+        XCTAssertTrue(ownerStops.allSatisfy { $0.contains(#""cmd":"stop""#) })
+
+        let firstPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStops[0].utf8)) as? [String: Any]
+        )
+        let secondPayload = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(ownerStops[1].utf8)) as? [String: Any]
+        )
+        let firstID = try XCTUnwrap(firstPayload["id"] as? String)
+        let secondID = try XCTUnwrap(secondPayload["id"] as? String)
+        XCTAssertNotEqual(firstID, secondID)
+
+        for client in [fixture.commandClient, fixture.legacyClient] {
+            try writeLine(
+                #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(firstID)"}"#,
+                to: client
+            )
+        }
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
+            to: fixture.commandClient
+        )
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
+        try writeLine(
+            #"{"type":"ack","command":"stop","outcome":"accept","id":"\#(secondID)"}"#,
+            to: fixture.legacyClient
+        )
+
+        let replay = try XCTUnwrap(readLine(from: fixture.commandClient, timeout: 1))
+        XCTAssertTrue(replay.contains(#""cmd":"replay""#))
+        XCTAssertNil(try readLine(from: fixture.commandClient, timeout: 0.2))
         XCTAssertNil(try readLine(from: fixture.legacyClient, timeout: 0.2))
     }
 

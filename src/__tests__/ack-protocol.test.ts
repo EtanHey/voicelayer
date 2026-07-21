@@ -175,8 +175,8 @@ describe("ack protocol", () => {
     });
   });
 
-  it("returns accept ack for stop when recording is active", () => {
-    const response = handleSocketCommand({
+  it("returns accept ack for stop when recording is active", async () => {
+    const response = await handleSocketCommand({
       cmd: "stop",
       id: "stop-1",
     } as unknown as SocketCommand);
@@ -209,8 +209,8 @@ describe("ack protocol", () => {
     });
   });
 
-  it("returns accept ack for cancel under happy path", () => {
-    const response = handleSocketCommand({
+  it("returns accept ack for cancel under happy path", async () => {
+    const response = await handleSocketCommand({
       cmd: "cancel",
       id: "cancel-1",
     } as unknown as SocketCommand);

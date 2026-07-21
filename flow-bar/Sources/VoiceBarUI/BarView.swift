@@ -310,11 +310,7 @@ public struct BarView: View {
                 statusIcon
             }
         case .teleprompter:
-            Image(systemName: "book.closed")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(notchPrimaryLabelColor)
-                .notchAdaptiveGlyphEdge(notchGlyphContrastHaloColor)
-                .accessibilityLabel("Teleprompter")
+            vocabularyButton
         }
     }
 

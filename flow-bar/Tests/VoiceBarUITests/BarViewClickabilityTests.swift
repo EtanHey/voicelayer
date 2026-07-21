@@ -384,8 +384,9 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertTrue(source.contains("synchronizeLauncherRetention()"))
     }
 
-    func testManagementButtonsMountOnlyInHoveredLauncherTrailingWing() throws {
+    func testDictionaryButtonMountsInHoveredLauncherAndTeleprompterLeadingWing() throws {
         let source = try barViewSource()
+        let leadingStart = try XCTUnwrap(source.range(of: "private var notchLeadingContent"))
         let trailingStart = try XCTUnwrap(source.range(of: "private var notchTrailingContent"))
         let compactStart = try XCTUnwrap(
             source.range(
@@ -399,11 +400,17 @@ final class BarViewClickabilityTests: XCTestCase {
                 .components(separatedBy: "case .recording:").first
         )
         let active = try XCTUnwrap(trailing.components(separatedBy: "case .recording:").dropFirst().first)
+        let leading = String(source[leadingStart.lowerBound ..< trailingStart.lowerBound])
+        let teleprompterLeading = try XCTUnwrap(
+            leading.components(separatedBy: "case .teleprompter:").dropFirst().first
+        )
 
         XCTAssertTrue(hover.contains("historyButton"))
         XCTAssertTrue(hover.contains("vocabularyButton"))
         XCTAssertFalse(active.contains("historyButton"))
         XCTAssertFalse(active.contains("vocabularyButton"))
+        XCTAssertTrue(teleprompterLeading.contains("vocabularyButton"))
+        XCTAssertFalse(teleprompterLeading.contains("Image(systemName: \"book.closed\")"))
     }
 
     func testProductNotchShellDoesNotMountAKeyboardFocusHighlightSurface() throws {

@@ -13,7 +13,12 @@ import {
   STOP_FILE,
   safeWriteFileSync,
 } from "./paths";
-import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
+import {
+  awaitCurrentPlayback,
+  getHistoryEntry,
+  playAudioNonBlocking,
+  stopPlayback,
+} from "./tts";
 import {
   waitForInput,
   hasRetainedRecording,
@@ -55,7 +60,7 @@ import { setRecordingHold } from "./recording-hold";
 
 export function handleSocketCommand(
   command: SocketCommand,
-): SocketResponse | void {
+): SocketResponse | void | Promise<SocketResponse> {
   const recordingState = getRecordingState();
   const playbackQueueDepth = getPlaybackQueueDepth();
   const isSpeaking = recordingState === "idle" && playbackQueueDepth > 0;
@@ -75,7 +80,7 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback();
-      return buildAck(command, "accept");
+      return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
     case "cancel":
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
@@ -90,7 +95,7 @@ export function handleSocketCommand(
       // AIDEV-NOTE: Must call stopPlayback() — not just pkill — to reset
       // playbackQueue and queueSize. Otherwise queued items resume after kill.
       stopPlayback();
-      return buildAck(command, "accept");
+      return awaitCurrentPlayback().then(() => buildAck(command, "accept"));
     case "replay": {
       if (recordingState === "recording" || recordingState === "transcribing") {
         return buildAck(command, "reject", "busy");

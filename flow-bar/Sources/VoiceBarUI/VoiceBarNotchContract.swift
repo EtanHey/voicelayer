@@ -269,7 +269,7 @@ public struct VoiceBarNotchPresentation: Equatable {
         case .compactStatus:
             [.compactStatus]
         case .teleprompter:
-            [.teleprompterControls, .waveform, .teleprompterBody]
+            [.dictionary, .teleprompterControls, .waveform, .teleprompterBody]
         }
     }
 
