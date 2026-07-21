@@ -148,11 +148,19 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
     func testIsolatedCaptureKeepsDynamicWindowsCoreAlignedInsideOneEnvelope() {
         let visibleFrame = CGRect(x: 0, y: 0, width: 1728, height: 1084)
+        let recordingPresentation = presentation(.recording)
+        let teleprompterPresentation = presentation(.teleprompter)
         let recordingLayout = VoiceBarPanelLayout.make(
-            presentation: presentation(.recording)
+            presentation: recordingPresentation,
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                for: recordingPresentation
+            ).canvasGeometry
         )
         let teleprompterLayout = VoiceBarPanelLayout.make(
-            presentation: presentation(.teleprompter)
+            presentation: teleprompterPresentation,
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                for: teleprompterPresentation
+            ).canvasGeometry
         )
         let recordingFrame = VoiceBarIsolatedCapturePlacement.frame(
             layout: recordingLayout,
@@ -171,6 +179,8 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
         XCTAssertEqual(recordingFrame.maxY, teleprompterFrame.maxY)
         XCTAssertEqual(recordingCoreMidX, teleprompterCoreMidX)
+        XCTAssertTrue(visibleFrame.contains(recordingFrame))
+        XCTAssertTrue(visibleFrame.contains(teleprompterFrame))
         XCTAssertEqual(recordingFrame.height, 49)
         XCTAssertEqual(teleprompterFrame.height, 245)
         XCTAssertFalse(
