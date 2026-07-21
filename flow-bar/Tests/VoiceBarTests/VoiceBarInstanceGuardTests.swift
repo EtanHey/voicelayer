@@ -4,6 +4,20 @@ import XCTest
 final class VoiceBarInstanceGuardTests: XCTestCase {
     private let canonicalPath = "/Applications/VoiceBar.app"
 
+    func testIsolatedLaunchDateUsesObservedWorkspaceValueOrImmediateFallback() {
+        let observed = Date(timeIntervalSince1970: 1_784_333_000.125)
+        let fallback = Date(timeIntervalSince1970: 1_784_333_001.250)
+
+        XCTAssertEqual(
+            VoiceBarInstanceLaunchDate.resolve(observed: observed, fallback: fallback),
+            observed
+        )
+        XCTAssertEqual(
+            VoiceBarInstanceLaunchDate.resolve(observed: nil, fallback: fallback),
+            fallback
+        )
+    }
+
     func testCanonicalLaunchSupersedesEveryOlderNoncanonicalInstanceByExactPID() {
         let decision = VoiceBarInstanceGuard.plan(
             current: .init(pid: 300, bundlePath: canonicalPath),

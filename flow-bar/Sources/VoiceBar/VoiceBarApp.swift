@@ -249,12 +249,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func registerCurrentIsolatedInstance() throws {
         let myPID = ProcessInfo.processInfo.processIdentifier
-        guard let launchDate = NSRunningApplication(
+        let observedLaunchDate = NSRunningApplication(
             processIdentifier: myPID
-        )?.launchDate else {
-            throw VoiceBarInstanceIsolationRegistryError
-                .launchDateUnavailable(pid: myPID)
+        )?.launchDate
+        if observedLaunchDate == nil {
+            NSLog(
+                "[VoiceBar] Workspace launch date unavailable for PID %d; using immediate fallback",
+                myPID
+            )
         }
+        let launchDate = VoiceBarInstanceLaunchDate.resolve(observed: observedLaunchDate)
         try VoiceBarInstanceIsolationRegistry.register(
             pid: myPID,
             launchDate: launchDate,
