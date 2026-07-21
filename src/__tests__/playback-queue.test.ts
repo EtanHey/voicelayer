@@ -352,6 +352,52 @@ describe("playback queue — P0-1 sequential playback", () => {
     ]);
   });
 
+  it("collapses only duplicate replay jobs and preserves unrelated pending speech", async () => {
+    const { playAudioNonBlocking, restartPlayback } = await import("../tts");
+    const replayMetadata = {
+      text: "Replay this item",
+      voice: "TestVoice",
+    };
+
+    const active = playAudioNonBlocking(
+      "/tmp/pq-selective-replay.mp3",
+      replayMetadata,
+    );
+    await waitFor(() => playerMocks.length === 1, "selective replay player");
+
+    const duplicate = playAudioNonBlocking(
+      "/tmp/pq-selective-replay.mp3",
+      replayMetadata,
+    );
+    const unrelated = playAudioNonBlocking("/tmp/pq-after-replay.mp3", {
+      text: "Keep this queued item",
+      voice: "OtherVoice",
+    });
+    let unrelatedResolved = false;
+    unrelated.exited.then(() => {
+      unrelatedResolved = true;
+    });
+
+    expect(restartPlayback()).toBe(true);
+    expect(await duplicate.exited).toMatchObject({
+      status: "skipped",
+      reason: "collapsed",
+    });
+    await Bun.sleep(10);
+    expect(unrelatedResolved).toBe(false);
+
+    playerMocks[0].resolveExit();
+    await waitFor(() => playerMocks.length === 2, "selective replay restart");
+    expect(playerMocks[1].cmd).toContain("/tmp/pq-selective-replay.mp3");
+    playerMocks[1].resolveExit();
+    expect(await active.exited).toMatchObject({ status: "completed" });
+
+    await waitFor(() => playerMocks.length === 3, "preserved queued player");
+    expect(playerMocks[2].cmd).toContain("/tmp/pq-after-replay.mp3");
+    playerMocks[2].resolveExit();
+    expect(await unrelated.exited).toMatchObject({ status: "completed" });
+  });
+
   it("collapses rapid replay while the replacement is still preparing", async () => {
     const { playAudioNonBlocking, restartPlayback } = await import("../tts");
 

@@ -936,9 +936,17 @@ class PlaybackQueueManager {
     if (!active) return false;
 
     this.current = null;
-    for (const job of this.pending.splice(0)) {
+    this.pending = this.pending.filter((job) => {
+      const isDuplicateReplay =
+        job.audioFile === active.job.audioFile &&
+        (job.metadata?.text ?? null) ===
+          (active.job.metadata?.text ?? null) &&
+        (job.metadata?.voice ?? null) ===
+          (active.job.metadata?.voice ?? null);
+      if (!isDuplicateReplay) return true;
       completeJob(job, buildPlaybackOutcome(job, "skipped", "collapsed"));
-    }
+      return false;
+    });
 
     this.restartAfterTermination = active.job;
     this.stopProgressTimer();
