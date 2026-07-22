@@ -107,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
+    private var lastAppliedNotchScreenGeometry: VoiceBarNotchScreenGeometry?
     /// Saved offsets (0.0-1.0) for pill center positioning on screen.
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
@@ -1294,6 +1295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let visibleFrame = targetScreen.visibleFrame
         let layout = currentPanelLayout()
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+        lastAppliedNotchScreenGeometry = screenGeometry
         let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
             PillResizePlan(
                 frame: VoiceBarIsolatedCapturePlacement.frame(
@@ -1843,10 +1845,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel else { return }
 
         let screens = NSScreen.screens
-        if let targetScreen = Self.screenIndexContainingMouse(in: screens),
-           targetScreen != currentScreenIndex {
-            currentScreenIndex = targetScreen
-            positionPanel(panel, on: screens[targetScreen])
+        if let targetScreenIndex = Self.screenIndexContainingMouse(in: screens) {
+            let targetScreen = screens[targetScreenIndex]
+            let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+            if targetScreenIndex != currentScreenIndex ||
+                screenGeometry != lastAppliedNotchScreenGeometry {
+                currentScreenIndex = targetScreenIndex
+                positionPanel(panel, on: targetScreen)
+            }
         }
 
         let localPoint = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
@@ -1888,6 +1894,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : (screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
+        lastAppliedNotchScreenGeometry = screenGeometry
         refreshNotchPresentationModel(for: targetScreen)
         if VoiceBarIsolatedCapturePlacement.isEnabled() {
             let layout = currentPanelLayout()
