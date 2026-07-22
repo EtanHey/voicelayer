@@ -1387,7 +1387,7 @@ public final class VoiceState {
         }
     }
 
-    /// Product pointer tracking calls this only after its own 300-millisecond exit
+    /// Product pointer tracking calls this only after its own 2.5-second exit
     /// grace has elapsed. Plain idle can therefore perform the one intended
     /// collapse immediately instead of paying the general idle timeout again.
     /// Retained read-back and modal/dev retention keep their own lifecycles.

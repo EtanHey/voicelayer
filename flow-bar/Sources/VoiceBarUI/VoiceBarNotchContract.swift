@@ -234,7 +234,9 @@ public struct VoiceBarNotchPresentation: Equatable {
             for: visualState,
             coreWidth: coreWidth,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-            resolvedTopHeight: virtualNotchIdleCoreHeight ?? VoiceBarNotchContract.topHeight
+            resolvedTopHeight: visualState == .idle
+                ? virtualNotchIdleCoreHeight ?? VoiceBarNotchContract.topHeight
+                : VoiceBarNotchContract.topHeight
         )
         let geometry = if visualState == .compactStatus,
                           compactStatusLeadingWingWidth != nil || compactStatusTrailingWingWidth != nil {
@@ -353,7 +355,6 @@ public enum VoiceBarNotchContract {
     }
 
     public static let topHeight: CGFloat = 32
-    public static let flatDisplayMenuBarHeightFallback: CGFloat = 30
     public static let teleprompterLeadingContentWidth: CGFloat = 50
     public static let teleprompterTrailingContentWidth = WaveformLayout.viewportWidth
 

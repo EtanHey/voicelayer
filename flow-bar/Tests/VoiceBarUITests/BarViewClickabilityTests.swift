@@ -705,7 +705,7 @@ final class BarViewClickabilityTests: XCTestCase {
                 isCollapsed: state.isCollapsed
             )
         )
-        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation,
             interactionConfiguration: configuration,

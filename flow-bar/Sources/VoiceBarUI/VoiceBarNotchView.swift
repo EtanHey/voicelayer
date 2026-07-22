@@ -16,7 +16,8 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     ) -> VoiceBarNotchViewDescriptor {
         VoiceBarNotchViewDescriptor(
             shellIdentity: "VoiceBarNotchShell",
-            fixedCoreCount: presentation.visualState == .idle ? 0 : 1,
+            fixedCoreCount: presentation.visualState == .idle
+                && presentation.virtualNotchIdleCoreHeight == nil ? 0 : 1,
             reusableWingSlotCount: 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
@@ -35,6 +36,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     private let trailingContent: TrailingContent
     private let lowerContent: LowerContent
     private let onHoverChanged: (Bool) -> Void
+    private let morphVariant: VoiceBarNotchMorphVariant
     private let canvasGeometry: VoiceBarNotchGeometry?
     @State private var renderedGeometry: VoiceBarNotchGeometry
     @State private var surfaceRevealProgress: CGFloat
@@ -44,6 +46,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     public init(
         presentation: VoiceBarNotchPresentation,
         appearance: VoiceBarNotchAppearance = .dark,
+        morphVariant: VoiceBarNotchMorphVariant = .p1Matched,
         canvasGeometry: VoiceBarNotchGeometry? = nil,
         onHoverChanged: @escaping (Bool) -> Void = { _ in },
         @ViewBuilder leadingContent: () -> LeadingContent,
@@ -52,6 +55,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
     ) {
         self.presentation = presentation
         self.appearance = appearance
+        self.morphVariant = morphVariant
         self.canvasGeometry = canvasGeometry
         _renderedGeometry = State(initialValue: presentation.geometry)
         _surfaceRevealProgress = State(
@@ -65,14 +69,17 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     public var body: some View {
         ZStack(alignment: .topLeading) {
-            // Keep the zero-path idle source mounted so the first visible
-            // frame can interpolate from the hardware core on both sides.
-            // Opacity zero plus an empty idle mask still paints no glass.
-            morphingNotchSurface
-                .opacity(presentation.visualState == .idle ? 0 : 1)
-                .allowsHitTesting(presentation.visualState != .idle)
-                .transition(.identity)
+            VoiceBarGlassContainer(variant: morphVariant) {
+                // Keep the zero-path idle source mounted so the first visible
+                // frame can interpolate from the hardware core on both sides.
+                // Opacity zero plus an empty idle mask still paints no glass.
+                morphingNotchSurface
+                    .opacity(presentation.visualState == .idle ? 0 : 1)
+                    .allowsHitTesting(presentation.visualState != .idle)
+                    .transition(.identity)
+            }
 
+            virtualIdleCore
             fixedHardwareCore
         }
         .frame(
@@ -80,9 +87,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             height: resolvedCanvasGeometry.totalHeight,
             alignment: .topLeading
         )
-        // Idle draws no software pixels. Hardware keeps the physical camera
-        // housing as its hover target; flat displays keep a separate clear
-        // AppKit tracking band resolved by VoiceBarPanelLayout.
+        // Hardware idle draws no software pixels and keeps the physical
+        // camera housing as its hover target. Flat-display idle paints that
+        // same target as the virtual core. AppKit still gates both through
+        // the exact rendered-shape hit region.
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
@@ -125,7 +133,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         if presentation.visualState == .teleprompter {
             notchSurface
                 .matchedGeometryEffect(
-                    id: "VoiceBarNotchMorphShell",
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
                     in: morphNamespace,
                     properties: .frame,
                     anchor: .top
@@ -133,7 +141,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         } else {
             notchSurface
                 .matchedGeometryEffect(
-                    id: "VoiceBarNotchMorphShell",
+                    id: VoiceBarNotchMorphVariant.sharedShellID,
                     in: morphNamespace,
                     properties: .frame,
                     anchor: .top
@@ -153,11 +161,32 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         if accessibilityReduceMotion {
             return .easeOut(duration: 0.18)
         }
+        let descriptor = morphDescriptor
+        if descriptor.effectiveVariant == .p3SpringDelight {
+            return .spring(
+                response: descriptor.totalDuration,
+                dampingFraction: descriptor.heroDampingFraction
+            )
+        }
         return .interpolatingSpring(
-            mass: VoiceBarNotchContract.motion.mass,
-            stiffness: VoiceBarNotchContract.motion.stiffness,
-            damping: VoiceBarNotchContract.motion.damping
+            mass: descriptor.mass,
+            stiffness: descriptor.stiffness,
+            damping: descriptor.damping
         )
+    }
+
+    private var morphDescriptor: VoiceBarNotchMorphDescriptor {
+        if #available(macOS 26.0, *) {
+            morphVariant.descriptor(
+                nativeGlassAvailable: true,
+                reducedMotion: accessibilityReduceMotion
+            )
+        } else {
+            morphVariant.descriptor(
+                nativeGlassAvailable: false,
+                reducedMotion: accessibilityReduceMotion
+            )
+        }
     }
 
     private func surfaceTransition(delay: TimeInterval) -> AnyTransition {
@@ -177,6 +206,30 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     private var layout: VoiceBarNotchShapeLayout {
         VoiceBarNotchShapeLayout(geometry: renderedGeometry)
+    }
+
+    @ViewBuilder
+    private var virtualIdleCore: some View {
+        if presentation.visualState == .idle,
+           presentation.virtualNotchIdleCoreHeight != nil {
+            VoiceBarNotchHardwareCoreShape(
+                lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
+            )
+            .fill(.black)
+            .frame(
+                width: resolvedCanvasGeometry.coreWidth,
+                height: resolvedCanvasGeometry.topHeight
+            )
+            .position(
+                x: resolvedCanvasGeometry.coreOriginX + resolvedCanvasGeometry.coreWidth / 2,
+                y: resolvedCanvasGeometry.topHeight / 2
+            )
+            .accessibilityHidden(true)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .zIndex(10)
+        }
     }
 
     @ViewBuilder
@@ -225,9 +278,19 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
         .modifier(
             VoiceBarGlassMaterial(
                 shape: shape,
-                appearance: appearance
+                appearance: appearance,
+                morphVariant: morphVariant
             )
         )
+        .overlay {
+            VoiceBarNotchMorphDelightEdge(
+                shape: shape,
+                trigger: presentation.visualState,
+                descriptor: morphDescriptor,
+                reducedMotion: accessibilityReduceMotion
+            )
+            .allowsHitTesting(false)
+        }
         .mask {
             VoiceBarNotchCoreAnchoredRevealMask(
                 progress: surfaceRevealProgress,
@@ -380,5 +443,35 @@ private struct VoiceBarNotchCoreAnchoredRevealMask: Shape {
                 coreRect: coreRect
             )
         )
+    }
+}
+
+private struct VoiceBarNotchMorphDelightEdge<SurfaceShape: Shape>: View {
+    let shape: SurfaceShape
+    let trigger: VoiceBarNotchVisualState
+    let descriptor: VoiceBarNotchMorphDescriptor
+    let reducedMotion: Bool
+    @State private var scale: CGFloat = 1
+
+    var body: some View {
+        shape
+            .stroke(.white.opacity(descriptor.maximumMaterialScaleDelta > 0 ? 0.18 : 0), lineWidth: 0.8)
+            .scaleEffect(scale, anchor: .top)
+            .onChange(of: trigger) { _, _ in
+                guard descriptor.maximumMaterialScaleDelta > 0, !reducedMotion else {
+                    scale = 1
+                    return
+                }
+                scale = 1 - descriptor.maximumMaterialScaleDelta
+                withAnimation(
+                    .spring(
+                        response: descriptor.totalDuration,
+                        dampingFraction: descriptor.heroDampingFraction
+                    )
+                    .delay(descriptor.childStagger)
+                ) {
+                    scale = 1
+                }
+            }
     }
 }

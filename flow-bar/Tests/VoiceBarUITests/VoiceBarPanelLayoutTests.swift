@@ -135,7 +135,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
-    func testCollapsedVirtualNotchPassesClicksThroughButKeepsItsInvisibleCatchBand() {
+    func testCollapsedVirtualNotchAdmitsOnlyItsRenderedMenuBarHeightCore() {
         let presentation = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: false,
             isRecording: false,
@@ -159,20 +159,9 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
         XCTAssertEqual(presentation.geometry.topHeight, 24)
         XCTAssertEqual(presentation.geometry.coreWidth, VoiceBarNotchContract.coreWidth)
-        XCTAssertFalse(layout.containsVisibleSurface(coreCenter))
+        XCTAssertTrue(layout.containsVisibleSurface(coreCenter))
         XCTAssertFalse(layout.containsInteractiveContent(coreCenter))
         XCTAssertFalse(layout.containsVisibleSurface(justBelowCore))
-        XCTAssertTrue(layout.containsHoverExpansion(coreCenter))
-        XCTAssertTrue(layout.containsHoverExpansion(justBelowCore))
-        XCTAssertEqual(
-            layout.hoverExpansionRect,
-            CGRect(
-                x: layout.visibleContentRect.minX,
-                y: layout.visibleContentRect.minY - 16,
-                width: VoiceBarNotchContract.coreWidth,
-                height: 40
-            )
-        )
         XCTAssertFalse(layout.containsVisibleSurface(CGPoint(x: 1, y: 1)))
     }
 
@@ -242,7 +231,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             let presentation = presentation(state)
             let layout = VoiceBarPanelLayout.make(
                 presentation: presentation,
-                canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
+                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
                     for: presentation
                 ).canvasGeometry
             )
@@ -263,13 +252,13 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let teleprompterPresentation = presentation(.teleprompter)
         let recordingLayout = VoiceBarPanelLayout.make(
             presentation: recordingPresentation,
-            canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
                 for: recordingPresentation
             ).canvasGeometry
         )
         let teleprompterLayout = VoiceBarPanelLayout.make(
             presentation: teleprompterPresentation,
-            canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
+            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
                 for: teleprompterPresentation
             ).canvasGeometry
         )

@@ -121,11 +121,17 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
             after: "private final class VoiceBarTrackedGlassEffectView",
             in: source
         )
+        let glassContainer = try bracedScope(
+            after: "private final class VoiceBarTrackedGlassContainerView",
+            in: source
+        )
 
-        XCTAssertFalse(glassView.contains("NSTrackingArea"))
-        XCTAssertFalse(glassView.contains("updateTrackingAreas"))
-        XCTAssertFalse(glassView.contains("mouseEntered"))
-        XCTAssertFalse(glassView.contains("mouseExited"))
+        for nativeHost in [glassView, glassContainer] {
+            XCTAssertFalse(nativeHost.contains("NSTrackingArea"))
+            XCTAssertFalse(nativeHost.contains("updateTrackingAreas"))
+            XCTAssertFalse(nativeHost.contains("mouseEntered"))
+            XCTAssertFalse(nativeHost.contains("mouseExited"))
+        }
     }
 
     func testNativeGlassDisablesImplicitAppKitOrderOutUntilTheExplicitMorphRound() throws {
@@ -136,16 +142,33 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertTrue(source.contains("-> Any? {\n        nil\n    }"))
     }
 
-    func testNativeMaterialKeepsTheDirectAppKitGlassHost() throws {
+    func testP2WrapsTheProvenAppKitHostWithoutRestoringSwiftUIGlassMaterial() throws {
+        let source = try notchMaterialSource()
+
+        XCTAssertTrue(source.contains("GlassEffectContainer(spacing:"))
+        XCTAssertTrue(source.contains(".glassEffectID("))
+        XCTAssertTrue(source.contains("NSGlassEffectContainerView"))
+        XCTAssertTrue(source.contains("VoiceBarAppKitGlassHost"))
+        XCTAssertTrue(source.contains("useNativeContainer: nativeContainerEnabled"))
+        XCTAssertTrue(source.contains("if useNativeContainer"))
+        XCTAssertFalse(source.contains(".glassEffect(.regular"))
+        XCTAssertFalse(source.contains("NSVisualEffectView"))
+    }
+
+    func testP1AndP3KeepTheDirectPhaseOneGlassHost() throws {
         let source = try notchMaterialSource()
         let host = try bracedScope(after: "private struct VoiceBarAppKitGlassHost", in: source)
 
+        XCTAssertTrue(host.contains("let useNativeContainer: Bool"))
         XCTAssertTrue(host.contains("return glassView"))
-        XCTAssertFalse(host.contains("useNativeContainer"))
-        XCTAssertFalse(source.contains("GlassEffectContainer"))
-        XCTAssertFalse(source.contains("NSGlassEffectContainerView"))
-        XCTAssertFalse(source.contains(".glassEffect(.regular"))
-        XCTAssertFalse(source.contains("NSVisualEffectView"))
+        XCTAssertTrue(host.contains("VoiceBarTrackedGlassContainerView"))
+        XCTAssertTrue(source.contains("private var nativeContainerEnabled: Bool"))
+    }
+
+    func testLiveVariantSelectionRebuildsTheAppKitHostTopology() throws {
+        let material = try glassMaterialSource()
+
+        XCTAssertTrue(material.contains(".id(morphVariant.rawValue)"))
     }
 
     func testGlassMaterialConsumesTheSettledAppearanceExplicitly() throws {

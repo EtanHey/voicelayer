@@ -12,7 +12,7 @@ public enum VoiceBarHoverHysteresisEffect: Equatable, Sendable {
 /// This state machine is deliberately independent of VoiceState and audio.
 /// Only pointer geometry can drive it.
 public struct VoiceBarHoverHysteresis: Equatable, Sendable {
-    public static let exitDelay: TimeInterval = 0.3
+    public static let exitDelay: TimeInterval = 2.5
 
     public private(set) var isHovering = false
     private var isInsideExpansionZone = false

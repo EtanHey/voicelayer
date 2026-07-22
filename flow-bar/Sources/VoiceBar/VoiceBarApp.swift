@@ -88,6 +88,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private let defaults = VoiceBarDefaults.make()
     private let pillContextMenuController = PillContextMenuController()
+    private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
+        environment: ProcessInfo.processInfo.environment,
+        defaults: defaults
+    )
     private let daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
@@ -103,7 +107,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var playbackEdgeLayoutTask: Task<Void, Never>?
     /// Track which screen the pill is on to avoid unnecessary repositioning.
     private var currentScreenIndex: Int = -1
-    private var lastAppliedNotchScreenGeometry: VoiceBarNotchScreenGeometry?
     /// Saved offsets (0.0-1.0) for pill center positioning on screen.
     private var horizontalOffset: CGFloat = Theme.horizontalOffset
     private var verticalOffset: CGFloat? // nil = fixed top-center island placement
@@ -507,6 +510,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state: voiceState,
             commandRouter: commandRouter,
             presentationModel: notchPresentationModel,
+            morphSelection: notchMorphSelection,
             includesPanelOutsets: true
         )
         let hosting = PillHostingView(rootView: barView)
@@ -668,6 +672,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.anchorModeProvider = { [weak self] in
             self?.currentAnchorMode() ?? .follow
         }
+        pillContextMenuController.morphPrototypeProvider = { [weak self] in
+            self?.notchMorphSelection.variant ?? .p1Matched
+        }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
         }
@@ -707,6 +714,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
+        }
+        pillContextMenuController.onSelectMorphPrototype = { [weak self] variant in
+            self?.notchMorphSelection.select(variant)
+            self?.logDiagnostic(event: "notch_morph_prototype_selected", details: [
+                "variant": variant.rawValue,
+            ])
         }
     }
 
@@ -1281,7 +1294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let visibleFrame = targetScreen.visibleFrame
         let layout = currentPanelLayout()
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
-        lastAppliedNotchScreenGeometry = screenGeometry
         let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
             PillResizePlan(
                 frame: VoiceBarIsolatedCapturePlacement.frame(
@@ -1491,7 +1503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func currentPanelLayout() -> VoiceBarPanelLayout {
         let presentation = notchPresentationModel.presentation
-        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(
             presentation: presentation,
             interactionConfiguration: Self.notchInteractionConfiguration(
@@ -1831,14 +1843,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let panel else { return }
 
         let screens = NSScreen.screens
-        if let targetScreenIndex = Self.screenIndexContainingMouse(in: screens) {
-            let targetScreen = screens[targetScreenIndex]
-            let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
-            if targetScreenIndex != currentScreenIndex ||
-                screenGeometry != lastAppliedNotchScreenGeometry {
-                currentScreenIndex = targetScreenIndex
-                positionPanel(panel, on: targetScreen)
-            }
+        if let targetScreen = Self.screenIndexContainingMouse(in: screens),
+           targetScreen != currentScreenIndex {
+            currentScreenIndex = targetScreen
+            positionPanel(panel, on: screens[targetScreen])
         }
 
         let localPoint = panel.convertPoint(fromScreen: NSEvent.mouseLocation)
@@ -1880,7 +1888,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             : (screen ?? Self.screenContainingMouse() ?? panel.screen ?? NSScreen.main)
         guard let targetScreen else { return }
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
-        lastAppliedNotchScreenGeometry = screenGeometry
         refreshNotchPresentationModel(for: targetScreen)
         if VoiceBarIsolatedCapturePlacement.isEnabled() {
             let layout = currentPanelLayout()

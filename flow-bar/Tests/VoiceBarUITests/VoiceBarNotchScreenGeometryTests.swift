@@ -86,7 +86,10 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(resolved.visibleCoreOcclusionInset, 0)
         XCTAssertEqual(resolved.virtualNotchIdleCoreHeight, 24)
         XCTAssertEqual(resolved.geometry(for: .idle).topHeight, 24)
-        XCTAssertEqual(resolved.geometry(for: .recording).topHeight, 24)
+        XCTAssertEqual(
+            resolved.geometry(for: .recording).topHeight,
+            VoiceBarNotchContract.topHeight
+        )
     }
 
     func testAuxiliaryAreasWithoutASafeAreaInsetDoNotMasqueradeAsHardwareNotch() {
@@ -105,7 +108,7 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
         XCTAssertEqual(resolved.virtualNotchIdleCoreHeight, 24)
     }
 
-    func testAutoHiddenMenuBarRetainsAThirtyPointInvisibleHoverBand() {
+    func testAutoHiddenMenuBarRetainsAOnePointVirtualHoverCap() {
         let resolved = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
@@ -116,54 +119,8 @@ final class VoiceBarNotchScreenGeometryTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(resolved.housingFrame, CGRect(x: 867.5, y: 1050, width: 185, height: 30))
-        XCTAssertEqual(resolved.virtualNotchIdleCoreHeight, 30)
-        XCTAssertEqual(resolved.geometry(for: .recording).topHeight, 30)
-    }
-
-    func testIdlePaintsNoSoftwareCoreAcrossVisibleHiddenAndHardwareMenuBars() {
-        let cases = [
-            VoiceBarNotchScreenMetrics(
-                frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
-                visibleFrame: CGRect(x: 0, y: 0, width: 1920, height: 1050),
-                safeAreaTop: 0,
-                auxiliaryTopLeftArea: nil,
-                auxiliaryTopRightArea: nil
-            ),
-            VoiceBarNotchScreenMetrics(
-                frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
-                visibleFrame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
-                safeAreaTop: 0,
-                auxiliaryTopLeftArea: nil,
-                auxiliaryTopRightArea: nil
-            ),
-            VoiceBarNotchScreenMetrics(
-                frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
-                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1085),
-                safeAreaTop: 32,
-                auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
-                auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
-            ),
-        ]
-
-        for metrics in cases {
-            let screen = VoiceBarNotchScreenGeometry.resolve(metrics: metrics)
-            let presentation = VoiceBarNotchPresentation.resolve(
-                hasTeleprompter: false,
-                isRecording: false,
-                hasCompactStatus: false,
-                isHovered: false,
-                isKeyboardFocused: false,
-                coreWidth: screen.housingFrame.width,
-                virtualNotchIdleCoreHeight: screen.virtualNotchIdleCoreHeight
-            )
-
-            XCTAssertEqual(
-                VoiceBarNotchViewDescriptor.resolve(presentation: presentation).fixedCoreCount,
-                0,
-                "kind=\(screen.kind) visibleFrame=\(metrics.visibleFrame)"
-            )
-        }
+        XCTAssertEqual(resolved.housingFrame, CGRect(x: 867.5, y: 1079, width: 185, height: 1))
+        XCTAssertEqual(resolved.virtualNotchIdleCoreHeight, 1)
     }
 
     func testDetectedHousingWidthDrivesThePanelAndRenderedCoreWithoutPerStateBranches() {

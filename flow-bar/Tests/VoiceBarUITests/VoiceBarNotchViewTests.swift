@@ -104,7 +104,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertEqual(recording.shellIdentity, teleprompter.shellIdentity)
         XCTAssertEqual(idle.fixedCoreCount, 0)
-        XCTAssertEqual(virtualIdle.fixedCoreCount, 0)
+        XCTAssertEqual(virtualIdle.fixedCoreCount, 1)
         XCTAssertEqual(virtualIdlePresentation.geometry.topHeight, 24)
         XCTAssertEqual(recording.fixedCoreCount, 1)
         XCTAssertEqual(recording.reusableWingSlotCount, 2)
@@ -142,29 +142,16 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(model.presentation.visualState, .idle)
     }
 
-    func testVirtualNotchUsesMeasuredMenuBarHeightWhileExpanded() {
-        let model = VoiceBarNotchPresentationModel()
-
-        model.updateOperationalEnvelope(
-            hasTeleprompter: false,
-            isRecording: true,
-            hasCompactStatus: false,
-            virtualNotchIdleCoreHeight: 30
-        )
-
-        XCTAssertEqual(model.presentation.visualState, .recording)
-        XCTAssertEqual(model.presentation.geometry.topHeight, 30)
-    }
-
-    func testPersistentBodyOwnsOneContentBearingSurfaceAcrossVisibleStates() throws {
+    func testPersistentContainerOwnsOneContentBearingSurfaceAcrossVisibleStates() throws {
         let source = try notchViewSource()
         let body = try bracedScope(after: "public var body: some View", in: source)
+        let container = try bracedScope(after: "VoiceBarGlassContainer", in: body)
         let surface = try bracedScope(after: "private var notchSurface", in: source)
         let slots = try bracedScope(after: "private var notchSlots", in: source)
 
-        XCTAssertFalse(body.contains("VoiceBarGlassContainer"))
-        XCTAssertTrue(body.contains("morphingNotchSurface"))
-        XCTAssertTrue(body.contains("presentation.visualState == .idle ? 0 : 1"))
+        XCTAssertFalse(container.contains("if presentation.visualState != .idle"))
+        XCTAssertTrue(container.contains("morphingNotchSurface"))
+        XCTAssertTrue(container.contains("presentation.visualState == .idle ? 0 : 1"))
         XCTAssertTrue(surface.contains("VoiceBarNotchContinuousShape"))
         XCTAssertTrue(surface.contains("notchSlots"))
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
@@ -190,7 +177,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertTrue(hero.contains("presentation.visualState == .teleprompter"))
         XCTAssertEqual(hero.components(separatedBy: ".matchedGeometryEffect(").count - 1, 2)
-        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphShell").count - 1, 2)
+        XCTAssertEqual(hero.components(separatedBy: "VoiceBarNotchMorphVariant.sharedShellID").count - 1, 2)
         XCTAssertTrue(hero.contains("properties: .frame"))
         XCTAssertTrue(hero.contains("anchor: .top"))
         XCTAssertFalse(hero.contains("anchor: .topLeading"))
@@ -236,7 +223,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertTrue(source.contains(".contentShape(Rectangle())"))
         XCTAssertTrue(source.contains("presentation.visualState != .idle"))
-        XCTAssertFalse(source.contains("virtualIdleCore"))
+        XCTAssertTrue(source.contains("virtualIdleCore"))
+        XCTAssertTrue(source.contains("presentation.virtualNotchIdleCoreHeight"))
     }
 
     func testContinuousContentBearingGlassOwnsTheHoverRegion() throws {
@@ -247,7 +235,8 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertTrue(surface.contains(".contentShape(shape)"))
         XCTAssertFalse(interactiveSurface.contains(".allowsHitTesting(false)"))
         XCTAssertFalse(interactiveSurface.contains("Color.clear"))
-        XCTAssertFalse(surface.contains("VoiceBarNotchMorphDelightEdge"))
+        XCTAssertTrue(surface.contains("VoiceBarNotchMorphDelightEdge"))
+        XCTAssertTrue(surface.contains(".allowsHitTesting(false)"))
     }
 
     func testTeleprompterMaterialAndContentRemovalIsAtomic() throws {
@@ -261,7 +250,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertFalse(source.contains("teleprompterSurfaceUnit"))
     }
 
-    func testFixedCoreAndContentAvoidTransformEffects() throws {
+    func testFixedCoreAndContentAvoidPrototypeTransformEffects() throws {
         let source = try notchViewSource()
         let core = try bracedScope(after: "private var fixedHardwareCore", in: source)
         let slots = try bracedScope(after: "private var notchSlots", in: source)

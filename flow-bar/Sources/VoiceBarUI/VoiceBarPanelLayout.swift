@@ -24,7 +24,6 @@ public struct VoiceBarNotchShadowOutsets: Equatable, Sendable {
 
 public struct VoiceBarPanelLayout: Equatable {
     public static let hoverRetentionPadding: CGFloat = 12
-    public static let virtualIdleHoverCatchBand: CGFloat = 16
 
     public let presentation: VoiceBarNotchPresentation
     public let panelSize: CGSize
@@ -35,7 +34,7 @@ public struct VoiceBarPanelLayout: Equatable {
 
     private let interactionRegion: VoiceBarNotchHitRegion
     private let visibleRegion: VoiceBarNotchVisibleRegion
-    private let localHoverExpansionRect: CGRect
+    private let localHoverCoreRect: CGRect
 
     public static func make(
         presentation: VoiceBarNotchPresentation,
@@ -81,21 +80,10 @@ public struct VoiceBarPanelLayout: Equatable {
             width: geometry.coreWidth,
             height: geometry.topHeight
         )
-        let localHoverExpansionRect = if presentation.visualState == .idle,
-                                         presentation.virtualNotchIdleCoreHeight != nil {
-            CGRect(
-                x: localHoverCoreRect.minX,
-                y: localHoverCoreRect.minY - Self.virtualIdleHoverCatchBand,
-                width: localHoverCoreRect.width,
-                height: localHoverCoreRect.height + Self.virtualIdleHoverCatchBand
-            )
-        } else {
-            localHoverCoreRect
-        }
         let interactionBounds = interactionRegion.bounds
         let hoverExpansionRect = (interactionBounds.isEmpty
-            ? localHoverExpansionRect
-            : localHoverExpansionRect.union(interactionBounds))
+            ? localHoverCoreRect
+            : localHoverCoreRect.union(interactionBounds))
             .offsetBy(dx: visibleContentRect.minX, dy: visibleContentRect.minY)
         let panelSize = CGSize(
             width: canvasGeometry.totalWidth + shadowOutsets.leading + shadowOutsets.trailing,
@@ -117,7 +105,7 @@ public struct VoiceBarPanelLayout: Equatable {
             hoverRetentionRect: hoverRetentionRect,
             interactionRegion: interactionRegion,
             visibleRegion: visibleRegion,
-            localHoverExpansionRect: localHoverExpansionRect
+            localHoverCoreRect: localHoverCoreRect
         )
     }
 
@@ -135,7 +123,7 @@ public struct VoiceBarPanelLayout: Equatable {
             x: point.x - visibleContentRect.minX,
             y: point.y - visibleContentRect.minY
         )
-        return localHoverExpansionRect.contains(localPoint) || interactionRegion.contains(localPoint)
+        return localHoverCoreRect.contains(localPoint) || interactionRegion.contains(localPoint)
     }
 
     public func containsVisibleSurface(_ point: CGPoint) -> Bool {
@@ -229,7 +217,7 @@ public enum VoiceBarIsolatedCapturePlacement {
             coreWidth: layout.presentation.geometry.coreWidth,
             visibleCoreOcclusionInset: layout.presentation.visibleCoreOcclusionInset
         )
-        let referenceCanvas = VoiceBarNotchCanvasLayout.resolve(
+        let referenceCanvas = VoiceBarNotchMorphCanvasLayout.resolve(
             for: referencePresentation
         )
         let referenceLayout = VoiceBarPanelLayout.make(

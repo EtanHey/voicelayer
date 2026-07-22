@@ -126,6 +126,7 @@ public struct BarView: View {
     public var state: VoiceState
     public var commandRouter: BarCommandRouting
     private let presentationModel: VoiceBarNotchPresentationModel?
+    private let morphSelection: VoiceBarNotchMorphSelection?
     private let includesPanelOutsets: Bool
     @State private var errorDismissTask: Task<Void, Never>?
     @State private var isMorphTeleprompterContentPresented = false
@@ -136,7 +137,7 @@ public struct BarView: View {
 
     public var body: some View {
         if includesPanelOutsets {
-            let canvas = VoiceBarNotchCanvasLayout.resolve(for: notchPresentation)
+            let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: notchPresentation)
             appearanceAwareNotchContent
                 .frame(
                     width: canvas.canvasGeometry.totalWidth,
@@ -154,6 +155,7 @@ public struct BarView: View {
         state: VoiceState,
         commandRouter: BarCommandRouting,
         presentationModel: VoiceBarNotchPresentationModel? = nil,
+        morphSelection: VoiceBarNotchMorphSelection? = nil,
         includesPanelOutsets: Bool = false
     ) {
         _notchAppearance = State(
@@ -164,6 +166,7 @@ public struct BarView: View {
         self.state = state
         self.commandRouter = commandRouter
         self.presentationModel = presentationModel
+        self.morphSelection = morphSelection
         self.includesPanelOutsets = includesPanelOutsets
     }
 
@@ -180,10 +183,11 @@ public struct BarView: View {
     }
 
     private var notchContent: some View {
-        let canvas = VoiceBarNotchCanvasLayout.resolve(for: notchPresentation)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: notchPresentation)
         return VoiceBarNotchView(
             presentation: notchPresentation,
             appearance: notchAppearance,
+            morphVariant: morphSelection?.variant ?? .p1Matched,
             canvasGeometry: includesPanelOutsets ? canvas.canvasGeometry : nil,
             onHoverChanged: { hovering in
                 guard !includesPanelOutsets else { return }

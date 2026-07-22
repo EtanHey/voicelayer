@@ -151,10 +151,6 @@ public struct VoiceBarNotchVisibleRegion: Equatable {
     }
 
     public func contains(_ point: CGPoint) -> Bool {
-        if presentation.visualState == .idle,
-           presentation.virtualNotchIdleCoreHeight != nil {
-            return false
-        }
         guard bounds.contains(point) else { return false }
 
         let geometry = presentation.geometry

@@ -13,7 +13,7 @@ final class AppLifecycleTests: XCTestCase {
         let presentation = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
         )
-        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation,
             interactionConfiguration: VoiceBarNotchInteractionConfiguration(
@@ -1056,22 +1056,6 @@ final class AppLifecycleTests: XCTestCase {
 
         XCTAssertTrue(observer.contains("reapplyAnchoredPanelPosition()"))
         XCTAssertTrue(reapply.contains("positionPanel(panel, on:"))
-    }
-
-    func testGlobalPointerMovementReevaluatesMenuBarPresentationGeometry() throws {
-        let source = try voiceBarAppSource()
-        let methodStart = try XCTUnwrap(source.range(of: "private func handleMouseMoved()"))
-        let methodEnd = try XCTUnwrap(
-            source.range(
-                of: "private func synchronizePanelMouseEventPassthrough(",
-                range: methodStart.upperBound ..< source.endIndex
-            )
-        )
-        let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
-
-        XCTAssertTrue(method.contains("Self.notchScreenGeometry(for: targetScreen)"))
-        XCTAssertTrue(method.contains("lastAppliedNotchScreenGeometry"))
-        XCTAssertTrue(method.contains("positionPanel(panel, on: targetScreen)"))
     }
 
     func testPhysicalAndVirtualNotchesAreBothFixedAnchors() throws {
