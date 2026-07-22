@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.3] - 2026-07-22
+
+### Fixed
+- **Shift+F5 re-paste works again while recording.** Since v2.1.15 the chord was
+  silently swallowed whenever a recording gesture was active, so re-pasting your
+  last transcript mid-recording did nothing. Restored.
+
+  Introduced by `374fa29` ("paste transcript once and restore clipboard
+  atomically"), which added a `guard !gestureIsActive` that consumed the keyDown.
+  The guard was unnecessary: re-paste targets the last **completed** transcript
+  (`latestReusableTranscript`), never the in-flight one, and clipboard restore is
+  already protected by an `expectedChangeCount` check that skips a restore whose
+  pasteboard changed underneath it. The atomic-restore guarantee is unaffected.
+
+  Two regression tests now pin the behavior with a gesture active, and an
+  `AIDEV-NOTE` marks the guard as not-to-be-reintroduced — if a paste race ever
+  appears, it gets fixed in the paste path rather than by swallowing a hotkey.
+
+### Note on 2.2.1 / 2.2.2
+
+Those releases shipped a hover regression and are **superseded**. The hover-exit
+debounce was cut from 2.5s to 300ms, which unmasked a latent bug: the hover
+region excludes the topmost 1–2px row of the display, so flinging the pointer to
+the top registers as hover-*exit* while the cursor is visually inside the notch.
+Measured at 16 expand/collapse cycles in 34s with fail-to-summon dwells of
+650–700ms. Both the debounce and the zero-pixel virtual-notch idle were reverted
+to 2.2.0 behavior; evidence is archived on Brain Drive under
+`06_ARCHIVE/voicelayer-notch-2026-07/hover-flake-2026-07-22/`.
+
 ## [2.2.2] - 2026-07-22
 
 Supersedes 2.2.1, which was tagged but never published to npm.
