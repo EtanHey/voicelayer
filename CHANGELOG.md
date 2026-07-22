@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.2] - 2026-07-22
+
+Supersedes 2.2.1, which was tagged but never published to npm.
+
+### Fixed
+- Sync the MCP registry metadata in `server.json` with `package.json`. The 2.2.1
+  bump missed it, and the build-app release-contract test correctly failed the
+  publish on the tag. `server.json` does not ship inside the app bundle, so the
+  2.2.1 and 2.2.2 VoiceBar artifacts are functionally identical — this release
+  exists so the npm package, Homebrew formula, tag, and app all agree again.
+
+Everything in 2.2.1 below is included.
+
 ## [2.2.1] - 2026-07-22
 
 ### Fixed
