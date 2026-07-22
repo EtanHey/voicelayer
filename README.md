@@ -23,6 +23,8 @@ VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Clau
 
 **Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
 
+**Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
+
 ## Architecture
 
 ```
