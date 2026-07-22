@@ -25,6 +25,8 @@ The hosted workflow will call a tracked predicate script extracted from the immu
 
 The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. The bootstrap PR copy must also match the SHA-256 digest stored outside the checkout in repository Actions variable `VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256` (`bbe6f46f057027620b7ecddfc2d2215b62d0157c2cf975c00c36af2fd28d2098`). After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR still depends on code review of the workflow that enforces this digest; this design does not claim that a workflow can cryptographically self-bootstrap its own definition.
 
+During review, the lead merged current `main` into the PR branch to clear its behind state, advancing the immutable PR base from `5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284` to `d292366078594e900f9e3f4201297a104e650e47`. The one-time bootstrap was re-pinned to only that new base; the older base is no longer accepted and no general fallback was added.
+
 The local `.verified/` receipt remains compatible with the existing local hook. The shared predicate is tracked so the hook can converge on the same signature check without duplicating CI logic.
 
 ## Alternatives Considered

@@ -318,7 +318,10 @@ describe("daemon verification workflow contract", () => {
       'git show "$BASE_SHA:scripts/check-daemon-verification-proof.sh"',
     );
     expect(workflow).toContain(
-      'elif [ "$BASE_SHA" = "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284" ]; then',
+      'elif [ "$BASE_SHA" = "d292366078594e900f9e3f4201297a104e650e47" ]; then',
+    );
+    expect(workflow).not.toContain(
+      "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284",
     );
     expect(workflow).toContain(
       "BOOTSTRAP_PREDICATE_SHA256: ${{ vars.VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256 }}",

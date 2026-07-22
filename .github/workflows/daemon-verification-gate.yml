@@ -34,7 +34,7 @@ jobs:
 
           if git show "$BASE_SHA:scripts/check-daemon-verification-proof.sh" > "$predicate" 2>/dev/null; then
             echo "Using daemon proof predicate from immutable base sha $BASE_SHA."
-          elif [ "$BASE_SHA" = "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284" ]; then
+          elif [ "$BASE_SHA" = "d292366078594e900f9e3f4201297a104e650e47" ]; then
             echo "Bootstrapping the daemon proof predicate on its one approved pre-gate base sha."
             cp scripts/check-daemon-verification-proof.sh "$predicate"
             if ! [[ "$BOOTSTRAP_PREDICATE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
