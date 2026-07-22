@@ -210,7 +210,7 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
 
     private func writeOffscreenWindowPNG(state: VoiceState, to outputURL: URL) throws {
         let presentation = notchPresentation(for: state)
-        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation,
             canvasGeometry: canvas.canvasGeometry

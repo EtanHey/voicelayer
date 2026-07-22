@@ -242,7 +242,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
             let presentation = presentation(state)
             let layout = VoiceBarPanelLayout.make(
                 presentation: presentation,
-                canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+                canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
                     for: presentation
                 ).canvasGeometry
             )
@@ -263,13 +263,13 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let teleprompterPresentation = presentation(.teleprompter)
         let recordingLayout = VoiceBarPanelLayout.make(
             presentation: recordingPresentation,
-            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+            canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
                 for: recordingPresentation
             ).canvasGeometry
         )
         let teleprompterLayout = VoiceBarPanelLayout.make(
             presentation: teleprompterPresentation,
-            canvasGeometry: VoiceBarNotchMorphCanvasLayout.resolve(
+            canvasGeometry: VoiceBarNotchCanvasLayout.resolve(
                 for: teleprompterPresentation
             ).canvasGeometry
         )
