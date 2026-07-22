@@ -266,6 +266,12 @@ describe("daemon verification workflow contract", () => {
     expect(workflow).toContain(
       'git show "$BASE_SHA:scripts/check-daemon-verification-proof.sh"',
     );
+    expect(workflow).toContain(
+      'elif [ "$BASE_SHA" = "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284" ]; then',
+    );
+    expect(workflow).not.toContain(
+      "a3e32626e2a9b7202ddb0bdb1671ff3d4e6f46ff",
+    );
     expect(workflow).not.toContain(
       "bash scripts/check-daemon-verification-proof.sh",
     );
