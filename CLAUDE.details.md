@@ -42,7 +42,7 @@
 - Uses Silero VAD (ONNX) with silence modes: quick (0.5s), standard (1.5s), thoughtful (2.5s).
 - Model location: `models/silero_vad.onnx`.
 - Recording modes: VAD (default) or `press_to_talk=true` for manual stop.
-- Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 300s).
+- Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 30s).
 - Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 
 ## Ring Buffer and Playback
@@ -85,5 +85,4 @@
 
 ## Naming
 - Primary tools: `voice_speak`, `voice_ask`
-- Back-compat: `qa_voice_*` aliases (announce, brief, consult, converse, think, say, ask, replay, toggle)
 - Env vars use `QA_VOICE_*` (aliasing to `VOICELAYER_*` planned)

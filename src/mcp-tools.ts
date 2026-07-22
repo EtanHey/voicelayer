@@ -7,7 +7,7 @@
 
 import { STOP_FILE } from "./paths";
 
-/** All VoiceLayer MCP tools (consolidated + backward-compat aliases). */
+/** The two canonical VoiceLayer MCP tools. */
 export function getToolDefinitions() {
   return [
     // === CONSOLIDATED TOOLS ===
@@ -27,7 +27,7 @@ export function getToolDefinitions() {
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
-        idempotentHint: true,
+        idempotentHint: false,
         openWorldHint: false,
       },
       inputSchema: {
@@ -112,6 +112,11 @@ export function getToolDefinitions() {
             type: "string",
             description: "The question to speak aloud before recording",
           },
+          voice: {
+            type: "string",
+            description:
+              "Voice name — profile name or raw edge-tts voice for the spoken question.",
+          },
           timeout_seconds: {
             type: "number",
             description:
@@ -140,219 +145,5 @@ export function getToolDefinitions() {
       },
     },
 
-    // === BACKWARD-COMPAT ALIASES ===
-
-    {
-      name: "qa_voice_announce",
-      description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to speak aloud",
-          },
-          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+10%" },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_brief",
-      description:
-        "Alias for voice_speak(mode='brief'). NON-BLOCKING TTS, slower rate.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to speak aloud",
-          },
-          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "-10%" },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_consult",
-      description:
-        "Alias for voice_speak(mode='consult'). NON-BLOCKING checkpoint.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to speak aloud",
-          },
-          rate: { type: "string", pattern: "^[+-]\\d+%$", default: "+5%" },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_converse",
-      description: "Alias for voice_ask. BLOCKING voice Q&A.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: { type: "string", description: "The question to speak" },
-          timeout_seconds: {
-            type: "number",
-            default: 30,
-            minimum: 5,
-            maximum: 3600,
-          },
-          silence_mode: {
-            type: "string",
-            enum: ["quick", "standard", "thoughtful"],
-            default: "thoughtful",
-          },
-          press_to_talk: {
-            type: "boolean",
-            description: `Push-to-talk mode. No VAD, stop via ${STOP_FILE}.`,
-            default: false,
-          },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_think",
-      description: "Alias for voice_speak(mode='think'). Silent markdown log.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          thought: { type: "string", description: "The thought to log" },
-          category: {
-            type: "string",
-            enum: ["insight", "question", "red-flag", "checklist-update"],
-            default: "insight",
-          },
-        },
-        required: ["thought"],
-      },
-    },
-    {
-      name: "qa_voice_replay",
-      description:
-        "Alias for voice_speak(replay_index=N). Replay cached audio.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          index: { type: "number", default: 0, minimum: 0, maximum: 19 },
-        },
-      },
-    },
-    {
-      name: "qa_voice_toggle",
-      description: "Alias for voice_speak(enabled=bool). Toggle voice on/off.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          enabled: { type: "boolean" },
-          scope: {
-            type: "string",
-            enum: ["all", "tts", "mic"],
-            default: "all",
-          },
-        },
-        required: ["enabled"],
-      },
-    },
-    {
-      name: "qa_voice_say",
-      description: "Alias for voice_speak(mode='announce'). NON-BLOCKING TTS.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to speak aloud",
-          },
-        },
-        required: ["message"],
-      },
-    },
-    {
-      name: "qa_voice_ask",
-      description: "Alias for voice_ask. BLOCKING voice Q&A.",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false,
-      },
-      inputSchema: {
-        type: "object" as const,
-        properties: {
-          message: { type: "string", description: "The question to speak" },
-          timeout_seconds: {
-            type: "number",
-            default: 30,
-            minimum: 5,
-            maximum: 3600,
-          },
-          silence_mode: {
-            type: "string",
-            enum: ["quick", "standard", "thoughtful"],
-            default: "thoughtful",
-          },
-          press_to_talk: {
-            type: "boolean",
-            description: `Push-to-talk mode. No VAD, stop via ${STOP_FILE}.`,
-            default: false,
-          },
-        },
-        required: ["message"],
-      },
-    },
   ];
 }

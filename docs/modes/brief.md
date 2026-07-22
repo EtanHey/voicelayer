@@ -11,7 +11,6 @@ One-way explanation via TTS. The agent reads back a longer piece of content — 
 ## MCP Tool
 
 **Tool:** `voice_speak` with `mode: "brief"` (or auto-selected for messages >280 chars)
-**Alias:** `qa_voice_brief`
 
 ### Parameters
 

@@ -11,13 +11,12 @@ Silent note-taking to a markdown log file. No audio, no mic — the agent captur
 ## MCP Tool
 
 **Tool:** `voice_speak` with `mode: "think"` (or auto-selected for "insight:", "note:", "TODO:")
-**Alias:** `qa_voice_think` (uses `thought` param; voice_speak uses `message`)
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `message` / `thought` | string | Yes | — | The insight, suggestion, or note to append |
+| `message` | string | Yes | — | The insight, suggestion, or note to append |
 | `category` | string | No | `insight` | One of: `insight`, `question`, `red-flag`, `checklist-update` |
 
 ### Returns
@@ -32,7 +31,7 @@ Silent note-taking to a markdown log file. No audio, no mic — the agent captur
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| Missing thought | Empty or missing `thought` param | Provide non-empty text |
+| Missing message | Empty or missing `message` param | Provide non-empty text |
 | File write failure | Permissions on think file path | Check path in `QA_VOICE_THINK_FILE` |
 
 ## Behavior

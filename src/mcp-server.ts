@@ -22,13 +22,6 @@ import { PACKAGE_VERSION } from "./version";
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
-  handleAnnounce,
-  handleBrief,
-  handleConsult,
-  handleConverse,
-  handleThink,
-  handleReplay,
-  handleToggle,
 } from "./handlers";
 import { createVoiceToolContext } from "./mcp-notifications";
 
@@ -47,8 +40,7 @@ const server = new Server(
       `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 2.5s silence (thoughtful default).\n` +
       'Auto-mode detection: ends with ? → consult. length > 280 → brief. starts with "insight:" → think. default → announce.\n' +
       "voice_speak returns immediately (non-blocking). Audio plays in background. voice_ask auto-waits for it to finish before speaking.\n" +
-      "Voice is disabled by default; user enables via /mcp or toggle tool.\n" +
-      "All qa_voice_* tool names still work (backward compat aliases).",
+      "Voice is disabled by default; user enables via /mcp or voice_speak's enabled parameter.",
   },
 );
 
@@ -75,31 +67,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
 
   try {
     switch (name) {
-      // Consolidated tools
       case "voice_speak":
         return await handleVoiceSpeak(args, context);
       case "voice_ask":
         return await handleVoiceAsk(args, context);
-      // Backward-compat aliases
-      case "qa_voice_announce":
-        return await handleAnnounce(args, context);
-      case "qa_voice_brief":
-        return await handleBrief(args, context);
-      case "qa_voice_consult":
-        return await handleConsult(args, context);
-      case "qa_voice_converse":
-        return await handleConverse(args, context);
-      case "qa_voice_think":
-        return await handleThink(args);
-      case "qa_voice_replay":
-        return await handleReplay(args);
-      case "qa_voice_toggle":
-        return await handleToggle(args);
-      // Aliases
-      case "qa_voice_say":
-        return await handleAnnounce(args, context);
-      case "qa_voice_ask":
-        return await handleConverse(args, context);
       default:
         return {
           content: [{ type: "text" as const, text: `Unknown tool: ${name}` }],

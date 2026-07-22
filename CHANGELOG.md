@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.0] - 2026-07-22
+
+### Removed — BREAKING
+
+- **The nine `qa_voice_*` MCP aliases are gone.** The server now advertises exactly
+  two tools: `voice_speak` and `voice_ask`. Removed: `qa_voice_announce`,
+  `qa_voice_brief`, `qa_voice_consult`, `qa_voice_converse`, `qa_voice_think`,
+  `qa_voice_say`, `qa_voice_ask`, `qa_voice_replay`, `qa_voice_toggle`.
+
+  **No capability is lost** — every alias was surface over the two canonical tools:
+
+  | Removed alias | Call instead |
+  |---|---|
+  | `qa_voice_announce` / `qa_voice_say` | `voice_speak({ mode: 'announce' })` |
+  | `qa_voice_brief` | `voice_speak({ mode: 'brief' })` |
+  | `qa_voice_consult` | `voice_speak({ mode: 'consult' })` |
+  | `qa_voice_think` | `voice_speak({ mode: 'think' })` |
+  | `qa_voice_replay` | `voice_speak({ replay_index: N })` |
+  | `qa_voice_toggle` | `voice_speak({ enabled: bool })` |
+  | `qa_voice_converse` / `qa_voice_ask` | `voice_ask({ ... })` |
+
+  `voice_speak` still auto-detects the mode from message content, so most callers
+  need only the tool name change. A regression test now pins the served tool list
+  to exactly `["voice_speak", "voice_ask"]` so an alias cannot silently return.
+
 ## [2.1.17] - 2026-07-22 — notch convergence
 
 The VoiceBar **notch** becomes the finished canonical surface: readable glass,

@@ -64,14 +64,9 @@ describe("B3: ToolAnnotations on all MCP tools", () => {
     expect(ask?.annotations?.idempotentHint).toBe(false);
   });
 
-  it("toggle tools are idempotent", () => {
-    const toggle = tools.find((t) => t.name === "qa_voice_toggle");
-    expect(toggle?.annotations?.idempotentHint).toBe(true);
-  });
-
-  it("replay tools are idempotent", () => {
-    const replay = tools.find((t) => t.name === "qa_voice_replay");
-    expect(replay?.annotations?.idempotentHint).toBe(true);
+  it("voice_speak is not idempotent because calls can speak, replay, or append notes", () => {
+    const speak = tools.find((t) => t.name === "voice_speak");
+    expect(speak?.annotations?.idempotentHint).toBe(false);
   });
 });
 

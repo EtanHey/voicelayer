@@ -5,7 +5,7 @@
 [![npm](https://img.shields.io/npm/v/voicelayer-mcp.svg)](https://www.npmjs.com/package/voicelayer-mcp)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
-[![Tools](https://img.shields.io/badge/MCP%20tools-2%20core%20%2B%209%20aliases-38BDF8.svg)](#voice-tools)
+[![Tools](https://img.shields.io/badge/MCP%20tools-2-38BDF8.svg)](#voice-tools)
 [![Tests](https://img.shields.io/badge/tests-1409%20Bun%20(CI)%20%2B%20787%20Swift-brightgreen.svg)](#testing)
 
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
@@ -19,7 +19,9 @@
 
 **[Website](https://voicelayer.etanheyman.com)** | **[Docs](https://etanhey.github.io/voicelayer/docs/)** | **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
 
-VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. 2 canonical MCP tools plus 9 backward-compatible aliases ship with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. Exactly 2 canonical MCP tools ship with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+
+**Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
 
 **Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
 
@@ -189,28 +191,10 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 | Tool | Behavior | Blocking | readOnly | destructive | idempotent |
 |------|----------|:--------:|:--------:|:-----------:|:----------:|
-| **`voice_speak`** | TTS with auto-mode (announce/brief/consult/think), replay, toggle | No | false | false | true |
+| **`voice_speak`** | TTS with auto-mode (announce/brief/consult/think), replay, toggle | No | false | false | false |
 | **`voice_ask`** | Speak question + record mic + transcribe response | Yes | false | false | false |
 
-### Backward-compatible aliases
-
-> **Deprecated.** The nine `qa_voice_*` aliases are retained only for backward
-> compatibility and are slated for removal. New integrations should call
-> `voice_speak` / `voice_ask` directly.
-
-| Alias | Maps to | idempotent |
-|-------|---------|:----------:|
-| `qa_voice_announce` | `voice_speak(mode='announce')` | true |
-| `qa_voice_brief` | `voice_speak(mode='brief')` | true |
-| `qa_voice_consult` | `voice_speak(mode='consult')` | true |
-| `qa_voice_say` | `voice_speak(mode='announce')` | true |
-| `qa_voice_think` | `voice_speak(mode='think')` | false |
-| `qa_voice_replay` | `voice_speak(replay_index=N)` | true |
-| `qa_voice_toggle` | `voice_speak(enabled=bool)` | true |
-| `qa_voice_converse` | `voice_ask` | false |
-| `qa_voice_ask` | `voice_ask` | false |
-
-All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive. All have `openWorldHint: false`.
+Both tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive. Both have `openWorldHint: false`.
 
 ### How voice_ask Works
 
@@ -440,7 +424,7 @@ voicelayer/
 │   └── edge-tts-words.py         # Word-level TTS with timestamps
 ├── launchd/                      # VoiceBar LaunchAgent + retired daemon cleanup
 ├── models/                       # Silero VAD ONNX model
-└── package.json                  # v2.1.17
+└── package.json                  # v2.2.0
 ```
 
 ## Platform Support
@@ -457,7 +441,7 @@ VoiceLayer is one of three open-source MCP servers in the [Golems](https://etanh
 | Server | What it does | Tools |
 |--------|-------------|:-----:|
 | **[BrainLayer](https://brainlayer.etanheyman.com)** | Persistent memory for AI agents — knowledge graph + hybrid search | 12 |
-| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, notch VoiceBar, F5 recording | 2 (+9 legacy) |
+| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, notch VoiceBar, F5 recording | 2 |
 | **[cmuxLayer](https://cmuxlayer.etanheyman.com)** | Terminal orchestration — spawn panes, read screens, coordinate agents | 22 |
 
 Pair with BrainLayer to remember voice conversations across sessions.

@@ -12,7 +12,7 @@ describe("landing page polish audit", () => {
     );
     expect(html).toContain('<main id="main-content">');
 
-    expect(html).toContain('<span class="stat-value">11</span>');
+    expect(html).toContain('<span class="stat-value">2</span>');
     expect(html).toContain('<span class="stat-label">MCP tools</span>');
     expect(html).toContain('<span class="stat-value">546</span>');
     expect(html).toContain('<span class="stat-label">tests passing</span>');
@@ -20,9 +20,7 @@ describe("landing page polish audit", () => {
       /<span class="stat-value">(?:&lt;|<)1\.5s<\/span>\s*<span class="stat-label">local STT<\/span>/,
     );
 
-    expect(html).toContain("qa_voice_announce");
-    expect(html).toContain("qa_voice_brief");
-    expect(html).toContain("qa_voice_ask");
+    expect(html).toContain("exactly two MCP tools");
     expect(html).toContain("Done. Three files changed, 546 tests passing.");
 
     expect(html).not.toContain('<div class="setup-code" onclick=');

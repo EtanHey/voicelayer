@@ -93,7 +93,3 @@ Only **converse** mode uses the microphone. To prevent conflicts when running mu
 - Lock releases on session exit
 
 See [Session Booking](../architecture/session-booking.md) for details.
-
-## Aliases
-
-Old `qa_voice_*` names still work as backward-compat aliases (e.g. `qa_voice_say` → announce, `qa_voice_ask` → voice_ask).
