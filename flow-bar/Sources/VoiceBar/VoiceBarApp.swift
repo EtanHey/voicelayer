@@ -499,6 +499,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hosting.activeHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsInteractiveContent(point) ?? false
         }
+        hosting.renderedSurfaceHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsVisibleSurface(point) ?? false
+        }
         hosting.hoverExpansionHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsHoverExpansion(point) ?? false
         }
@@ -545,6 +548,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pill.activeHitTestProvider = { [weak self] point in
             self?.currentPanelLayout().containsInteractiveContent(point) ?? false
+        }
+        pill.contextMenuHitTestProvider = { [weak self] point in
+            self?.currentPanelLayout().containsVisibleSurface(point) ?? false
         }
         pill.isPillDragEnabled = anchorMode.allowsFreeDrag
         pill.alphaValue = 0
@@ -1589,7 +1595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pointer: NSPoint,
         isIsolatedCapture: Bool
     ) {
-        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsInteractiveContent(pointer)
+        panel.ignoresMouseEvents = !isIsolatedCapture && !layout.containsVisibleSurface(pointer)
     }
 
     private func positionPanel(_ panel: FloatingPillPanel, on screen: NSScreen?) {

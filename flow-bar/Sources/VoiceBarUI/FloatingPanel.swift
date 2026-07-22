@@ -65,6 +65,7 @@ public enum VoiceBarBackingScaleSynchronizer {
 
 public final class PillHostingView<Content: View>: NSHostingView<Content> {
     public var activeHitTestProvider: ((NSPoint) -> Bool)?
+    public var renderedSurfaceHitTestProvider: ((NSPoint) -> Bool)?
     public var hoverExpansionHitTestProvider: ((NSPoint) -> Bool)?
     public var hoverRetentionHitTestProvider: ((NSPoint) -> Bool)?
     public var onHoverChanged: ((Bool) -> Void)?
@@ -80,10 +81,16 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override public func hitTest(_ point: NSPoint) -> NSView? {
-        if let activeHitTestProvider, !activeHitTestProvider(point) {
+        let containsRenderedSurface = renderedSurfaceHitTestProvider?(point)
+            ?? activeHitTestProvider?(point)
+            ?? true
+        guard containsRenderedSurface else {
             return nil
         }
-        return super.hitTest(point)
+        // Returning nil makes AppKit continue hit testing windows underneath
+        // this nonactivating panel. Claim only VoiceBar's exact rendered path;
+        // `self` is the fallback when SwiftUI has no child at a glass pixel.
+        return super.hitTest(point) ?? self
     }
 
     override public func updateTrackingAreas() {
@@ -158,6 +165,7 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
 public final class FloatingPillPanel: NSPanel {
     public var contextMenuProvider: (() -> NSMenu)?
     public var activeHitTestProvider: ((NSPoint) -> Bool)?
+    public var contextMenuHitTestProvider: ((NSPoint) -> Bool)?
     public var isPillDragEnabled = true
     private var dragStartWasInVisiblePill = false
 
@@ -247,7 +255,9 @@ public final class FloatingPillPanel: NSPanel {
     }
 
     public func shouldHandleContextMenu(at point: NSPoint) -> Bool {
-        activeHitTestProvider?(point) ?? true
+        contextMenuHitTestProvider?(point)
+            ?? activeHitTestProvider?(point)
+            ?? true
     }
 
     /// Position pill on the given screen (or the screen containing the mouse).

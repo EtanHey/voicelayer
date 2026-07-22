@@ -128,9 +128,13 @@ for state_name in idle recording transcribing speaking; do
 done
 
 swift test --package-path "$repo_root/flow-bar" \
-  --filter BarViewClickabilityTests/testPanelAppKitMouseEventsHitOnlyMountedControls
+  --filter BarViewClickabilityTests/testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface
 swift test --package-path "$repo_root/flow-bar" \
-  --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsPassThroughItsBody
+  --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu
+swift test --package-path "$repo_root/flow-bar" \
+  --filter BarViewClickabilityTests/testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing
+swift test --package-path "$repo_root/flow-bar" \
+  --filter AppLifecycleTests/testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins
 env \
   VOICEBAR_REGENERATE_VISUAL_ARTIFACTS=1 \
   VOICEBAR_VISUAL_ARTIFACT_OUTPUT="$frame_dir" \
@@ -158,4 +162,5 @@ fi
 
 printf 'offscreen_origin=%s\n' "$offscreen_origin" >"$receipt_dir/acceptance.txt"
 printf 'states=idle,recording,transcribing,speaking\n' >>"$receipt_dir/acceptance.txt"
+printf 'right_click_context_menu=passed\n' >>"$receipt_dir/acceptance.txt"
 printf 'EVENT_HANDLING_OFFSCREEN_ACCEPTANCE=%s\n' "$receipt_dir"
