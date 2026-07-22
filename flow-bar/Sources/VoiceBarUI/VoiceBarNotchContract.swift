@@ -200,6 +200,7 @@ public struct VoiceBarNotchPresentation: Equatable {
     public let visualState: VoiceBarNotchVisualState
     public let geometry: VoiceBarNotchGeometry
     public let visibleCoreOcclusionInset: CGFloat
+    public let virtualNotchIdleCoreHeight: CGFloat?
     public let contentRoles: [VoiceBarNotchContentRole]
     public let accessibilityLabel: String
 
@@ -214,7 +215,8 @@ public struct VoiceBarNotchPresentation: Equatable {
         isHovered: Bool,
         isKeyboardFocused: Bool,
         coreWidth: CGFloat = VoiceBarNotchContract.coreWidth,
-        visibleCoreOcclusionInset: CGFloat = 0
+        visibleCoreOcclusionInset: CGFloat = 0,
+        virtualNotchIdleCoreHeight: CGFloat? = nil
     ) -> VoiceBarNotchPresentation {
         let visualState: VoiceBarNotchVisualState = if hasTeleprompter {
             .teleprompter
@@ -231,7 +233,10 @@ public struct VoiceBarNotchPresentation: Equatable {
         let baseGeometry = VoiceBarNotchContract.geometry(
             for: visualState,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: visibleCoreOcclusionInset
+            visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+            resolvedTopHeight: visualState == .idle
+                ? virtualNotchIdleCoreHeight ?? VoiceBarNotchContract.topHeight
+                : VoiceBarNotchContract.topHeight
         )
         let geometry = if visualState == .compactStatus,
                           compactStatusLeadingWingWidth != nil || compactStatusTrailingWingWidth != nil {
@@ -266,6 +271,7 @@ public struct VoiceBarNotchPresentation: Equatable {
             visualState: visualState,
             geometry: geometry,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
+            virtualNotchIdleCoreHeight: virtualNotchIdleCoreHeight,
             contentRoles: contentRoles(for: visualState),
             accessibilityLabel: accessibilityLabel(for: visualState)
         )
@@ -409,32 +415,42 @@ public enum VoiceBarNotchContract {
     public static func geometry(
         for visualState: VoiceBarNotchVisualState,
         coreWidth: CGFloat = coreWidth,
-        visibleCoreOcclusionInset: CGFloat = 0
+        visibleCoreOcclusionInset: CGFloat = 0,
+        resolvedTopHeight: CGFloat = topHeight
     ) -> VoiceBarNotchGeometry {
         switch visualState {
         case .idle:
-            geometry(coreWidth: coreWidth, leadingWingWidth: 0, trailingWingWidth: 0)
+            geometry(
+                coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
+                leadingWingWidth: 0,
+                trailingWingWidth: 0
+            )
         case .hoverLauncher:
             geometry(
                 coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
                 leadingWingWidth: compactIndicatorLaneWidth,
                 trailingWingWidth: hoverLauncherTrailingWingWidth
             )
         case .recording:
             geometry(
                 coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
                 leadingWingWidth: recordingLeadingWingWidth,
                 trailingWingWidth: waveformWingWidth
             )
         case .compactStatus:
             geometry(
                 coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
                 leadingWingWidth: compactIndicatorLaneWidth,
                 trailingWingWidth: compactStatusDefaultTrailingWingWidth
             )
         case .teleprompter:
             geometry(
                 coreWidth: coreWidth,
+                topHeight: resolvedTopHeight,
                 leadingWingWidth: 0,
                 trailingWingWidth: teleprompterWaveformWingWidth(
                     visibleCoreOcclusionInset: visibleCoreOcclusionInset
@@ -448,6 +464,7 @@ public enum VoiceBarNotchContract {
 
     private static func geometry(
         coreWidth: CGFloat,
+        topHeight: CGFloat,
         leadingWingWidth: CGFloat,
         trailingWingWidth: CGFloat,
         bodyLeadingExtent: CGFloat = 0,

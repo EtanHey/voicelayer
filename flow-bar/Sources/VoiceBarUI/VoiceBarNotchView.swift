@@ -16,7 +16,8 @@ public struct VoiceBarNotchViewDescriptor: Equatable {
     ) -> VoiceBarNotchViewDescriptor {
         VoiceBarNotchViewDescriptor(
             shellIdentity: "VoiceBarNotchShell",
-            fixedCoreCount: presentation.visualState == .idle ? 0 : 1,
+            fixedCoreCount: presentation.visualState == .idle
+                && presentation.virtualNotchIdleCoreHeight == nil ? 0 : 1,
             reusableWingSlotCount: 2,
             lowerSurfaceCount: presentation.geometry.lowerSurfaceHeight > 0 ? 1 : 0,
             clipsContentToVisibleSurfaces: true,
@@ -78,6 +79,7 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
                     .transition(.identity)
             }
 
+            virtualIdleCore
             fixedHardwareCore
         }
         .frame(
@@ -85,10 +87,10 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
             height: resolvedCanvasGeometry.totalHeight,
             alignment: .topLeading
         )
-        // The collapsed state draws no software pixels, but the physical
-        // camera housing remains the intentional hover target that summons
-        // VoiceBar again. AppKit still gates this rectangle through the exact
-        // rendered-shape hit region for every expanded state.
+        // Hardware idle draws no software pixels and keeps the physical
+        // camera housing as its hover target. Flat-display idle paints that
+        // same target as the virtual core. AppKit still gates both through
+        // the exact rendered-shape hit region.
         .contentShape(Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityLabel(presentation.accessibilityLabel)
@@ -204,6 +206,30 @@ public struct VoiceBarNotchView<LeadingContent: View, TrailingContent: View, Low
 
     private var layout: VoiceBarNotchShapeLayout {
         VoiceBarNotchShapeLayout(geometry: renderedGeometry)
+    }
+
+    @ViewBuilder
+    private var virtualIdleCore: some View {
+        if presentation.visualState == .idle,
+           presentation.virtualNotchIdleCoreHeight != nil {
+            VoiceBarNotchHardwareCoreShape(
+                lowerCornerRadius: VoiceBarNotchContract.material.hardwareCoreLowerCornerRadius
+            )
+            .fill(.black)
+            .frame(
+                width: resolvedCanvasGeometry.coreWidth,
+                height: resolvedCanvasGeometry.topHeight
+            )
+            .position(
+                x: resolvedCanvasGeometry.coreOriginX + resolvedCanvasGeometry.coreWidth / 2,
+                y: resolvedCanvasGeometry.topHeight / 2
+            )
+            .accessibilityHidden(true)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
+            .zIndex(10)
+        }
     }
 
     @ViewBuilder

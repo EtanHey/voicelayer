@@ -34,6 +34,47 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         }
     }
 
+    func testWritesVirtualNotchIdleOffscreenAppKitArtifact() throws {
+        try VisualArtifactTestPolicy.requireRegeneration()
+        let outputDirectory = artifactOutputDirectory()
+        try FileManager.default.createDirectory(
+            at: outputDirectory,
+            withIntermediateDirectories: true
+        )
+
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            isHovered: false,
+            isKeyboardFocused: false,
+            virtualNotchIdleCoreHeight: 24
+        )
+        let view = ZStack(alignment: .top) {
+            Color(red: 0.78, green: 0.82, blue: 0.88)
+            VoiceBarNotchView(
+                presentation: presentation,
+                canvasGeometry: presentation.geometry,
+                leadingContent: { EmptyView() },
+                trailingContent: { EmptyView() },
+                lowerContent: { EmptyView() }
+            )
+        }
+        .frame(width: 240, height: 60, alignment: .top)
+        let outputURL = outputDirectory.appendingPathComponent("virtual-notch-idle.png")
+
+        try writeOffscreenWindowPNG(
+            view: view,
+            size: CGSize(width: 240, height: 60),
+            to: outputURL
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
+        XCTAssertGreaterThan(
+            try FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? Int ?? 0,
+            0
+        )
+    }
+
     func testWritesPronunciationDisplayTeleprompterArtifact() throws {
         try VisualArtifactTestPolicy.requireRegeneration()
         let outputDirectory = artifactOutputDirectory()
@@ -208,6 +249,43 @@ final class BarViewSnapshotArtifactTests: XCTestCase {
         let bitmap = NSBitmapImageRep(cgImage: cgImage)
         guard let data = bitmap.representation(using: .png, properties: [:]) else {
             throw NSError(domain: "BarViewSnapshotArtifactTests", code: 2)
+        }
+        try data.write(to: outputURL, options: .atomic)
+    }
+
+    private func writeOffscreenWindowPNG(
+        view: some View,
+        size: CGSize,
+        to outputURL: URL
+    ) throws {
+        let host = NSHostingView(rootView: view)
+        host.frame = CGRect(origin: .zero, size: size)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.contentView = host
+        window.setFrameOrigin(NSPoint(x: -20000, y: -20000))
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.35))
+        host.layoutSubtreeIfNeeded()
+        guard let cgImage = captureWindowImage(windowNumber: window.windowNumber) else {
+            throw NSError(domain: "BarViewSnapshotArtifactTests", code: 3)
+        }
+        let bitmap = NSBitmapImageRep(cgImage: cgImage)
+        guard let data = bitmap.representation(using: .png, properties: [:]) else {
+            throw NSError(domain: "BarViewSnapshotArtifactTests", code: 4)
         }
         try data.write(to: outputURL, options: .atomic)
     }
