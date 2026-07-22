@@ -193,7 +193,7 @@ write_local_allowed_signers() {
       ;;
   esac
   case "$public_key" in
-    ssh-*|ecdsa-*) ;;
+    ssh-*|ecdsa-*|sk-*) ;;
     *)
       printf '[voicelayer-verify] runtime signing key did not yield an SSH public key.\n' >&2
       return 1

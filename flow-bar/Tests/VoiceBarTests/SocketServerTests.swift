@@ -475,16 +475,6 @@ final class SocketServerTests: XCTestCase {
 /// isolated socket and exercise production input/UI event dispatch against the
 /// still-running daemon.
 final class CorpusReplayRuntimeInteractionTests: XCTestCase {
-    private final class ScratchCmuxApplication: NSRunningApplication, @unchecked Sendable {
-        override var bundleIdentifier: String? {
-            "com.cmuxterm.app"
-        }
-
-        override var processIdentifier: pid_t {
-            52005
-        }
-    }
-
     private func writeTerminalProof(
         environmentKey: String,
         environment: [String: String],
@@ -599,10 +589,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         dispatchRuntimeKey(virtualKey: 53, router: router)
         XCTAssertTrue(waitForCondition(timeout: 15) { idleTransitions >= 2 })
 
-        let cmux = ScratchCmuxApplication()
+        // NSRunningApplication is an AppKit-managed object. Constructing a test
+        // subclass with `init()` corrupts its Objective-C lifetime and can crash
+        // XCTest's autorelease-pool teardown after this long-running test. The
+        // paste path only needs a stable, identical application instance; the
+        // insertion strategy receives the cmux bundle identifier explicitly.
+        let pasteTarget = NSRunningApplication.current
         var scratchTerminal = ""
         var axInsertionFired = false
-        state.frontmostAppProvider = { cmux }
+        state.frontmostAppProvider = { pasteTarget }
         state.targetAppActivator = { _ in }
         state.pasteScheduler = { _, block in block() }
         state.pasteConfirmationDelay = 0
@@ -612,7 +607,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
                 let strategy = CommandModeAXHelper.insertionStrategy(
                     text: text,
                     focusedValueLength: (scratchTerminal as NSString).length,
-                    targetBundleIdentifier: cmux.bundleIdentifier
+                    targetBundleIdentifier: "com.cmuxterm.app"
                 )
                 if strategy == .valueRewrite {
                     scratchTerminal.append(text)
@@ -666,7 +661,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         veryLongState.sendCommand = { _ in }
         veryLongState.minimumTranscribingDisplayDuration = 0
         veryLongState.pasteConfirmationDelay = 0
-        veryLongState.frontmostAppProvider = { cmux }
+        veryLongState.frontmostAppProvider = { pasteTarget }
         veryLongState.targetAppActivator = { _ in }
         veryLongState.pasteScheduler = { _, block in block() }
         veryLongState.asyncDictationInsertionHandlerProvider = {
@@ -675,7 +670,7 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
                 let strategy = CommandModeAXHelper.insertionStrategy(
                     text: text,
                     focusedValueLength: (veryLongScratchTerminal as NSString).length,
-                    targetBundleIdentifier: cmux.bundleIdentifier
+                    targetBundleIdentifier: "com.cmuxterm.app"
                 )
                 if strategy == .valueRewrite {
                     veryLongScratchTerminal.append(text)

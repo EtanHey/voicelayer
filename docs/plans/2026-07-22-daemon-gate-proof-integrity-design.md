@@ -8,7 +8,7 @@
 
 The local merge hook requires a machine-local `.verified/` receipt, but the hosted `daemon-verification-gate` trusts a `Verified-Runtime: <sha>` sentence in the pull request body. An actor with permission to edit the body can therefore satisfy the hosted check without running VoiceBar. The receipt cannot simply be committed: adding it changes the commit SHA, so it cannot bind to the exact PR head it is meant to attest.
 
-The corpus runtime leg also intermittently exits with SIGSEGV. `SocketServer.stop()` only schedules cleanup, while `deinit` can immediately run queue-owned cleanup from an arbitrary thread. The spawned-daemon test releases the server as soon as the test body exits, making teardown race with socket callbacks and dispatch-source cancellation.
+The corpus runtime leg also intermittently exits with SIGSEGV. The initial theory was a `SocketServer.stop()` race. Reproduction produced a macOS crash report whose faulting main-thread stack is `objc_release` → autorelease-pool pop → XCTest memory checking. Enabling Zombies made the same runtime interaction complete. Inspection then found that the runtime test directly constructs a subclass of AppKit-managed `NSRunningApplication`, which is not a valid test-double lifecycle. The fix removes that unsupported Objective-C object rather than adding a retry or changing production socket behavior without evidence.
 
 ## Evidence Mechanism
 
@@ -58,11 +58,11 @@ The design does not prevent:
 
 The signing key should therefore be hardware- or user-presence-backed, with per-use approval. GitHub stores only the public key in a repository Actions variable. CI proves provenance and exact-SHA binding; it cannot independently observe what happened in front of the microphone. A repository administrator who can change that Actions variable or the base-branch workflow remains inside the trust boundary.
 
-## Socket Shutdown Design
+## Runtime Test Lifetime Design
 
-`SocketServer` will gain a synchronous, idempotent shutdown boundary that executes cleanup on its serial queue and does not return until cancellation has been scheduled and queue-owned state is stable. Queue-specific identity will avoid deadlock if shutdown is invoked from the server queue. `deinit` becomes a defensive fallback, not the normal test teardown path.
+The runtime interaction test uses `NSRunningApplication.current` as the stable paste-target identity and passes the cmux bundle identifier directly to the insertion-strategy function under test. It no longer subclasses and default-constructs `NSRunningApplication`, whose instances are owned by AppKit.
 
-The runtime interaction test and reusable fixtures will call the joinable shutdown before releasing windows, sockets, and temporary directories. A focused stress test will repeatedly start, connect, stop, and release a server to make the pre-fix lifecycle failure reproducible without depending on the full corpus.
+The complete isolated corpus/runtime leg is the regression because the failure occurred during XCTest autorelease-pool teardown after that long interaction. Five consecutive non-Zombie runs must pass after the change. A deterministic retry is intentionally not added: it would hide an invalid-object fault rather than repair it.
 
 ## Error Handling
 
@@ -74,7 +74,7 @@ The runtime interaction test and reusable fixtures will call the joinable shutdo
 ## Verification
 
 - Bun tests exercise skip behavior, missing/unsigned/stale/wrong-target proofs, valid signed proof, verifier tag creation, and failure to publish.
-- Swift tests demonstrate the shutdown race before the fix and stress the joinable shutdown after the fix.
+- A captured pre-fix crash report demonstrates the invalid Objective-C teardown; five consecutive isolated corpus/runtime legs stress the corrected test lifetime.
 - `shellcheck` and the cyber grep protocol cover all changed shell/workflow surfaces.
 - Full tracked TypeScript tests and the full Swift package suite run before PR creation.
 - The final branch must be runtime-verified at its exact head, producing a signed tag that the hosted predicate accepts.

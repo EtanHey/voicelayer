@@ -4,7 +4,7 @@
 
 **Goal:** Make hosted daemon verification depend on signed, exact-head runtime evidence and eliminate the spawned-daemon XCTest teardown crash.
 
-**Architecture:** A shared shell predicate validates an SSH-signed annotated Git tag whose target and marker equal the PR head. The local verifier creates the existing local receipt, signs/publishes the detached tag, and CI invokes the shared predicate. `SocketServer` gains a queue-safe joinable shutdown used by tests and fixtures.
+**Architecture:** A shared shell predicate validates an SSH-signed annotated Git tag whose target and marker equal the PR head. The local verifier creates the existing local receipt, signs/publishes the detached tag, and CI invokes the shared predicate. The runtime test replaces an unsupported `NSRunningApplication` subclass with an AppKit-owned application instance.
 
 **Tech Stack:** Bash, Git annotated tags, OpenSSH signatures, GitHub Actions, Bun tests, Swift/XCTest, GCD dispatch sources.
 
@@ -93,33 +93,28 @@ Run: `bun test src/__tests__/daemon-verification-proof.test.ts`
 
 Expected: all predicate and workflow contract tests pass.
 
-### Task 4: Reproduce and repair SocketServer teardown
+### Task 4: Reproduce and repair the runtime-test Objective-C teardown
 
 **Files:**
-- Modify: `flow-bar/Sources/VoiceBar/SocketServer.swift`
 - Modify: `flow-bar/Tests/VoiceBarTests/SocketServerTests.swift`
 
-**Step 1: Add a failing lifecycle regression**
+**Step 1: Reproduce and capture the fault**
 
-Stress repeated start/connect/stop/release cycles and assert that `stopAndWait()` removes the socket and returns only after queue-owned cleanup. The test must fail to compile or fail behaviorally before the API exists.
+Run the isolated corpus/runtime leg until it fails, then inspect the macOS crash report rather than inferring a lifecycle cause from the non-zero status.
 
-**Step 2: Verify RED**
+**Step 2: Identify the lifetime boundary**
 
-Run: `swift test --package-path flow-bar --filter SocketServerTests/testStopAndWaitJoinsQueueOwnedCleanup`
+The reproduced report faults on the main thread in `objc_release` during XCTest autorelease-pool memory checking. Run the exact interaction with Zombies; a clean completion confirms an invalid Objective-C lifetime. Inspect AppKit objects created directly by the test.
 
-Expected: FAIL because the joinable shutdown API is missing.
+Expected: find the directly constructed `NSRunningApplication` test subclass; do not add a socket API or retry without supporting stack evidence.
 
-**Step 3: Implement minimal queue-safe shutdown**
+**Step 3: Remove the unsupported AppKit test double**
 
-Install a dispatch-specific key on the server queue. Make cleanup idempotent. Run cleanup inline on the server queue or synchronously dispatch to it from other threads. Keep `stop()` for production callers but make tests and fixtures use `stopAndWait()`.
+Use `NSRunningApplication.current` for stable target identity and pass `com.cmuxterm.app` directly to the pure insertion-strategy function. Preserve every runtime assertion.
 
-**Step 4: Verify GREEN and stress**
+**Step 4: Verify GREEN and stress without retries**
 
-Run: `swift test --package-path flow-bar --filter SocketServerTests`
-
-Expected: all socket tests pass repeatedly without SIGSEGV.
-
-Run the corpus runtime leg repeatedly through `./scripts/voicelayer-verify.sh --corpus 1` before final proof publication.
+Run the isolated corpus/runtime leg five consecutive times without Zombies. Expected: five passes, no SIGSEGV, and no deterministic retry path.
 
 ### Task 5: Security and regression verification
 
