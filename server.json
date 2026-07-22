@@ -3,7 +3,7 @@
   "name": "io.github.etanhey/voicelayer",
   "title": "VoiceLayer",
   "description": "Voice I/O for AI agents — local TTS via edge-tts, on-device STT via whisper.cpp. 2 MCP tools with ToolAnnotations. Press F5, speak, ship. No cloud, no API keys.",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "websiteUrl": "https://voicelayer.etanheyman.com",
   "repository": {
     "url": "https://github.com/EtanHey/voicelayer",
@@ -14,7 +14,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "voicelayer-mcp",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "runtimeHint": "bunx",
       "transport": {
         "type": "stdio"
