@@ -319,6 +319,46 @@ describe("CLI integration", () => {
     });
   }, 15_000);
 
+  // Regression: on a machine with NO existing mapping — i.e. EVERY FRESH BOOT —
+  // `hidutil property --get UserKeyMapping` prints the literal string `(null)`,
+  // which is neither plist nor JSON. That reached the JSON parser and the merge
+  // died with "JSON Parse error: Unexpected token '('", so the F5 -> F18 relay
+  // was never applied. The LaunchAgent still exited 0, making it silent: F5
+  // worked all day and broke on every restart.
+  it("hidutil helper applies the relay from a fresh boot, where hidutil prints (null)", () => {
+    const F5_SRC = 30064771134;
+    const DICTATION_SRC = 51539607759;
+    const F18_DST = 30064771181;
+
+    for (const emptyish of ["(null)", "", "   ", "not json at all"]) {
+      const result = spawnSync(
+        "bash",
+        ["scripts/apply-voicebar-f5-hidutil.sh"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            VOICELAYER_HIDUTIL_DRY_RUN: "1",
+            VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+            VOICELAYER_HIDUTIL_CURRENT_MAPPING: emptyish,
+          },
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const entries = JSON.parse(result.stdout).UserKeyMapping;
+      expect(entries).toContainEqual({
+        HIDKeyboardModifierMappingSrc: F5_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      });
+      expect(entries).toContainEqual({
+        HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      });
+    }
+  }, 20_000);
+
   it("hidutil helper reclaims F5 for VoiceBar while non-F5 keys survive", () => {
     // VoiceBar owns the physical F5 key: any prior F5 -> anything (e.g. a stray
     // F5 -> CapsLock) is reclaimed as F5 -> F18 with no duplicate F5 Src, so a

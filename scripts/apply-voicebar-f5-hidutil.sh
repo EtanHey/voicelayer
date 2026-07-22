@@ -16,6 +16,21 @@ else
   )"
 fi
 
+# AIDEV-NOTE: On a machine with NO existing key mapping — i.e. every fresh boot —
+# `hidutil property --get UserKeyMapping` prints the literal string `(null)`,
+# which is not plist and not JSON. `plutil -convert json` then emits nothing on
+# stdout while still exiting 0, so the `|| printf '[]'` fallback never fires and
+# an unparseable value reaches the JSON parser below. The merge dies with
+# "JSON Parse error: Unexpected token '('" and the F5 -> F18 relay is never
+# applied. The LaunchAgent still reports a clean exit, so the failure is silent
+# and looks exactly like "F5 stopped working after I restarted".
+# This is why the relay survived all day but died on every reboot.
+# Normalize anything that is not a JSON array into an empty array.
+case "${current_mapping_json//[[:space:]]/}" in
+  '['*']') : ;;
+  *) current_mapping_json='[]' ;;
+esac
+
 merge_with_osascript() {
   /usr/bin/osascript -l JavaScript - "$current_mapping_json" "$F5_SRC_DEC" "$DICTATION_SRC_DEC" "$F18_DST_DEC" <<'JXA'
 function run(argv) {
