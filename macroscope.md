@@ -39,4 +39,4 @@
 - Keep `/tmp/voicelayer-*` path constants centralized in `src/paths.ts`. Do not scatter hardcoded `/tmp` paths.
 - SwiftUI code in `flow-bar/` follows standard Apple conventions. Keep Swift and TypeScript concerns separated — IPC via the socket protocol only (`src/socket-protocol.ts`).
 - Environment variable names use the `QA_VOICE_` prefix for backward compatibility. New variables should follow the same convention.
-- Backward-compatible `qa_voice_*` tool name aliases must be preserved — do not remove them without a deprecation cycle.
+- The served MCP surface is exactly `voice_speak` and `voice_ask`; do not add compatibility aliases.

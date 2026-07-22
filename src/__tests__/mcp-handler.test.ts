@@ -149,7 +149,7 @@ describe("mcp-handler", () => {
       expect(response.result.tools).toHaveLength(expected.length);
     });
 
-    it("includes voice_speak and voice_ask", async () => {
+    it("serves exactly the two canonical VoiceLayer tools", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",
         id: 3,
@@ -159,22 +159,24 @@ describe("mcp-handler", () => {
       const toolNames = response.result.tools.map(
         (t: { name: string }) => t.name,
       );
-      expect(toolNames).toContain("voice_speak");
-      expect(toolNames).toContain("voice_ask");
+      expect(toolNames).toEqual(["voice_speak", "voice_ask"]);
     });
 
-    it("includes backward-compat aliases", async () => {
+    it("advertises the preserved voice override on voice_ask", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",
         id: 4,
         method: "tools/list",
       });
 
-      const toolNames = response.result.tools.map(
-        (t: { name: string }) => t.name,
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
       );
-      expect(toolNames).toContain("qa_voice_announce");
-      expect(toolNames).toContain("qa_voice_ask");
+      expect(voiceAsk.inputSchema.properties.voice).toEqual({
+        type: "string",
+        description:
+          "Voice name — profile name or raw edge-tts voice for the spoken question.",
+      });
     });
 
     it("each tool has name, description, inputSchema", async () => {

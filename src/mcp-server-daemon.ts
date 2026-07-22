@@ -73,13 +73,6 @@ import {
 import {
   handleVoiceSpeak,
   handleVoiceAsk,
-  handleAnnounce,
-  handleBrief,
-  handleConsult,
-  handleConverse,
-  handleThink,
-  handleReplay,
-  handleToggle,
 } from "./handlers";
 import type { VoiceToolContext } from "./mcp-notifications";
 
@@ -95,15 +88,6 @@ const toolDispatch: Record<
 > = {
   voice_speak: handleVoiceSpeak,
   voice_ask: handleVoiceAsk,
-  qa_voice_announce: handleAnnounce,
-  qa_voice_brief: handleBrief,
-  qa_voice_consult: handleConsult,
-  qa_voice_converse: handleConverse,
-  qa_voice_think: handleThink,
-  qa_voice_replay: handleReplay,
-  qa_voice_toggle: handleToggle,
-  qa_voice_say: handleAnnounce,
-  qa_voice_ask: handleConverse,
 };
 
 // --- Startup ---

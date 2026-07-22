@@ -11,7 +11,6 @@ Fire-and-forget text-to-speech. The agent speaks a short message aloud — no re
 ## MCP Tool
 
 **Tool:** `voice_speak` with `mode: "announce"` (or omit mode — short messages default to announce)
-**Alias:** `qa_voice_announce`, `qa_voice_say`
 
 ### Parameters
 

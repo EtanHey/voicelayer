@@ -47,33 +47,34 @@ export const VoiceSpeakSchema = z.object({
 /** voice_ask tool input. */
 export const VoiceAskSchema = z.object({
   message: nonEmptyTrimmed,
+  voice: z.string().optional(),
   timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
   press_to_talk: z.boolean().optional(),
 });
 
-/** qa_voice_announce / qa_voice_say args. */
+/** Internal announce-mode args. */
 export const AnnounceArgsSchema = z.object({
   message: nonEmptyTrimmed,
   rate: ratePattern.optional(),
   voice: z.string().optional(),
 });
 
-/** qa_voice_brief args. */
+/** Internal brief-mode args. */
 export const BriefArgsSchema = z.object({
   message: nonEmptyTrimmed,
   rate: ratePattern.optional(),
   voice: z.string().optional(),
 });
 
-/** qa_voice_consult args. */
+/** Internal consult-mode args. */
 export const ConsultArgsSchema = z.object({
   message: nonEmptyTrimmed,
   rate: ratePattern.optional(),
   voice: z.string().optional(),
 });
 
-/** qa_voice_converse / qa_voice_ask args. */
+/** Internal converse-mode args. */
 export const ConverseArgsSchema = z.object({
   message: nonEmptyTrimmed,
   timeout_seconds: z.number().min(5).max(3600).default(30),
@@ -82,18 +83,18 @@ export const ConverseArgsSchema = z.object({
   voice: z.string().optional(),
 });
 
-/** qa_voice_think args. */
+/** Internal think-mode args. */
 export const ThinkArgsSchema = z.object({
   thought: nonEmptyTrimmed,
   category: thinkCategoryEnum.default("insight"),
 });
 
-/** qa_voice_replay args. */
+/** Internal replay args. */
 export const ReplayArgsSchema = z.object({
   index: z.number().int().min(0).max(19).default(0),
 });
 
-/** qa_voice_toggle args. */
+/** Internal toggle args. */
 export const ToggleArgsSchema = z.object({
   enabled: z.boolean(),
   scope: scopeEnum.default("all"),
