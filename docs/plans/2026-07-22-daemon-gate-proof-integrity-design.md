@@ -21,9 +21,9 @@ The verification script will continue to create the local `.verified/verified-ru
 - is SSH-signed by an allowlisted public key; and
 - is pushed to `origin` without changing the tested commit.
 
-The hosted workflow will call a tracked predicate script extracted from the immutable base commit rather than executing the PR copy. That script computes the daemon-sensitive diff, skips when no sensitive path changed, fetches/requires the exact tag for the PR head, checks the tag target, validates the marker, and runs native SSH signature verification. The trusted public key comes from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, not from the PR checkout, so an attacker cannot authorize a new key in the same diff. PR-body text is informational only and has no authority.
+The hosted workflow will call a tracked predicate script extracted from the immutable base commit rather than executing the PR copy. That script computes the daemon-sensitive diff with rename detection disabled so both the deleted sensitive source and added destination are visible, skips when no sensitive path changed, fetches/requires the exact tag for the PR head, checks the tag target, validates the marker, and runs native SSH signature verification. The trusted public key comes from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, not from the PR checkout, so an attacker cannot authorize a new key in the same diff. PR-body text is informational only and has no authority.
 
-The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR therefore still depends on code review of the new workflow; this design does not claim to cryptographically self-bootstrap.
+The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. The bootstrap PR copy must also match the SHA-256 digest stored outside the checkout in repository Actions variable `VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256` (`b80a0f0080a3ccdb79c62daafa7235520fc13855048ac82c102b20eb217a1104`). After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR still depends on code review of the workflow that enforces this digest; this design does not claim that a workflow can cryptographically self-bootstrap its own definition.
 
 The local `.verified/` receipt remains compatible with the existing local hook. The shared predicate is tracked so the hook can converge on the same signature check without duplicating CI logic.
 
@@ -48,7 +48,8 @@ The design prevents:
 - making CI green by editing the PR body;
 - fabricating or modifying proof text without invalidating its signature;
 - replaying proof for an earlier commit after the PR head changes; and
-- pointing the expected tag name at a different commit.
+- pointing the expected tag name at a different commit; and
+- renaming a sensitive source to a non-sensitive destination to evade path matching.
 
 The design does not prevent:
 
@@ -73,7 +74,7 @@ The complete isolated corpus/runtime leg is the regression because the failure o
 
 ## Verification
 
-- Bun tests exercise skip behavior, missing/unsigned/stale/wrong-target proofs, valid signed proof, verifier tag creation, and failure to publish.
+- Bun tests exercise skip behavior, sensitive-path renames, missing/unsigned/stale/wrong-target proofs, valid signed proof, verifier tag creation, and failure to publish.
 - A captured pre-fix crash report demonstrates the invalid Objective-C teardown; five consecutive isolated corpus/runtime legs stress the corrected test lifetime.
 - `shellcheck` and the cyber grep protocol cover all changed shell/workflow surfaces.
 - Full tracked TypeScript tests and the full Swift package suite run before PR creation.

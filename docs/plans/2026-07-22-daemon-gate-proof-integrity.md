@@ -21,6 +21,7 @@
 Create temporary Git repositories and assert that the predicate:
 
 - exits 0 when only non-daemon files changed;
+- still requires proof when a daemon-sensitive source is renamed outside the path law;
 - fails when daemon files changed and no tag exists;
 - fails for unsigned, wrong-target, wrong-marker, and stale tags; and
 - exits 0 only for an SSH-signed `runtime-verified/<head-sha>` tag targeting the exact head.
@@ -33,7 +34,7 @@ Expected: FAIL because `scripts/check-daemon-verification-proof.sh` does not exi
 
 **Step 3: Implement the minimal predicate**
 
-Use one `daemon_path_matches` function for the tracked path law, strict base/head inputs, native `git verify-tag` against a caller-supplied trust-root file, exact target comparison, and an exact `Verified-Runtime: <head-sha>` line check.
+Use one `daemon_path_matches` function for the tracked path law, `git diff --no-renames` so sensitive rename sources remain visible, strict base/head inputs, native `git verify-tag` against a caller-supplied trust-root file, exact target comparison, and an exact `Verified-Runtime: <head-sha>` line check.
 
 **Step 4: Verify GREEN**
 
@@ -85,7 +86,7 @@ Expected: workflow contract test fails against the current body-marker implement
 
 **Step 3: Update the workflow**
 
-Construct a temporary allowed-signers file from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, extract the predicate from the immutable base SHA, fetch the exact tag ref if present, and invoke that extracted predicate with `"$BASE_SHA" "$HEAD_SHA" "$allowed_signers"`. Never source trust material from the PR checkout after the one-time, exact-base-pinned bootstrap.
+Construct a temporary allowed-signers file from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, extract the predicate from the immutable base SHA, fetch the exact tag ref if present, and invoke that extracted predicate with `"$BASE_SHA" "$HEAD_SHA" "$allowed_signers"`. For the one-time, exact-base-pinned bootstrap, require the PR predicate to match repository Actions variable `VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256`; never accept unanchored trust material from the checkout.
 
 **Step 4: Verify GREEN**
 

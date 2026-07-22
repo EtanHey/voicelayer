@@ -128,9 +128,9 @@ changed_files() {
 
   local merge_base
   if merge_base="$(git merge-base HEAD "$base_ref" 2>/dev/null)"; then
-    git diff --name-only "$merge_base...HEAD"
+    git diff --name-only --no-renames "$merge_base...HEAD"
   else
-    git diff --name-only "$base_ref...HEAD"
+    git diff --name-only --no-renames "$base_ref...HEAD"
   fi
 }
 

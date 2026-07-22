@@ -170,6 +170,22 @@ describe("daemon verification proof predicate", () => {
     );
   });
 
+  test("requires proof when a sensitive path is renamed outside the path law", () => {
+    const base = commitFile("src/daemon.ts", "sensitive\n");
+    mkdirSync(join(tempRoot, "docs"), { recursive: true });
+    git("mv", "src/daemon.ts", "docs/daemon-reference.ts");
+    git("commit", "-m", "rename daemon source outside sensitive paths");
+    const head = git("rev-parse", "HEAD");
+
+    const result = runPredicate(base, head);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stdout)).toContain("src/daemon.ts");
+    expect(text(result.stderr)).toContain(
+      `missing signed runtime verification tag for ${head}`,
+    );
+  });
+
   test("rejects an unsigned exact-head tag", () => {
     const base = git("rev-parse", "HEAD");
     const head = commitFile("src/mcp-daemon.ts", "sensitive\n");
@@ -269,6 +285,10 @@ describe("daemon verification workflow contract", () => {
     expect(workflow).toContain(
       'elif [ "$BASE_SHA" = "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284" ]; then',
     );
+    expect(workflow).toContain(
+      "BOOTSTRAP_PREDICATE_SHA256: ${{ vars.VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256 }}",
+    );
+    expect(workflow).toContain("sha256sum -c -");
     expect(workflow).not.toContain(
       "a3e32626e2a9b7202ddb0bdb1671ff3d4e6f46ff",
     );

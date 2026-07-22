@@ -23,6 +23,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUNTIME_SIGNER: ${{ vars.VOICELAYER_RUNTIME_SIGNER }}
+          BOOTSTRAP_PREDICATE_SHA256: ${{ vars.VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256 }}
         run: |
           set -euo pipefail
 
@@ -52,6 +53,15 @@ jobs:
           elif [ "$BASE_SHA" = "5396e4cfb87b9e0d715af9fc9dd39cb2d1ae5284" ]; then
             echo "Bootstrapping the daemon proof predicate on its one approved pre-gate base sha."
             cp scripts/check-daemon-verification-proof.sh "$predicate"
+            if ! [[ "$BOOTSTRAP_PREDICATE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Repository variable VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256 is not configured with a lowercase SHA-256 digest." >&2
+              exit 2
+            fi
+            if ! printf '%s  %s\n' "$BOOTSTRAP_PREDICATE_SHA256" "$predicate" |
+              sha256sum -c - >/dev/null 2>&1; then
+              echo "The bootstrap daemon proof predicate does not match the externally trusted digest." >&2
+              exit 2
+            fi
           else
             echo "The immutable base sha does not contain the daemon proof predicate." >&2
             exit 2

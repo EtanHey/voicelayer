@@ -278,6 +278,28 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("src/recording-state.ts");
   });
 
+  test("requires runtime verification when a sensitive file is renamed outside the path law", () => {
+    mkdirSync(join(tempRoot, "src"), { recursive: true });
+    writeFileSync(join(tempRoot, "src", "daemon.ts"), "sensitive\n");
+    run(["git", "add", "src/daemon.ts"]);
+    run(["git", "commit", "-m", "add daemon source"]);
+    mkdirSync(join(tempRoot, "docs"), { recursive: true });
+    run(["git", "mv", "src/daemon.ts", "docs/daemon-reference.ts"]);
+    run(["git", "commit", "-m", "rename daemon source outside sensitive paths"]);
+
+    const result = run(["bash", scriptPath], {
+      env: {
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_SKIP_RELAUNCH: "1",
+      },
+      input: "n\n",
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stdout)).toContain("src/daemon.ts");
+    expect(text(result.stdout)).not.toContain("runtime gate not required");
+  });
+
   test("does not create an artifact when manual confirmation is rejected", () => {
     const changed = join(tempRoot, "changed.txt");
     writeFileSync(changed, "src/socket-handlers.ts\n");

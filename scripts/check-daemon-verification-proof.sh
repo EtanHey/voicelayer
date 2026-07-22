@@ -79,7 +79,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-git diff --name-only "$base_sha" "$head_sha" >"$changed_files"
+git diff --name-only --no-renames "$base_sha" "$head_sha" >"$changed_files"
 while IFS= read -r file; do
   [ -n "$file" ] || continue
   if daemon_path_matches "$file"; then
