@@ -159,24 +159,32 @@ export async function handleVoiceSpeak(
     return handleReplay({ index: a.replay_index });
   }
 
-  // Speech/think mode — sanitize to prevent SSML injection
-  const message = sanitizeTtsText(
-    typeof a.message === "string" ? a.message.trim() : "",
-  );
-  if (!message) {
+  // Resolve think mode before TTS sanitization so silent notes retain code and
+  // markup-shaped text exactly as the former direct think tool did.
+  const rawMessage =
+    typeof a.message === "string" ? a.message.trim() : "";
+  if (!rawMessage) {
     return textResult("Missing or empty required parameter: message", true);
   }
 
   const requestedMode = typeof a.mode === "string" ? a.mode : "auto";
-  const mode = requestedMode === "auto" ? detectMode(message) : requestedMode;
+  const mode =
+    requestedMode === "auto" ? detectMode(rawMessage) : requestedMode;
   const rate = typeof a.rate === "string" ? a.rate : undefined;
   const voice = typeof a.voice === "string" ? a.voice : undefined;
 
+  if (mode === "think") {
+    const category = typeof a.category === "string" ? a.category : "insight";
+    return handleThink({ thought: rawMessage, category });
+  }
+
+  // Spoken modes strip SSML-shaped content before synthesis.
+  const message = sanitizeTtsText(rawMessage);
+  if (!message) {
+    return textResult("Missing or empty required parameter: message", true);
+  }
+
   switch (mode) {
-    case "think": {
-      const category = typeof a.category === "string" ? a.category : "insight";
-      return handleThink({ thought: message, category });
-    }
     case "announce":
       return handleAnnounce({ message, rate, voice }, context);
     case "brief":
@@ -199,6 +207,7 @@ export async function handleVoiceAsk(
   return handleConverse(
     {
       message: a.message,
+      voice: a.voice,
       timeout_seconds: a.timeout_seconds,
       silence_mode: a.silence_mode,
       press_to_talk: a.press_to_talk,

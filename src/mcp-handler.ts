@@ -16,20 +16,8 @@ import {
   type VoiceToolContext,
 } from "./mcp-notifications";
 
-/** Known tool names from mcp-server.ts dispatch table. */
-const KNOWN_TOOLS = new Set([
-  "voice_speak",
-  "voice_ask",
-  "qa_voice_announce",
-  "qa_voice_brief",
-  "qa_voice_consult",
-  "qa_voice_converse",
-  "qa_voice_think",
-  "qa_voice_replay",
-  "qa_voice_toggle",
-  "qa_voice_say",
-  "qa_voice_ask",
-]);
+/** Known tool names from the server dispatch tables. */
+const KNOWN_TOOLS = new Set(["voice_speak", "voice_ask"]);
 
 /** Tool execution context — injected by caller to decouple from actual handlers. */
 export interface ToolExecutor {

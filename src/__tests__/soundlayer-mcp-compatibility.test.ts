@@ -129,7 +129,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     ]);
   });
 
-  it("keeps voice_ask blocking through playback completion before recording", async () => {
+  it("keeps voice_ask blocking and preserves its question voice override", async () => {
     const calls: string[] = [];
     awaitPlaybackSpy.mockImplementation(async () => {
       calls.push("awaitCurrentPlayback");
@@ -165,7 +165,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(speakSpy).toHaveBeenCalledWith("What changed?", {
       mode: "converse",
       waitForPlayback: true,
-      voice: undefined,
+      voice: "theo",
       captureAudioArtifact: true,
     });
     expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {

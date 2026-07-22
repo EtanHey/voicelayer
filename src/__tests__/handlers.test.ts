@@ -16,9 +16,15 @@ import {
 } from "bun:test";
 import { existsSync, unlinkSync, readFileSync } from "fs";
 import * as socketClient from "../socket-client";
+import * as voiceBarLauncher from "../voice-bar-launcher";
 import * as actualPaths from "../paths";
 import { TTS_HISTORY_FILE } from "../paths";
-import { handleToggle, handleReplay, handleThink } from "../handlers";
+import {
+  handleToggle,
+  handleReplay,
+  handleThink,
+  handleVoiceSpeak,
+} from "../handlers";
 
 const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-tts-disabled`;
 const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-mic-disabled`;
@@ -185,6 +191,26 @@ describe("handleThink", () => {
     expect(existsSync(THINK_FILE)).toBe(true);
     const content = readFileSync(THINK_FILE, "utf-8");
     expect(content).toContain("Test insight");
+  });
+
+  it("preserves code-shaped content routed through voice_speak think mode", async () => {
+    const ensureBarSpy = spyOn(
+      voiceBarLauncher,
+      "ensureVoiceBarRunning",
+    ).mockImplementation(() => {});
+
+    try {
+      const thought = "Use Array<string> inside <button>";
+      const result = await handleVoiceSpeak({
+        message: thought,
+        mode: "think",
+      });
+
+      expect(result.content[0].text).toContain(thought);
+      expect(readFileSync(THINK_FILE, "utf-8")).toContain(thought);
+    } finally {
+      ensureBarSpy.mockRestore();
+    }
   });
 
   it("includes category in output", async () => {

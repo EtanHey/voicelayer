@@ -11,7 +11,6 @@ Speak a checkpoint message — the user **may** want to respond, but no mic reco
 ## MCP Tool
 
 **Tool:** `voice_speak` with `mode: "consult"` (or auto-selected for messages with "?" or "about to")
-**Alias:** `qa_voice_consult`
 
 ### Parameters
 

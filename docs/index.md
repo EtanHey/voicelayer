@@ -47,10 +47,10 @@ Claude Code  ─── MCP ───>  VoiceLayer
 
 | Tool | What It Does | Blocking | readOnly | destructive | idempotent |
 |------|-------------|:--------:|:--------:|:-----------:|:----------:|
-| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think | No | false | false | true |
+| **voice_speak** | Non-blocking TTS — auto-selects announce/brief/consult/think | No | false | false | false |
 | **voice_ask** | Blocking voice Q&A — speak question, record + transcribe | Yes | false | false | false |
 
-All 11 tools (2 primary + 9 backward-compat aliases) include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive.
+Both tools include [MCP ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations). No VoiceLayer tools are destructive.
 
 Mode-specific guidance: [Announce](modes/announce.md), [Brief](modes/brief.md), [Consult](modes/consult.md), [Converse](modes/converse.md), [Think](modes/think.md). Full reference: [MCP Tools Reference](tools-reference.md).
 

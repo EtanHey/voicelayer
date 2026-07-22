@@ -14,14 +14,14 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 ## MCP Tool
 
 **Tool:** `voice_ask` (blocking voice Q&A)
-**Alias:** `qa_voice_converse`, `qa_voice_ask`
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `message` | string | Yes | — | Question or prompt to speak aloud (non-empty) |
-| `timeout_seconds` | number | No | `300` | Max wait time for response (clamped to 10-3600) |
+| `voice` | string | No | default voice | Profile name or raw edge-tts voice ID for the question |
+| `timeout_seconds` | number | No | `30` | Max wait time for response (clamped to 5-3600) |
 
 ### Returns
 
@@ -37,7 +37,7 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 
 ```json
 {
-  "content": [{ "type": "text", "text": "[converse] No response received within 300 seconds. The user may have stepped away." }]
+  "content": [{ "type": "text", "text": "[converse] No response received within 30 seconds. The user may have stepped away." }]
 }
 ```
 
@@ -79,7 +79,7 @@ This is the **only blocking mode** — the tool call doesn't return until the us
 1. **User stop signal** (PRIMARY): `touch /tmp/voicelayer-stop`
 2. **Silero VAD silence detection** (FALLBACK): configurable silence duration after speech is detected
 3. **Pre-speech timeout**: 15s of no speech → returns null early
-4. **Timeout** (SAFETY NET): `timeout_seconds` parameter (default 300s)
+4. **Timeout** (SAFETY NET): `timeout_seconds` parameter (default 30s)
 
 !!! info "Why user-controlled stop is primary"
     Silence detection can misfire — background noise, thinking pauses, or mic sensitivity issues cause premature cutoff. The touch-file approach gives the user explicit control over when they're done speaking.
