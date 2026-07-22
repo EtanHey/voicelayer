@@ -18,10 +18,12 @@ The verification script will continue to create the local `.verified/verified-ru
 
 - points to the exact tested commit;
 - carries the exact `Verified-Runtime: <full-head-sha>` marker and the receipt body;
-- is signed under the `voicelayer-runtime` namespace by an allowlisted public key; and
+- is SSH-signed by an allowlisted public key; and
 - is pushed to `origin` without changing the tested commit.
 
-The hosted workflow will call a tracked predicate script. That script computes the daemon-sensitive diff, skips when no sensitive path changed, fetches/requires the exact tag for the PR head, checks the tag target, validates the marker, and runs native SSH signature verification against the tracked allowlist. PR-body text is informational only and has no authority.
+The hosted workflow will call a tracked predicate script extracted from the immutable base commit rather than executing the PR copy. That script computes the daemon-sensitive diff, skips when no sensitive path changed, fetches/requires the exact tag for the PR head, checks the tag target, validates the marker, and runs native SSH signature verification. The trusted public key comes from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, not from the PR checkout, so an attacker cannot authorize a new key in the same diff. PR-body text is informational only and has no authority.
+
+The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR therefore still depends on code review of the new workflow; this design does not claim to cryptographically self-bootstrap.
 
 The local `.verified/` receipt remains compatible with the existing local hook. The shared predicate is tracked so the hook can converge on the same signature check without duplicating CI logic.
 
@@ -54,7 +56,7 @@ The design does not prevent:
 - compromise of the signing private key; or
 - a local process that is already authorized to invoke the signing key from requesting a false signature.
 
-The signing key should therefore be hardware- or user-presence-backed, with per-use approval. The repository stores only the public key. CI proves provenance and exact-SHA binding; it cannot independently observe what happened in front of the microphone.
+The signing key should therefore be hardware- or user-presence-backed, with per-use approval. GitHub stores only the public key in a repository Actions variable. CI proves provenance and exact-SHA binding; it cannot independently observe what happened in front of the microphone. A repository administrator who can change that Actions variable or the base-branch workflow remains inside the trust boundary.
 
 ## Socket Shutdown Design
 

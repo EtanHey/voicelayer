@@ -67,10 +67,13 @@ fi
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd -P)"
 DEFAULT_GIT_DIR="$(git -C "$DEFAULT_REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
 VERIFY_GIT_DIR="$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-if [ "$VERIFY_MODE" = "corpus" ] && {
-  [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ] ||
-    { [ -n "$DEFAULT_GIT_DIR" ] && [ "$VERIFY_GIT_DIR" = "$DEFAULT_GIT_DIR" ]; };
-} && {
+CERTIFYING_THIS_REPOSITORY=0
+if [ "$REPO_ROOT" = "$DEFAULT_REPO_ROOT" ] || {
+  [ -n "$DEFAULT_GIT_DIR" ] && [ "$VERIFY_GIT_DIR" = "$DEFAULT_GIT_DIR" ];
+}; then
+  CERTIFYING_THIS_REPOSITORY=1
+fi
+if [ "$VERIFY_MODE" = "corpus" ] && [ "$CERTIFYING_THIS_REPOSITORY" -eq 1 ] && {
   [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ] ||
     [ -n "${VOICELAYER_VERIFY_INTERACTION_RUNNER:-}" ];
 }; then
@@ -143,6 +146,153 @@ assert_corpus_tree_clean() {
     printf '[voicelayer-verify] HEAD changed during corpus verification; no artifact written.\n' >&2
     return 1
   fi
+}
+
+assert_verification_head_stable() {
+  local status
+  status="$(git status --porcelain --untracked-files=no)"
+  if [ -n "$status" ]; then
+    printf '[voicelayer-verify] tracked worktree changes appeared during runtime verification; proof not published:\n' >&2
+    printf '%s\n' "$status" | sed 's/^/[voicelayer-verify]   /' >&2
+    return 1
+  fi
+  if [ "$(git rev-parse HEAD)" != "$sha" ]; then
+    printf '[voicelayer-verify] HEAD changed during runtime verification; proof not published.\n' >&2
+    return 1
+  fi
+}
+
+runtime_signing_key() {
+  local configured="${VOICELAYER_VERIFY_SIGNING_KEY:-}"
+  if [ -z "$configured" ]; then
+    configured="$(git config --get voicelayer.runtimeSigningKey 2>/dev/null || true)"
+  fi
+  if [ -z "$configured" ]; then
+    configured="$(git config --global --get voicelayer.runtimeSigningKey 2>/dev/null || true)"
+  fi
+  if [ -z "$configured" ] && [ -f "${HOME:-}/.ssh/id_ed25519_m1.pub" ]; then
+    configured="${HOME:-}/.ssh/id_ed25519_m1.pub"
+  fi
+  printf '%s\n' "$configured"
+}
+
+write_local_allowed_signers() {
+  local signing_key="$1"
+  local allowed_signers_file="$2"
+  local public_key=""
+
+  case "$signing_key" in
+    *.pub)
+      public_key="$(awk 'NF { print; exit }' "$signing_key")"
+      ;;
+    *)
+      if ! public_key="$(ssh-keygen -y -f "$signing_key" 2>/dev/null)"; then
+        printf '[voicelayer-verify] could not derive the runtime signing public key.\n' >&2
+        return 1
+      fi
+      ;;
+  esac
+  case "$public_key" in
+    ssh-*|ecdsa-*) ;;
+    *)
+      printf '[voicelayer-verify] runtime signing key did not yield an SSH public key.\n' >&2
+      return 1
+      ;;
+  esac
+
+  mkdir -p "$(dirname "$allowed_signers_file")"
+  local tmp_allowed="${allowed_signers_file}.tmp.$$"
+  printf '* %s\n' "$public_key" >"$tmp_allowed"
+  chmod 600 "$tmp_allowed"
+  mv "$tmp_allowed" "$allowed_signers_file"
+}
+
+publish_signed_runtime_tag() {
+  local artifact="$1"
+  local signing_key
+  signing_key="$(runtime_signing_key)"
+  if [ -z "$signing_key" ] || [ ! -f "$signing_key" ]; then
+    printf '[voicelayer-verify] runtime signing key is missing; set VOICELAYER_VERIFY_SIGNING_KEY or git config voicelayer.runtimeSigningKey.\n' >&2
+    return 1
+  fi
+
+  local allowed_signers_file="${VOICELAYER_VERIFY_ALLOWED_SIGNERS_FILE:-$VERIFY_DIR/runtime-allowed-signers}"
+  write_local_allowed_signers "$signing_key" "$allowed_signers_file"
+
+  local tag_name="runtime-verified/$sha"
+  local tag_ref="refs/tags/$tag_name"
+  local created_tag=0
+  if git show-ref --verify --quiet "$tag_ref"; then
+    local existing_target
+    existing_target="$(git rev-list -n 1 "$tag_ref")"
+    if [ "$existing_target" != "$sha" ]; then
+      printf '[voicelayer-verify] existing runtime tag targets %s instead of %s; refusing to overwrite.\n' \
+        "$existing_target" "$sha" >&2
+      return 1
+    fi
+  else
+    if ! git \
+      -c gpg.format=ssh \
+      -c "user.signingkey=$signing_key" \
+      tag -s -F "$artifact" "$tag_name" "$sha"; then
+      printf '[voicelayer-verify] failed to create signed runtime verification tag.\n' >&2
+      return 1
+    fi
+    created_tag=1
+  fi
+
+  local marker="Verified-Runtime: $sha"
+  local tag_contents
+  tag_contents="$(git for-each-ref --format='%(contents)' "$tag_ref")"
+  if ! grep -Fqx "$marker" <<<"$tag_contents"; then
+    printf '[voicelayer-verify] signed runtime tag is missing the exact head marker.\n' >&2
+    if [ "$created_tag" -eq 1 ]; then
+      git tag -d "$tag_name" >/dev/null
+    fi
+    return 1
+  fi
+  if ! git \
+    -c gpg.format=ssh \
+    -c "gpg.ssh.allowedSignersFile=$allowed_signers_file" \
+    verify-tag "$tag_ref" >/dev/null 2>&1; then
+    printf '[voicelayer-verify] signed runtime tag failed local signature verification.\n' >&2
+    if [ "$created_tag" -eq 1 ]; then
+      git tag -d "$tag_name" >/dev/null
+    fi
+    return 1
+  fi
+
+  local publish_remote="${VOICELAYER_VERIFY_PUBLISH_REMOTE:-origin}"
+  if ! git remote get-url "$publish_remote" >/dev/null 2>&1; then
+    printf '[voicelayer-verify] runtime proof publish remote is unavailable: %s.\n' "$publish_remote" >&2
+    return 1
+  fi
+  local local_tag_object
+  local_tag_object="$(git rev-parse "$tag_ref")"
+  local remote_tag_object
+  remote_tag_object="$(git ls-remote --tags "$publish_remote" "$tag_ref" | awk 'NF { print $1; exit }')"
+  if [ -n "$remote_tag_object" ] && [ "$remote_tag_object" != "$local_tag_object" ]; then
+    printf '[voicelayer-verify] remote runtime tag already exists with different signed proof; refusing to overwrite.\n' >&2
+    return 1
+  fi
+  if [ -z "$remote_tag_object" ]; then
+    if ! git push "$publish_remote" "$tag_ref:$tag_ref"; then
+      printf '[voicelayer-verify] failed to publish signed runtime verification tag.\n' >&2
+      return 1
+    fi
+  fi
+
+  printf '[voicelayer-verify] published signed runtime tag: %s\n' "$tag_name"
+}
+
+complete_runtime_proof() {
+  local artifact="$1"
+  printf '[voicelayer-verify] wrote runtime artifact: %s\n' "$artifact"
+  if [ "$CERTIFYING_THIS_REPOSITORY" -eq 1 ]; then
+    assert_verification_head_stable
+    publish_signed_runtime_tag "$artifact"
+  fi
+  printf 'Verified-Runtime: %s\n' "$sha"
 }
 
 is_voicebar_launchd_managed() {
@@ -360,8 +510,7 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   } >"$tmp_artifact"
   mv "$tmp_artifact" "$artifact"
 
-  printf '[voicelayer-verify] wrote runtime artifact: %s\n' "$artifact"
-  printf 'Verified-Runtime: %s\n' "$sha"
+  complete_runtime_proof "$artifact"
   exit 0
 fi
 
@@ -447,5 +596,4 @@ tmp_artifact="${artifact}.tmp.$$"
 } >"$tmp_artifact"
 mv "$tmp_artifact" "$artifact"
 
-printf '[voicelayer-verify] wrote runtime artifact: %s\n' "$artifact"
-printf 'Verified-Runtime: %s\n' "$sha"
+complete_runtime_proof "$artifact"

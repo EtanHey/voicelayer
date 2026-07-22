@@ -15,8 +15,14 @@ import { tmpdir } from "os";
 
 const repoRoot = new URL("../..", import.meta.url).pathname;
 const scriptPath = join(repoRoot, "scripts", "voicelayer-verify.sh");
+const proofPredicatePath = join(
+  repoRoot,
+  "scripts",
+  "check-daemon-verification-proof.sh",
+);
 
 let tempRoot = "";
+let remoteRoot = "";
 
 function run(command: string[], options: { env?: Record<string, string>; cwd?: string; input?: string } = {}) {
   const env = {
@@ -85,14 +91,145 @@ function writeFakeExecutable(name: string, body: string) {
 
 beforeEach(() => {
   tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-verify-test-"));
+  remoteRoot = "";
   initFakeRepo();
 });
 
 afterEach(() => {
   if (tempRoot) rmSync(tempRoot, { recursive: true, force: true });
+  if (remoteRoot) rmSync(remoteRoot, { recursive: true, force: true });
 });
 
+function prepareCertifyingRepository() {
+  const localScript = join(tempRoot, "scripts", "voicelayer-verify.sh");
+  const localPredicate = join(
+    tempRoot,
+    "scripts",
+    "check-daemon-verification-proof.sh",
+  );
+  mkdirSync(join(tempRoot, "scripts"), { recursive: true });
+  mkdirSync(join(tempRoot, "src"), { recursive: true });
+  copyFileSync(scriptPath, localScript);
+  copyFileSync(proofPredicatePath, localPredicate);
+  writeFileSync(join(tempRoot, "src", "mcp-daemon.ts"), "sensitive\n");
+  run([
+    "git",
+    "add",
+    "-f",
+    "scripts/voicelayer-verify.sh",
+    "scripts/check-daemon-verification-proof.sh",
+    "src/mcp-daemon.ts",
+  ]);
+  run(["git", "commit", "-m", "add certifying verifier"]);
+
+  remoteRoot = `${tempRoot}-remote.git`;
+  const initRemote = run(["git", "init", "--bare", remoteRoot]);
+  expect(initRemote.exitCode).toBe(0);
+  run(["git", "remote", "add", "origin", remoteRoot]);
+  const push = run(["git", "push", "-u", "origin", "HEAD"]);
+  expect(push.exitCode).toBe(0);
+
+  const keyDirectory = join(tempRoot, ".verified", "test-signing");
+  mkdirSync(keyDirectory, { recursive: true });
+  const signingKey = join(keyDirectory, "runtime-key");
+  const keygen = run([
+    "ssh-keygen",
+    "-q",
+    "-t",
+    "ed25519",
+    "-N",
+    "",
+    "-C",
+    "verifier-test",
+    "-f",
+    signingKey,
+  ]);
+  expect(keygen.exitCode).toBe(0);
+  const allowedSigners = join(keyDirectory, "allowed_signers");
+  return { localScript, signingKey, allowedSigners };
+}
+
 describe("voicelayer-verify.sh", () => {
+  test("publishes an SSH-signed exact-head tag from a certifying repository", () => {
+    const { localScript, signingKey, allowedSigners } =
+      prepareCertifyingRepository();
+    const changed = join(tempRoot, "changed.txt");
+    writeFileSync(changed, "src/mcp-daemon.ts\n");
+    const head = text(run(["git", "rev-parse", "HEAD"]).stdout).trim();
+    const base = text(run(["git", "rev-parse", "HEAD^"]).stdout).trim();
+
+    const result = run(["bash", localScript], {
+      env: {
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_BUILD: "1",
+        VOICELAYER_VERIFY_SKIP_RELAUNCH: "1",
+        VOICELAYER_VERIFY_SIGNING_KEY: signingKey,
+        VOICELAYER_VERIFY_ALLOWED_SIGNERS_FILE: allowedSigners,
+        VOICELAYER_VERIFY_TESTER: "Signed Proof Test",
+      },
+      input: "Y\n",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain(
+      `published signed runtime tag: runtime-verified/${head}`,
+    );
+    const remoteTag = text(
+      run([
+        "git",
+        "ls-remote",
+        "--tags",
+        "origin",
+        `refs/tags/runtime-verified/${head}`,
+      ]).stdout,
+    );
+    expect(remoteTag).toContain(`refs/tags/runtime-verified/${head}`);
+
+    const predicate = run([
+      "bash",
+      join(tempRoot, "scripts", "check-daemon-verification-proof.sh"),
+      base,
+      head,
+      allowedSigners,
+    ]);
+    expect(predicate.exitCode).toBe(0);
+    expect(text(predicate.stdout)).toContain(
+      `signed runtime verification accepted for ${head}`,
+    );
+  });
+
+  test("fails closed when a certifying repository cannot sign the receipt", () => {
+    const { localScript, allowedSigners } = prepareCertifyingRepository();
+    const changed = join(tempRoot, "changed.txt");
+    writeFileSync(changed, "src/mcp-daemon.ts\n");
+    const head = text(run(["git", "rev-parse", "HEAD"]).stdout).trim();
+
+    const result = run(["bash", localScript], {
+      env: {
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_SKIP_BUILD: "1",
+        VOICELAYER_VERIFY_SKIP_RELAUNCH: "1",
+        VOICELAYER_VERIFY_SIGNING_KEY: join(tempRoot, "missing-key"),
+        VOICELAYER_VERIFY_ALLOWED_SIGNERS_FILE: allowedSigners,
+      },
+      input: "Y\n",
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain("runtime signing key");
+    expect(text(result.stdout)).not.toContain("published signed runtime tag");
+    const remoteTag = text(
+      run([
+        "git",
+        "ls-remote",
+        "--tags",
+        "origin",
+        `refs/tags/runtime-verified/${head}`,
+      ]).stdout,
+    );
+    expect(remoteTag.trim()).toBe("");
+  });
+
   test("creates a runtime artifact for daemon-touching changes after confirmation", async () => {
     run(["git", "checkout", "-b", "feature/gate"]);
     const changed = join(tempRoot, "changed.txt");

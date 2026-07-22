@@ -14,7 +14,6 @@
 
 **Files:**
 - Create: `scripts/check-daemon-verification-proof.sh`
-- Create: `.github/runtime-verification-allowed-signers`
 - Create: `src/__tests__/daemon-verification-proof.test.ts`
 
 **Step 1: Write the failing tests**
@@ -34,7 +33,7 @@ Expected: FAIL because `scripts/check-daemon-verification-proof.sh` does not exi
 
 **Step 3: Implement the minimal predicate**
 
-Use one `daemon_path_matches` function for the tracked path law, strict base/head inputs, native `git verify-tag`, exact target comparison, and an exact `Verified-Runtime: <head-sha>` line check.
+Use one `daemon_path_matches` function for the tracked path law, strict base/head inputs, native `git verify-tag` against a caller-supplied trust-root file, exact target comparison, and an exact `Verified-Runtime: <head-sha>` line check.
 
 **Step 4: Verify GREEN**
 
@@ -86,7 +85,7 @@ Expected: workflow contract test fails against the current body-marker implement
 
 **Step 3: Update the workflow**
 
-Fetch the exact tag ref if present and invoke `scripts/check-daemon-verification-proof.sh "$BASE_SHA" "$HEAD_SHA"`.
+Construct a temporary allowed-signers file from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, extract the predicate from the immutable base SHA, fetch the exact tag ref if present, and invoke that extracted predicate with `"$BASE_SHA" "$HEAD_SHA" "$allowed_signers"`. Never source trust material from the PR checkout after the one-time, exact-base-pinned bootstrap.
 
 **Step 4: Verify GREEN**
 
