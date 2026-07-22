@@ -1009,13 +1009,65 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(method.contains("recording_control_top_clicks=3"))
     }
 
-    func testFlatDisplayIdleKeepsAVisibleFallbackInsteadOfAnInvisibleClickTarget() throws {
+    func testFlatDisplayUsesCenteredVirtualNotchInsteadOfSavedPillPlacement() throws {
         let source = try voiceBarAppSource()
 
-        XCTAssertTrue(
-            source.contains("screenGeometry?.kind == .flatDisplayFallback")
+        XCTAssertTrue(source.contains("visibleFrame: screen.visibleFrame"))
+        XCTAssertTrue(source.contains("virtualNotchIdleCoreHeight:"))
+        XCTAssertFalse(source.contains("screenGeometry?.kind == .flatDisplayFallback"))
+
+        let applyStart = try XCTUnwrap(source.range(of: "private func applyPanelLayout(animated:"))
+        let applyEnd = try XCTUnwrap(
+            source.range(
+                of: "private func commitNotchContentThenApplyPanelLayout",
+                range: applyStart.upperBound ..< source.endIndex
+            )
         )
-        XCTAssertTrue(source.contains("keepsIdleExpanded:"))
+        let applyMethod = source[applyStart.lowerBound ..< applyEnd.lowerBound]
+        XCTAssertEqual(applyMethod.components(separatedBy: "windowFrame(anchoredTo:").count - 1, 1)
+        XCTAssertFalse(applyMethod.contains("PillResizePlan.makeAnchored"))
+
+        let positionStart = try XCTUnwrap(source.range(of: "private func positionPanel("))
+        let positionEnd = try XCTUnwrap(
+            source.range(
+                of: "private static func screenContainingMouse",
+                range: positionStart.upperBound ..< source.endIndex
+            )
+        )
+        let positionMethod = source[positionStart.lowerBound ..< positionEnd.lowerBound]
+        XCTAssertEqual(positionMethod.components(separatedBy: "windowFrame(anchoredTo:").count - 1, 1)
+        XCTAssertFalse(positionMethod.contains("panel.positionOnScreen"))
+    }
+
+    func testScreenParameterChangesReResolveTargetScreenBeforeLayout() throws {
+        let source = try voiceBarAppSource()
+        let observerStart = try XCTUnwrap(
+            source.range(of: "forName: NSApplication.didChangeScreenParametersNotification")
+        )
+        let observerEnd = try XCTUnwrap(
+            source.range(of: "func applicationWillTerminate", range: observerStart.upperBound ..< source.endIndex)
+        )
+        let observer = source[observerStart.lowerBound ..< observerEnd.lowerBound]
+        let reapplyStart = try XCTUnwrap(source.range(of: "private func reapplyAnchoredPanelPosition()"))
+        let reapplyEnd = try XCTUnwrap(
+            source.range(of: "// MARK: - Drag persistence", range: reapplyStart.upperBound ..< source.endIndex)
+        )
+        let reapply = source[reapplyStart.lowerBound ..< reapplyEnd.lowerBound]
+
+        XCTAssertTrue(observer.contains("reapplyAnchoredPanelPosition()"))
+        XCTAssertTrue(reapply.contains("positionPanel(panel, on:"))
+    }
+
+    func testPhysicalAndVirtualNotchesAreBothFixedAnchors() throws {
+        let source = try voiceBarAppSource()
+        let methodStart = try XCTUnwrap(source.range(of: "private func configurePanelDragging("))
+        let methodEnd = try XCTUnwrap(
+            source.range(of: "private func logDiagnostic", range: methodStart.upperBound ..< source.endIndex)
+        )
+        let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
+
+        XCTAssertTrue(method.contains("panel.isPillDragEnabled = false"))
+        XCTAssertTrue(method.contains("panel.isMovableByWindowBackground = false"))
     }
 
     func testPointerAwareCoordinatorIsTheOnlyRetainedReadbackDismissalOwner() throws {

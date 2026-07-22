@@ -42,6 +42,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let screen = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1085),
                 safeAreaTop: 32,
                 auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
                 auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
@@ -73,6 +74,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let screen = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1085),
                 safeAreaTop: 32,
                 auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
                 auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)
@@ -100,6 +102,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         let screen = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1085),
                 safeAreaTop: 32,
                 auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
                 auxiliaryTopRightArea: CGRect(x: 972, y: 1085, width: 756, height: 32)
@@ -130,6 +133,36 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
             XCTAssertTrue(panelBounds.contains(layout.interactiveHitRect), "state=\(state)")
         }
+    }
+
+    func testCollapsedVirtualNotchAdmitsOnlyItsRenderedMenuBarHeightCore() {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: false,
+            hasCompactStatus: false,
+            isHovered: false,
+            isKeyboardFocused: false,
+            virtualNotchIdleCoreHeight: 24
+        )
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: .none
+        )
+        let coreCenter = CGPoint(
+            x: layout.visibleContentRect.minX + presentation.geometry.coreMidX,
+            y: layout.visibleContentRect.minY + 12
+        )
+        let justBelowCore = CGPoint(
+            x: coreCenter.x,
+            y: layout.visibleContentRect.minY - 1
+        )
+
+        XCTAssertEqual(presentation.geometry.topHeight, 24)
+        XCTAssertEqual(presentation.geometry.coreWidth, VoiceBarNotchContract.coreWidth)
+        XCTAssertTrue(layout.containsVisibleSurface(coreCenter))
+        XCTAssertFalse(layout.containsInteractiveContent(coreCenter))
+        XCTAssertFalse(layout.containsVisibleSurface(justBelowCore))
+        XCTAssertFalse(layout.containsVisibleSurface(CGPoint(x: 1, y: 1)))
     }
 
     func testIsolatedCapturePlacementRequiresParallelModeAndUsesANormalScreenCorner() {

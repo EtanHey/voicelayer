@@ -175,6 +175,7 @@ final class VoiceBarNotchMorphPrototypeTests: XCTestCase {
         let screen = VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+                visibleFrame: CGRect(x: 0, y: 0, width: 1728, height: 1085),
                 safeAreaTop: 32,
                 auxiliaryTopLeftArea: CGRect(x: 0, y: 1085, width: 771, height: 32),
                 auxiliaryTopRightArea: CGRect(x: 956, y: 1085, width: 772, height: 32)

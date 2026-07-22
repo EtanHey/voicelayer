@@ -1294,7 +1294,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let visibleFrame = targetScreen.visibleFrame
         let layout = currentPanelLayout()
         let screenGeometry = Self.notchScreenGeometry(for: targetScreen)
-        let placement = anchorPlacement(for: panel, visibleFrame: visibleFrame, pillSize: layout.panelSize)
         let plan = if VoiceBarIsolatedCapturePlacement.isEnabled() {
             PillResizePlan(
                 frame: VoiceBarIsolatedCapturePlacement.frame(
@@ -1303,21 +1302,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ),
                 animate: false
             )
-        } else if screenGeometry.kind == .hardwareNotch {
+        } else {
             PillResizePlan(
                 frame: layout.windowFrame(anchoredTo: screenGeometry),
                 animate: false
-            )
-        } else {
-            PillResizePlan.makeAnchored(
-                visibleFrame: visibleFrame,
-                horizontalOffset: placement.horizontalOffset,
-                verticalOffset: placement.verticalOffset,
-                topPadding: Theme.topPadding,
-                pillSize: layout.panelSize,
-                from: previousVoiceMode,
-                to: currentVoiceMode,
-                padding: 0
             )
         }
         panel.contentView?.frame = NSRect(origin: .zero, size: layout.panelSize)
@@ -1625,11 +1613,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             recordingTrailingWingWidth: resolved.visualState == .recording
                 ? resolved.geometry.trailingWingWidth
                 : nil,
-            keepsIdleExpanded: voiceState.mode == .idle && (
-                !voiceState.isCollapsed || screenGeometry?.kind == .flatDisplayFallback
-            ),
+            keepsIdleExpanded: voiceState.mode == .idle && !voiceState.isCollapsed,
             coreWidth: coreWidth,
-            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0
+            visibleCoreOcclusionInset: screenGeometry?.visibleCoreOcclusionInset ?? 0,
+            virtualNotchIdleCoreHeight: screenGeometry?.virtualNotchIdleCoreHeight
         )
         notchPresentationModel.setHovered(voiceState.isHovering)
     }
@@ -1682,6 +1669,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         VoiceBarNotchScreenGeometry.resolve(
             metrics: VoiceBarNotchScreenMetrics(
                 frame: screen.frame,
+                visibleFrame: screen.visibleFrame,
                 safeAreaTop: screen.safeAreaInsets.top,
                 auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
                 auxiliaryTopRightArea: screen.auxiliaryTopRightArea
@@ -1693,6 +1681,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         _ panel: FloatingPillPanel,
         for screenGeometry: VoiceBarNotchScreenGeometry
     ) {
+        if screenGeometry.kind == .flatDisplayFallback {
+            panel.isPillDragEnabled = false
+            panel.isMovableByWindowBackground = false
+            return
+        }
         let usesPhysicalHousing = screenGeometry.kind == .hardwareNotch
         let pillDragEnabled = !usesPhysicalHousing && anchorMode.allowsFreeDrag
         let movableByWindowBackground = !usesPhysicalHousing
@@ -1910,28 +1903,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             return
         }
-        if screenGeometry.kind == .hardwareNotch {
-            panel.setFrame(
-                currentPanelLayout().windowFrame(anchoredTo: screenGeometry),
-                display: true
-            )
-            configurePanelDragging(panel, for: screenGeometry)
-            if let index = NSScreen.screens.firstIndex(of: targetScreen) {
-                currentScreenIndex = index
-            }
-            return
-        }
-
-        let visibleFrame = targetScreen.visibleFrame
-        let placement = anchorPlacement(
-            for: panel,
-            visibleFrame: visibleFrame,
-            pillSize: panel.frame.size
-        )
-        panel.positionOnScreen(
-            targetScreen,
-            horizontalOffset: placement.horizontalOffset,
-            verticalOffset: placement.verticalOffset
+        panel.setFrame(
+            currentPanelLayout().windowFrame(anchoredTo: screenGeometry),
+            display: true
         )
         configurePanelDragging(panel, for: screenGeometry)
         if let index = NSScreen.screens.firstIndex(of: targetScreen) {
