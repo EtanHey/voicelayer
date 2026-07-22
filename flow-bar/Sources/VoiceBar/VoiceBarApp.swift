@@ -88,10 +88,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private let defaults = VoiceBarDefaults.make()
     private let pillContextMenuController = PillContextMenuController()
-    private lazy var notchMorphSelection = VoiceBarNotchMorphSelection(
-        environment: ProcessInfo.processInfo.environment,
-        defaults: defaults
-    )
     private let daemonController = VoiceBarDaemonController()
     private lazy var anchorPreferences = VoiceBarAnchorPreferences(defaults: defaults)
     private var terminationPolicy = VoiceBarTerminationPolicy()
@@ -511,7 +507,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             state: voiceState,
             commandRouter: commandRouter,
             presentationModel: notchPresentationModel,
-            morphSelection: notchMorphSelection,
             includesPanelOutsets: true
         )
         let hosting = PillHostingView(rootView: barView)
@@ -673,9 +668,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         pillContextMenuController.anchorModeProvider = { [weak self] in
             self?.currentAnchorMode() ?? .follow
         }
-        pillContextMenuController.morphPrototypeProvider = { [weak self] in
-            self?.notchMorphSelection.variant ?? .p1Matched
-        }
         pillContextMenuController.onOpenSettings = { [weak self] in
             self?.openSettingsWindow()
         }
@@ -715,12 +707,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         pillContextMenuController.onSelectAnchorMode = { [weak self] mode in
             self?.selectAnchorMode(mode)
-        }
-        pillContextMenuController.onSelectMorphPrototype = { [weak self] variant in
-            self?.notchMorphSelection.select(variant)
-            self?.logDiagnostic(event: "notch_morph_prototype_selected", details: [
-                "variant": variant.rawValue,
-            ])
         }
     }
 
@@ -1505,7 +1491,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func currentPanelLayout() -> VoiceBarPanelLayout {
         let presentation = notchPresentationModel.presentation
-        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
         return VoiceBarPanelLayout.make(
             presentation: presentation,
             interactionConfiguration: Self.notchInteractionConfiguration(
