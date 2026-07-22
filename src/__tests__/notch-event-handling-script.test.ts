@@ -37,11 +37,21 @@ describe("verify-notch-event-handling.sh", () => {
     const source = readFileSync(scriptPath, "utf8");
 
     expect(source).toContain('for state_name in idle recording transcribing speaking');
-    expect(source).toContain("testPanelAppKitMouseEventsHitOnlyMountedControls");
-    expect(source).toContain("testTeleprompterAppKitMouseEventsPassThroughItsBody");
+    expect(source).toContain("testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface");
+    expect(source).toContain("testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu");
+    expect(source).toContain("testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing");
+    expect(source).toContain("testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins");
+    expect(source).toContain("QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH");
+    expect(source).toContain(': >"$context_menu_receipt"');
+    expect(source).toContain('"type":"qa_context_menu_probe"');
+    expect(source).toContain('[[ -s "$context_menu_receipt" ]]');
+    expect(source).toContain('grep -Fxq "window_event_gate=passed" "$context_menu_receipt"');
+    expect(source).toContain('grep -Fxq "right_click_context_menu=passed" "$context_menu_receipt"');
     expect(source).toContain("BarViewSnapshotArtifactTests");
     expect(source).toContain("VOICEBAR_VISUAL_ARTIFACT_OUTPUT");
     expect(source).toContain("trap cleanup EXIT INT TERM");
     expect(source).toContain("EVENT_HANDLING_OFFSCREEN_ACCEPTANCE");
+    expect(source).toContain("right_click_context_menu=passed");
+    expect(source).not.toContain("printf 'right_click_context_menu=passed");
   });
 });

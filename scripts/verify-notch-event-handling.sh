@@ -48,6 +48,8 @@ mcp_pid_path="$runtime_dir/voicelayer-mcp.pid"
 recording_path="$runtime_dir/retained.wav"
 disable_path="$runtime_dir/disabled"
 render_scale_receipt="$runtime_dir/render-scale.json"
+context_menu_receipt="$receipt_dir/app-context-menu.txt"
+: >"$context_menu_receipt"
 defaults_suite="com.voicelayer.qa.notch-event.$$.${RANDOM}"
 app_log="$receipt_dir/voicebar.log"
 state_log="$receipt_dir/state-events.ndjson"
@@ -82,6 +84,7 @@ env \
   QA_VOICE_RETAINED_RECORDING_PATH="$recording_path" \
   QA_VOICE_DISABLE_FLAG_PATH="$disable_path" \
   QA_VOICEBAR_RENDER_SCALE_RECEIPT_PATH="$render_scale_receipt" \
+  QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH="$context_menu_receipt" \
   VOICEBAR_USER_DEFAULTS_SUITE="$defaults_suite" \
   DISABLE_VOICELAYER=1 \
   QA_VOICEBAR_CAPTURE_OFFSCREEN=1 \
@@ -127,10 +130,32 @@ for state_name in idle recording transcribing speaking; do
   sleep 0.15
 done
 
+printf '%s\n' '{"type":"state","state":"recording"}' | tee -a "$state_log" | nc -U "$socket_path"
+sleep 0.15
+printf '%s\n' '{"type":"qa_context_menu_probe"}' | nc -U "$socket_path"
+for _ in {1..100}; do
+  [[ -s "$context_menu_receipt" ]] && break
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    printf 'error: isolated VoiceBar exited during context-menu probe; see %s\n' "$app_log" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -s "$context_menu_receipt" ]] ||
+   ! grep -Fxq "window_event_gate=passed" "$context_menu_receipt" ||
+   ! grep -Fxq "right_click_context_menu=passed" "$context_menu_receipt"; then
+  printf 'error: supplied VoiceBar app did not pass its window and context-menu gates; see %s\n' "$app_log" >&2
+  exit 1
+fi
+
 swift test --package-path "$repo_root/flow-bar" \
-  --filter BarViewClickabilityTests/testPanelAppKitMouseEventsHitOnlyMountedControls
+  --filter BarViewClickabilityTests/testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface
 swift test --package-path "$repo_root/flow-bar" \
-  --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsPassThroughItsBody
+  --filter BarViewClickabilityTests/testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu
+swift test --package-path "$repo_root/flow-bar" \
+  --filter BarViewClickabilityTests/testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing
+swift test --package-path "$repo_root/flow-bar" \
+  --filter AppLifecycleTests/testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins
 env \
   VOICEBAR_REGENERATE_VISUAL_ARTIFACTS=1 \
   VOICEBAR_VISUAL_ARTIFACT_OUTPUT="$frame_dir" \
@@ -158,4 +183,5 @@ fi
 
 printf 'offscreen_origin=%s\n' "$offscreen_origin" >"$receipt_dir/acceptance.txt"
 printf 'states=idle,recording,transcribing,speaking\n' >>"$receipt_dir/acceptance.txt"
+cat "$context_menu_receipt" >>"$receipt_dir/acceptance.txt"
 printf 'EVENT_HANDLING_OFFSCREEN_ACCEPTANCE=%s\n' "$receipt_dir"

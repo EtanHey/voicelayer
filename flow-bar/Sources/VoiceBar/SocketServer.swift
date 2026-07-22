@@ -56,6 +56,7 @@ final class SocketServer {
     private let state: VoiceState
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
+    var onQAContextMenuProbe: (() -> Void)?
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -248,6 +249,15 @@ final class SocketServer {
         if let controlCommand = VoiceBarLocalControlCommand(payload: dict) {
             DispatchQueue.main.async { [weak self] in
                 self?.onControlCommand?(controlCommand)
+            }
+            return
+        }
+
+        if dict["type"] as? String == "qa_context_menu_probe" {
+            if onQAContextMenuProbe != nil {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onQAContextMenuProbe?()
+                }
             }
             return
         }

@@ -532,7 +532,7 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(router.primaryTapCount, 0)
     }
 
-    func testPanelAppKitMouseEventsHitOnlyMountedControls() {
+    func testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface() {
         let state = VoiceState()
         state.mode = .recording
         state.recordingMode = "vad"
@@ -559,20 +559,23 @@ final class BarViewClickabilityTests: XCTestCase {
         XCTAssertEqual(sentCommand?["engaged"] as? Bool, true)
 
         let gapBesideStop = NSPoint(x: controlRects[2].maxX + 3, y: controlRects[2].midY)
-        let belowStop = NSPoint(x: controlRects[2].midX, y: controlRects[2].minY - 2)
+        let transparentMargin = NSPoint(x: 1, y: 1)
         let waveform = NSPoint(
             x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
                 + layout.presentation.geometry.coreWidth + WaveformLayout.coreGap + 10,
             y: controlRects[2].midY
         )
-        XCTAssertNil(host.hitTest(gapBesideStop))
-        XCTAssertNil(host.hitTest(belowStop))
-        XCTAssertNil(host.hitTest(waveform))
+        XCTAssertTrue(layout.containsVisibleSurface(gapBesideStop))
+        XCTAssertNotNil(host.hitTest(gapBesideStop))
+        XCTAssertFalse(layout.containsVisibleSurface(transparentMargin))
+        XCTAssertNil(host.hitTest(transparentMargin))
+        XCTAssertTrue(layout.containsVisibleSurface(waveform))
+        XCTAssertNotNil(host.hitTest(waveform))
         XCTAssertFalse(panel.startsDrag(at: gapBesideStop))
-        XCTAssertFalse(panel.shouldHandleContextMenu(at: waveform))
+        XCTAssertTrue(panel.shouldHandleContextMenu(at: waveform))
     }
 
-    func testTeleprompterAppKitMouseEventsPassThroughItsBody() {
+    func testTeleprompterAppKitMouseEventsAdmitItsRenderedBodyForContextMenu() {
         let state = VoiceState()
         state.isConnected = true
         state.isCollapsed = false
@@ -598,10 +601,52 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertFalse(controlRects.isEmpty)
         XCTAssertNotNil(host.hitTest(controlRects[0].center))
-        XCTAssertNil(host.hitTest(bodyPoint))
+        XCTAssertTrue(layout.containsVisibleSurface(bodyPoint))
+        XCTAssertNotNil(host.hitTest(bodyPoint))
+        XCTAssertFalse(layout.containsVisibleSurface(formerDictionaryLane))
         XCTAssertNil(host.hitTest(formerDictionaryLane))
         XCTAssertFalse(panel.startsDrag(at: bodyPoint))
         XCTAssertFalse(panel.shouldHandleContextMenu(at: formerDictionaryLane))
+    }
+
+    func testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing() throws {
+        let state = VoiceState()
+        state.mode = .recording
+        state.recordingMode = "vad"
+        state.isConnected = true
+        state.isCollapsed = false
+        let (host, panel, layout, controlRects) = makeInteractivePanelHost(
+            state: state,
+            router: SpyCommandRouter(),
+            configuration: VoiceBarNotchInteractionConfiguration(leadingControlCount: 3)
+        )
+        let wingPoint = NSPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreOriginX
+                + layout.presentation.geometry.coreWidth + WaveformLayout.coreGap + 10,
+            y: controlRects[0].midY
+        )
+        let menu = NSMenu(title: "VoiceBar acceptance")
+        menu.addItem(withTitle: "Context menu opened", action: nil, keyEquivalent: "")
+        panel.contextMenuProvider = { menu }
+        let beganTracking = expectation(
+            forNotification: NSMenu.didBeginTrackingNotification,
+            object: menu
+        )
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            menu.cancelTracking()
+        }
+        let event = try XCTUnwrap(
+            mouseEvent(
+                type: .rightMouseDown,
+                at: wingPoint,
+                windowNumber: panel.windowNumber
+            )
+        )
+
+        XCTAssertNotNil(host.hitTest(wingPoint))
+        XCTAssertTrue(panel.shouldHandleContextMenu(at: wingPoint))
+        panel.sendEvent(event)
+        wait(for: [beganTracking], timeout: 1)
     }
 
     private func makeHost(
@@ -666,8 +711,10 @@ final class BarViewClickabilityTests: XCTestCase {
         )
         host.frame = NSRect(origin: .zero, size: layout.panelSize)
         host.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        host.renderedSurfaceHitTestProvider = { layout.containsVisibleSurface($0) }
         let panel = FloatingPillPanel(content: host)
         panel.activeHitTestProvider = { layout.containsInteractiveContent($0) }
+        panel.contextMenuHitTestProvider = { layout.containsVisibleSurface($0) }
         panel.setFrameOrigin(NSPoint(x: -100_000, y: -100_000))
         panel.orderBack(nil)
         windows.append(panel)
