@@ -251,34 +251,6 @@ final class VoiceBarNotchCaptureAuditTests: XCTestCase {
         XCTAssertFalse(source.contains("--glass-wing-foreground-region 0.455,0.81"))
     }
 
-    func testMorphPrototypeCaptureRunnerRecordsEveryVariantFromOneAppAtSixtyFPS() throws {
-        let packageRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let source = try String(
-            contentsOf: packageRoot
-                .deletingLastPathComponent()
-                .appendingPathComponent("scripts/capture-notch-morph-prototypes.sh"),
-            encoding: .utf8
-        )
-
-        XCTAssertTrue(source.contains("p1-matched p2-native-glass p3-spring-delight"))
-        XCTAssertTrue(source.contains("VOICEBAR_NOTCH_MORPH_VARIANT"))
-        XCTAssertTrue(source.contains("VOICEBAR_QA_ALLOW_PARALLEL_INSTANCE=1"))
-        XCTAssertTrue(source.contains("VOICEBAR_USER_DEFAULTS_SUITE"))
-        XCTAssertTrue(source.contains("NotchGlassBackdropFixture"))
-        XCTAssertTrue(source.contains("screencapture -x -v -V1"))
-        XCTAssertTrue(source.contains("capture_live_png_transition"))
-        XCTAssertTrue(source.contains("live-frames/frame-%03d.png"))
-        XCTAssertTrue(source.contains("screencapture -x -R\"$capture_rect\""))
-        XCTAssertTrue(source.contains("-vf fps=60"))
-        XCTAssertTrue(source.contains("ffprobe"))
-        XCTAssertTrue(source.contains("forward"))
-        XCTAssertTrue(source.contains("reverse"))
-        XCTAssertTrue(source.contains("trap cleanup EXIT INT TERM"))
-    }
-
     func testCaptureAuditCodifiesTheRouteQAGhostTextThreshold() throws {
         let packageRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

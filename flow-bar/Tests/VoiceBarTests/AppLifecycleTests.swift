@@ -13,7 +13,7 @@ final class AppLifecycleTests: XCTestCase {
         let presentation = VoiceBarPresentation.notchPresentation(
             from: VoiceBarNotchOperationalInput(mode: .idle, isHovered: true)
         )
-        let canvas = VoiceBarNotchMorphCanvasLayout.resolve(for: presentation)
+        let canvas = VoiceBarNotchCanvasLayout.resolve(for: presentation)
         let layout = VoiceBarPanelLayout.make(
             presentation: presentation,
             interactionConfiguration: VoiceBarNotchInteractionConfiguration(

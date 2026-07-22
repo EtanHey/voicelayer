@@ -229,7 +229,7 @@ public enum VoiceBarIsolatedCapturePlacement {
             coreWidth: layout.presentation.geometry.coreWidth,
             visibleCoreOcclusionInset: layout.presentation.visibleCoreOcclusionInset
         )
-        let referenceCanvas = VoiceBarNotchMorphCanvasLayout.resolve(
+        let referenceCanvas = VoiceBarNotchCanvasLayout.resolve(
             for: referencePresentation
         )
         let referenceLayout = VoiceBarPanelLayout.make(
