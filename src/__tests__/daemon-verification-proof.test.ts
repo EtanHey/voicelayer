@@ -152,6 +152,41 @@ describe("daemon verification proof predicate", () => {
     expect(text(result.stdout)).toContain("runtime gate not required");
   });
 
+  test("skips non-daemon changes before requiring signer configuration", () => {
+    const base = git("rev-parse", "HEAD");
+    const head = commitFile("docs/example.md", "docs only\n");
+    const missingSigners = join(tempRoot, "missing-allowed-signers");
+
+    const result = run([
+      "bash",
+      predicatePath,
+      base,
+      head,
+      missingSigners,
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout)).toContain("runtime gate not required");
+    expect(text(result.stderr)).not.toContain("allowed signers");
+  });
+
+  test("fails closed for daemon changes when signer configuration is missing", () => {
+    const base = git("rev-parse", "HEAD");
+    const head = commitFile("src/daemon.ts", "sensitive\n");
+    const missingSigners = join(tempRoot, "missing-allowed-signers");
+
+    const result = run([
+      "bash",
+      predicatePath,
+      base,
+      head,
+      missingSigners,
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain("allowed signers");
+  });
+
   test.each([
     "src/mcp-daemon.ts",
     "src/recording-state.ts",
@@ -295,6 +330,7 @@ describe("daemon verification workflow contract", () => {
     expect(workflow).not.toContain(
       "bash scripts/check-daemon-verification-proof.sh",
     );
+    expect(workflow).not.toContain('if [ -z "$RUNTIME_SIGNER" ]');
     expect(workflow).not.toContain("PR_BODY");
     expect(workflow).not.toContain('grep -Fqx "$marker"');
   });

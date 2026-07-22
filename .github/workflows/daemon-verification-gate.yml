@@ -27,22 +27,6 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ -z "$RUNTIME_SIGNER" ]; then
-            echo "Repository variable VOICELAYER_RUNTIME_SIGNER is not configured." >&2
-            exit 2
-          fi
-          case "$RUNTIME_SIGNER" in
-            *$'\n'*|*$'\r'*)
-              echo "VOICELAYER_RUNTIME_SIGNER must contain exactly one public-key line." >&2
-              exit 2
-              ;;
-            ssh-*|ecdsa-*|sk-*) ;;
-            *)
-              echo "VOICELAYER_RUNTIME_SIGNER is not an SSH public key." >&2
-              exit 2
-              ;;
-          esac
-
           allowed_signers="$(mktemp)"
           predicate="$(mktemp)"
           trap 'rm -f "$allowed_signers" "$predicate"' EXIT INT TERM

@@ -21,6 +21,7 @@
 Create temporary Git repositories and assert that the predicate:
 
 - exits 0 when only non-daemon files changed;
+- exits 0 for non-daemon changes even when signer configuration is absent, while daemon changes fail closed;
 - still requires proof when a daemon-sensitive source is renamed outside the path law;
 - fails when daemon files changed and no tag exists;
 - fails for unsigned, wrong-target, wrong-marker, and stale tags; and

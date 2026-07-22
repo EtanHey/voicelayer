@@ -23,7 +23,7 @@ The verification script will continue to create the local `.verified/verified-ru
 
 The hosted workflow will call a tracked predicate script extracted from the immutable base commit rather than executing the PR copy. That script computes the daemon-sensitive diff with rename detection disabled so both the deleted sensitive source and added destination are visible, skips when no sensitive path changed, fetches/requires the exact tag for the PR head, checks the tag target, validates the marker, and runs native SSH signature verification. The trusted public key comes from the repository Actions variable `VOICELAYER_RUNTIME_SIGNER`, not from the PR checkout, so an attacker cannot authorize a new key in the same diff. PR-body text is informational only and has no authority.
 
-The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. The bootstrap PR copy must also match the SHA-256 digest stored outside the checkout in repository Actions variable `VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256` (`b80a0f0080a3ccdb79c62daafa7235520fc13855048ac82c102b20eb217a1104`). After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR still depends on code review of the workflow that enforces this digest; this design does not claim that a workflow can cryptographically self-bootstrap its own definition.
+The introducing PR has a one-time bootstrap exception pinned to its exact pre-gate base SHA because that base does not yet contain the predicate. The bootstrap PR copy must also match the SHA-256 digest stored outside the checkout in repository Actions variable `VOICELAYER_DAEMON_PROOF_PREDICATE_SHA256` (`bbe6f46f057027620b7ecddfc2d2215b62d0157c2cf975c00c36af2fd28d2098`). After the introducing PR merges, later base commits contain the trusted predicate and the bootstrap SHA cannot match a current base. The introducing PR still depends on code review of the workflow that enforces this digest; this design does not claim that a workflow can cryptographically self-bootstrap its own definition.
 
 The local `.verified/` receipt remains compatible with the existing local hook. The shared predicate is tracked so the hook can converge on the same signature check without duplicating CI logic.
 
@@ -68,6 +68,7 @@ The complete isolated corpus/runtime leg is the regression because the failure o
 ## Error Handling
 
 - A missing signing key, failed signature, failed tag push, mismatched target, stale SHA, missing tag, or malformed marker fails closed.
+- Signer configuration is validated only after the predicate finds a sensitive path, so unrelated PRs retain the intended skip even during signer rotation.
 - Existing tags are never silently overwritten. A matching valid tag is idempotent; any conflicting tag fails with remediation instructions.
 - The verifier writes no publishable proof until runtime verification and the clean-tree/head-stability checks have completed.
 - Shell temporary files use `mktemp` and traps; paths and arguments are quoted.

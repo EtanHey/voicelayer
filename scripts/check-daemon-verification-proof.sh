@@ -41,11 +41,6 @@ if ! git cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
   printf '[daemon-proof] head commit is unavailable: %s\n' "$head_sha" >&2
   exit 2
 fi
-if [ ! -s "$allowed_signers_file" ]; then
-  printf '[daemon-proof] allowed signers file is missing or empty: %s\n' "$allowed_signers_file" >&2
-  exit 2
-fi
-
 daemon_path_matches() {
   case "$1" in
     flow-bar/*) return 0 ;;
@@ -90,6 +85,19 @@ done <"$changed_files"
 if [ ! -s "$daemon_files" ]; then
   printf '[daemon-proof] no daemon/socket/MCP files changed; runtime gate not required.\n'
   exit 0
+fi
+
+if [ ! -s "$allowed_signers_file" ] || ! awk '
+  /^[[:space:]]*$/ { next }
+  {
+    if (seen || NF < 3 || $2 !~ /^(ssh-|ecdsa-|sk-)/) exit 1
+    seen = 1
+  }
+  END { if (!seen) exit 1 }
+' "$allowed_signers_file"; then
+  printf '[daemon-proof] allowed signers file must contain exactly one SSH public key: %s\n' \
+    "$allowed_signers_file" >&2
+  exit 2
 fi
 
 printf '[daemon-proof] daemon/socket/MCP files changed:\n'
