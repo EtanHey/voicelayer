@@ -115,14 +115,23 @@ final class VoiceBarNotchMaterialTests: XCTestCase {
         XCTAssertFalse(material.contains(".shadow("))
     }
 
-    func testNativeGlassTracksPointerWhileThePanelRemainsInactive() throws {
+    func testNativeGlassLeavesHoverTrackingToTheAuthoritativePanelPath() throws {
         let source = try notchMaterialSource()
+        let glassView = try bracedScope(
+            after: "private final class VoiceBarTrackedGlassEffectView",
+            in: source
+        )
+        let glassContainer = try bracedScope(
+            after: "private final class VoiceBarTrackedGlassContainerView",
+            in: source
+        )
 
-        XCTAssertTrue(source.contains("NSTrackingArea"))
-        XCTAssertTrue(source.contains(".mouseEnteredAndExited"))
-        XCTAssertTrue(source.contains(".activeInActiveApp"))
-        XCTAssertTrue(source.contains("override func mouseEntered"))
-        XCTAssertTrue(source.contains("override func mouseExited"))
+        for nativeHost in [glassView, glassContainer] {
+            XCTAssertFalse(nativeHost.contains("NSTrackingArea"))
+            XCTAssertFalse(nativeHost.contains("updateTrackingAreas"))
+            XCTAssertFalse(nativeHost.contains("mouseEntered"))
+            XCTAssertFalse(nativeHost.contains("mouseExited"))
+        }
     }
 
     func testNativeGlassDisablesImplicitAppKitOrderOutUntilTheExplicitMorphRound() throws {

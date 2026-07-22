@@ -44,7 +44,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
             VoiceBarNotchGeometry(
                 coreWidth: 185,
                 topHeight: 32,
-                leadingWingWidth: 82,
+                leadingWingWidth: 0,
                 trailingWingWidth: 78,
                 bodyLeadingExtent: 140,
                 bodyTrailingExtent: 140,
@@ -66,7 +66,7 @@ final class VoiceBarNotchContractTests: XCTestCase {
         XCTAssertEqual(hover.totalWidth, 306)
         XCTAssertEqual(recording.topWidth, 336.5)
         XCTAssertEqual(recording.totalWidth, 336.5)
-        XCTAssertEqual(teleprompter.topWidth, 345)
+        XCTAssertEqual(teleprompter.topWidth, 263)
         XCTAssertEqual(teleprompter.bodyWidth, 465)
         XCTAssertEqual(teleprompter.totalWidth, 465)
         XCTAssertEqual(teleprompter.totalHeight, 228)
@@ -112,19 +112,14 @@ final class VoiceBarNotchContractTests: XCTestCase {
         )
         XCTAssertNotEqual(hover.leadingWingWidth, hover.trailingWingWidth)
 
-        XCTAssertEqual(
-            teleprompter.leadingWingWidth,
-            VoiceBarNotchContract.teleprompterContentFitWingWidth(
-                contentWidth: VoiceBarNotchContract.teleprompterLeadingContentWidth
-            )
-        )
+        XCTAssertEqual(teleprompter.leadingWingWidth, 0)
         XCTAssertEqual(
             teleprompter.trailingWingWidth,
             VoiceBarNotchContract.teleprompterWaveformWingWidth(
                 visibleCoreOcclusionInset: 0
             )
         )
-        XCTAssertNotEqual(teleprompter.leadingWingWidth, teleprompter.trailingWingWidth)
+        XCTAssertGreaterThan(teleprompter.trailingWingWidth, teleprompter.leadingWingWidth)
 
         XCTAssertEqual(recording.leadingWingWidth, VoiceBarNotchContract.recordingLeadingWingWidth)
         XCTAssertEqual(recording.trailingWingWidth, VoiceBarNotchContract.waveformWingWidth)

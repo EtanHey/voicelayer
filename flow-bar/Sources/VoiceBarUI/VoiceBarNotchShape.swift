@@ -310,9 +310,13 @@ public struct VoiceBarNotchContinuousShape: Shape {
         let leadingWing = layout.leadingWingRect
         let trailingWing = layout.trailingWingRect
         let core = layout.coreRect
-        let shoulderRadius = min(
+        let leadingShoulderRadius = min(
             layout.inverseJoinRadius,
             leadingWing.width,
+            layout.geometry.topHeight
+        )
+        let trailingShoulderRadius = min(
+            layout.inverseJoinRadius,
             trailingWing.width,
             layout.geometry.topHeight
         )
@@ -325,14 +329,14 @@ public struct VoiceBarNotchContinuousShape: Shape {
 
         path.move(to: CGPoint(x: core.minX, y: 0))
         path.addLine(to: CGPoint(x: leadingWing.minX, y: 0))
-        path.addLine(to: CGPoint(x: leadingWing.minX, y: body.minY - shoulderRadius))
+        path.addLine(to: CGPoint(x: leadingWing.minX, y: body.minY - leadingShoulderRadius))
         path.addQuadCurve(
-            to: CGPoint(x: leadingWing.minX - shoulderRadius, y: body.minY),
+            to: CGPoint(x: leadingWing.minX - leadingShoulderRadius, y: body.minY),
             control: CGPoint(x: leadingWing.minX, y: body.minY)
         )
-        path.addLine(to: CGPoint(x: body.minX + shoulderRadius, y: body.minY))
+        path.addLine(to: CGPoint(x: body.minX + leadingShoulderRadius, y: body.minY))
         path.addQuadCurve(
-            to: CGPoint(x: body.minX, y: body.minY + shoulderRadius),
+            to: CGPoint(x: body.minX, y: body.minY + leadingShoulderRadius),
             control: CGPoint(x: body.minX, y: body.minY)
         )
         path.addLine(to: CGPoint(x: body.minX, y: body.maxY - lowerRadius))
@@ -345,14 +349,14 @@ public struct VoiceBarNotchContinuousShape: Shape {
             to: CGPoint(x: body.maxX, y: body.maxY - lowerRadius),
             control: CGPoint(x: body.maxX, y: body.maxY)
         )
-        path.addLine(to: CGPoint(x: body.maxX, y: body.minY + shoulderRadius))
+        path.addLine(to: CGPoint(x: body.maxX, y: body.minY + trailingShoulderRadius))
         path.addQuadCurve(
-            to: CGPoint(x: body.maxX - shoulderRadius, y: body.minY),
+            to: CGPoint(x: body.maxX - trailingShoulderRadius, y: body.minY),
             control: CGPoint(x: body.maxX, y: body.minY)
         )
-        path.addLine(to: CGPoint(x: trailingWing.maxX + shoulderRadius, y: body.minY))
+        path.addLine(to: CGPoint(x: trailingWing.maxX + trailingShoulderRadius, y: body.minY))
         path.addQuadCurve(
-            to: CGPoint(x: trailingWing.maxX, y: body.minY - shoulderRadius),
+            to: CGPoint(x: trailingWing.maxX, y: body.minY - trailingShoulderRadius),
             control: CGPoint(x: trailingWing.maxX, y: body.minY)
         )
         path.addLine(to: CGPoint(x: trailingWing.maxX, y: 0))

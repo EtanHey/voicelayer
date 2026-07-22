@@ -298,7 +298,6 @@ private final class VoiceBarTrackedGlassEffectView: NSGlassEffectView {
     var maskPathProvider: ((CGRect) -> CGPath)?
 
     private let glassMaskLayer = CAShapeLayer()
-    private var glassTrackingArea: NSTrackingArea?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -324,28 +323,6 @@ private final class VoiceBarTrackedGlassEffectView: NSGlassEffectView {
         super.layout()
         contentView?.frame = bounds
         updateGlassMask()
-    }
-
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let glassTrackingArea {
-            removeTrackingArea(glassTrackingArea)
-        }
-        let trackingArea = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInActiveApp, .inVisibleRect],
-            owner: self
-        )
-        addTrackingArea(trackingArea)
-        glassTrackingArea = trackingArea
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
     }
 
     private func updateGlassMask() {

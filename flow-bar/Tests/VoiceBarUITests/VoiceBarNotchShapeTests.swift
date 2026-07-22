@@ -23,13 +23,13 @@ final class VoiceBarNotchShapeTests: XCTestCase {
         XCTAssertTrue(path.quadCurveEndPoints.contains(CGPoint(x: 321.5, y: 32)))
     }
 
-    func testTeleprompterKeepsTheHousingCenteredInsideAnAsymmetricTopBar() {
+    func testTeleprompterKeepsTheHousingCenteredWithNoLeadingTopWing() {
         let geometry = VoiceBarNotchContract.geometry(for: .teleprompter)
         let layout = VoiceBarNotchShapeLayout(geometry: geometry)
 
         XCTAssertEqual(layout.totalSize, CGSize(width: 465, height: 228))
         XCTAssertEqual(layout.coreRect, CGRect(x: 140, y: 0, width: 185, height: 32))
-        XCTAssertEqual(layout.leadingWingRect, CGRect(x: 58, y: 0, width: 82, height: 32))
+        XCTAssertEqual(layout.leadingWingRect, CGRect(x: 140, y: 0, width: 0, height: 32))
         XCTAssertEqual(layout.trailingWingRect, CGRect(x: 325, y: 0, width: 78, height: 32))
         XCTAssertEqual(layout.bodyRect, CGRect(x: 0, y: 32, width: 465, height: 196))
         XCTAssertEqual(layout.inverseJoinRadius, 5)
@@ -46,8 +46,17 @@ final class VoiceBarNotchShapeTests: XCTestCase {
 
         XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.midX, y: 16)))
         XCTAssertTrue(path.contains(CGPoint(x: layout.bodyRect.midX, y: 64)))
-        XCTAssertTrue(path.contains(CGPoint(x: layout.leadingWingRect.midX, y: 16)))
+        XCTAssertFalse(path.contains(CGPoint(x: layout.coreRect.minX - 1, y: 16)))
         XCTAssertTrue(path.contains(CGPoint(x: layout.trailingWingRect.midX, y: 16)))
+        XCTAssertTrue(
+            path.quadCurveEndPoints.contains(
+                CGPoint(
+                    x: layout.trailingWingRect.maxX,
+                    y: layout.bodyRect.minY - layout.inverseJoinRadius
+                )
+            ),
+            "the unchanged trailing wing keeps its five-point inverse shoulder"
+        )
         XCTAssertFalse(path.contains(CGPoint(x: 10, y: 16)))
         XCTAssertFalse(path.contains(CGPoint(x: 455, y: 16)))
         XCTAssertEqual(path.moveElementCount, 1)
