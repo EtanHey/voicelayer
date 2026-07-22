@@ -64,7 +64,7 @@ final class VoiceBarDevStateTests: XCTestCase {
         XCTAssertFalse(state.isHovering)
         XCTAssertTrue(
             state.isCollapsed,
-            "the hover coordinator already paid Etan's 2.5-second grace"
+            "the hover coordinator already paid the 300-millisecond exit grace"
         )
     }
 

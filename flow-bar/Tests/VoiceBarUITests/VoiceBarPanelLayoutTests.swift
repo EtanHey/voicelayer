@@ -135,7 +135,7 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
         }
     }
 
-    func testCollapsedVirtualNotchAdmitsOnlyItsRenderedMenuBarHeightCore() {
+    func testCollapsedVirtualNotchPassesClicksThroughButKeepsItsInvisibleCatchBand() {
         let presentation = VoiceBarNotchPresentation.resolve(
             hasTeleprompter: false,
             isRecording: false,
@@ -159,9 +159,20 @@ final class VoiceBarPanelLayoutTests: XCTestCase {
 
         XCTAssertEqual(presentation.geometry.topHeight, 24)
         XCTAssertEqual(presentation.geometry.coreWidth, VoiceBarNotchContract.coreWidth)
-        XCTAssertTrue(layout.containsVisibleSurface(coreCenter))
+        XCTAssertFalse(layout.containsVisibleSurface(coreCenter))
         XCTAssertFalse(layout.containsInteractiveContent(coreCenter))
         XCTAssertFalse(layout.containsVisibleSurface(justBelowCore))
+        XCTAssertTrue(layout.containsHoverExpansion(coreCenter))
+        XCTAssertTrue(layout.containsHoverExpansion(justBelowCore))
+        XCTAssertEqual(
+            layout.hoverExpansionRect,
+            CGRect(
+                x: layout.visibleContentRect.minX,
+                y: layout.visibleContentRect.minY - 16,
+                width: VoiceBarNotchContract.coreWidth,
+                height: 40
+            )
+        )
         XCTAssertFalse(layout.containsVisibleSurface(CGPoint(x: 1, y: 1)))
     }
 

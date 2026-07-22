@@ -104,7 +104,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertEqual(recording.shellIdentity, teleprompter.shellIdentity)
         XCTAssertEqual(idle.fixedCoreCount, 0)
-        XCTAssertEqual(virtualIdle.fixedCoreCount, 1)
+        XCTAssertEqual(virtualIdle.fixedCoreCount, 0)
         XCTAssertEqual(virtualIdlePresentation.geometry.topHeight, 24)
         XCTAssertEqual(recording.fixedCoreCount, 1)
         XCTAssertEqual(recording.reusableWingSlotCount, 2)
@@ -140,6 +140,20 @@ final class VoiceBarNotchViewTests: XCTestCase {
         XCTAssertEqual(model.presentation.virtualNotchIdleCoreHeight, 24)
         XCTAssertEqual(model.presentation.geometry.topHeight, 24)
         XCTAssertEqual(model.presentation.visualState, .idle)
+    }
+
+    func testVirtualNotchUsesMeasuredMenuBarHeightWhileExpanded() {
+        let model = VoiceBarNotchPresentationModel()
+
+        model.updateOperationalEnvelope(
+            hasTeleprompter: false,
+            isRecording: true,
+            hasCompactStatus: false,
+            virtualNotchIdleCoreHeight: 30
+        )
+
+        XCTAssertEqual(model.presentation.visualState, .recording)
+        XCTAssertEqual(model.presentation.geometry.topHeight, 30)
     }
 
     func testPersistentContainerOwnsOneContentBearingSurfaceAcrossVisibleStates() throws {
@@ -223,8 +237,7 @@ final class VoiceBarNotchViewTests: XCTestCase {
 
         XCTAssertTrue(source.contains(".contentShape(Rectangle())"))
         XCTAssertTrue(source.contains("presentation.visualState != .idle"))
-        XCTAssertTrue(source.contains("virtualIdleCore"))
-        XCTAssertTrue(source.contains("presentation.virtualNotchIdleCoreHeight"))
+        XCTAssertFalse(source.contains("virtualIdleCore"))
     }
 
     func testContinuousContentBearingGlassOwnsTheHoverRegion() throws {

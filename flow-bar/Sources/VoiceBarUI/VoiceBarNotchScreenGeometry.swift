@@ -34,9 +34,9 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
     public let leadingSeamError: CGFloat?
     public let trailingSeamError: CGFloat?
 
-    /// A flat display has no physical camera housing to paint or receive
-    /// hover events. Its collapsed software core occupies exactly the menu
-    /// bar band reported by AppKit.
+    /// A flat display has no physical camera housing. This height sizes its
+    /// invisible hover band and every expanded state's top-menu-bar lane; it
+    /// does not authorize idle painting.
     public var virtualNotchIdleCoreHeight: CGFloat? {
         guard kind == .flatDisplayFallback else { return nil }
         return housingFrame.height
@@ -83,7 +83,10 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
             )
         }
 
-        let menuBarHeight = max(1, metrics.frame.maxY - metrics.visibleFrame.maxY)
+        let measuredMenuBarHeight = max(0, metrics.frame.maxY - metrics.visibleFrame.maxY)
+        let menuBarHeight = measuredMenuBarHeight > 0
+            ? measuredMenuBarHeight
+            : VoiceBarNotchContract.flatDisplayMenuBarHeightFallback
         let housingFrame = CGRect(
             x: metrics.frame.midX - (VoiceBarNotchContract.coreWidth / 2),
             y: metrics.frame.maxY - menuBarHeight,
@@ -117,8 +120,8 @@ public struct VoiceBarNotchScreenGeometry: Equatable {
             for: visualState,
             coreWidth: housingFrame.width,
             visibleCoreOcclusionInset: visibleCoreOcclusionInset,
-            resolvedTopHeight: visualState == .idle
-                ? virtualNotchIdleCoreHeight ?? VoiceBarNotchContract.topHeight
+            resolvedTopHeight: kind == .flatDisplayFallback
+                ? housingFrame.height
                 : VoiceBarNotchContract.topHeight
         )
     }

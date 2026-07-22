@@ -126,7 +126,7 @@ final class VoiceBarHoverHysteresisTests: XCTestCase {
         XCTAssertEqual(hoverUpdates, [true, false])
     }
 
-    func testEntryIsImmediateButExitUsesEtansTwoToThreeSecondGrace() {
+    func testEntryIsImmediateButExitUsesAThreeHundredMillisecondGrace() {
         var hysteresis = VoiceBarHoverHysteresis()
 
         XCTAssertEqual(
@@ -135,10 +135,10 @@ final class VoiceBarHoverHysteresisTests: XCTestCase {
         )
         XCTAssertEqual(
             hysteresis.update(isInsideExpansionZone: false, isInsideRetentionZone: false),
-            [.scheduleExit(after: 2.5)]
+            [.scheduleExit(after: 0.3)]
         )
-        XCTAssertGreaterThanOrEqual(VoiceBarHoverHysteresis.exitDelay, 2.0)
-        XCTAssertLessThanOrEqual(VoiceBarHoverHysteresis.exitDelay, 3.0)
+        XCTAssertGreaterThanOrEqual(VoiceBarHoverHysteresis.exitDelay, 0.25)
+        XCTAssertLessThanOrEqual(VoiceBarHoverHysteresis.exitDelay, 0.4)
         XCTAssertEqual(hysteresis.exitDelayElapsed(), [.hoverChanged(false)])
     }
 
@@ -198,7 +198,7 @@ final class VoiceBarHoverHysteresisTests: XCTestCase {
         )
         XCTAssertEqual(
             hysteresis.update(isInsideExpansionZone: false, isInsideRetentionZone: false),
-            [.scheduleExit(after: 2.5)]
+            [.scheduleExit(after: 0.3)]
         )
     }
 }
