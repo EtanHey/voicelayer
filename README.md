@@ -6,7 +6,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 [![MCP](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
 [![Tools](https://img.shields.io/badge/MCP%20tools-2%20core%20%2B%209%20aliases-38BDF8.svg)](#voice-tools)
-[![Tests](https://img.shields.io/badge/tests-585%20Bun%20%2B%20144%20Swift-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-1409%20Bun%20(CI)%20%2B%20787%20Swift-brightgreen.svg)](#testing)
 
 **Voice I/O for AI coding assistants.** Press F5, speak to Claude Code, get on-device transcription in under 1.5 seconds. Your AI speaks back. Works with any MCP client.
 
@@ -20,6 +20,8 @@
 **[Website](https://voicelayer.etanheyman.com)** | **[Docs](https://etanhey.github.io/voicelayer/docs/)** | **[npm](https://www.npmjs.com/package/voicelayer-mcp)**
 
 VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. 2 canonical MCP tools plus 9 backward-compatible aliases ship with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
+
+**Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
 
 ## Architecture
 
@@ -56,9 +58,26 @@ VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Clau
 
 ## Quick Start
 
+### Homebrew (recommended, macOS)
+
+The tap ships the CLI/MCP package and the notarized notch app as a cask. This is
+the fastest way to a running VoiceBar.
+
 ```bash
-# Install from npm
-bun add -g voicelayer-mcp
+brew tap etanhey/layers
+brew install etanhey/layers/voicelayer         # CLI + MCP package
+brew install --cask etanhey/layers/voicebar    # notarized VoiceBar menu-bar notch app
+voicelayer setup                               # one-time runtime setup
+```
+
+`voicebar` (the cask) owns the microphone-permissioned daemon child, so install
+it too — the formula alone gives you the CLI/MCP but no notch UI.
+
+### npm / source
+
+```bash
+# Install the MCP package from npm
+bun add -g voicelayer-mcp                       # or: npm i -g voicelayer-mcp
 
 # Prerequisites
 brew install sox socat
@@ -175,6 +194,10 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 
 ### Backward-compatible aliases
 
+> **Deprecated.** The nine `qa_voice_*` aliases are retained only for backward
+> compatibility and are slated for removal. New integrations should call
+> `voice_speak` / `voice_ask` directly.
+
 | Alias | Maps to | idempotent |
 |-------|---------|:----------:|
 | `qa_voice_announce` | `voice_speak(mode='announce')` | true |
@@ -223,18 +246,37 @@ All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/
 
 Auto-detected. Override with `QA_VOICE_STT_BACKEND=whisper|wispr|auto`.
 
-## Voice Bar (macOS)
+## VoiceBar — the notch surface (macOS)
 
-Floating SwiftUI widget providing visual feedback during voice interactions. Connects to the daemon via NDJSON over `/tmp/voicelayer.sock`.
+VoiceBar is the canonical UI (SwiftUI + AppKit). It renders as a **menu-bar notch
+surface** that tucks around the MacBook camera-housing notch instead of a floating
+pill. It connects to the daemon via NDJSON over `/tmp/voicelayer.sock`, and the app
+owns the MCP daemon child (see below).
 
-- Teleprompter with word-level highlighting and auto-scroll
-- Waveform visualization during recording
-- Expandable pill UI — collapses to dot after 5s idle
-- Draggable, position persisted across launches
-- **Global hotkey:** F5 (hold for push-to-talk)
+- **Liquid-Glass wings** flank the fixed camera-housing core — native macOS glass
+  material when available, with a graceful fallback. A black-to-glass fade blends
+  the software surface into the physical housing.
+- **Morph animations** — state changes (idle ↔ recording ↔ speaking ↔ teleprompter)
+  animate as sequenced surface transitions between wings and the lower surface;
+  Reduce-Motion aware.
+- **Idle-hover to summon** — collapsed, VoiceBar draws no software pixels; the camera
+  housing stays the hover target. Hovering expands it and reveals idle accessory
+  buttons: **Recent transcripts**, **Dictionary** (transcription-vocabulary popover),
+  and **Replay** (when audio is cached).
+- **Teleprompter** with word-by-word karaoke highlighting — bright current word, faded
+  past, dimmed upcoming — driven by server-provided word-boundary timestamps (client
+  estimation fallback). Used for both speaking and readback.
+- **Truthful waveform** in the recording wing, plus an optional recording-hold control
+  to keep recording through silence in VAD mode.
+- **Right-click context menu** — Settings, Show/Hide VoiceBar, Recent Transcripts,
+  Paste / Copy last transcript, Transcription Tools, Preferences, Quit.
+- **Global hotkey:** F5 starts/stops recording; **Shift+F5** re-pastes the latest
+  transcript.
+
+Install via the Homebrew cask (`brew install --cask etanhey/layers/voicebar`, above),
+or build from source:
 
 ```bash
-bun add -g voicelayer-mcp
 voicelayer build-app            # Build + install /Applications/VoiceBar.app
 voicelayer hotkey install       # Install Dictation-key -> F18 relay
 voicelayer bar                  # Launch the installed VoiceBar.app
@@ -305,10 +347,36 @@ path. The daemon only accepts `Host: 127.0.0.1:8880` /
 ## Testing
 
 ```bash
-bun test                              # 585 Bun tests + 1 skip (latest verified on PR #190 pre-push gate)
-bash flow-bar/run_tests.sh            # 144 Swift tests for VoiceBar
+bun test                              # Bun/TypeScript suite (~2570 tests across 190 files)
+swift test --package-path flow-bar    # 787 Swift tests for VoiceBar
 git config core.hooksPath .githooks   # install repo pre-push hook once per clone (#181, #182)
 ```
+
+**What CI runs.** The GitHub Actions `CI` workflow runs the platform-independent
+slice — **1409 tests across 104 files, 0 failures** on `main`. The remaining local
+tests are macOS- and hardware-bound (real whisper decodes, live daemon/socket
+round-trips, microphone capture, corpus replay) and are skipped off-macOS.
+
+**Running the full suite locally**, note two things:
+1. `bun test` treats its arguments as path *substrings*, so a previous
+   `dist/voicebar-release/**/Resources/src/__tests__` build copy gets picked up and
+   double-counted (even via `bun test src/`). Scope with an explicit file list:
+   `bun test $(git ls-files 'src/__tests__/*.test.ts')`.
+2. Many local-only tests assert against **real machine and repo state**, so they
+   fail for environmental reasons rather than code ones:
+   - the shell-contract suites (`voicelayer-version-check.sh`,
+     `voicelayer-verify.sh`, `voicelayer-update.sh`, `verify-notch-*.sh`) require a
+     **clean worktree on a tagged release commit**, with the git tag, `package.json`,
+     the checked-in `Info.plist`, the Homebrew cask, and the stapled resident
+     `/Applications/VoiceBar.app` all in agreement — by design, since that is exactly
+     what they exist to police. On a feature branch they will fail.
+   - the live-integration and TTS tests claim the **real microphone** and voice-session
+     lock, so running them while VoiceBar is recording (or alongside another agent
+     driving the daemon) yields failures like
+     `user is recording — speaker output refused`.
+
+   Treat CI, or a clean checkout at a release tag on an idle machine, as the source of
+   truth for "green".
 
 Test coverage includes: MCP protocol framing, tool handlers, TTS synthesis + retry, VAD speech detection, session booking, process lock lifecycle, socket client reconnection, edge-tts health checks, schema validation, Hebrew STT eval baselines, daemon resilience, ToolAnnotations, SSML sanitization, and secure path hardening.
 
@@ -345,7 +413,7 @@ One-week sprint focused on VoiceBar reliability and a recording corpus to fight 
 
 ```
 voicelayer/
-├── src/                          # TypeScript/Bun (18K lines, 69 files)
+├── src/                          # TypeScript/Bun (~80 non-test source files)
 │   ├── mcp-server-daemon.ts      # Singleton daemon entry point
 │   ├── mcp-server.ts             # Stdio MCP server (legacy)
 │   ├── mcp-daemon.ts             # Unix socket server (dual-protocol)
@@ -361,16 +429,18 @@ voicelayer/
 │   ├── socket-client.ts          # Voice Bar IPC (auto-reconnect)
 │   ├── session-booking.ts        # Lockfile mutex
 │   ├── paths.ts                  # Centralized path constants
-│   └── __tests__/                # 536 tests across 48 files
-├── flow-bar/                     # SwiftUI macOS app (1.9K lines, 9 files)
-│   ├── Sources/VoiceBar/         # App source
+│   └── __tests__/                # ~95 test files
+├── flow-bar/                     # SwiftUI/AppKit macOS app (~62 Swift files)
+│   ├── Sources/VoiceBar/         # App + daemon-owner source
+│   ├── Sources/VoiceBarUI/       # Notch UI — VoiceBarNotch* suite (glass,
+│   │                             #   morph motion, hit region, context menu)
 │   └── Tests/                    # Swift tests
 ├── scripts/
 │   ├── migrate-to-daemon.sh      # Batch .mcp.json migration
 │   └── edge-tts-words.py         # Word-level TTS with timestamps
 ├── launchd/                      # VoiceBar LaunchAgent + retired daemon cleanup
 ├── models/                       # Silero VAD ONNX model
-└── package.json                  # v2.0.0
+└── package.json                  # v2.1.17
 ```
 
 ## Platform Support
@@ -387,7 +457,7 @@ VoiceLayer is one of three open-source MCP servers in the [Golems](https://etanh
 | Server | What it does | Tools |
 |--------|-------------|:-----:|
 | **[BrainLayer](https://brainlayer.etanheyman.com)** | Persistent memory for AI agents — knowledge graph + hybrid search | 12 |
-| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, F5 push-to-talk | 11 |
+| **[VoiceLayer](https://voicelayer.etanheyman.com)** | Voice I/O — local STT, neural TTS, notch VoiceBar, F5 recording | 2 (+9 legacy) |
 | **[cmuxLayer](https://cmuxlayer.etanheyman.com)** | Terminal orchestration — spawn panes, read screens, coordinate agents | 22 |
 
 Pair with BrainLayer to remember voice conversations across sessions.
