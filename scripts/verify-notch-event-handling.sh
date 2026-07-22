@@ -142,8 +142,9 @@ for _ in {1..100}; do
   sleep 0.05
 done
 if [[ ! -s "$context_menu_receipt" ]] ||
+   ! grep -Fxq "window_event_gate=passed" "$context_menu_receipt" ||
    ! grep -Fxq "right_click_context_menu=passed" "$context_menu_receipt"; then
-  printf 'error: supplied VoiceBar app did not track its context menu; see %s\n' "$app_log" >&2
+  printf 'error: supplied VoiceBar app did not pass its window and context-menu gates; see %s\n' "$app_log" >&2
   exit 1
 fi
 

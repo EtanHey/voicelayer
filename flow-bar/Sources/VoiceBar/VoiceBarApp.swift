@@ -716,7 +716,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard VoiceBarIsolatedCapturePlacement.isEnabled(),
               !VoiceLayerPaths.enforcesSingletonInstance,
               let panel,
-              panel.contentView != nil
+              let contentView = panel.contentView
         else {
             NSLog("[VoiceBar] Refusing context-menu probe outside isolated offscreen QA")
             return
@@ -735,6 +735,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
+        let transparentMargin = NSPoint(x: 1, y: 1)
+        Self.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: transparentMargin,
+            isIsolatedCapture: false
+        )
+        guard panel.ignoresMouseEvents,
+              contentView.hitTest(transparentMargin) == nil
+        else {
+            NSLog("[VoiceBar] Context-menu probe found an admitted transparent margin")
+            return
+        }
+        Self.applyPanelMouseEventPassthrough(
+            panel,
+            layout: layout,
+            pointer: renderedCore,
+            isIsolatedCapture: false
+        )
+        guard !panel.ignoresMouseEvents,
+              contentView.hitTest(renderedCore) != nil,
+              panel.shouldHandleContextMenu(at: renderedCore)
+        else {
+            NSLog("[VoiceBar] Context-menu probe failed a rendered-surface event gate")
+            return
+        }
+
         let menu = NSMenu(title: "VoiceBar context-menu acceptance")
         menu.addItem(withTitle: "Context menu opened", action: nil, keyEquivalent: "")
         let originalProvider = panel.contextMenuProvider
@@ -745,7 +772,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             queue: .main
         ) { _ in
             do {
-                try "right_click_context_menu=passed\n".write(
+                try "window_event_gate=passed\nright_click_context_menu=passed\n".write(
                     toFile: receiptPath,
                     atomically: true,
                     encoding: .utf8

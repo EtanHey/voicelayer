@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Add the right-click regression contract
+## Task 1: Add the right-click regression contract
 
 **Files:**
 - Modify: `flow-bar/Tests/VoiceBarUITests/BarViewClickabilityTests.swift`
@@ -22,7 +22,7 @@
 4. Assert panel context-menu eligibility uses the rendered surface while drag eligibility remains control-only.
 5. Run `swift test --package-path flow-bar --filter 'BarViewClickabilityTests|AppLifecycleTests'` and confirm the new assertions fail for the missing seam.
 
-### Task 2: Implement the minimal AppKit routing seam
+## Task 2: Implement the minimal AppKit routing seam
 
 **Files:**
 - Modify: `flow-bar/Sources/VoiceBarUI/FloatingPanel.swift`
@@ -35,7 +35,7 @@
 5. Re-run the filtered tests and confirm zero failures.
 6. Run `git diff --check`.
 
-### Task 3: Verify release acceptance and publish the worker PR
+## Task 3: Verify release acceptance and publish the worker PR
 
 **Files:**
 - Modify: `/Users/etanheyman/Gits/orchestrator/collab/2026-07-17-voicelayer-notch-w1-w2.md`

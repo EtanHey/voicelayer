@@ -45,6 +45,7 @@ describe("verify-notch-event-handling.sh", () => {
     expect(source).toContain(': >"$context_menu_receipt"');
     expect(source).toContain('"type":"qa_context_menu_probe"');
     expect(source).toContain('[[ -s "$context_menu_receipt" ]]');
+    expect(source).toContain('grep -Fxq "window_event_gate=passed" "$context_menu_receipt"');
     expect(source).toContain('grep -Fxq "right_click_context_menu=passed" "$context_menu_receipt"');
     expect(source).toContain("BarViewSnapshotArtifactTests");
     expect(source).toContain("VOICEBAR_VISUAL_ARTIFACT_OUTPUT");

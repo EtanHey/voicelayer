@@ -965,6 +965,27 @@ final class AppLifecycleTests: XCTestCase {
         )
     }
 
+    func testIsolatedContextMenuProbeChecksEveryAppKitDeliveryGate() throws {
+        let source = try voiceBarAppSource()
+        let methodStart = try XCTUnwrap(
+            source.range(of: "private func runIsolatedContextMenuProbe")
+        )
+        let methodEnd = try XCTUnwrap(
+            source.range(
+                of: "private func snoozeForOneHour()",
+                range: methodStart.upperBound ..< source.endIndex
+            )
+        )
+        let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
+
+        XCTAssertTrue(method.contains("applyPanelMouseEventPassthrough("))
+        XCTAssertTrue(method.contains("panel.ignoresMouseEvents"))
+        XCTAssertTrue(method.contains("contentView.hitTest(renderedCore)"))
+        XCTAssertTrue(method.contains("contentView.hitTest(transparentMargin)"))
+        XCTAssertTrue(method.contains("panel.shouldHandleContextMenu(at: renderedCore)"))
+        XCTAssertTrue(method.contains("window_event_gate=passed"))
+    }
+
     func testFlatDisplayIdleKeepsAVisibleFallbackInsteadOfAnInvisibleClickTarget() throws {
         let source = try voiceBarAppSource()
 
