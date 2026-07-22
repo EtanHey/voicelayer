@@ -986,6 +986,29 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(method.contains("window_event_gate=passed"))
     }
 
+    func testIsolatedVerticalHitProbeUsesRealMouseMovementAndTopEdgeClicks() throws {
+        let source = try voiceBarAppSource()
+        let methodStart = try XCTUnwrap(
+            source.range(of: "private func runIsolatedVerticalHitProbe")
+        )
+        let methodEnd = try XCTUnwrap(
+            source.range(
+                of: "private func snoozeForOneHour()",
+                range: methodStart.upperBound ..< source.endIndex
+            )
+        )
+        let method = source[methodStart.lowerBound ..< methodEnd.lowerBound]
+
+        XCTAssertTrue(method.contains("hosting.mouseMoved(with:"))
+        XCTAssertTrue(method.contains("synchronizePanelMouseEventPassthrough("))
+        XCTAssertTrue(method.contains("isIsolatedCapture: false"))
+        XCTAssertTrue(method.contains("panel.ignoresMouseEvents"))
+        XCTAssertTrue(method.contains("panel.sendEvent(downEvent)"))
+        XCTAssertTrue(method.contains("panel.sendEvent(upEvent)"))
+        XCTAssertTrue(method.contains("surface_vertical_boundary=passed"))
+        XCTAssertTrue(method.contains("recording_control_top_clicks=3"))
+    }
+
     func testFlatDisplayIdleKeepsAVisibleFallbackInsteadOfAnInvisibleClickTarget() throws {
         let source = try voiceBarAppSource()
 

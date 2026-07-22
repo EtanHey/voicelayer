@@ -108,13 +108,15 @@ public final class PillHostingView<Content: View>: NSHostingView<Content> {
     }
 
     override public func mouseEntered(with event: NSEvent) {
-        handlePointerMovement(at: convert(event.locationInWindow, from: nil))
+        handlePointerMovement(at: event.locationInWindow)
     }
 
     override public func mouseMoved(with event: NSEvent) {
-        handlePointerMovement(at: convert(event.locationInWindow, from: nil))
+        handlePointerMovement(at: event.locationInWindow)
     }
 
+    /// Provider geometry is expressed in the panel's unflipped window space,
+    /// matching `NSEvent.locationInWindow` and `FloatingPillPanel` hit tests.
     public func handlePointerMovement(at point: NSPoint) {
         onPointerMoved?(point)
         updateHover(at: point)

@@ -49,7 +49,9 @@ recording_path="$runtime_dir/retained.wav"
 disable_path="$runtime_dir/disabled"
 render_scale_receipt="$runtime_dir/render-scale.json"
 context_menu_receipt="$receipt_dir/app-context-menu.txt"
+vertical_hit_receipt="$receipt_dir/app-vertical-hit.txt"
 : >"$context_menu_receipt"
+: >"$vertical_hit_receipt"
 defaults_suite="com.voicelayer.qa.notch-event.$$.${RANDOM}"
 app_log="$receipt_dir/voicebar.log"
 state_log="$receipt_dir/state-events.ndjson"
@@ -57,11 +59,23 @@ app_pid=''
 isolated_marker_path=''
 offscreen_origin=-20000
 
-cleanup() {
+terminate_app() {
   if [[ -n "$app_pid" ]] && kill -0 "$app_pid" 2>/dev/null; then
     kill "$app_pid" 2>/dev/null || true
+    for _ in {1..100}; do
+      ! kill -0 "$app_pid" 2>/dev/null && break
+      sleep 0.05
+    done
+    if kill -0 "$app_pid" 2>/dev/null; then
+      kill -KILL "$app_pid" 2>/dev/null || true
+    fi
     wait "$app_pid" 2>/dev/null || true
   fi
+  app_pid=''
+}
+
+cleanup() {
+  terminate_app
   defaults delete "$defaults_suite" >/dev/null 2>&1 || true
   if [[ -n "$isolated_marker_path" && -f "$isolated_marker_path" ]]; then
     rm -f "$isolated_marker_path"
@@ -85,6 +99,7 @@ env \
   QA_VOICE_DISABLE_FLAG_PATH="$disable_path" \
   QA_VOICEBAR_RENDER_SCALE_RECEIPT_PATH="$render_scale_receipt" \
   QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH="$context_menu_receipt" \
+  QA_VOICEBAR_VERTICAL_HIT_RECEIPT_PATH="$vertical_hit_receipt" \
   VOICEBAR_USER_DEFAULTS_SUITE="$defaults_suite" \
   DISABLE_VOICELAYER=1 \
   QA_VOICEBAR_CAPTURE_OFFSCREEN=1 \
@@ -130,8 +145,24 @@ for state_name in idle recording transcribing speaking; do
   sleep 0.15
 done
 
-printf '%s\n' '{"type":"state","state":"recording"}' | tee -a "$state_log" | nc -U "$socket_path"
+printf '%s\n' '{"type":"state","state":"recording","mode":"vad"}' | tee -a "$state_log" | nc -U "$socket_path"
 sleep 0.15
+printf '%s\n' '{"type":"qa_vertical_hit_probe"}' | nc -U "$socket_path"
+for _ in {1..100}; do
+  [[ -s "$vertical_hit_receipt" ]] && break
+  if ! kill -0 "$app_pid" 2>/dev/null; then
+    printf 'error: isolated VoiceBar exited during vertical-hit probe; see %s\n' "$app_log" >&2
+    exit 1
+  fi
+  sleep 0.05
+done
+if [[ ! -s "$vertical_hit_receipt" ]] ||
+   ! grep -Fxq "surface_vertical_boundary=passed" "$vertical_hit_receipt" ||
+   ! grep -Fxq "recording_control_top_clicks=3" "$vertical_hit_receipt"; then
+  printf 'error: supplied VoiceBar app did not pass its vertical hit-alignment gates; see %s\n' "$app_log" >&2
+  exit 1
+fi
+
 printf '%s\n' '{"type":"qa_context_menu_probe"}' | nc -U "$socket_path"
 for _ in {1..100}; do
   [[ -s "$context_menu_receipt" ]] && break
@@ -147,7 +178,6 @@ if [[ ! -s "$context_menu_receipt" ]] ||
   printf 'error: supplied VoiceBar app did not pass its window and context-menu gates; see %s\n' "$app_log" >&2
   exit 1
 fi
-
 swift test --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelAppKitMouseEventsAdmitTheRenderedRecordingSurface
 swift test --package-path "$repo_root/flow-bar" \
@@ -156,6 +186,8 @@ swift test --package-path "$repo_root/flow-bar" \
   --filter BarViewClickabilityTests/testPanelRightMouseDownOpensContextMenuOnRenderedRecordingWing
 swift test --package-path "$repo_root/flow-bar" \
   --filter AppLifecycleTests/testEveryNotchStateAdmitsRenderedPixelsButRejectsTransparentMargins
+swift test --package-path "$repo_root/flow-bar" \
+  --filter VoiceBarHoverHysteresisTests/testMouseMovedKeepsUnflippedWindowYForVisibleSurfaceAdmission
 env \
   VOICEBAR_REGENERATE_VISUAL_ARTIFACTS=1 \
   VOICEBAR_VISUAL_ARTIFACT_OUTPUT="$frame_dir" \
@@ -169,9 +201,7 @@ for frame_name in idle recording transcribing speaking; do
   fi
 done
 
-kill "$app_pid"
-wait "$app_pid"
-app_pid=''
+terminate_app
 for _ in {1..100}; do
   [[ ! -S "$socket_path" && ! -f "$isolated_marker_path" ]] && break
   sleep 0.05
@@ -181,7 +211,10 @@ if [[ -S "$socket_path" || -f "$isolated_marker_path" ]]; then
   exit 1
 fi
 
-printf 'offscreen_origin=%s\n' "$offscreen_origin" >"$receipt_dir/acceptance.txt"
-printf 'states=idle,recording,transcribing,speaking\n' >>"$receipt_dir/acceptance.txt"
-cat "$context_menu_receipt" >>"$receipt_dir/acceptance.txt"
+{
+  printf 'offscreen_origin=%s\n' "$offscreen_origin"
+  printf 'states=idle,recording,transcribing,speaking\n'
+  cat "$context_menu_receipt"
+  cat "$vertical_hit_receipt"
+} >"$receipt_dir/acceptance.txt"
 printf 'EVENT_HANDLING_OFFSCREEN_ACCEPTANCE=%s\n' "$receipt_dir"

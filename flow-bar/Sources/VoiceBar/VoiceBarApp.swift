@@ -454,11 +454,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.onCaptureFailure = { [weak self] failureType in
             self?.daemonController.handleCaptureFailure(type: failureType)
         }
-        if let receiptPath = ProcessInfo.processInfo.environment[
+        let contextMenuReceiptPath = ProcessInfo.processInfo.environment[
             "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH"
-        ], !receiptPath.isEmpty {
+        ]
+        let verticalHitReceiptPath = ProcessInfo.processInfo.environment[
+            "QA_VOICEBAR_VERTICAL_HIT_RECEIPT_PATH"
+        ]
+        if contextMenuReceiptPath?.isEmpty == false {
             server.onQAContextMenuProbe = { [weak self] in
-                self?.runIsolatedContextMenuProbe(receiptPath: receiptPath)
+                guard let self, let contextMenuReceiptPath else { return }
+                runIsolatedContextMenuProbe(receiptPath: contextMenuReceiptPath)
+            }
+        }
+        if verticalHitReceiptPath?.isEmpty == false {
+            server.onQAVerticalHitProbe = { [weak self] in
+                guard let self, let verticalHitReceiptPath else { return }
+                runIsolatedVerticalHitProbe(receiptPath: verticalHitReceiptPath)
             }
         }
 
@@ -809,6 +820,178 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         panel.sendEvent(event)
+    }
+
+    private func runIsolatedVerticalHitProbe(receiptPath: String) {
+        guard VoiceBarIsolatedCapturePlacement.isEnabled(),
+              !VoiceLayerPaths.enforcesSingletonInstance,
+              let panel,
+              let hosting = panel.contentView as? PillHostingView<BarView>
+        else {
+            NSLog("[VoiceBar] Refusing vertical-hit probe outside isolated offscreen QA")
+            return
+        }
+
+        let originalPointerHandler = hosting.onPointerMoved
+        let originalCommandWriter = voiceState.sendCommand
+        var commands: [String] = []
+        hosting.onPointerMoved = { [weak self] point in
+            self?.synchronizePanelMouseEventPassthrough(
+                localPoint: point,
+                isIsolatedCapture: false
+            )
+        }
+        voiceState.sendCommand = { command in
+            if let name = command["cmd"] as? String {
+                commands.append(name)
+            }
+        }
+        defer {
+            hosting.onPointerMoved = originalPointerHandler
+            voiceState.sendCommand = originalCommandWriter
+            panel.ignoresMouseEvents = false
+        }
+
+        let expectedClicks: [(rectIndex: Int, command: String)] = [
+            (2, "stop"),
+            (1, "cancel"),
+            (0, "set_recording_hold"),
+        ]
+        for expected in expectedClicks {
+            voiceState.mode = .recording
+            voiceState.recordingMode = "vad"
+            voiceState.isConnected = true
+            voiceState.isCollapsed = false
+            refreshNotchPresentationAndPanelLayout(animated: false)
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+
+            let layout = currentPanelLayout()
+            let region = VoiceBarNotchHitRegion(
+                geometry: layout.presentation.geometry,
+                configuration: Self.notchInteractionConfiguration(
+                    for: voiceState,
+                    visualState: layout.presentation.visualState
+                )
+            )
+            guard region.rects.indices.contains(expected.rectIndex) else {
+                NSLog("[VoiceBar] Vertical-hit probe could not resolve recording control %d", expected.rectIndex)
+                return
+            }
+            let controlRect = region.rects[expected.rectIndex].offsetBy(
+                dx: layout.visibleContentRect.minX,
+                dy: layout.visibleContentRect.minY
+            )
+            let topGlyphPoint = NSPoint(x: controlRect.midX, y: controlRect.maxY - 1)
+            guard let movedEvent = NSEvent.mouseEvent(
+                with: .mouseMoved,
+                location: topGlyphPoint,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: expected.rectIndex + 1,
+                clickCount: 0,
+                pressure: 0
+            ) else {
+                NSLog("[VoiceBar] Vertical-hit probe could not synthesize mouseMoved")
+                return
+            }
+            hosting.mouseMoved(with: movedEvent)
+            guard !panel.ignoresMouseEvents,
+                  layout.containsInteractiveContent(topGlyphPoint),
+                  hosting.hitTest(topGlyphPoint) != nil
+            else {
+                NSLog(
+                    "[VoiceBar] Vertical-hit probe rejected visible control top at %@",
+                    NSStringFromPoint(topGlyphPoint)
+                )
+                return
+            }
+
+            let commandCount = commands.count
+            guard let downEvent = NSEvent.mouseEvent(
+                with: .leftMouseDown,
+                location: topGlyphPoint,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: (expected.rectIndex * 2) + 10,
+                clickCount: 1,
+                pressure: 1
+            ), let upEvent = NSEvent.mouseEvent(
+                with: .leftMouseUp,
+                location: topGlyphPoint,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime + 0.01,
+                windowNumber: panel.windowNumber,
+                context: nil,
+                eventNumber: (expected.rectIndex * 2) + 11,
+                clickCount: 1,
+                pressure: 0
+            ) else {
+                NSLog("[VoiceBar] Vertical-hit probe could not synthesize control click")
+                return
+            }
+            panel.sendEvent(downEvent)
+            panel.sendEvent(upEvent)
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            guard commands.count == commandCount + 1,
+                  commands.last == expected.command
+            else {
+                let details = "expected=\(expected.command) commands=\(commands.joined(separator: ",")) "
+                    + "mode=\(voiceState.mode) recordingMode=\(voiceState.recordingMode ?? "nil") "
+                    + "hold=\(voiceState.isRecordingHoldEngaged)"
+                NSLog("[VoiceBar] Vertical-hit probe did not route: %@", details)
+                return
+            }
+        }
+
+        voiceState.mode = .recording
+        voiceState.recordingMode = "vad"
+        voiceState.isConnected = true
+        voiceState.isCollapsed = false
+        refreshNotchPresentationAndPanelLayout(animated: false)
+        let finalLayout = currentPanelLayout()
+        let bottomShadowPoint = NSPoint(
+            x: finalLayout.interactiveHitRect.midX,
+            y: finalLayout.visibleContentRect.minY - 1
+        )
+        guard let movedEvent = NSEvent.mouseEvent(
+            with: .mouseMoved,
+            location: bottomShadowPoint,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 20,
+            clickCount: 0,
+            pressure: 0
+        ) else {
+            NSLog("[VoiceBar] Vertical-hit probe could not synthesize boundary mouseMoved")
+            return
+        }
+        hosting.mouseMoved(with: movedEvent)
+        guard panel.ignoresMouseEvents,
+              !finalLayout.containsVisibleSurface(bottomShadowPoint)
+        else {
+            NSLog("[VoiceBar] Vertical-hit probe captured the bottom-only shadow lane")
+            return
+        }
+
+        do {
+            try "surface_vertical_boundary=passed\nrecording_control_top_clicks=3\n".write(
+                toFile: receiptPath,
+                atomically: true,
+                encoding: .utf8
+            )
+        } catch {
+            NSLog(
+                "[VoiceBar] Could not write vertical-hit receipt at %@: %@",
+                receiptPath,
+                String(describing: error)
+            )
+        }
     }
 
     private func snoozeForOneHour() {
@@ -1682,7 +1865,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func synchronizePanelMouseEventPassthrough(
-        localPoint: NSPoint? = nil
+        localPoint: NSPoint? = nil,
+        isIsolatedCapture: Bool? = nil
     ) {
         guard let panel else { return }
         let layout = currentPanelLayout()
@@ -1691,7 +1875,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             panel,
             layout: layout,
             pointer: point,
-            isIsolatedCapture: VoiceBarIsolatedCapturePlacement.isEnabled()
+            isIsolatedCapture: isIsolatedCapture
+                ?? VoiceBarIsolatedCapturePlacement.isEnabled()
         )
     }
 

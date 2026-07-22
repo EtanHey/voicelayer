@@ -3,6 +3,96 @@ import SwiftUI
 import XCTest
 
 final class VoiceBarHoverHysteresisTests: XCTestCase {
+    private var windows: [NSWindow] = []
+
+    @MainActor
+    func testMouseMovedKeepsUnflippedWindowYForVisibleSurfaceAdmission() throws {
+        let presentation = VoiceBarNotchPresentation.resolve(
+            hasTeleprompter: false,
+            isRecording: true,
+            hasCompactStatus: false,
+            isHovered: false,
+            isKeyboardFocused: false
+        )
+        let interactionConfiguration = VoiceBarNotchInteractionConfiguration(
+            leadingControlCount: 3
+        )
+        let layout = VoiceBarPanelLayout.make(
+            presentation: presentation,
+            interactionConfiguration: interactionConfiguration
+        )
+        let host = PillHostingView(rootView: EmptyView())
+        host.frame = NSRect(origin: .zero, size: layout.panelSize)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        window.orderBack(nil)
+        windows.append(window)
+
+        var admitted: [Bool] = []
+        var providerPoints: [NSPoint] = []
+        var hoverExpansionPoints: [NSPoint] = []
+        var hoverRetentionPoints: [NSPoint] = []
+        host.onPointerMoved = { point in
+            providerPoints.append(point)
+            admitted.append(layout.containsVisibleSurface(point))
+        }
+        host.hoverExpansionHitTestProvider = { point in
+            hoverExpansionPoints.append(point)
+            return false
+        }
+        host.hoverRetentionHitTestProvider = { point in
+            hoverRetentionPoints.append(point)
+            return false
+        }
+
+        let holdRect = try XCTUnwrap(
+            VoiceBarNotchHitRegion(
+                geometry: presentation.geometry,
+                configuration: interactionConfiguration
+            ).rects.first
+        ).offsetBy(
+            dx: layout.visibleContentRect.minX,
+            dy: layout.visibleContentRect.minY
+        )
+        let visibleControlTop = NSPoint(x: holdRect.midX, y: holdRect.maxY - 1)
+        let bottomShadow = NSPoint(
+            x: visibleControlTop.x,
+            y: layout.visibleContentRect.minY - 1
+        )
+        for point in [visibleControlTop, bottomShadow] {
+            let event = try XCTUnwrap(
+                NSEvent.mouseEvent(
+                    with: .mouseMoved,
+                    location: point,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    eventNumber: 1,
+                    clickCount: 0,
+                    pressure: 0
+                )
+            )
+            host.mouseMoved(with: event)
+        }
+
+        XCTAssertTrue(host.isFlipped)
+        XCTAssertTrue(layout.containsInteractiveContent(visibleControlTop))
+        XCTAssertEqual(providerPoints, [visibleControlTop, bottomShadow])
+        XCTAssertEqual(hoverExpansionPoints, [visibleControlTop, bottomShadow])
+        XCTAssertEqual(hoverRetentionPoints, [visibleControlTop, bottomShadow])
+        XCTAssertEqual(
+            admitted,
+            [true, false],
+            "the visible top must capture and the bottom-only shadow lane must pass through"
+        )
+    }
+
     @MainActor
     func testSharedPointerPathCarriesHoverFromActiveThroughRetentionToOutside() async {
         let host = PillHostingView(rootView: EmptyView())
