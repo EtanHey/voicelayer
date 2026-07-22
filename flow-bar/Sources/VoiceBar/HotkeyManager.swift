@@ -459,14 +459,23 @@ func hotkeyAction(
             NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
             return .ignore
         }
-        guard !gestureIsActive else {
-            NSLog("[HotkeyManager] Consuming Shift+F5 keyDown during an active gesture for keycode %lld", keycode)
-            return .consume
-        }
+        // Re-paste stays available WHILE RECORDING. It pastes the last COMPLETED
+        // transcript (`latestReusableTranscript`), never the in-flight one, so it
+        // cannot collide with the recording's own paste. Clipboard restore is
+        // already guarded by `expectedChangeCount` — a restore whose pasteboard
+        // changed underneath it is skipped — so #344's atomic-restore guarantee
+        // holds without gating the hotkey.
+        //
+        // AIDEV-NOTE: 374fa29 (#344) added a `guard !gestureIsActive` here that
+        // consumed this chord mid-gesture. That silently removed a capability
+        // Etan uses daily and shipped broken from v2.1.15 through v2.2.0. Do not
+        // reintroduce it — if a paste race ever appears, fix it in the paste path,
+        // not by swallowing the user's hotkey.
         NSLog(
-            "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@)",
+            "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@, gestureActive=%@)",
             keycode,
-            describeFlags(flags)
+            describeFlags(flags),
+            gestureIsActive ? "true" : "false"
         )
         return .pasteLastTranscript
     }

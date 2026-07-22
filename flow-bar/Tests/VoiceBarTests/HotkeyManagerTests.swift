@@ -198,6 +198,40 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
+    /// Regression: 374fa29 (#344) consumed Shift+F5 while a recording gesture was
+    /// active, silently removing re-paste-while-recording from v2.1.15 through
+    /// v2.2.0. Re-paste targets the last COMPLETED transcript, so it never races
+    /// the in-flight recording's own paste.
+    func testShiftF5TriggersPasteLastTranscriptWhileGestureIsActive() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: true,
+                gestureIsActive: true
+            ),
+            .pasteLastTranscript
+        )
+    }
+
+    func testShiftF5TriggersPasteLastTranscriptWhileGestureIsActiveInNonModifierMode() {
+        XCTAssertEqual(
+            hotkeyAction(
+                type: .keyDown,
+                keycode: 96,
+                flags: .maskShift,
+                autorepeat: 0,
+                targetKeycodes: HotkeyManager.defaultTargetKeycodes,
+                useModifierMode: false,
+                gestureIsActive: true
+            ),
+            .pasteLastTranscript
+        )
+    }
+
     func testShiftF5TriggersPasteLastTranscriptInNonModifierMode() {
         XCTAssertEqual(
             hotkeyAction(
