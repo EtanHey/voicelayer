@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.1] - 2026-07-22
+
+### Fixed
+- **Virtual notch no longer paints a permanent black block on external displays.**
+  On a screen with no hardware notch, the collapsed idle state now draws **zero**
+  pixels — matching the built-in-display contract, where the physical camera
+  housing is the hover target and VoiceBar renders nothing. Previously an opaque
+  185×30 core was drawn in ~99.8% of frames regardless of pointer position; with
+  the menu bar auto-hidden or an app fullscreen (measured at 72.7% of a real
+  session) that read as a black rectangle floating over the app's own title bar.
+  A clear hover target plus a 16pt catch band keeps it summonable, hover exit now
+  collapses in 300ms instead of 2.5s, and expanded states track the measured
+  menu-bar height instead of a fixed 32pt (#377).
+
+### Removed
+- **The three notch morph prototypes** (`p1-matched`, `p2-native-glass`,
+  `p3-spring-delight`), their selection menu, the `VOICEBAR_NOTCH_MORPH_VARIANT`
+  override, and the persisted choice. They shipped unevaluated and served no one.
+  The single shipped morph behavior is unchanged — this is a pure consolidation,
+  net −759 lines (#379).
+
 ## [2.2.0] - 2026-07-22
 
 ### Removed — BREAKING
