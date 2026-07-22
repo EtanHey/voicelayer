@@ -55,6 +55,19 @@ final class SocketServerTests: XCTestCase {
         wait(for: [expectation], timeout: 0.2)
     }
 
+    func testQAContextMenuProbeRoutesOnlyWhenExplicitlyInstalled() {
+        let expectation = expectation(description: "QA context-menu probe routed")
+        let server = SocketServer(state: VoiceState())
+        server.onQAContextMenuProbe = {
+            XCTAssertTrue(Thread.isMainThread)
+            expectation.fulfill()
+        }
+
+        server.parseLine(#"{"type":"qa_context_menu_probe"}"#)
+
+        wait(for: [expectation], timeout: 1)
+    }
+
     func testStateEventsStillRouteToVoiceState() {
         let state = VoiceState()
         let expectation = expectation(description: "state event routed")

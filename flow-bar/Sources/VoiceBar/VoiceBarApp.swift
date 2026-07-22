@@ -454,6 +454,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         server.onCaptureFailure = { [weak self] failureType in
             self?.daemonController.handleCaptureFailure(type: failureType)
         }
+        if let receiptPath = ProcessInfo.processInfo.environment[
+            "QA_VOICEBAR_CONTEXT_MENU_RECEIPT_PATH"
+        ], !receiptPath.isEmpty {
+            server.onQAContextMenuProbe = { [weak self] in
+                self?.runIsolatedContextMenuProbe(receiptPath: receiptPath)
+            }
+        }
 
         // Wire the send-command closure so BarView buttons -> socket -> MCP clients
         voiceState.sendCommand = { [weak server] cmd in
@@ -703,6 +710,78 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "variant": variant.rawValue,
             ])
         }
+    }
+
+    private func runIsolatedContextMenuProbe(receiptPath: String) {
+        guard VoiceBarIsolatedCapturePlacement.isEnabled(),
+              !VoiceLayerPaths.enforcesSingletonInstance,
+              let panel,
+              panel.contentView != nil
+        else {
+            NSLog("[VoiceBar] Refusing context-menu probe outside isolated offscreen QA")
+            return
+        }
+
+        let layout = currentPanelLayout()
+        let renderedCore = NSPoint(
+            x: layout.visibleContentRect.minX + layout.presentation.geometry.coreMidX,
+            y: layout.visibleContentRect.minY + layout.presentation.geometry.lowerSurfaceHeight
+                + (layout.presentation.geometry.topHeight / 2)
+        )
+        guard layout.containsVisibleSurface(renderedCore),
+              !layout.containsInteractiveContent(renderedCore)
+        else {
+            NSLog("[VoiceBar] Context-menu probe could not resolve a rendered glass point")
+            return
+        }
+
+        let menu = NSMenu(title: "VoiceBar context-menu acceptance")
+        menu.addItem(withTitle: "Context menu opened", action: nil, keyEquivalent: "")
+        let originalProvider = panel.contextMenuProvider
+        panel.contextMenuProvider = { menu }
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSMenu.didBeginTrackingNotification,
+            object: menu,
+            queue: .main
+        ) { _ in
+            do {
+                try "right_click_context_menu=passed\n".write(
+                    toFile: receiptPath,
+                    atomically: true,
+                    encoding: .utf8
+                )
+            } catch {
+                NSLog(
+                    "[VoiceBar] Could not write context-menu receipt at %@: %@",
+                    receiptPath,
+                    String(describing: error)
+                )
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                menu.cancelTracking()
+            }
+        }
+        defer {
+            NotificationCenter.default.removeObserver(observer)
+            panel.contextMenuProvider = originalProvider
+        }
+
+        guard let event = NSEvent.mouseEvent(
+            with: .rightMouseDown,
+            location: renderedCore,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: panel.windowNumber,
+            context: nil,
+            eventNumber: 1,
+            clickCount: 1,
+            pressure: 1
+        ) else {
+            NSLog("[VoiceBar] Context-menu probe could not synthesize rightMouseDown")
+            return
+        }
+
+        panel.sendEvent(event)
     }
 
     private func snoozeForOneHour() {
