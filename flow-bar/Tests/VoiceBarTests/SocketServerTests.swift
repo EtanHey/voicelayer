@@ -68,6 +68,24 @@ final class SocketServerTests: XCTestCase {
         wait(for: [expectation], timeout: 1)
     }
 
+    func testQAVerticalHitProbeRoutesIndependentlyFromTheContextMenuProbe() {
+        let verticalExpectation = expectation(description: "QA vertical-hit probe routed")
+        let contextExpectation = expectation(description: "QA context-menu probe not routed")
+        contextExpectation.isInverted = true
+        let server = SocketServer(state: VoiceState())
+        server.onQAVerticalHitProbe = {
+            XCTAssertTrue(Thread.isMainThread)
+            verticalExpectation.fulfill()
+        }
+        server.onQAContextMenuProbe = {
+            contextExpectation.fulfill()
+        }
+
+        server.parseLine(#"{"type":"qa_vertical_hit_probe"}"#)
+
+        wait(for: [verticalExpectation, contextExpectation], timeout: 0.2)
+    }
+
     func testStateEventsStillRouteToVoiceState() {
         let state = VoiceState()
         let expectation = expectation(description: "state event routed")

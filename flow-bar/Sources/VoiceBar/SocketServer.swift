@@ -57,6 +57,7 @@ final class SocketServer {
     var onControlCommand: ((VoiceBarLocalControlCommand) -> Void)?
     var onCaptureFailure: ((String) -> Void)?
     var onQAContextMenuProbe: (() -> Void)?
+    var onQAVerticalHitProbe: (() -> Void)?
 
     /// Listening socket file descriptor.
     private var listenFD: Int32 = -1
@@ -257,6 +258,15 @@ final class SocketServer {
             if onQAContextMenuProbe != nil {
                 DispatchQueue.main.async { [weak self] in
                     self?.onQAContextMenuProbe?()
+                }
+            }
+            return
+        }
+
+        if dict["type"] as? String == "qa_vertical_hit_probe" {
+            if onQAVerticalHitProbe != nil {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onQAVerticalHitProbe?()
                 }
             }
             return

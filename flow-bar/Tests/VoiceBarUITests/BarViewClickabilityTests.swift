@@ -549,9 +549,9 @@ final class BarViewClickabilityTests: XCTestCase {
 
         XCTAssertTrue(panel.styleMask.contains(.nonactivatingPanel))
         XCTAssertFalse(panel.canBecomeMain)
-        click(host, at: controlRects[2].center)
-        click(host, at: controlRects[1].center)
-        click(host, at: controlRects[0].center)
+        click(host, at: topEdgePoint(of: controlRects[2]))
+        click(host, at: topEdgePoint(of: controlRects[1]))
+        click(host, at: topEdgePoint(of: controlRects[0]))
 
         XCTAssertEqual(router.stopCount, 1)
         XCTAssertEqual(router.cancelCount, 1)
@@ -600,7 +600,12 @@ final class BarViewClickabilityTests: XCTestCase {
         )
 
         XCTAssertFalse(controlRects.isEmpty)
-        XCTAssertNotNil(host.hitTest(controlRects[0].center))
+        for rect in controlRects {
+            let point = topEdgePoint(of: rect)
+            XCTAssertTrue(layout.containsInteractiveContent(point))
+            XCTAssertTrue(layout.containsVisibleSurface(point))
+            XCTAssertNotNil(host.hitTest(point))
+        }
         XCTAssertTrue(layout.containsVisibleSurface(bodyPoint))
         XCTAssertNotNil(host.hitTest(bodyPoint))
         XCTAssertFalse(layout.containsVisibleSurface(formerDictionaryLane))
@@ -674,6 +679,10 @@ final class BarViewClickabilityTests: XCTestCase {
         windows.append(window)
         host.layoutSubtreeIfNeeded()
         return host
+    }
+
+    private func topEdgePoint(of rect: CGRect) -> NSPoint {
+        NSPoint(x: rect.midX, y: rect.maxY - 1)
     }
 
     private func makeInteractivePanelHost(
