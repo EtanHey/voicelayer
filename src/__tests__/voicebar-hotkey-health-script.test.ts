@@ -102,6 +102,25 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     );
   });
 
+  test("matches a canonical running process when its app path contains spaces", () => {
+    const result = callFunction(
+      'canonical_process_rows "$TEST_PS" "$TEST_EXPECTED"',
+      {
+        TEST_EXPECTED:
+          "/Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
+        TEST_PS: [
+          "  123 /Applications/Other.app/Contents/MacOS/Other",
+          "  456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
+        ].join("\n"),
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(
+      "456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
+    );
+  });
+
   test("classifies event-tap startup and permission failures", () => {
     const ready = callFunction(
       'event_tap_log_verdict "$TEST_LOG"',

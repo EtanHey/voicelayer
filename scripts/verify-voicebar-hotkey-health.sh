@@ -67,6 +67,24 @@ launchd_loaded_program() {
     printf '%s\n' "$program"
 }
 
+canonical_process_rows() {
+    local ps_output="$1"
+    local expected="$2"
+
+    printf '%s\n' "$ps_output" | awk -v expected="$expected" '
+        {
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            pid = line
+            sub(/[[:space:]].*$/, "", pid)
+            sub(/^[^[:space:]]+[[:space:]]+/, "", line)
+            if (line == expected) {
+                print pid " " line
+            }
+        }
+    '
+}
+
 event_tap_log_verdict() {
     local log_output="$1"
     local verdict="unknown"
@@ -202,10 +220,11 @@ if secure_pid="$(secure_input_owner "$ioreg_output")"; then
 fi
 
 if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
+    ps_output="$(ps -axo pid=,comm=)"
     process_rows="$(
-        ps -axo pid=,comm= \
-            | awk -v expected="$CANONICAL_APP/Contents/MacOS/VoiceBar" \
-                '$2 == expected { print }'
+        canonical_process_rows \
+            "$ps_output" \
+            "$CANONICAL_APP/Contents/MacOS/VoiceBar"
     )"
     process_count="$(printf '%s\n' "$process_rows" | awk 'NF { count++ } END { print count + 0 }')"
     [[ "$process_count" -eq 1 ]] || fail "expected one running VoiceBar process, found $process_count"
