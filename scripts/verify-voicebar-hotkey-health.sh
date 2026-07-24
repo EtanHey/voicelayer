@@ -48,7 +48,7 @@ secure_input_owner() {
     local owner
     owner="$(
         printf '%s\n' "$ioreg_output" \
-            | sed -n 's/.*kCGSSessionSecureInputPID"=\([0-9][0-9]*\).*/\1/p' \
+            | sed -n 's/.*kCGSSessionSecureInputPID"[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
             | head -n 1
     )"
     [[ -n "$owner" ]] || return 1

@@ -70,7 +70,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
       'secure_input_owner "$TEST_IOREG"',
       {
         TEST_IOREG:
-          '  | "IOConsoleUsers" = ({"kCGSSessionSecureInputPID"=59247})',
+          '  | "IOConsoleUsers" = ({"kCGSSessionSecureInputPID" = 59247})',
       },
     );
     const disabled = callFunction(
