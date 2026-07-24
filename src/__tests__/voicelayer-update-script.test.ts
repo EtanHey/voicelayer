@@ -81,7 +81,7 @@ describe("voicelayer-update.sh", () => {
     );
   });
 
-  test("brew-cask-managed VoiceBar uses cask reinstall instead of a local rebuild", () => {
+  test("brew-cask-managed VoiceBar upgrades in place instead of forcing a reinstall", () => {
     const result = run(["bash", updateScript, "--dry-run"], {
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
     });
@@ -89,11 +89,12 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      "VOICEBAR APP UPDATE: brew reinstall --cask etanhey/layers/voicebar",
+      "VOICEBAR APP UPDATE: brew upgrade --cask etanhey/layers/voicebar",
     );
     expect(stdout).toContain(
-      "+ brew reinstall --cask etanhey/layers/voicebar",
+      "+ brew upgrade --cask etanhey/layers/voicebar",
     );
+    expect(stdout).not.toContain("brew reinstall --cask");
     expect(stdout).not.toContain("bash flow-bar/build-app.sh");
   });
 
@@ -106,10 +107,61 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      "+ brew reinstall --cask etanhey/layers/voicebar",
+      "+ brew upgrade --cask etanhey/layers/voicebar",
     );
     expect(stdout).not.toContain("+ env VOICEBAR_CODESIGN_IDENTITY=");
     expect(stdout).not.toContain(`bash ${repoRoot}/flow-bar/build-app.sh`);
+  });
+
+  test("standard updates restore and verify the complete canonical hotkey path after the app update", () => {
+    const result = run(["bash", updateScript], {
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+    });
+    const stdout = text(result.stdout);
+    const appUpdate = stdout.indexOf(
+      `bash ${repoRoot}/flow-bar/build-app.sh`,
+    );
+    const dedupe = stdout.indexOf(
+      `bash ${repoRoot}/scripts/voicelayer-dedupe-voicebar.sh --apply --no-relaunch`,
+    );
+    const remap = stdout.indexOf(
+      `bash ${repoRoot}/scripts/install-voicebar-f5-hidutil.sh`,
+    );
+    const autostart = stdout.indexOf(
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh`,
+    );
+    const kickstart = stdout.indexOf(
+      "launchctl kickstart -k gui/",
+    );
+    const verify = stdout.indexOf(
+      `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh`,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(appUpdate).toBeGreaterThanOrEqual(0);
+    expect(dedupe).toBeGreaterThan(appUpdate);
+    expect(remap).toBeGreaterThan(dedupe);
+    expect(autostart).toBeGreaterThan(remap);
+    expect(kickstart).toBeGreaterThan(autostart);
+    expect(verify).toBeGreaterThan(kickstart);
+    expect(stdout).not.toContain("hotkey postflight skipped");
+  });
+
+  test("explicit no-relaunch updates still run static hotkey checks without restarting VoiceBar", () => {
+    const result = run(
+      ["bash", updateScript, "--no-stop", "--no-relaunch"],
+      { VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1" },
+    );
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/voicelayer-dedupe-voicebar.sh --apply --no-stop --no-relaunch`,
+    );
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh --allow-stopped`,
+    );
+    expect(stdout).not.toContain("launchctl kickstart -k gui/");
   });
 
   test("non-dry-run updates can skip personal data sync", () => {
@@ -176,6 +228,11 @@ describe("voicelayer-update.sh", () => {
     expect(dedupeScript).toContain("pass --apply");
     expect(dedupeScript).toContain("BACKUP_DIR=");
     expect(dedupeScript).not.toContain('rm -rf "$b"');
+    expect(dedupeScript).toContain("install-voicebar-autostart.sh");
+    expect(dedupeScript).not.toContain('bash "$SCRIPT_DIR/../launchd/install.sh"');
+    expect(dedupeScript).toContain(
+      'launchctl kickstart -k "gui/$(id -u)/$LABEL"',
+    );
   });
 
   test("global Bun install path uses the actual global update command", () => {

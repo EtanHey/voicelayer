@@ -29,17 +29,24 @@ HOME_DIR="${HOME:?HOME is required}"
 BACKUP_DIR="$HOME_DIR/.voicelayer/voicebar-dedupe-backup"
 
 APPLY=0
+STOP_RUNNING=1
+RELAUNCH=1
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
     --dry-run) APPLY=0 ;;
+    --no-stop) STOP_RUNNING=0 ;;
+    --no-relaunch) RELAUNCH=0 ;;
     -h|--help)
       cat <<EOF
-Usage: voicelayer-dedupe-voicebar.sh [--dry-run|--apply]
+Usage: voicelayer-dedupe-voicebar.sh [--dry-run|--apply] [--no-stop] [--no-relaunch]
 
   --dry-run   (default) inventory only; print what WOULD change, change nothing.
   --apply     perform the cleanup. Stray bundles are moved to:
               $BACKUP_DIR/<timestamp>/  (not deleted).
+  --no-stop   leave running VoiceBar processes alone while repairing disk state.
+  --no-relaunch
+              defer relaunch so a caller can finish postflight repairs first.
 
 Keeps exactly one canonical Developer-ID (Team $REQUIRED_TEAM_ID) VoiceBar at
 $CANONICAL_APP, plus one $LABEL LaunchAgent.
@@ -149,8 +156,12 @@ DEST_BACKUP="$BACKUP_DIR/$STAMP"
 
 # 6a. Quit every running VoiceBar instance (graceful, then force)
 log "-- quit running VoiceBar instances"
-run osascript -e 'tell application "VoiceBar" to quit' || true
-run pkill -x VoiceBar || true
+if [[ "$STOP_RUNNING" -eq 1 ]]; then
+  run osascript -e 'tell application "VoiceBar" to quit' || true
+  run pkill -x VoiceBar || true
+else
+  log "  skip: --no-stop was provided"
+fi
 
 # 6b. Bootout + back up stray LaunchAgents that don't point at the canonical app
 log "-- prune stray LaunchAgents (keep only $LABEL -> $CANONICAL_APP)"
@@ -190,11 +201,19 @@ done
 
 # 6e. Reinstall the single canonical LaunchAgent (idempotent installer)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-if [[ -f "$SCRIPT_DIR/../launchd/install.sh" ]]; then
-  log "-- (re)install canonical LaunchAgent via launchd/install.sh"
-  run bash "$SCRIPT_DIR/../launchd/install.sh" || true
+AUTOSTART_INSTALLER="$SCRIPT_DIR/install-voicebar-autostart.sh"
+if [[ -f "$AUTOSTART_INSTALLER" ]]; then
+  log "-- (re)install canonical LaunchAgent via install-voicebar-autostart.sh"
+  run bash "$AUTOSTART_INSTALLER"
 else
-  log "-- launchd/install.sh not found next to script; skipping agent reinstall"
+  log "-- install-voicebar-autostart.sh not found next to script; skipping agent reinstall"
+fi
+
+# 6f. A clean app quit does not trigger this LaunchAgent's crash-only KeepAlive,
+# so standalone doctor repairs must explicitly relaunch the canonical app.
+if [[ "$STOP_RUNNING" -eq 1 && "$RELAUNCH" -eq 1 ]]; then
+  log "-- relaunch canonical VoiceBar"
+  run launchctl kickstart -k "gui/$(id -u)/$LABEL"
 fi
 
 sect "7. Result"

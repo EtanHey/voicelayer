@@ -755,6 +755,17 @@ create_release_zip() {
     fi
 }
 
+clear_app_bundle_for_rebuild() {
+    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+        # Preserve the canonical bundle root so updater churn cannot replace the
+        # path with a different directory identity. Contents are recreated and
+        # the finished bundle is signed below.
+        find "$APP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    else
+        rm -rf -- "$APP_DIR"
+    fi
+}
+
 if [[ "${VOICEBAR_BUILD_APP_SOURCE_ONLY:-0}" = "1" ]]; then
     # shellcheck disable=SC2317 # The exit path is used only when executed, not sourced.
     return 0 2>/dev/null || exit 0
@@ -790,7 +801,7 @@ if [ -d "$APP_DIR" ]; then
         backup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.backup-$(date +%Y%m%d-%H%M%S).app.zip"
         echo "[build-app] Archiving old bundle to $backup_path..."
         ditto -c -k --keepParent "$APP_DIR" "$backup_path"
-        rm -rf "$APP_DIR"
+        clear_app_bundle_for_rebuild
         # Keep only the most recent backup; prune older ones.
         find "$VOICEBAR_BACKUP_DIR" -maxdepth 1 -name 'VoiceBar.backup-*.app.zip' -type f \
             | sort -r | sed -n '2,$p' | while IFS= read -r old_backup; do
@@ -798,7 +809,7 @@ if [ -d "$APP_DIR" ]; then
             done
     else
         echo "[build-app] Removing old bundle..."
-        rm -rf "$APP_DIR"
+        clear_app_bundle_for_rebuild
     fi
 fi
 

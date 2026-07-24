@@ -82,6 +82,14 @@ describe("build-app.sh bundles runtime assets", () => {
 });
 
 describe("build-app.sh Developer ID release contract", () => {
+  test("preserves the canonical bundle directory while replacing its contents in place", () => {
+    expect(buildScript).toContain("clear_app_bundle_for_rebuild");
+    expect(buildScript).toContain(
+      'find "$APP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +',
+    );
+    expect(buildScript).not.toContain('rm -rf "$APP_DIR"');
+  });
+
   test("uses the Developer ID Application identity with hardened runtime and a real timestamp", () => {
     expect(buildScript).toContain(
       "Developer ID Application: Etan Heyman (PPN23G925Y)",

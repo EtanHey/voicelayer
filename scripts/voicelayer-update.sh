@@ -22,6 +22,8 @@ PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
 VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
 BUILD_APP_ARGS=()
+NO_STOP=0
+NO_RELAUNCH=0
 
 usage() {
     cat <<'EOF'
@@ -135,10 +137,12 @@ parse_args() {
                 shift 2
                 ;;
             --no-stop)
+                NO_STOP=1
                 BUILD_APP_ARGS+=("--no-stop")
                 shift
                 ;;
             --no-relaunch)
+                NO_RELAUNCH=1
                 BUILD_APP_ARGS+=("--no-relaunch")
                 shift
                 ;;
@@ -214,7 +218,7 @@ voicebar_cask_installed() {
 
 voicebar_app_update_mode() {
     if voicebar_cask_installed; then
-        printf 'cask-reinstall\n'
+        printf 'cask-upgrade\n'
         return
     fi
 
@@ -230,8 +234,8 @@ voicebar_app_update_mode() {
 
 voicebar_app_update_label() {
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall)
-            printf 'brew reinstall --cask %s\n' "$VOICEBAR_CASK_TOKEN"
+        cask-upgrade)
+            printf 'brew upgrade --cask %s\n' "$VOICEBAR_CASK_TOKEN"
             ;;
         cask-install)
             printf 'brew install --cask %s\n' "$VOICEBAR_CASK_TOKEN"
@@ -265,16 +269,16 @@ print_plan() {
     log "Steps:"
     log "  1. update package: $(package_update_label)"
     log "  2. install package dependencies when running from a git checkout"
-    log "  3. + $app_update"
-    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
     case "$(voicebar_app_update_mode)" in
         local-build)
-            log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
+            log "  3. + $app_update (build-app.sh relaunches VoiceBar unless --no-relaunch is set)"
             ;;
         *)
-            log "  5. Homebrew installs the notarized VoiceBar cask artifact"
+            log "  3. + $app_update (Homebrew installs the notarized VoiceBar cask artifact)"
             ;;
     esac
+    log "  4. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
+    log "  5. create/update $VENV_DIR and pull Qwen3 model if missing"
     if [[ "$DATA_MODE" != "skip" ]]; then
         log "  6. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
@@ -349,8 +353,8 @@ update_package() {
 
 update_voicebar_app() {
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall)
-            run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+        cask-upgrade)
+            run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
             ;;
         cask-install)
             run_cmd brew install --cask "$VOICEBAR_CASK_TOKEN"
@@ -359,6 +363,27 @@ update_voicebar_app() {
             run_cmd env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
             ;;
     esac
+}
+
+repair_and_verify_voicebar_hotkey_path() {
+    local dedupe_args=(--apply)
+    local health_args=()
+
+    if [[ "$NO_STOP" -eq 1 || "$NO_RELAUNCH" -eq 1 ]]; then
+        dedupe_args+=(--no-stop)
+        health_args+=(--allow-stopped)
+    fi
+    dedupe_args+=(--no-relaunch)
+
+    run_cmd bash "$PACKAGE_ROOT/scripts/voicelayer-dedupe-voicebar.sh" "${dedupe_args[@]}"
+    run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
+    run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
+
+    if [[ "$NO_STOP" -eq 0 && "$NO_RELAUNCH" -eq 0 ]]; then
+        run_cmd launchctl kickstart -k "gui/$(id -u)/com.voicelayer.voicebar"
+    fi
+
+    run_cmd bash "$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh" "${health_args[@]+"${health_args[@]}"}"
 }
 
 main() {
@@ -385,7 +410,7 @@ main() {
         ensure_command "$RSYNC_BIN"
     fi
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall|cask-install)
+        cask-upgrade|cask-install)
             if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
                 ensure_command brew
             fi
@@ -394,6 +419,7 @@ main() {
 
     update_package
     update_voicebar_app
+    repair_and_verify_voicebar_hotkey_path
     install_qwen3_model
     sync_personal_data
     log "VoiceLayer update complete."
