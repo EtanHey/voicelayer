@@ -10,10 +10,14 @@ import { join } from "path";
 // missing → recording broke) and 2026-06-05 (scripts/edge-tts-words.py
 // missing → all daemon TTS broke with edge-tts exit code 2).
 
-const buildScript = readFileSync(
-  join(import.meta.dir, "..", "..", "flow-bar", "build-app.sh"),
-  "utf-8",
+const buildScriptPath = join(
+  import.meta.dir,
+  "..",
+  "..",
+  "flow-bar",
+  "build-app.sh",
 );
+const buildScript = readFileSync(buildScriptPath, "utf-8");
 const packageJson = JSON.parse(
   readFileSync(join(import.meta.dir, "..", "..", "package.json"), "utf-8"),
 );
@@ -83,11 +87,37 @@ describe("build-app.sh bundles runtime assets", () => {
 
 describe("build-app.sh Developer ID release contract", () => {
   test("preserves the canonical bundle directory while replacing its contents in place", () => {
-    expect(buildScript).toContain("clear_app_bundle_for_rebuild");
-    expect(buildScript).toContain(
-      'find "$APP_DIR" -mindepth 1 -maxdepth 1 -exec rm -rf {} +',
+    const canonical = Bun.spawnSync(
+      [
+        "bash",
+        "-c",
+        'VOICEBAR_BUILD_APP_SOURCE_ONLY=1 source "$1"; find() { printf "find:%s\\n" "$*"; }; rm() { printf "rm:%s\\n" "$*"; }; APP_DIR="/Applications/VoiceBar.app"; clear_app_bundle_for_rebuild',
+        "_",
+        buildScriptPath,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
     );
-    expect(buildScript).not.toContain('rm -rf "$APP_DIR"');
+    const noncanonical = Bun.spawnSync(
+      [
+        "bash",
+        "-c",
+        'VOICEBAR_BUILD_APP_SOURCE_ONLY=1 source "$1"; find() { printf "find:%s\\n" "$*"; }; rm() { printf "rm:%s\\n" "$*"; }; APP_DIR="/tmp/VoiceBar.app"; clear_app_bundle_for_rebuild',
+        "_",
+        buildScriptPath,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const canonicalOutput = new TextDecoder().decode(canonical.stdout);
+    const noncanonicalOutput = new TextDecoder().decode(noncanonical.stdout);
+
+    expect(canonical.exitCode).toBe(0);
+    expect(canonicalOutput).toContain(
+      "find:/Applications/VoiceBar.app -mindepth 1 -maxdepth 1 -exec rm -rf {} +",
+    );
+    expect(canonicalOutput).not.toContain("rm:");
+    expect(noncanonical.exitCode).toBe(0);
+    expect(noncanonicalOutput).toContain("rm:-rf -- /tmp/VoiceBar.app");
+    expect(noncanonicalOutput).not.toContain("find:");
   });
 
   test("uses the Developer ID Application identity with hardened runtime and a real timestamp", () => {

@@ -55,19 +55,44 @@ secure_input_owner() {
     printf '%s\n' "$owner"
 }
 
+launchd_loaded_program() {
+    local launchd_output="$1"
+    local program
+    program="$(
+        printf '%s\n' "$launchd_output" \
+            | sed -n 's/^[[:space:]]*program = //p' \
+            | head -n 1
+    )"
+    [[ -n "$program" ]] || return 1
+    printf '%s\n' "$program"
+}
+
 event_tap_log_verdict() {
     local log_output="$1"
-    if [[ "$log_output" == *"[HotkeyManager] Input Monitoring permission not granted"* ]]; then
-        printf 'input-monitoring-missing\n'
-    elif [[ "$log_output" == *"[HotkeyManager] Accessibility permission not granted"* ]]; then
-        printf 'accessibility-missing\n'
-    elif [[ "$log_output" == *"[HotkeyManager] Failed to create CGEventTap"* ]]; then
-        printf 'event-tap-failed\n'
-    elif [[ "$log_output" == *"[HotkeyManager] Event tap started"* ]]; then
-        printf 'ready\n'
-    else
-        printf 'unknown\n'
-    fi
+    local verdict="unknown"
+    local line
+
+    # Both unified logging and the LaunchAgent stderr file are chronological.
+    # Keep replacing the verdict so a successful retry supersedes a stale
+    # startup failure, while a later failure still wins over an earlier success.
+    while IFS= read -r line; do
+        case "$line" in
+            *"[HotkeyManager] Input Monitoring permission not granted"*)
+                verdict="input-monitoring-missing"
+                ;;
+            *"[HotkeyManager] Accessibility permission not granted"*)
+                verdict="accessibility-missing"
+                ;;
+            *"[HotkeyManager] Failed to create CGEventTap"*)
+                verdict="event-tap-failed"
+                ;;
+            *"[HotkeyManager] Event tap started"*)
+                verdict="ready"
+                ;;
+        esac
+    done <<<"$log_output"
+
+    printf '%s\n' "$verdict"
 }
 
 fail() {
@@ -125,14 +150,25 @@ codesign --verify --deep --strict "$CANONICAL_APP" >/dev/null 2>&1 \
     || fail "canonical app signature verification failed"
 
 declare -a bundles=()
+bundle_search_roots=(
+    /Applications
+    "$HOME/Applications"
+    "$HOME/Gits"
+    "$HOME/Desktop"
+    "$HOME/Downloads"
+    /tmp
+    /private/tmp
+)
+if [[ -n "${TMPDIR:-}" && -d "$TMPDIR" ]]; then
+    bundle_search_roots+=("$TMPDIR")
+fi
 while IFS= read -r bundle; do
     [[ -d "$bundle" ]] || continue
     bundles+=("$bundle")
 done < <(
     {
         mdfind "kMDItemCFBundleIdentifier == '$BUNDLE_ID'" 2>/dev/null || true
-        find /Applications "$HOME/Applications" "$HOME/Gits" "$HOME/Desktop" \
-            "$HOME/Downloads" /tmp /private/tmp /var/folders \
+        find "${bundle_search_roots[@]}" \
             -maxdepth 6 -name 'VoiceBar.app' -type d -prune 2>/dev/null || true
     } | sort -u
 )
@@ -147,8 +183,11 @@ agent_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 agent_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
 [[ "$agent_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
     || fail "LaunchAgent targets ${agent_program:-<missing>}, not the canonical app"
-launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1 \
+launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
     || fail "canonical LaunchAgent is not loaded"
+loaded_program="$(launchd_loaded_program "$launchd_output" || true)"
+[[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
+    || fail "loaded LaunchAgent targets ${loaded_program:-<missing>}, not the canonical app"
 
 mapping="$(hidutil property --get UserKeyMapping 2>/dev/null || true)"
 mapping_has_pair "$mapping" "$F5_USAGE" "$F18_USAGE" \
@@ -191,7 +230,7 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
                     'index($0, process_marker) > 0 { print }' \
                     "$agent_stderr_path"
             fi
-        }
+        } | sort
     )"
     verdict="$(event_tap_log_verdict "$log_output")"
     case "$verdict" in

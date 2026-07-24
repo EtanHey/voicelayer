@@ -204,7 +204,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUTOSTART_INSTALLER="$SCRIPT_DIR/install-voicebar-autostart.sh"
 if [[ -f "$AUTOSTART_INSTALLER" ]]; then
   log "-- (re)install canonical LaunchAgent via install-voicebar-autostart.sh"
-  run bash "$AUTOSTART_INSTALLER"
+  if [[ "$STOP_RUNNING" -eq 1 && "$RELAUNCH" -eq 1 ]]; then
+    run bash "$AUTOSTART_INSTALLER" --reload
+  else
+    run bash "$AUTOSTART_INSTALLER"
+  fi
 else
   log "-- install-voicebar-autostart.sh not found next to script; skipping agent reinstall"
 fi

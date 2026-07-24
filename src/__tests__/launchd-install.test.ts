@@ -16,6 +16,10 @@ const buildScript = readFileSync(
   join(repoRoot, "flow-bar", "build-app.sh"),
   "utf-8",
 );
+const voicebarAutostartScript = readFileSync(
+  join(repoRoot, "scripts", "install-voicebar-autostart.sh"),
+  "utf-8",
+);
 
 describe("MCP daemon LaunchAgent install contract", () => {
   test("retires the daemon LaunchAgent plist from the repo", () => {
@@ -55,6 +59,23 @@ describe("MCP daemon LaunchAgent install contract", () => {
     );
     expect(buildScript).toContain('mkdir -p "$VOICEBAR_BACKUP_DIR"');
     expect(buildScript).toContain('find "$VOICEBAR_BACKUP_DIR"');
+  });
+
+  test("VoiceBar autostart installer can reload a repaired loaded definition immediately", () => {
+    expect(voicebarAutostartScript).toContain("--reload");
+    expect(voicebarAutostartScript).toContain(
+      'launchctl bootout "$DOMAIN/$LABEL"',
+    );
+    expect(voicebarAutostartScript).toContain(
+      'launchctl bootstrap "$DOMAIN" "$PLIST_DST"',
+    );
+    expect(
+      voicebarAutostartScript.indexOf('launchctl bootout "$DOMAIN/$LABEL"'),
+    ).toBeLessThan(
+      voicebarAutostartScript.lastIndexOf(
+        'launchctl bootstrap "$DOMAIN" "$PLIST_DST"',
+      ),
+    );
   });
 
   test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {

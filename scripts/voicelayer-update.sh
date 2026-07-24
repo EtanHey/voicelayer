@@ -21,6 +21,9 @@ RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
 VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
+VOICEBAR_CANONICAL_APP="${VOICELAYER_UPDATE_VOICEBAR_APP:-/Applications/VoiceBar.app}"
+VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
+VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
 BUILD_APP_ARGS=()
 NO_STOP=0
 NO_RELAUNCH=0
@@ -246,6 +249,38 @@ voicebar_app_update_label() {
     esac
 }
 
+voicebar_cask_repair_needed() {
+    case "${VOICELAYER_UPDATE_TEST_CASK_REPAIR_NEEDED:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+
+    # Command-stubbed tests must not depend on the developer machine's resident
+    # application. A test that exercises this branch opts in above.
+    if [[ "$DRY_RUN_COMMANDS" = "1" ]]; then
+        return 1
+    fi
+
+    local info_plist="$VOICEBAR_CANONICAL_APP/Contents/Info.plist"
+    local bundle_id
+    local signature
+    local team_id
+    local authority
+
+    [[ -f "$info_plist" ]] || return 0
+    bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist" 2>/dev/null || true)"
+    [[ "$bundle_id" = "$VOICEBAR_BUNDLE_ID" ]] || return 0
+    codesign --verify --deep --strict "$VOICEBAR_CANONICAL_APP" >/dev/null 2>&1 || return 0
+
+    signature="$(codesign -dvvv "$VOICEBAR_CANONICAL_APP" 2>&1 || true)"
+    team_id="$(printf '%s\n' "$signature" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+    authority="$(printf '%s\n' "$signature" | awk -F= '/^Authority=/{print $2; exit}')"
+    [[ "$team_id" = "$VOICEBAR_REQUIRED_TEAM_ID" ]] || return 0
+    [[ "$authority" = "Developer ID Application"* ]] || return 0
+
+    return 1
+}
+
 print_plan() {
     local install_type
     local app_update
@@ -355,6 +390,10 @@ update_voicebar_app() {
     case "$(voicebar_app_update_mode)" in
         cask-upgrade)
             run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+            if voicebar_cask_repair_needed; then
+                log "Resident VoiceBar failed canonical signature checks after cask upgrade; reinstalling the cask."
+                run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+            fi
             ;;
         cask-install)
             run_cmd brew install --cask "$VOICEBAR_CASK_TOKEN"
@@ -369,18 +408,21 @@ repair_and_verify_voicebar_hotkey_path() {
     local dedupe_args=(--apply)
     local health_args=()
 
-    if [[ "$NO_STOP" -eq 1 || "$NO_RELAUNCH" -eq 1 ]]; then
+    if [[ "$NO_STOP" -eq 1 ]]; then
         dedupe_args+=(--no-stop)
+    fi
+    if [[ "$NO_STOP" -eq 1 || "$NO_RELAUNCH" -eq 1 ]]; then
         health_args+=(--allow-stopped)
     fi
     dedupe_args+=(--no-relaunch)
 
     run_cmd bash "$PACKAGE_ROOT/scripts/voicelayer-dedupe-voicebar.sh" "${dedupe_args[@]}"
     run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
-    run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
-
     if [[ "$NO_STOP" -eq 0 && "$NO_RELAUNCH" -eq 0 ]]; then
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --reload
         run_cmd launchctl kickstart -k "gui/$(id -u)/com.voicelayer.voicebar"
+    else
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
     fi
 
     run_cmd bash "$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh" "${health_args[@]+"${health_args[@]}"}"

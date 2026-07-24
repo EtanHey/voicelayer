@@ -113,6 +113,28 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).not.toContain(`bash ${repoRoot}/flow-bar/build-app.sh`);
   });
 
+  test("cask path reinstalls only when the upgraded resident app is still damaged", () => {
+    const result = run(["bash", updateScript], {
+      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
+      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
+      VOICELAYER_UPDATE_TEST_CASK_REPAIR_NEEDED: "1",
+    });
+    const stdout = text(result.stdout);
+    const upgrade = stdout.indexOf(
+      "+ brew upgrade --cask etanhey/layers/voicebar",
+    );
+    const reinstall = stdout.indexOf(
+      "+ brew reinstall --cask etanhey/layers/voicebar",
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(upgrade).toBeGreaterThanOrEqual(0);
+    expect(reinstall).toBeGreaterThan(upgrade);
+    expect(stdout).toContain(
+      "Resident VoiceBar failed canonical signature checks after cask upgrade",
+    );
+  });
+
   test("standard updates restore and verify the complete canonical hotkey path after the app update", () => {
     const result = run(["bash", updateScript], {
       VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
@@ -128,7 +150,7 @@ describe("voicelayer-update.sh", () => {
       `bash ${repoRoot}/scripts/install-voicebar-f5-hidutil.sh`,
     );
     const autostart = stdout.indexOf(
-      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh`,
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --reload`,
     );
     const kickstart = stdout.indexOf(
       "launchctl kickstart -k gui/",
@@ -157,6 +179,32 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
       `bash ${repoRoot}/scripts/voicelayer-dedupe-voicebar.sh --apply --no-stop --no-relaunch`,
+    );
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh --allow-stopped`,
+    );
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh`,
+    );
+    expect(stdout).not.toContain(
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --reload`,
+    );
+    expect(stdout).not.toContain("launchctl kickstart -k gui/");
+  });
+
+  test("no-relaunch without no-stop still stops and dedupes the old VoiceBar process", () => {
+    const result = run(
+      ["bash", updateScript, "--no-relaunch"],
+      { VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1" },
+    );
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/voicelayer-dedupe-voicebar.sh --apply --no-relaunch`,
+    );
+    expect(stdout).not.toContain(
+      `bash ${repoRoot}/scripts/voicelayer-dedupe-voicebar.sh --apply --no-stop`,
     );
     expect(stdout).toContain(
       `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh --allow-stopped`,
@@ -230,6 +278,9 @@ describe("voicelayer-update.sh", () => {
     expect(dedupeScript).not.toContain('rm -rf "$b"');
     expect(dedupeScript).toContain("install-voicebar-autostart.sh");
     expect(dedupeScript).not.toContain('bash "$SCRIPT_DIR/../launchd/install.sh"');
+    expect(dedupeScript).toContain(
+      'bash "$AUTOSTART_INSTALLER" --reload',
+    );
     expect(dedupeScript).toContain(
       'launchctl kickstart -k "gui/$(id -u)/$LABEL"',
     );
