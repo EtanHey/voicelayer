@@ -405,6 +405,8 @@ public final class VoiceState {
     /// auto-pasted into the frontmost app. This is deliberately a second, independent gate from
     /// `barInitiatedRecording`: even if classification goes wrong, the transcript must not leak
     /// to whatever the user happens to be looking at.
+    /// Capture-terminal resets are explicit because generic mode changes can belong to another
+    /// client and are not authoritative ownership boundaries.
     /// Live repro 2026-07-26 12:55:30 — a remote caller's answer was pasted into Preview.
     private var remoteOwnedRecording = false
 
@@ -415,7 +417,8 @@ public final class VoiceState {
 
     /// Test-only view of the remote-ownership gate.
     var remoteOwnedRecordingForTesting: Bool {
-        remoteOwnedRecording
+        get { remoteOwnedRecording }
+        set { remoteOwnedRecording = newValue }
     }
 
     /// The app that was frontmost when bar-initiated recording started.
@@ -717,6 +720,7 @@ public final class VoiceState {
             break
         }
         barInitiatedRecording = false
+        remoteOwnedRecording = false
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -936,6 +940,7 @@ public final class VoiceState {
             "recordCommandUptimeMs": String(commandUptimeMs),
         ])
         barInitiatedRecording = true
+        remoteOwnedRecording = false
         if pressToTalk, isConnected {
             mode = .recording
             onModeChange?(.recording)
@@ -951,6 +956,7 @@ public final class VoiceState {
             if !Task.isCancelled, barInitiatedRecording {
                 guard mode != .transcribing else { return }
                 barInitiatedRecording = false
+                remoteOwnedRecording = false
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
             }
@@ -1013,6 +1019,7 @@ public final class VoiceState {
                 // stale idle events would kill the paste flag. Recording-sourced
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
+                    remoteOwnedRecording = false
                     barInitiatedTimeout?.cancel()
                     if historyRetranscriptionRequest.currentPath() != nil,
                        deferredFinalTranscriptionTask == nil {
@@ -1268,6 +1275,7 @@ public final class VoiceState {
             // we're not in an active bar-initiated recording.
             if showDuringBarRecording {
                 barInitiatedRecording = false
+                remoteOwnedRecording = false
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
                 cancelDeferredFinalTranscription()
@@ -1362,6 +1370,7 @@ public final class VoiceState {
         transcribingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
+        remoteOwnedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -1818,7 +1827,8 @@ public final class VoiceState {
         // blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost and
         // strands the caller forever. Never remove this even if classification looks correct.
         let shouldAutoPaste = barInitiatedRecording && !remoteOwnedRecording && !wasHistoryRetranscription
-        let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste && !wasHistoryRetranscription
+        let shouldPasteRecoveredTranscription =
+            pendingRecoveredTranscriptionPaste && !remoteOwnedRecording && !wasHistoryRetranscription
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
@@ -1875,6 +1885,7 @@ public final class VoiceState {
         transcribingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
+        remoteOwnedRecording = false
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -2492,6 +2503,7 @@ public final class VoiceState {
 
         let canRecoverLateRecording = ack.reason == "VoiceLayer is starting"
         barInitiatedRecording = false
+        remoteOwnedRecording = false
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
