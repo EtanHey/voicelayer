@@ -627,6 +627,31 @@ final class VoiceStatePasteTests: XCTestCase {
         assertNextPttPastes(state, text: "my own dictation")
     }
 
+    func testSourceLessIdleThenLocalPttDoesNotPasteStillActiveRemoteTranscript() {
+        let state = makeRemoteOwnedRecordingState()
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        // Another client can emit an ambiguous idle while the authoritative remote capture
+        // remains active. The optimistic local PTT must not turn its late transcript into paste.
+        state.handleEvent(["type": "state", "state": "idle"])
+        XCTAssertTrue(state.remoteOwnedRecordingForTesting)
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "transcription",
+            "text": "remote transcript that wins the race with the reject ack",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            [],
+            "A local record attempt must not unguard an earlier remote capture's transcript"
+        )
+    }
+
     func testSnoozeClearsRemoteOwnershipBeforeNextPttPaste() {
         let state = makeRemoteOwnedRecordingState()
 

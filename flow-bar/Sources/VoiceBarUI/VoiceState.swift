@@ -410,6 +410,11 @@ public final class VoiceState {
     /// Live repro 2026-07-26 12:55:30 — a remote caller's answer was pasted into Preview.
     private var remoteOwnedRecording = false
 
+    /// A local record request must clear `remoteOwnedRecording`, but an ambiguous idle from
+    /// another client can let that request race an active remote capture's final transcript.
+    /// Keep this independent paste block until an authoritative owner/terminal event arrives.
+    private var supersededRemoteTranscriptPending = false
+
     /// Test-only view of the bar-initiated classification.
     var barInitiatedRecordingForTesting: Bool {
         barInitiatedRecording
@@ -419,6 +424,16 @@ public final class VoiceState {
     var remoteOwnedRecordingForTesting: Bool {
         get { remoteOwnedRecording }
         set { remoteOwnedRecording = newValue }
+    }
+
+    private func releaseRemoteCaptureOwnership(preservingPossibleTranscript: Bool) {
+        if preservingPossibleTranscript {
+            supersededRemoteTranscriptPending =
+                supersededRemoteTranscriptPending || remoteOwnedRecording
+        } else {
+            supersededRemoteTranscriptPending = false
+        }
+        remoteOwnedRecording = false
     }
 
     /// The app that was frontmost when bar-initiated recording started.
@@ -629,7 +644,7 @@ public final class VoiceState {
 
     public func cancel() {
         barInitiatedRecording = false
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -720,7 +735,7 @@ public final class VoiceState {
             break
         }
         barInitiatedRecording = false
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -939,8 +954,8 @@ public final class VoiceState {
             "hasCapturedInsertion": boolString(recordStartInsertionHandler != nil),
             "recordCommandUptimeMs": String(commandUptimeMs),
         ])
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedRecording = true
-        remoteOwnedRecording = false
         if pressToTalk, isConnected {
             mode = .recording
             onModeChange?(.recording)
@@ -956,7 +971,7 @@ public final class VoiceState {
             if !Task.isCancelled, barInitiatedRecording {
                 guard mode != .transcribing else { return }
                 barInitiatedRecording = false
-                remoteOwnedRecording = false
+                releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                 frontmostAppOnRecordStart = nil
                 recordStartInsertionHandler = nil
             }
@@ -1019,7 +1034,7 @@ public final class VoiceState {
                 // stale idle events would kill the paste flag. Recording-sourced
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
-                    remoteOwnedRecording = false
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
                     barInitiatedTimeout?.cancel()
                     if historyRetranscriptionRequest.currentPath() != nil,
                        deferredFinalTranscriptionTask == nil {
@@ -1073,11 +1088,13 @@ public final class VoiceState {
                 let captureIsRemoteOwned = (event["bar_owned"] as? Bool) == false
                 if captureIsRemoteOwned {
                     remoteOwnedRecording = true
+                    supersededRemoteTranscriptPending = false
                     // A remote capture supersedes any bar claim on the line.
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
-                } else if startsNewRecording {
-                    remoteOwnedRecording = false
+                } else {
+                    // An authoritative local-owner event resolves any earlier request race.
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
                 }
                 if pendingIntent?.command == .record {
                     recordStartAckTimeoutTask?.cancel()
@@ -1275,7 +1292,7 @@ public final class VoiceState {
             // we're not in an active bar-initiated recording.
             if showDuringBarRecording {
                 barInitiatedRecording = false
-                remoteOwnedRecording = false
+                releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                 barInitiatedTimeout?.cancel()
                 recordingIdleCleanupTask?.cancel()
                 cancelDeferredFinalTranscription()
@@ -1370,7 +1387,7 @@ public final class VoiceState {
         transcribingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -1822,13 +1839,18 @@ public final class VoiceState {
         let wasHistoryRetranscription = recordingPath.map { path in
             historyRetranscriptionRequest.suppressesPaste(for: path)
         } ?? false
-        // AIDEV-NOTE: `!remoteOwnedRecording` is an independent second gate on top of the
-        // classification fix in the "recording" handler. A remote-owned transcript belongs to the
-        // blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost and
-        // strands the caller forever. Never remove this even if classification looks correct.
-        let shouldAutoPaste = barInitiatedRecording && !remoteOwnedRecording && !wasHistoryRetranscription
+        // AIDEV-NOTE: The effective remote-capture block is an independent second gate on top of
+        // the classification fix in the "recording" handler. A remote-owned transcript belongs to
+        // the blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost
+        // and strands the caller forever. Never remove this even if classification looks correct.
+        let remoteCaptureBlocksPaste =
+            remoteOwnedRecording || supersededRemoteTranscriptPending
+        let shouldAutoPaste =
+            barInitiatedRecording && !remoteCaptureBlocksPaste && !wasHistoryRetranscription
         let shouldPasteRecoveredTranscription =
-            pendingRecoveredTranscriptionPaste && !remoteOwnedRecording && !wasHistoryRetranscription
+            pendingRecoveredTranscriptionPaste
+                && !remoteCaptureBlocksPaste
+                && !wasHistoryRetranscription
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
@@ -1853,7 +1875,7 @@ public final class VoiceState {
 
         // The remote caller's transcript has been delivered; release the ownership gate so a
         // following F5 dictation pastes normally.
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
     }
 
     private func scheduleRecordingIdleCleanupIfNeeded() {
@@ -1885,7 +1907,7 @@ public final class VoiceState {
         transcribingStartedAt = nil
         transcribingStatusText = nil
         barInitiatedRecording = false
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         pendingIntent = nil
         frontmostAppOnRecordStart = nil
         recordStartInsertionHandler = nil
@@ -2503,7 +2525,7 @@ public final class VoiceState {
 
         let canRecoverLateRecording = ack.reason == "VoiceLayer is starting"
         barInitiatedRecording = false
-        remoteOwnedRecording = false
+        releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
         barInitiatedTimeout?.cancel()
         recordingIdleCleanupTask?.cancel()
         recordStartAckTimeoutTask?.cancel()
