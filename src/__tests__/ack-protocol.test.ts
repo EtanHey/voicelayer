@@ -166,6 +166,7 @@ describe("ack protocol", () => {
     expect(waitForInputSpy).toHaveBeenCalled();
     expect(waitForInputSpy).toHaveBeenCalledWith(30000, "standard", false, {
       archiveSource: "voicebar",
+      barOwned: true,
     });
     expect(response).toEqual({
       type: "ack",

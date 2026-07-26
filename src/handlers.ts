@@ -429,6 +429,7 @@ export async function handleConverse(
       pressToTalk,
       {
         archiveSource: "voice_ask",
+        barOwned: false,
         voiceAskArtifacts: {
           agentAudioBytes: speech.audioArtifact.bytes,
           agentAudioFormat: speech.audioArtifact.format,

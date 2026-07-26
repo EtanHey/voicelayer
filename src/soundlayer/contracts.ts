@@ -170,6 +170,8 @@ export interface MicCapture {
 
 export interface MicCaptureOptions {
   archiveRecording?: boolean;
+  /** Explicit VoiceBar ownership; missing provenance fails closed to false. */
+  barOwned?: boolean;
 }
 
 export interface CancellationController {

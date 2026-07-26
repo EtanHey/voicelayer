@@ -210,6 +210,7 @@ export function handleSocketCommand(
       const ptt = command.press_to_talk ?? false;
       waitForInput(timeoutMs, silenceMode, ptt, {
         archiveSource: "voicebar",
+        barOwned: true,
       }).catch((err) => {
         console.error(
           `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,

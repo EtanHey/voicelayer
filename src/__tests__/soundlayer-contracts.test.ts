@@ -103,6 +103,7 @@ describe("SoundLayer contracts", () => {
     await expect(
       layer.micCapture.waitForInput(30_000, "thoughtful", true, {
         archiveRecording: true,
+        barOwned: false,
       }),
     ).resolves.toBe("hello");
     expect(layer.playback.play("/tmp/audio.mp3", { text: "hi", voice: "jenny" }))
@@ -127,6 +128,7 @@ describe("SoundLayer contracts", () => {
     });
     expect(waitForInputSpy).toHaveBeenCalledWith(30_000, "thoughtful", true, {
       archiveSource: "voicebar",
+      barOwned: false,
     });
   });
 });
