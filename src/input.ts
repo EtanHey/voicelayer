@@ -250,7 +250,8 @@ export async function finalizeTranscriptionTextForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = process.env,
 ): Promise<string> {
-  return (await finalizeTranscriptionResultForSurface(rawText, surface, env)).text;
+  return (await finalizeTranscriptionResultForSurface(rawText, surface, env))
+    .text;
 }
 
 export interface FinalizedTranscriptionResult {
@@ -325,11 +326,13 @@ export function polishSurfaceForWaitOptions(
   return null;
 }
 
-export function warmPolishEndpointAtRecordingStart(options: {
-  env?: STTPolishEnv;
-  warm?: (env: STTPolishEnv) => Promise<STTPolishWarmupResult>;
-  appendEvent?: typeof appendControlLayerEvent;
-} = {}): void {
+export function warmPolishEndpointAtRecordingStart(
+  options: {
+    env?: STTPolishEnv;
+    warm?: (env: STTPolishEnv) => Promise<STTPolishWarmupResult>;
+    appendEvent?: typeof appendControlLayerEvent;
+  } = {},
+): void {
   const env = options.env ?? process.env;
   const warm = options.warm ?? warmPolishEndpoint;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
@@ -370,6 +373,13 @@ export interface NoSpeechGateResult {
 
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
+  /**
+   * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
+   * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
+   * F5 press, so its late-record-start recovery claims the ask and auto-pastes the answer into
+   * the frontmost app instead of returning it to the blocked caller.
+   */
+  archiveSource?: "voicebar" | "voice_ask";
 }
 
 export function consumeCancelSignalForRecording(): boolean {
@@ -390,11 +400,10 @@ export interface VoiceBarRecordingArchiveInput {
   backend: string;
 }
 
-export interface VoiceBarUntranscribedRecordingArchiveInput
-  extends Omit<
-    VoiceBarRecordingArchiveInput,
-    "transcript" | "transcribedDurationMs"
-  > {
+export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
+  VoiceBarRecordingArchiveInput,
+  "transcript" | "transcribedDurationMs"
+> {
   reason: "cancelled";
 }
 
@@ -657,7 +666,11 @@ function wavHeaderValidationError(
   return null;
 }
 
-function repairRetainedWavHeader(path: string, data: Buffer, dataSize: number): void {
+function repairRetainedWavHeader(
+  path: string,
+  data: Buffer,
+  dataSize: number,
+): void {
   if (dataSize > 0xffffffff - 36) {
     throw new Error(
       `Retained recording is too large to repair as WAV: ${path} has ${dataSize} audio bytes on disk.`,
@@ -698,11 +711,7 @@ function retainedRetranscriptionError(path: string, err: unknown): Error {
   );
 }
 
-function writeAllSync(
-  fd: number,
-  data: Uint8Array,
-  position: number,
-): void {
+function writeAllSync(fd: number, data: Uint8Array, position: number): void {
   let writtenTotal = 0;
   while (writtenTotal < data.byteLength) {
     const written = writeSync(
@@ -1197,17 +1206,20 @@ export function trimTrailingSilenceForSTT(
     };
   }
 
-  const windowBytes =
-    Math.floor(
-      (sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS * BYTES_PER_SAMPLE) / 1000,
-    );
+  const windowBytes = Math.floor(
+    (sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS * BYTES_PER_SAMPLE) / 1000,
+  );
   const alignedWindowBytes = Math.max(
     BYTES_PER_SAMPLE,
     Math.floor(windowBytes / BYTES_PER_SAMPLE) * BYTES_PER_SAMPLE,
   );
 
   let lastActiveEnd = 0;
-  for (let offset = 0; offset < pcmData.byteLength; offset += alignedWindowBytes) {
+  for (
+    let offset = 0;
+    offset < pcmData.byteLength;
+    offset += alignedWindowBytes
+  ) {
     const windowEnd = Math.min(offset + alignedWindowBytes, pcmData.byteLength);
     const window = pcmData.slice(offset, windowEnd);
     if (isActiveTrimWindow(window)) {
@@ -1224,10 +1236,9 @@ export function trimTrailingSilenceForSTT(
     };
   }
 
-  const padBytes =
-    Math.floor(
-      (sampleRate * TRAILING_SILENCE_TRIM_PAD_MS * BYTES_PER_SAMPLE) / 1000,
-    );
+  const padBytes = Math.floor(
+    (sampleRate * TRAILING_SILENCE_TRIM_PAD_MS * BYTES_PER_SAMPLE) / 1000,
+  );
   const trimEnd = Math.min(pcmData.byteLength, lastActiveEnd + padBytes);
   const quietTailMs = pcmDurationMs(pcmData.slice(trimEnd), sampleRate);
   if (quietTailMs < TRAILING_SILENCE_TRIM_MIN_QUIET_MS) {
@@ -1346,10 +1357,7 @@ class IncrementalRecoveryWavWriter {
   flushSnapshot(chunks: Uint8Array[]): void {
     const pcmData = flattenChunks(chunks);
     if (pcmData.byteLength === 0) return;
-    retainLastCaptureForRecovery(
-      createWavBuffer(pcmData),
-      this.polishSurface,
-    );
+    retainLastCaptureForRecovery(createWavBuffer(pcmData), this.polishSurface);
     this.initialized = true;
     this.chunksSinceFsync = 0;
   }
@@ -1424,8 +1432,15 @@ export class ChunkedRecordingSession {
     this.hasSpeech = false;
     this.silenceChunks = 0;
 
-    for (let offset = 0; offset < pcmData.byteLength; offset += VAD_CHUNK_BYTES) {
-      this.pushChunk(pcmData.slice(offset, offset + VAD_CHUNK_BYTES), speechDetected);
+    for (
+      let offset = 0;
+      offset < pcmData.byteLength;
+      offset += VAD_CHUNK_BYTES
+    ) {
+      this.pushChunk(
+        pcmData.slice(offset, offset + VAD_CHUNK_BYTES),
+        speechDetected,
+      );
     }
   }
 
@@ -1853,7 +1868,9 @@ export async function recordToBuffer(
         pttStopRequestedAtMs !== null &&
         isPttStopDrainComplete(pttStopRequestedAtMs, Date.now())
       ) {
-        console.error("[voicelayer] PTT tail capture complete — ending recording");
+        console.error(
+          "[voicelayer] PTT tail capture complete — ending recording",
+        );
         finish();
         return true;
       }
@@ -2011,6 +2028,12 @@ export async function recordToBuffer(
         state: "recording",
         mode: pressToTalk ? "ptt" : "vad",
         silence_mode: silenceMode,
+        // AIDEV-NOTE: Tells Voice Bar who owns this capture. Without it, a remote MCP capture is
+        // indistinguishable from a dropped-ack F5 press and gets claimed by late-record-start
+        // recovery, auto-pasting the remote caller's answer into the frontmost app.
+        ...(captureState?.archiveSource
+          ? { bar_owned: captureState.archiveSource === "voicebar" }
+          : {}),
       });
 
       console.error(
@@ -2214,7 +2237,9 @@ export async function waitForInput(
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;
-  const captureState: RecordingCaptureState = {};
+  const captureState: RecordingCaptureState = {
+    archiveSource: options.archiveSource,
+  };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
     : undefined;
@@ -2273,7 +2298,9 @@ export async function waitForInput(
       });
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      console.error(`[voicelayer] Failed to archive voice_ask capture: ${detail}`);
+      console.error(
+        `[voicelayer] Failed to archive voice_ask capture: ${detail}`,
+      );
       const archiveError = `voice_ask archive failed: ${detail}`;
       appendControlLayerEvent("capture.archive_failed", {
         archive_source: "voice_ask",
@@ -2362,8 +2389,7 @@ export async function waitForInput(
   }
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
-  const vadNoSpeech =
-    !pressToTalk && captureState.vadSpeechDetected === false;
+  const vadNoSpeech = !pressToTalk && captureState.vadSpeechDetected === false;
   const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
@@ -2374,9 +2400,7 @@ export async function waitForInput(
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!transcriptionAllowed) {
-    const noSpeechReason = vadNoSpeech
-      ? "vad-no-speech"
-      : noSpeechGate.reason;
+    const noSpeechReason = vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
     const captureFailure = vadNoSpeech
       ? null
       : classifyCaptureFailure(noSpeechGate);
@@ -2485,25 +2509,28 @@ export async function waitForInput(
     if (useChunkedTranscription) {
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
-      const rawText = await transcribeChunkSequenceRaw(segments, async (chunk, prompt) => {
-        const chunkPath = recordingFilePath(
-          process.pid,
-          Date.now() + Math.random(),
-        );
-        try {
-          throwIfWaitForInputAborted(options.signal);
-          writeFileSync(chunkPath, createWavBuffer(chunk));
-          const result = await backend.transcribe(chunkPath, {
-            promptOverride: prompt,
-          });
-          throwIfWaitForInputAborted(options.signal);
-          return result.text;
-        } finally {
+      const rawText = await transcribeChunkSequenceRaw(
+        segments,
+        async (chunk, prompt) => {
+          const chunkPath = recordingFilePath(
+            process.pid,
+            Date.now() + Math.random(),
+          );
           try {
-            if (existsSync(chunkPath)) unlinkSync(chunkPath);
-          } catch {}
-        }
-      });
+            throwIfWaitForInputAborted(options.signal);
+            writeFileSync(chunkPath, createWavBuffer(chunk));
+            const result = await backend.transcribe(chunkPath, {
+              promptOverride: prompt,
+            });
+            throwIfWaitForInputAborted(options.signal);
+            return result.text;
+          } finally {
+            try {
+              if (existsSync(chunkPath)) unlinkSync(chunkPath);
+            } catch {}
+          }
+        },
+      );
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
@@ -2562,9 +2589,7 @@ export async function waitForInput(
             });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        console.error(
-          `[voicelayer] Failed to archive recording: ${detail}`,
-        );
+        console.error(`[voicelayer] Failed to archive recording: ${detail}`);
         if (options.archiveSource === "voice_ask") {
           throw new Error(`voice_ask archive failed: ${detail}`);
         }
@@ -2818,7 +2843,9 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       status: "transcribing",
       message: "Transcribing",
     });
-    console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
+    console.error(
+      `[voicelayer] Retranscribing last capture with ${backend.name}...`,
+    );
     const result = await backend.transcribe(wavPath);
     const finalized = await finalizeTranscriptionResultForSurface(
       result.text,

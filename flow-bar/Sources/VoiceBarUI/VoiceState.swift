@@ -398,6 +398,26 @@ public final class VoiceState {
     /// Never cleared by idle/error alone — those are ambiguous with multiple MCP clients.
     private var barInitiatedRecording = false
 
+    /// Whether the in-flight capture is known to belong to a remote MCP caller.
+    ///
+    /// AIDEV-NOTE: Authoritative ownership signal from the daemon (`bar_owned` on the recording
+    /// state event). A remote-owned transcript belongs to the blocked caller and must NEVER be
+    /// auto-pasted into the frontmost app. This is deliberately a second, independent gate from
+    /// `barInitiatedRecording`: even if classification goes wrong, the transcript must not leak
+    /// to whatever the user happens to be looking at.
+    /// Live repro 2026-07-26 12:55:30 — a remote caller's answer was pasted into Preview.
+    private var remoteOwnedRecording = false
+
+    /// Test-only view of the bar-initiated classification.
+    var barInitiatedRecordingForTesting: Bool {
+        barInitiatedRecording
+    }
+
+    /// Test-only view of the remote-ownership gate.
+    var remoteOwnedRecordingForTesting: Bool {
+        remoteOwnedRecording
+    }
+
     /// The app that was frontmost when bar-initiated recording started.
     private var frontmostAppOnRecordStart: NSRunningApplication?
     private var recordStartInsertionHandler: AsyncDictationInsertionHandler?
@@ -606,6 +626,7 @@ public final class VoiceState {
 
     public func cancel() {
         barInitiatedRecording = false
+        remoteOwnedRecording = false
         barInitiatedTimeout?.cancel()
         transcriptionTimeoutTask?.cancel()
         recordingIdleCleanupTask?.cancel()
@@ -1035,10 +1056,26 @@ public final class VoiceState {
             case "recording":
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
+                // AIDEV-NOTE: The daemon tells us who owns this capture. A remote MCP capture
+                // emits a `recording` event that is otherwise indistinguishable from a dropped-ack
+                // F5 press, so without this the late-recovery branch below claims it and the remote
+                // caller's answer gets auto-pasted into the frontmost app. The 10s recovery window
+                // makes that a RACE — a remote capture starting inside the window is hijacked,
+                // outside it is fine — which is why the symptom was intermittent.
+                // Live repro 2026-07-26 12:55:30.
+                let captureIsRemoteOwned = (event["bar_owned"] as? Bool) == false
+                if captureIsRemoteOwned {
+                    remoteOwnedRecording = true
+                    // A remote capture supersedes any bar claim on the line.
+                    barInitiatedRecording = false
+                    barInitiatedTimeout?.cancel()
+                } else if startsNewRecording {
+                    remoteOwnedRecording = false
+                }
                 if pendingIntent?.command == .record {
                     recordStartAckTimeoutTask?.cancel()
                     pendingIntent = nil
-                } else if canRecoverLateRecordStart {
+                } else if canRecoverLateRecordStart, !captureIsRemoteOwned {
                     barInitiatedRecording = true
                 }
                 clearRecordStartLateRecovery(clearPasteTarget: false)
@@ -1776,7 +1813,11 @@ public final class VoiceState {
         let wasHistoryRetranscription = recordingPath.map { path in
             historyRetranscriptionRequest.suppressesPaste(for: path)
         } ?? false
-        let shouldAutoPaste = barInitiatedRecording && !wasHistoryRetranscription
+        // AIDEV-NOTE: `!remoteOwnedRecording` is an independent second gate on top of the
+        // classification fix in the "recording" handler. A remote-owned transcript belongs to the
+        // blocked MCP caller; auto-pasting it leaks the answer into whatever app is frontmost and
+        // strands the caller forever. Never remove this even if classification looks correct.
+        let shouldAutoPaste = barInitiatedRecording && !remoteOwnedRecording && !wasHistoryRetranscription
         let shouldPasteRecoveredTranscription = pendingRecoveredTranscriptionPaste && !wasHistoryRetranscription
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
@@ -1799,6 +1840,10 @@ public final class VoiceState {
         if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
             enterIdleState(clearQueue: false)
         }
+
+        // The remote caller's transcript has been delivered; release the ownership gate so a
+        // following F5 dictation pastes normally.
+        remoteOwnedRecording = false
     }
 
     private func scheduleRecordingIdleCleanupIfNeeded() {

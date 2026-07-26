@@ -120,6 +120,29 @@ describe("socket-protocol", () => {
       expect(parsed.silence_mode).toBe("quick");
     });
 
+    it("serializes state recording event carrying bar_owned ownership", () => {
+      // AIDEV-NOTE: Voice Bar needs this to tell a remote MCP capture from a dropped-ack F5
+      // press. Without it, late-record-start recovery claims the remote capture and auto-pastes
+      // the answer into the frontmost app instead of returning it to the caller.
+      // Live repro 2026-07-26 12:55:30 — 466 chars pasted into Preview.
+      const remote: SocketEvent = {
+        type: "state",
+        state: "recording",
+        mode: "vad",
+        silence_mode: "thoughtful",
+        bar_owned: false,
+      };
+      expect(JSON.parse(serializeEvent(remote).trim()).bar_owned).toBe(false);
+
+      const bar: SocketEvent = {
+        type: "state",
+        state: "recording",
+        mode: "ptt",
+        bar_owned: true,
+      };
+      expect(JSON.parse(serializeEvent(bar).trim()).bar_owned).toBe(true);
+    });
+
     it("serializes speech detected event", () => {
       const event: SocketEvent = { type: "speech", detected: true };
       const result = serializeEvent(event);
@@ -320,15 +343,17 @@ describe("socket-protocol", () => {
 
     it("preserves the VoiceBar playback clock on interrupt commands", () => {
       expect(
-        parseCommand('{"cmd":"stop","id":"visual-stop","playback_elapsed_ms":812.4}'),
+        parseCommand(
+          '{"cmd":"stop","id":"visual-stop","playback_elapsed_ms":812.4}',
+        ),
       ).toEqual({
         cmd: "stop",
         id: "visual-stop",
         playback_elapsed_ms: 812,
       });
-      expect(
-        parseCommand('{"cmd":"cancel","playback_elapsed_ms":-1}'),
-      ).toEqual({ cmd: "cancel" });
+      expect(parseCommand('{"cmd":"cancel","playback_elapsed_ms":-1}')).toEqual(
+        { cmd: "cancel" },
+      );
     });
 
     it("parses replay command", () => {
