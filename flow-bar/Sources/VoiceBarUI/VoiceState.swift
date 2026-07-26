@@ -2509,9 +2509,15 @@ public final class VoiceState {
         recordStartAckTimeoutTask?.cancel()
         pendingIntent = nil
 
-        if ack.command == .retranscribeLast, ack.outcome != .accept {
-            pendingRecoveredTranscriptionPaste = false
-            showConfirmation(ack.reason ?? "Nothing to transcribe")
+        if ack.command == .retranscribeLast {
+            if ack.outcome == .accept {
+                // The daemon rejects retranscription while any capture is active, so acceptance is
+                // authoritative that an older remote ownership latch or shadow is now stale.
+                releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+            } else {
+                pendingRecoveredTranscriptionPaste = false
+                showConfirmation(ack.reason ?? "Nothing to transcribe")
+            }
             return
         }
 

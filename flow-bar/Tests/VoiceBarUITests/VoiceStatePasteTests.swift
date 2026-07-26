@@ -780,6 +780,80 @@ final class VoiceStatePasteTests: XCTestCase {
         )
     }
 
+    func testAcceptedRetranscriptionClearsSupersededRemoteShadowAfterReconnect() throws {
+        let state = makeRemoteOwnedRecordingState()
+        state.setConnectionStatus(false)
+        state.setConnectionStatus(true)
+        var retranscribeCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        state.sendCommand = { command in
+            if command["cmd"] as? String == "retranscribe_last" {
+                retranscribeCommand = command
+            }
+        }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.retranscribeLastCapture()
+        let retranscribeID = try XCTUnwrap(retranscribeCommand?["id"] as? String)
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_last",
+            "outcome": "accept",
+            "id": retranscribeID,
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "accepted recovered dictation",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            ["accepted recovered dictation"],
+            "Daemon acceptance resolves an old remote shadow and must not consume the first retry"
+        )
+    }
+
+    func testAcceptedRetranscriptionClearsStaleRemoteOwnership() throws {
+        let state = makeRemoteOwnedRecordingState()
+        state.handleEvent(["type": "state", "state": "idle"])
+        XCTAssertTrue(state.remoteOwnedRecordingForTesting)
+        var retranscribeCommand: [String: Any]?
+        var pastedTexts: [String] = []
+        state.sendCommand = { command in
+            if command["cmd"] as? String == "retranscribe_last" {
+                retranscribeCommand = command
+            }
+        }
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.retranscribeLastCapture()
+        let retranscribeID = try XCTUnwrap(retranscribeCommand?["id"] as? String)
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "ack",
+            "command": "retranscribe_last",
+            "outcome": "accept",
+            "id": retranscribeID,
+        ])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "accepted retranscription after stale ownership",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            ["accepted retranscription after stale ownership"],
+            "Daemon acceptance is authoritative that an older remote capture is no longer active"
+        )
+    }
+
     private func makeRemoteOwnedRecordingState(
         file: StaticString = #filePath,
         line: UInt = #line
