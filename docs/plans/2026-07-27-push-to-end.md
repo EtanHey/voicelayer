@@ -10,7 +10,7 @@
 
 ---
 
-### Task 1: Specify the MCP-facing behavior
+## Task 1: Specify the MCP-facing behavior
 
 **Files:**
 - Modify: `src/__tests__/mcp-schemas.test.ts`
@@ -40,7 +40,7 @@ bun test src/__tests__/mcp-schemas.test.ts src/__tests__/mcp-handler.test.ts src
 
 Expected: failures because `push_to_end`, warnings, and the gate do not exist yet.
 
-### Task 2: Add the centralized gate and MCP rename
+## Task 2: Add the centralized gate and MCP rename
 
 **Files:**
 - Create: `src/push-to-end.ts`
@@ -66,7 +66,7 @@ Expected: failures because `push_to_end`, warnings, and the gate do not exist ye
 
 Expected: the new MCP tests pass.
 
-### Task 3: Rename internal capture identifiers and protect the socket boundary
+## Task 3: Rename internal capture identifiers and protect the socket boundary
 
 **Files:**
 - Modify: `src/input.ts`
@@ -97,7 +97,7 @@ bun test src/__tests__/input.test.ts src/__tests__/ack-protocol.test.ts src/__te
 
 Expected: all affected tests pass.
 
-### Task 4: Verify real regression coverage
+## Task 4: Verify real regression coverage
 
 **Files:**
 - No permanent file changes.
@@ -118,7 +118,7 @@ Re-run the same focused tests.
 
 Expected: all focused tests pass.
 
-### Task 5: Full verification and PR
+## Task 5: Full verification and PR
 
 **Files:**
 - Create: `docs.local/qa/push-to-end/report.md` (gitignored terminal report)
