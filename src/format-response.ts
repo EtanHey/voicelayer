@@ -59,7 +59,7 @@ export function formatAsk(
   transcript: string | null,
   opts?: {
     timeoutSeconds?: number;
-    pressToTalk?: boolean;
+    pushToEnd?: boolean;
     outcome?: "timeout" | "no-speech";
     promptPlayback?: PlaybackOutcomeEvent;
   },
@@ -81,8 +81,8 @@ export function formatAsk(
   }
 
   const secs = opts?.timeoutSeconds ?? 30;
-  const ptt = opts?.pressToTalk ?? false;
-  const prefix = ptt ? "PTT timeout" : "timeout";
+  const pushToEnd = opts?.pushToEnd ?? false;
+  const prefix = pushToEnd ? "push-to-end timeout" : "timeout";
   return boxed("voice_ask", [
     `⏱ No response — ${prefix} after ${secs}s`,
     ...(promptInterruption ? [promptInterruption] : []),

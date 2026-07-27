@@ -27,9 +27,9 @@ import {
   createWavBuffer,
   clearInput,
   evaluateNoSpeechGate,
-  evaluatePttSpeechGate,
+  evaluatePushToEndSpeechGate,
   isChunkedSTTEnabled,
-  isPttStopDrainComplete,
+  isPushToEndStopDrainComplete,
   polishSurfaceForWaitOptions,
   retainLastCaptureForRecovery,
   selectChunksWithPreRoll,
@@ -214,7 +214,7 @@ describe("input module", () => {
         createdAt: new Date("2026-05-02T07:08:09.123Z"),
         source: "voicebar",
         silenceMode: "thoughtful",
-        pressToTalk: true,
+        pushToEnd: true,
         durationMs: 900,
         backend: "whisper.cpp",
       });
@@ -266,7 +266,7 @@ describe("input module", () => {
         transcript: null,
         source: "voicebar",
         silenceMode: "standard",
-        pressToTalk: false,
+        pushToEnd: false,
         durationMs: 700,
         backend: "whisper.cpp",
       });
@@ -283,7 +283,7 @@ describe("input module", () => {
         createdAt: new Date("2026-05-22T10:11:12.345Z"),
         source: "voicebar",
         silenceMode: "thoughtful",
-        pressToTalk: true,
+        pushToEnd: true,
         durationMs: 1000,
         backend: "not-transcribed",
         reason: "cancelled",
@@ -318,7 +318,7 @@ describe("input module", () => {
         transcript: "",
         source: "voicebar",
         silenceMode: "standard",
-        pressToTalk: false,
+        pushToEnd: false,
         durationMs: 700,
         backend: "whisper.cpp",
       });
@@ -333,7 +333,7 @@ describe("input module", () => {
         audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
         transcript: "MCP voice ask response",
         silenceMode: "standard",
-        pressToTalk: false,
+        pushToEnd: false,
         durationMs: 900,
         backend: "whisper.cpp",
       });
@@ -361,7 +361,7 @@ describe("input module", () => {
         audioBytes: userAudio,
         transcript: "The archive now keeps both sides.",
         silenceMode: "thoughtful",
-        pressToTalk: false,
+        pushToEnd: false,
         durationMs: 1_200,
         transcribedDurationMs: 1_000,
         backend: "whisper.cpp",
@@ -435,7 +435,7 @@ describe("input module", () => {
         options,
         audioBytes: userAudio,
         silenceMode: "thoughtful",
-        pressToTalk: false,
+        pushToEnd: false,
         durationMs: 1_200,
         transcribedDurationMs: 1_000,
       });
@@ -523,7 +523,7 @@ describe("input module", () => {
             audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
             transcript: "Collision answer",
             silenceMode: "standard",
-            pressToTalk: false,
+            pushToEnd: false,
             durationMs: 900,
             backend: "whisper.cpp",
           }),
@@ -541,7 +541,7 @@ describe("input module", () => {
           audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
           transcript: "User answer",
           silenceMode: "standard",
-          pressToTalk: false,
+          pushToEnd: false,
           durationMs: 900,
           backend: "whisper.cpp",
         }),
@@ -562,7 +562,7 @@ describe("input module", () => {
           audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
           transcript: "User answer",
           silenceMode: "standard",
-          pressToTalk: false,
+          pushToEnd: false,
           durationMs: 900,
           backend: "whisper.cpp",
         }),
@@ -775,10 +775,10 @@ describe("input module", () => {
     });
   });
 
-  describe("PTT stop capture drain", () => {
-    it("keeps recording briefly after a PTT stop signal to preserve final words", () => {
-      expect(isPttStopDrainComplete(1000, 1249, 250)).toBe(false);
-      expect(isPttStopDrainComplete(1000, 1250, 250)).toBe(true);
+  describe("push-to-end stop capture drain", () => {
+    it("keeps recording briefly after a push-to-end stop signal to preserve final words", () => {
+      expect(isPushToEndStopDrainComplete(1000, 1249, 250)).toBe(false);
+      expect(isPushToEndStopDrainComplete(1000, 1250, 250)).toBe(true);
     });
   });
 
@@ -901,7 +901,7 @@ describe("input module", () => {
       return buffer;
     }
 
-    it("trims a long quiet PTT tail before STT while preserving a short pad", () => {
+    it("trims a long quiet push-to-end tail before STT while preserving a short pad", () => {
       const speech = pcmWithConstantSample(2000, 2000);
       const quietTail = pcmWithConstantSample(0, 9000);
       const pcm = new Uint8Array(speech.byteLength + quietTail.byteLength);
@@ -983,7 +983,7 @@ describe("input module", () => {
       expect(result.transcribedDurationMs).toBe(22250);
     });
 
-    it("does not trim a low-RMS final speech burst after a long quiet PTT tail", () => {
+    it("does not trim a low-RMS final speech burst after a long quiet push-to-end tail", () => {
       const opening = pcmWithConstantSample(2000, 2000);
       const roomNoise = pcmWithConstantSample(45, 14000);
       const finalQuietWord = pcmWithSparseQuietSpeechlikeBurst(450, 250);
@@ -1056,7 +1056,7 @@ describe("input module", () => {
       expect(result.transcribedDurationMs).toBe(12250);
     });
 
-    it("keeps long low-energy PTT captures eligible for STT after trimming", () => {
+    it("keeps long low-energy push-to-end captures eligible for STT after trimming", () => {
       const speech = pcmWithConstantSample(1000, 2000);
       const veryLongSilence = pcmWithConstantSample(0, 1000000);
       const pcm = new Uint8Array(speech.byteLength + veryLongSilence.byteLength);
@@ -1073,7 +1073,7 @@ describe("input module", () => {
       expect(trimmedGate.allowed).toBe(true);
     });
 
-    it("can rebuild chunked STT segments from trimmed PTT audio", () => {
+    it("can rebuild chunked STT segments from trimmed push-to-end audio", () => {
       const session = new ChunkedRecordingSession(16000, "thoughtful");
       const trimmedPcm = pcmWithVaryingSpeech(65000);
 
@@ -1149,7 +1149,7 @@ describe("input module", () => {
     });
   });
 
-  describe("PTT speech gate", () => {
+  describe("push-to-end speech gate", () => {
     function fixturePCM(name: string): Uint8Array {
       const fixturePath = join(
         import.meta.dir,
@@ -1165,15 +1165,15 @@ describe("input module", () => {
     }
 
     it("rejects high-noise captures that contain no detected speech", async () => {
-      const result = await evaluatePttSpeechGate(fixturePCM("high_noise.wav"));
+      const result = await evaluatePushToEndSpeechGate(fixturePCM("high_noise.wav"));
 
       expect(result.detected).toBe(false);
       expect(result.speechChunks).toBe(0);
       expect(result.totalChunks).toBeGreaterThan(0);
     });
 
-    it("allows clean speech captures through the PTT speech gate", async () => {
-      const result = await evaluatePttSpeechGate(
+    it("allows clean speech captures through the push-to-end speech gate", async () => {
+      const result = await evaluatePushToEndSpeechGate(
         fixturePCM("clean_speech.wav"),
       );
 
@@ -1186,7 +1186,7 @@ describe("input module", () => {
       const probabilities = [0.91, 0.1, 0.1];
       const pcm = new Uint8Array(VAD_CHUNK_BYTES * probabilities.length);
 
-      const result = await evaluatePttSpeechGate(pcm, {
+      const result = await evaluatePushToEndSpeechGate(pcm, {
         reset: async () => {},
         processChunk: async () => probabilities.shift() ?? 0,
         isSpeechPredicate: (probability) => probability >= 0.5,
@@ -1198,21 +1198,21 @@ describe("input module", () => {
     });
   });
 
-  describe("PTT mode exports", () => {
-    it("recordToBuffer accepts pressToTalk parameter (type check)", async () => {
+  describe("push-to-end mode exports", () => {
+    it("recordToBuffer accepts pushToEnd parameter (type check)", async () => {
       const { recordToBuffer } = await import("../input");
       // Verify the function exists and has the right arity (3 params)
       expect(typeof recordToBuffer).toBe("function");
       expect(recordToBuffer.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("waitForInput accepts pressToTalk parameter (type check)", async () => {
+    it("waitForInput accepts pushToEnd parameter (type check)", async () => {
       const { waitForInput } = await import("../input");
       expect(typeof waitForInput).toBe("function");
       expect(waitForInput.length).toBeGreaterThanOrEqual(1);
     });
 
-    it("stops PTT recording promptly even when no audio chunks are processed", async () => {
+    it("stops push-to-end recording promptly even when no audio chunks are processed", async () => {
       const originalSpawn = Bun.spawn;
       const originalSpawnSync = Bun.spawnSync;
       let spawned = false;

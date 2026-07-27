@@ -361,6 +361,55 @@ describe("input recording durability", () => {
     expect(getRecordingState()).toBe("idle");
   });
 
+  it("keeps push-to-end capture open through VAD-length silence until explicit stop", async () => {
+    const quickSilenceChunks = vad.silenceChunksForMode("quick");
+    const chunks = [
+      makePcmChunk(1800),
+      ...Array.from({ length: quickSilenceChunks + 2 }, () => makePcmChunk(0)),
+    ];
+    const recorder = installFakeRecorder(chunks, true);
+    const { recordToBuffer } = await import("../input");
+    let recordingSettled = false;
+    const recording = recordToBuffer(2_000, "quick", true).finally(() => {
+      recordingSettled = true;
+    });
+
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(
+        () =>
+          existsSync(retainedPath) &&
+          readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * chunks.length,
+        "push-to-end PCM persistence",
+      );
+
+      expect(vadCallCount).toBe(0);
+      expect(recordingSettled).toBe(false);
+
+      writeFileSync(STOP_FILE, "stop");
+      await expect(recording).resolves.toBeInstanceOf(Uint8Array);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  });
+
+  it("keeps the absent push-to-end default on VAD and auto-closes after silence", async () => {
+    const quickSilenceChunks = vad.silenceChunksForMode("quick");
+    const chunks = [
+      makePcmChunk(1800),
+      ...Array.from({ length: quickSilenceChunks }, () => makePcmChunk(0)),
+    ];
+    vadProbabilityForCall = (call) => (call === 1 ? 0.95 : 0);
+    installFakeRecorder(chunks, true);
+    const { recordToBuffer } = await import("../input");
+
+    await expect(recordToBuffer(2_000, "quick")).resolves.toBeInstanceOf(
+      Uint8Array,
+    );
+    expect(vadCallCount).toBe(chunks.length);
+  });
+
   it("keeps live quick-mode capture open while held then closes after a fresh full countdown", async () => {
     const holdPath = process.env.QA_VOICE_RECORDING_HOLD_PATH!;
     const quickSilenceChunks = vad.silenceChunksForMode("quick");

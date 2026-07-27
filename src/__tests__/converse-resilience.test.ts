@@ -211,7 +211,7 @@ describe("handleConverse resilience — P0-2", () => {
       speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
       let capturedSignal: AbortSignal | undefined;
       waitSpy = spyOn(input, "waitForInput").mockImplementation(
-        (_timeout, _silenceMode, _pressToTalk, options) => {
+        (_timeout, _silenceMode, _pushToEnd, options) => {
           capturedSignal = (options as { signal?: AbortSignal } | undefined)
             ?.signal;
           return new Promise(() => {});
@@ -343,7 +343,7 @@ describe("handleConverse resilience — P0-2", () => {
       let captureEnded: (() => void) | undefined;
       let finishTranscription!: (value: string) => void;
       waitSpy = spyOn(input, "waitForInput").mockImplementation(
-        (_timeout, _silenceMode, _pressToTalk, options) => {
+        (_timeout, _silenceMode, _pushToEnd, options) => {
           captureEnded = (
             options as { onCaptureEnd?: () => void } | undefined
           )?.onCaptureEnd;

@@ -26,8 +26,15 @@ describe("SoundLayer MCP compatibility regression", () => {
   let bookSpy: ReturnType<typeof spyOn>;
   let clearInputSpy: ReturnType<typeof spyOn>;
   let clearStopSpy: ReturnType<typeof spyOn>;
+  let savedAllowPushToEnd: string | undefined;
+  let savedControlLayerDisable: string | undefined;
 
   beforeEach(() => {
+    savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+    savedControlLayerDisable =
+      process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+    process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
     ensureBarSpy = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(
       () => {},
     );
@@ -72,6 +79,17 @@ describe("SoundLayer MCP compatibility regression", () => {
     bookSpy.mockRestore();
     clearInputSpy.mockRestore();
     clearStopSpy.mockRestore();
+    if (savedAllowPushToEnd === undefined) {
+      delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+    } else {
+      process.env.VOICELAYER_ALLOW_PUSH_TO_END = savedAllowPushToEnd;
+    }
+    if (savedControlLayerDisable === undefined) {
+      delete process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    } else {
+      process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL =
+        savedControlLayerDisable;
+    }
   });
 
   it("keeps voice_speak non-blocking by not requesting playback wait", async () => {
@@ -129,7 +147,8 @@ describe("SoundLayer MCP compatibility regression", () => {
     ]);
   });
 
-  it("keeps voice_ask blocking and preserves its question voice override", async () => {
+  it("uses manual-stop capture when push_to_end is requested and the gate is satisfied", async () => {
+    process.env.VOICELAYER_ALLOW_PUSH_TO_END = "1";
     const calls: string[] = [];
     awaitPlaybackSpy.mockImplementation(async () => {
       calls.push("awaitCurrentPlayback");
@@ -155,7 +174,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       message: "What changed?",
       timeout_seconds: 45,
       silence_mode: "quick",
-      press_to_talk: true,
+      push_to_end: true,
       voice: "theo",
     });
 
@@ -182,6 +201,99 @@ describe("SoundLayer MCP compatibility regression", () => {
         agentTtsVoice: "en-US-AndrewNeural",
       },
     });
+  });
+
+  it("uses VAD capture when push_to_end is absent", async () => {
+    speakSpy.mockResolvedValue({
+      displayText: "What changed safely?",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+
+    await handleVoiceAsk({
+      message: "What changed?",
+      silence_mode: "thoughtful",
+    });
+
+    expect(waitForInputSpy).toHaveBeenCalledWith(
+      30_000,
+      "thoughtful",
+      false,
+      expect.any(Object),
+    );
+  });
+
+  it("ignores legacy press_to_talk, keeps VAD, and emits a deprecation warning", async () => {
+    process.env.VOICELAYER_ALLOW_PUSH_TO_END = "1";
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    speakSpy.mockResolvedValue({
+      displayText: "What changed safely?",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+
+    try {
+      await handleVoiceAsk({
+        message: "What changed?",
+        press_to_talk: true,
+      });
+
+      expect(waitForInputSpy).toHaveBeenCalledWith(
+        30_000,
+        "thoughtful",
+        false,
+        expect.any(Object),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "Deprecated press_to_talk ignored; use push_to_end",
+        ),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("ignores push_to_end when the gate is not satisfied, keeps VAD, and warns", async () => {
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    speakSpy.mockResolvedValue({
+      displayText: "What changed safely?",
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+
+    try {
+      await handleVoiceAsk({
+        message: "What changed?",
+        push_to_end: true,
+      });
+
+      expect(waitForInputSpy).toHaveBeenCalledWith(
+        30_000,
+        "thoughtful",
+        false,
+        expect.any(Object),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          "push_to_end ignored: VOICELAYER_ALLOW_PUSH_TO_END=1 is required",
+        ),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it("includes ask-prompt interruption telemetry in the blocking result", async () => {
@@ -228,7 +340,7 @@ describe("SoundLayer MCP compatibility regression", () => {
       },
     });
     waitForInputSpy.mockImplementation(
-      async (_timeoutMs, _silenceMode, _pressToTalk, options) => {
+      async (_timeoutMs, _silenceMode, _pushToEnd, options) => {
         await Bun.sleep(35);
         options?.onPhaseChange?.("transcribing");
         await Bun.sleep(25);
@@ -294,13 +406,13 @@ describe("SoundLayer MCP compatibility regression", () => {
       audioArtifact: { bytes: agentAudio, format: "mp3" },
     });
     waitForInputSpy.mockImplementation(
-      async (timeoutMs, silenceMode, pressToTalk, options) => {
+      async (timeoutMs, silenceMode, pushToEnd, options) => {
         input.archiveWaitForInputRecording({
           options: options!,
           audioBytes: input.createWavBuffer(new Uint8Array([1, 2, 3, 4])),
           transcript: "Paired answer",
           silenceMode: silenceMode!,
-          pressToTalk: pressToTalk!,
+          pushToEnd: pushToEnd!,
           durationMs: timeoutMs / 10,
           backend: "fake-stt",
         });
@@ -360,12 +472,12 @@ describe("SoundLayer MCP compatibility regression", () => {
       },
     });
     waitForInputSpy.mockImplementation(
-      async (_timeoutMs, silenceMode, pressToTalk, options) => {
+      async (_timeoutMs, silenceMode, pushToEnd, options) => {
         input.archiveVoiceAskCapture({
           options: options!,
           audioBytes: input.createWavBuffer(new Uint8Array(32_000)),
           silenceMode: silenceMode!,
-          pressToTalk: pressToTalk!,
+          pushToEnd: pushToEnd!,
           durationMs: 1_000,
         });
         options?.onCaptureEnd?.();
