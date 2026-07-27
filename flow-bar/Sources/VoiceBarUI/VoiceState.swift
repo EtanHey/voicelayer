@@ -426,6 +426,11 @@ public final class VoiceState {
         set { remoteOwnedRecording = newValue }
     }
 
+    /// Test-only view of the in-flight remote-transcript shadow.
+    var supersededRemoteTranscriptPendingForTesting: Bool {
+        supersededRemoteTranscriptPending
+    }
+
     private func releaseRemoteCaptureOwnership(preservingPossibleTranscript: Bool) {
         if preservingPossibleTranscript {
             supersededRemoteTranscriptPending =
@@ -1034,7 +1039,7 @@ public final class VoiceState {
                 // stale idle events would kill the paste flag. Recording-sourced
                 // idle gets a short final-transcript grace before clearing it.
                 if idleSource == "recording" {
-                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: false)
+                    releaseRemoteCaptureOwnership(preservingPossibleTranscript: true)
                     barInitiatedTimeout?.cancel()
                     if historyRetranscriptionRequest.currentPath() != nil,
                        deferredFinalTranscriptionTask == nil {

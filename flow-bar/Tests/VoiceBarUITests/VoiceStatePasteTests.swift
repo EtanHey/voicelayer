@@ -747,6 +747,47 @@ final class VoiceStatePasteTests: XCTestCase {
         assertNextPttPastes(state, text: "my own dictation")
     }
 
+    func testRecordingIdleBeforeRemoteFinalThenLocalPttDoesNotPasteRemoteTranscript() {
+        let state = makeRemoteOwnedRecordingState()
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "state",
+            "state": "idle",
+            "source": "recording",
+        ])
+
+        XCTAssertFalse(
+            state.remoteOwnedRecordingForTesting,
+            "Recording idle ends live ownership while the final transcript remains possible"
+        )
+        XCTAssertTrue(
+            state.supersededRemoteTranscriptPendingForTesting,
+            "Recording idle must preserve the possible remote final transcript in the shadow"
+        )
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "transcription",
+            "text": "the remote caller's answer",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            [],
+            "A local PTT in the recording-idle grace must not paste the remote final transcript"
+        )
+        XCTAssertFalse(
+            state.supersededRemoteTranscriptPendingForTesting,
+            "Final transcript delivery must clear the superseded remote shadow"
+        )
+    }
+
     func testSourceLessIdleThenLocalPttDoesNotPasteStillActiveRemoteTranscript() {
         let state = makeRemoteOwnedRecordingState()
         var pastedTexts: [String] = []
