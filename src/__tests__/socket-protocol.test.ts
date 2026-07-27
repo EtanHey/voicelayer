@@ -343,17 +343,15 @@ describe("socket-protocol", () => {
 
     it("preserves the VoiceBar playback clock on interrupt commands", () => {
       expect(
-        parseCommand(
-          '{"cmd":"stop","id":"visual-stop","playback_elapsed_ms":812.4}',
-        ),
+        parseCommand('{"cmd":"stop","id":"visual-stop","playback_elapsed_ms":812.4}'),
       ).toEqual({
         cmd: "stop",
         id: "visual-stop",
         playback_elapsed_ms: 812,
       });
-      expect(parseCommand('{"cmd":"cancel","playback_elapsed_ms":-1}')).toEqual(
-        { cmd: "cancel" },
-      );
+      expect(
+        parseCommand('{"cmd":"cancel","playback_elapsed_ms":-1}'),
+      ).toEqual({ cmd: "cancel" });
     });
 
     it("parses replay command", () => {

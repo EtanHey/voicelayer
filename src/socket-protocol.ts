@@ -16,7 +16,10 @@ import {
 // --- Events: VoiceLayer → Voice Bar ---
 
 export type VoiceLayerState =
-  "idle" | "speaking" | "recording" | "transcribing";
+  | "idle"
+  | "speaking"
+  | "recording"
+  | "transcribing";
 
 export interface StateEvent {
   type: "state";
@@ -68,8 +71,7 @@ export interface TranscriptionEvent {
   /** Whether the optional LLM polish layer produced the final candidate. */
   polished?: boolean;
   /** Outcome of the polish attempt; rejected means the safety gate kept cleaned text. */
-  polish_status?:
-    "skipped" | "unavailable" | "shadowed" | "applied" | "rejected" | "failed";
+  polish_status?: "skipped" | "unavailable" | "shadowed" | "applied" | "rejected" | "failed";
   /** Why the cleaned fallback was used when polished is false. */
   polish_reason?: string;
 }
@@ -126,7 +128,11 @@ export interface SubtitleEvent {
 }
 
 export type PlaybackPriority =
-  "critical" | "high" | "normal" | "low" | "background";
+  | "critical"
+  | "high"
+  | "normal"
+  | "low"
+  | "background";
 
 export interface QueueItemSnapshot {
   text: string;
@@ -146,10 +152,18 @@ export interface QueueEvent {
 }
 
 export type PlaybackOutcomeStatus =
-  "completed" | "interrupted" | "skipped" | "failed";
+  | "completed"
+  | "interrupted"
+  | "skipped"
+  | "failed";
 
 export type PlaybackOutcomeReason =
-  "stopped" | "barge-in" | "expired" | "collapsed" | "refused" | "player-error";
+  | "stopped"
+  | "barge-in"
+  | "expired"
+  | "collapsed"
+  | "refused"
+  | "player-error";
 
 export interface PlaybackOutcomeEvent {
   type: "playback_outcome";
@@ -165,7 +179,12 @@ export interface PlaybackOutcomeEvent {
 }
 
 export type CommandModePhase =
-  "listening" | "capturing" | "applying" | "fallback" | "done" | "error";
+  | "listening"
+  | "capturing"
+  | "applying"
+  | "fallback"
+  | "done"
+  | "error";
 
 export interface CommandModeEvent {
   type: "command_mode";
@@ -441,10 +460,7 @@ export function serializeEvent(event: SocketEvent): string {
     return payload;
   }
 
-  if (
-    normalizedEvent.type === "state" &&
-    normalizedEvent.state === "speaking"
-  ) {
+  if (normalizedEvent.type === "state" && normalizedEvent.state === "speaking") {
     const textBoundedPayload = fitSpeakingTextToSocketFrame(normalizedEvent);
     if (textBoundedPayload) return textBoundedPayload;
 
