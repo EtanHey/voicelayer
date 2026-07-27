@@ -1078,17 +1078,23 @@ public final class VoiceState {
             case "recording":
                 let startsNewRecording = mode != .recording
                 cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
-                // AIDEV-NOTE: The daemon tells us who owns this capture. A remote MCP capture
-                // emits a `recording` event that is otherwise indistinguishable from a dropped-ack
-                // F5 press, so without this the late-recovery branch below claims it and the remote
-                // caller's answer gets auto-pasted into the frontmost app. The 10s recovery window
-                // makes that a RACE — a remote capture starting inside the window is hijacked,
-                // outside it is fine — which is why the symptom was intermittent.
+                // AIDEV-NOTE: `bar_owned` is optional on the wire. Only explicit `true` confirms
+                // a local bar capture; explicit `false` confirms remote ownership, while absence
+                // leaves the ownership gate untouched and fails closed for auto-paste.
+                // Absent is not evidence of local ownership. It is absence of evidence.
+                let barOwned = event["bar_owned"] as? Bool
+                let captureIsRemoteOwned = barOwned != true
+                // A remote MCP capture emits a `recording` event that is otherwise
+                // indistinguishable from a dropped-ack F5 press, so without this the late-recovery
+                // branch below claims it and the remote caller's answer gets auto-pasted into the
+                // frontmost app. The 10s recovery window makes that a RACE — a remote capture
+                // starting inside the window is hijacked, outside it is fine.
                 // Live repro 2026-07-26 12:55:30.
-                let captureIsRemoteOwned = (event["bar_owned"] as? Bool) == false
-                if captureIsRemoteOwned {
+                if barOwned == false {
                     remoteOwnedRecording = true
                     supersededRemoteTranscriptPending = false
+                }
+                if captureIsRemoteOwned {
                     // A remote capture supersedes any bar claim on the line.
                     barInitiatedRecording = false
                     barInitiatedTimeout?.cancel()
@@ -1846,7 +1852,10 @@ public final class VoiceState {
         let remoteCaptureBlocksPaste =
             remoteOwnedRecording || supersededRemoteTranscriptPending
         let shouldAutoPaste =
-            barInitiatedRecording && !remoteCaptureBlocksPaste && !wasHistoryRetranscription
+            barInitiatedRecording
+                && !remoteOwnedRecording
+                && !supersededRemoteTranscriptPending
+                && !wasHistoryRetranscription
         let shouldPasteRecoveredTranscription =
             pendingRecoveredTranscriptionPaste
                 && !remoteCaptureBlocksPaste

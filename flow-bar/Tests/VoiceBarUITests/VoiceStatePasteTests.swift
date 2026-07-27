@@ -423,6 +423,7 @@ final class VoiceStatePasteTests: XCTestCase {
             "type": "state",
             "state": "recording",
             "mode": "ptt",
+            "bar_owned": true,
         ])
         state.handleEvent([
             "type": "state",
@@ -583,11 +584,12 @@ final class VoiceStatePasteTests: XCTestCase {
         state.record(pressToTalk: true)
         try? await Task.sleep(for: .milliseconds(100))
 
-        // Bar legitimately claims a recording (no bar_owned on the wire).
+        // The current daemon explicitly marks genuine bar captures.
         state.handleEvent([
             "type": "state",
             "state": "recording",
             "mode": "ptt",
+            "bar_owned": true,
         ])
         XCTAssertTrue(state.barInitiatedRecordingForTesting)
 
@@ -608,6 +610,124 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(
             pastedTexts, [],
             "Once a capture is known to be remote-owned, its transcript must never auto-paste"
+        )
+    }
+
+    func testUnmarkedRecordingAfterSourceLessIdleAndLocalPttDoesNotLeakRemoteTranscript() {
+        let state = makeRemoteOwnedRecordingState()
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        // An ambiguous idle can belong to another client while the remote capture remains active.
+        state.handleEvent(["type": "state", "state": "idle"])
+        XCTAssertTrue(state.remoteOwnedRecordingForTesting)
+
+        // The local PTT request preserves the possible remote transcript in the shadow gate.
+        state.record(pressToTalk: true)
+
+        // Unknown ownership is not authoritative evidence that the local request won the race.
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "the remote caller's answer",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            [],
+            "An unmarked event must not clear the shadow and leak the in-flight remote transcript"
+        )
+    }
+
+    func testUnmarkedRecordingMidCaptureDoesNotClearRemoteOwnership() {
+        let state = makeRemoteOwnedRecordingState()
+
+        // A state re-broadcast without ownership provenance must not disown the active capture.
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+        ])
+
+        XCTAssertTrue(
+            state.remoteOwnedRecordingForTesting,
+            "An unmarked mid-capture event must leave known remote ownership untouched"
+        )
+    }
+
+    func testUnmarkedRecordingFailsClosedAndDoesNotAutoPaste() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.minimumTranscribingDisplayDuration = 0
+        state.pasteConfirmationDelay = 0
+        state.sendCommand = { _ in }
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+
+        XCTAssertFalse(
+            state.barInitiatedRecordingForTesting,
+            "Absent ownership provenance must not confirm a local bar capture"
+        )
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "unknown-owner transcript",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            [],
+            "Unknown provenance must fail closed instead of auto-pasting"
+        )
+    }
+
+    func testRemoteOwnershipTermDirectlyBlocksAutoPaste() {
+        // Mutation guard: deleting only `!remoteOwnedRecording` from `shouldAutoPaste`
+        // must make this test fail even while the superseded-shadow term remains.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.minimumTranscribingDisplayDuration = 0
+        state.pasteConfirmationDelay = 0
+        state.sendCommand = { _ in }
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        XCTAssertTrue(state.barInitiatedRecordingForTesting)
+        state.remoteOwnedRecordingForTesting = true
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "inconsistently classified remote transcript",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts,
+            [],
+            "Known remote ownership must independently block ordinary auto-paste"
         )
     }
 
