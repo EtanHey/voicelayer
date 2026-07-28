@@ -90,7 +90,12 @@ export function getToolDefinitions() {
     {
       name: "voice_ask",
       description:
-        "Speak a question aloud and wait for the user's voice response. BLOCKING.\n" +
+        "Ask one short question aloud and wait for the user's voice response. BLOCKING: " +
+        "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
+        "Keep it short. If content the user must understand or respond to is long, split it into two or more sequential voice_ask calls. " +
+        "Each ask is a checkpoint: the user confirms they absorbed one part before the next is spoken. " +
+        "voice_speak is only for announcements or status updates that do not need a response. " +
+        "~2,300 characters takes ~3 minutes of speech before recording begins.\n" +
         "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
@@ -111,7 +116,8 @@ export function getToolDefinitions() {
         properties: {
           message: {
             type: "string",
-            description: "The question to speak aloud before recording",
+            description:
+              "Short question to speak aloud before recording. Split long content into sequential voice_ask checkpoints.",
           },
           voice: {
             type: "string",

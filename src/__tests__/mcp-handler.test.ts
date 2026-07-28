@@ -179,6 +179,38 @@ describe("mcp-handler", () => {
       });
     });
 
+    it("teaches callers to keep voice_ask short and use sequential checkpoints", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/list",
+      });
+
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
+      );
+      expect(voiceAsk.description).toContain("spoken before the microphone opens");
+      expect(voiceAsk.description).toContain(
+        "blocks for the entire playback plus the response",
+      );
+      expect(voiceAsk.description).toContain(
+        "two or more sequential voice_ask calls",
+      );
+      expect(voiceAsk.description).toContain("checkpoint");
+      expect(voiceAsk.description).toContain(
+        "confirms they absorbed one part",
+      );
+      expect(voiceAsk.description).toContain(
+        "voice_speak is only for announcements or status updates",
+      );
+      expect(voiceAsk.description).toContain(
+        "~2,300 characters takes ~3 minutes",
+      );
+      expect(voiceAsk.inputSchema.properties.message.description).toContain(
+        "Short question",
+      );
+    });
+
     it("advertises only the gated push_to_end mode with explicit silence consequences", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",

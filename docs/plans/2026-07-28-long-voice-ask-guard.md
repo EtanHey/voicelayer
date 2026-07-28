@@ -41,8 +41,9 @@ Expected: exit 0.
 Assert the `voice_ask` description says the question is spoken before the mic
 opens, the call blocks during playback and response, long content is split into
 two or more sequential `voice_ask` calls, each ask is an acknowledgement
-checkpoint before the next part, `voice_speak` is only for announcements that
-need no response, and about 2,300 characters takes about three minutes.
+checkpoint before the next part, `voice_speak` is only for announcements or
+status updates that need no response, and about 2,300 characters takes about
+three minutes.
 
 **Step 2: Test the guard and journal**
 

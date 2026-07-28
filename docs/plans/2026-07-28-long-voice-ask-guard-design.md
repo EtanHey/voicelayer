@@ -14,9 +14,9 @@ Teach callers in the `voice_ask` tool description that the tool is for a short
 question. Long content the user must understand or respond to must be split into
 two or more sequential `voice_ask` calls. Each ask is an acknowledgement
 checkpoint: wait for the user to confirm they absorbed one part before speaking
-the next. `voice_speak` is only for announcements that do not need a response.
-Include the measured scale warning that about 2,300 characters takes about three
-minutes to speak before recording begins.
+the next. `voice_speak` is only for announcements or status updates that do not
+need a response. Include the measured scale warning that about 2,300 characters
+takes about three minutes to speak before recording begins.
 
 Reject messages longer than 1,200 characters before session booking, synthesis,
 or playback. The refusal reports the actual character count, threshold,
