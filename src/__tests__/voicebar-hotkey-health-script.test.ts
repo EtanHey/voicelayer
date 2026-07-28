@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
+import {
+  chmodSync,
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const healthScript = join(
@@ -32,7 +40,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     const body = await healthScriptBody;
 
     expect(body).toContain('bundle_search_roots+=("$TMPDIR")');
-    expect(body).not.toContain('"$HOME/Downloads" /tmp /private/tmp /var/folders');
+    expect(body).not.toContain("/var/folders");
   });
 
   test("requires both VoiceBar source keys to map to F18", () => {
@@ -77,10 +85,18 @@ describe("verify-voicebar-hotkey-health.sh", () => {
       'secure_input_owner "$TEST_IOREG"',
       { TEST_IOREG: '  | "IOConsoleUsers" = ({"kCGSSessionUserIDKey"=501})' },
     );
+    const zero = callFunction(
+      'secure_input_owner "$TEST_IOREG"',
+      {
+        TEST_IOREG:
+          '  | "IOConsoleUsers" = ({"kCGSSessionSecureInputPID" = 0})',
+      },
+    );
 
     expect(enabled.status).toBe(0);
     expect(enabled.stdout.trim()).toBe("59247");
     expect(disabled.status).not.toBe(0);
+    expect(zero.status).not.toBe(0);
   });
 
   test("extracts the program from the loaded LaunchAgent definition", () => {
@@ -140,6 +156,13 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(result.stdout.trim()).toBe(
       "456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
     );
+  });
+
+  test("reads the full process command rather than the truncated comm column", async () => {
+    const body = await healthScriptBody;
+
+    expect(body).toContain("ps -axo pid=,command=");
+    expect(body).not.toContain("ps -axo pid=,comm=");
   });
 
   test("classifies event-tap startup and permission failures", () => {
@@ -210,47 +233,111 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(reverse.stdout.trim()).toBe(readyThenFailure);
   });
 
-  test("--allow-stopped keeps the Secure Input probe inside the live-state guard", async () => {
-    const body = await healthScriptBody;
-    const liveGuardIndex = body.indexOf(
-      'if [[ "$ALLOW_STOPPED" -eq 0 ]]; then',
+  test("--allow-stopped skips loaded-agent, Secure Input, and process probes", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicebar-health-stopped-"));
+    const tempHome = join(tempRoot, "home");
+    const binDir = join(tempRoot, "bin");
+    const appDir = join(tempRoot, "VoiceBar.app");
+    const infoPlist = join(appDir, "Contents", "Info.plist");
+    const agentDir = join(tempHome, "Library", "LaunchAgents");
+    const agentPlist = join(
+      agentDir,
+      "com.voicelayer.voicebar.plist",
     );
-    const secureInputProbeIndex = body.indexOf(
-      'ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"',
+    const probeLog = join(tempRoot, "live-probes.log");
+    mkdirSync(join(appDir, "Contents", "MacOS"), { recursive: true });
+    mkdirSync(agentDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      infoPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        "<key>CFBundleIdentifier</key><string>com.voicelayer.voicebar</string>",
+        "</dict></plist>",
+        "",
+      ].join("\n"),
     );
-    const liveGuardEndIndex = body.lastIndexOf(
-      "\nfi\n\nprintf 'HOTKEY HEALTH OK\\n'",
+    writeFileSync(
+      agentPlist,
+      [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        "<key>ProgramArguments</key><array>",
+        `<string>${appDir}/Contents/MacOS/VoiceBar</string>`,
+        "</array>",
+        "</dict></plist>",
+        "",
+      ].join("\n"),
     );
+    const stubs: Record<string, string> = {
+      codesign: [
+        "#!/usr/bin/env bash",
+        'if [[ "$1" == "-dvvv" ]]; then',
+        '  printf "Authority=Developer ID Application: Test\\nTeamIdentifier=PPN23G925Y\\n" >&2',
+        "fi",
+        "exit 0",
+        "",
+      ].join("\n"),
+      mdfind: `#!/usr/bin/env bash\nprintf "%s\\n" "$VOICEBAR_CANONICAL_APP"\n`,
+      find: `#!/usr/bin/env bash\nprintf "%s\\n" "$VOICEBAR_CANONICAL_APP"\n`,
+      grep: `#!/usr/bin/env bash\nprintf "%s\\n" "$HOME/Library/LaunchAgents/com.voicelayer.voicebar.plist"\n`,
+      hidutil: [
+        "#!/usr/bin/env bash",
+        "cat <<'EOF'",
+        "({",
+        "HIDKeyboardModifierMappingSrc = 30064771134;",
+        "HIDKeyboardModifierMappingDst = 30064771181;",
+        "},{",
+        "HIDKeyboardModifierMappingSrc = 51539607759;",
+        "HIDKeyboardModifierMappingDst = 30064771181;",
+        "})",
+        "EOF",
+        "",
+      ].join("\n"),
+    };
+    for (const [name, body] of Object.entries(stubs)) {
+      const path = join(binDir, name);
+      writeFileSync(path, body);
+      chmodSync(path, 0o755);
+    }
+    for (const name of ["launchctl", "ioreg", "ps"]) {
+      const path = join(binDir, name);
+      writeFileSync(
+        path,
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$0 $*" >> "$VOICEBAR_TEST_LIVE_PROBE_LOG"',
+          "exit 97",
+          "",
+        ].join("\n"),
+      );
+      chmodSync(path, 0o755);
+    }
 
-    expect(liveGuardIndex).toBeGreaterThan(-1);
-    expect(secureInputProbeIndex).toBeGreaterThan(liveGuardIndex);
-    expect(liveGuardEndIndex).toBeGreaterThan(secureInputProbeIndex);
-  });
+    try {
+      const result = spawnSync(
+        "bash",
+        [healthScript, "--allow-stopped"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            VOICEBAR_CANONICAL_APP: appDir,
+            VOICEBAR_TEST_LIVE_PROBE_LOG: probeLog,
+          },
+        },
+      );
 
-  test("--allow-stopped does not require the LaunchAgent to be loaded", async () => {
-    const body = await healthScriptBody;
-    const launchdProbeIndex = body.indexOf(
-      'launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)"',
-    );
-    const liveGuardIndex = body.lastIndexOf(
-      'if [[ "$ALLOW_STOPPED" -eq 0 ]]; then',
-      launchdProbeIndex,
-    );
-    const liveGuardEndIndex = body.indexOf("\nfi", liveGuardIndex);
-    const loadedProgramIndex = body.indexOf(
-      'loaded_program="$(launchd_loaded_program "$launchd_output" || true)"',
-      liveGuardIndex,
-    );
-    const loadedPathAssertionIndex = body.indexOf(
-      '[[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]]',
-      liveGuardIndex,
-    );
-
-    expect(launchdProbeIndex).toBeGreaterThan(-1);
-    expect(liveGuardIndex).toBeGreaterThan(-1);
-    expect(loadedProgramIndex).toBeGreaterThan(launchdProbeIndex);
-    expect(loadedPathAssertionIndex).toBeGreaterThan(loadedProgramIndex);
-    expect(liveGuardEndIndex).toBeGreaterThan(launchdProbeIndex);
-    expect(liveGuardEndIndex).toBeGreaterThan(loadedPathAssertionIndex);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("HOTKEY HEALTH OK");
+      expect(Bun.file(probeLog).size).toBe(0);
+    } finally {
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
   });
 });

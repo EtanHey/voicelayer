@@ -132,8 +132,52 @@ describe("voicelayer-update.sh", () => {
     expect(upgrade).toBeGreaterThanOrEqual(0);
     expect(reinstall).toBeGreaterThan(upgrade);
     expect(stdout).toContain(
-      "Resident VoiceBar failed canonical signature checks after cask upgrade",
+      "Resident VoiceBar failed canonical signature checks",
     );
+  });
+
+  test("an already-current cask skips upgrade without bypassing repair checks", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-cask-current-"));
+    const binDir = join(tempRoot, "bin");
+    const brewLog = join(tempRoot, "brew.log");
+    const brewStub = join(binDir, "brew");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      brewStub,
+      [
+        "#!/usr/bin/env bash",
+        'printf "%s\\n" "$*" >> "$VOICEBAR_TEST_BREW_LOG"',
+        '[[ "$1" == "outdated" ]] && exit 0',
+        '[[ "$1" == "upgrade" ]] && exit 7',
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(brewStub, 0o755);
+
+    const result = run(
+      [
+        "bash",
+        "-c",
+        [
+          'source "$1"',
+          "voicebar_app_update_mode() { printf 'cask-upgrade\\n'; }",
+          "voicebar_cask_repair_needed() { return 1; }",
+          "update_voicebar_app",
+        ].join("; "),
+        "_",
+        updateScript,
+      ],
+      {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        VOICEBAR_TEST_BREW_LOG: brewLog,
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    const calls = readFileSync(brewLog, "utf8");
+    expect(calls).toContain("outdated --cask --quiet");
+    expect(calls).not.toContain("upgrade --cask");
   });
 
   test("standard updates restore and verify the complete canonical hotkey path after the app update", () => {
@@ -153,9 +197,6 @@ describe("voicelayer-update.sh", () => {
     const autostart = stdout.indexOf(
       `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --reload`,
     );
-    const kickstart = stdout.indexOf(
-      "launchctl kickstart -k gui/",
-    );
     const verify = stdout.indexOf(
       `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh`,
     );
@@ -165,8 +206,8 @@ describe("voicelayer-update.sh", () => {
     expect(dedupe).toBeGreaterThan(appUpdate);
     expect(remap).toBeGreaterThan(dedupe);
     expect(autostart).toBeGreaterThan(remap);
-    expect(kickstart).toBeGreaterThan(autostart);
-    expect(verify).toBeGreaterThan(kickstart);
+    expect(verify).toBeGreaterThan(autostart);
+    expect(stdout).not.toContain("launchctl kickstart -k gui/");
     expect(stdout).not.toContain("hotkey postflight skipped");
   });
 
@@ -288,7 +329,7 @@ describe("voicelayer-update.sh", () => {
     expect(dedupeScript).toContain(
       'bash "$AUTOSTART_INSTALLER" --no-start',
     );
-    expect(dedupeScript).toContain(
+    expect(dedupeScript).not.toContain(
       'launchctl kickstart -k "gui/$(id -u)/$LABEL"',
     );
   });
@@ -418,7 +459,7 @@ describe("voicelayer-update.sh", () => {
           'PACKAGE_ROOT="$2"',
           "VOICEBAR_HEALTH_MAX_ATTEMPTS=3",
           "VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=0",
-          "verify_voicebar_hotkey_health",
+          "verify_voicebar_hotkey_health --allow-stopped",
         ].join("; "),
         "_",
         updateScript,
@@ -430,6 +471,99 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(readFileSync(attemptFile, "utf8").trim()).toBe("3");
     expect(text(result.stdout).match(/verify-voicebar-hotkey-health\.sh/g)).toHaveLength(3);
+  });
+
+  test("hotkey verification fails after exhausting its bounded retries", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-health-exhaust-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    const healthStub = join(scriptsDir, "verify-voicebar-hotkey-health.sh");
+    const attemptFile = join(tempRoot, "attempts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(
+      healthStub,
+      [
+        "#!/usr/bin/env bash",
+        'attempt=0',
+        '[[ -f "$VOICEBAR_HEALTH_TEST_ATTEMPTS" ]] && read -r attempt < "$VOICEBAR_HEALTH_TEST_ATTEMPTS"',
+        'attempt=$((attempt + 1))',
+        'printf "%s\\n" "$attempt" > "$VOICEBAR_HEALTH_TEST_ATTEMPTS"',
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(healthStub, 0o755);
+
+    const result = run(
+      [
+        "bash",
+        "-c",
+        [
+          'source "$1"',
+          'PACKAGE_ROOT="$2"',
+          "VOICEBAR_HEALTH_MAX_ATTEMPTS=3",
+          "VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=0",
+          "verify_voicebar_hotkey_health --allow-stopped",
+        ].join("; "),
+        "_",
+        updateScript,
+        tempRoot,
+      ],
+      { VOICEBAR_HEALTH_TEST_ATTEMPTS: attemptFile },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(readFileSync(attemptFile, "utf8").trim()).toBe("3");
+    expect(text(result.stderr)).toContain(
+      "VoiceBar hotkey health did not become ready after 3 attempts",
+    );
+  });
+
+  test("the installed VoiceBar path stays canonical despite environment overrides", () => {
+    const result = run(
+      [
+        "bash",
+        "-c",
+        'source "$1"; printf "%s\\n" "$VOICEBAR_CANONICAL_APP"',
+        "_",
+        updateScript,
+      ],
+      { VOICELAYER_UPDATE_VOICEBAR_APP: "/tmp/Unexpected.app" },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(text(result.stdout).trim()).toBe("/Applications/VoiceBar.app");
+  });
+
+  test("main completes model and data work before returning a hotkey repair failure", () => {
+    const result = run([
+      "bash",
+      "-c",
+      [
+        'source "$1"',
+        "parse_args() { :; }",
+        "validate_args() { :; }",
+        "print_plan() { :; }",
+        "detect_install_type() { printf 'global-package\\n'; }",
+        "voicebar_app_update_mode() { printf 'local-build\\n'; }",
+        "ensure_command() { :; }",
+        "update_package() { printf 'package\\n'; }",
+        "update_voicebar_app() { printf 'app\\n'; }",
+        "install_qwen3_model() { printf 'model\\n'; }",
+        "sync_personal_data() { printf 'data\\n'; }",
+        "repair_and_verify_voicebar_hotkey_path() { printf 'repair\\n'; return 1; }",
+        "main",
+      ].join("; "),
+      "_",
+      updateScript,
+    ]);
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(stdout).toContain("model");
+    expect(stdout).toContain("data");
+    expect(stdout.indexOf("model")).toBeLessThan(stdout.indexOf("repair"));
+    expect(stdout.indexOf("data")).toBeLessThan(stdout.indexOf("repair"));
+    expect(stdout).not.toContain("VoiceLayer update complete.");
   });
 
   test("pins mlx-audio to the 0.4 release line for Qwen3", () => {

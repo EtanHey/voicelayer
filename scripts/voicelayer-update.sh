@@ -21,7 +21,7 @@ RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
 VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
-VOICEBAR_CANONICAL_APP="${VOICELAYER_UPDATE_VOICEBAR_APP:-/Applications/VoiceBar.app}"
+VOICEBAR_CANONICAL_APP="/Applications/VoiceBar.app"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
 BUILD_APP_ARGS=()
@@ -314,15 +314,17 @@ print_plan() {
             log "  3. + $app_update (Homebrew installs the notarized VoiceBar cask artifact)"
             ;;
     esac
-    log "  4. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
-    log "  5. create/update $VENV_DIR and pull Qwen3 model if missing"
+    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
     if [[ "$DATA_MODE" != "skip" ]]; then
-        log "  6. rsync personal data:"
+        log "  5. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
         log "     $(source_path ".voicelayer/voices.json") -> $VOICELAYER_HOME/voices.json"
         log "     $(source_path ".voicelayer/pronunciation.yaml") -> $VOICELAYER_HOME/pronunciation.yaml"
         log "     $(source_path ".voicelayer/daemon.secret") -> $VOICELAYER_HOME/daemon.secret"
         log "     $(source_path ".local/state/voicelayer/stt-vocabulary.json") -> $STATE_HOME/stt-vocabulary.json"
+        log "  6. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
+    else
+        log "  5. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
     fi
     log ""
 }
@@ -389,11 +391,24 @@ update_package() {
 }
 
 update_voicebar_app() {
+    local outdated_casks=""
+
     case "$(voicebar_app_update_mode)" in
         cask-upgrade)
-            run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+            if [[ "$DRY_RUN_COMMANDS" = "1" ]]; then
+                run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+            else
+                outdated_casks="$(
+                    brew outdated --cask --quiet "$VOICEBAR_CASK_TOKEN"
+                )"
+                if [[ -n "$outdated_casks" ]]; then
+                    run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+                else
+                    log "VoiceBar cask is already current; skipping upgrade."
+                fi
+            fi
             if voicebar_cask_repair_needed; then
-                log "Resident VoiceBar failed canonical signature checks after cask upgrade; reinstalling the cask."
+                log "Resident VoiceBar failed canonical signature checks; reinstalling the cask."
                 run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
             fi
             ;;
@@ -411,13 +426,8 @@ verify_voicebar_hotkey_health() {
     local health_script="$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh"
     local attempt=1
 
-    if [[ "${#health_args[@]}" -gt 0 ]]; then
-        run_cmd bash "$health_script" "${health_args[@]}"
-        return
-    fi
-
     while [[ "$attempt" -le "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; do
-        if run_cmd bash "$health_script"; then
+        if run_cmd bash "$health_script" "${health_args[@]+"${health_args[@]}"}"; then
             return 0
         fi
         if [[ "$attempt" -lt "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; then
@@ -447,7 +457,6 @@ repair_and_verify_voicebar_hotkey_path() {
     run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
     if [[ "$NO_STOP" -eq 0 && "$NO_RELAUNCH" -eq 0 ]]; then
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --reload
-        run_cmd launchctl kickstart -k "gui/$(id -u)/com.voicelayer.voicebar"
     else
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --no-start
     fi
@@ -488,9 +497,9 @@ main() {
 
     update_package
     update_voicebar_app
-    repair_and_verify_voicebar_hotkey_path
     install_qwen3_model
     sync_personal_data
+    repair_and_verify_voicebar_hotkey_path
     log "VoiceLayer update complete."
 }
 

@@ -215,12 +215,8 @@ else
   log "-- install-voicebar-autostart.sh not found next to script; skipping agent reinstall"
 fi
 
-# 6f. A clean app quit does not trigger this LaunchAgent's crash-only KeepAlive,
-# so standalone doctor repairs must explicitly relaunch the canonical app.
-if [[ "$STOP_RUNNING" -eq 1 && "$RELAUNCH" -eq 1 ]]; then
-  log "-- relaunch canonical VoiceBar"
-  run launchctl kickstart -k "gui/$(id -u)/$LABEL"
-fi
+# The --reload installer path above bootstraps and kickstarts the repaired job,
+# so no second relaunch is needed here.
 
 sect "7. Result"
 if [[ "$APPLY" -eq 1 ]]; then

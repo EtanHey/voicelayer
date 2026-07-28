@@ -16,6 +16,38 @@ DOMAIN="gui/$(id -u)"
 RELOAD=0
 NO_START=0
 
+reload_launch_agent() {
+  local bootout_output=""
+  local attempt
+  local unloaded=0
+
+  if ! bootout_output="$(launchctl bootout "$DOMAIN/$LABEL" 2>&1)"; then
+    # The job can disappear between the loaded-state probe and bootout. Treat
+    # that race as success only when a fresh probe confirms it is gone.
+    if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      printf 'ERROR: launchctl bootout failed: %s\n' \
+        "${bootout_output:-unknown error}" >&2
+      return 1
+    fi
+  fi
+
+  # bootout is asynchronous. Do not race bootstrap against the old job.
+  for ((attempt = 1; attempt <= 10; attempt++)); do
+    if ! launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+      unloaded=1
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ "$unloaded" -eq 0 ]]; then
+    echo "ERROR: $LABEL did not finish unloading" >&2
+    return 1
+  fi
+
+  launchctl bootstrap "$DOMAIN" "$PLIST_DST"
+  launchctl kickstart "$DOMAIN/$LABEL"
+}
+
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --reload)
@@ -72,9 +104,7 @@ if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
     exit 0
   fi
 
-  launchctl bootout "$DOMAIN/$LABEL"
-  launchctl bootstrap "$DOMAIN" "$PLIST_DST"
-  launchctl kickstart "$DOMAIN/$LABEL"
+  reload_launch_agent
   echo "Installed $LABEL (reloaded)"
   exit 0
 fi

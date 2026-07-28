@@ -51,7 +51,7 @@ secure_input_owner() {
             | sed -n 's/.*kCGSSessionSecureInputPID"[[:space:]]*=[[:space:]]*\([0-9][0-9]*\).*/\1/p' \
             | head -n 1
     )"
-    [[ -n "$owner" ]] || return 1
+    [[ "$owner" =~ ^[1-9][0-9]*$ ]] || return 1
     printf '%s\n' "$owner"
 }
 
@@ -90,7 +90,7 @@ canonical_process_rows() {
             pid = line
             sub(/[[:space:]].*$/, "", pid)
             sub(/^[^[:space:]]+[[:space:]]+/, "", line)
-            if (line == expected) {
+            if (line == expected || index(line, expected " ") == 1) {
                 print pid " " line
             }
         }
@@ -254,7 +254,7 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
         fail "macOS Secure Input is held by PID $secure_pid (${secure_process:-unknown}); change focus or quit that app"
     fi
 
-    ps_output="$(ps -axo pid=,comm=)"
+    ps_output="$(ps -axo pid=,command=)"
     process_rows="$(
         canonical_process_rows \
             "$ps_output" \
