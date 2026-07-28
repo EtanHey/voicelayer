@@ -96,6 +96,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     const binDir = join(tempHome, "bin");
     const launchctlLog = join(tempHome, "launchctl.log");
     const launchctlStub = join(binDir, "launchctl");
+    const plutilStub = join(binDir, "plutil");
     mkdirSync(binDir, { recursive: true });
     writeFileSync(
       launchctlStub,
@@ -108,6 +109,8 @@ describe("MCP daemon LaunchAgent install contract", () => {
       ].join("\n"),
     );
     chmodSync(launchctlStub, 0o755);
+    writeFileSync(plutilStub, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(plutilStub, 0o755);
 
     const result = Bun.spawnSync(
       ["bash", voicebarAutostartScriptPath, "--no-start"],
