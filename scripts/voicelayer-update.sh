@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Update the installed VoiceLayer package, rebuild the canonical VoiceBar.app,
-# and let build-app complete the local VoiceBar-owned daemon stack restart.
+# and perform one VoiceBar-owned daemon stack restart after postflight repairs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -162,6 +162,13 @@ parse_args() {
                 ;;
         esac
     done
+
+    # A local build must never relaunch before model/data work and postflight
+    # repairs complete. Preserve NO_RELAUNCH as user intent while adding the
+    # internal build-only opt-out exactly once.
+    if [[ "$NO_RELAUNCH" -eq 0 ]]; then
+        BUILD_APP_ARGS+=("--no-relaunch")
+    fi
 }
 
 validate_args() {
@@ -308,7 +315,7 @@ print_plan() {
     log "  2. install package dependencies when running from a git checkout"
     case "$(voicebar_app_update_mode)" in
         local-build)
-            log "  3. + $app_update (build-app.sh relaunches VoiceBar unless --no-relaunch is set)"
+            log "  3. + $app_update (postflight performs the single requested VoiceBar relaunch)"
             ;;
         *)
             log "  3. + $app_update (Homebrew installs the notarized VoiceBar cask artifact)"

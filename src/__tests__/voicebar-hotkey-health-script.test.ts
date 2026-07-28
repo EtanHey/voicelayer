@@ -139,23 +139,23 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     );
   });
 
-  test("matches a canonical running process when its app path contains spaces", () => {
+  test("enumerates canonical and stray VoiceBar bundle processes, including paths with spaces", () => {
     const result = callFunction(
-      'canonical_process_rows "$TEST_PS" "$TEST_EXPECTED"',
+      'voicebar_process_rows "$TEST_PS"',
       {
-        TEST_EXPECTED:
-          "/Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
         TEST_PS: [
           "  123 /Applications/Other.app/Contents/MacOS/Other",
           "  456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
+          "  789 /tmp/Stale Build/VoiceBar.app/Contents/MacOS/VoiceBar --restored",
         ].join("\n"),
       },
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe(
+    expect(result.stdout.trim().split("\n")).toEqual([
       "456 /Users/test/Test Builds/VoiceBar.app/Contents/MacOS/VoiceBar",
-    );
+      "789 /tmp/Stale Build/VoiceBar.app/Contents/MacOS/VoiceBar --restored",
+    ]);
   });
 
   test("reads the full process command rather than the truncated comm column", async () => {

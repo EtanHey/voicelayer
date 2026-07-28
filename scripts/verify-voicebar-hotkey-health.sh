@@ -80,18 +80,17 @@ noncanonical_launchd_definitions() {
     done <<<"$definitions"
 }
 
-canonical_process_rows() {
+voicebar_process_rows() {
     local ps_output="$1"
-    local expected="$2"
 
-    printf '%s\n' "$ps_output" | awk -v expected="$expected" '
+    printf '%s\n' "$ps_output" | awk '
         {
             line = $0
             sub(/^[[:space:]]*/, "", line)
             pid = line
             sub(/[[:space:]].*$/, "", pid)
             sub(/^[^[:space:]]+[[:space:]]+/, "", line)
-            if (line == expected || index(line, expected " ") == 1) {
+            if (line ~ /^\/.*\/VoiceBar\.app\/Contents\/MacOS\/VoiceBar([[:space:]]|$)/) {
                 print pid " " line
             }
         }
@@ -258,9 +257,7 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
 
     ps_output="$(ps -axo pid=,command=)"
     process_rows="$(
-        canonical_process_rows \
-            "$ps_output" \
-            "$CANONICAL_APP/Contents/MacOS/VoiceBar"
+        voicebar_process_rows "$ps_output"
     )"
     process_count="$(printf '%s\n' "$process_rows" | awk 'NF { count++ } END { print count + 0 }')"
     [[ "$process_count" -eq 1 ]] || fail "expected one running VoiceBar process, found $process_count"

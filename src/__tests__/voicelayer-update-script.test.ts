@@ -40,9 +40,9 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).toContain("DRY RUN: yes");
     expect(stdout).toContain("INSTALL TYPE:");
     expect(stdout).toContain("PACKAGE UPDATE:");
-    expect(stdout).toContain("bash flow-bar/build-app.sh");
+    expect(stdout).toContain("bash flow-bar/build-app.sh --no-relaunch");
     expect(stdout).toContain(
-      "build-app.sh relaunches VoiceBar unless --no-relaunch is set",
+      "postflight performs the single requested VoiceBar relaunch",
     );
     expect(stdout).not.toContain("bash launchd/install.sh");
     expect(stdout).not.toContain("restart VoiceLayer daemon");
@@ -78,8 +78,9 @@ describe("voicelayer-update.sh", () => {
       "bash flow-bar/build-app.sh --no-stop --no-relaunch",
     );
     expect(stdout).toContain(
-      "build-app.sh relaunches VoiceBar unless --no-relaunch is set",
+      "postflight performs the single requested VoiceBar relaunch",
     );
+    expect(stdout).not.toContain("--no-relaunch --no-relaunch");
   });
 
   test("brew-cask-managed VoiceBar upgrades in place instead of forcing a reinstall", () => {
@@ -203,6 +204,9 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(appUpdate).toBeGreaterThanOrEqual(0);
+    expect(stdout).toContain(
+      `bash ${repoRoot}/flow-bar/build-app.sh --no-relaunch`,
+    );
     expect(dedupe).toBeGreaterThan(appUpdate);
     expect(remap).toBeGreaterThan(dedupe);
     expect(autostart).toBeGreaterThan(remap);
