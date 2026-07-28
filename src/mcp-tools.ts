@@ -94,7 +94,8 @@ export function getToolDefinitions() {
         "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
-        "- Push-to-talk (press_to_talk=true): Records until stop signal — best for noisy environments\n\n" +
+        "- Push-to-end (push_to_end=true; gated): DISABLES automatic silence detection. " +
+        "Recording will not stop when the user stops speaking; use only when the user explicitly asked for manual stop.\n\n" +
         `User-controlled stop: touch ${STOP_FILE} to end recording.\n` +
         "Requires voice session booking — other sessions see 'line busy'.\n\n" +
         "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
@@ -128,16 +129,17 @@ export function getToolDefinitions() {
           silence_mode: {
             type: "string",
             description:
-              "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default). Ignored in PTT mode.",
+              "VAD silence threshold: 'quick' (0.5s), 'standard' (1.5s), 'thoughtful' (2.5s, default). Ignored in push-to-end mode.",
             enum: ["quick", "standard", "thoughtful"],
             default: "thoughtful",
           },
-          press_to_talk: {
+          push_to_end: {
             type: "boolean",
             description:
-              `Push-to-talk mode. When true, recording runs until user sends stop signal ` +
-              `(touch ${STOP_FILE}). No VAD silence detection. ` +
-              "Recommended for loud/noisy environments.",
+              "Manual-stop mode that disables automatic silence detection. " +
+              "The recording will not stop when the user stops speaking; it ends only on an explicit " +
+              `stop (touch ${STOP_FILE}) or timeout. Use only when the user explicitly asked for manual stop. ` +
+              "Ignored unless VOICELAYER_ALLOW_PUSH_TO_END=1.",
             default: false,
           },
         },

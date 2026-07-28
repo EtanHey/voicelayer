@@ -179,6 +179,38 @@ describe("mcp-handler", () => {
       });
     });
 
+    it("advertises only the gated push_to_end mode with explicit silence consequences", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/list",
+      });
+
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
+      );
+      const properties = voiceAsk.inputSchema.properties;
+      expect(properties.press_to_talk).toBeUndefined();
+      expect(properties.push_to_end).toEqual(
+        expect.objectContaining({
+          type: "boolean",
+          default: false,
+        }),
+      );
+      expect(properties.push_to_end.description).toContain(
+        "disables automatic silence detection",
+      );
+      expect(properties.push_to_end.description).toContain(
+        "will not stop when the user stops speaking",
+      );
+      expect(properties.push_to_end.description).toContain(
+        "only when the user explicitly asked for manual stop",
+      );
+      expect(properties.push_to_end.description).toContain(
+        "VOICELAYER_ALLOW_PUSH_TO_END=1",
+      );
+    });
+
     it("each tool has name, description, inputSchema", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",

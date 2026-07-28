@@ -41,7 +41,8 @@
 ## VAD and Recording
 - Uses Silero VAD (ONNX) with silence modes: quick (0.5s), standard (1.5s), thoughtful (2.5s).
 - Model location: `models/silero_vad.onnx`.
-- Recording modes: VAD (default) or `press_to_talk=true` for manual stop.
+- MCP recording modes: VAD (default) or gated `push_to_end=true` for manual stop.
+- VoiceBar's trusted F5/tap socket field remains `press_to_talk=true`; do not rename or MCP-gate it.
 - Stop signals: touch `/tmp/voicelayer-stop-{TOKEN}`, VAD silence (VAD mode), timeout (default 30s).
 - Session booking uses `/tmp/voicelayer-session-{TOKEN}.lock`; stale locks are cleaned.
 
@@ -76,6 +77,7 @@
 ## Environment Variables
 - `QA_VOICE_STT_BACKEND`, `QA_VOICE_WHISPER_MODEL`, `QA_VOICE_WISPR_KEY`
 - `QA_VOICE_TTS_VOICE`, `QA_VOICE_TTS_RATE`, `QA_VOICE_THINK_FILE`
+- `VOICELAYER_ALLOW_PUSH_TO_END=1` enables the MCP manual-stop mode; unset/other values keep it disabled.
 - `VOICELAYER_SOCKET_PATH` and `VOICELAYER_MCP_SOCKET_PATH` isolate dev VoiceBar/MCP sockets; legacy `QA_VOICE_SOCKET_PATH` and `QA_VOICE_MCP_SOCKET_PATH` remain supported.
 
 ## Dependencies (setup)

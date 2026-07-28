@@ -7,10 +7,10 @@
  *
  * Two recording modes:
  *   - VAD mode (default): Silero VAD neural network detects speech/silence
- *   - Push-to-talk (PTT): User explicitly controls start/stop via stop signal
+ *   - Push-to-end (manual stop): User explicitly controls the stop signal
  *
  * AIDEV-NOTE: Energy-based VAD (amplitude threshold) removed in Phase 2.
- * False positives in noisy environments. Use Silero VAD or PTT instead.
+ * False positives in noisy environments. Use Silero VAD or push-to-end instead.
  * calculateRMS() in audio-utils.ts is retained only for Wispr Flow volume data.
  *
  * Stops recording on:
@@ -116,7 +116,7 @@ const BITS_PER_SAMPLE = 16;
 // AIDEV-TODO: expose these no-speech gate thresholds in VoiceBar Settings.
 const MIN_TRANSCRIBE_DURATION_MS = 600;
 const MIN_TRANSCRIBE_DBFS = -55;
-const MIN_PTT_SPEECH_CHUNKS = 2;
+const MIN_PUSH_TO_END_SPEECH_CHUNKS = 2;
 const MIN_LOW_ENERGY_TRANSCRIBE_DURATION_MS = 1500;
 const TRAILING_SILENCE_TRIM_WINDOW_MS = 250;
 const TRAILING_SILENCE_TRIM_THRESHOLD_RMS = 300;
@@ -125,7 +125,7 @@ const TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK = 350;
 const TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR = 0.12;
 const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_RMS = 30;
 const TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_PEAK = 400;
-const PTT_STOP_CAPTURE_DRAIN_MS = 250;
+const PUSH_TO_END_STOP_CAPTURE_DRAIN_MS = 250;
 const TRAILING_SILENCE_TRIM_MIN_QUIET_MS = 4000;
 const TRAILING_SILENCE_TRIM_PAD_MS = 1000;
 const PRE_ROLL_MS = 500;
@@ -136,7 +136,7 @@ const PRE_ROLL_CHUNKS = Math.ceil(
 /**
  * Pre-speech timeout: if no speech is detected within this many seconds,
  * stop recording early and return null. Prevents long silent waits.
- * Only applies to VAD mode (not PTT).
+ * Only applies to VAD mode (not push-to-end).
  */
 const PRE_SPEECH_TIMEOUT_SECONDS = 15;
 
@@ -391,7 +391,7 @@ export interface VoiceBarRecordingArchiveInput {
   createdAt?: Date;
   source: "voicebar";
   silenceMode: SilenceMode;
-  pressToTalk: boolean;
+  pushToEnd: boolean;
   durationMs: number;
   transcribedDurationMs?: number;
   backend: string;
@@ -458,7 +458,7 @@ interface WaitForInputArchiveInput {
   audioBytes: Uint8Array;
   transcript: string | null;
   silenceMode: SilenceMode;
-  pressToTalk: boolean;
+  pushToEnd: boolean;
   durationMs: number;
   transcribedDurationMs?: number;
   backend: string;
@@ -468,7 +468,7 @@ export interface VoiceAskCaptureArchiveInput {
   options: WaitForInputOptions;
   audioBytes: Uint8Array;
   silenceMode: SilenceMode;
-  pressToTalk: boolean;
+  pushToEnd: boolean;
   durationMs: number;
   transcribedDurationMs?: number;
 }
@@ -829,7 +829,7 @@ function writeVoiceBarRecordingArchive(
     id,
     created_at: createdAtIso,
     source: input.source,
-    mode: input.pressToTalk ? "ptt" : "vad",
+    mode: input.pushToEnd ? "ptt" : "vad",
     silence_mode: input.silenceMode,
     duration_ms: input.durationMs,
     raw_duration_ms: input.durationMs,
@@ -913,7 +913,7 @@ export function archiveVoiceAskCapture(
     id,
     created_at: createdAtIso,
     source: "voice_ask",
-    mode: input.pressToTalk ? "ptt" : "vad",
+    mode: input.pushToEnd ? "ptt" : "vad",
     silence_mode: input.silenceMode,
     duration_ms: input.durationMs,
     raw_duration_ms: input.durationMs,
@@ -1052,7 +1052,7 @@ export function archiveWaitForInputRecording(
       transcript: input.transcript,
       source: input.options.archiveSource,
       silenceMode: input.silenceMode,
-      pressToTalk: input.pressToTalk,
+      pushToEnd: input.pushToEnd,
       durationMs: input.durationMs,
       transcribedDurationMs: input.transcribedDurationMs,
       backend: input.backend,
@@ -1065,7 +1065,7 @@ export function archiveWaitForInputRecording(
     options: input.options,
     audioBytes: input.audioBytes,
     silenceMode: input.silenceMode,
-    pressToTalk: input.pressToTalk,
+    pushToEnd: input.pushToEnd,
     durationMs: input.durationMs,
     transcribedDurationMs: input.transcribedDurationMs,
   });
@@ -1081,13 +1081,13 @@ export interface CaptureFailure {
   message: string;
 }
 
-export interface PttSpeechGateResult {
+export interface PushToEndSpeechGateResult {
   detected: boolean;
   speechChunks: number;
   totalChunks: number;
 }
 
-interface PttSpeechGateOptions {
+interface PushToEndSpeechGateOptions {
   processChunk?: (chunk: Uint8Array) => Promise<number>;
   reset?: () => Promise<void>;
   isSpeechPredicate?: (probability: number) => boolean;
@@ -1191,11 +1191,13 @@ function isActiveTrimWindow(pcmData: Uint8Array): boolean {
 
 export function trimTrailingSilenceForSTT(
   pcmData: Uint8Array,
-  pressToTalk: boolean,
+  pushToEnd: boolean,
   sampleRate = SAMPLE_RATE,
 ): STTTrimResult {
   const rawDurationMs = pcmDurationMs(pcmData, sampleRate);
-  if (!pressToTalk || pcmData.byteLength === 0) {
+  // Manual-stop captures can contain a long quiet tail before the explicit
+  // stop signal; VAD captures already end at their silence boundary.
+  if (!pushToEnd || pcmData.byteLength === 0) {
     return {
       pcmData,
       trimmed: false,
@@ -1271,14 +1273,15 @@ export function classifyCaptureFailure(
   return null;
 }
 
-export async function evaluatePttSpeechGate(
+export async function evaluatePushToEndSpeechGate(
   pcmData: Uint8Array,
-  options: PttSpeechGateOptions = {},
-): Promise<PttSpeechGateResult> {
+  options: PushToEndSpeechGateOptions = {},
+): Promise<PushToEndSpeechGateResult> {
   const processChunk = options.processChunk ?? processVADChunk;
   const reset = options.reset ?? resetVAD;
   const isSpeechPredicate = options.isSpeechPredicate ?? isSpeech;
-  const minSpeechChunks = options.minSpeechChunks ?? MIN_PTT_SPEECH_CHUNKS;
+  const minSpeechChunks =
+    options.minSpeechChunks ?? MIN_PUSH_TO_END_SPEECH_CHUNKS;
 
   if (pcmData.byteLength === 0) {
     return { detected: false, speechChunks: 0, totalChunks: 0 };
@@ -1718,10 +1721,10 @@ export function startMicChunkStream(options: {
   return { exited, stop };
 }
 
-export function isPttStopDrainComplete(
+export function isPushToEndStopDrainComplete(
   stopRequestedAtMs: number,
   nowMs: number,
-  drainMs = PTT_STOP_CAPTURE_DRAIN_MS,
+  drainMs = PUSH_TO_END_STOP_CAPTURE_DRAIN_MS,
 ): boolean {
   return nowMs - stopRequestedAtMs >= drainMs;
 }
@@ -1732,16 +1735,16 @@ export function isPttStopDrainComplete(
  *
  * Two modes:
  * - VAD mode (default): Silero VAD detects speech/silence, auto-stops on silence
- * - PTT mode (pressToTalk=true): Records until stop signal or timeout, no VAD
+ * - push-to-end mode (pushToEnd=true): Records until stop signal or timeout, no VAD
  *
  * @param timeoutMs - Maximum recording time in milliseconds
- * @param silenceMode - VAD silence threshold (ignored in PTT mode)
- * @param pressToTalk - If true, skip VAD — only stop on user signal or timeout
+ * @param silenceMode - VAD silence threshold (ignored in push-to-end mode)
+ * @param pushToEnd - If true, skip VAD — only stop on user signal or timeout
  */
 export async function recordToBuffer(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
-  pressToTalk: boolean = false,
+  pushToEnd: boolean = false,
   chunkedSession?: ChunkedRecordingSession,
   signal?: AbortSignal,
   preserveNoSpeechCapture = false,
@@ -1767,12 +1770,12 @@ export async function recordToBuffer(
   clearRecordingHold();
   setRecordingState("recording");
 
-  const silenceChunksNeeded = pressToTalk
+  const silenceChunksNeeded = pushToEnd
     ? Infinity
     : silenceChunksForMode(silenceMode);
 
   // Pre-speech timeout: max chunks before giving up if no speech detected
-  const preSpeechChunks = pressToTalk
+  const preSpeechChunks = pushToEnd
     ? Infinity
     : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
 
@@ -1812,8 +1815,8 @@ export async function recordToBuffer(
     );
   }
 
-  // Reset VAD state for fresh recording (skip in PTT mode — no VAD needed)
-  if (!pressToTalk) {
+  // Reset VAD state for fresh recording (skip in push-to-end mode — no VAD needed)
+  if (!pushToEnd) {
     try {
       await resetVAD();
     } catch (err) {
@@ -1840,27 +1843,29 @@ export async function recordToBuffer(
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
     let abortHandler: (() => void) | undefined;
-    let pttStopRequestedAtMs: number | null = null;
+    let pushToEndStopRequestedAtMs: number | null = null;
     const recoveryWriter = new IncrementalRecoveryWavWriter(null);
     const silencePolicy = new RecordingSilenceAutoClosePolicy({
       preSpeechChunks,
       postSpeechSilenceChunks: silenceChunksNeeded,
     });
 
-    const beginPttStopDrain = () => {
-      if (pttStopRequestedAtMs !== null) return;
-      pttStopRequestedAtMs = Date.now();
+    const beginPushToEndStopDrain = () => {
+      if (pushToEndStopRequestedAtMs !== null) return;
+      pushToEndStopRequestedAtMs = Date.now();
       console.error(
-        `[voicelayer] Stop signal received — capturing ${PTT_STOP_CAPTURE_DRAIN_MS}ms PTT tail before ending recording`,
+        `[voicelayer] Stop signal received — capturing ${PUSH_TO_END_STOP_CAPTURE_DRAIN_MS}ms push-to-end tail before ending recording`,
       );
     };
 
-    const finishIfPttStopDrainComplete = () => {
+    const finishIfPushToEndStopDrainComplete = () => {
       if (
-        pttStopRequestedAtMs !== null &&
-        isPttStopDrainComplete(pttStopRequestedAtMs, Date.now())
+        pushToEndStopRequestedAtMs !== null &&
+        isPushToEndStopDrainComplete(pushToEndStopRequestedAtMs, Date.now())
       ) {
-        console.error("[voicelayer] PTT tail capture complete — ending recording");
+        console.error(
+          "[voicelayer] push-to-end tail capture complete — ending recording",
+        );
         finish();
         return true;
       }
@@ -1911,14 +1916,14 @@ export async function recordToBuffer(
         reject(finishError);
       } else if (totalPcmBytes === 0) {
         resolve(null);
-      } else if (!pressToTalk && !hasSpeech && !preserveNoSpeechCapture) {
+      } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
       } else {
-        if (!pressToTalk && captureState) {
+        if (!pushToEnd && captureState) {
           captureState.vadSpeechDetected = hasSpeech;
         }
         const selectedChunks =
-          !pressToTalk && hasSpeech && firstSpeechChunkIndex >= 0
+          !pushToEnd && hasSpeech && firstSpeechChunkIndex >= 0
             ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
             : pcmChunks;
         const selectedPcmBytes = selectedChunks.reduce(
@@ -1947,11 +1952,11 @@ export async function recordToBuffer(
       signal.addEventListener("abort", abortHandler, { once: true });
     }
     stopSignalPoll = setInterval(() => {
-      if (pressToTalk && finishIfPttStopDrainComplete()) return;
+      if (pushToEnd && finishIfPushToEndStopDrainComplete()) return;
       if (!hasStopSignal()) return;
       clearStopSignal();
-      if (pressToTalk) {
-        beginPttStopDrain();
+      if (pushToEnd) {
+        beginPushToEndStopDrain();
         return;
       }
       console.error("[voicelayer] Stop signal received — ending recording");
@@ -2016,7 +2021,7 @@ export async function recordToBuffer(
       broadcast({
         type: "state",
         state: "recording",
-        mode: pressToTalk ? "ptt" : "vad",
+        mode: pushToEnd ? "ptt" : "vad",
         silence_mode: silenceMode,
         // AIDEV-NOTE: Tells Voice Bar who owns this capture. Without it, a remote MCP capture is
         // indistinguishable from a dropped-ack F5 press and gets claimed by late-record-start
@@ -2027,8 +2032,8 @@ export async function recordToBuffer(
       });
 
       console.error(
-        pressToTalk
-          ? "[voicelayer] Push-to-talk: recording... touch ~/.local/state/voicelayer/stop-{TOKEN} to end"
+        pushToEnd
+          ? "[voicelayer] Push-to-end: recording... touch ~/.local/state/voicelayer/stop-{TOKEN} to end"
           : "[voicelayer] Listening... speak now (Silero VAD active)",
       );
 
@@ -2105,13 +2110,13 @@ export async function recordToBuffer(
             });
           }
 
-          if (pressToTalk) {
+          if (pushToEnd) {
             chunkedSession?.pushChunk(chunk, true);
             if (hasStopSignal()) {
               clearStopSignal();
-              beginPttStopDrain();
+              beginPushToEndStopDrain();
             }
-            if (finishIfPttStopDrainComplete()) {
+            if (finishIfPushToEndStopDrainComplete()) {
               return;
             }
           } else {
@@ -2200,12 +2205,12 @@ export async function recordToBuffer(
  *
  * @param timeoutMs - Max wait time in milliseconds
  * @param silenceMode - VAD silence mode: quick (0.5s), standard (1.5s), thoughtful (2.5s)
- * @param pressToTalk - If true, use PTT mode (no VAD, stop on signal only)
+ * @param pushToEnd - If true, use push-to-end mode (no VAD, stop on signal only)
  */
 export async function waitForInput(
   timeoutMs: number,
   silenceMode: SilenceMode = "standard",
-  pressToTalk: boolean = false,
+  pushToEnd: boolean = false,
   options: WaitForInputOptions = {},
 ): Promise<string | null> {
   throwIfWaitForInputAborted(options.signal);
@@ -2217,7 +2222,7 @@ export async function waitForInput(
   }
   appendControlLayerEvent("capture.started", {
     silence_mode: silenceMode,
-    press_to_talk: pressToTalk,
+    push_to_end: pushToEnd,
     timeout_ms: timeoutMs,
     archive_source: options.archiveSource ?? null,
   });
@@ -2237,7 +2242,7 @@ export async function waitForInput(
     pcmData = await recordToBuffer(
       timeoutMs,
       silenceMode,
-      pressToTalk,
+      pushToEnd,
       chunkedSession,
       options.signal,
       options.archiveSource === "voice_ask",
@@ -2248,7 +2253,7 @@ export async function waitForInput(
       error: err instanceof Error ? err.message : String(err),
       recording_state: getEffectiveRecordingState(),
       silence_mode: silenceMode,
-      press_to_talk: pressToTalk,
+      push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
     });
     if (options.signal?.aborted) throw err;
@@ -2274,7 +2279,7 @@ export async function waitForInput(
   }
 
   const retainedWavData = createWavBuffer(pcmData);
-  const sttTrim = trimTrailingSilenceForSTT(pcmData, pressToTalk);
+  const sttTrim = trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
   if (options.archiveSource === "voice_ask") {
     try {
@@ -2282,7 +2287,7 @@ export async function waitForInput(
         options,
         audioBytes: retainedWavData,
         silenceMode,
-        pressToTalk,
+        pushToEnd,
         durationMs: sttTrim.rawDurationMs,
         transcribedDurationMs: sttTrim.transcribedDurationMs,
       });
@@ -2337,7 +2342,7 @@ export async function waitForInput(
           audioBytes: retainedWavData,
           source: options.archiveSource,
           silenceMode,
-          pressToTalk,
+          pushToEnd,
           durationMs: pcmDurationMs(pcmData),
           backend: "not-transcribed",
           reason: "cancelled",
@@ -2354,7 +2359,7 @@ export async function waitForInput(
     appendControlLayerEvent("capture.cancelled", {
       duration_ms: pcmDurationMs(pcmData),
       silence_mode: silenceMode,
-      press_to_talk: pressToTalk,
+      push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
       retained_recording: true,
     });
@@ -2371,14 +2376,14 @@ export async function waitForInput(
       transcribed_duration_ms: sttTrim.transcribedDurationMs,
       trimmed_ms: sttTrim.rawDurationMs - sttTrim.transcribedDurationMs,
       silence_mode: silenceMode,
-      press_to_talk: pressToTalk,
+      push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
     });
   }
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
   const vadNoSpeech =
-    !pressToTalk && captureState.vadSpeechDetected === false;
+    !pushToEnd && captureState.vadSpeechDetected === false;
   const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
@@ -2411,7 +2416,7 @@ export async function waitForInput(
       dbfs: Number.isFinite(noSpeechGate.dbfs) ? noSpeechGate.dbfs : null,
       trimmed: sttTrim.trimmed,
       silence_mode: silenceMode,
-      press_to_talk: pressToTalk,
+      push_to_end: pushToEnd,
       archive_source: options.archiveSource ?? null,
       vad_speech_detected: captureState.vadSpeechDetected ?? null,
       capture_failure: captureFailure?.type ?? null,
@@ -2430,15 +2435,17 @@ export async function waitForInput(
     return null;
   }
 
-  if (pressToTalk) {
+  if (pushToEnd) {
     try {
-      const pttSpeechGate = await evaluatePttSpeechGate(sttTrim.pcmData);
+      const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
+        sttTrim.pcmData,
+      );
       throwIfWaitForInputAborted(options.signal);
       console.error(
-        `[voicelayer] PTT speech gate: detected=${pttSpeechGate.detected} ` +
-          `(speech-chunks=${pttSpeechGate.speechChunks}/${pttSpeechGate.totalChunks})`,
+        `[voicelayer] push-to-end speech gate: detected=${pushToEndSpeechGate.detected} ` +
+          `(speech-chunks=${pushToEndSpeechGate.speechChunks}/${pushToEndSpeechGate.totalChunks})`,
       );
-      if (!pttSpeechGate.detected) {
+      if (!pushToEndSpeechGate.detected) {
         clearCancelSignal();
         invokeCaptureObserver("no_speech", options.onNoSpeech);
         broadcast({ type: "state", state: "idle", source: "recording" });
@@ -2447,7 +2454,7 @@ export async function waitForInput(
     } catch (err) {
       if (options.signal?.aborted) throw err;
       console.error(
-        `[voicelayer] PTT speech gate skipped: ${err instanceof Error ? err.message : String(err)}`,
+        `[voicelayer] push-to-end speech gate skipped: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
   }
@@ -2570,7 +2577,7 @@ export async function waitForInput(
               audioBytes: retainedWavData,
               transcript: text,
               silenceMode,
-              pressToTalk,
+              pushToEnd,
               durationMs: sttTrim.rawDurationMs,
               transcribedDurationMs: sttTrim.transcribedDurationMs,
               backend: backend.name,
@@ -2641,21 +2648,21 @@ export class SoxMicCapture implements MicCapture {
   recordToBuffer(
     timeoutMs: number,
     silenceMode: SilenceMode = "standard",
-    pressToTalk = false,
+    pushToEnd = false,
   ): Promise<Uint8Array | null> {
-    return recordToBuffer(timeoutMs, silenceMode, pressToTalk);
+    return recordToBuffer(timeoutMs, silenceMode, pushToEnd);
   }
 
   waitForInput(
     timeoutMs: number,
     silenceMode: SilenceMode = "standard",
-    pressToTalk = false,
+    pushToEnd = false,
     options: MicCaptureOptions = {},
   ): Promise<string | null> {
     return waitForInput(
       timeoutMs,
       silenceMode,
-      pressToTalk,
+      pushToEnd,
       options.archiveRecording ? { archiveSource: "voicebar" } : {},
     );
   }

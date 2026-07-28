@@ -50,7 +50,7 @@ export const VoiceAskSchema = z.object({
   voice: z.string().optional(),
   timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
-  press_to_talk: z.boolean().optional(),
+  push_to_end: z.boolean().optional(),
 });
 
 /** Internal announce-mode args. */
@@ -79,7 +79,7 @@ export const ConverseArgsSchema = z.object({
   message: nonEmptyTrimmed,
   timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
-  press_to_talk: z.boolean().optional(),
+  push_to_end: z.boolean().optional(),
   voice: z.string().optional(),
 });
 

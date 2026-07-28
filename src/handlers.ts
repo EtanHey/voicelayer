@@ -59,6 +59,10 @@ import {
   type VoiceToolContext,
 } from "./mcp-notifications";
 import type { TextToSpeechOptions } from "./soundlayer";
+import {
+  resolvePushToEnd,
+  warnLegacyPressToTalk,
+} from "./push-to-end";
 
 // --- MCP result helper ---
 
@@ -204,13 +208,16 @@ export async function handleVoiceAsk(
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
+  if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
+    warnLegacyPressToTalk("mcp.voice_ask");
+  }
   return handleConverse(
     {
       message: a.message,
       voice: a.voice,
       timeout_seconds: a.timeout_seconds,
       silence_mode: a.silence_mode,
-      press_to_talk: a.press_to_talk,
+      push_to_end: a.push_to_end,
     },
     context,
   );
@@ -421,12 +428,14 @@ export async function handleConverse(
     }
 
     // Record mic audio, then transcribe with selected STT backend
-    const pressToTalk = validated.press_to_talk ?? false;
+    const pushToEnd = resolvePushToEnd(validated.push_to_end ?? false, {
+      caller: "mcp.voice_ask",
+    });
     progressHeartbeat?.start("recording");
     const response = await waitForInput(
       timeoutSeconds * 1000,
       silenceMode,
-      pressToTalk,
+      pushToEnd,
       {
         archiveSource: "voice_ask",
         voiceAskArtifacts: {
@@ -453,7 +462,7 @@ export async function handleConverse(
       return textResult(
         formatAsk(null, {
           timeoutSeconds,
-          pressToTalk,
+          pushToEnd,
           ...(noSpeech ? { outcome: "no-speech" as const } : {}),
           promptPlayback: speech.playbackOutcome,
         }),

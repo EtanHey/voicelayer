@@ -156,12 +156,12 @@ export interface MicCapture {
   recordToBuffer(
     timeoutMs: number,
     silenceMode?: SilenceMode,
-    pressToTalk?: boolean,
+    pushToEnd?: boolean,
   ): Promise<Uint8Array | null>;
   waitForInput(
     timeoutMs: number,
     silenceMode?: SilenceMode,
-    pressToTalk?: boolean,
+    pushToEnd?: boolean,
     options?: MicCaptureOptions,
   ): Promise<string | null>;
   clear(): void;

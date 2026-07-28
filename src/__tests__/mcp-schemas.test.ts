@@ -137,12 +137,27 @@ describe("MCP input schemas", () => {
       expect(result.success).toBe(false);
     });
 
-    it("accepts press_to_talk boolean", () => {
+    it("accepts push_to_end boolean", () => {
+      const result = VoiceAskSchema.safeParse({
+        message: "hello",
+        push_to_end: true,
+      });
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.push_to_end).toBe(true);
+      }
+    });
+
+    it("does not expose legacy press_to_talk in validated data", () => {
       const result = VoiceAskSchema.safeParse({
         message: "hello",
         press_to_talk: true,
       });
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).not.toHaveProperty("press_to_talk");
+        expect(result.data.push_to_end).toBeUndefined();
+      }
     });
 
     it("defaults timeout_seconds to 30", () => {

@@ -38,7 +38,7 @@ Non-blocking text-to-speech. Speaks a message aloud or logs it silently. Auto-de
 
 ## voice_ask
 
-Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, then speaks a question aloud, records mic at device's native rate (auto-detected), resamples to 16kHz, transcribes via Silero VAD + whisper.cpp/Wispr Flow, returns text.
+Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, then speaks a question aloud, records mic at device's native rate (auto-detected), resamples to 16kHz, and returns text transcribed by whisper.cpp/Wispr Flow. The default recording mode uses Silero VAD; gated `push_to_end` disables automatic silence detection.
 
 | Property | Value |
 |----------|-------|
@@ -59,7 +59,7 @@ Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, th
 | `voice` | `string` | No | default voice | Profile name or raw edge-tts voice ID for the question |
 | `timeout_seconds` | `number` | No | `30` | Max wait time (clamped to 5-3600) |
 | `silence_mode` | `string` | No | `thoughtful` | `quick` (0.5s), `standard` (1.5s), or `thoughtful` (2.5s) |
-| `press_to_talk` | `boolean` | No | `false` | Push-to-talk mode — no VAD, stop via signal file only |
+| `push_to_end` | `boolean` | No | `false` | Manual-stop mode that disables automatic silence detection. Recording will not stop when the user stops speaking; use only on explicit user request. Ignored unless `VOICELAYER_ALLOW_PUSH_TO_END=1`. |
 
 **Returns (success):** The user's transcribed text (plain string)
 **Returns (timeout):** `[converse] No response received within N seconds.`

@@ -152,6 +152,42 @@ describe("ack protocol", () => {
     });
   });
 
+  it("honors trusted VoiceBar press_to_talk without the MCP gate or a deprecation warning", () => {
+    const savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+    delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const command = parseCommand(
+        '{"cmd":"record","id":"voicebar-record","timeout_seconds":30,"press_to_talk":true}',
+      );
+      expect(command).toEqual({
+        cmd: "record",
+        id: "voicebar-record",
+        timeout_seconds: 30,
+        press_to_talk: true,
+      });
+
+      queueDepthSpy.mockReturnValue(0);
+      recordingStateSpy.mockReturnValue("idle");
+      handleSocketCommand(command!);
+
+      expect(waitForInputSpy).toHaveBeenCalledWith(
+        30_000,
+        "standard",
+        true,
+        { archiveSource: "voicebar" },
+      );
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      if (savedAllowPushToEnd === undefined) {
+        delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
+      } else {
+        process.env.VOICELAYER_ALLOW_PUSH_TO_END = savedAllowPushToEnd;
+      }
+    }
+  });
+
   it("returns accept ack for record under happy path", () => {
     queueDepthSpy.mockReturnValue(0);
     recordingStateSpy.mockReturnValue("idle");

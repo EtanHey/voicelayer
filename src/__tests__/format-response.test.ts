@@ -90,21 +90,21 @@ describe("formatAsk — success", () => {
 
 describe("formatAsk — timeout", () => {
   it("formats timeout with seconds", () => {
-    const out = formatAsk(null, { timeoutSeconds: 30, pressToTalk: false });
+    const out = formatAsk(null, { timeoutSeconds: 30, pushToEnd: false });
     expect(out).toContain("30s");
     expect(out).toContain("timeout");
   });
 
-  it("formats PTT timeout differently", () => {
-    const out = formatAsk(null, { timeoutSeconds: 60, pressToTalk: true });
-    expect(out).toContain("PTT");
+  it("formats push-to-end timeout differently", () => {
+    const out = formatAsk(null, { timeoutSeconds: 60, pushToEnd: true });
+    expect(out).toContain("push-to-end");
     expect(out).toContain("60s");
   });
 
   it("reports no speech promptly without claiming the configured timeout elapsed", () => {
     const out = formatAsk(null, {
       timeoutSeconds: 180,
-      pressToTalk: false,
+      pushToEnd: false,
       outcome: "no-speech",
     } as any);
 

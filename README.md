@@ -201,7 +201,7 @@ Both tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/sp
 1. Waits for any playing `voice_speak` audio to finish
 2. Speaks the question via edge-tts (with retry on failure)
 3. Records mic at device native rate, resamples to 16kHz
-4. Silero VAD detects speech onset and silence end
+4. In the default mode, Silero VAD detects speech onset and silence end; gated `push_to_end` disables this automatic stop
 5. whisper.cpp transcribes locally (~200-400ms on Apple Silicon)
 6. Returns transcription to the AI agent
 
@@ -219,7 +219,8 @@ Both tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/sp
 | Stop signal | `touch ~/.local/state/voicelayer/stop-{token}` |
 | VAD silence | Configurable: quick (0.5s), standard (1.5s), thoughtful (2.5s) |
 | Timeout | 30s default, configurable 5-3600s per call |
-| Push-to-talk | `press_to_talk: true` — no VAD, stop on signal only |
+| MCP manual stop | `push_to_end: true` with `VOICELAYER_ALLOW_PUSH_TO_END=1` — disables VAD and requires an explicit stop |
+| VoiceBar F5/tap | Trusted socket `press_to_talk: true` — deliberately unchanged and not MCP-gated |
 
 ## STT Backends
 
