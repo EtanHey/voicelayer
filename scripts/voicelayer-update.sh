@@ -457,6 +457,8 @@ repair_and_verify_voicebar_hotkey_path() {
     run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
     if [[ "$NO_STOP" -eq 0 && "$NO_RELAUNCH" -eq 0 ]]; then
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --reload
+    elif [[ "$NO_STOP" -eq 1 ]]; then
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --preserve-load-state
     else
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --no-start
     fi

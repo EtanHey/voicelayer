@@ -91,7 +91,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     );
   });
 
-  test("VoiceBar autostart reload tolerates a concurrent unload", () => {
+  test("VoiceBar autostart no-start unloads a loaded job and tolerates a concurrent unload", () => {
     const tempHome = mkdtempSync(join(tmpdir(), "voicebar-autostart-reload-"));
     const binDir = join(tempHome, "bin");
     const launchctlLog = join(tempHome, "launchctl.log");
@@ -123,7 +123,7 @@ describe("MCP daemon LaunchAgent install contract", () => {
     writeFileSync(launchctlState, "loaded\n");
 
     const result = Bun.spawnSync(
-      ["bash", voicebarAutostartScriptPath, "--reload"],
+      ["bash", voicebarAutostartScriptPath, "--no-start"],
       {
         cwd: repoRoot,
         stdout: "pipe",
@@ -141,10 +141,8 @@ describe("MCP daemon LaunchAgent install contract", () => {
     expect(result.exitCode).toBe(0);
     const launchctlCalls = readFileSync(launchctlLog, "utf-8");
     expect(launchctlCalls).toContain("bootout gui/");
-    expect(launchctlCalls).toContain("bootstrap gui/");
-    expect(launchctlCalls.indexOf("bootout")).toBeLessThan(
-      launchctlCalls.indexOf("bootstrap"),
-    );
+    expect(launchctlCalls).not.toContain("bootstrap gui/");
+    expect(launchctlCalls).not.toContain("kickstart gui/");
   });
 
   test("VoiceBar autostart reload waits for asynchronous bootout before bootstrap", () => {
@@ -232,39 +230,42 @@ describe("MCP daemon LaunchAgent install contract", () => {
     writeFileSync(plutilStub, "#!/usr/bin/env bash\nexit 0\n");
     chmodSync(plutilStub, 0o755);
 
-    const result = Bun.spawnSync(
-      ["bash", voicebarAutostartScriptPath, "--no-start"],
-      {
-        cwd: repoRoot,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: {
-          ...process.env,
-          HOME: tempHome,
-          PATH: `${binDir}:${process.env.PATH ?? ""}`,
-          VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
+    for (const mode of ["--no-start", "--preserve-load-state"]) {
+      writeFileSync(launchctlLog, "");
+      const result = Bun.spawnSync(
+        ["bash", voicebarAutostartScriptPath, mode],
+        {
+          cwd: repoRoot,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
+          },
         },
-      },
-    );
+      );
 
-    expect(result.exitCode).toBe(0);
-    expect(
-      existsSync(
-        join(
-          tempHome,
-          "Library",
-          "LaunchAgents",
-          "com.voicelayer.voicebar.plist",
+      expect(result.exitCode).toBe(0);
+      expect(
+        existsSync(
+          join(
+            tempHome,
+            "Library",
+            "LaunchAgents",
+            "com.voicelayer.voicebar.plist",
+          ),
         ),
-      ),
-    ).toBe(true);
-    const launchctlCalls = readFileSync(launchctlLog, "utf-8");
-    expect(launchctlCalls).toContain(
-      "print gui/",
-    );
-    expect(launchctlCalls).not.toContain("bootstrap");
-    expect(launchctlCalls).not.toContain("kickstart");
-    expect(launchctlCalls).not.toMatch(/^(?:load|start|submit)\b/m);
+      ).toBe(true);
+      const launchctlCalls = readFileSync(launchctlLog, "utf-8");
+      expect(launchctlCalls).toContain(
+        "print gui/",
+      );
+      expect(launchctlCalls).not.toContain("bootstrap");
+      expect(launchctlCalls).not.toContain("kickstart");
+      expect(launchctlCalls).not.toMatch(/^(?:load|start|submit)\b/m);
+    }
   });
 
   test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {
