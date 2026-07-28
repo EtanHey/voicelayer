@@ -27,6 +27,8 @@ VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
 BUILD_APP_ARGS=()
 NO_STOP=0
 NO_RELAUNCH=0
+VOICEBAR_HEALTH_MAX_ATTEMPTS=10
+VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=1
 
 usage() {
     cat <<'EOF'
@@ -404,6 +406,31 @@ update_voicebar_app() {
     esac
 }
 
+verify_voicebar_hotkey_health() {
+    local health_args=("$@")
+    local health_script="$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh"
+    local attempt=1
+
+    if [[ "${#health_args[@]}" -gt 0 ]]; then
+        run_cmd bash "$health_script" "${health_args[@]}"
+        return
+    fi
+
+    while [[ "$attempt" -le "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; do
+        if run_cmd bash "$health_script"; then
+            return 0
+        fi
+        if [[ "$attempt" -lt "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; then
+            log "VoiceBar hotkey health is not ready (attempt $attempt/$VOICEBAR_HEALTH_MAX_ATTEMPTS); retrying."
+            run_cmd sleep "$VOICEBAR_HEALTH_RETRY_DELAY_SECONDS"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "VoiceBar hotkey health did not become ready after $VOICEBAR_HEALTH_MAX_ATTEMPTS attempts"
+    return 1
+}
+
 repair_and_verify_voicebar_hotkey_path() {
     local dedupe_args=(--apply)
     local health_args=()
@@ -425,7 +452,7 @@ repair_and_verify_voicebar_hotkey_path() {
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --no-start
     fi
 
-    run_cmd bash "$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh" "${health_args[@]+"${health_args[@]}"}"
+    verify_voicebar_hotkey_health "${health_args[@]+"${health_args[@]}"}"
 }
 
 main() {
@@ -467,4 +494,6 @@ main() {
     log "VoiceLayer update complete."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

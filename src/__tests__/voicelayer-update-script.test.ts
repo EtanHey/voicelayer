@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   copyFileSync,
   mkdtempSync,
   mkdirSync,
@@ -369,6 +370,66 @@ describe("voicelayer-update.sh", () => {
     expect(body).toContain("set -euo pipefail");
     expect(body).not.toContain("eval ");
     expect(body).not.toContain("bash -c");
+  });
+
+  test("live hotkey verification has a bounded startup retry window", () => {
+    const body = readFileSync(updateScript, "utf8");
+
+    expect(body).toContain("VOICEBAR_HEALTH_MAX_ATTEMPTS=10");
+    expect(body).toContain("VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=1");
+    expect(body).toContain("verify_voicebar_hotkey_health() {");
+    expect(body).toContain(
+      'while [[ "$attempt" -le "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]',
+    );
+    expect(body).toContain(
+      'run_cmd sleep "$VOICEBAR_HEALTH_RETRY_DELAY_SECONDS"',
+    );
+    expect(body).toContain(
+      'verify_voicebar_hotkey_health "${health_args[@]+"${health_args[@]}"}"',
+    );
+  });
+
+  test("live hotkey verification retries until the health probe is ready", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-health-retry-"));
+    const scriptsDir = join(tempRoot, "scripts");
+    const healthStub = join(scriptsDir, "verify-voicebar-hotkey-health.sh");
+    const attemptFile = join(tempRoot, "attempts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(
+      healthStub,
+      [
+        "#!/usr/bin/env bash",
+        'attempt=0',
+        '[[ -f "$VOICEBAR_HEALTH_TEST_ATTEMPTS" ]] && read -r attempt < "$VOICEBAR_HEALTH_TEST_ATTEMPTS"',
+        'attempt=$((attempt + 1))',
+        'printf "%s\\n" "$attempt" > "$VOICEBAR_HEALTH_TEST_ATTEMPTS"',
+        '[[ "$attempt" -ge 3 ]]',
+        "",
+      ].join("\n"),
+    );
+    chmodSync(healthStub, 0o755);
+
+    const result = run(
+      [
+        "bash",
+        "-c",
+        [
+          'source "$1"',
+          'PACKAGE_ROOT="$2"',
+          "VOICEBAR_HEALTH_MAX_ATTEMPTS=3",
+          "VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=0",
+          "verify_voicebar_hotkey_health",
+        ].join("; "),
+        "_",
+        updateScript,
+        tempRoot,
+      ],
+      { VOICEBAR_HEALTH_TEST_ATTEMPTS: attemptFile },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(readFileSync(attemptFile, "utf8").trim()).toBe("3");
+    expect(text(result.stdout).match(/verify-voicebar-hotkey-health\.sh/g)).toHaveLength(3);
   });
 
   test("pins mlx-audio to the 0.4 release line for Qwen3", () => {
