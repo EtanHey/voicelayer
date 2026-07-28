@@ -422,7 +422,7 @@ repair_and_verify_voicebar_hotkey_path() {
         run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --reload
         run_cmd launchctl kickstart -k "gui/$(id -u)/com.voicelayer.voicebar"
     else
-        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh"
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --no-start
     fi
 
     run_cmd bash "$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh" "${health_args[@]+"${health_args[@]}"}"

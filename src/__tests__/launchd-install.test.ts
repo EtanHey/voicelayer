@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "fs";
+import { tmpdir } from "os";
 import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
@@ -19,6 +27,11 @@ const buildScript = readFileSync(
 const voicebarAutostartScript = readFileSync(
   join(repoRoot, "scripts", "install-voicebar-autostart.sh"),
   "utf-8",
+);
+const voicebarAutostartScriptPath = join(
+  repoRoot,
+  "scripts",
+  "install-voicebar-autostart.sh",
 );
 
 describe("MCP daemon LaunchAgent install contract", () => {
@@ -76,6 +89,59 @@ describe("MCP daemon LaunchAgent install contract", () => {
         'launchctl bootstrap "$DOMAIN" "$PLIST_DST"',
       ),
     );
+  });
+
+  test("VoiceBar autostart installer can write an unloaded definition without starting it", () => {
+    const tempHome = mkdtempSync(join(tmpdir(), "voicebar-autostart-no-start-"));
+    const binDir = join(tempHome, "bin");
+    const launchctlLog = join(tempHome, "launchctl.log");
+    const launchctlStub = join(binDir, "launchctl");
+    mkdirSync(binDir, { recursive: true });
+    writeFileSync(
+      launchctlStub,
+      [
+        "#!/usr/bin/env bash",
+        'printf "%s\\n" "$*" >> "$VOICEBAR_TEST_LAUNCHCTL_LOG"',
+        '[[ "$1" == "print" ]] && exit 1',
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(launchctlStub, 0o755);
+
+    const result = Bun.spawnSync(
+      ["bash", voicebarAutostartScriptPath, "--no-start"],
+      {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          HOME: tempHome,
+          PATH: `${binDir}:${process.env.PATH ?? ""}`,
+          VOICEBAR_TEST_LAUNCHCTL_LOG: launchctlLog,
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      existsSync(
+        join(
+          tempHome,
+          "Library",
+          "LaunchAgents",
+          "com.voicelayer.voicebar.plist",
+        ),
+      ),
+    ).toBe(true);
+    const launchctlCalls = readFileSync(launchctlLog, "utf-8");
+    expect(launchctlCalls).toContain(
+      "print gui/",
+    );
+    expect(launchctlCalls).not.toContain("bootstrap");
+    expect(launchctlCalls).not.toContain("kickstart");
+    expect(launchctlCalls).not.toMatch(/^(?:load|start|submit)\b/m);
   });
 
   test("VoiceBar build script self-completes live app replacement with precise stop and relaunch", () => {

@@ -184,7 +184,7 @@ describe("voicelayer-update.sh", () => {
       `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh --allow-stopped`,
     );
     expect(stdout).toContain(
-      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh`,
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --no-start`,
     );
     expect(stdout).not.toContain(
       `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --reload`,
@@ -208,6 +208,9 @@ describe("voicelayer-update.sh", () => {
     );
     expect(stdout).toContain(
       `bash ${repoRoot}/scripts/verify-voicebar-hotkey-health.sh --allow-stopped`,
+    );
+    expect(stdout).toContain(
+      `bash ${repoRoot}/scripts/install-voicebar-autostart.sh --no-start`,
     );
     expect(stdout).not.toContain("launchctl kickstart -k gui/");
   });
@@ -280,6 +283,9 @@ describe("voicelayer-update.sh", () => {
     expect(dedupeScript).not.toContain('bash "$SCRIPT_DIR/../launchd/install.sh"');
     expect(dedupeScript).toContain(
       'bash "$AUTOSTART_INSTALLER" --reload',
+    );
+    expect(dedupeScript).toContain(
+      'bash "$AUTOSTART_INSTALLER" --no-start',
     );
     expect(dedupeScript).toContain(
       'launchctl kickstart -k "gui/$(id -u)/$LABEL"',
