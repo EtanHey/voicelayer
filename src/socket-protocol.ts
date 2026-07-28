@@ -42,6 +42,17 @@ export interface StateEvent {
   source?: "playback" | "recording";
   /** Immediate follow-up after playback completion (voice_ask converse flow). */
   next_state?: "recording";
+  /**
+   * Present when state is "recording" — true when the capture was started from the Voice Bar
+   * (F5/dictation), false when it belongs to a remote MCP caller.
+   * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a remote-initiated capture from a
+   * dropped-ack F5 press, so its late-record-start recovery claims the remote capture and
+   * auto-pastes the answer into the frontmost app instead of returning it to the blocked caller.
+   * The 10s recovery window makes that a race, which is why the symptom was intermittent.
+   * Sent as a derived boolean, not the raw source token, to keep the UI layer presentation-only
+   * (see BoundaryContractTests). Live repro 2026-07-26 12:55:30 (466 chars pasted into Preview).
+   */
+  bar_owned?: boolean;
 }
 
 export interface SpeechEvent {

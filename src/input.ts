@@ -370,6 +370,13 @@ export interface NoSpeechGateResult {
 
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
+  /**
+   * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
+   * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
+   * F5 press, so its late-record-start recovery claims the ask and auto-pastes the answer into
+   * the frontmost app instead of returning it to the blocked caller.
+   */
+  archiveSource?: "voicebar" | "voice_ask";
 }
 
 export function consumeCancelSignalForRecording(): boolean {
@@ -2011,6 +2018,12 @@ export async function recordToBuffer(
         state: "recording",
         mode: pressToTalk ? "ptt" : "vad",
         silence_mode: silenceMode,
+        // AIDEV-NOTE: Tells Voice Bar who owns this capture. Without it, a remote MCP capture is
+        // indistinguishable from a dropped-ack F5 press and gets claimed by late-record-start
+        // recovery, auto-pasting the remote caller's answer into the frontmost app.
+        ...(captureState?.archiveSource
+          ? { bar_owned: captureState.archiveSource === "voicebar" }
+          : {}),
       });
 
       console.error(
@@ -2214,7 +2227,9 @@ export async function waitForInput(
 
   // Record audio to buffer
   let pcmData: Uint8Array | null;
-  const captureState: RecordingCaptureState = {};
+  const captureState: RecordingCaptureState = {
+    archiveSource: options.archiveSource,
+  };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
     : undefined;

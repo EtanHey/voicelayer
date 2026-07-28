@@ -470,6 +470,147 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(pastedTexts, [])
     }
 
+    // MARK: - Remote MCP captures must never be claimed by F5 late-record-start recovery
+
+    //
+    // AIDEV-NOTE: Live repro 2026-07-26 12:55:30. A remote MCP capture started while
+    // canRecoverLateRecordStart was open. VoiceState.handleEvent's "recording" case saw no
+    // pendingIntent and claimed it as a dropped-ack F5 press (barInitiatedRecording = true),
+    // so the caller's 466-char answer was auto-pasted into the frontmost app (Preview) instead
+    // of being returned to the blocked caller. The 10s window is a RACE: a capture starting
+    // inside it is hijacked, outside it works — which is why the symptom was intermittent.
+
+    func testRemoteCaptureInsideLateRecoveryWindowIsNotClaimedAsBarRecording() async {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.recordStartAckTimeout = .milliseconds(20)
+        state.recordStartLateRecoveryWindow = .seconds(10)
+        state.minimumTranscribingDisplayDuration = 0
+        state.sendCommand = { _ in }
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        // Arm the late-recovery window exactly as a dropped F5 ack would.
+        state.record(pressToTalk: true)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // A voice_ask capture now starts INSIDE that window.
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+            "silence_mode": "thoughtful",
+            "bar_owned": false,
+        ])
+
+        XCTAssertFalse(
+            state.barInitiatedRecordingForTesting,
+            "A remote MCP capture must never be claimed as a bar/F5 recording"
+        )
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "the answer that belongs to the remote caller",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts, [],
+            "A remote-owned transcript must go back to its caller, never auto-paste to the frontmost app"
+        )
+    }
+
+    func testGenuineF5WithDroppedAckInsideWindowStillRecovers() async {
+        // Regression guard: the late-recovery feature must keep working for real F5 presses.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.recordStartAckTimeout = .milliseconds(20)
+        state.recordStartLateRecoveryWindow = .seconds(10)
+        state.minimumTranscribingDisplayDuration = 0
+        state.sendCommand = { _ in }
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+            "bar_owned": true,
+        ])
+
+        XCTAssertTrue(
+            state.barInitiatedRecordingForTesting,
+            "A genuine F5 recording with a dropped ack must still be recovered"
+        )
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "late successful dictation",
+        ])
+
+        XCTAssertEqual(pastedTexts, ["late successful dictation"])
+    }
+
+    func testRemoteOwnedTranscriptNeverAutoPastesEvenIfBarRecordingWasClaimed() async {
+        // Belt and braces: even if classification goes wrong upstream, a remote-owned capture
+        // must not auto-paste. Here a genuine bar recording is claimed first, then a remote MCP
+        // capture supersedes it before the transcript lands.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.recordStartAckTimeout = .milliseconds(20)
+        state.recordStartLateRecoveryWindow = .seconds(10)
+        state.minimumTranscribingDisplayDuration = 0
+        state.sendCommand = { _ in }
+
+        var pastedTexts: [String] = []
+        state.pasteHandler = { text in
+            pastedTexts.append(text)
+            return true
+        }
+
+        state.record(pressToTalk: true)
+        try? await Task.sleep(for: .milliseconds(100))
+
+        // Bar legitimately claims a recording (no archive_source on the wire).
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "ptt",
+        ])
+        XCTAssertTrue(state.barInitiatedRecordingForTesting)
+
+        // A remote MCP capture then takes over the line.
+        state.handleEvent([
+            "type": "state",
+            "state": "recording",
+            "mode": "vad",
+            "silence_mode": "thoughtful",
+            "bar_owned": false,
+        ])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent([
+            "type": "transcription",
+            "text": "remote answer that must not be pasted",
+        ])
+
+        XCTAssertEqual(
+            pastedTexts, [],
+            "Once a capture is known to be remote-owned, its transcript must never auto-paste"
+        )
+    }
+
     func testFastFinalTranscriptionKeepsBlueStateUntilPendingRecordingIdleCanApply() async {
         let state = VoiceState()
         state.sendCommand = { _ in }
