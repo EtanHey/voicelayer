@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { unlinkSync } from "fs";
+import { deriveBarOwned } from "../input";
 import type { SocketEvent } from "../socket-protocol";
 
 const TEST_SOCKET = "/tmp/voicelayer-test-emission.sock";
@@ -94,6 +95,21 @@ describe("state emission", () => {
     await Bun.sleep(200);
     return { broadcast };
   }
+
+  describe("recording ownership derivation", () => {
+    it("marks an explicitly remote capture as not bar-owned", () => {
+      expect(deriveBarOwned({ barOwned: false })).toBe(false);
+    });
+
+    it("marks an explicit VoiceBar capture as bar-owned", () => {
+      expect(deriveBarOwned({ barOwned: true })).toBe(true);
+    });
+
+    it("fails closed when a recording capture has no ownership field", () => {
+      expect(deriveBarOwned()).toBe(false);
+      expect(deriveBarOwned({})).toBe(false);
+    });
+  });
 
   describe("broadcast events", () => {
     it("sends speaking state event", async () => {

@@ -5,13 +5,19 @@ import { afterEach, describe, expect, it } from "bun:test";
 import { createVoiceSdkSessionManager } from "../voicesdk/session";
 import type { SoundLayer } from "../soundlayer";
 
-function fakeSoundLayer(): SoundLayer {
+function fakeSoundLayer(
+  onWaitForInput?: (options: {
+    archiveRecording?: boolean;
+    barOwned?: boolean;
+  }) => void,
+): SoundLayer {
   return {
     micCapture: {
       async recordToBuffer() {
         return null;
       },
-      async waitForInput() {
+      async waitForInput(_timeoutMs, _silenceMode, _pressToTalk, options = {}) {
+        onWaitForInput?.(options);
         return "raw answer";
       },
       clear() {},
@@ -148,8 +154,13 @@ describe("VoiceSDK session manager", () => {
   it("emits ordered lifecycle events and appends them to a durable NDJSON log", async () => {
     tempDir = mkdtempSync(join(tmpdir(), "voicesdk-session-"));
     const emitted: string[] = [];
+    let captureOptions:
+      | { archiveRecording?: boolean; barOwned?: boolean }
+      | undefined;
     const manager = createVoiceSdkSessionManager({
-      soundLayer: fakeSoundLayer(),
+      soundLayer: fakeSoundLayer((options) => {
+        captureOptions = options;
+      }),
       logDir: tempDir,
       idFactory: () => "session-fixed",
       now: () => new Date("2026-05-28T12:00:00.000Z"),
@@ -192,6 +203,10 @@ describe("VoiceSDK session manager", () => {
       "decision.recorded",
       "session.ended",
     ]);
+    expect(captureOptions).toEqual({
+      archiveRecording: true,
+      barOwned: false,
+    });
 
     const logLines = readFileSync(
       join(tempDir, "session-fixed.ndjson"),

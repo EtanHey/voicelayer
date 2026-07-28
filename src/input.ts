@@ -371,12 +371,18 @@ export interface NoSpeechGateResult {
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
   /**
-   * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
+   * Whether VoiceBar owns this capture. Independent from archive/polish routing.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
    * F5 press, so its late-record-start recovery claims the ask and auto-pastes the answer into
    * the frontmost app instead of returning it to the blocked caller.
    */
-  archiveSource?: "voicebar" | "voice_ask";
+  barOwned: boolean;
+}
+
+export function deriveBarOwned(ownership?: {
+  barOwned?: boolean;
+}): boolean {
+  return ownership?.barOwned === true;
 }
 
 export function consumeCancelSignalForRecording(): boolean {
@@ -406,6 +412,11 @@ export interface VoiceBarUntranscribedRecordingArchiveInput
 }
 
 export interface WaitForInputOptions {
+  /**
+   * Explicit capture ownership. Missing/unknown provenance fails closed to false.
+   * This must not be inferred from archiveSource, which only controls archive/polish routing.
+   */
+  barOwned?: boolean;
   archiveSource?: "voicebar" | "voice_ask";
   voiceAskArtifacts?: {
     agentAudioBytes: Uint8Array;
@@ -1745,7 +1756,7 @@ export async function recordToBuffer(
   chunkedSession?: ChunkedRecordingSession,
   signal?: AbortSignal,
   preserveNoSpeechCapture = false,
-  captureState?: RecordingCaptureState,
+  captureState: RecordingCaptureState = { barOwned: false },
 ): Promise<Uint8Array | null> {
   throwIfWaitForInputAborted(signal);
   // Check mic disabled flag
@@ -2021,9 +2032,7 @@ export async function recordToBuffer(
         // AIDEV-NOTE: Tells Voice Bar who owns this capture. Without it, a remote MCP capture is
         // indistinguishable from a dropped-ack F5 press and gets claimed by late-record-start
         // recovery, auto-pasting the remote caller's answer into the frontmost app.
-        ...(captureState?.archiveSource
-          ? { bar_owned: captureState.archiveSource === "voicebar" }
-          : {}),
+        bar_owned: deriveBarOwned(captureState),
       });
 
       console.error(
@@ -2228,7 +2237,7 @@ export async function waitForInput(
   // Record audio to buffer
   let pcmData: Uint8Array | null;
   const captureState: RecordingCaptureState = {
-    archiveSource: options.archiveSource,
+    barOwned: deriveBarOwned(options),
   };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
@@ -2656,7 +2665,12 @@ export class SoxMicCapture implements MicCapture {
       timeoutMs,
       silenceMode,
       pressToTalk,
-      options.archiveRecording ? { archiveSource: "voicebar" } : {},
+      {
+        ...(options.archiveRecording
+          ? { archiveSource: "voicebar" as const }
+          : {}),
+        barOwned: deriveBarOwned(options),
+      },
     );
   }
 

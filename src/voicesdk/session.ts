@@ -246,7 +246,7 @@ export function createVoiceSdkSessionManager(
       input.timeout_ms ?? 30_000,
       "standard",
       mode === "push_to_talk",
-      { archiveRecording: true },
+      { archiveRecording: true, barOwned: false },
     );
     if (text === null) {
       emit({
