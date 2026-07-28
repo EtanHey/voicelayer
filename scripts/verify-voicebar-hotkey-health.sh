@@ -234,12 +234,13 @@ if [[ -n "$stray_launchd_definitions" ]]; then
         "$stray_launchd_definitions" >&2
     fail "expected only the canonical user LaunchAgent definition"
 fi
-if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
-    launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
-        || fail "canonical LaunchAgent is not loaded"
+launchd_output=""
+if launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)"; then
     loaded_program="$(launchd_loaded_program "$launchd_output" || true)"
     [[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
         || fail "loaded LaunchAgent targets ${loaded_program:-<missing>}, not the canonical app"
+elif [[ "$ALLOW_STOPPED" -eq 0 ]]; then
+    fail "canonical LaunchAgent is not loaded"
 fi
 
 mapping="$(hidutil property --get UserKeyMapping 2>/dev/null || true)"

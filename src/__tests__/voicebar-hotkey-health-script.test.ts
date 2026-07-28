@@ -233,7 +233,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(reverse.stdout.trim()).toBe(readyThenFailure);
   });
 
-  test("--allow-stopped skips loaded-agent, Secure Input, and process probes", () => {
+  test("--allow-stopped tolerates an unloaded agent but rejects a stale loaded program", async () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "voicebar-health-stopped-"));
     const tempHome = join(tempRoot, "home");
     const binDir = join(tempRoot, "bin");
@@ -325,6 +325,7 @@ describe("verify-voicebar-hotkey-health.sh", () => {
       );
       chmodSync(path, 0o755);
     }
+    writeFileSync(probeLog, "");
 
     try {
       const result = spawnSync(
@@ -346,7 +347,45 @@ describe("verify-voicebar-hotkey-health.sh", () => {
 
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("HOTKEY HEALTH OK");
-      expect(Bun.file(probeLog).size).toBe(0);
+      const unloadedProbes = await Bun.file(probeLog).text();
+      expect(unloadedProbes).toContain(join(binDir, "launchctl"));
+      expect(unloadedProbes).not.toContain(join(binDir, "ioreg"));
+      expect(unloadedProbes).not.toContain(join(binDir, "ps"));
+
+      writeFileSync(
+        join(binDir, "launchctl"),
+        [
+          "#!/usr/bin/env bash",
+          'printf "%s\\n" "$0 $*" >> "$VOICEBAR_TEST_LIVE_PROBE_LOG"',
+          "cat <<'EOF'",
+          "gui/501/com.voicelayer.voicebar = {",
+          "  program = /tmp/StaleVoiceBar.app/Contents/MacOS/VoiceBar",
+          "}",
+          "EOF",
+          "",
+        ].join("\n"),
+      );
+      const staleLoaded = spawnSync(
+        "bash",
+        [healthScript, "--allow-stopped"],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            HOME: tempHome,
+            PATH: `${binDir}:${process.env.PATH ?? ""}`,
+            VOICEBAR_CANONICAL_APP: appDir,
+            VOICEBAR_PLIST_BUDDY: join(binDir, "PlistBuddy"),
+            VOICEBAR_TEST_CANONICAL_APP: appDir,
+            VOICEBAR_TEST_LIVE_PROBE_LOG: probeLog,
+          },
+        },
+      );
+
+      expect(staleLoaded.status).not.toBe(0);
+      expect(staleLoaded.stderr).toContain(
+        "loaded LaunchAgent targets /tmp/StaleVoiceBar.app",
+      );
     } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
