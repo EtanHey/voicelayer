@@ -63,6 +63,7 @@ import {
   resolvePushToEnd,
   warnLegacyPressToTalk,
 } from "./push-to-end";
+import { appendControlLayerEvent } from "./control-layer-journal";
 
 // --- MCP result helper ---
 
@@ -85,6 +86,9 @@ const THINK_FILE =
 
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
 const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
+const VOICE_ASK_MESSAGE_MAX_CHARS = 1_200;
+const VOICE_ASK_INCIDENT_CHARS = 2_300;
+const VOICE_ASK_INCIDENT_SPEECH_SECONDS = 180;
 
 // --- Validation wrappers ---
 
@@ -211,9 +215,35 @@ export async function handleVoiceAsk(
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
+  const message =
+    typeof a.message === "string" ? a.message.trim() : a.message;
+  if (
+    typeof message === "string" &&
+    message.length > VOICE_ASK_MESSAGE_MAX_CHARS
+  ) {
+    const approximateSpeechSeconds = Math.ceil(
+      (message.length * VOICE_ASK_INCIDENT_SPEECH_SECONDS) /
+        VOICE_ASK_INCIDENT_CHARS,
+    );
+    appendControlLayerEvent("voice_ask.message_too_long", {
+      caller: "mcp.voice_ask",
+      message_length: message.length,
+      threshold: VOICE_ASK_MESSAGE_MAX_CHARS,
+      approximate_speech_seconds: approximateSpeechSeconds,
+    });
+    return textResult(
+      `voice_ask message is ${message.length.toLocaleString("en-US")} characters; ` +
+        `the threshold is ${VOICE_ASK_MESSAGE_MAX_CHARS.toLocaleString("en-US")}. ` +
+        `It would take approximately ${approximateSpeechSeconds} seconds of blocking speech before the microphone opens. ` +
+        "Split long content into two or more sequential voice_ask calls. " +
+        "Each ask is a checkpoint where the user confirms they absorbed one part before the next is spoken. " +
+        "Use voice_speak only for announcements or status updates that do not need a response.",
+      true,
+    );
+  }
   return handleConverse(
     {
-      message: a.message,
+      message,
       voice: a.voice,
       timeout_seconds: a.timeout_seconds,
       silence_mode: a.silence_mode,

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { Database } from "bun:sqlite";
 import { handleVoiceAsk, handleVoiceSpeak } from "../handlers";
 import * as input from "../input";
 import * as recordingState from "../recording-state";
@@ -28,11 +29,13 @@ describe("SoundLayer MCP compatibility regression", () => {
   let clearStopSpy: ReturnType<typeof spyOn>;
   let savedAllowPushToEnd: string | undefined;
   let savedControlLayerDisable: string | undefined;
+  let savedControlLayerBase: string | undefined;
 
   beforeEach(() => {
     savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     savedControlLayerDisable =
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    savedControlLayerBase = process.env.VOICELAYER_CONTROL_LAYER_BASE;
     delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
     ensureBarSpy = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(
@@ -89,6 +92,11 @@ describe("SoundLayer MCP compatibility regression", () => {
     } else {
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL =
         savedControlLayerDisable;
+    }
+    if (savedControlLayerBase === undefined) {
+      delete process.env.VOICELAYER_CONTROL_LAYER_BASE;
+    } else {
+      process.env.VOICELAYER_CONTROL_LAYER_BASE = savedControlLayerBase;
     }
   });
 
@@ -225,6 +233,76 @@ describe("SoundLayer MCP compatibility regression", () => {
       false,
       expect.any(Object),
     );
+  });
+
+  it("accepts a voice_ask message at the 1,200-character boundary", async () => {
+    const boundaryMessage = "A".repeat(1_200);
+    speakSpy.mockResolvedValue({
+      displayText: boundaryMessage,
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+
+    const result = await handleVoiceAsk({ message: boundaryMessage });
+
+    expect(result.isError).toBeUndefined();
+    expect(speakSpy).toHaveBeenCalledWith(
+      boundaryMessage,
+      expect.objectContaining({
+        mode: "converse",
+        waitForPlayback: true,
+      }),
+    );
+    expect(waitForInputSpy).toHaveBeenCalled();
+  });
+
+  it("refuses and journals a voice_ask message above 1,200 characters", async () => {
+    const journalRoot = mkdtempSync(join(tmpdir(), "voiceask-length-guard-"));
+    process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "0";
+    process.env.VOICELAYER_CONTROL_LAYER_BASE = journalRoot;
+
+    try {
+      const result = await handleVoiceAsk({ message: "A".repeat(1_201) });
+      const text = result.content[0].text;
+
+      expect(result.isError).toBe(true);
+      expect(text).toContain("1,201");
+      expect(text).toContain("1,200");
+      expect(text).toContain("approximately 94 seconds");
+      expect(text).toContain("two or more sequential voice_ask calls");
+      expect(text).toContain("checkpoint");
+      expect(text).toContain("confirms");
+      expect(speakSpy).not.toHaveBeenCalled();
+      expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+      expect(waitForInputSpy).not.toHaveBeenCalled();
+
+      const database = new Database(
+        join(journalRoot, "fleet-journal.db"),
+        { readonly: true },
+      );
+      const row = database
+        .query(
+          "SELECT payload_json FROM events WHERE type = ? ORDER BY seq DESC LIMIT 1",
+        )
+        .get("voice_ask.message_too_long") as
+        | { payload_json: string }
+        | null;
+      database.close();
+
+      expect(row).not.toBeNull();
+      expect(JSON.parse(row!.payload_json)).toMatchObject({
+        caller: "mcp.voice_ask",
+        message_length: 1_201,
+        threshold: 1_200,
+        approximate_speech_seconds: 94,
+      });
+    } finally {
+      rmSync(journalRoot, { recursive: true, force: true });
+    }
   });
 
   it("ignores legacy press_to_talk, keeps VAD, and emits a deprecation warning", async () => {

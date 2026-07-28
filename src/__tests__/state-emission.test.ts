@@ -338,8 +338,8 @@ describe("state emission", () => {
     });
   });
 
-  describe("text truncation in speak broadcast", () => {
-    it("truncates long text in speaking event", async () => {
+  describe("long text in speak broadcast", () => {
+    it("preserves long text that fits the socket frame", async () => {
       mockServer = createMockVoiceBarServer(TEST_SOCKET);
       const { broadcast } = await connectAndWait();
 
@@ -347,12 +347,12 @@ describe("state emission", () => {
       broadcast({
         type: "state",
         state: "speaking",
-        text: longText.slice(0, 2000),
+        text: longText,
       });
 
       await Bun.sleep(100);
       expect(mockServer.received.length).toBe(1);
-      expect((mockServer.received[0] as any).text.length).toBe(2000);
+      expect((mockServer.received[0] as any).text).toBe(longText);
     });
   });
 });

@@ -79,6 +79,30 @@ describe("socket-protocol", () => {
       expect(event.text?.startsWith(parsed.text)).toBe(true);
     });
 
+    it("preserves incident-sized text and byte-fits oversized text", () => {
+      for (const length of [2_300, 10_000]) {
+        const text = "A".repeat(length);
+        const serialized = serializeEvent({
+          type: "state",
+          state: "speaking",
+          text,
+          voice: "en-US-JennyNeural",
+        });
+        const parsed = JSON.parse(serialized.trim());
+
+        expect(Buffer.byteLength(serialized, "utf8")).toBeLessThan(
+          VOICEBAR_SOCKET_EVENT_MAX_BYTES + 1,
+        );
+        expect(parsed.text.length).toBeGreaterThan(0);
+        expect(text.startsWith(parsed.text)).toBe(true);
+        if (length === 2_300) {
+          expect(parsed.text).toBe(text);
+        } else {
+          expect(parsed.text.length).toBeLessThan(length);
+        }
+      }
+    });
+
     it("downgrades a producer-incompatible envelope before fitting speaking text", () => {
       const event: SocketEvent = {
         type: "state",
