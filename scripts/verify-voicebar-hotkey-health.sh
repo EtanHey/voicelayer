@@ -7,6 +7,7 @@ BUNDLE_ID="com.voicelayer.voicebar"
 LABEL="com.voicelayer.voicebar"
 REQUIRED_TEAM_ID="${VOICEBAR_REQUIRED_TEAM_ID:-PPN23G925Y}"
 REQUIRED_AUTHORITY_PREFIX="Developer ID Application"
+PLIST_BUDDY="${VOICEBAR_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 F18_USAGE=30064771181
 F5_USAGE=30064771134
 DICTATION_USAGE=51539607759
@@ -173,7 +174,7 @@ done
 
 info_plist="$CANONICAL_APP/Contents/Info.plist"
 [[ -f "$info_plist" ]] || fail "Info.plist is missing: $info_plist"
-actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist" 2>/dev/null || true)"
+actual_bundle_id="$("$PLIST_BUDDY" -c 'Print :CFBundleIdentifier' "$info_plist" 2>/dev/null || true)"
 [[ "$actual_bundle_id" = "$BUNDLE_ID" ]] || fail "unexpected bundle id: ${actual_bundle_id:-<missing>}"
 
 signature="$(
@@ -217,7 +218,7 @@ fi
 
 agent_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 [[ -f "$agent_plist" ]] || fail "canonical LaunchAgent is missing: $agent_plist"
-agent_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
+agent_program="$("$PLIST_BUDDY" -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
 [[ "$agent_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
     || fail "LaunchAgent targets ${agent_program:-<missing>}, not the canonical app"
 launchd_definitions="$(
@@ -269,7 +270,7 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
         || fail "running VoiceBar is not canonical: $process_command"
 
     agent_stderr_path="$(
-        /usr/libexec/PlistBuddy -c 'Print :StandardErrorPath' \
+        "$PLIST_BUDDY" -c 'Print :StandardErrorPath' \
             "$agent_plist" 2>/dev/null || true
     )"
     log_output="$(

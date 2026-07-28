@@ -297,6 +297,15 @@ describe("verify-voicebar-hotkey-health.sh", () => {
         "EOF",
         "",
       ].join("\n"),
+      PlistBuddy: [
+        "#!/usr/bin/env bash",
+        'case "$2" in',
+        '  "Print :CFBundleIdentifier") printf "com.voicelayer.voicebar\\n" ;;',
+        '  "Print :ProgramArguments:0") printf "%s/Contents/MacOS/VoiceBar\\n" "$VOICEBAR_TEST_CANONICAL_APP" ;;',
+        "  *) exit 1 ;;",
+        "esac",
+        "",
+      ].join("\n"),
     };
     for (const [name, body] of Object.entries(stubs)) {
       const path = join(binDir, name);
@@ -328,6 +337,8 @@ describe("verify-voicebar-hotkey-health.sh", () => {
             HOME: tempHome,
             PATH: `${binDir}:${process.env.PATH ?? ""}`,
             VOICEBAR_CANONICAL_APP: appDir,
+            VOICEBAR_PLIST_BUDDY: join(binDir, "PlistBuddy"),
+            VOICEBAR_TEST_CANONICAL_APP: appDir,
             VOICEBAR_TEST_LIVE_PROBE_LOG: probeLog,
           },
         },
