@@ -208,11 +208,13 @@ agent_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 agent_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
 [[ "$agent_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
     || fail "LaunchAgent targets ${agent_program:-<missing>}, not the canonical app"
-launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
-    || fail "canonical LaunchAgent is not loaded"
-loaded_program="$(launchd_loaded_program "$launchd_output" || true)"
-[[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
-    || fail "loaded LaunchAgent targets ${loaded_program:-<missing>}, not the canonical app"
+if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
+    launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
+        || fail "canonical LaunchAgent is not loaded"
+    loaded_program="$(launchd_loaded_program "$launchd_output" || true)"
+    [[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
+        || fail "loaded LaunchAgent targets ${loaded_program:-<missing>}, not the canonical app"
+fi
 
 mapping="$(hidutil property --get UserKeyMapping 2>/dev/null || true)"
 mapping_has_pair "$mapping" "$F5_USAGE" "$F18_USAGE" \

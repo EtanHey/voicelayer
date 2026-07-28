@@ -205,4 +205,31 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(secureInputProbeIndex).toBeGreaterThan(liveGuardIndex);
     expect(liveGuardEndIndex).toBeGreaterThan(secureInputProbeIndex);
   });
+
+  test("--allow-stopped does not require the LaunchAgent to be loaded", async () => {
+    const body = await healthScriptBody;
+    const launchdProbeIndex = body.indexOf(
+      'launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)"',
+    );
+    const liveGuardIndex = body.lastIndexOf(
+      'if [[ "$ALLOW_STOPPED" -eq 0 ]]; then',
+      launchdProbeIndex,
+    );
+    const liveGuardEndIndex = body.indexOf("\nfi", liveGuardIndex);
+    const loadedProgramIndex = body.indexOf(
+      'loaded_program="$(launchd_loaded_program "$launchd_output" || true)"',
+      liveGuardIndex,
+    );
+    const loadedPathAssertionIndex = body.indexOf(
+      '[[ "$loaded_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]]',
+      liveGuardIndex,
+    );
+
+    expect(launchdProbeIndex).toBeGreaterThan(-1);
+    expect(liveGuardIndex).toBeGreaterThan(-1);
+    expect(loadedProgramIndex).toBeGreaterThan(launchdProbeIndex);
+    expect(loadedPathAssertionIndex).toBeGreaterThan(loadedProgramIndex);
+    expect(liveGuardEndIndex).toBeGreaterThan(launchdProbeIndex);
+    expect(liveGuardEndIndex).toBeGreaterThan(loadedPathAssertionIndex);
+  });
 });
