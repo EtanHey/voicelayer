@@ -113,6 +113,13 @@ event_tap_log_verdict() {
     printf '%s\n' "$verdict"
 }
 
+chronological_event_tap_logs() {
+    # Both sources begin with an ISO-like date and time. Sort only by those
+    # fields and keep input order for equal timestamps so message text cannot
+    # reverse two status transitions recorded in the same clock tick.
+    LC_ALL=C sort -s -k1,2
+}
+
 fail() {
     printf 'HOTKEY HEALTH FAILED: %s\n' "$*" >&2
     exit 1
@@ -213,13 +220,13 @@ mapping_has_pair "$mapping" "$F5_USAGE" "$F18_USAGE" \
 mapping_has_pair "$mapping" "$DICTATION_USAGE" "$F18_USAGE" \
     || fail "Dictation/F5 -> F18 hidutil mapping is missing"
 
-ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"
-if secure_pid="$(secure_input_owner "$ioreg_output")"; then
-    secure_process="$(ps -p "$secure_pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//' || true)"
-    fail "macOS Secure Input is held by PID $secure_pid (${secure_process:-unknown}); change focus or quit that app"
-fi
-
 if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
+    ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"
+    if secure_pid="$(secure_input_owner "$ioreg_output")"; then
+        secure_process="$(ps -p "$secure_pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//' || true)"
+        fail "macOS Secure Input is held by PID $secure_pid (${secure_process:-unknown}); change focus or quit that app"
+    fi
+
     ps_output="$(ps -axo pid=,comm=)"
     process_rows="$(
         canonical_process_rows \
@@ -249,7 +256,7 @@ if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
                     'index($0, process_marker) > 0 { print }' \
                     "$agent_stderr_path"
             fi
-        } | sort
+        } | chronological_event_tap_logs
     )"
     verdict="$(event_tap_log_verdict "$log_output")"
     case "$verdict" in

@@ -168,4 +168,41 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     expect(recovered.stdout.trim()).toBe("ready");
     expect(regressed.stdout.trim()).toBe("event-tap-failed");
   });
+
+  test("preserves source order when event-tap records share a timestamp", () => {
+    const failed = "2026-07-28 19:49:53 [HotkeyManager] Failed to create CGEventTap";
+    const ready = "2026-07-28 19:49:53 [HotkeyManager] Event tap started";
+    const failureThenReady = [failed, ready].join("\n");
+    const readyThenFailure = [ready, failed].join("\n");
+    const forward = callFunction(
+      'printf "%s\\n" "$TEST_LOG" | chronological_event_tap_logs',
+      { TEST_LOG: failureThenReady },
+    );
+    const reverse = callFunction(
+      'printf "%s\\n" "$TEST_LOG" | chronological_event_tap_logs',
+      { TEST_LOG: readyThenFailure },
+    );
+
+    expect(forward.status).toBe(0);
+    expect(forward.stdout.trim()).toBe(failureThenReady);
+    expect(reverse.status).toBe(0);
+    expect(reverse.stdout.trim()).toBe(readyThenFailure);
+  });
+
+  test("--allow-stopped keeps the Secure Input probe inside the live-state guard", async () => {
+    const body = await healthScriptBody;
+    const liveGuardIndex = body.indexOf(
+      'if [[ "$ALLOW_STOPPED" -eq 0 ]]; then',
+    );
+    const secureInputProbeIndex = body.indexOf(
+      'ioreg_output="$(ioreg -l -w 0 2>/dev/null || true)"',
+    );
+    const liveGuardEndIndex = body.lastIndexOf(
+      "\nfi\n\nprintf 'HOTKEY HEALTH OK\\n'",
+    );
+
+    expect(liveGuardIndex).toBeGreaterThan(-1);
+    expect(secureInputProbeIndex).toBeGreaterThan(liveGuardIndex);
+    expect(liveGuardEndIndex).toBeGreaterThan(secureInputProbeIndex);
+  });
 });
