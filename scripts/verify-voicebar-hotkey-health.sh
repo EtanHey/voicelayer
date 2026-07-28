@@ -67,6 +67,18 @@ launchd_loaded_program() {
     printf '%s\n' "$program"
 }
 
+noncanonical_launchd_definitions() {
+    local definitions="$1"
+    local canonical_definition="$2"
+    local definition
+
+    while IFS= read -r definition; do
+        [[ -n "$definition" ]] || continue
+        [[ "$definition" = "$canonical_definition" ]] && continue
+        printf '%s\n' "$definition"
+    done <<<"$definitions"
+}
+
 canonical_process_rows() {
     local ps_output="$1"
     local expected="$2"
@@ -208,6 +220,19 @@ agent_plist="$HOME/Library/LaunchAgents/$LABEL.plist"
 agent_program="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$agent_plist" 2>/dev/null || true)"
 [[ "$agent_program" = "$CANONICAL_APP/Contents/MacOS/VoiceBar" ]] \
     || fail "LaunchAgent targets ${agent_program:-<missing>}, not the canonical app"
+launchd_definitions="$(
+    grep -rlE 'VoiceBar|voicelayer\.voicebar' \
+        "$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons \
+        2>/dev/null | sort -u || true
+)"
+stray_launchd_definitions="$(
+    noncanonical_launchd_definitions "$launchd_definitions" "$agent_plist"
+)"
+if [[ -n "$stray_launchd_definitions" ]]; then
+    printf 'Stray VoiceBar launchd definitions found:\n%s\n' \
+        "$stray_launchd_definitions" >&2
+    fail "expected only the canonical user LaunchAgent definition"
+fi
 if [[ "$ALLOW_STOPPED" -eq 0 ]]; then
     launchd_output="$(launchctl print "gui/$(id -u)/$LABEL" 2>/dev/null)" \
         || fail "canonical LaunchAgent is not loaded"

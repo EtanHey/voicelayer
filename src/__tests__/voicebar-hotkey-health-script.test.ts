@@ -102,6 +102,27 @@ describe("verify-voicebar-hotkey-health.sh", () => {
     );
   });
 
+  test("rejects VoiceBar launchd definitions outside the canonical user plist", async () => {
+    const canonical =
+      "/Users/test/Library/LaunchAgents/com.voicelayer.voicebar.plist";
+    const stray =
+      "/Library/LaunchDaemons/com.example.stale-voicebar.plist";
+    const result = callFunction(
+      'noncanonical_launchd_definitions "$TEST_DEFINITIONS" "$TEST_CANONICAL"',
+      {
+        TEST_CANONICAL: canonical,
+        TEST_DEFINITIONS: [canonical, stray].join("\n"),
+      },
+    );
+    const body = await healthScriptBody;
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).toBe(stray);
+    expect(body).toContain(
+      '"$HOME/Library/LaunchAgents" /Library/LaunchAgents /Library/LaunchDaemons',
+    );
+  });
+
   test("matches a canonical running process when its app path contains spaces", () => {
     const result = callFunction(
       'canonical_process_rows "$TEST_PS" "$TEST_EXPECTED"',
