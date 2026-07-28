@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Teach callers to route long content through `voice_speak`, reject pathological `voice_ask` messages before synthesis, and let the socket layer safely fit full teleprompter text.
+**Goal:** Teach callers to split long content into acknowledged `voice_ask` checkpoints, reject pathological messages before synthesis, and let the socket layer safely fit full teleprompter text.
 
 **Architecture:** Keep caller guidance in the MCP schema, add a synchronous length gate at the start of `handleVoiceAsk`, and leave transport fitting to `serializeEvent`. The gate rejects messages above 1,200 JavaScript characters, journals its decision, and returns a self-correcting routing message before session booking or TTS.
 
@@ -39,19 +39,19 @@ Expected: exit 0.
 **Step 1: Test the caller guidance**
 
 Assert the `voice_ask` description says the question is spoken before the mic
-opens, the call blocks during playback and response, long content goes through
-`voice_speak` first, the subsequent `voice_ask` contains only the short
-question, multiple asks are only for multiple real questions, and about 2,300
-characters takes about three minutes.
+opens, the call blocks during playback and response, long content is split into
+two or more sequential `voice_ask` calls, each ask is an acknowledgement
+checkpoint before the next part, `voice_speak` is only for announcements that
+need no response, and about 2,300 characters takes about three minutes.
 
 **Step 2: Test the guard and journal**
 
 Call `handleVoiceAsk` with 1,201 characters and a temporary
 `VOICELAYER_CONTROL_LAYER_BASE`. Assert the error contains `1,201`, `1,200`, an
-estimated duration, `voice_speak`, and the short-question instruction. Assert
-TTS and capture are not called. Query `fleet-journal.db` and assert the event
-contains caller `mcp.voice_ask`, message length 1,201, threshold 1,200, and an
-approximate speech duration.
+estimated duration, two-or-more sequential asks, and the acknowledgement
+checkpoint reason. Assert TTS and capture are not called. Query
+`fleet-journal.db` and assert the event contains caller `mcp.voice_ask`, message
+length 1,201, threshold 1,200, and an approximate speech duration.
 
 **Step 3: Test the accepted boundary**
 
@@ -100,10 +100,10 @@ Expected: FAIL because both TTS paths still slice display text at 2,000.
 
 **Step 1: Update the tool description**
 
-Put the short-question, blocking-playback, `voice_speak` routing, genuinely
-multiple-question, and 2,300-character scale instructions at the beginning of
-the `voice_ask` description. Reinforce “short question” in the `message`
-property.
+Put the short-question, blocking-playback, sequential-checkpoint,
+acknowledgement, announcement-only `voice_speak`, and 2,300-character scale
+instructions at the beginning of the `voice_ask` description. Reinforce “short
+question” in the `message` property.
 
 **Step 2: Add the refusal guard**
 
@@ -210,4 +210,5 @@ responses. The terminal endpoint is the open, unmerged stacked PR.
 
 Include `git log --oneline -1`, RED/GREEN/revert proof, PR URL, threshold
 justification, and the final tool description quoted in full. Re-read the
-complete report and ensure its final line is exactly `TASK_DONE`.
+complete report, record the deferred `voice_speak` rewind and acknowledgement
+gaps, and ensure its final line is exactly `TASK_DONE`.

@@ -11,15 +11,16 @@ the socket's byte-safe serializer could fit the frame.
 ## Design
 
 Teach callers in the `voice_ask` tool description that the tool is for a short
-question. Long content must be sent through non-blocking `voice_speak` first,
-followed by one short `voice_ask` containing only the actual question. Multiple
-sequential asks are appropriate only when there are genuinely multiple
-questions. Include the measured scale warning that about 2,300 characters takes
-about three minutes to speak before recording begins.
+question. Long content the user must understand or respond to must be split into
+two or more sequential `voice_ask` calls. Each ask is an acknowledgement
+checkpoint: wait for the user to confirm they absorbed one part before speaking
+the next. `voice_speak` is only for announcements that do not need a response.
+Include the measured scale warning that about 2,300 characters takes about three
+minutes to speak before recording begins.
 
 Reject messages longer than 1,200 characters before session booking, synthesis,
 or playback. The refusal reports the actual character count, threshold,
-estimated speech duration, and the same `voice_speak` then short `voice_ask`
+estimated speech duration, and the same sequential acknowledgement-checkpoint
 routing. Journal the refusal with caller, length, threshold, and duration.
 
 The 1,200-character threshold is a backstop rather than the primary mechanism.
@@ -47,3 +48,7 @@ Use test-driven development:
   prove they return to RED, then restore and rerun GREEN.
 
 Escape-to-stop playback remains out of scope.
+
+`voice_speak` rewind and acknowledgement gating are also out of scope. They are
+recorded as separate gaps because changing `voice_speak` behavior here would
+expand this PR beyond the long-ask guard.
