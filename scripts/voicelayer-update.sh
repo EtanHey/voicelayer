@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Update the installed VoiceLayer package, rebuild the canonical VoiceBar.app,
-# and let build-app complete the local VoiceBar-owned daemon stack restart.
+# and perform one VoiceBar-owned daemon stack restart after postflight repairs.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,7 +21,14 @@ RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
 VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
+VOICEBAR_CANONICAL_APP="/Applications/VoiceBar.app"
+VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
+VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
 BUILD_APP_ARGS=()
+NO_STOP=0
+NO_RELAUNCH=0
+VOICEBAR_HEALTH_MAX_ATTEMPTS=10
+VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=1
 
 usage() {
     cat <<'EOF'
@@ -135,10 +142,12 @@ parse_args() {
                 shift 2
                 ;;
             --no-stop)
+                NO_STOP=1
                 BUILD_APP_ARGS+=("--no-stop")
                 shift
                 ;;
             --no-relaunch)
+                NO_RELAUNCH=1
                 BUILD_APP_ARGS+=("--no-relaunch")
                 shift
                 ;;
@@ -153,6 +162,13 @@ parse_args() {
                 ;;
         esac
     done
+
+    # A local build must never relaunch before model/data work and postflight
+    # repairs complete. Preserve NO_RELAUNCH as user intent while adding the
+    # internal build-only opt-out exactly once.
+    if [[ "$NO_RELAUNCH" -eq 0 ]]; then
+        BUILD_APP_ARGS+=("--no-relaunch")
+    fi
 }
 
 validate_args() {
@@ -214,7 +230,7 @@ voicebar_cask_installed() {
 
 voicebar_app_update_mode() {
     if voicebar_cask_installed; then
-        printf 'cask-reinstall\n'
+        printf 'cask-upgrade\n'
         return
     fi
 
@@ -230,8 +246,8 @@ voicebar_app_update_mode() {
 
 voicebar_app_update_label() {
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall)
-            printf 'brew reinstall --cask %s\n' "$VOICEBAR_CASK_TOKEN"
+        cask-upgrade)
+            printf 'brew upgrade --cask %s\n' "$VOICEBAR_CASK_TOKEN"
             ;;
         cask-install)
             printf 'brew install --cask %s\n' "$VOICEBAR_CASK_TOKEN"
@@ -240,6 +256,38 @@ voicebar_app_update_label() {
             print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
             ;;
     esac
+}
+
+voicebar_cask_repair_needed() {
+    case "${VOICELAYER_UPDATE_TEST_CASK_REPAIR_NEEDED:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+
+    # Command-stubbed tests must not depend on the developer machine's resident
+    # application. A test that exercises this branch opts in above.
+    if [[ "$DRY_RUN_COMMANDS" = "1" ]]; then
+        return 1
+    fi
+
+    local info_plist="$VOICEBAR_CANONICAL_APP/Contents/Info.plist"
+    local bundle_id
+    local signature
+    local team_id
+    local authority
+
+    [[ -f "$info_plist" ]] || return 0
+    bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_plist" 2>/dev/null || true)"
+    [[ "$bundle_id" = "$VOICEBAR_BUNDLE_ID" ]] || return 0
+    codesign --verify --deep --strict "$VOICEBAR_CANONICAL_APP" >/dev/null 2>&1 || return 0
+
+    signature="$(codesign -dvvv "$VOICEBAR_CANONICAL_APP" 2>&1 || true)"
+    team_id="$(printf '%s\n' "$signature" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+    authority="$(printf '%s\n' "$signature" | awk -F= '/^Authority=/{print $2; exit}')"
+    [[ "$team_id" = "$VOICEBAR_REQUIRED_TEAM_ID" ]] || return 0
+    [[ "$authority" = "Developer ID Application"* ]] || return 0
+
+    return 1
 }
 
 print_plan() {
@@ -265,23 +313,25 @@ print_plan() {
     log "Steps:"
     log "  1. update package: $(package_update_label)"
     log "  2. install package dependencies when running from a git checkout"
-    log "  3. + $app_update"
-    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
     case "$(voicebar_app_update_mode)" in
         local-build)
-            log "  5. build-app.sh relaunches VoiceBar unless --no-relaunch is set"
+            log "  3. + $app_update (postflight performs the single requested VoiceBar relaunch)"
             ;;
         *)
-            log "  5. Homebrew installs the notarized VoiceBar cask artifact"
+            log "  3. + $app_update (Homebrew installs the notarized VoiceBar cask artifact)"
             ;;
     esac
+    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
     if [[ "$DATA_MODE" != "skip" ]]; then
-        log "  6. rsync personal data:"
+        log "  5. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
         log "     $(source_path ".voicelayer/voices.json") -> $VOICELAYER_HOME/voices.json"
         log "     $(source_path ".voicelayer/pronunciation.yaml") -> $VOICELAYER_HOME/pronunciation.yaml"
         log "     $(source_path ".voicelayer/daemon.secret") -> $VOICELAYER_HOME/daemon.secret"
         log "     $(source_path ".local/state/voicelayer/stt-vocabulary.json") -> $STATE_HOME/stt-vocabulary.json"
+        log "  6. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
+    else
+        log "  5. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
     fi
     log ""
 }
@@ -348,9 +398,26 @@ update_package() {
 }
 
 update_voicebar_app() {
+    local outdated_casks=""
+
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall)
-            run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+        cask-upgrade)
+            if [[ "$DRY_RUN_COMMANDS" = "1" ]]; then
+                run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+            else
+                outdated_casks="$(
+                    brew outdated --cask --quiet "$VOICEBAR_CASK_TOKEN"
+                )"
+                if [[ -n "$outdated_casks" ]]; then
+                    run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
+                else
+                    log "VoiceBar cask is already current; skipping upgrade."
+                fi
+            fi
+            if voicebar_cask_repair_needed; then
+                log "Resident VoiceBar failed canonical signature checks; reinstalling the cask."
+                run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+            fi
             ;;
         cask-install)
             run_cmd brew install --cask "$VOICEBAR_CASK_TOKEN"
@@ -359,6 +426,51 @@ update_voicebar_app() {
             run_cmd env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
             ;;
     esac
+}
+
+verify_voicebar_hotkey_health() {
+    local health_args=("$@")
+    local health_script="$PACKAGE_ROOT/scripts/verify-voicebar-hotkey-health.sh"
+    local attempt=1
+
+    while [[ "$attempt" -le "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; do
+        if run_cmd bash "$health_script" "${health_args[@]+"${health_args[@]}"}"; then
+            return 0
+        fi
+        if [[ "$attempt" -lt "$VOICEBAR_HEALTH_MAX_ATTEMPTS" ]]; then
+            log "VoiceBar hotkey health is not ready (attempt $attempt/$VOICEBAR_HEALTH_MAX_ATTEMPTS); retrying."
+            run_cmd sleep "$VOICEBAR_HEALTH_RETRY_DELAY_SECONDS"
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    err "VoiceBar hotkey health did not become ready after $VOICEBAR_HEALTH_MAX_ATTEMPTS attempts"
+    return 1
+}
+
+repair_and_verify_voicebar_hotkey_path() {
+    local dedupe_args=(--apply)
+    local health_args=()
+
+    if [[ "$NO_STOP" -eq 1 ]]; then
+        dedupe_args+=(--no-stop)
+    fi
+    if [[ "$NO_STOP" -eq 1 || "$NO_RELAUNCH" -eq 1 ]]; then
+        health_args+=(--allow-stopped)
+    fi
+    dedupe_args+=(--no-relaunch)
+
+    run_cmd bash "$PACKAGE_ROOT/scripts/voicelayer-dedupe-voicebar.sh" "${dedupe_args[@]}"
+    run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-f5-hidutil.sh"
+    if [[ "$NO_STOP" -eq 0 && "$NO_RELAUNCH" -eq 0 ]]; then
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --reload
+    elif [[ "$NO_STOP" -eq 1 ]]; then
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --preserve-load-state
+    else
+        run_cmd bash "$PACKAGE_ROOT/scripts/install-voicebar-autostart.sh" --no-start
+    fi
+
+    verify_voicebar_hotkey_health "${health_args[@]+"${health_args[@]}"}"
 }
 
 main() {
@@ -385,7 +497,7 @@ main() {
         ensure_command "$RSYNC_BIN"
     fi
     case "$(voicebar_app_update_mode)" in
-        cask-reinstall|cask-install)
+        cask-upgrade|cask-install)
             if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
                 ensure_command brew
             fi
@@ -396,7 +508,10 @@ main() {
     update_voicebar_app
     install_qwen3_model
     sync_personal_data
+    repair_and_verify_voicebar_hotkey_path
     log "VoiceLayer update complete."
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi
