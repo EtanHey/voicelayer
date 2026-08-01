@@ -495,7 +495,7 @@ export async function handleConverse(
         }
       : undefined;
   const settleTimeout = (
-    stage: "prompt" | "capture" | "return",
+    stage: "prompt" | "capture-start" | "capture" | "return",
     timeoutMs: number,
   ): void => {
     if (timeoutSettled) return;
@@ -515,7 +515,7 @@ export async function handleConverse(
   };
   const armTimeout = (
     timeoutMs: number,
-    stage: "prompt" | "capture" | "return",
+    stage: "prompt" | "capture-start" | "capture" | "return",
   ): void => {
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
@@ -527,7 +527,7 @@ export async function handleConverse(
       const abortError = new Error(
         `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
       );
-      if (stage === "prompt") {
+      if (stage === "prompt" || stage === "capture-start") {
         // No mic has opened, so there cannot be captured audio to publish.
         settleTimeout(stage, timeoutMs);
         inputAbortController.abort(abortError);
@@ -574,9 +574,9 @@ export async function handleConverse(
         true,
       );
     }
-    // Playback and capture get separate bounded windows. Without rearming here,
-    // an accepted prompt can consume nearly all of the user's response time.
-    armTimeout(outerTimeoutMs, "capture");
+    // Bound recorder startup separately from prompt playback. The full capture
+    // window is rearmed only by onCaptureStart after the microphone opens.
+    armTimeout(outerTimeoutMs, "capture-start");
     if (
       !speech.audioArtifact ||
       !speech.displayText?.trim() ||

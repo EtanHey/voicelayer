@@ -218,9 +218,12 @@ describe("handleConverse resilience — P0-2", () => {
         },
       );
 
+      let settled = false;
       const pending = handleConverse({
         message: "test question",
         timeout_seconds: 5,
+      }).finally(() => {
+        settled = true;
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -231,6 +234,8 @@ describe("handleConverse resilience — P0-2", () => {
       expect(capturedSignal?.aborted).toBe(false);
 
       jest.advanceTimersByTime(20_000);
+      await Promise.resolve();
+      expect(settled).toBe(true);
       const result = await pending;
 
       expect(result.isError).toBe(true);
