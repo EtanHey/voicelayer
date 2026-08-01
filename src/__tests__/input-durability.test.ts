@@ -22,7 +22,11 @@ import {
 import * as fsModule from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { clearCancelSignal, clearStopSignal } from "../session-booking";
+import {
+  clearCancelSignal,
+  clearStopSignal,
+  setCancelSignal,
+} from "../session-booking";
 import { STOP_FILE } from "../paths";
 import * as socketClient from "../socket-client";
 import * as stt from "../stt";
@@ -695,6 +699,92 @@ describe("input recording durability", () => {
       );
     } finally {
       releaseVad?.();
+      await capture.catch(() => null);
+    }
+  });
+
+  it("archives queued PCM when a backlogged capture reaches its normal timeout", async () => {
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const chunks = Array.from({ length: 6 }, () => makePcmChunk(1800));
+    installFakeRecorder(chunks, true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(100, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep timeout audio",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "timeout VAD backlog");
+      await expect(capture).resolves.toBeNull();
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * chunks.length,
+      );
+    } finally {
+      releaseVad?.();
+      await capture.catch(() => null);
+    }
+  });
+
+  it("archives queued PCM when a backlogged capture is cancelled", async () => {
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const chunks = Array.from({ length: 7 }, () => makePcmChunk(1800));
+    installFakeRecorder(chunks, true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(2_000, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep cancelled audio",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "cancel VAD backlog");
+      await Bun.sleep(10);
+      setCancelSignal();
+      writeFileSync(STOP_FILE, "cancel");
+      await expect(capture).resolves.toBeNull();
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * chunks.length,
+      );
+    } finally {
+      releaseVad?.();
+      writeFileSync(STOP_FILE, "stop");
       await capture.catch(() => null);
     }
   });

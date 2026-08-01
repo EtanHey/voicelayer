@@ -1873,7 +1873,6 @@ export async function recordToBuffer(
     let readBufferLen = 0;
     const pcmChunks: Uint8Array[] = [];
     const chunkQueue: Uint8Array[] = [];
-    let totalPcmBytes = 0;
     let resolved = false;
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
@@ -1958,9 +1957,7 @@ export async function recordToBuffer(
       }
 
       let finishError = error;
-      const capturedChunks = finishError
-        ? [...pcmChunks, ...drainPendingCapturedPcm()]
-        : pcmChunks;
+      const capturedChunks = [...pcmChunks, ...drainPendingCapturedPcm()];
       const capturedPcmBytes = capturedChunks.reduce(
         (sum, chunk) => sum + chunk.byteLength,
         0,
@@ -1987,7 +1984,7 @@ export async function recordToBuffer(
               )
             : finishError,
         );
-      } else if (totalPcmBytes === 0) {
+      } else if (capturedPcmBytes === 0) {
         resolve(null);
       } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
@@ -1997,8 +1994,8 @@ export async function recordToBuffer(
         }
         const selectedChunks =
           !pushToEnd && hasSpeech && firstSpeechChunkIndex >= 0
-            ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
-            : pcmChunks;
+            ? selectChunksWithPreRoll(capturedChunks, firstSpeechChunkIndex)
+            : capturedChunks;
         const selectedPcmBytes = selectedChunks.reduce(
           (sum, chunk) => sum + chunk.byteLength,
           0,
@@ -2171,7 +2168,6 @@ export async function recordToBuffer(
           const chunk = chunkQueue.shift()!;
 
           pcmChunks.push(chunk);
-          totalPcmBytes += chunk.byteLength;
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
 
