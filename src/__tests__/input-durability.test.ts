@@ -622,6 +622,83 @@ describe("input recording durability", () => {
     }
   });
 
+  it("stays idle when capture-start observation aborts synchronously", async () => {
+    const controller = new AbortController();
+    installFakeRecorder([], true);
+    const { getRecordingState, recordToBuffer } = await import("../input");
+
+    await expect(
+      recordToBuffer(
+        2_000,
+        "quick",
+        false,
+        undefined,
+        controller.signal,
+        false,
+        {
+          onCaptureStart: () => {
+            controller.abort(new Error("capture guard already ended"));
+          },
+        },
+      ),
+    ).rejects.toThrow("capture guard already ended");
+
+    expect(getRecordingState()).toBe("idle");
+    expect(
+      broadcasts.some(
+        (event) => event.type === "state" && event.state === "recording",
+      ),
+    ).toBe(false);
+  });
+
+  it("archives PCM already read from the mic while VAD is still backlogged", async () => {
+    const controller = new AbortController();
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const fullChunks = Array.from({ length: 8 }, () => makePcmChunk(1800));
+    const partialChunk = makePcmChunk(1800).slice(0, 256);
+    installFakeRecorder([...fullChunks, partialChunk], true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(2_000, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep every queued byte",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+      signal: controller.signal,
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "backlogged VAD start");
+      await Bun.sleep(10);
+      controller.abort(new Error("voice_ask capture stage timed out"));
+      await expect(capture).rejects.toThrow(
+        "voice_ask capture stage timed out",
+      );
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * fullChunks.length + partialChunk.byteLength,
+      );
+    } finally {
+      releaseVad?.();
+      await capture.catch(() => null);
+    }
+  });
+
   it("archives captured PCM with prompt artifacts before an abort rejects", async () => {
     const controller = new AbortController();
     let publishedArchivePath: string | undefined;

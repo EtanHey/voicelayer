@@ -1872,6 +1872,7 @@ export async function recordToBuffer(
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
     const pcmChunks: Uint8Array[] = [];
+    const chunkQueue: Uint8Array[] = [];
     let totalPcmBytes = 0;
     let resolved = false;
     let recorder: RecorderProcess | null = null;
@@ -1883,6 +1884,30 @@ export async function recordToBuffer(
       preSpeechChunks,
       postSpeechSilenceChunks: silenceChunksNeeded,
     });
+
+    const drainPendingCapturedPcm = (): Uint8Array[] => {
+      const pendingChunks = chunkQueue.splice(0);
+      if (readBufferLen === 0) return pendingChunks;
+
+      const pendingNativePcm = flattenChunks(readBuffer);
+      readBuffer = [];
+      readBufferLen = 0;
+      const nativeFrameBytes = nativeChannels * BYTES_PER_SAMPLE;
+      const alignedBytes =
+        Math.floor(pendingNativePcm.byteLength / nativeFrameBytes) *
+        nativeFrameBytes;
+      if (alignedBytes === 0) return pendingChunks;
+
+      const nativeTail = pendingNativePcm.slice(0, alignedBytes);
+      const monoTail = needsDownmix
+        ? downmixPCM16ToMono(nativeTail, nativeChannels)
+        : nativeTail;
+      const normalizedTail = needsResample
+        ? resamplePCM16(monoTail, nativeRate, SAMPLE_RATE)
+        : monoTail;
+      if (normalizedTail.byteLength > 0) pendingChunks.push(normalizedTail);
+      return pendingChunks;
+    };
 
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
@@ -1933,9 +1958,16 @@ export async function recordToBuffer(
       }
 
       let finishError = error;
-      if (totalPcmBytes > 0) {
+      const capturedChunks = finishError
+        ? [...pcmChunks, ...drainPendingCapturedPcm()]
+        : pcmChunks;
+      const capturedPcmBytes = capturedChunks.reduce(
+        (sum, chunk) => sum + chunk.byteLength,
+        0,
+      );
+      if (capturedPcmBytes > 0) {
         try {
-          recoveryWriter.flushSnapshot(pcmChunks);
+          recoveryWriter.flushSnapshot(capturedChunks);
         } catch (err) {
           console.error(
             `[voicelayer] Failed to flush retained recovery WAV: ${err instanceof Error ? err.message : String(err)}`,
@@ -1948,10 +1980,10 @@ export async function recordToBuffer(
 
       if (finishError) {
         reject(
-          totalPcmBytes > 0
+          capturedPcmBytes > 0
             ? new RecordingFailureWithCapturedPcm(
                 finishError,
-                flattenChunks(pcmChunks),
+                flattenChunks(capturedChunks),
               )
             : finishError,
         );
@@ -2035,6 +2067,7 @@ export async function recordToBuffer(
       }
 
       invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
+      if (resolved) return;
 
       // Capture stderr for diagnostics — rec errors (permissions, no device) go here
       if (spawnedRecorder.stderr) {
@@ -2088,7 +2121,6 @@ export async function recordToBuffer(
       // ONNX inference (5-50ms) in processVADChunk blocks reader.read(),
       // causing Bun to recycle pipe buffers before JS consumes them → rms=0.
       // Split into: pipeReader (tight loop, no ONNX awaits) + chunkProcessor (VAD).
-      const chunkQueue: Uint8Array[] = [];
       let readerDone = false;
 
       // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
