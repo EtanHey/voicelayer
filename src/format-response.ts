@@ -60,7 +60,12 @@ export function formatAsk(
   opts?: {
     timeoutSeconds?: number;
     pushToEnd?: boolean;
-    outcome?: "timeout" | "no-speech";
+    outcome?: "timeout" | "no-speech" | "captured";
+    recovery?: {
+      archiveId: string;
+      audioPath: string;
+      reason?: string;
+    };
     promptPlayback?: PlaybackOutcomeEvent;
   },
 ): string {
@@ -69,6 +74,21 @@ export function formatAsk(
   if (transcript !== null && transcript !== undefined) {
     return boxed("voice_ask", [
       `🎤 "${transcript}"`,
+      ...(promptInterruption ? [promptInterruption] : []),
+    ]);
+  }
+
+  if (opts?.recovery) {
+    const summary =
+      opts.outcome === "no-speech"
+        ? "🎙 No speech detected, but the captured audio was kept."
+        : "🎙 Audio captured and kept; transcription did not complete.";
+    return boxed("voice_ask", [
+      summary,
+      `↳ Archive: ${opts.recovery.archiveId}`,
+      `↳ Audio: ${opts.recovery.audioPath}`,
+      ...(opts.recovery.reason ? [`↳ Reason: ${opts.recovery.reason}`] : []),
+      "↳ Re-transcribe from VoiceBar History; do not ask the user to repeat.",
       ...(promptInterruption ? [promptInterruption] : []),
     ]);
   }

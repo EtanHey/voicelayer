@@ -99,6 +99,38 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         )
     }
 
+    func testLoadsCapturedVoiceAskWithoutTranscriptForHistoryRetranscription() throws {
+        let id = "2026-08-01T13-14-02-000Z-abcd1234"
+        let dir = tempRoot
+            .appendingPathComponent("2026-08-01")
+            .appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([0, 1, 2, 3]).write(to: dir.appendingPathComponent("audio.wav"))
+        let metadata = """
+        {
+          "id": "\(id)",
+          "created_at": "2026-08-01T13:14:02.000Z",
+          "source": "voice_ask",
+          "transcription_status": "captured",
+          "backend": null
+        }
+        """
+        try metadata.write(
+            to: dir.appendingPathComponent("metadata.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let groups = SettingsHistoryArchive.load(from: tempRoot)
+        let entry = try XCTUnwrap(groups.first?.entries.first)
+
+        XCTAssertEqual(entry.recordingID, id)
+        XCTAssertFalse(entry.hasTranscript)
+        XCTAssertEqual(entry.displayTranscript, "No transcript stored")
+        XCTAssertEqual(entry.audioPath.lastPathComponent, "audio.wav")
+        XCTAssertEqual(entry.audioPath.deletingLastPathComponent().lastPathComponent, id)
+    }
+
     func testSkipsIncompleteAndTemporaryArchiveDirectories() throws {
         try writeRecording(
             day: "2026-06-25",

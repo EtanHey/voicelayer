@@ -6,6 +6,7 @@
  */
 
 import { appendFileSync, existsSync, writeFileSync, unlinkSync } from "fs";
+import { basename, join } from "path";
 import {
   assertSpeakerClear,
   isSpeakerOutputRefusedError,
@@ -88,6 +89,7 @@ const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
 const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
 const VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS = 15;
 const VOICE_ASK_PLAYBACK_MARGIN_SECONDS = 1;
+const VOICE_ASK_ABORT_SETTLE_GRACE_MS = 15_000;
 
 /**
  * Measured median synthesis rate across 326 retained `voice_ask` prompts
@@ -474,6 +476,7 @@ export async function handleConverse(
     (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
   let noSpeech = false;
+  let captureArchivePath: string | null = null;
   const progressHeartbeat = context
     ? new VoiceAskProgressHeartbeat(context)
     : null;
@@ -483,34 +486,63 @@ export async function handleConverse(
   const timeoutPromise = new Promise<McpResult>((resolve) => {
     resolveTimeout = resolve;
   });
+  const recoveryOptions = (reason?: string) =>
+    captureArchivePath
+      ? {
+          archiveId: basename(captureArchivePath),
+          audioPath: join(captureArchivePath, "audio.wav"),
+          ...(reason ? { reason } : {}),
+        }
+      : undefined;
+  const settleTimeout = (
+    stage: "prompt" | "capture" | "return",
+    timeoutMs: number,
+  ): void => {
+    if (timeoutSettled) return;
+    timeoutSettled = true;
+    const recovery = recoveryOptions(
+      `Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s`,
+    );
+    resolveTimeout(
+      recovery
+        ? textResult(formatAsk(null, { outcome: "captured", recovery }))
+        : textResult(
+            `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s. ` +
+              "The voice pipeline may be stuck with zero recoverable audio.",
+            true,
+          ),
+    );
+  };
   const armTimeout = (
     timeoutMs: number,
-    stage: "playback" | "capture" | "return",
+    stage: "prompt" | "capture" | "return",
   ): void => {
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      timeoutSettled = true;
       console.error(
         `[voicelayer] voice_ask ${stage} hard timeout after ${timeoutMs / 1000}s`,
       );
-      const timeoutResult = textResult(
-        `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s. ` +
-          "The voice pipeline may be stuck. Try again.",
-        true,
-      );
       broadcast({ type: "state", state: "idle", source: "recording" });
-      // Settle the public timeout result before aborting the deeper pipeline so
-      // a synchronous abort rejection cannot replace the intended response.
-      resolveTimeout(timeoutResult);
-      inputAbortController.abort(
-        new Error(
-          `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
-        ),
+      const abortError = new Error(
+        `voice_ask ${stage} stage aborted after hard timeout (${timeoutMs}ms)`,
+      );
+      if (stage === "prompt") {
+        // No mic has opened, so there cannot be captured audio to publish.
+        settleTimeout(stage, timeoutMs);
+        inputAbortController.abort(abortError);
+        return;
+      }
+
+      // Let the abort path publish captured PCM before the public fallback wins.
+      inputAbortController.abort(abortError);
+      timer = setTimeout(
+        () => settleTimeout(stage, timeoutMs),
+        VOICE_ASK_ABORT_SETTLE_GRACE_MS,
       );
     }, timeoutMs);
   };
-  armTimeout(outerTimeoutMs, "playback");
+  armTimeout(outerTimeoutMs, "prompt");
 
   const converseFlow = async (): Promise<McpResult> => {
     // V1 policy: refuse instead of queueing while the user is recording.
@@ -574,6 +606,12 @@ export async function handleConverse(
           agentTtsEngine: speech.engine,
           agentTtsVoice: speech.voice,
         },
+        onCaptureStart: () => {
+          armTimeout(outerTimeoutMs, "capture");
+        },
+        onArchiveCreated: (archivePath) => {
+          captureArchivePath = archivePath;
+        },
         onCaptureEnd: () => {
           armTimeout(VOICE_ASK_RETURN_TIMEOUT_MS, "return");
         },
@@ -588,11 +626,17 @@ export async function handleConverse(
     );
 
     if (response === null) {
+      const recovery = recoveryOptions();
       return textResult(
         formatAsk(null, {
           timeoutSeconds,
           pushToEnd,
-          ...(noSpeech ? { outcome: "no-speech" as const } : {}),
+          ...(noSpeech
+            ? { outcome: "no-speech" as const }
+            : recovery
+              ? { outcome: "captured" as const }
+              : {}),
+          ...(recovery ? { recovery } : {}),
           promptPlayback: speech.playbackOutcome,
         }),
       );
@@ -620,6 +664,10 @@ export async function handleConverse(
     }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[voicelayer] voice_ask error: ${message}`);
+    const recovery = recoveryOptions(message);
+    if (recovery) {
+      return textResult(formatAsk(null, { outcome: "captured", recovery }));
+    }
     return textResult(`[converse] Error: ${message}`, true);
   } finally {
     progressHeartbeat?.stop();

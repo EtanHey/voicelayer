@@ -370,6 +370,7 @@ export interface NoSpeechGateResult {
 
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
+  onCaptureStart?: () => void;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -415,6 +416,8 @@ export interface WaitForInputOptions {
     agentTtsVoice: string;
     createdAt?: Date;
   };
+  onCaptureStart?: () => void;
+  onArchiveCreated?: (archivePath: string) => void;
   onCaptureEnd?: () => void;
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
@@ -422,7 +425,7 @@ export interface WaitForInputOptions {
 }
 
 function invokeCaptureObserver(
-  observerName: "no_speech" | "phase_change",
+  observerName: "capture_start" | "no_speech" | "phase_change",
   observer: (() => void) | undefined,
 ): void {
   if (!observer) return;
@@ -440,6 +443,26 @@ function invokeCaptureObserver(
   }
 }
 
+function invokeArchiveCreatedObserver(
+  archivePath: string,
+  observer: ((archivePath: string) => void) | undefined,
+): void {
+  if (!observer) return;
+  try {
+    observer(archivePath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[voicelayer] Capture archive_created observer failed: ${detail}`,
+    );
+    appendControlLayerEvent("capture.observer_failed", {
+      observer: "archive_created",
+      error: detail,
+      archive_path: archivePath,
+    });
+  }
+}
+
 function waitForInputAbortError(signal: AbortSignal): Error {
   if (signal.reason instanceof Error) return signal.reason;
   const error = new Error("voice input aborted");
@@ -449,6 +472,17 @@ function waitForInputAbortError(signal: AbortSignal): Error {
 
 function throwIfWaitForInputAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw waitForInputAbortError(signal);
+}
+
+class RecordingFailureWithCapturedPcm extends Error {
+  constructor(
+    readonly originalError: Error,
+    readonly pcmData: Uint8Array,
+  ) {
+    super(originalError.message);
+    this.name = originalError.name;
+    this.stack = originalError.stack;
+  }
 }
 
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
@@ -1913,7 +1947,14 @@ export async function recordToBuffer(
       }
 
       if (finishError) {
-        reject(finishError);
+        reject(
+          totalPcmBytes > 0
+            ? new RecordingFailureWithCapturedPcm(
+                finishError,
+                flattenChunks(pcmChunks),
+              )
+            : finishError,
+        );
       } else if (totalPcmBytes === 0) {
         resolve(null);
       } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
@@ -1992,6 +2033,8 @@ export async function recordToBuffer(
         finish(new Error("rec: stdout not available"));
         return;
       }
+
+      invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
 
       // Capture stderr for diagnostics — rec errors (permissions, no device) go here
       if (spawnedRecorder.stderr) {
@@ -2234,6 +2277,7 @@ export async function waitForInput(
   let pcmData: Uint8Array | null;
   const captureState: RecordingCaptureState = {
     archiveSource: options.archiveSource,
+    onCaptureStart: options.onCaptureStart,
   };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
@@ -2249,6 +2293,37 @@ export async function waitForInput(
       captureState,
     );
   } catch (err) {
+    if (
+      err instanceof RecordingFailureWithCapturedPcm &&
+      options.archiveSource === "voice_ask"
+    ) {
+      const retainedWavData = createWavBuffer(err.pcmData);
+      const durationMs = pcmDurationMs(err.pcmData);
+      try {
+        const archivePath = archiveVoiceAskCapture({
+          options,
+          audioBytes: retainedWavData,
+          silenceMode,
+          pushToEnd,
+          durationMs,
+          transcribedDurationMs: durationMs,
+        });
+        invokeArchiveCreatedObserver(
+          archivePath,
+          options.onArchiveCreated,
+        );
+      } catch (archiveErr) {
+        const detail =
+          archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
+        appendControlLayerEvent("capture.archive_failed", {
+          archive_source: "voice_ask",
+          duration_ms: durationMs,
+          error: detail,
+          recording_error: err.originalError.message,
+        });
+        throw new Error(`voice_ask archive failed after capture abort: ${detail}`);
+      }
+    }
     appendControlLayerEvent("capture.recording_failed", {
       error: err instanceof Error ? err.message : String(err),
       recording_state: getEffectiveRecordingState(),
@@ -2291,6 +2366,10 @@ export async function waitForInput(
         durationMs: sttTrim.rawDurationMs,
         transcribedDurationMs: sttTrim.transcribedDurationMs,
       });
+      invokeArchiveCreatedObserver(
+        voiceAskArchivePath,
+        options.onArchiveCreated,
+      );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.error(`[voicelayer] Failed to archive voice_ask capture: ${detail}`);
@@ -2693,6 +2772,9 @@ function updateArchivedTranscript(
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
     metadata.voicelayer_transcript_chars = text.length;
+    if (metadata.source === "voice_ask") {
+      metadata.user_transcript_chars = text.length;
+    }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
   });
 }

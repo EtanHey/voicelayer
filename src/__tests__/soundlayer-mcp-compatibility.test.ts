@@ -201,7 +201,9 @@ describe("SoundLayer MCP compatibility regression", () => {
     });
     expect(waitForInputSpy).toHaveBeenCalledWith(45_000, "quick", true, {
       archiveSource: "voice_ask",
+      onArchiveCreated: expect.any(Function),
       onCaptureEnd: expect.any(Function),
+      onCaptureStart: expect.any(Function),
       onNoSpeech: expect.any(Function),
       onPhaseChange: expect.any(Function),
       signal: expect.any(AbortSignal),

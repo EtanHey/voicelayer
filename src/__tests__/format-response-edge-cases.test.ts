@@ -75,6 +75,23 @@ describe("formatAsk edge cases", () => {
     expect(out).toContain("30s"); // default
   });
 
+  it("formats a captured-audio recovery without telling the agent to re-ask", () => {
+    const out = formatAsk(null, {
+      outcome: "captured",
+      recovery: {
+        archiveId: "2026-08-01T13-14-02-000Z-abcd1234",
+        audioPath:
+          "/isolated/recordings/2026-08-01/2026-08-01T13-14-02-000Z-abcd1234/audio.wav",
+      },
+    });
+
+    expect(out).toContain("Audio captured");
+    expect(out).toContain("2026-08-01T13-14-02-000Z-abcd1234");
+    expect(out).toContain("audio.wav");
+    expect(out).toContain("Re-transcribe");
+    expect(out).not.toContain("Try again");
+  });
+
   it("handles transcript with quotes", () => {
     const out = formatAsk('He said "hello"');
     expect(out).toContain("He said");

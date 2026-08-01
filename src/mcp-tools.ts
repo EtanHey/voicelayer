@@ -110,7 +110,10 @@ export function getToolDefinitions() {
         "Recording will not stop when the user stops speaking; use only when the user explicitly asked for manual stop.\n\n" +
         `User-controlled stop: touch ${STOP_FILE} to end recording.\n` +
         "Requires voice session booking — other sessions see 'line busy'.\n\n" +
-        "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
+        "Captured user audio is always kept, including cancel, abort, and hard-timeout paths. " +
+        "If transcription cannot finish after audio exists, the non-fatal result includes an archive ID and audio path. " +
+        "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
+        "Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, error if busy or the pipeline is stuck with zero recoverable audio.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       annotations: {
         readOnlyHint: false,
