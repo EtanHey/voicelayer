@@ -10,6 +10,7 @@ import {
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
 import * as socketClient from "../socket-client";
+import * as qwen3 from "../tts/qwen3";
 
 const TEST_DISABLED_FILE = `/tmp/voicelayer-display-text-${process.pid}-disabled`;
 const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-display-text-${process.pid}-recording.json`;
@@ -267,6 +268,69 @@ describe("TTS display text stays separate from pronunciation text", () => {
     expect(speaking?.text).toBe(
       "Etan runs supabase cmuxlayer golems and BrainLayer",
     );
+  });
+
+  it("broadcasts all 2,300 display characters through edge TTS", async () => {
+    const { speak } = await import("../tts");
+    const displayText = "A".repeat(2_300);
+
+    await speak(displayText);
+    await waitFor(
+      () => broadcasts.some(
+        (event) =>
+          event.type === "state" &&
+          event.state === "speaking",
+      ),
+      "long edge-TTS speaking event",
+    );
+
+    const speaking = broadcasts.find(
+      (event) => event.type === "state" && event.state === "speaking",
+    );
+    expect(speaking?.text).toBe(displayText);
+  });
+
+  it("broadcasts all 2,300 display characters through cloned TTS", async () => {
+    const profileSpy = spyOn(qwen3, "loadProfile").mockReturnValue({
+      profile_id: "long-display-clone",
+      name: "long-display-clone",
+      engine: "qwen3-tts",
+      model_path: "/tmp/long-display-clone-model",
+      reference_clips: [],
+      reference_clip: "",
+      fallback: "jenny",
+      created: "2026-07-28",
+    });
+    const synthesizeSpy = spyOn(qwen3, "synthesizeCloned").mockResolvedValue(
+      Buffer.from("fake cloned mp3"),
+    );
+
+    try {
+      const { speak } = await import("../tts");
+      const displayText = "B".repeat(2_300);
+
+      const result = await speak(displayText, {
+        voice: "long-display-clone",
+      });
+      expect(synthesizeSpy).toHaveBeenCalledTimes(1);
+      expect(result.engine).toBe("qwen3-tts");
+      await waitFor(
+        () => broadcasts.some(
+          (event) =>
+            event.type === "state" &&
+            event.state === "speaking",
+        ),
+        "long cloned-TTS speaking event",
+      );
+
+      const speaking = broadcasts.find(
+        (event) => event.type === "state" && event.state === "speaking",
+      );
+      expect(speaking?.text).toBe(displayText);
+    } finally {
+      profileSpy.mockRestore();
+      synthesizeSpy.mockRestore();
+    }
   });
 
   it("falls back to the original text when engine boundaries cannot map cleanly", async () => {

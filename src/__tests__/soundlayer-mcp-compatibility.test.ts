@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { handleVoiceAsk, handleVoiceSpeak } from "../handlers";
+import { Database } from "bun:sqlite";
+import {
+  handleVoiceAsk,
+  handleVoiceSpeak,
+  VOICE_ASK_MESSAGE_MAX_CHARS,
+} from "../handlers";
 import * as input from "../input";
 import * as recordingState from "../recording-state";
 import * as sessionBooking from "../session-booking";
@@ -28,11 +33,13 @@ describe("SoundLayer MCP compatibility regression", () => {
   let clearStopSpy: ReturnType<typeof spyOn>;
   let savedAllowPushToEnd: string | undefined;
   let savedControlLayerDisable: string | undefined;
+  let savedControlLayerBase: string | undefined;
 
   beforeEach(() => {
     savedAllowPushToEnd = process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     savedControlLayerDisable =
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL;
+    savedControlLayerBase = process.env.VOICELAYER_CONTROL_LAYER_BASE;
     delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "1";
     ensureBarSpy = spyOn(launcher, "ensureVoiceBarRunning").mockImplementation(
@@ -89,6 +96,11 @@ describe("SoundLayer MCP compatibility regression", () => {
     } else {
       process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL =
         savedControlLayerDisable;
+    }
+    if (savedControlLayerBase === undefined) {
+      delete process.env.VOICELAYER_CONTROL_LAYER_BASE;
+    } else {
+      process.env.VOICELAYER_CONTROL_LAYER_BASE = savedControlLayerBase;
     }
   });
 
@@ -225,6 +237,84 @@ describe("SoundLayer MCP compatibility regression", () => {
       false,
       expect.any(Object),
     );
+  });
+
+  it("accepts a voice_ask message at the blocking limit", async () => {
+    const boundaryMessage = "A".repeat(VOICE_ASK_MESSAGE_MAX_CHARS);
+    speakSpy.mockResolvedValue({
+      displayText: boundaryMessage,
+      engine: "edge-tts",
+      voice: "en-US-AndrewNeural",
+      audioArtifact: {
+        bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+        format: "mp3",
+      },
+    });
+
+    const result = await handleVoiceAsk({ message: boundaryMessage });
+
+    expect(result.isError).toBeUndefined();
+    expect(speakSpy).toHaveBeenCalledWith(
+      boundaryMessage,
+      expect.objectContaining({
+        mode: "converse",
+        waitForPlayback: true,
+      }),
+    );
+    expect(waitForInputSpy).toHaveBeenCalled();
+  });
+
+  it("refuses and journals a voice_ask message above the blocking limit", async () => {
+    const journalRoot = mkdtempSync(join(tmpdir(), "voiceask-length-guard-"));
+    process.env.VOICELAYER_DISABLE_CONTROL_LAYER_JOURNAL = "0";
+    process.env.VOICELAYER_CONTROL_LAYER_BASE = journalRoot;
+    const refusedLength = VOICE_ASK_MESSAGE_MAX_CHARS + 1;
+    const approximateSpeechSeconds = Math.ceil(refusedLength / 13.9);
+
+    try {
+      const result = await handleVoiceAsk({
+        message: "A".repeat(refusedLength),
+      });
+      const text = result.content[0].text;
+
+      expect(result.isError).toBe(true);
+      expect(text).toContain(refusedLength.toLocaleString("en-US"));
+      expect(text).toContain(
+        VOICE_ASK_MESSAGE_MAX_CHARS.toLocaleString("en-US"),
+      );
+      expect(text).toContain(
+        `approximately ${approximateSpeechSeconds} seconds`,
+      );
+      expect(text).toContain("two or more sequential voice_ask calls");
+      expect(text).toContain("checkpoint");
+      expect(text).toContain("confirms");
+      expect(speakSpy).not.toHaveBeenCalled();
+      expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+      expect(waitForInputSpy).not.toHaveBeenCalled();
+
+      const database = new Database(
+        join(journalRoot, "fleet-journal.db"),
+        { readonly: true },
+      );
+      const row = database
+        .query(
+          "SELECT payload_json FROM events WHERE type = ? ORDER BY seq DESC LIMIT 1",
+        )
+        .get("voice_ask.message_too_long") as
+        | { payload_json: string }
+        | null;
+      database.close();
+
+      expect(row).not.toBeNull();
+      expect(JSON.parse(row!.payload_json)).toMatchObject({
+        caller: "mcp.voice_ask",
+        message_length: refusedLength,
+        threshold: VOICE_ASK_MESSAGE_MAX_CHARS,
+        approximate_speech_seconds: approximateSpeechSeconds,
+      });
+    } finally {
+      rmSync(journalRoot, { recursive: true, force: true });
+    }
   });
 
   it("ignores legacy press_to_talk, keeps VAD, and emits a deprecation warning", async () => {
