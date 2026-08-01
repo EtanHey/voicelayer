@@ -63,6 +63,7 @@ import {
   resolvePushToEnd,
   warnLegacyPressToTalk,
 } from "./push-to-end";
+import { appendControlLayerEvent } from "./control-layer-journal";
 
 // --- MCP result helper ---
 
@@ -85,6 +86,118 @@ const THINK_FILE =
 
 const DEFAULT_CONVERSE_SILENCE_MODE: SilenceMode = "thoughtful";
 const VOICE_ASK_RETURN_TIMEOUT_MS = 120_000;
+const VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS = 15;
+const VOICE_ASK_PLAYBACK_MARGIN_SECONDS = 1;
+
+/**
+ * Measured median synthesis rate across 326 retained `voice_ask` prompts
+ * (`agent_transcript_chars` vs ffprobe duration of the retained
+ * `agent-audio.mp3`). Used to tell a refused caller what its message would
+ * have cost in blocking seconds.
+ */
+const SPEECH_CHARS_PER_SECOND = 13.9;
+
+/**
+ * Hard maximum for the BLOCKING tool. At the measured ~13 characters/second,
+ * 600 characters is about 46 seconds: it lands on the 45-second default
+ * playback stage budget, `(timeout_seconds + 15)s`, armed before `speak()`.
+ * The principle is that the spoken prompt cannot consume the recording budget
+ * it is supposed to precede. At 1,200 characters (about 92 seconds), the prompt
+ * is already twice the default budget and can time out before the microphone
+ * opens.
+ *
+ * A second mechanical constraint points the same way: the teleprompter carries
+ * its text and the RMS waveform in one 8,191-byte socket frame. Past ~50s of
+ * audio the envelope saturates at 1,000 samples and single-frame capacity
+ * collapses to ~1,254 Latin / ~712 Hebrew characters. Staying under 45s keeps
+ * the envelope small and the whole question on screen in either script.
+ *
+ * The MCP description is the primary intervention: it teaches callers to split
+ * long prompts into sequential acknowledgement checkpoints. This guard is the
+ * backstop. Its cost is refusing 97/326 retained asks (29.8%). Etan explicitly
+ * confirmed the 600-character product limit on 2026-08-01.
+ * AIDEV-NOTE: This is the blocking cap. Do NOT raise it to match
+ * VOICE_SPEAK_MESSAGE_MAX_CHARS — voice_speak does not block or wait for an
+ * acknowledgement.
+ */
+export const VOICE_ASK_MESSAGE_MAX_CHARS = 600;
+
+/**
+ * Roomier cap for the NON-BLOCKING tool. `voice_speak` returns instantly and the
+ * user can ignore or stop it, so this is a pathology backstop only — it exists to
+ * catch the 2,300-character class, not to shape normal announcements.
+ */
+export const VOICE_SPEAK_MESSAGE_MAX_CHARS = 1_200;
+
+function voiceAskMessageMaxCharsForTimeout(timeoutSeconds: unknown): number {
+  const normalizedTimeoutSeconds =
+    typeof timeoutSeconds === "number" && Number.isFinite(timeoutSeconds)
+      ? Math.min(Math.max(timeoutSeconds, 5), 3_600)
+      : 30;
+  const playbackBudgetSeconds =
+    normalizedTimeoutSeconds +
+    VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS -
+    VOICE_ASK_PLAYBACK_MARGIN_SECONDS;
+  return Math.min(
+    VOICE_ASK_MESSAGE_MAX_CHARS,
+    Math.floor(playbackBudgetSeconds * SPEECH_CHARS_PER_SECOND),
+  );
+}
+
+// --- Length guard ---
+
+type VoiceTool = "voice_ask" | "voice_speak";
+
+const MESSAGE_MAX_CHARS: Record<VoiceTool, number> = {
+  voice_ask: VOICE_ASK_MESSAGE_MAX_CHARS,
+  voice_speak: VOICE_SPEAK_MESSAGE_MAX_CHARS,
+};
+
+/**
+ * Refuse an over-long message before anything is synthesised, booked, or
+ * recorded, and journal the refusal so the anomaly is never invisible.
+ *
+ * Returns null when the message is acceptable (or is not a string — schema
+ * validation downstream owns that case).
+ */
+function refuseOverlongMessage(
+  message: unknown,
+  tool: VoiceTool,
+  thresholdOverride?: number,
+): McpResult | null {
+  const threshold = thresholdOverride ?? MESSAGE_MAX_CHARS[tool];
+  if (typeof message !== "string" || message.length <= threshold) return null;
+
+  const approximateSpeechSeconds = Math.ceil(
+    message.length / SPEECH_CHARS_PER_SECOND,
+  );
+  appendControlLayerEvent(`${tool}.message_too_long`, {
+    caller: `mcp.${tool}`,
+    message_length: message.length,
+    threshold,
+    approximate_speech_seconds: approximateSpeechSeconds,
+  });
+
+  const cost =
+    tool === "voice_ask"
+      ? `It would take approximately ${approximateSpeechSeconds} seconds of blocking speech before the microphone opens. `
+      : `It would take approximately ${approximateSpeechSeconds} seconds to speak. `;
+  const remedy =
+    tool === "voice_ask"
+      ? "Split long content into two or more sequential voice_ask calls. " +
+        "Each ask is a checkpoint where the user confirms they absorbed one part before the next is spoken. " +
+        "Use voice_speak only for announcements or status updates that do not need a response."
+      : "Shorten the announcement, or split it across separate voice_speak calls. " +
+        "If the user must understand or respond to this content, use sequential voice_ask checkpoints instead.";
+
+  return textResult(
+    `${tool} message is ${message.length.toLocaleString("en-US")} characters; ` +
+      `the limit is ${threshold.toLocaleString("en-US")}. ` +
+      cost +
+      remedy,
+    true,
+  );
+}
 
 // --- Validation wrappers ---
 
@@ -182,6 +295,11 @@ export async function handleVoiceSpeak(
     return handleThink({ thought: rawMessage, category });
   }
 
+  // Pathology backstop for the spoken path only — a silent think note costs no
+  // playback time, so it is exempt. Runs before synthesis, never truncating.
+  const refusal = refuseOverlongMessage(rawMessage, "voice_speak");
+  if (refusal) return refusal;
+
   // Spoken modes strip SSML-shaped content before synthesis.
   const message = sanitizeTtsText(rawMessage);
   if (!message) {
@@ -211,9 +329,16 @@ export async function handleVoiceAsk(
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
+  const message = typeof a.message === "string" ? a.message.trim() : a.message;
+  const refusal = refuseOverlongMessage(
+    message,
+    "voice_ask",
+    voiceAskMessageMaxCharsForTimeout(a.timeout_seconds),
+  );
+  if (refusal) return refusal;
   return handleConverse(
     {
-      message: a.message,
+      message,
       voice: a.voice,
       timeout_seconds: a.timeout_seconds,
       silence_mode: a.silence_mode,
@@ -345,7 +470,8 @@ export async function handleConverse(
 
   // Outer timeout guard — prevents the entire converse flow from hanging
   // if speak(), awaitCurrentPlayback(), or waitForInput() gets stuck
-  const outerTimeoutMs = (timeoutSeconds + 15) * 1000;
+  const outerTimeoutMs =
+    (timeoutSeconds + VOICE_ASK_CAPTURE_TIMEOUT_ALLOWANCE_SECONDS) * 1000;
   const inputAbortController = new AbortController();
   let noSpeech = false;
   const progressHeartbeat = context
@@ -359,7 +485,7 @@ export async function handleConverse(
   });
   const armTimeout = (
     timeoutMs: number,
-    stage: "capture" | "return",
+    stage: "playback" | "capture" | "return",
   ): void => {
     if (timeoutSettled) return;
     if (timer) clearTimeout(timer);
@@ -384,7 +510,7 @@ export async function handleConverse(
       );
     }, timeoutMs);
   };
-  armTimeout(outerTimeoutMs, "capture");
+  armTimeout(outerTimeoutMs, "playback");
 
   const converseFlow = async (): Promise<McpResult> => {
     // V1 policy: refuse instead of queueing while the user is recording.
@@ -416,6 +542,9 @@ export async function handleConverse(
         true,
       );
     }
+    // Playback and capture get separate bounded windows. Without rearming here,
+    // an accepted prompt can consume nearly all of the user's response time.
+    armTimeout(outerTimeoutMs, "capture");
     if (
       !speech.audioArtifact ||
       !speech.displayText?.trim() ||

@@ -15,11 +15,16 @@ export function getToolDefinitions() {
     {
       name: "voice_speak",
       description:
-        "Speak a message aloud or log it silently. NON-BLOCKING — returns instantly.\n\n" +
+        "Speak an announcement/status aloud or log a note silently. NON-BLOCKING — returns instantly.\n" +
+        "Spoken modes have a HARD LIMIT: 1,200 characters — longer messages are refused, not truncated. " +
+        "Use them only for announcements or status updates that do not require the user to understand or respond. " +
+        "voice_speak never waits for the user to absorb it — it has no acknowledgement gate, " +
+        "so an agent can queue the next utterance before the user has taken in the current one. " +
+        "Content the user must understand or respond to belongs in sequential voice_ask checkpoints.\n\n" +
         "Modes (auto-detected from message if omitted):\n" +
         "- announce: fast TTS for status updates (default for short messages)\n" +
         "- brief: slower TTS for explanations (auto for messages > 280 chars)\n" +
-        "- consult: checkpoint — speaks, hints user may respond\n" +
+        "- consult: non-blocking spoken consultation; never waits for a response\n" +
         "- think: silent markdown log, no audio (auto for 'insight:', 'note:', 'TODO:')\n\n" +
         "Also supports: replay (index param) and toggle (enabled param).\n\n" +
         "Stop playback: Voice Bar stop button or socket 'stop' command.\n" +
@@ -90,7 +95,14 @@ export function getToolDefinitions() {
     {
       name: "voice_ask",
       description:
-        "Speak a question aloud and wait for the user's voice response. BLOCKING.\n" +
+        "Ask one short question aloud and wait for the user's voice response. BLOCKING: " +
+        "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
+        "HARD LIMIT: 600 characters maximum; the effective per-request limit may be lower for short timeout_seconds values. " +
+        "Longer messages are refused, not truncated. " +
+        "That is roughly 45 seconds of speech, and it is a question, not a briefing.\n" +
+        "If content the user must understand or respond to is longer, split it into two or more sequential voice_ask calls. " +
+        "Each ask is a checkpoint: the user confirms they absorbed one part before the next is spoken. " +
+        "voice_speak is only for announcements or status updates that do not need a response.\n" +
         "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
         "Two recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
@@ -111,7 +123,8 @@ export function getToolDefinitions() {
         properties: {
           message: {
             type: "string",
-            description: "The question to speak aloud before recording",
+            description:
+              "Short question to speak aloud before recording. Split long content into sequential voice_ask checkpoints.",
           },
           voice: {
             type: "string",

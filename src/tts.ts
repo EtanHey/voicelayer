@@ -1453,9 +1453,7 @@ export async function speak(
     );
   }
 
-  // Truncate for IPC — keep generous limit for teleprompter scrolling.
-  // Voice Bar's ScrollView + FlowLayout handles long text fine.
-  const speakingText = displayText.slice(0, 2000);
+  const speakingText = displayText;
 
   // Context-aware shortcut: short announcements use edge-tts for speed.
   // Skipped when a clone is mandated — a required clone must not be downgraded.
@@ -1702,7 +1700,7 @@ async function speakWithEdgeTTS(
     );
     addToHistory(displayText, ttsFile, voice);
     proc = playAudioNonBlocking(ttsFile, {
-      text: displayText.slice(0, 2000),
+      text: displayText,
       voice,
       wordBoundaries: wordBoundaries.length > 0 ? wordBoundaries : undefined,
       priority: playbackPriorityForMode(options?.mode),
