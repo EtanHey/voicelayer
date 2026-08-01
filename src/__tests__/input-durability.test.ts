@@ -22,7 +22,11 @@ import {
 import * as fsModule from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { clearCancelSignal, clearStopSignal } from "../session-booking";
+import {
+  clearCancelSignal,
+  clearStopSignal,
+  setCancelSignal,
+} from "../session-booking";
 import { STOP_FILE } from "../paths";
 import * as socketClient from "../socket-client";
 import * as stt from "../stt";
@@ -600,6 +604,275 @@ describe("input recording durability", () => {
     expect(broadcasts.some((event) => event.type === "transcription")).toBe(
       false,
     );
+  });
+
+  it("reports capture start only after the recorder opens", async () => {
+    const recorder = installFakeRecorder([], true);
+    const { waitForInput } = await import("../input");
+    let captureStarts = 0;
+    const recording = waitForInput(2_000, "quick", false, {
+      onCaptureStart: () => {
+        captureStarts += 1;
+      },
+    });
+
+    try {
+      await recorder.waitForSpawn();
+      await waitUntil(() => captureStarts === 1, "capture-start observer");
+      expect(captureStarts).toBe(1);
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+  });
+
+  it("stays idle when capture-start observation aborts synchronously", async () => {
+    const controller = new AbortController();
+    installFakeRecorder([], true);
+    const { getRecordingState, recordToBuffer } = await import("../input");
+
+    await expect(
+      recordToBuffer(
+        2_000,
+        "quick",
+        false,
+        undefined,
+        controller.signal,
+        false,
+        {
+          onCaptureStart: () => {
+            controller.abort(new Error("capture guard already ended"));
+          },
+        },
+      ),
+    ).rejects.toThrow("capture guard already ended");
+
+    expect(getRecordingState()).toBe("idle");
+    expect(
+      broadcasts.some(
+        (event) => event.type === "state" && event.state === "recording",
+      ),
+    ).toBe(false);
+  });
+
+  it("archives PCM already read from the mic while VAD is still backlogged", async () => {
+    const controller = new AbortController();
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const fullChunks = Array.from({ length: 8 }, () => makePcmChunk(1800));
+    const partialChunk = makePcmChunk(1800).slice(0, 256);
+    installFakeRecorder([...fullChunks, partialChunk], true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(2_000, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep every queued byte",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+      signal: controller.signal,
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "backlogged VAD start");
+      await Bun.sleep(10);
+      controller.abort(new Error("voice_ask capture stage timed out"));
+      await expect(capture).rejects.toThrow(
+        "voice_ask capture stage timed out",
+      );
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * fullChunks.length + partialChunk.byteLength,
+      );
+    } finally {
+      releaseVad?.();
+      await capture.catch(() => null);
+    }
+  });
+
+  it("archives queued PCM when a backlogged capture reaches its normal timeout", async () => {
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const chunks = Array.from({ length: 6 }, () => makePcmChunk(1800));
+    installFakeRecorder(chunks, true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(100, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep timeout audio",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "timeout VAD backlog");
+      await expect(capture).resolves.toBeNull();
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * chunks.length,
+      );
+    } finally {
+      releaseVad?.();
+      await capture.catch(() => null);
+    }
+  });
+
+  it("archives queued PCM when a backlogged capture is cancelled", async () => {
+    let releaseVad!: () => void;
+    vadProcessSpy?.mockImplementation(async () => {
+      vadCallCount += 1;
+      await new Promise<void>((resolve) => {
+        releaseVad = resolve;
+      });
+      return 0.95;
+    });
+    const chunks = Array.from({ length: 7 }, () => makePcmChunk(1800));
+    installFakeRecorder(chunks, true);
+    const { waitForInput } = await import("../input");
+
+    const capture = waitForInput(2_000, "thoughtful", false, {
+      archiveSource: "voice_ask",
+      voiceAskArtifacts: {
+        agentAudioBytes: new Uint8Array([0x49, 0x44, 0x33]),
+        agentAudioFormat: "mp3",
+        agentTranscript: "Keep cancelled audio",
+        agentTtsEngine: "edge-tts",
+        agentTtsVoice: "en-US-JennyNeural",
+        createdAt: new Date("2026-08-01T13:14:02.000Z"),
+      },
+    });
+
+    try {
+      await waitUntil(() => vadCallCount === 1, "cancel VAD backlog");
+      await Bun.sleep(10);
+      setCancelSignal();
+      writeFileSync(STOP_FILE, "cancel");
+      await expect(capture).resolves.toBeNull();
+
+      const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+      const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+      expectValidRetainedWav(
+        join(archiveDir, "audio.wav"),
+        VAD_CHUNK_BYTES * chunks.length,
+      );
+    } finally {
+      releaseVad?.();
+      writeFileSync(STOP_FILE, "stop");
+      await capture.catch(() => null);
+    }
+  });
+
+  it("archives captured PCM with prompt artifacts before an abort rejects", async () => {
+    const controller = new AbortController();
+    let publishedArchivePath: string | undefined;
+    vadProbabilityForCall = () => 0.95;
+    onVadCall = () => {
+      if (vadCallCount === 3) {
+        controller.abort(new Error("voice_ask capture stage timed out"));
+      }
+    };
+    installFakeRecorder(
+      Array.from({ length: 8 }, () => makePcmChunk(1800)),
+      true,
+    );
+    const { waitForInput } = await import("../input");
+    const agentAudio = new Uint8Array([0x49, 0x44, 0x33, 0xaa, 0xbb]);
+
+    await expect(
+      waitForInput(2_000, "thoughtful", false, {
+        archiveSource: "voice_ask",
+        voiceAskArtifacts: {
+          agentAudioBytes: agentAudio,
+          agentAudioFormat: "mp3",
+          agentTranscript: "Keep the captured answer",
+          agentTtsEngine: "edge-tts",
+          agentTtsVoice: "en-US-JennyNeural",
+          createdAt: new Date("2026-08-01T13:14:02.000Z"),
+        },
+        onArchiveCreated: (archivePath) => {
+          publishedArchivePath = archivePath;
+        },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("voice_ask capture stage timed out");
+
+    const dayDir = join(tmpRoot, "recordings", "2026-08-01");
+    expect(existsSync(dayDir)).toBe(true);
+    const archiveIds = readdirSync(dayDir);
+    expect(archiveIds).toHaveLength(1);
+    const archiveDir = join(dayDir, archiveIds[0]);
+    expect(publishedArchivePath).toBe(archiveDir);
+    expect(readdirSync(archiveDir).sort()).toEqual([
+      "agent-audio.mp3",
+      "agent-transcript.txt",
+      "audio.wav",
+      "metadata.json",
+    ]);
+    expect(readFileSync(join(archiveDir, "agent-audio.mp3"))).toEqual(
+      Buffer.from(agentAudio),
+    );
+    expect(
+      readFileSync(join(archiveDir, "agent-transcript.txt"), "utf8"),
+    ).toBe("Keep the captured answer");
+    expectValidRetainedWav(join(archiveDir, "audio.wav"));
+    expect(
+      JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8")),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "captured",
+      backend: null,
+      retention_policy: "indefinite",
+    });
+
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const archivedAudioBeforeLaterCapture = readFileSync(archivedAudioPath);
+    writeFileSync(retainedPath, makeWav(makePcmChunk(400)));
+    expect(readFileSync(archivedAudioPath)).toEqual(
+      archivedAudioBeforeLaterCapture,
+    );
+
+    const { retranscribeRecordingCapture } = await import("../input");
+    await expect(
+      retranscribeRecordingCapture(archivedAudioPath),
+    ).resolves.toBe("Retained transcript.");
+    expect(
+      readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8"),
+    ).toBe("Retained transcript.");
+    expect(
+      JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8")),
+    ).toMatchObject({
+      source: "voice_ask",
+      transcription_status: "transcribed",
+      backend: "fake-stt",
+      user_transcript_chars: "Retained transcript.".length,
+    });
   });
 
   it("restores idle when abort fires while VAD reset is still pending", async () => {

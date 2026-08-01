@@ -38,6 +38,7 @@ const server = new Server(
       "Voice I/O layer for Claude Code. 2 tools:\n" +
       "- voice_speak(message): TTS. mode is auto-detected (announce=short update, brief=long explanation, consult=checkpoint question, think=silent log). Override with mode param.\n" +
       `- voice_ask(message): BLOCKING. Waits for any playing voice_speak audio to finish, then speaks question, records mic, returns transcription. Session booking prevents mic conflicts. Stop: touch ${STOP_FILE} OR 2.5s silence (thoughtful default).\n` +
+      "  Captured audio is always kept. If a result includes an archive path, use VoiceBar History → Re-transcribe and do not ask the user to repeat.\n" +
       'Auto-mode detection: ends with ? → consult. length > 280 → brief. starts with "insight:" → think. default → announce.\n' +
       "voice_speak returns immediately (non-blocking). Audio plays in background. voice_ask auto-waits for it to finish before speaking.\n" +
       "Voice is disabled by default; user enables via /mcp or voice_speak's enabled parameter.",

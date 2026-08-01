@@ -218,9 +218,12 @@ describe("handleConverse resilience — P0-2", () => {
         },
       );
 
+      let settled = false;
       const pending = handleConverse({
         message: "test question",
         timeout_seconds: 5,
+      }).finally(() => {
+        settled = true;
       });
       await Promise.resolve();
       await Promise.resolve();
@@ -231,6 +234,8 @@ describe("handleConverse resilience — P0-2", () => {
       expect(capturedSignal?.aborted).toBe(false);
 
       jest.advanceTimersByTime(20_000);
+      await Promise.resolve();
+      expect(settled).toBe(true);
       const result = await pending;
 
       expect(result.isError).toBe(true);
@@ -240,6 +245,136 @@ describe("handleConverse resilience — P0-2", () => {
       jest.useRealTimers();
       errorSpy.mockRestore();
     }
+  });
+
+  it("returns a non-fatal archive pointer when hard timeout aborts captured audio", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      const archivePath =
+        "/isolated/recordings/2026-08-01/2026-08-01T13-14-02-000Z-abcd1234";
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pushToEnd, options) => {
+          const captureOptions = options as
+            | {
+                signal?: AbortSignal;
+                onCaptureStart?: () => void;
+                onArchiveCreated?: (path: string) => void;
+              }
+            | undefined;
+          captureOptions?.onCaptureStart?.();
+          return new Promise((_resolve, reject) => {
+            captureOptions?.signal?.addEventListener(
+              "abort",
+              () => {
+                captureOptions.onArchiveCreated?.(archivePath);
+                reject(captureOptions.signal?.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+      );
+
+      const pending = handleConverse({
+        message: "Keep my answer if the capture guard fires",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(20_000);
+      const result = await pending;
+
+      expect(result.isError).toBeUndefined();
+      expect(result.content[0].text).toContain(
+        "2026-08-01T13-14-02-000Z-abcd1234",
+      );
+      expect(result.content[0].text).toContain(`${archivePath}/audio.wav`);
+      expect(result.content[0].text).toContain("Re-transcribe");
+      expect(result.content[0].text).not.toContain("Try again");
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("keeps a bounded fatal fallback when capture stalls with zero audio", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pushToEnd, options) => {
+          (
+            options as { onCaptureStart?: () => void } | undefined
+          )?.onCaptureStart?.();
+          return new Promise(() => {});
+        },
+      );
+
+      let settled = false;
+      const pending = handleConverse({
+        message: "Bound a stuck empty capture",
+        timeout_seconds: 5,
+      }).finally(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(20_000);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      jest.advanceTimersByTime(14_999);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+
+      jest.advanceTimersByTime(1);
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("zero recoverable audio");
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("returns the archive pointer when a captured ask is cancelled", async () => {
+    speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+    const archivePath =
+      "/isolated/recordings/2026-08-01/2026-08-01T13-17-24-177Z-4633481a";
+    waitSpy = spyOn(input, "waitForInput").mockImplementation(
+      async (_timeout, _silenceMode, _pushToEnd, options) => {
+        const captureOptions = options as
+          | {
+              onCaptureStart?: () => void;
+              onArchiveCreated?: (path: string) => void;
+              onCaptureEnd?: () => void;
+            }
+          | undefined;
+        captureOptions?.onCaptureStart?.();
+        captureOptions?.onArchiveCreated?.(archivePath);
+        captureOptions?.onCaptureEnd?.();
+        return null;
+      },
+    );
+
+    const result = await handleConverse({
+      message: "Keep a cancelled answer",
+      timeout_seconds: 30,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain(
+      "2026-08-01T13-17-24-177Z-4633481a",
+    );
+    expect(result.content[0].text).toContain(`${archivePath}/audio.wav`);
+    expect(result.content[0].text).toContain("Re-transcribe");
   });
 
   it("does not start a heartbeat or recording after prompt speech outlives the outer timeout", async () => {
@@ -329,6 +464,66 @@ describe("handleConverse resilience — P0-2", () => {
 
       expect(speakSpy).not.toHaveBeenCalled();
       expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("gives capture a fresh hard-timeout window after long prompt playback", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let finishPrompt!: (value: ReturnType<typeof capturedPrompt>) => void;
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finishPrompt = resolve;
+          }),
+      );
+      let capturedSignal: AbortSignal | undefined;
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pushToEnd, options) => {
+          const captureOptions = options as
+            | {
+                signal?: AbortSignal;
+                onCaptureStart?: () => void;
+              }
+            | undefined;
+          capturedSignal = captureOptions?.signal;
+          captureOptions?.onCaptureStart?.();
+          return new Promise((_resolve, reject) => {
+            capturedSignal?.addEventListener(
+              "abort",
+              () => reject(capturedSignal?.reason),
+              { once: true },
+            );
+          });
+        },
+      );
+
+      const pending = handleConverse({
+        message: "Let the full recording window start after this prompt",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(19_000);
+      finishPrompt(capturedPrompt());
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(waitSpy).toHaveBeenCalledTimes(1);
+      expect(capturedSignal?.aborted).toBe(false);
+
+      jest.advanceTimersByTime(19_999);
+      expect(capturedSignal?.aborted).toBe(false);
+      jest.advanceTimersByTime(1);
+      expect(capturedSignal?.aborted).toBe(true);
+      await pending;
     } finally {
       jest.useRealTimers();
       errorSpy.mockRestore();

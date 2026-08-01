@@ -264,6 +264,22 @@ describe("mcp-handler", () => {
       );
     });
 
+    it("teaches agents to recover retained audio instead of re-asking", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/list",
+      });
+
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
+      );
+      expect(voiceAsk.description).toContain("always kept");
+      expect(voiceAsk.description).toContain("archive ID");
+      expect(voiceAsk.description).toContain("VoiceBar History");
+      expect(voiceAsk.description).toContain("do not ask the user to repeat");
+    });
+
     it("each tool has name, description, inputSchema", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",

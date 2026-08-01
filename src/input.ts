@@ -370,6 +370,7 @@ export interface NoSpeechGateResult {
 
 export interface RecordingCaptureState {
   vadSpeechDetected?: boolean;
+  onCaptureStart?: () => void;
   /**
    * Who owns this capture. Forwarded to Voice Bar on the `recording` state event.
    * AIDEV-NOTE: Voice Bar cannot otherwise distinguish a voice_ask capture from a dropped-ack
@@ -415,6 +416,8 @@ export interface WaitForInputOptions {
     agentTtsVoice: string;
     createdAt?: Date;
   };
+  onCaptureStart?: () => void;
+  onArchiveCreated?: (archivePath: string) => void;
   onCaptureEnd?: () => void;
   onPhaseChange?: (phase: "transcribing") => void;
   onNoSpeech?: () => void;
@@ -422,7 +425,7 @@ export interface WaitForInputOptions {
 }
 
 function invokeCaptureObserver(
-  observerName: "no_speech" | "phase_change",
+  observerName: "capture_start" | "no_speech" | "phase_change",
   observer: (() => void) | undefined,
 ): void {
   if (!observer) return;
@@ -440,6 +443,26 @@ function invokeCaptureObserver(
   }
 }
 
+function invokeArchiveCreatedObserver(
+  archivePath: string,
+  observer: ((archivePath: string) => void) | undefined,
+): void {
+  if (!observer) return;
+  try {
+    observer(archivePath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[voicelayer] Capture archive_created observer failed: ${detail}`,
+    );
+    appendControlLayerEvent("capture.observer_failed", {
+      observer: "archive_created",
+      error: detail,
+      archive_path: archivePath,
+    });
+  }
+}
+
 function waitForInputAbortError(signal: AbortSignal): Error {
   if (signal.reason instanceof Error) return signal.reason;
   const error = new Error("voice input aborted");
@@ -449,6 +472,17 @@ function waitForInputAbortError(signal: AbortSignal): Error {
 
 function throwIfWaitForInputAborted(signal?: AbortSignal): void {
   if (signal?.aborted) throw waitForInputAbortError(signal);
+}
+
+class RecordingFailureWithCapturedPcm extends Error {
+  constructor(
+    readonly originalError: Error,
+    readonly pcmData: Uint8Array,
+  ) {
+    super(originalError.message);
+    this.name = originalError.name;
+    this.stack = originalError.stack;
+  }
 }
 
 type STTFinalizeEnv = STTCorrectorEnv & STTPolishEnv;
@@ -1838,7 +1872,7 @@ export async function recordToBuffer(
     let readBuffer: Uint8Array[] = [];
     let readBufferLen = 0;
     const pcmChunks: Uint8Array[] = [];
-    let totalPcmBytes = 0;
+    const chunkQueue: Uint8Array[] = [];
     let resolved = false;
     let recorder: RecorderProcess | null = null;
     let stopSignalPoll: ReturnType<typeof setInterval> | undefined;
@@ -1849,6 +1883,30 @@ export async function recordToBuffer(
       preSpeechChunks,
       postSpeechSilenceChunks: silenceChunksNeeded,
     });
+
+    const drainPendingCapturedPcm = (): Uint8Array[] => {
+      const pendingChunks = chunkQueue.splice(0);
+      if (readBufferLen === 0) return pendingChunks;
+
+      const pendingNativePcm = flattenChunks(readBuffer);
+      readBuffer = [];
+      readBufferLen = 0;
+      const nativeFrameBytes = nativeChannels * BYTES_PER_SAMPLE;
+      const alignedBytes =
+        Math.floor(pendingNativePcm.byteLength / nativeFrameBytes) *
+        nativeFrameBytes;
+      if (alignedBytes === 0) return pendingChunks;
+
+      const nativeTail = pendingNativePcm.slice(0, alignedBytes);
+      const monoTail = needsDownmix
+        ? downmixPCM16ToMono(nativeTail, nativeChannels)
+        : nativeTail;
+      const normalizedTail = needsResample
+        ? resamplePCM16(monoTail, nativeRate, SAMPLE_RATE)
+        : monoTail;
+      if (normalizedTail.byteLength > 0) pendingChunks.push(normalizedTail);
+      return pendingChunks;
+    };
 
     const beginPushToEndStopDrain = () => {
       if (pushToEndStopRequestedAtMs !== null) return;
@@ -1899,9 +1957,14 @@ export async function recordToBuffer(
       }
 
       let finishError = error;
-      if (totalPcmBytes > 0) {
+      const capturedChunks = [...pcmChunks, ...drainPendingCapturedPcm()];
+      const capturedPcmBytes = capturedChunks.reduce(
+        (sum, chunk) => sum + chunk.byteLength,
+        0,
+      );
+      if (capturedPcmBytes > 0) {
         try {
-          recoveryWriter.flushSnapshot(pcmChunks);
+          recoveryWriter.flushSnapshot(capturedChunks);
         } catch (err) {
           console.error(
             `[voicelayer] Failed to flush retained recovery WAV: ${err instanceof Error ? err.message : String(err)}`,
@@ -1913,8 +1976,15 @@ export async function recordToBuffer(
       }
 
       if (finishError) {
-        reject(finishError);
-      } else if (totalPcmBytes === 0) {
+        reject(
+          capturedPcmBytes > 0
+            ? new RecordingFailureWithCapturedPcm(
+                finishError,
+                flattenChunks(capturedChunks),
+              )
+            : finishError,
+        );
+      } else if (capturedPcmBytes === 0) {
         resolve(null);
       } else if (!pushToEnd && !hasSpeech && !preserveNoSpeechCapture) {
         resolve(null);
@@ -1924,8 +1994,8 @@ export async function recordToBuffer(
         }
         const selectedChunks =
           !pushToEnd && hasSpeech && firstSpeechChunkIndex >= 0
-            ? selectChunksWithPreRoll(pcmChunks, firstSpeechChunkIndex)
-            : pcmChunks;
+            ? selectChunksWithPreRoll(capturedChunks, firstSpeechChunkIndex)
+            : capturedChunks;
         const selectedPcmBytes = selectedChunks.reduce(
           (sum, chunk) => sum + chunk.byteLength,
           0,
@@ -1993,6 +2063,9 @@ export async function recordToBuffer(
         return;
       }
 
+      invokeCaptureObserver("capture_start", captureState?.onCaptureStart);
+      if (resolved) return;
+
       // Capture stderr for diagnostics — rec errors (permissions, no device) go here
       if (spawnedRecorder.stderr) {
         const stderrReader = (
@@ -2045,7 +2118,6 @@ export async function recordToBuffer(
       // ONNX inference (5-50ms) in processVADChunk blocks reader.read(),
       // causing Bun to recycle pipe buffers before JS consumes them → rms=0.
       // Split into: pipeReader (tight loop, no ONNX awaits) + chunkProcessor (VAD).
-      const chunkQueue: Uint8Array[] = [];
       let readerDone = false;
 
       // pipeReader: reads sox stdout as fast as possible, extracts 16kHz chunks
@@ -2096,7 +2168,6 @@ export async function recordToBuffer(
           const chunk = chunkQueue.shift()!;
 
           pcmChunks.push(chunk);
-          totalPcmBytes += chunk.byteLength;
           totalChunksProcessed++;
           recoveryWriter.appendCapturedChunk(chunk, pcmChunks);
 
@@ -2234,6 +2305,7 @@ export async function waitForInput(
   let pcmData: Uint8Array | null;
   const captureState: RecordingCaptureState = {
     archiveSource: options.archiveSource,
+    onCaptureStart: options.onCaptureStart,
   };
   const chunkedSession = isChunkedSTTEnabled()
     ? new ChunkedRecordingSession(SAMPLE_RATE, silenceMode)
@@ -2249,6 +2321,37 @@ export async function waitForInput(
       captureState,
     );
   } catch (err) {
+    if (
+      err instanceof RecordingFailureWithCapturedPcm &&
+      options.archiveSource === "voice_ask"
+    ) {
+      const retainedWavData = createWavBuffer(err.pcmData);
+      const durationMs = pcmDurationMs(err.pcmData);
+      try {
+        const archivePath = archiveVoiceAskCapture({
+          options,
+          audioBytes: retainedWavData,
+          silenceMode,
+          pushToEnd,
+          durationMs,
+          transcribedDurationMs: durationMs,
+        });
+        invokeArchiveCreatedObserver(
+          archivePath,
+          options.onArchiveCreated,
+        );
+      } catch (archiveErr) {
+        const detail =
+          archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
+        appendControlLayerEvent("capture.archive_failed", {
+          archive_source: "voice_ask",
+          duration_ms: durationMs,
+          error: detail,
+          recording_error: err.originalError.message,
+        });
+        throw new Error(`voice_ask archive failed after capture abort: ${detail}`);
+      }
+    }
     appendControlLayerEvent("capture.recording_failed", {
       error: err instanceof Error ? err.message : String(err),
       recording_state: getEffectiveRecordingState(),
@@ -2291,6 +2394,10 @@ export async function waitForInput(
         durationMs: sttTrim.rawDurationMs,
         transcribedDurationMs: sttTrim.transcribedDurationMs,
       });
+      invokeArchiveCreatedObserver(
+        voiceAskArchivePath,
+        options.onArchiveCreated,
+      );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       console.error(`[voicelayer] Failed to archive voice_ask capture: ${detail}`);
@@ -2693,6 +2800,9 @@ function updateArchivedTranscript(
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
     metadata.voicelayer_transcript_chars = text.length;
+    if (metadata.source === "voice_ask") {
+      metadata.user_transcript_chars = text.length;
+    }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
   });
 }
