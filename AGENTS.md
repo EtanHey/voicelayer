@@ -76,8 +76,10 @@ Use `brain_search` before reading files. VoiceLayer history is indexed.
 
 <!-- PATHS: src/mcp-server.ts (entry), src/tts.ts, src/input.ts, src/vad.ts, src/stt.ts, src/session-booking.ts, src/socket-protocol.ts, src/paths.ts, flow-bar/ (SwiftUI), src/__tests__/ (tests), scripts/migrate-to-daemon.sh -->
 <!-- TESTING: bun test — tests in src/__tests__/ | Playwright MCP tests in tests/playwright-mcp-verify.test.ts -->
-## MCP Daemon (preferred)
+## MCP Daemon — VoiceBar.app is the SOLE owner
+- **Never install a second owner.** `com.voicelayer.mcp-daemon` is RETIRED: `launchd/install.sh`
+  boots it out and deletes its plist, printing *"Retired. VoiceBar.app now owns the MCP daemon child
+  process."* A second owner is the double-owner bug that took five commits to fix.
 - Singleton daemon on `/tmp/voicelayer-mcp.sock` — replaces per-session `voicelayer-mcp` spawning.
-- LaunchAgent: `com.voicelayer.mcp-daemon` (auto-start on login, auto-restart on crash).
 - `.mcp.json` config: `{ "command": "socat", "args": ["STDIO", "UNIX-CONNECT:/tmp/voicelayer-mcp.sock"] }`
 - Migration: `bash scripts/migrate-to-daemon.sh` (migrates all repos under ~/Gits).
