@@ -12,6 +12,8 @@ import {
 
 export interface STTCleanupEnv {
   [key: string]: string | undefined;
+  VOICELAYER_STT_AGGRESSIVE_FILLERS?: string;
+  QA_VOICE_STT_AGGRESSIVE_FILLERS?: string;
   QA_VOICE_STT_VOCABULARY_PATH?: string;
   QA_VOICE_STT_VOCABULARY_DISABLED?: string;
   QA_VOICE_STT_COMMANDS_DIR?: string;
@@ -689,6 +691,7 @@ export function cleanupTranscriptionText(
   const aliases = buildRuntimeAliases(env, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
+    aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),
   };
   const cleaned = applyRules(trimmed, rulesConfig);
   const oneNormalized = normalizeConversationalOne(cleaned);
@@ -704,6 +707,16 @@ export function cleanupTranscriptionText(
   // re-emitted lowercase flags are never re-uppercased downstream.
   const flagNormalized = normalizeAgentSpawnFlags(sentenceCased);
   return isMeaningfulTranscription(flagNormalized) ? flagNormalized : "";
+}
+
+function isAggressiveFillerRemovalEnabled(env: STTCleanupEnv): boolean {
+  // Canonical VOICELAYER_* configuration wins when explicitly present; the
+  // QA_VOICE_* alias preserves the existing repository configuration style.
+  const canonical = env.VOICELAYER_STT_AGGRESSIVE_FILLERS?.trim();
+  const raw = (canonical || env.QA_VOICE_STT_AGGRESSIVE_FILLERS)
+    ?.trim()
+    .toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 // Whisper renders dictated repoGolem spawn flags ("-s -c") as an upper-cased,

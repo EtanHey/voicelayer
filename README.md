@@ -323,6 +323,7 @@ path. The daemon only accepts `Host: 127.0.0.1:8880` /
 | `QA_VOICE_STT_BACKEND` | `auto` | STT backend: `whisper`, `wispr`, or `auto` |
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Path to whisper.cpp GGML model |
 | `QA_VOICE_WHISPER_PERFORMANCE_EFFORT` | `accurate` | STT decode effort: `fast`, `balanced`, or `accurate` |
+| `VOICELAYER_STT_AGGRESSIVE_FILLERS` | unset | Opt into legacy removal of meaning-bearing hedges/intensifiers; `QA_VOICE_STT_AGGRESSIVE_FILLERS` is supported as a legacy alias |
 | `QA_VOICE_WISPR_KEY` | -- | Wispr Flow API key (cloud fallback) |
 | `QA_VOICE_TTS_VOICE` | `en-US-JennyNeural` | edge-tts voice ID |
 | `QA_VOICE_TTS_RATE` | `+0%` | Base speech rate |

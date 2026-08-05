@@ -876,8 +876,9 @@ describe("stt-cleanup", () => {
     expect(
       cleanupTranscriptionText(
         "let's see if we get any of those artifacts here, basically.",
+        { VOICELAYER_STT_AGGRESSIVE_FILLERS: "0" },
       ),
-    ).toBe("Let's see if we get any of those artifacts here.");
+    ).toBe("Let's see if we get any of those artifacts here, basically.");
 
     expect(cleanupTranscriptionText("then it does,..")).toBe("Then it does.");
   });

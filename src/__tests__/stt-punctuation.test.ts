@@ -149,4 +149,73 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
     const out = finalizeTranscriptionText("why did it do that", env);
     expect(out.endsWith("?")).toBe(true);
   });
+
+  test("preserves every audited content-word filler candidate by default", () => {
+    const env = {
+      QA_VOICE_CORRECTOR: "off",
+      VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
+    } as Record<string, string>;
+    const cases: Array<[string, string]> = [
+      ["this is basically working", "This is basically working."],
+      ["this is essentially working", "This is essentially working."],
+      ["this is actually working", "This is actually working."],
+      ["this is literally working", "This is literally working."],
+      ["this is kind of working", "This is kind of working."],
+      ["this is sort of working", "This is sort of working."],
+      ["it's like really fast", "It's like really fast."],
+      ["like this post", "Like this post."],
+      ["what does it look like", "What does it look like?"],
+    ];
+
+    for (const [input, expected] of cases) {
+      expect(finalizeTranscriptionText(input, env), input).toBe(expected);
+    }
+  });
+
+  test("still removes genuine acoustic disfluencies by default", () => {
+    expect(
+      finalizeTranscriptionText("um this uh is er still ah working", {
+        QA_VOICE_CORRECTOR: "off",
+        VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
+      }),
+    ).toBe("This is still working.");
+  });
+
+  test("allows aggressive filler removal through the canonical env opt-in", () => {
+    expect(
+      finalizeTranscriptionText("this is basically working", {
+        QA_VOICE_CORRECTOR: "off",
+        VOICELAYER_STT_AGGRESSIVE_FILLERS: "1",
+      }),
+    ).toBe("This is working.");
+  });
+
+  test("allows aggressive filler removal through the QA env alias", () => {
+    expect(
+      finalizeTranscriptionText("this is basically working", {
+        QA_VOICE_CORRECTOR: "off",
+        QA_VOICE_STT_AGGRESSIVE_FILLERS: "1",
+      }),
+    ).toBe("This is working.");
+  });
+
+  test("canonical aggressive-filler config takes precedence over the QA alias", () => {
+    expect(
+      finalizeTranscriptionText("this is basically working", {
+        QA_VOICE_CORRECTOR: "off",
+        VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
+        QA_VOICE_STT_AGGRESSIVE_FILLERS: "1",
+      }),
+    ).toBe("This is basically working.");
+  });
+
+  test("an empty canonical aggressive-filler value falls through to the QA alias", () => {
+    expect(
+      finalizeTranscriptionText("this is basically working", {
+        QA_VOICE_CORRECTOR: "off",
+        VOICELAYER_STT_AGGRESSIVE_FILLERS: "",
+        QA_VOICE_STT_AGGRESSIVE_FILLERS: "1",
+      }),
+    ).toBe("This is working.");
+  });
 });

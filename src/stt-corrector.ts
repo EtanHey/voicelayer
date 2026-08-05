@@ -1,4 +1,7 @@
-import { cleanupTranscriptionText } from "./stt-cleanup";
+import {
+  cleanupTranscriptionText,
+  type STTCleanupEnv,
+} from "./stt-cleanup";
 
 export type STTCorrectorMode = "off" | "identity" | "rules";
 export type CorrectionContext =
@@ -6,8 +9,7 @@ export type CorrectionContext =
   | "content-edit"
   | "no-op"
   | "mixed";
-export interface STTCorrectorEnv {
-  [key: string]: string | undefined;
+export interface STTCorrectorEnv extends STTCleanupEnv {
   QA_VOICE_CORRECTOR?: string;
 }
 
@@ -83,7 +85,9 @@ export function correctTranscriptionText(
   const shouldApplyRules =
     mode === "rules" &&
     (context === "dictionary-heavy" || isLikelyNonSpeechCue(text));
-  const corrected = shouldApplyRules ? cleanupTranscriptionText(text) : text;
+  const corrected = shouldApplyRules
+    ? cleanupTranscriptionText(text, options.env)
+    : text;
   const latencyMs = performance.now() - start;
 
   return {
