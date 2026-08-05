@@ -88,4 +88,4 @@
 
 ## Naming
 - Primary tools: `voice_speak`, `voice_ask`
-- Env vars use `QA_VOICE_*` (aliasing to `VOICELAYER_*` planned)
+- Env vars use a mixed contract: `VOICELAYER_*` is canonical where implemented (currently aggressive-filler control and socket overrides), with legacy `QA_VOICE_*` aliases retained; settings not yet migrated still use `QA_VOICE_*`.
