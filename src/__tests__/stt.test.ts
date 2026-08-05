@@ -1299,7 +1299,7 @@ describe("STT backends", () => {
         promptOverride: "previous chunk transcript here",
       });
       expect(result).toBeDefined();
-      expect(result?.language).toBeUndefined();
+      expect(result?.language).toBe("auto");
       expect(result?.prompt).toContain("previous chunk transcript here");
     });
 
@@ -1319,7 +1319,7 @@ describe("STT backends", () => {
       // one-shot audio so borderline silence/noise cannot decode into
       // prompt-biased dev phrases. promptOverride is still forwarded by the
       // previous test for chunk-continuity.
-      expect(result).toBeUndefined();
+      expect(result).toEqual({ language: "auto" });
     });
   });
 });
