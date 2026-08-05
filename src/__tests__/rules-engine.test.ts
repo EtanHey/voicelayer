@@ -50,6 +50,7 @@ describe("rules-engine", () => {
         "it's like really fast",
         "like this post",
         "what does it look like",
+        "ah I see",
       ];
 
       for (const input of cases) {
@@ -57,6 +58,12 @@ describe("rules-engine", () => {
           input[0].toUpperCase() + input.slice(1),
         );
       }
+    });
+
+    it("preserves the ratified English ah in aggressive mode too", () => {
+      expect(
+        applyRules("ah I see", { aggressiveFillerRemoval: true }),
+      ).toBe("Ah I see");
     });
 
     it("allows the old aggressive filler behavior as an explicit opt-in", () => {
@@ -78,8 +85,8 @@ describe("rules-engine", () => {
       }
     });
 
-    it("handles multiple consecutive fillers", () => {
-      expect(applyRules("um uh er ah the code")).toBe("The code");
+    it("removes um/uh/er while preserving the ratified English ah", () => {
+      expect(applyRules("um uh er ah the code")).toBe("Ah the code");
     });
   });
 

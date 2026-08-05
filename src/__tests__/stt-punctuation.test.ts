@@ -165,6 +165,7 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
       ["it's like really fast", "It's like really fast."],
       ["like this post", "Like this post."],
       ["what does it look like", "What does it look like?"],
+      ["ah I see", "Ah I see."],
     ];
 
     for (const [input, expected] of cases) {
@@ -174,7 +175,7 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
 
   test("still removes genuine acoustic disfluencies by default", () => {
     expect(
-      finalizeTranscriptionText("um this uh is er still ah working", {
+      finalizeTranscriptionText("um this uh is er still working", {
         QA_VOICE_CORRECTOR: "off",
         VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
       }),

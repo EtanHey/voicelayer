@@ -104,7 +104,7 @@ export function preserveCodeTokens(text: string): string {
 
 const DISFLUENCY_PATTERNS: RegExp[] = [
   // English acoustic disfluencies.
-  /\b(?:um|uh|er|ah)\b/gi,
+  /\b(?:um|uh|er)\b/gi,
   // Hebrew acoustic fillers. Keep discourse markers like "כאילו" in prose.
   // The lookahead excludes ש so legitimate words starting with אמ
   // (e.g. אמש "last night", אמת "truth") and אה (e.g. אהבה "love") are
