@@ -8,7 +8,8 @@
  *
  * AIDEV-NOTE: From R1 research — "Stock Whisper with auto-detection is a better
  * starting point for bilingual speech than ivrit-ai models, which degrade English."
- * Auto mode omits the -l flag entirely, letting whisper choose.
+ * Auto mode passes `-l auto` explicitly because whisper.cpp defaults to English
+ * when the language flag is omitted.
  *
  * Initial prompts help whisper recognize domain-specific vocabulary.
  * Limited to ~224 tokens (~900 chars). Most critical terms first.
@@ -79,11 +80,10 @@ export function getLanguageConfig(mode: LanguageMode | string): LanguageConfig {
 
   const args: string[] = [];
 
-  // Language flag: auto mode omits -l to let whisper detect
-  if (normalized !== "auto") {
-    const langCode = normalized === "hebrew" ? "he" : "en";
-    args.push("-l", langCode);
-  }
+  // Always pass the language flag: whisper.cpp defaults to English when omitted.
+  const langCode =
+    normalized === "hebrew" ? "he" : normalized === "english" ? "en" : "auto";
+  args.push("-l", langCode);
 
   // Initial prompt for vocabulary priming. Auto mode skips prompts so
   // borderline silence/noise cannot decode into prompt-biased dev phrases.

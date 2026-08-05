@@ -1293,9 +1293,7 @@ export function buildWhisperServerOptions(
     .trim();
 
   const result: WhisperServerTranscribeOptions = {};
-  if (languageConfig.mode !== "auto") {
-    result.language = languageConfig.whisperLang;
-  }
+  result.language = languageConfig.whisperLang;
   if (prompt) {
     result.prompt = prompt;
   }
