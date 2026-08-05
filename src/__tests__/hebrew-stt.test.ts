@@ -113,9 +113,12 @@ describe("Hebrew rules in rules-engine", () => {
 // --- WhisperCppBackend Language Args ---
 
 describe("whisper language args", () => {
-  it("auto mode omits -l flag for auto-detection", () => {
+  it("auto mode passes -l auto for auto-detection", () => {
     const config = getLanguageConfig("auto");
-    expect(config.whisperArgs).not.toContain("-l");
+    expect(config.whisperArgs).toContain("-l");
+    expect(config.whisperArgs[config.whisperArgs.indexOf("-l") + 1]).toBe(
+      "auto",
+    );
   });
 
   it("hebrew mode passes -l he", () => {
@@ -132,7 +135,7 @@ describe("whisper language args", () => {
 
   it("auto mode omits prompt context to avoid prompt-biased silence", () => {
     const config = getLanguageConfig("auto");
-    expect(config.whisperArgs).not.toContain("-l");
+    expect(config.whisperArgs).toContain("-l");
     expect(config.whisperArgs).not.toContain("--prompt");
   });
 
