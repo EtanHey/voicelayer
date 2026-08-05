@@ -51,6 +51,29 @@ describe("stt-corrector", () => {
     expect(result.latencyMs).toBeLessThan(10);
   });
 
+  it("threads aggressive filler configuration through rules-mode cleanup", () => {
+    const input = "basically use brain layer";
+
+    expect(
+      correctTranscriptionText(input, {
+        mode: "rules",
+        env: {
+          QA_VOICE_STT_VOCABULARY_PATH: "",
+          VOICELAYER_STT_AGGRESSIVE_FILLERS: "0",
+        },
+      }).text,
+    ).toBe("Basically use BrainLayer");
+    expect(
+      correctTranscriptionText(input, {
+        mode: "rules",
+        env: {
+          QA_VOICE_STT_VOCABULARY_PATH: "",
+          VOICELAYER_STT_AGGRESSIVE_FILLERS: "1",
+        },
+      }).text,
+    ).toBe("Use BrainLayer");
+  });
+
   it("passes no-op prose through without mutating capitalization or fillers", () => {
     const result = correctTranscriptionText(
       "Ok, it's researching. I'll let you know when it's done.",

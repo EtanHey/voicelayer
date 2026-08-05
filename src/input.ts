@@ -237,8 +237,8 @@ export function finalizeTranscriptionText(
   if (mode === "identity") return correctTranscriptionText(text, { mode }).text;
   const cleaned =
     mode === "off"
-      ? cleanupTranscriptionText(text)
-      : correctTranscriptionText(text, { mode }).text;
+      ? cleanupTranscriptionText(text, env)
+      : correctTranscriptionText(text, { mode, env }).text;
   // Deterministic terminal-punctuation floor — guarantees punctuation-rich
   // output even when the optional LLM polish server is unavailable. See
   // src/stt-punctuation.ts for the regression this closes.

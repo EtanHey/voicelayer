@@ -17,6 +17,7 @@
 export interface RulesConfig {
   aliases?: Record<string, string>;
   disabledStages?: Set<string>;
+  aggressiveFillerRemoval?: boolean;
 }
 
 /**
@@ -30,7 +31,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
 
   // Stage 1: Filler removal (highest priority — clean noise first)
   if (!disabled?.has("fillers")) {
-    result = removeFillers(result);
+    result = removeFillers(result, config?.aggressiveFillerRemoval ?? false);
   }
 
   // Stage 7: Custom aliases (before tech vocab to allow user overrides)
@@ -101,15 +102,9 @@ export function preserveCodeTokens(text: string): string {
 
 // --- Stage 1: Filler removal ---
 
-const FILLER_PATTERNS: RegExp[] = [
-  // English fillers
-  /\b(?:um|uh|er|ah)\b/gi,
-  /\b(?:basically|essentially|actually|literally)\b/gi,
-  /\bkind of\b/gi,
-  /\bsort of\b/gi,
-  /\blike\b(?=\s+(?:really|very|so|just|totally|super))/gi, // "like" before intensifiers
-  /^like\b\s*/gi, // "like" at start
-  /\s+like$/gi, // "like" at end
+const DISFLUENCY_PATTERNS: RegExp[] = [
+  // English acoustic disfluencies.
+  /\b(?:um|uh|er)\b/gi,
   // Hebrew acoustic fillers. Keep discourse markers like "כאילו" in prose.
   // The lookahead excludes ש so legitimate words starting with אמ
   // (e.g. אמש "last night", אמת "truth") and אה (e.g. אהבה "love") are
@@ -117,9 +112,24 @@ const FILLER_PATTERNS: RegExp[] = [
   /(?:^|\s)(?:אמ|אה)(?=\s|$)/g,
 ];
 
-function removeFillers(text: string): string {
+// These expressions can carry meaning and are ordinary English. They remain
+// available only for callers that explicitly opt into the legacy aggressive
+// behavior; deleting them unconditionally changes what the speaker asserted.
+const AGGRESSIVE_FILLER_PATTERNS: RegExp[] = [
+  /\b(?:basically|essentially|actually|literally)\b/gi,
+  /\bkind of\b/gi,
+  /\bsort of\b/gi,
+  /\blike\b(?=\s+(?:really|very|so|just|totally|super))/gi,
+  /^like\b\s*/gi,
+  /\s+like$/gi,
+];
+
+function removeFillers(text: string, aggressive: boolean): string {
   let result = text;
-  for (const pattern of FILLER_PATTERNS) {
+  const patterns = aggressive
+    ? [...DISFLUENCY_PATTERNS, ...AGGRESSIVE_FILLER_PATTERNS]
+    : DISFLUENCY_PATTERNS;
+  for (const pattern of patterns) {
     result = result.replace(pattern, " ");
   }
   return result.replace(/  +/g, " ").trim();

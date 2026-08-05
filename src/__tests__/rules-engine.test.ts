@@ -24,7 +24,7 @@ describe("rules-engine", () => {
   // --- Stage 1: Filler removal ---
   describe("filler removal", () => {
     it("removes common English fillers", () => {
-      expect(applyRules("um I think uh this is basically working")).toBe(
+      expect(applyRules("um I think uh this is working")).toBe(
         "I think this is working",
       );
     });
@@ -39,12 +39,54 @@ describe("rules-engine", () => {
       );
     });
 
-    it("removes 'like' as filler before intensifiers", () => {
-      expect(applyRules("it's like really fast")).toBe("It's really fast");
+    it("preserves hedges, intensifiers, and ambiguous discourse words by default", () => {
+      const cases = [
+        "this is basically working",
+        "this is essentially working",
+        "this is actually working",
+        "this is literally working",
+        "this is kind of working",
+        "this is sort of working",
+        "it's like really fast",
+        "like this post",
+        "what does it look like",
+        "ah I see",
+      ];
+
+      for (const input of cases) {
+        expect(applyRules(input), input).toBe(
+          input[0].toUpperCase() + input.slice(1),
+        );
+      }
     });
 
-    it("handles multiple consecutive fillers", () => {
-      expect(applyRules("um uh basically the code")).toBe("The code");
+    it("preserves the ratified English ah in aggressive mode too", () => {
+      expect(
+        applyRules("ah I see", { aggressiveFillerRemoval: true }),
+      ).toBe("Ah I see");
+    });
+
+    it("allows the old aggressive filler behavior as an explicit opt-in", () => {
+      const config: RulesConfig = { aggressiveFillerRemoval: true };
+      const cases: Array<[string, string]> = [
+        ["this is basically working", "This is working"],
+        ["this is essentially working", "This is working"],
+        ["this is actually working", "This is working"],
+        ["this is literally working", "This is working"],
+        ["this is kind of working", "This is working"],
+        ["this is sort of working", "This is working"],
+        ["it's like really fast", "It's really fast"],
+        ["like this post", "This post"],
+        ["what does it look like", "What does it look"],
+      ];
+
+      for (const [input, expected] of cases) {
+        expect(applyRules(input, config), input).toBe(expected);
+      }
+    });
+
+    it("removes um/uh/er while preserving the ratified English ah", () => {
+      expect(applyRules("um uh er ah the code")).toBe("Ah the code");
     });
   });
 
