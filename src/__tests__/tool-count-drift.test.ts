@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -84,6 +84,15 @@ export async function assertToolCountTruth(root: string): Promise<void> {
   const expected = enumerateTools(registration);
   const surfaces = await readSurfaces(root);
   const claims = surfaces.flatMap(findClaims);
+  const surfacesWithoutClaims = documentedPaths.filter(
+    (path) => !claims.some((claim) => claim.path === path),
+  );
+
+  if (surfacesWithoutClaims.length > 0) {
+    throw new Error(
+      `documented surfaces without parsed tool-count claims: ${surfacesWithoutClaims.join(", ")}`,
+    );
+  }
 
   if (
     process.env.VOICELAYER_TOOL_COUNT_MUTATION === "1" &&
@@ -115,25 +124,44 @@ describe("tool-count drift guard", () => {
 
   it("goes red when a fixture count is mutated", async () => {
     const fixture = await mkdtemp(join(tmpdir(), "voicelayer-tool-count-"));
-    await Bun.write(`${fixture}/${registrationPath}`, await Bun.file(registrationPath).text());
-    await Bun.write(
-      `${fixture}/README.md`,
-      await Bun.file("README.md").text(),
-    );
-    await Bun.write(
-      `${fixture}/docs/tools-reference.md`,
-      await Bun.file("docs/tools-reference.md").text(),
-    );
-    await Bun.write(`${fixture}/src/mcp-server.ts`, await Bun.file("src/mcp-server.ts").text());
+    try {
+      await Bun.write(`${fixture}/${registrationPath}`, await Bun.file(registrationPath).text());
+      await Bun.write(
+        `${fixture}/README.md`,
+        await Bun.file("README.md").text(),
+      );
+      await Bun.write(
+        `${fixture}/docs/tools-reference.md`,
+        await Bun.file("docs/tools-reference.md").text(),
+      );
+      await Bun.write(`${fixture}/src/mcp-server.ts`, await Bun.file("src/mcp-server.ts").text());
 
-    await expect(assertToolCountTruth(fixture)).resolves.toBeUndefined();
-    const mutated = (await Bun.file(`${fixture}/README.md`).text()).replace(
-      "MCP%20tools-2",
-      "MCP%20tools-3",
-    );
-    await Bun.write(`${fixture}/README.md`, mutated);
-    await expect(assertToolCountTruth(fixture)).rejects.toThrow(
-      "README.md",
-    );
+      await expect(assertToolCountTruth(fixture)).resolves.toBeUndefined();
+      await Bun.write(
+        `${fixture}/src/mcp-server.ts`,
+        (await Bun.file(`${fixture}/src/mcp-server.ts`).text()).replace(
+          "2 tools:",
+          "two tools:",
+        ),
+      );
+      await expect(assertToolCountTruth(fixture)).rejects.toThrow(
+        "src/mcp-server.ts",
+      );
+
+      await Bun.write(
+        `${fixture}/src/mcp-server.ts`,
+        await Bun.file("src/mcp-server.ts").text(),
+      );
+      const mutated = (await Bun.file(`${fixture}/README.md`).text()).replace(
+        "MCP%20tools-2",
+        "MCP%20tools-3",
+      );
+      await Bun.write(`${fixture}/README.md`, mutated);
+      await expect(assertToolCountTruth(fixture)).rejects.toThrow(
+        "README.md",
+      );
+    } finally {
+      await rm(fixture, { recursive: true, force: true });
+    }
   });
 });
