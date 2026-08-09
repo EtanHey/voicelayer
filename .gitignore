@@ -49,3 +49,5 @@ site/stylesheets/
 site/tools-reference/
 site/use-cases/
 site/what-is-voicelayer/
+.worktrees/
+.cmux/worktrees/
