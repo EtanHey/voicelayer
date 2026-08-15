@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.5] - 2026-08-15
+
+### Fixed
+- **F5/Dictation → F18 `hidutil` relay survives reboot.** Fresh-boot
+  `hidutil` prints OpenStep `(null)`; `plutil` turns that into JSON
+  `["null"]`, which the prior reboot fix treated as a valid mapping array.
+  Merge then emitted null Src/Dst and silently wiped UserKeyMapping while the
+  LaunchAgent still exited 0. Reject `["null"]` / non-object arrays, coerce
+  HID fields before `Number()` (so null/false/"" cannot become synthetic
+  `0→0`), and lock it with a real-`plutil` regression (#427).
+
 ## [2.2.3] - 2026-07-22
 
 ### Fixed
