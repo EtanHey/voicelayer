@@ -16,18 +16,27 @@ else
   )"
 fi
 
-# AIDEV-NOTE: On a machine with NO existing key mapping — i.e. every fresh boot —
-# `hidutil property --get UserKeyMapping` prints the literal string `(null)`,
-# which is not plist and not JSON. `plutil -convert json` then emits nothing on
-# stdout while still exiting 0, so the `|| printf '[]'` fallback never fires and
-# an unparseable value reaches the JSON parser below. The merge dies with
-# "JSON Parse error: Unexpected token '('" and the F5 -> F18 relay is never
-# applied. The LaunchAgent still reports a clean exit, so the failure is silent
-# and looks exactly like "F5 stopped working after I restarted".
-# This is why the relay survived all day but died on every reboot.
-# Normalize anything that is not a JSON array into an empty array.
-case "${current_mapping_json//[[:space:]]/}" in
-  '['*']') : ;;
+# AIDEV-NOTE: Fresh boot — `hidutil property --get UserKeyMapping` prints the
+# OpenStep literal `(null)`. Piping that through `plutil -convert json` does
+# NOT emit empty stdout (the earlier fix's wrong assumption). On current macOS
+# it emits the JSON array `["null"]` and exits 0, so the `|| printf '[]'`
+# fallback never fires. A naive "accept any `[...]`" normalizer then lets
+# `["null"]` into the merge; `Number("null".Src)` is NaN → JSON `null`, and
+# `hidutil property --set` with a null Src/Dst entry leaves UserKeyMapping as
+# `(null)`. LaunchAgent still exits 0 → silent "F5 dies every reboot".
+# Unit tests that inject raw `(null)` via VOICELAYER_HIDUTIL_CURRENT_MAPPING
+# bypass plutil and cannot catch this. Reject non-arrays AND plutil's
+# `["null"]` (and any other non-object-array garbage) before merging.
+compact_mapping="${current_mapping_json//[[:space:]]/}"
+case "$compact_mapping" in
+  '[]') : ;;
+  '["null"]') current_mapping_json='[]' ;;
+  '['*']')
+    # Keep real mapping arrays; drop arrays that are not objects (e.g. ["null"]).
+    if [[ "$compact_mapping" != *'{'* ]]; then
+      current_mapping_json='[]'
+    fi
+    ;;
   *) current_mapping_json='[]' ;;
 esac
 
@@ -49,12 +58,28 @@ function run(argv) {
   const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
   // hidutil/plutil can emit HID values as strings on some macOS versions;
   // normalize so `hidutil property --set` always sees numeric Src/Dst.
+  // Reject non-objects and coercive junk (null/false/"") BEFORE Number() —
+  // Number(null|false|"") is 0, which would invent a synthetic 0→0 mapping.
+  // Also drop non-finite results so plutil's `["null"]` cannot wipe the set.
+  function coerceHid(value) {
+    if (typeof value === "number") return isFinite(value) ? value : NaN;
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      return isFinite(n) ? n : NaN;
+    }
+    return NaN;
+  }
   const preserved = mappings
-    .filter((entry) => !voiceBarOwnedSrc.has(Number(entry.HIDKeyboardModifierMappingSrc)))
+    .filter((entry) => entry != null && typeof entry === "object")
     .map((entry) => ({
-      HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
-      HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
-    }));
+      HIDKeyboardModifierMappingSrc: coerceHid(entry.HIDKeyboardModifierMappingSrc),
+      HIDKeyboardModifierMappingDst: coerceHid(entry.HIDKeyboardModifierMappingDst),
+    }))
+    .filter((entry) =>
+      isFinite(entry.HIDKeyboardModifierMappingSrc) &&
+      isFinite(entry.HIDKeyboardModifierMappingDst) &&
+      !voiceBarOwnedSrc.has(entry.HIDKeyboardModifierMappingSrc)
+    );
 
   // Push BOTH remaps. F5 -> F18 is required so a bare F5 press survives reboots
   // instead of falling through to macOS Dictation; Dictation -> F18 promotes the
@@ -87,12 +112,29 @@ const voiceBarOwnedSrc = new Set([f5Src, dictationSrc]);
 const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
 // hidutil/plutil can emit HID values as strings on some macOS versions;
 // normalize so `hidutil property --set` always sees numeric Src/Dst.
+// Reject non-objects and coercive junk (null/false/"") BEFORE Number() —
+// Number(null|false|"") is 0, which would invent a synthetic 0→0 mapping.
+// Also drop non-finite results so plutil's `["null"]` cannot wipe the set.
+function coerceHid(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
 const preserved = mappings
-  .filter((entry) => !voiceBarOwnedSrc.has(Number(entry.HIDKeyboardModifierMappingSrc)))
+  .filter((entry) => entry != null && typeof entry === "object")
   .map((entry) => ({
-    HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
-    HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
-  }));
+    HIDKeyboardModifierMappingSrc: coerceHid(entry.HIDKeyboardModifierMappingSrc),
+    HIDKeyboardModifierMappingDst: coerceHid(entry.HIDKeyboardModifierMappingDst),
+  }))
+  .filter(
+    (entry) =>
+      Number.isFinite(entry.HIDKeyboardModifierMappingSrc) &&
+      Number.isFinite(entry.HIDKeyboardModifierMappingDst) &&
+      !voiceBarOwnedSrc.has(entry.HIDKeyboardModifierMappingSrc),
+  );
 
 // Push BOTH remaps: F5 -> F18 (survives reboots, no Dictation fall-through) and
 // Dictation -> F18. Numeric Src/Dst, no null entries.

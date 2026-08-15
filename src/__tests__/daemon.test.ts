@@ -325,12 +325,24 @@ describe("CLI integration", () => {
   // died with "JSON Parse error: Unexpected token '('", so the F5 -> F18 relay
   // was never applied. The LaunchAgent still exited 0, making it silent: F5
   // worked all day and broke on every restart.
+  //
+  // Also cover plutil's actual conversion of OpenStep `(null)` → JSON
+  // `["null"]`. Injecting raw `(null)` via env bypasses plutil and cannot catch
+  // that path; the dedicated test below locks it.
   it("hidutil helper applies the relay from a fresh boot, where hidutil prints (null)", () => {
     const F5_SRC = 30064771134;
     const DICTATION_SRC = 51539607759;
     const F18_DST = 30064771181;
 
-    for (const emptyish of ["(null)", "", "   ", "not json at all"]) {
+    for (const emptyish of [
+      "(null)",
+      "",
+      "   ",
+      "not json at all",
+      '["null"]',
+      "[null]",
+      '["foo"]',
+    ]) {
       const result = spawnSync(
         "bash",
         ["scripts/apply-voicebar-f5-hidutil.sh"],
@@ -356,8 +368,122 @@ describe("CLI integration", () => {
         HIDKeyboardModifierMappingSrc: DICTATION_SRC,
         HIDKeyboardModifierMappingDst: F18_DST,
       });
+      for (const e of entries) {
+        expect(e.HIDKeyboardModifierMappingSrc).not.toBeNull();
+        expect(e.HIDKeyboardModifierMappingDst).not.toBeNull();
+      }
     }
   }, 20_000);
+
+  it("hidutil helper drops coercive null/false/empty HID fields instead of inventing 0→0", () => {
+    // Number(null|false|"") === 0; without a pre-Number guard those become a
+    // synthetic 0→0 mapping in the merged UserKeyMapping.
+    const F5_SRC = 30064771134;
+    const DICTATION_SRC = 51539607759;
+    const F18_DST = 30064771181;
+    const voiceOnly = [
+      {
+        HIDKeyboardModifierMappingSrc: F5_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      },
+      {
+        HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      },
+    ];
+
+    for (const junk of [
+      [
+        {
+          HIDKeyboardModifierMappingSrc: null,
+          HIDKeyboardModifierMappingDst: null,
+        },
+      ],
+      [
+        {
+          HIDKeyboardModifierMappingSrc: false,
+          HIDKeyboardModifierMappingDst: false,
+        },
+      ],
+      [
+        {
+          HIDKeyboardModifierMappingSrc: "",
+          HIDKeyboardModifierMappingDst: "",
+        },
+      ],
+      [{}],
+    ]) {
+      const result = spawnSync(
+        "bash",
+        ["scripts/apply-voicebar-f5-hidutil.sh"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            VOICELAYER_HIDUTIL_DRY_RUN: "1",
+            VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+            VOICELAYER_HIDUTIL_CURRENT_MAPPING: JSON.stringify(junk),
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).UserKeyMapping).toEqual(voiceOnly);
+    }
+  }, 15_000);
+
+  it.skipIf(!existsSync("/usr/bin/plutil"))(
+    'hidutil helper survives the real plutil (null) → ["null"] boot pipeline',
+    () => {
+      // This is the mismatch the earlier reboot fix missed: tests injected raw
+      // `(null)` via env, but LaunchAgent runs `hidutil | plutil`, and plutil
+      // turns `(null)` into `["null"]`. Linux CI has no plutil — skip the
+      // binary probe; injected `["null"]` coverage is in the test above.
+      const F5_SRC = 30064771134;
+      const DICTATION_SRC = 51539607759;
+      const F18_DST = 30064771181;
+
+      const plutil = spawnSync(
+        "/usr/bin/plutil",
+        ["-convert", "json", "-o", "-", "-"],
+        {
+          input: "(null)\n",
+          encoding: "utf8",
+        },
+      );
+      expect(plutil.status).toBe(0);
+      expect(plutil.stdout.replace(/\s/g, "")).toBe('["null"]');
+
+      const result = spawnSync(
+        "bash",
+        ["scripts/apply-voicebar-f5-hidutil.sh"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            VOICELAYER_HIDUTIL_DRY_RUN: "1",
+            VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+            VOICELAYER_HIDUTIL_CURRENT_MAPPING: plutil.stdout,
+          },
+          encoding: "utf8",
+        },
+      );
+
+      expect(result.status).toBe(0);
+      const entries = JSON.parse(result.stdout).UserKeyMapping;
+      expect(entries).toEqual([
+        {
+          HIDKeyboardModifierMappingSrc: F5_SRC,
+          HIDKeyboardModifierMappingDst: F18_DST,
+        },
+        {
+          HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+          HIDKeyboardModifierMappingDst: F18_DST,
+        },
+      ]);
+    },
+    15_000,
+  );
 
   it("hidutil helper reclaims F5 for VoiceBar while non-F5 keys survive", () => {
     // VoiceBar owns the physical F5 key: any prior F5 -> anything (e.g. a stray
