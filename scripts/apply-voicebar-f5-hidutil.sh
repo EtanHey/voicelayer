@@ -58,13 +58,22 @@ function run(argv) {
   const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
   // hidutil/plutil can emit HID values as strings on some macOS versions;
   // normalize so `hidutil property --set` always sees numeric Src/Dst.
-  // Skip non-objects / non-finite values so plutil's `["null"]` cannot become
-  // `{Src:null,Dst:null}` and wipe the mapping on set.
+  // Reject non-objects and coercive junk (null/false/"") BEFORE Number() —
+  // Number(null|false|"") is 0, which would invent a synthetic 0→0 mapping.
+  // Also drop non-finite results so plutil's `["null"]` cannot wipe the set.
+  function coerceHid(value) {
+    if (typeof value === "number") return isFinite(value) ? value : NaN;
+    if (typeof value === "string" && value.trim() !== "") {
+      const n = Number(value);
+      return isFinite(n) ? n : NaN;
+    }
+    return NaN;
+  }
   const preserved = mappings
     .filter((entry) => entry != null && typeof entry === "object")
     .map((entry) => ({
-      HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
-      HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
+      HIDKeyboardModifierMappingSrc: coerceHid(entry.HIDKeyboardModifierMappingSrc),
+      HIDKeyboardModifierMappingDst: coerceHid(entry.HIDKeyboardModifierMappingDst),
     }))
     .filter((entry) =>
       isFinite(entry.HIDKeyboardModifierMappingSrc) &&
@@ -103,13 +112,22 @@ const voiceBarOwnedSrc = new Set([f5Src, dictationSrc]);
 const mappings = Array.isArray(current) ? current : ((current && current.UserKeyMapping) || []);
 // hidutil/plutil can emit HID values as strings on some macOS versions;
 // normalize so `hidutil property --set` always sees numeric Src/Dst.
-// Skip non-objects / non-finite values so plutil's `["null"]` cannot become
-// `{Src:null,Dst:null}` and wipe the mapping on set.
+// Reject non-objects and coercive junk (null/false/"") BEFORE Number() —
+// Number(null|false|"") is 0, which would invent a synthetic 0→0 mapping.
+// Also drop non-finite results so plutil's `["null"]` cannot wipe the set.
+function coerceHid(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : NaN;
+  if (typeof value === "string" && value.trim() !== "") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
 const preserved = mappings
   .filter((entry) => entry != null && typeof entry === "object")
   .map((entry) => ({
-    HIDKeyboardModifierMappingSrc: Number(entry.HIDKeyboardModifierMappingSrc),
-    HIDKeyboardModifierMappingDst: Number(entry.HIDKeyboardModifierMappingDst),
+    HIDKeyboardModifierMappingSrc: coerceHid(entry.HIDKeyboardModifierMappingSrc),
+    HIDKeyboardModifierMappingDst: coerceHid(entry.HIDKeyboardModifierMappingDst),
   }))
   .filter(
     (entry) =>

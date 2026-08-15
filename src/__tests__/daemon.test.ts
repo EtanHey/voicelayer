@@ -375,6 +375,63 @@ describe("CLI integration", () => {
     }
   }, 20_000);
 
+  it("hidutil helper drops coercive null/false/empty HID fields instead of inventing 0→0", () => {
+    // Number(null|false|"") === 0; without a pre-Number guard those become a
+    // synthetic 0→0 mapping in the merged UserKeyMapping.
+    const F5_SRC = 30064771134;
+    const DICTATION_SRC = 51539607759;
+    const F18_DST = 30064771181;
+    const voiceOnly = [
+      {
+        HIDKeyboardModifierMappingSrc: F5_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      },
+      {
+        HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+        HIDKeyboardModifierMappingDst: F18_DST,
+      },
+    ];
+
+    for (const junk of [
+      [
+        {
+          HIDKeyboardModifierMappingSrc: null,
+          HIDKeyboardModifierMappingDst: null,
+        },
+      ],
+      [
+        {
+          HIDKeyboardModifierMappingSrc: false,
+          HIDKeyboardModifierMappingDst: false,
+        },
+      ],
+      [
+        {
+          HIDKeyboardModifierMappingSrc: "",
+          HIDKeyboardModifierMappingDst: "",
+        },
+      ],
+      [{}],
+    ]) {
+      const result = spawnSync(
+        "bash",
+        ["scripts/apply-voicebar-f5-hidutil.sh"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            VOICELAYER_HIDUTIL_DRY_RUN: "1",
+            VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+            VOICELAYER_HIDUTIL_CURRENT_MAPPING: JSON.stringify(junk),
+          },
+          encoding: "utf8",
+        },
+      );
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout).UserKeyMapping).toEqual(voiceOnly);
+    }
+  }, 15_000);
+
   it.skipIf(!existsSync("/usr/bin/plutil"))(
     'hidutil helper survives the real plutil (null) → ["null"] boot pipeline',
     () => {
@@ -397,16 +454,20 @@ describe("CLI integration", () => {
       expect(plutil.status).toBe(0);
       expect(plutil.stdout.replace(/\s/g, "")).toBe('["null"]');
 
-      const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          VOICELAYER_HIDUTIL_DRY_RUN: "1",
-          VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
-          VOICELAYER_HIDUTIL_CURRENT_MAPPING: plutil.stdout,
+      const result = spawnSync(
+        "bash",
+        ["scripts/apply-voicebar-f5-hidutil.sh"],
+        {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            VOICELAYER_HIDUTIL_DRY_RUN: "1",
+            VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+            VOICELAYER_HIDUTIL_CURRENT_MAPPING: plutil.stdout,
+          },
+          encoding: "utf8",
         },
-        encoding: "utf8",
-      });
+      );
 
       expect(result.status).toBe(0);
       const entries = JSON.parse(result.stdout).UserKeyMapping;
