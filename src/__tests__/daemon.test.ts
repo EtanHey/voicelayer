@@ -375,49 +375,54 @@ describe("CLI integration", () => {
     }
   }, 20_000);
 
-  it('hidutil helper survives the real plutil (null) → ["null"] boot pipeline', () => {
-    // This is the mismatch the earlier reboot fix missed: tests injected raw
-    // `(null)` via env, but LaunchAgent runs `hidutil | plutil`, and plutil
-    // turns `(null)` into `["null"]`.
-    const F5_SRC = 30064771134;
-    const DICTATION_SRC = 51539607759;
-    const F18_DST = 30064771181;
+  it.skipIf(!existsSync("/usr/bin/plutil"))(
+    'hidutil helper survives the real plutil (null) → ["null"] boot pipeline',
+    () => {
+      // This is the mismatch the earlier reboot fix missed: tests injected raw
+      // `(null)` via env, but LaunchAgent runs `hidutil | plutil`, and plutil
+      // turns `(null)` into `["null"]`. Linux CI has no plutil — skip the
+      // binary probe; injected `["null"]` coverage is in the test above.
+      const F5_SRC = 30064771134;
+      const DICTATION_SRC = 51539607759;
+      const F18_DST = 30064771181;
 
-    const plutil = spawnSync(
-      "/usr/bin/plutil",
-      ["-convert", "json", "-o", "-", "-"],
-      {
-        input: "(null)\n",
+      const plutil = spawnSync(
+        "/usr/bin/plutil",
+        ["-convert", "json", "-o", "-", "-"],
+        {
+          input: "(null)\n",
+          encoding: "utf8",
+        },
+      );
+      expect(plutil.status).toBe(0);
+      expect(plutil.stdout.replace(/\s/g, "")).toBe('["null"]');
+
+      const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          VOICELAYER_HIDUTIL_DRY_RUN: "1",
+          VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
+          VOICELAYER_HIDUTIL_CURRENT_MAPPING: plutil.stdout,
+        },
         encoding: "utf8",
-      },
-    );
-    expect(plutil.status).toBe(0);
-    expect(plutil.stdout.replace(/\s/g, "")).toBe('["null"]');
+      });
 
-    const result = spawnSync("bash", ["scripts/apply-voicebar-f5-hidutil.sh"], {
-      cwd: process.cwd(),
-      env: {
-        ...process.env,
-        VOICELAYER_HIDUTIL_DRY_RUN: "1",
-        VOICELAYER_HIDUTIL_JS_RUNTIME: "node",
-        VOICELAYER_HIDUTIL_CURRENT_MAPPING: plutil.stdout,
-      },
-      encoding: "utf8",
-    });
-
-    expect(result.status).toBe(0);
-    const entries = JSON.parse(result.stdout).UserKeyMapping;
-    expect(entries).toEqual([
-      {
-        HIDKeyboardModifierMappingSrc: F5_SRC,
-        HIDKeyboardModifierMappingDst: F18_DST,
-      },
-      {
-        HIDKeyboardModifierMappingSrc: DICTATION_SRC,
-        HIDKeyboardModifierMappingDst: F18_DST,
-      },
-    ]);
-  }, 15_000);
+      expect(result.status).toBe(0);
+      const entries = JSON.parse(result.stdout).UserKeyMapping;
+      expect(entries).toEqual([
+        {
+          HIDKeyboardModifierMappingSrc: F5_SRC,
+          HIDKeyboardModifierMappingDst: F18_DST,
+        },
+        {
+          HIDKeyboardModifierMappingSrc: DICTATION_SRC,
+          HIDKeyboardModifierMappingDst: F18_DST,
+        },
+      ]);
+    },
+    15_000,
+  );
 
   it("hidutil helper reclaims F5 for VoiceBar while non-F5 keys survive", () => {
     // VoiceBar owns the physical F5 key: any prior F5 -> anything (e.g. a stray
