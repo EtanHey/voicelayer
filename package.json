@@ -1,7 +1,7 @@
 {
   "name": "voicelayer-mcp",
-  "version": "2.2.4",
-  "description": "Voice I/O layer for AI coding assistants \u2014 local TTS, STT, session booking. MCP server.",
+  "version": "2.2.5",
+  "description": "Voice I/O layer for AI coding assistants — local TTS, STT, session booking. MCP server.",
   "type": "module",
   "bin": {
     "voicelayer-mcp": "src/mcp-server.ts",
