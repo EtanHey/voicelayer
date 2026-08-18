@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SwiftUI
 
@@ -443,7 +444,11 @@ public struct SettingsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
+                        LazyVStack(
+                            alignment: .leading,
+                            spacing: 18,
+                            pinnedViews: [.sectionHeaders]
+                        ) {
                             Color.clear
                                 .frame(height: 1)
                                 .id(latestHistoryAnchorID)
@@ -526,20 +531,36 @@ public struct SettingsView: View {
     }
 
     private func historyDaySection(_ group: SettingsHistoryDayGroup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text(group.dayTitle())
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 1)
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(group.entries) { entry in
+                    historyEntryRow(entry)
+                }
             }
-
-            ForEach(group.entries) { entry in
-                historyEntryRow(entry)
-            }
+        } header: {
+            historyDayHeader(group)
         }
+    }
+
+    // AIDEV-NOTE: pinned via LazyVStack(pinnedViews: .sectionHeaders) so the date
+    // stays visible while scrolling a long history. The header must paint an opaque
+    // background or rows scroll through it.
+    private func historyDayHeader(_ group: SettingsHistoryDayGroup) -> some View {
+        HStack(spacing: 10) {
+            Text(group.dayTitle())
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(height: 1)
+        }
+        .padding(.vertical, 6)
+        .background(
+            Rectangle()
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .padding(.horizontal, -18)
+                .padding(.top, -18)
+        )
     }
 
     private func historyEntryRow(_ entry: SettingsHistoryEntry) -> some View {
@@ -559,6 +580,8 @@ public struct SettingsView: View {
                     .textSelection(.enabled)
                     .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
+
+                historyEntryStats(entry)
 
                 if isRetranscribing {
                     HStack(spacing: 6) {
@@ -583,6 +606,35 @@ public struct SettingsView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .opacity(isRetranscribing ? 0.62 : 1)
         .disabled(isRetranscribing)
+    }
+
+    // AIDEV-NOTE: two separate facts, deliberately not merged into one number —
+    // "waveform" is mic-on time, "text.viewfinder" is the slice STT actually heard.
+    // The second only renders when the trailing-silence trim made them differ.
+    @ViewBuilder
+    private func historyEntryStats(_ entry: SettingsHistoryEntry) -> some View {
+        let audioLabel = entry.durationLabel
+        let heardLabel = entry.transcribedDurationLabel
+
+        if audioLabel != nil || heardLabel != nil {
+            HStack(spacing: 12) {
+                if let audioLabel {
+                    Label(audioLabel, systemImage: "waveform")
+                        .help("Audio length — how long the mic was on")
+                        .accessibilityLabel("Audio length \(audioLabel)")
+                }
+                if let heardLabel {
+                    Label(heardLabel, systemImage: "text.viewfinder")
+                        .help(
+                            "Transcribed — the audio actually sent to speech-to-text after trailing silence was trimmed"
+                        )
+                        .accessibilityLabel("Transcribed length \(heardLabel)")
+                }
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .labelStyle(.titleAndIcon)
+        }
     }
 
     private func historyEntryActions(_ entry: SettingsHistoryEntry, isRetranscribing: Bool) -> some View {
@@ -613,6 +665,14 @@ public struct SettingsView: View {
             .disabled(isRetranscribing)
             .help("Re-transcribe stored audio")
             .accessibilityLabel("Re-transcribe stored audio")
+
+            Button {
+                NSWorkspace.shared.activateFileViewerSelecting([entry.audioPath])
+            } label: {
+                Label("Show in Finder", systemImage: "folder")
+            }
+            .help("Reveal the stored recording in Finder")
+            .accessibilityLabel("Reveal the stored recording in Finder")
         }
         .buttonStyle(.borderless)
         .controlSize(.small)

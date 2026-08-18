@@ -39,6 +39,7 @@ import {
   finalizeVoiceAskArchive,
   trimTrailingSilenceForSTT,
   terminateRecorderProcess,
+  updateArchivedTranscript,
 } from "../input";
 import * as inputModule from "../input";
 import { VAD_CHUNK_BYTES } from "../vad";
@@ -1524,5 +1525,93 @@ describe("input module", () => {
 
       expect(result).toBe("");
     });
+  });
+});
+
+describe("archived transcript metadata after retranscription", () => {
+  let archiveDir: string;
+
+  const writeArchive = (metadata: Record<string, unknown>): string => {
+    archiveDir = mkdtempSync(join(tmpdir(), "voicelayer-retranscribe-meta-"));
+    const audioPath = join(archiveDir, "audio.wav");
+    writeFileSync(audioPath, createWavBuffer(new Uint8Array([1, 2, 3, 4])));
+    writeFileSync(
+      join(archiveDir, "metadata.json"),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+    return audioPath;
+  };
+
+  const readMetadata = (): Record<string, unknown> =>
+    JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8"));
+
+  afterEach(() => {
+    if (archiveDir && existsSync(archiveDir)) {
+      rmSync(archiveDir, { recursive: true, force: true });
+    }
+  });
+
+  it("records the trimmed duration actually handed to STT, leaving mic-on time intact", () => {
+    const audioPath = writeArchive({
+      id: "2026-08-18T12-14-56-912Z-ece16541",
+      source: "voicebar",
+      mode: "ptt",
+      duration_ms: 64853,
+      raw_duration_ms: 64853,
+      transcribed_duration_ms: 64853,
+      transcription_status: "transcribed",
+    });
+
+    updateArchivedTranscript(audioPath, "Well, I got a no from Upwind.", {
+      backend: "whisper-server",
+      languageMode: "auto",
+      transcribedDurationMs: 17000,
+    });
+
+    const metadata = readMetadata();
+    // The portion whisper actually saw.
+    expect(metadata.transcribed_duration_ms).toBe(17000);
+    // Mic-on time is a separate fact and must survive untouched.
+    expect(metadata.duration_ms).toBe(64853);
+    expect(metadata.raw_duration_ms).toBe(64853);
+  });
+
+  it("leaves the recorded duration alone when nothing was trimmed", () => {
+    const audioPath = writeArchive({
+      id: "2026-08-18T12-14-56-912Z-ece16541",
+      source: "voicebar",
+      mode: "vad",
+      duration_ms: 4200,
+      raw_duration_ms: 4200,
+      transcribed_duration_ms: 4200,
+      transcription_status: "transcribed",
+    });
+
+    updateArchivedTranscript(audioPath, "Short one.", {
+      backend: "whisper-server",
+      languageMode: "auto",
+      transcribedDurationMs: 4200,
+    });
+
+    expect(readMetadata().transcribed_duration_ms).toBe(4200);
+  });
+
+  it("does not invent a duration when the caller supplies none", () => {
+    const audioPath = writeArchive({
+      id: "2026-08-18T12-14-56-912Z-ece16541",
+      source: "voicebar",
+      mode: "ptt",
+      duration_ms: 64853,
+      raw_duration_ms: 64853,
+      transcribed_duration_ms: 64853,
+      transcription_status: "transcribed",
+    });
+
+    updateArchivedTranscript(audioPath, "No duration passed.", {
+      backend: "whisper-server",
+      languageMode: "auto",
+    });
+
+    expect(readMetadata().transcribed_duration_ms).toBe(64853);
   });
 });

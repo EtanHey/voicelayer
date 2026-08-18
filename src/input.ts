@@ -331,13 +331,21 @@ function readWavPcmData(wavPath: string): Uint8Array {
 function prepareRetranscribeWavForSTT(
   sourceWavPath: string,
   pushToEnd: boolean,
-): { sttWavPath: string; cleanup: () => void } {
+): {
+  sttWavPath: string;
+  cleanup: () => void;
+  transcribedDurationMs: number;
+} {
   const sttTrim = trimTrailingSilenceForSTT(
     readWavPcmData(sourceWavPath),
     pushToEnd,
   );
   if (!sttTrim.trimmed) {
-    return { sttWavPath: sourceWavPath, cleanup: () => {} };
+    return {
+      sttWavPath: sourceWavPath,
+      cleanup: () => {},
+      transcribedDurationMs: sttTrim.transcribedDurationMs,
+    };
   }
 
   const tempPath = recordingFilePath(process.pid, Date.now());
@@ -352,6 +360,7 @@ function prepareRetranscribeWavForSTT(
         if (existsSync(tempPath)) unlinkSync(tempPath);
       } catch {}
     },
+    transcribedDurationMs: sttTrim.transcribedDurationMs,
   };
 }
 
@@ -2979,10 +2988,19 @@ export function hasRetainedRecording(): boolean {
   return existsSync(retainedRecordingFilePath());
 }
 
-function updateArchivedTranscript(
+// AIDEV-NOTE: `transcribed_duration_ms` is the slice of audio STT actually saw,
+// which is shorter than `duration_ms`/`raw_duration_ms` (mic-on time) whenever the
+// trailing-silence trim fires. Retranscribing recomputes that slice, so the field
+// must be rewritten here or the archive keeps reporting the original capture's
+// value forever — which is what happened before this was threaded through.
+export function updateArchivedTranscript(
   audioPath: string,
   text: string,
-  transcription: { backend: string; languageMode: string },
+  transcription: {
+    backend: string;
+    languageMode: string;
+    transcribedDurationMs?: number;
+  },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
@@ -2991,6 +3009,9 @@ function updateArchivedTranscript(
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
+    if (transcription.transcribedDurationMs !== undefined) {
+      metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
+    }
     metadata.voicelayer_transcript_chars = text.length;
     if (metadata.source === "voice_ask") {
       metadata.user_transcript_chars = text.length;
@@ -3065,10 +3086,11 @@ export async function retranscribeRecordingCapture(
     console.error(
       `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
     );
-    const { sttWavPath, cleanup } = prepareRetranscribeWavForSTT(
-      wavPath,
-      pushToEndForArchivedAudio(wavPath),
-    );
+    const { sttWavPath, cleanup, transcribedDurationMs } =
+      prepareRetranscribeWavForSTT(
+        wavPath,
+        pushToEndForArchivedAudio(wavPath),
+      );
     try {
       const result = await backend.transcribe(sttWavPath);
       const finalized = await finalizeTranscriptionResultForSurface(
@@ -3087,6 +3109,7 @@ export async function retranscribeRecordingCapture(
         updateArchivedTranscript(wavPath, text, {
           backend: backend.name,
           languageMode: getLanguageModeFromEnv(),
+          transcribedDurationMs,
         });
         broadcast({
           type: "transcription",
@@ -3158,10 +3181,8 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     const pushToEnd = archivedAudioPath
       ? pushToEndForArchivedAudio(archivedAudioPath)
       : false;
-    const { sttWavPath, cleanup } = prepareRetranscribeWavForSTT(
-      sourceWavPath,
-      pushToEnd,
-    );
+    const { sttWavPath, cleanup, transcribedDurationMs } =
+      prepareRetranscribeWavForSTT(sourceWavPath, pushToEnd);
     try {
       const result = await backend.transcribe(sttWavPath);
       const finalized = await finalizeTranscriptionResultForSurface(
@@ -3181,6 +3202,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
           updateArchivedTranscript(archivedAudioPath, text, {
             backend: backend.name,
             languageMode: getLanguageModeFromEnv(),
+            transcribedDurationMs,
           });
         }
         broadcast({
