@@ -235,7 +235,9 @@ function readRetainedRecordingMetadata(): RetainedRecordingMetadata | null {
       metadata.schema_version === 1 &&
       (metadata.polish_surface === "dictation" ||
         metadata.polish_surface === "voice_ask") &&
-      typeof metadata.audio_sha256 === "string"
+      typeof metadata.audio_sha256 === "string" &&
+      (!("archive_audio_path" in metadata) ||
+        typeof metadata.archive_audio_path === "string")
     ) {
       return metadata as RetainedRecordingMetadata;
     }
@@ -252,19 +254,18 @@ export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
   const trimmedPath = archiveAudioPath.trim();
   if (!trimmedPath || !existsSync(retainedRecordingFilePath())) return;
 
-  const audioSha256 = retainedRecordingAudioSha256();
-  const existing = readRetainedRecordingMetadata();
-  const metadata: RetainedRecordingMetadata = {
-    schema_version: 1,
-    polish_surface:
-      existing?.audio_sha256 === audioSha256
-        ? existing.polish_surface
-        : "dictation",
-    audio_sha256: audioSha256,
-    archive_audio_path: trimmedPath,
-  };
-
   try {
+    const audioSha256 = retainedRecordingAudioSha256();
+    const existing = readRetainedRecordingMetadata();
+    const metadata: RetainedRecordingMetadata = {
+      schema_version: 1,
+      polish_surface:
+        existing?.audio_sha256 === audioSha256
+          ? existing.polish_surface
+          : "dictation",
+      audio_sha256: audioSha256,
+      archive_audio_path: trimmedPath,
+    };
     atomicWriteFile(
       retainedRecordingMetadataFilePath(),
       `${JSON.stringify(metadata, null, 2)}\n`,
@@ -280,8 +281,15 @@ function retainedArchiveAudioPath(): string | null {
   const metadata = readRetainedRecordingMetadata();
   if (!metadata?.archive_audio_path?.trim()) return null;
   if (metadata.audio_sha256 !== retainedRecordingAudioSha256()) return null;
-  if (!existsSync(metadata.archive_audio_path)) return null;
-  return metadata.archive_audio_path;
+  try {
+    requireArchivedRecordingAudioPath(metadata.archive_audio_path);
+    return metadata.archive_audio_path;
+  } catch (err) {
+    console.error(
+      `[voicelayer] Ignoring invalid linked archive audio path: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
 }
 
 function pushToEndForArchivedAudio(audioPath: string): boolean {
@@ -3144,7 +3152,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
     const sourceWavPath = archivedAudioPath ?? wavPath;
     const pushToEnd = archivedAudioPath
       ? pushToEndForArchivedAudio(archivedAudioPath)
-      : true;
+      : false;
     const { sttWavPath, cleanup } = prepareRetranscribeWavForSTT(
       sourceWavPath,
       pushToEnd,

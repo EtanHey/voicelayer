@@ -1631,4 +1631,89 @@ describe("input recording durability", () => {
       ),
     ).toBe(true);
   });
+
+  it("retranscribeLastCapture ignores a non-string archive_audio_path instead of throwing", async () => {
+    writeFileSync(retainedPath, makeWav(makePcmChunk()));
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256")
+            .update(readFileSync(retainedPath))
+            .digest("hex"),
+          archive_audio_path: 123,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+  });
+
+  it("retranscribeLastCapture does not write a transcript outside the archive root", async () => {
+    const outsideDir = join(tmpRoot, "outside");
+    mkdirSync(outsideDir, { recursive: true });
+    const outsideAudioPath = join(outsideDir, "audio.wav");
+    const retainedWav = makeWav(makePcmChunk());
+    writeFileSync(outsideAudioPath, retainedWav);
+    writeFileSync(retainedPath, retainedWav);
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256").update(retainedWav).digest("hex"),
+          archive_audio_path: outsideAudioPath,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(existsSync(join(outsideDir, "voicelayer-transcript.txt"))).toBe(
+      false,
+    );
+    const transcriptionEvent = broadcasts.find(
+      (event) => event.type === "transcription",
+    );
+    expect(transcriptionEvent).toMatchObject({
+      type: "transcription",
+      text: "Retained transcript.",
+    });
+    expect(transcriptionEvent.recording_path).toBeUndefined();
+  });
+
+  it("retranscribeLastCapture does not trim unlinked retained audio", async () => {
+    writeFileSync(retainedPath, makePttWavWithLongQuietTail());
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(backendTranscribedDataSize).toBe(16000 * 2 * 11);
+    expect(readWavDataSize(retainedPath)).toBe(16000 * 2 * 11);
+  });
+
+  it("linkRetainedCaptureToArchive does not throw when the retained WAV cannot be read", async () => {
+    mkdirSync(retainedPath);
+    const { linkRetainedCaptureToArchive } = await import("../input");
+
+    expect(() =>
+      linkRetainedCaptureToArchive(join(tmpRoot, "recordings", "audio.wav")),
+    ).not.toThrow();
+  });
 });
