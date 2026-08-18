@@ -1105,6 +1105,33 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
+    it("drops a short final chunk when two tokens only match by independent edits", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-short-final-double-edit-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(108));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro setup";
+          if (calls === 2) return "setup middle";
+          if (calls === 3) return "middle plan";
+          if (calls === 4) return "plan look at ponytail skill";
+          if (calls === 5) return "house plane";
+          return "horse plant";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(6);
+      expect(result.text).toBe(
+        "intro setup middle plan look at ponytail skill",
+      );
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
     it("keeps non-overlapping speech from a very short final chunk when unprompted decode agrees", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-chunked-short-final-real-tail-test.wav";
@@ -1356,6 +1383,12 @@ describe("STT backends", () => {
       expect(
         mergeChunkTranscripts(["hello world gloss", "world glosses continue"]),
       ).toBe("hello world glosses continue");
+    });
+
+    it("does not treat a one-word fuzzy neighbor as chunk overlap", () => {
+      expect(
+        mergeChunkTranscripts(["submit the form", "farm the server"]),
+      ).toBe("submit the form farm the server");
     });
 
     it("does not collapse distinct operator-only tokens at chunk boundaries", () => {

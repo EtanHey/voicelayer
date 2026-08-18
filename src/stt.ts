@@ -249,10 +249,19 @@ function containsSimilarWordSequence(
 ): boolean {
   if (sequence.length === 0 || words.length < sequence.length) return false;
   for (let index = 0; index + sequence.length <= words.length; index++) {
+    let substitutions = 0;
     if (
-      sequence.every((token, offset) =>
-        tokensAreSimilar(words[index + offset], token),
-      )
+      sequence.every((token, offset) => {
+        const word = words[index + offset];
+        if (!tokensAreSimilar(word, token)) return false;
+        if (
+          normalizeChunkWordForOverlap(word) !==
+          normalizeChunkWordForOverlap(token)
+        ) {
+          substitutions += 1;
+        }
+        return substitutions <= 1;
+      })
     ) {
       return true;
     }
@@ -275,7 +284,10 @@ function findChunkOverlap(
     if (mergedTail === nextHead) {
       return { overlap: size, skipPrefix: 0 };
     }
-    if (overlapAllowsSingleSubstitution(mergedWords, nextWords, size)) {
+    if (
+      size > 1 &&
+      overlapAllowsSingleSubstitution(mergedWords, nextWords, size)
+    ) {
       return { overlap: size, skipPrefix: 0 };
     }
   }
