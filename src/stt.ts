@@ -66,10 +66,7 @@ function normalizeChunkWords(text: string): string[] {
 }
 
 function normalizeProseQuoteSpacing(text: string): string {
-  let result = text.replace(
-    /([\p{L}\p{N}])"(?=\p{L}[^"]*")/gu,
-    "$1 \"",
-  );
+  let result = text.replace(/([\p{L}\p{N}])"(?=\p{L}[^"]*")/gu, '$1 "');
   result = result.replace(/"(?=\p{L})/gu, (match, offset) => {
     const quoteCountBefore = result.slice(0, offset).match(/"/g)?.length ?? 0;
     return quoteCountBefore % 2 === 1 ? `${match} ` : match;
@@ -166,6 +163,103 @@ function preferPunctuatedOverlapWord(
   return next;
 }
 
+function levenshteinDistance(left: string, right: string): number {
+  if (left === right) return 0;
+  if (left.length === 0) return right.length;
+  if (right.length === 0) return left.length;
+
+  const previous = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
+  for (let i = 1; i <= left.length; i++) {
+    const current = [i];
+    for (let j = 1; j <= right.length; j++) {
+      const cost = left[i - 1] === right[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost,
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+  return previous[right.length];
+}
+
+function isAlphabeticOverlapToken(word: string): boolean {
+  return /^[\p{L}]+$/u.test(normalizeChunkWordForOverlap(word));
+}
+
+function tokensAreSimilar(left: string, right: string): boolean {
+  const leftKey = normalizeChunkWordForOverlap(left);
+  const rightKey = normalizeChunkWordForOverlap(right);
+  if (leftKey === rightKey) return true;
+  if (!isAlphabeticOverlapToken(left) || !isAlphabeticOverlapToken(right)) {
+    return false;
+  }
+  if (leftKey.length < 4 || rightKey.length < 4) return false;
+  if (leftKey.startsWith(rightKey) || rightKey.startsWith(leftKey)) {
+    const extra = Math.abs(leftKey.length - rightKey.length);
+    return extra > 0 && extra <= 3;
+  }
+  return levenshteinDistance(leftKey, rightKey) <= 1;
+}
+
+function overlapAllowsSingleSubstitution(
+  mergedWords: string[],
+  nextWords: string[],
+  size: number,
+): boolean {
+  const mergedTail = mergedWords.slice(-size);
+  const nextHead = nextWords.slice(0, size);
+  let substitutions = 0;
+  for (let index = 0; index < size; index++) {
+    if (
+      normalizeChunkWordForOverlap(mergedTail[index]) ===
+      normalizeChunkWordForOverlap(nextHead[index])
+    ) {
+      continue;
+    }
+    if (!tokensAreSimilar(mergedTail[index], nextHead[index])) return false;
+    substitutions += 1;
+    if (substitutions > 1) return false;
+  }
+  return substitutions === 1;
+}
+
+function preferOverlapWord(
+  current: string,
+  next: string,
+  nextContinues: boolean,
+): string {
+  const punctuated = preferPunctuatedOverlapWord(current, next, nextContinues);
+  if (punctuated !== current) return punctuated;
+  const currentKey = normalizeChunkWordForOverlap(current);
+  const nextKey = normalizeChunkWordForOverlap(next);
+  if (tokensAreSimilar(current, next) && nextKey.length > currentKey.length) {
+    return next;
+  }
+  return current;
+}
+
+function containsSimilarWordSequence(
+  words: string[],
+  sequence: string[],
+): boolean {
+  if (sequence.length === 0 || words.length < sequence.length) return false;
+  for (let index = 0; index + sequence.length <= words.length; index++) {
+    if (
+      sequence.every((token, offset) =>
+        tokensAreSimilar(words[index + offset], token),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function findChunkOverlap(
   mergedWords: string[],
   nextWords: string[],
@@ -179,6 +273,9 @@ function findChunkOverlap(
     const mergedTail = overlapKey(mergedWords.slice(-size));
     const nextHead = overlapKey(nextWords.slice(0, size));
     if (mergedTail === nextHead) {
+      return { overlap: size, skipPrefix: 0 };
+    }
+    if (overlapAllowsSingleSubstitution(mergedWords, nextWords, size)) {
       return { overlap: size, skipPrefix: 0 };
     }
   }
@@ -216,7 +313,9 @@ function containsEarlierWordSequence(
   if (sequence.length === 0 || beforeIndex < sequence.length) return false;
   const sequenceKey = overlapKey(sequence);
   for (let index = 0; index + sequence.length <= beforeIndex; index++) {
-    if (overlapKey(words.slice(index, index + sequence.length)) === sequenceKey) {
+    if (
+      overlapKey(words.slice(index, index + sequence.length)) === sequenceKey
+    ) {
       return true;
     }
   }
@@ -237,7 +336,9 @@ function hasNovelTailExtension(
     suffixWords--
   ) {
     const suffix = extension.slice(extension.length - suffixWords);
-    if (!containsEarlierWordSequence(currentWords, suffix, currentWords.length)) {
+    if (
+      !containsEarlierWordSequence(currentWords, suffix, currentWords.length)
+    ) {
       return true;
     }
   }
@@ -339,7 +440,8 @@ function mergeTailVerificationTranscript(
 
   for (
     let dropWords = 1;
-    dropWords <= Math.min(MAX_ORPHANED_TAIL_FRAGMENT_WORDS, currentWords.length);
+    dropWords <=
+    Math.min(MAX_ORPHANED_TAIL_FRAGMENT_WORDS, currentWords.length);
     dropWords++
   ) {
     const retainedWords = currentWords.slice(0, -dropWords);
@@ -427,7 +529,8 @@ function repairLeadingPunctuationFromHead(
   const originalPrefix = overlapKey(originalWords.slice(0, overlapWords));
   for (
     let insertedWords = 0;
-    insertedWords <= Math.min(MAX_LEADING_PUNCTUATION_INSERTED_WORDS, headWords.length);
+    insertedWords <=
+    Math.min(MAX_LEADING_PUNCTUATION_INSERTED_WORDS, headWords.length);
     insertedWords++
   ) {
     if (
@@ -461,6 +564,7 @@ const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
+const CHUNK_NO_SPEECH_MIN_DBFS = -55;
 
 function readAscii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
@@ -473,7 +577,10 @@ function parseWavPcmInfo(wavData: Uint8Array): WavPcmInfo | null {
     wavData.byteOffset,
     wavData.byteLength,
   );
-  if (readAscii(wavData, 0, 4) !== "RIFF" || readAscii(wavData, 8, 4) !== "WAVE") {
+  if (
+    readAscii(wavData, 0, 4) !== "RIFF" ||
+    readAscii(wavData, 8, 4) !== "WAVE"
+  ) {
     return null;
   }
 
@@ -482,7 +589,7 @@ function parseWavPcmInfo(wavData: Uint8Array): WavPcmInfo | null {
   let byteRate = 0;
   let blockAlign = 0;
 
-  for (let offset = 12; offset + 8 <= wavData.byteLength; ) {
+  for (let offset = 12; offset + 8 <= wavData.byteLength;) {
     const chunkId = readAscii(wavData, offset, 4);
     const chunkSize = view.getUint32(offset + 4, true);
     const chunkDataOffset = offset + 8;
@@ -544,10 +651,7 @@ function sliceWavSegment(
   const segment = new Uint8Array(header.byteLength + segmentSize);
   segment.set(header, 0);
   segment.set(
-    wavData.slice(
-      info.dataOffset + segmentStart,
-      info.dataOffset + segmentEnd,
-    ),
+    wavData.slice(info.dataOffset + segmentStart, info.dataOffset + segmentEnd),
     header.byteLength,
   );
 
@@ -568,6 +672,16 @@ function sliceWavTail(wavData: Uint8Array, seconds: number): Uint8Array | null {
   );
 }
 
+function isLowEnergyWavSegment(wavData: Uint8Array): boolean {
+  const info = parseWavPcmInfo(wavData);
+  if (!info) return true;
+  const pcm = wavData.slice(info.dataOffset, info.dataOffset + info.dataSize);
+  const rms = calculateRMS(pcm);
+  if (rms <= 0) return true;
+  const dbfs = 20 * Math.log10(rms / 32768);
+  return dbfs < CHUNK_NO_SPEECH_MIN_DBFS;
+}
+
 export function mergeChunkTranscripts(chunks: string[]): string {
   const merged: string[] = [];
 
@@ -585,7 +699,7 @@ export function mergeChunkTranscripts(chunks: string[]): string {
     if (overlap > 0) {
       for (let index = 0; index < overlap; index++) {
         const mergedIndex = merged.length - overlap + index;
-        merged[mergedIndex] = preferPunctuatedOverlapWord(
+        merged[mergedIndex] = preferOverlapWord(
           merged[mergedIndex],
           nextWords[skipPrefix + index],
           skipPrefix + index < nextWords.length - 1,
@@ -599,7 +713,10 @@ export function mergeChunkTranscripts(chunks: string[]): string {
   return normalizeProseQuoteSpacing(merged.join(" ").trim());
 }
 
-function hasChunkBoundaryOverlap(currentText: string, nextText: string): boolean {
+function hasChunkBoundaryOverlap(
+  currentText: string,
+  nextText: string,
+): boolean {
   const currentWords = normalizeChunkWords(currentText);
   const nextWords = normalizeChunkWords(nextText);
   if (currentWords.length === 0 || nextWords.length === 0) return false;
@@ -613,8 +730,9 @@ function shortFinalChunkAgrees(
   const promptedWords = normalizeChunkWords(promptedText);
   const unpromptedWords = normalizeChunkWords(unpromptedText);
   if (promptedWords.length === 0 || unpromptedWords.length === 0) return false;
-  if (containsWordSequence(unpromptedWords, promptedWords)) return true;
-  if (!containsWordSequence(promptedWords, unpromptedWords)) return false;
+  if (containsSimilarWordSequence(unpromptedWords, promptedWords)) return true;
+  if (!containsSimilarWordSequence(promptedWords, unpromptedWords))
+    return false;
 
   const minimumConfirmationWords =
     promptedWords.length <= 2
@@ -651,10 +769,7 @@ function trimOneEchoedTrailingPhrase(
   ) {
     const tailStart = words.length - phraseWords;
     const tailKey = overlapKey(words.slice(tailStart));
-    const searchStart = Math.max(
-      0,
-      tailStart - MAX_ECHOED_TAIL_LOOKBACK_WORDS,
-    );
+    const searchStart = Math.max(0, tailStart - MAX_ECHOED_TAIL_LOOKBACK_WORDS);
 
     for (let index = tailStart - phraseWords; index >= searchStart; index--) {
       const candidate = words.slice(index, index + phraseWords);
@@ -668,11 +783,9 @@ function trimOneEchoedTrailingPhrase(
         candidate,
         index,
       );
-      const repeatedPhraseBridge = isRepeatedPhraseBridge(
-        bridgeWords,
-        phraseWords,
-        tailKey,
-      ) || containsWordSequence(bridgeWords, candidate);
+      const repeatedPhraseBridge =
+        isRepeatedPhraseBridge(bridgeWords, phraseWords, tailKey) ||
+        containsWordSequence(bridgeWords, candidate);
       const allowedSeparatedEcho =
         interveningWords >= 2 && !repeatedPhraseBridge;
       const allowedAdjacentEcho =
@@ -701,7 +814,9 @@ function isRepeatedPhraseBridge(
     return false;
   }
   for (let offset = 0; offset < bridgeWords.length; offset += phraseWords) {
-    if (overlapKey(bridgeWords.slice(offset, offset + phraseWords)) !== phraseKey) {
+    if (
+      overlapKey(bridgeWords.slice(offset, offset + phraseWords)) !== phraseKey
+    ) {
       return false;
     }
   }
@@ -712,7 +827,9 @@ function containsWordSequence(words: string[], sequence: string[]): boolean {
   if (sequence.length === 0 || words.length < sequence.length) return false;
   const sequenceKey = overlapKey(sequence);
   for (let index = 0; index + sequence.length <= words.length; index++) {
-    if (overlapKey(words.slice(index, index + sequence.length)) === sequenceKey) {
+    if (
+      overlapKey(words.slice(index, index + sequence.length)) === sequenceKey
+    ) {
       return true;
     }
   }
@@ -740,7 +857,9 @@ function trimEchoedTrailingPhrase(
 
 function allowsAdjacentTailEchoCleanup(wavData: Uint8Array): boolean {
   const info = parseWavPcmInfo(wavData);
-  return !!info && info.durationSeconds >= WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS;
+  return (
+    !!info && info.durationSeconds >= WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS
+  );
 }
 
 function combinePromptOverride(
@@ -1095,7 +1214,10 @@ export class WhisperServerBackend implements STTBackend {
     }
 
     try {
-      const fallback = await this.fallbackBackend.transcribe(audioPath, options);
+      const fallback = await this.fallbackBackend.transcribe(
+        audioPath,
+        options,
+      );
       const fallbackText = fallback.text.trim();
       if (
         fallbackText &&
@@ -1127,12 +1249,19 @@ export class WhisperServerBackend implements STTBackend {
 
     const tailWav = sliceWavTail(wavData, WAV_TAIL_VERIFY_SECONDS);
     if (!tailWav) return fullText;
+    // Late-stop PTT often leaves a silent last 12s. Decoding that window
+    // hallucinates YouTube outros ("All right. Thank you.") and merge can
+    // append them after a 2-word overlap such as "All right".
+    if (isLowEnergyWavSegment(tailWav)) return fullText;
 
     try {
       const tailText = await this.transcribeResident(
         tailWav,
         buildWhisperServerOptions({
-          promptOverride: combinePromptOverride(options?.promptOverride, fullText),
+          promptOverride: combinePromptOverride(
+            options?.promptOverride,
+            fullText,
+          ),
         }),
       );
       const merged = mergeTailVerificationTranscript(fullText, tailText);
@@ -1186,12 +1315,9 @@ export class WhisperServerBackend implements STTBackend {
       const isVeryShortFinalChunk =
         startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds &&
         info.durationSeconds - startSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
-      const segment = sliceWavSegment(
-        wavData,
-        startSeconds,
-        WAV_CHUNK_SECONDS,
-      );
+      const segment = sliceWavSegment(wavData, startSeconds, WAV_CHUNK_SECONDS);
       if (!segment) continue;
+      if (isLowEnergyWavSegment(segment)) continue;
 
       const mergedSoFar = mergeChunkTranscripts(transcripts);
       const text = await this.transcribeResident(

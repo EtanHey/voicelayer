@@ -10,7 +10,10 @@ import {
   buildWhisperServerOptions,
 } from "../stt";
 
-function makePcm16Wav(durationSeconds: number): Uint8Array {
+function makePcm16Wav(
+  durationSeconds: number,
+  speechEndSeconds = durationSeconds,
+): Uint8Array {
   const sampleRate = 16000;
   const channels = 1;
   const bitsPerSample = 16;
@@ -37,7 +40,47 @@ function makePcm16Wav(durationSeconds: number): Uint8Array {
   writeAscii(36, "data");
   view.setUint32(40, dataBytes, true);
 
+  const speechSamples = Math.max(
+    0,
+    Math.min(Math.floor(speechEndSeconds * sampleRate), dataBytes / 2),
+  );
+  const peak = 2000;
+  const frequencyHz = 180;
+  for (let i = 0; i < speechSamples; i++) {
+    const sample = Math.round(
+      peak * Math.sin((2 * Math.PI * frequencyHz * i) / sampleRate),
+    );
+    view.setInt16(44 + i * 2, sample, true);
+  }
+
   return wav;
+}
+
+function addWavClick(
+  wav: Uint8Array,
+  timeSeconds: number,
+  peak = 413,
+  burstMs = 4,
+): void {
+  const sampleRate = 16000;
+  const view = new DataView(wav.buffer, wav.byteOffset, wav.byteLength);
+  const dataBytes = view.getUint32(40, true);
+  const sampleCount = dataBytes / 2;
+  const start = Math.max(
+    0,
+    Math.min(sampleCount - 1, Math.floor(timeSeconds * sampleRate)),
+  );
+  const burstSamples = Math.max(
+    1,
+    Math.min(sampleCount - start, Math.floor((sampleRate * burstMs) / 1000)),
+  );
+  const frequencyHz = 180;
+  for (let i = 0; i < burstSamples; i++) {
+    const sample = Math.round(
+      peak * Math.sin((2 * Math.PI * frequencyHz * i) / sampleRate),
+    );
+    view.setInt16(44 + (start + i) * 2, sample, true);
+  }
 }
 
 describe("STT backends", () => {
@@ -348,6 +391,59 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+tail");
     });
 
+    it("does not append All right / Thank you from a silent 12s tail on a sub-chunked recording", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-silent-tail-thank-you-test.wav";
+      const wav = makePcm16Wav(64.8, 16);
+      addWavClick(wav, 35.25, 655);
+      addWavClick(wav, 64.5, 413);
+      await Bun.write(wavPath, wav);
+      const transcripts: string[] = [];
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          if (!options?.prompt) {
+            transcripts.push("Should we ship the plan now? All right.");
+            return "Should we ship the plan now? All right.";
+          }
+          transcripts.push("All right. Thank you.");
+          return "All right. Thank you.";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(transcripts).toEqual(["Should we ship the plan now? All right."]);
+      expect(result.text).toBe("Should we ship the plan now? All right.");
+      expect(result.text).not.toMatch(/thank you/i);
+      expect(result.backend).toBe("whisper-server");
+    });
+
+    it("still recovers final words when a sub-chunked recording has speech in the last 12s", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-subchunked-energetic-tail-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(64.8));
+      const requestSizes: number[] = [];
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (wavData, options) => {
+          requestSizes.push(wavData.byteLength);
+          return options?.prompt
+            ? "backfill migration. And lastly, how long do you think it'll take to do the backfill? Okay."
+            : "Let's plan the backfill migration";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(requestSizes).toHaveLength(2);
+      expect(requestSizes[1]).toBeLessThan(requestSizes[0]);
+      expect(result.text).toBe(
+        "Let's plan the backfill migration. And lastly, how long do you think it'll take to do the backfill?",
+      );
+      expect(result.backend).toBe("whisper-server+tail");
+    });
+
     it("keeps full-window text when tail verification has no overlap", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-tail-no-overlap-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
@@ -408,7 +504,8 @@ describe("STT backends", () => {
     });
 
     it("preserves a real tail extension that intentionally repeats an earlier phrase", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-repeat-extension-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-repeat-extension-test.wav";
       await Bun.write(wavPath, makePcm16Wav(71));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -453,7 +550,8 @@ describe("STT backends", () => {
     });
 
     it("repairs a leading punctuation-only resident decode when retry preserves the start", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-leading-punctuation-test.wav";
       await Bun.write(wavPath, makePcm16Wav(8));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -669,7 +767,8 @@ describe("STT backends", () => {
     });
 
     it("refuses to drop a repeated short common word as a tail orphan", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-short-orphan-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-short-orphan-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -689,7 +788,8 @@ describe("STT backends", () => {
     });
 
     it("preserves adjacent repeated phrases in long resident decodes when they appear only twice", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-adjacent-tail-echo-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
@@ -719,9 +819,7 @@ describe("STT backends", () => {
 
       const result = await backend.transcribe(wavPath);
 
-      expect(result.text).toBe(
-        "please repeat after me please repeat after me",
-      );
+      expect(result.text).toBe("please repeat after me please repeat after me");
       expect(result.backend).toBe("whisper-server");
     });
 
@@ -786,16 +884,15 @@ describe("STT backends", () => {
     });
 
     it("preserves real tail filler when it was already in the full-window decode", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-tail-real-filler-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-tail-real-filler-test.wav";
       await Bun.write(wavPath, makePcm16Wav(31));
       let calls = 0;
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
         transcribeViaServer: async () => {
           calls++;
-          return calls === 1
-            ? "we are shipping? okay"
-            : "are shipping? okay";
+          return calls === 1 ? "we are shipping? okay" : "are shipping? okay";
         },
       });
 
@@ -821,7 +918,9 @@ describe("STT backends", () => {
 
       const result = await backend.transcribe(wavPath);
 
-      expect(result.text).toBe("first chunk asks are we shipping? okay and done");
+      expect(result.text).toBe(
+        "first chunk asks are we shipping? okay and done",
+      );
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
@@ -881,7 +980,8 @@ describe("STT backends", () => {
           requestSizes.push(wavData.byteLength);
           prompts.push(options?.prompt);
           if (requestSizes.length === 1) return "first chunk has setup";
-          if (requestSizes.length === 2) return "setup and middle chunk continues";
+          if (requestSizes.length === 2)
+            return "setup and middle chunk continues";
           return "chunk continues with final decision";
         },
       });
@@ -900,7 +1000,8 @@ describe("STT backends", () => {
     });
 
     it("trims repeated tail loops after chunked long recordings are merged", async () => {
-      const wavPath = "/tmp/voicelayer-whisper-server-chunked-tail-loop-test.wav";
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-tail-loop-test.wav";
       await Bun.write(wavPath, makePcm16Wav(95));
       let calls = 0;
       const backend = new WhisperServerBackend({
@@ -944,7 +1045,63 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(calls).toBe(6);
-      expect(result.text).toBe("intro setup middle plan look at ponytail skill");
+      expect(result.text).toBe(
+        "intro setup middle plan look at ponytail skill",
+      );
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    it("rejects hallucinated text from a no-speech low-energy chunk in a long recording", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-silence-reject-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95, 16));
+      const transcripts: string[] = [];
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (_wavData, options) => {
+          const prompted = Boolean(options?.prompt);
+          if (transcripts.length === 0 && !prompted) {
+            transcripts.push("real speech about the plan");
+            return "real speech about the plan";
+          }
+          transcripts.push("All right. Thank you.");
+          return "All right. Thank you.";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(
+        transcripts.every((text) => text !== "All right. Thank you."),
+      ).toBe(true);
+      expect(result.text).toBe("real speech about the plan");
+      expect(result.backend).toBe("whisper-server+chunks");
+    });
+
+    it("keeps a short final chunk when unprompted decode agrees on an inflected last token", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-short-final-gloss-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(108));
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro setup";
+          if (calls === 2) return "setup middle";
+          if (calls === 3) return "middle plan";
+          if (calls === 4) return "plan look at ponytail skill";
+          if (calls === 5) return "look at the gloss";
+          return "look at the glosses";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(calls).toBe(6);
+      expect(result.text).toBe(
+        "intro setup middle plan look at ponytail skill look at the gloss",
+      );
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
@@ -1193,6 +1350,12 @@ describe("STT backends", () => {
           '"distill whisper" work if it is English only, though',
         ]),
       ).toBe('Would "distill whisper" work if it is English only, though');
+    });
+
+    it("reconciles a single substituted alphabetic edge token without duplicating it", () => {
+      expect(
+        mergeChunkTranscripts(["hello world gloss", "world glosses continue"]),
+      ).toBe("hello world glosses continue");
     });
 
     it("does not collapse distinct operator-only tokens at chunk boundaries", () => {
