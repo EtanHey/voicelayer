@@ -1497,8 +1497,9 @@ describe("input recording durability", () => {
     );
     mkdirSync(archiveDir, { recursive: true });
     const archivedAudioPath = join(archiveDir, "audio.wav");
-    const retainedWav = makePttWavWithLongQuietTail();
-    writeFileSync(archivedAudioPath, retainedWav);
+    const archiveWav = makePttWavWithLongQuietTail();
+    const retainedWav = makeWav(pcmWithConstantSample(2000, 5000));
+    writeFileSync(archivedAudioPath, archiveWav);
     writeFileSync(
       join(archiveDir, "metadata.json"),
       JSON.stringify({ mode: "ptt", transcription_status: "transcribed" }),
@@ -1524,6 +1525,8 @@ describe("input recording durability", () => {
       "Retained transcript.",
     );
     expect(backendTranscribedDataSize).toBe(16000 * 2 * 3);
+    expect(readWavDataSize(archivedAudioPath)).toBe(16000 * 2 * 11);
+    expect(readWavDataSize(retainedPath)).toBe(16000 * 2 * 5);
   });
 
   it("retranscribeRecordingCapture trims trailing silence before STT for ptt archives", async () => {
@@ -1550,6 +1553,7 @@ describe("input recording durability", () => {
       "Retained transcript.",
     );
     expect(backendTranscribedDataSize).toBe(16000 * 2 * 3);
+    expect(readWavDataSize(audioPath)).toBe(16000 * 2 * 11);
   });
 
   it("waitForInput links retained capture metadata to the archived audio path", async () => {
@@ -1578,5 +1582,53 @@ describe("input recording durability", () => {
       schema_version: 1,
       archive_audio_path: archivedAudioPath,
     });
+  });
+
+  it("links a cancelled VoiceBar archive so retranscribe last can replace that row", async () => {
+    const recorder = installFakeRecorder(
+      [makePcmChunk(1800), makePcmChunk(1800), makePcmChunk(1800)],
+      true,
+    );
+    const { waitForInput, retranscribeLastCapture } = await import("../input");
+    const recording = waitForInput(2_000, "quick", true, {
+      archiveSource: "voicebar",
+    });
+
+    try {
+      await recorder.waitForSpawn();
+      setCancelSignal();
+      writeFileSync(STOP_FILE, "stop");
+      await expect(recording).resolves.toBeNull();
+    } finally {
+      writeFileSync(STOP_FILE, "stop");
+      await recording.catch(() => null);
+    }
+
+    const dayDir = join(
+      tmpRoot,
+      "recordings",
+      new Date().toISOString().slice(0, 10),
+    );
+    const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    expect(
+      JSON.parse(readFileSync(`${retainedPath}.metadata.json`, "utf8")),
+    ).toMatchObject({
+      archive_audio_path: archivedAudioPath,
+    });
+    expect(existsSync(transcriptPath)).toBe(false);
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Retained transcript.");
+    expect(
+      broadcasts.some(
+        (event) =>
+          event.type === "transcription" &&
+          event.recording_path === archivedAudioPath,
+      ),
+    ).toBe(true);
   });
 });

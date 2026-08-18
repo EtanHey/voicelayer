@@ -2622,7 +2622,7 @@ export async function waitForInput(
     );
     if (options.archiveSource === "voicebar") {
       try {
-        archiveVoiceBarUntranscribedRecording({
+        const cancelledArchivePath = archiveVoiceBarUntranscribedRecording({
           audioBytes: retainedWavData,
           source: options.archiveSource,
           silenceMode,
@@ -2631,6 +2631,7 @@ export async function waitForInput(
           backend: "not-transcribed",
           reason: "cancelled",
         });
+        linkRetainedCaptureToArchive(join(cancelledArchivePath, "audio.wav"));
       } catch (err) {
         console.error(
           `[voicelayer] Failed to archive cancelled recording: ${err instanceof Error ? err.message : String(err)}`,
@@ -3140,11 +3141,12 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       `[voicelayer] Retranscribing last capture with ${backend.name}...`,
     );
     const archivedAudioPath = retainedArchiveAudioPath();
+    const sourceWavPath = archivedAudioPath ?? wavPath;
     const pushToEnd = archivedAudioPath
       ? pushToEndForArchivedAudio(archivedAudioPath)
       : true;
     const { sttWavPath, cleanup } = prepareRetranscribeWavForSTT(
-      wavPath,
+      sourceWavPath,
       pushToEnd,
     );
     try {
