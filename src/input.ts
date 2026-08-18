@@ -317,8 +317,13 @@ function pushToEndForArchivedAudio(audioPath: string): boolean {
 
 function readWavPcmData(wavPath: string): Uint8Array {
   const wavData = readFileSync(wavPath);
-  if (wavData.byteLength <= 44) {
-    throw new Error(`Recording WAV has no PCM payload: ${wavPath}`);
+  const validationError = wavHeaderValidationError(
+    wavPath,
+    wavData,
+    wavData.byteLength,
+  );
+  if (validationError) {
+    throw new Error(validationError);
   }
   return new Uint8Array(wavData.subarray(44));
 }

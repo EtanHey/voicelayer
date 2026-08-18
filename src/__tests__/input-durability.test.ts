@@ -78,6 +78,31 @@ function makeWav(pcmData: Uint8Array): Uint8Array {
   return wav;
 }
 
+function makeWavWithListChunkBeforeData(pcmData: Uint8Array): Uint8Array {
+  const listPayload = 4;
+  const extraChunkBytes = 8 + listPayload;
+  const wav = new Uint8Array(44 + extraChunkBytes + pcmData.byteLength);
+  const view = new DataView(wav.buffer);
+  writeAscii(wav, 0, "RIFF");
+  view.setUint32(4, 36 + extraChunkBytes + pcmData.byteLength, true);
+  writeAscii(wav, 8, "WAVE");
+  writeAscii(wav, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, 16000, true);
+  view.setUint32(28, 32000, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(wav, 36, "LIST");
+  view.setUint32(40, listPayload, true);
+  writeAscii(wav, 44, "INFO");
+  writeAscii(wav, 48, "data");
+  view.setUint32(52, pcmData.byteLength, true);
+  wav.set(pcmData, 56);
+  return wav;
+}
+
 function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
   const samples = Math.floor((16000 * durationMs) / 1000);
   const buffer = new Uint8Array(samples * 2);
@@ -1715,5 +1740,46 @@ describe("input recording durability", () => {
     expect(() =>
       linkRetainedCaptureToArchive(join(tmpRoot, "recordings", "audio.wav")),
     ).not.toThrow();
+  });
+
+  it("retranscribeLastCapture rejects an archived WAV whose data chunk is not at offset 36", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-riffchunks",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    const pcm = makePcmChunk();
+    const retainedWav = makeWav(pcm);
+    writeFileSync(archivedAudioPath, makeWavWithListChunkBeforeData(pcm));
+    writeFileSync(transcriptPath, "Old riff transcript.");
+    writeFileSync(
+      join(archiveDir, "metadata.json"),
+      JSON.stringify({ mode: "ptt", transcription_status: "transcribed" }),
+    );
+    writeFileSync(retainedPath, retainedWav);
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256").update(retainedWav).digest("hex"),
+          archive_audio_path: archivedAudioPath,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).rejects.toThrow(
+      /missing the PCM data chunk/,
+    );
+    expect(backendTranscribeCalls).toBe(0);
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Old riff transcript.");
   });
 });
