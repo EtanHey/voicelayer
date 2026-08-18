@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 import SwiftUI
 
@@ -665,14 +664,6 @@ public struct SettingsView: View {
             .disabled(isRetranscribing)
             .help("Re-transcribe stored audio")
             .accessibilityLabel("Re-transcribe stored audio")
-
-            Button {
-                NSWorkspace.shared.activateFileViewerSelecting([entry.audioPath])
-            } label: {
-                Label("Show in Finder", systemImage: "folder")
-            }
-            .help("Reveal the stored recording in Finder")
-            .accessibilityLabel("Reveal the stored recording in Finder")
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
