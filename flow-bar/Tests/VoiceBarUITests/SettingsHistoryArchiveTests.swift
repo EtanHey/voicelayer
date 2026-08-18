@@ -99,20 +99,37 @@ final class SettingsHistoryArchiveTests: XCTestCase {
         )
     }
 
-    func testLoadsCapturedVoiceAskWithoutTranscriptForHistoryRetranscription() throws {
-        let id = "2026-08-01T13-14-02-000Z-abcd1234"
+    func testRecordingHistoryExcludesVoiceAskArchives() throws {
+        try writeRecording(
+            day: "2026-08-01",
+            id: "2026-08-01T09-00-00-000Z-f5clip",
+            createdAt: "2026-08-01T09:00:00.000Z",
+            transcript: "An F5 dictation"
+        )
+        let askID = "2026-08-01T13-14-02-000Z-abcd1234"
         let dir = tempRoot
             .appendingPathComponent("2026-08-01")
-            .appendingPathComponent(id)
+            .appendingPathComponent(askID)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         try Data([0, 1, 2, 3]).write(to: dir.appendingPathComponent("audio.wav"))
+        try Data([4, 5, 6, 7]).write(to: dir.appendingPathComponent("agent-audio.mp3"))
+        try "Ask question".write(
+            to: dir.appendingPathComponent("agent-transcript.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "Ask response".write(
+            to: dir.appendingPathComponent("voicelayer-transcript.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
         let metadata = """
         {
-          "id": "\(id)",
+          "id": "\(askID)",
           "created_at": "2026-08-01T13:14:02.000Z",
           "source": "voice_ask",
-          "transcription_status": "captured",
-          "backend": null
+          "transcription_status": "transcribed",
+          "schema_version": 3
         }
         """
         try metadata.write(
@@ -121,14 +138,42 @@ final class SettingsHistoryArchiveTests: XCTestCase {
             encoding: .utf8
         )
 
-        let groups = SettingsHistoryArchive.load(from: tempRoot)
-        let entry = try XCTUnwrap(groups.first?.entries.first)
+        let entries = SettingsHistoryArchive.load(from: tempRoot).flatMap(\.entries)
 
-        XCTAssertEqual(entry.recordingID, id)
-        XCTAssertFalse(entry.hasTranscript)
-        XCTAssertEqual(entry.displayTranscript, "No transcript stored")
-        XCTAssertEqual(entry.audioPath.lastPathComponent, "audio.wav")
-        XCTAssertEqual(entry.audioPath.deletingLastPathComponent().lastPathComponent, id)
+        XCTAssertEqual(entries.map(\.transcript), ["An F5 dictation"])
+    }
+
+    func testRecordingHistoryPagingDoesNotOfferOlderWhenOnlyAskArchivesRemain() throws {
+        try writeRecording(
+            day: "2026-08-01",
+            id: "2026-08-01T09-00-00-000Z-f5clip",
+            createdAt: "2026-08-01T09:00:00.000Z",
+            transcript: "An F5 dictation"
+        )
+        let askID = "2026-08-01T08-00-00-000Z-ask"
+        let dir = tempRoot
+            .appendingPathComponent("2026-08-01")
+            .appendingPathComponent(askID)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try Data([0, 1, 2, 3]).write(to: dir.appendingPathComponent("audio.wav"))
+        let metadata = """
+        {
+          "id": "\(askID)",
+          "created_at": "2026-08-01T08:00:00.000Z",
+          "source": "voice_ask",
+          "schema_version": 3
+        }
+        """
+        try metadata.write(
+            to: dir.appendingPathComponent("metadata.json"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let page = SettingsHistoryArchive.loadPage(from: tempRoot, limit: 1)
+
+        XCTAssertEqual(page.loadedEntryCount, 1)
+        XCTAssertFalse(page.hasMore)
     }
 
     func testSkipsIncompleteAndTemporaryArchiveDirectories() throws {

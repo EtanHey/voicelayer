@@ -32,10 +32,20 @@ final class BoundaryContractTests: XCTestCase {
         let sourceFiles = try swiftSourceFiles(in: sourceRoot)
         XCTAssertFalse(sourceFiles.isEmpty, "VoiceBarUI should contain Swift source files")
 
+        // AIDEV-NOTE: `SettingsArchiveSchema.swift` is the single declared home for the archive's
+        // ask `source` discriminator, which Settings → History must match to keep ask exchanges out
+        // of the recording list. That is a stored value in a JSON file the UI already reads, not a
+        // call into the MCP layer, so it is exempted for that one token only — every other file,
+        // and every other token, is still forbidden.
+        let exemptions: [String: Set<String>] = [
+            "SettingsArchiveSchema.swift": ["voice_ask"],
+        ]
+
         var violations: [String] = []
         for fileURL in sourceFiles {
             let contents = try String(contentsOf: fileURL, encoding: .utf8)
-            for token in forbiddenTokens where contents.contains(token) {
+            let exempt = exemptions[fileURL.lastPathComponent] ?? []
+            for token in forbiddenTokens where contents.contains(token) && !exempt.contains(token) {
                 violations.append("\(fileURL.lastPathComponent): \(token)")
             }
         }
