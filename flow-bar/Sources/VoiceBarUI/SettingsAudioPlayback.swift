@@ -62,8 +62,11 @@ public extension SettingsAudioPlayback {
             start: { url in holder.play(url) },
             stop: { holder.stop() }
         )
+        // AIDEV-NOTE: AVAudioPlayer delivers its delegate callback on the thread that ran the
+        // player, which is not guaranteed to be main — hop explicitly rather than asserting
+        // isolation, which would trap.
         holder.onFinish = { [weak playback] url in
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 playback?.playbackDidFinish(url)
             }
         }
