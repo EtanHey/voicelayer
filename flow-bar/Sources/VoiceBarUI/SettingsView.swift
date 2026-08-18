@@ -248,8 +248,7 @@ public struct SettingsView: View {
             }
         }
         .onDisappear {
-            historyRefreshTask?.cancel()
-            askHistoryRefreshTask?.cancel()
+            cancelHistoryLoads()
             askPlayback.stop()
         }
     }
@@ -472,14 +471,20 @@ public struct SettingsView: View {
                 askHistoryScope
             }
         }
+        // AIDEV-NOTE: Always reload the scope being switched to. An inactive scope is out of the
+        // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
+        // this, switching back shows a list frozen at whenever that scope was last on screen.
         .onChange(of: selectedHistoryScope) { _, scope in
             askPlayback.stop()
-            if scope == .ask, askHistoryDayGroups.isEmpty {
+            switch scope {
+            case .recording:
+                requestHistoryReload()
+            case .ask:
                 requestAskHistoryReload()
             }
         }
         .onDisappear {
-            askHistoryRefreshTask?.cancel()
+            cancelHistoryLoads()
             askPlayback.stop()
         }
     }
@@ -1283,6 +1288,20 @@ public struct SettingsView: View {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
+    }
+
+    /// Cancels both in-flight archive loads and clears their loading flags.
+    ///
+    /// AIDEV-NOTE: The flag must be cleared with the cancel. A scope reopens without reloading when
+    /// it already has entries, so a stranded `true` leaves the spinner up and "Load older" disabled
+    /// for the rest of the session.
+    private func cancelHistoryLoads() {
+        historyRefreshTask?.cancel()
+        historyRefreshTask = nil
+        isHistoryLoading = false
+        askHistoryRefreshTask?.cancel()
+        askHistoryRefreshTask = nil
+        isAskHistoryLoading = false
     }
 
     private func requestAskHistoryReload(

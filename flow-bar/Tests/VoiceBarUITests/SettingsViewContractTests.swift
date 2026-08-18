@@ -173,6 +173,36 @@ final class SettingsViewContractTests: XCTestCase {
         }
     }
 
+    func testCancellingHistoryLoadsAlsoClearsTheirLoadingFlags() throws {
+        let source = try settingsViewSource()
+
+        // A stranded `true` leaves the spinner up and "Load older" disabled for the session,
+        // because a scope with entries reopens without reloading.
+        XCTAssertTrue(source.contains("private func cancelHistoryLoads()"))
+        XCTAssertTrue(source.contains("cancelHistoryLoads()"))
+        XCTAssertFalse(source
+            .contains(
+                "historyRefreshTask?.cancel()\n            askHistoryRefreshTask?.cancel()\n            askPlayback.stop()"
+            ))
+
+        let helper = try XCTUnwrap(source.range(of: "private func cancelHistoryLoads() {"))
+        let helperBody = source[helper.upperBound...].prefix(400)
+        XCTAssertTrue(helperBody.contains("isHistoryLoading = false"))
+        XCTAssertTrue(helperBody.contains("isAskHistoryLoading = false"))
+    }
+
+    func testSwitchingScopeReloadsTheScopeBeingShown() throws {
+        let source = try settingsViewSource()
+        let onChange = try XCTUnwrap(source.range(of: "onChange(of: selectedHistoryScope)"))
+        let handler = source[onChange.upperBound...].prefix(400)
+
+        // An inactive scope misses voiceBarHistoryArchiveDidChange, so both sides must reload
+        // on switch rather than only when empty.
+        XCTAssertTrue(handler.contains("requestHistoryReload()"))
+        XCTAssertTrue(handler.contains("requestAskHistoryReload()"))
+        XCTAssertFalse(handler.contains("askHistoryDayGroups.isEmpty"))
+    }
+
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
         let source = try settingsViewSource()
 
