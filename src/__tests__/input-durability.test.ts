@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -85,6 +78,25 @@ function makeWav(pcmData: Uint8Array): Uint8Array {
   return wav;
 }
 
+function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
+  const samples = Math.floor((16000 * durationMs) / 1000);
+  const buffer = new Uint8Array(samples * 2);
+  const view = new DataView(buffer.buffer);
+  for (let i = 0; i < samples; i++) {
+    view.setInt16(i * 2, sample, true);
+  }
+  return buffer;
+}
+
+function makePttWavWithLongQuietTail(): Uint8Array {
+  const speech = pcmWithConstantSample(2000, 2000);
+  const quietTail = pcmWithConstantSample(0, 9000);
+  const pcm = new Uint8Array(speech.byteLength + quietTail.byteLength);
+  pcm.set(speech);
+  pcm.set(quietTail, speech.byteLength);
+  return makeWav(pcm);
+}
+
 function writeAscii(buffer: Uint8Array, offset: number, text: string): void {
   for (let index = 0; index < text.length; index++) {
     buffer[offset + index] = text.charCodeAt(index);
@@ -159,12 +171,8 @@ async function waitUntil(
 
 function installFakeRecorder(chunks: Uint8Array[], keepStdoutOpen: boolean) {
   let spawned = false;
-  let stdoutController:
-    | ReadableStreamDefaultController<Uint8Array>
-    | undefined;
-  let stderrController:
-    | ReadableStreamDefaultController<Uint8Array>
-    | undefined;
+  let stdoutController: ReadableStreamDefaultController<Uint8Array> | undefined;
+  let stderrController: ReadableStreamDefaultController<Uint8Array> | undefined;
 
   Bun.spawnSync = ((cmd: string[]) => {
     if (cmd[0] === "which" && cmd[1] === "rec") {
@@ -244,10 +252,7 @@ describe("input recording durability", () => {
       tmpRoot,
       "recording-state.json",
     );
-    process.env.QA_VOICE_RECORDING_HOLD_PATH = join(
-      tmpRoot,
-      "recording-hold",
-    );
+    process.env.QA_VOICE_RECORDING_HOLD_PATH = join(tmpRoot, "recording-hold");
     vadMode = "silence";
     onVadCall = null;
     vadCallCount = 0;
@@ -838,9 +843,9 @@ describe("input recording durability", () => {
     expect(readFileSync(join(archiveDir, "agent-audio.mp3"))).toEqual(
       Buffer.from(agentAudio),
     );
-    expect(
-      readFileSync(join(archiveDir, "agent-transcript.txt"), "utf8"),
-    ).toBe("Keep the captured answer");
+    expect(readFileSync(join(archiveDir, "agent-transcript.txt"), "utf8")).toBe(
+      "Keep the captured answer",
+    );
     expectValidRetainedWav(join(archiveDir, "audio.wav"));
     expect(
       JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8")),
@@ -859,9 +864,9 @@ describe("input recording durability", () => {
     );
 
     const { retranscribeRecordingCapture } = await import("../input");
-    await expect(
-      retranscribeRecordingCapture(archivedAudioPath),
-    ).resolves.toBe("Retained transcript.");
+    await expect(retranscribeRecordingCapture(archivedAudioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
     expect(
       readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8"),
     ).toBe("Retained transcript.");
@@ -1418,5 +1423,160 @@ describe("input recording durability", () => {
     );
     expect(metadata.backend).toBe("fake-stt");
     expect(metadata.language_mode).toBe("auto");
+  });
+
+  it("retranscribeLastCapture updates the linked archive transcript and broadcasts recording_path", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-menu1234",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    const metadataPath = join(archiveDir, "metadata.json");
+    const retainedWav = makeWav(makePcmChunk());
+    writeFileSync(archivedAudioPath, retainedWav);
+    writeFileSync(transcriptPath, "Old menu transcript.");
+    writeFileSync(
+      metadataPath,
+      JSON.stringify(
+        {
+          id: "2026-06-25T10-11-12-000Z-menu1234",
+          source: "voicebar",
+          mode: "ptt",
+          transcription_status: "transcribed",
+          backend: "old-stt",
+          language_mode: "english",
+        },
+        null,
+        2,
+      ),
+    );
+    writeFileSync(retainedPath, retainedWav);
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256").update(retainedWav).digest("hex"),
+          archive_audio_path: archivedAudioPath,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Retained transcript.");
+    const transcriptionEvent = broadcasts.find(
+      (event) => event.type === "transcription",
+    );
+    expect(transcriptionEvent).toMatchObject({
+      type: "transcription",
+      text: "Retained transcript.",
+      recording_path: archivedAudioPath,
+    });
+    expect(JSON.parse(readFileSync(metadataPath, "utf8"))).toMatchObject({
+      transcription_status: "transcribed",
+      backend: "fake-stt",
+      voicelayer_transcript_chars: "Retained transcript.".length,
+    });
+  });
+
+  it("retranscribeLastCapture trims trailing silence before STT for linked ptt archives", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-trimlast",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const retainedWav = makePttWavWithLongQuietTail();
+    writeFileSync(archivedAudioPath, retainedWav);
+    writeFileSync(
+      join(archiveDir, "metadata.json"),
+      JSON.stringify({ mode: "ptt", transcription_status: "transcribed" }),
+    );
+    writeFileSync(retainedPath, retainedWav);
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256").update(retainedWav).digest("hex"),
+          archive_audio_path: archivedAudioPath,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(backendTranscribedDataSize).toBe(16000 * 2 * 3);
+  });
+
+  it("retranscribeRecordingCapture trims trailing silence before STT for ptt archives", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-trimhist",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const audioPath = join(archiveDir, "audio.wav");
+    writeFileSync(audioPath, makePttWavWithLongQuietTail());
+    writeFileSync(
+      join(archiveDir, "metadata.json"),
+      JSON.stringify({ mode: "ptt", transcription_status: "transcribed" }),
+    );
+    writeFileSync(
+      join(archiveDir, "voicelayer-transcript.txt"),
+      "Old history transcript.",
+    );
+
+    const { retranscribeRecordingCapture } = await import("../input");
+
+    await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+      "Retained transcript.",
+    );
+    expect(backendTranscribedDataSize).toBe(16000 * 2 * 3);
+  });
+
+  it("waitForInput links retained capture metadata to the archived audio path", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+
+    await waitForInput(2_000, "standard", true, {
+      archiveSource: "voicebar",
+    });
+
+    const dayDir = join(
+      tmpRoot,
+      "recordings",
+      new Date().toISOString().slice(0, 10),
+    );
+    const archiveDir = join(dayDir, readdirSync(dayDir)[0]);
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const retainedMetadata = JSON.parse(
+      readFileSync(`${retainedPath}.metadata.json`, "utf8"),
+    );
+    expect(retainedMetadata).toMatchObject({
+      schema_version: 1,
+      archive_audio_path: archivedAudioPath,
+    });
   });
 });
