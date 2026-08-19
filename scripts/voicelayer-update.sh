@@ -5,6 +5,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/brew-cask-sync.sh
+. "$SCRIPT_DIR/lib/brew-cask-sync.sh"
 HOME_DIR="${HOME:?HOME is required}"
 VOICELAYER_HOME="$HOME_DIR/.voicelayer"
 STATE_HOME="$HOME_DIR/.local/state/voicelayer"
@@ -29,6 +31,18 @@ NO_STOP=0
 NO_RELAUNCH=0
 VOICEBAR_HEALTH_MAX_ATTEMPTS=10
 VOICEBAR_HEALTH_RETRY_DELAY_SECONDS=1
+VERIFY_FAILURES=0
+VOICEBAR_FORMULA_NAME="${VOICELAYER_UPDATE_VOICEBAR_FORMULA_NAME:-voicelayer}"
+VOICEBAR_CASK_TAP_BRANCH="${VOICELAYER_UPDATE_CASK_TAP_BRANCH:-main}"
+CASK_BACKUP_ROOT="${VOICELAYER_UPDATE_CASK_BACKUP_ROOT:-$HOME_DIR/Library/Application Support/VoiceBar/Backups}"
+MCP_SOCKET_PATH="${VOICELAYER_MCP_SOCKET_PATH:-${QA_VOICE_MCP_SOCKET_PATH:-/tmp/voicelayer-mcp.sock}}"
+VOICEBAR_SOCKET_PATH="${VOICELAYER_SOCKET_PATH:-${QA_VOICE_SOCKET_PATH:-/tmp/voicelayer.sock}}"
+
+# brew-cask-sync asserts post-conditions; it must not do that when run_cmd is
+# only printing.
+bcs_caller_simulates_commands() {
+    [[ "$DRY_RUN" -eq 1 || "$DRY_RUN_COMMANDS" = "1" ]]
+}
 
 usage() {
     cat <<'EOF'
@@ -187,6 +201,10 @@ validate_args() {
 }
 
 detect_install_type() {
+    if [[ -n "${VOICELAYER_UPDATE_TEST_INSTALL_TYPE:-}" ]]; then
+        printf '%s\n' "$VOICELAYER_UPDATE_TEST_INSTALL_TYPE"
+        return
+    fi
     local git_root
     local package_root_real
     local git_root_real
@@ -225,12 +243,12 @@ voicebar_cask_installed() {
         0) return 1 ;;
     esac
 
-    command -v brew >/dev/null 2>&1 && brew list --cask voicebar >/dev/null 2>&1
+    bcs_brew_bin >/dev/null 2>&1 && [[ -n "$(bcs_cask_registered_version "$(bcs_cask_name "$VOICEBAR_CASK_TOKEN")")" ]]
 }
 
 voicebar_app_update_mode() {
     if voicebar_cask_installed; then
-        printf 'cask-upgrade\n'
+        printf 'cask-sync\n'
         return
     fi
 
@@ -239,18 +257,15 @@ voicebar_app_update_mode() {
             printf 'local-build\n'
             ;;
         *)
-            printf 'cask-install\n'
+            printf 'cask-sync\n'
             ;;
     esac
 }
 
 voicebar_app_update_label() {
     case "$(voicebar_app_update_mode)" in
-        cask-upgrade)
-            printf 'brew upgrade --cask %s\n' "$VOICEBAR_CASK_TOKEN"
-            ;;
-        cask-install)
-            printf 'brew install --cask %s\n' "$VOICEBAR_CASK_TOKEN"
+        cask-sync)
+            printf 'drift-proof brew cask sync of %s\n' "$VOICEBAR_CASK_TOKEN"
             ;;
         *)
             print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
@@ -318,7 +333,7 @@ print_plan() {
             log "  3. + $app_update (postflight performs the single requested VoiceBar relaunch)"
             ;;
         *)
-            log "  3. + $app_update (Homebrew installs the notarized VoiceBar cask artifact)"
+            log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
             ;;
     esac
     log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
@@ -330,8 +345,10 @@ print_plan() {
         log "     $(source_path ".voicelayer/daemon.secret") -> $VOICELAYER_HOME/daemon.secret"
         log "     $(source_path ".local/state/voicelayer/stt-vocabulary.json") -> $STATE_HOME/stt-vocabulary.json"
         log "  6. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
+        log "  7. verify app/cask/formula/process/launchd/sockets and print a green summary"
     else
         log "  5. dedupe VoiceBar, restore F5 remap + autostart, and verify hotkey health"
+        log "  6. verify app/cask/formula/process/launchd/sockets and print a green summary"
     fi
     log ""
 }
@@ -398,29 +415,17 @@ update_package() {
 }
 
 update_voicebar_app() {
-    local outdated_casks=""
-
     case "$(voicebar_app_update_mode)" in
-        cask-upgrade)
-            if [[ "$DRY_RUN_COMMANDS" = "1" ]]; then
-                run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
-            else
-                outdated_casks="$(
-                    brew outdated --cask --quiet "$VOICEBAR_CASK_TOKEN"
-                )"
-                if [[ -n "$outdated_casks" ]]; then
-                    run_cmd brew upgrade --cask "$VOICEBAR_CASK_TOKEN"
-                else
-                    log "VoiceBar cask is already current; skipping upgrade."
-                fi
-            fi
+        cask-sync)
+            bcs_sync_cask \
+                "$VOICEBAR_CASK_TOKEN" \
+                "$VOICEBAR_CANONICAL_APP" \
+                "$CASK_BACKUP_ROOT" \
+                "$VOICEBAR_CASK_TAP_BRANCH"
             if voicebar_cask_repair_needed; then
                 log "Resident VoiceBar failed canonical signature checks; reinstalling the cask."
-                run_cmd brew reinstall --cask "$VOICEBAR_CASK_TOKEN"
+                bcs_brew_run reinstall --cask "$VOICEBAR_CASK_TOKEN"
             fi
-            ;;
-        cask-install)
-            run_cmd brew install --cask "$VOICEBAR_CASK_TOKEN"
             ;;
         *)
             run_cmd env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash "$PACKAGE_ROOT/flow-bar/build-app.sh" "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
@@ -473,6 +478,73 @@ repair_and_verify_voicebar_hotkey_path() {
     verify_voicebar_hotkey_health "${health_args[@]+"${health_args[@]}"}"
 }
 
+check_row() {
+    # check_row <label> <ok:0|1> <detail>
+    local label="$1"
+    local ok="$2"
+    local detail="$3"
+    if [[ "$ok" -eq 0 ]]; then
+        log "  OK    $label: $detail"
+    else
+        log "  FAIL  $label: $detail"
+        VERIFY_FAILURES=$((VERIFY_FAILURES + 1))
+    fi
+}
+
+launchd_service_loaded() {
+    launchctl print "gui/$(id -u)/$1" >/dev/null 2>&1
+}
+
+verify_voicebar_stack() {
+    local cask_name app_version cask_version formula_version offered
+    local expect_running=1
+    VERIFY_FAILURES=0
+
+    if [[ "$NO_STOP" -eq 1 || "$NO_RELAUNCH" -eq 1 ]]; then
+        expect_running=0
+    fi
+
+    cask_name="$(bcs_cask_name "$VOICEBAR_CASK_TOKEN")"
+    app_version="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
+    cask_version="$(bcs_cask_registered_version "$cask_name")"
+    formula_version="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
+    offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_TOKEN")"
+
+    log ""
+    log "VoiceLayer sync summary"
+
+    check_row "tap offer" "$([[ -n "$offered" ]] && printf 0 || printf 1)" \
+        "${offered:-could not read the tapped cask}"
+    check_row "app bundle" "$([[ -n "$app_version" && ( -z "$offered" || "$app_version" = "$offered" ) ]] && printf 0 || printf 1)" \
+        "${app_version:-not installed} ($VOICEBAR_CANONICAL_APP)"
+    check_row "cask ledger" "$([[ -n "$cask_version" && ( -z "$offered" || "$cask_version" = "$offered" ) ]] && printf 0 || printf 1)" \
+        "${cask_version:-not registered with brew}"
+    check_row "formula" "$([[ -n "$formula_version" && ( -z "$offered" || "$formula_version" = "$offered" ) ]] && printf 0 || printf 1)" \
+        "$VOICEBAR_FORMULA_NAME ${formula_version:-not installed}"
+
+    if [[ "$expect_running" -eq 1 ]]; then
+        check_row "process" "$(pgrep -f "$VOICEBAR_CANONICAL_APP/Contents/MacOS/" >/dev/null 2>&1 && printf 0 || printf 1)" \
+            "VoiceBar running"
+        check_row "launchd voicebar" "$(launchd_service_loaded com.voicelayer.voicebar && printf 0 || printf 1)" \
+            "com.voicelayer.voicebar"
+        check_row "launchd F5 relay" "$(launchd_service_loaded com.voicelayer.f5-to-f18-hidutil && printf 0 || printf 1)" \
+            "com.voicelayer.f5-to-f18-hidutil"
+        check_row "voicebar socket" "$([[ -S "$VOICEBAR_SOCKET_PATH" ]] && printf 0 || printf 1)" \
+            "$VOICEBAR_SOCKET_PATH"
+        check_row "mcp socket" "$([[ -S "$MCP_SOCKET_PATH" ]] && printf 0 || printf 1)" \
+            "$MCP_SOCKET_PATH"
+    else
+        log "  SKIP  runtime checks: --no-stop/--no-relaunch asked for VoiceBar to stay down"
+    fi
+
+    if [[ "$VERIFY_FAILURES" -ne 0 ]]; then
+        err "VoiceLayer is NOT canonical on this Mac: $VERIFY_FAILURES check(s) failed above."
+        return 1
+    fi
+
+    log "GREEN: this Mac is canonical at ${offered:-$app_version}."
+}
+
 main() {
     parse_args "$@"
     validate_args
@@ -497,9 +569,9 @@ main() {
         ensure_command "$RSYNC_BIN"
     fi
     case "$(voicebar_app_update_mode)" in
-        cask-upgrade|cask-install)
+        cask-sync)
             if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
-                ensure_command brew
+                bcs_require_brew || exit 1
             fi
             ;;
     esac
@@ -509,6 +581,9 @@ main() {
     install_qwen3_model
     sync_personal_data
     repair_and_verify_voicebar_hotkey_path
+    if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
+        verify_voicebar_stack
+    fi
     log "VoiceLayer update complete."
 }
 

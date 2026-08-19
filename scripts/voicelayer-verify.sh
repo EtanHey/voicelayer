@@ -386,7 +386,9 @@ if [ "${VOICELAYER_VERIFY_SKIP_BUILD:-0}" = "1" ]; then
   printf '[voicelayer-verify] VOICELAYER_VERIFY_SKIP_BUILD=1; skipping build.\n'
 else
   printf '[voicelayer-verify] rebuilding VoiceBar.app...\n'
-  (cd "$REPO_ROOT/flow-bar" && ./build-app.sh)
+  # This gate deliberately swaps the resident app so the MCP reconnects to the
+  # branch build; `voicelayer update` re-registers it with brew afterwards.
+  (cd "$REPO_ROOT/flow-bar" && VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1 ./build-app.sh)
 fi
 
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then

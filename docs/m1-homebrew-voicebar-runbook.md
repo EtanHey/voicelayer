@@ -71,11 +71,14 @@ uname -m
 printf "uid=%s home=%s\n" "$(id -u)" "$HOME"
 
 printf "== brew ==\n"
-brew tap
-HOMEBREW_NO_AUTO_UPDATE=1 brew list --versions voicelayer cmuxlayer brainlayer 2>/dev/null || true
-HOMEBREW_NO_AUTO_UPDATE=1 brew list --cask --versions voicebar brainbar 2>/dev/null || true
-HOMEBREW_NO_AUTO_UPDATE=1 brew info etanhey/layers/voicelayer || true
-HOMEBREW_NO_AUTO_UPDATE=1 brew info --cask etanhey/layers/voicebar || true
+BREW=/opt/homebrew/bin/brew
+$BREW tap
+HOMEBREW_NO_AUTO_UPDATE=1 $BREW list --versions voicelayer cmuxlayer brainlayer 2>/dev/null || true
+HOMEBREW_NO_AUTO_UPDATE=1 $BREW list --cask --versions voicebar brainbar 2>/dev/null || true
+HOMEBREW_NO_AUTO_UPDATE=1 $BREW info etanhey/layers/voicelayer || true
+HOMEBREW_NO_AUTO_UPDATE=1 $BREW info --cask etanhey/layers/voicebar || true
+printf "== drift ==\n"
+/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" /Applications/VoiceBar.app/Contents/Info.plist 2>/dev/null || echo "no resident app"
 
 printf "== launchd ==\n"
 launchctl print "gui/$(id -u)/com.voicelayer.voicebar" 2>&1 || true
@@ -110,33 +113,75 @@ done
 
 ## 3. Install Or Upgrade With Homebrew
 
-Run on the M1:
+**One command, from any starting state:**
+
+```bash
+voicelayer update
+```
+
+That is the whole procedure. It is idempotent — running it twice is a no-op — and it is correct
+whether the Mac has a clean registration, a stale one, an unmanaged hand-placed bundle, or nothing
+at all. It refreshes the tap explicitly, detects drift, repairs it without sudo, and ends by
+printing a green summary (or failing loudly).
+
+If `voicelayer` is not installed yet, bootstrap it once:
 
 ```bash
 # Over ssh use the absolute path; bare `brew` is not on the non-interactive PATH.
 BREW=/opt/homebrew/bin/brew
-
 $BREW tap etanhey/layers
-$BREW trust --formula etanhey/layers/voicelayer
-$BREW trust --cask etanhey/layers/voicebar
-$BREW update
-
-# Check what brew thinks is installed BEFORE touching anything. A stale registration
-# (e.g. a version brew still lists but /Applications no longer matches) sends `install`
-# down the upgrade path, which runs `uninstall` first.
-$BREW list --versions --cask voicebar || true
-ls /opt/homebrew/Caskroom/voicebar 2>/dev/null || true
-
-$BREW upgrade etanhey/layers/voicelayer || $BREW install etanhey/layers/voicelayer
-$BREW upgrade --cask etanhey/layers/voicebar || $BREW install --cask etanhey/layers/voicebar
-voicelayer setup
+$BREW install --cask etanhey/layers/voicebar
+voicelayer update
 ```
+
+### What `voicelayer update` does about drift
+
+Drift means **brew's ledger and the disk disagree** about which VoiceBar is installed. It happens
+whenever something writes `/Applications/VoiceBar.app` without telling brew — a local
+`build-app.sh`, an rsync'd bundle, an unzipped release.
+
+`scripts/lib/brew-cask-sync.sh` handles it:
+
+1. Refresh the tap explicitly — `git -C <tap> pull --ff-only origin main`. `brew update` did **not**
+   refresh `etanhey/layers` on 2026-08-19; it sat 3 commits behind, still serving the destructive
+   definition.
+2. Compare the tapped `version`, `brew list --versions --cask voicebar`, and the real
+   `CFBundleShortVersionString` in `/Applications/VoiceBar.app`.
+3. On drift, **do not upgrade.** Move the stale (user-owned) `Caskroom/voicebar` aside into
+   `~/Library/Application Support/VoiceBar/Backups/`, then `brew install --cask --force` to adopt
+   the app in place. Nothing is deleted and no uninstall recipe runs.
+4. Never shell out to root. If clearing the registration would need sudo, it stops and says so
+   **before** changing anything.
+
+Recover by hand only if the script itself is unavailable — this is the same sequence, and it is what
+actually worked on 2026-08-19:
+
+```bash
+mv /opt/homebrew/Caskroom/voicebar ~/voicebar-caskroom-backup
+/opt/homebrew/bin/brew install --cask --force etanhey/layers/voicebar
+```
+
+`--force` is what lets brew adopt an app that is already on disk; without it you get
+`It seems there is already an App at '/Applications/VoiceBar.app'`.
+
+### Do not create drift in the first place
+
+`flow-bar/build-app.sh` now **refuses** to write `/Applications/VoiceBar.app` on a Mac where the
+`voicebar` cask is registered. Build somewhere else instead:
+
+```bash
+bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.app"
+```
+
+Deliberately swapping the resident app to test a branch build (the lifecycle in `AGENTS.md`) is
+still possible with `VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1`; it warns that brew's ledger is now
+stale and tells you to run `voicelayer update` to put the Mac back.
 
 Verify the tap line before proceeding:
 
 ```bash
-brew info etanhey/layers/voicelayer | sed -n '1,20p'
-brew info --cask etanhey/layers/voicebar | sed -n '1,30p'
+/opt/homebrew/bin/brew info etanhey/layers/voicelayer | sed -n '1,20p'
+/opt/homebrew/bin/brew info --cask etanhey/layers/voicebar | sed -n '1,30p'
 ```
 
 Expected:
@@ -222,18 +267,26 @@ Then verify the real user path:
 The M1 is green only after all four runtime checks pass.
 
 
-## Known Failure Mode — fixed in the tap 2026-08-19
+## Known Failure Mode — `sudo rm` during a cask upgrade
 
 Before tap PR #30, the cask's `uninstall delete:` shelled out to `sudo rm` unconditionally
 (`uninstall_delete` passes `sudo: true`, Homebrew `cask/artifact/abstract_uninstall.rb:509`). Over
 ssh there is no TTY, so sudo could not prompt, the uninstall aborted — and because the upgrade path
 runs uninstall *first*, `brew upgrade --cask` and `brew install --cask` both died with it, after the
-destructive half had already run. That deleted `/Applications/VoiceBar.app` on the M1.
+destructive half had already run. That deleted `/Applications/VoiceBar.app` on the M1, and on
+2026-08-19 destroyed the main Mac's LaunchAgents too.
 
-Fixed in tap PR #30 (`67f567a`, merged 2026-08-19T14:45Z) by switching that stanza to `trash:`,
-which needs no root — nothing in `~/Library/LaunchAgents` is root-owned.
+Tap PR #30 (`67f567a`, merged 2026-08-19T14:45Z) switched that stanza to `trash:`, which needs no
+root — nothing in `~/Library/LaunchAgents` is root-owned.
 
-**The fix is tied to the tap revision, not the app version.** Cask `2.2.6` exists both pre- and
-post-fix: the 2.2.6 install that broke the M1 ran against the pre-fix definition. So always
-`$BREW update` before a cask operation, and if you see `sudo: a terminal is required to read the
-password`, your tap predates `67f567a` — update it and retry rather than reaching for sudo.
+**That fix does NOT rescue a machine that is already registered at a pre-fix version.** Homebrew
+reads the uninstall stanza from the **old** version's saved cask in
+`Caskroom/voicebar/.metadata/<version>/*/Casks/voicebar.rb`, never from the newly tapped one. A Mac
+whose ledger still says `2.1.10` will run `2.1.10`'s `sudo rm` no matter how current the tap is.
+
+This is why the drift path never upgrades. `voicelayer update` greps the saved cask for `delete:`
+and `sudo: true`; if the recipe it would run needs root, it re-registers instead — clearing the
+stale entry and adopting with `--force`, so that recipe is never executed.
+
+If you ever see `sudo: a terminal is required to read the password`, do not reach for sudo. Run
+`voicelayer update`.
