@@ -11,6 +11,49 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     public let createdAt: Date
     public let transcript: String
     public let audioPath: URL
+    /// Mic-on time: how long the recording actually ran.
+    public let durationMs: Int?
+    /// The slice of that audio handed to speech-to-text. Shorter than `durationMs`
+    /// when the trailing-silence trim fired.
+    public let transcribedDurationMs: Int?
+
+    public init(
+        id: String,
+        dayKey: String,
+        recordingID: String,
+        createdAt: Date,
+        transcript: String,
+        audioPath: URL,
+        durationMs: Int? = nil,
+        transcribedDurationMs: Int? = nil
+    ) {
+        self.id = id
+        self.dayKey = dayKey
+        self.recordingID = recordingID
+        self.createdAt = createdAt
+        self.transcript = transcript
+        self.audioPath = audioPath
+        self.durationMs = durationMs
+        self.transcribedDurationMs = transcribedDurationMs
+    }
+
+    public var durationLabel: String? {
+        Self.clockLabel(durationMs)
+    }
+
+    /// Only surfaced when it differs from mic-on time — otherwise every VAD row
+    /// would carry a redundant twin of the same number.
+    public var transcribedDurationLabel: String? {
+        guard let transcribedDurationMs, let durationMs else { return nil }
+        guard abs(transcribedDurationMs - durationMs) >= 1000 else { return nil }
+        return Self.clockLabel(transcribedDurationMs)
+    }
+
+    static func clockLabel(_ milliseconds: Int?) -> String? {
+        guard let milliseconds, milliseconds > 0 else { return nil }
+        let totalSeconds = Int((Double(milliseconds) / 1000).rounded())
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
+    }
 
     public var hasTranscript: Bool {
         !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -210,17 +253,23 @@ public enum SettingsHistoryArchive {
             recordingID: recordingID,
             createdAt: createdAt,
             transcript: transcript,
-            audioPath: audioURL
+            audioPath: audioURL,
+            durationMs: metadata?.durationMs,
+            transcribedDurationMs: metadata?.transcribedDurationMs
         )
     }
 
     private struct Metadata: Decodable {
         let id: String?
         let createdAt: String?
+        let durationMs: Int?
+        let transcribedDurationMs: Int?
 
         enum CodingKeys: String, CodingKey {
             case id
             case createdAt = "created_at"
+            case durationMs = "duration_ms"
+            case transcribedDurationMs = "transcribed_duration_ms"
         }
     }
 

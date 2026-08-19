@@ -147,6 +147,9 @@ interface RetainedRecordingMetadata {
   schema_version: 1;
   polish_surface: STTPolishSurface;
   audio_sha256: string;
+  archive_audio_path?: string;
+  /** SHA-256 of the ARCHIVED file at link time, so a replaced archive is detectable. */
+  archive_audio_sha256?: string;
 }
 
 function clearRetainedRecordingMetadata(): void {
@@ -213,6 +216,177 @@ function retainedPolishSurfaceForRetranscription(): STTPolishSurface {
   return "dictation";
 }
 
+function retainedRecordingAudioSha256(): string {
+  return createHash("sha256")
+    .update(readFileSync(retainedRecordingFilePath()))
+    .digest("hex");
+}
+
+function readRetainedRecordingMetadata(): RetainedRecordingMetadata | null {
+  const metadataPath = retainedRecordingMetadataFilePath();
+  if (!existsSync(metadataPath)) return null;
+
+  try {
+    const metadata: unknown = JSON.parse(readFileSync(metadataPath, "utf8"));
+    if (
+      metadata &&
+      typeof metadata === "object" &&
+      "schema_version" in metadata &&
+      "polish_surface" in metadata &&
+      "audio_sha256" in metadata &&
+      metadata.schema_version === 1 &&
+      (metadata.polish_surface === "dictation" ||
+        metadata.polish_surface === "voice_ask") &&
+      typeof metadata.audio_sha256 === "string" &&
+      (!("archive_audio_path" in metadata) ||
+        typeof metadata.archive_audio_path === "string")
+    ) {
+      return metadata as RetainedRecordingMetadata;
+    }
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to read retained recording metadata: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return null;
+}
+
+export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
+  const trimmedPath = archiveAudioPath.trim();
+  if (!trimmedPath || !existsSync(retainedRecordingFilePath())) return;
+
+  try {
+    const audioSha256 = retainedRecordingAudioSha256();
+    const existing = readRetainedRecordingMetadata();
+    const metadata: RetainedRecordingMetadata = {
+      schema_version: 1,
+      polish_surface:
+        existing?.audio_sha256 === audioSha256
+          ? existing.polish_surface
+          : "dictation",
+      audio_sha256: audioSha256,
+      archive_audio_path: trimmedPath,
+      archive_audio_sha256: existsSync(trimmedPath)
+        ? archivedAudioSha256(trimmedPath)
+        : undefined,
+    };
+    atomicWriteFile(
+      retainedRecordingMetadataFilePath(),
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to link retained capture to archive: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function retainedArchiveAudioPath(): string | null {
+  const metadata = readRetainedRecordingMetadata();
+  if (!metadata?.archive_audio_path?.trim()) return null;
+  if (metadata.audio_sha256 !== retainedRecordingAudioSha256()) return null;
+  try {
+    const archivedPath = requireArchivedRecordingAudioPath(
+      metadata.archive_audio_path,
+    );
+    // AIDEV-NOTE: the retained hash only proves WHICH capture we still hold, not
+    // that the archive folder still holds that same capture. Archive and retained
+    // bytes are NOT required to be identical, so this compares against the hash
+    // taken of the ARCHIVED file at link time. Without it, a replaced audio.wav
+    // takes this retranscription and another recording's transcript is
+    // overwritten. Links written before this field existed have nothing to
+    // compare and keep the old trust-the-path behavior.
+    if (
+      metadata.archive_audio_sha256 !== undefined &&
+      metadata.archive_audio_sha256 !== archivedAudioSha256(archivedPath)
+    ) {
+      console.error(
+        `[voicelayer] Linked archive no longer matches the retained capture; skipping archive update: ${archivedPath}`,
+      );
+      return null;
+    }
+    return metadata.archive_audio_path;
+  } catch (err) {
+    console.error(
+      `[voicelayer] Ignoring invalid linked archive audio path: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+function pushToEndForArchivedAudio(audioPath: string): boolean {
+  const metadataPath = join(dirname(audioPath), "metadata.json");
+  if (!existsSync(metadataPath)) return true;
+
+  try {
+    const metadata: unknown = JSON.parse(readFileSync(metadataPath, "utf8"));
+    if (
+      metadata &&
+      typeof metadata === "object" &&
+      "mode" in metadata &&
+      metadata.mode === "vad"
+    ) {
+      return false;
+    }
+  } catch (err) {
+    console.error(
+      `[voicelayer] Failed to read archived recording mode: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  return true;
+}
+
+function readWavPcmData(wavPath: string): Uint8Array {
+  const wavData = readFileSync(wavPath);
+  const validationError = wavHeaderValidationError(
+    wavPath,
+    wavData,
+    wavData.byteLength,
+  );
+  if (validationError) {
+    throw new Error(validationError);
+  }
+  return new Uint8Array(wavData.subarray(44));
+}
+
+function prepareRetranscribeWavForSTT(
+  sourceWavPath: string,
+  pushToEnd: boolean,
+): {
+  sttWavPath: string;
+  cleanup: () => void;
+  transcribedDurationMs: number;
+} {
+  const sttTrim = trimTrailingSilenceForSTT(
+    readWavPcmData(sourceWavPath),
+    pushToEnd,
+  );
+  if (!sttTrim.trimmed) {
+    return {
+      sttWavPath: sourceWavPath,
+      cleanup: () => {},
+      transcribedDurationMs: sttTrim.transcribedDurationMs,
+    };
+  }
+
+  const tempPath = recordingFilePath(process.pid, Date.now());
+  writeFileSync(tempPath, createWavBuffer(sttTrim.pcmData));
+  console.error(
+    `[voicelayer] Trimmed trailing silence before retranscription: raw=${sttTrim.rawDurationMs}ms, transcribed=${sttTrim.transcribedDurationMs}ms`,
+  );
+  return {
+    sttWavPath: tempPath,
+    cleanup: () => {
+      try {
+        if (existsSync(tempPath)) unlinkSync(tempPath);
+      } catch {}
+    },
+    transcribedDurationMs: sttTrim.transcribedDurationMs,
+  };
+}
+
 export function retainLastCaptureForRecovery(
   wavData: Uint8Array,
   polishSurface: STTPolishSurface | null,
@@ -250,7 +424,8 @@ export async function finalizeTranscriptionTextForSurface(
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = process.env,
 ): Promise<string> {
-  return (await finalizeTranscriptionResultForSurface(rawText, surface, env)).text;
+  return (await finalizeTranscriptionResultForSurface(rawText, surface, env))
+    .text;
 }
 
 export interface FinalizedTranscriptionResult {
@@ -325,11 +500,13 @@ export function polishSurfaceForWaitOptions(
   return null;
 }
 
-export function warmPolishEndpointAtRecordingStart(options: {
-  env?: STTPolishEnv;
-  warm?: (env: STTPolishEnv) => Promise<STTPolishWarmupResult>;
-  appendEvent?: typeof appendControlLayerEvent;
-} = {}): void {
+export function warmPolishEndpointAtRecordingStart(
+  options: {
+    env?: STTPolishEnv;
+    warm?: (env: STTPolishEnv) => Promise<STTPolishWarmupResult>;
+    appendEvent?: typeof appendControlLayerEvent;
+  } = {},
+): void {
   const env = options.env ?? process.env;
   const warm = options.warm ?? warmPolishEndpoint;
   const appendEvent = options.appendEvent ?? appendControlLayerEvent;
@@ -398,11 +575,10 @@ export interface VoiceBarRecordingArchiveInput {
   backend: string;
 }
 
-export interface VoiceBarUntranscribedRecordingArchiveInput
-  extends Omit<
-    VoiceBarRecordingArchiveInput,
-    "transcript" | "transcribedDurationMs"
-  > {
+export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
+  VoiceBarRecordingArchiveInput,
+  "transcript" | "transcribedDurationMs"
+> {
   reason: "cancelled";
 }
 
@@ -698,7 +874,11 @@ function wavHeaderValidationError(
   return null;
 }
 
-function repairRetainedWavHeader(path: string, data: Buffer, dataSize: number): void {
+function repairRetainedWavHeader(
+  path: string,
+  data: Buffer,
+  dataSize: number,
+): void {
   if (dataSize > 0xffffffff - 36) {
     throw new Error(
       `Retained recording is too large to repair as WAV: ${path} has ${dataSize} audio bytes on disk.`,
@@ -739,11 +919,7 @@ function retainedRetranscriptionError(path: string, err: unknown): Error {
   );
 }
 
-function writeAllSync(
-  fd: number,
-  data: Uint8Array,
-  position: number,
-): void {
+function writeAllSync(fd: number, data: Uint8Array, position: number): void {
   let writtenTotal = 0;
   while (writtenTotal < data.byteLength) {
     const written = writeSync(
@@ -1431,10 +1607,7 @@ class IncrementalRecoveryWavWriter {
   flushSnapshot(chunks: Uint8Array[]): void {
     const pcmData = flattenChunks(chunks);
     if (pcmData.byteLength === 0) return;
-    retainLastCaptureForRecovery(
-      createWavBuffer(pcmData),
-      this.polishSurface,
-    );
+    retainLastCaptureForRecovery(createWavBuffer(pcmData), this.polishSurface);
     this.initialized = true;
     this.chunksSinceFsync = 0;
   }
@@ -1509,8 +1682,15 @@ export class ChunkedRecordingSession {
     this.hasSpeech = false;
     this.silenceChunks = 0;
 
-    for (let offset = 0; offset < pcmData.byteLength; offset += VAD_CHUNK_BYTES) {
-      this.pushChunk(pcmData.slice(offset, offset + VAD_CHUNK_BYTES), speechDetected);
+    for (
+      let offset = 0;
+      offset < pcmData.byteLength;
+      offset += VAD_CHUNK_BYTES
+    ) {
+      this.pushChunk(
+        pcmData.slice(offset, offset + VAD_CHUNK_BYTES),
+        speechDetected,
+      );
     }
   }
 
@@ -2377,10 +2557,7 @@ export async function waitForInput(
           durationMs,
           transcribedDurationMs: durationMs,
         });
-        invokeArchiveCreatedObserver(
-          archivePath,
-          options.onArchiveCreated,
-        );
+        invokeArchiveCreatedObserver(archivePath, options.onArchiveCreated);
       } catch (archiveErr) {
         const detail =
           archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
@@ -2390,7 +2567,9 @@ export async function waitForInput(
           error: detail,
           recording_error: err.originalError.message,
         });
-        throw new Error(`voice_ask archive failed after capture abort: ${detail}`);
+        throw new Error(
+          `voice_ask archive failed after capture abort: ${detail}`,
+        );
       }
     }
     appendControlLayerEvent("capture.recording_failed", {
@@ -2441,7 +2620,9 @@ export async function waitForInput(
       );
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      console.error(`[voicelayer] Failed to archive voice_ask capture: ${detail}`);
+      console.error(
+        `[voicelayer] Failed to archive voice_ask capture: ${detail}`,
+      );
       const archiveError = `voice_ask archive failed: ${detail}`;
       appendControlLayerEvent("capture.archive_failed", {
         archive_source: "voice_ask",
@@ -2486,7 +2667,7 @@ export async function waitForInput(
     );
     if (options.archiveSource === "voicebar") {
       try {
-        archiveVoiceBarUntranscribedRecording({
+        const cancelledArchivePath = archiveVoiceBarUntranscribedRecording({
           audioBytes: retainedWavData,
           source: options.archiveSource,
           silenceMode,
@@ -2495,6 +2676,7 @@ export async function waitForInput(
           backend: "not-transcribed",
           reason: "cancelled",
         });
+        linkRetainedCaptureToArchive(join(cancelledArchivePath, "audio.wav"));
       } catch (err) {
         console.error(
           `[voicelayer] Failed to archive cancelled recording: ${err instanceof Error ? err.message : String(err)}`,
@@ -2530,8 +2712,7 @@ export async function waitForInput(
   }
 
   const noSpeechGate = evaluateNoSpeechGate(sttTrim.pcmData);
-  const vadNoSpeech =
-    !pushToEnd && captureState.vadSpeechDetected === false;
+  const vadNoSpeech = !pushToEnd && captureState.vadSpeechDetected === false;
   const transcriptionAllowed = noSpeechGate.allowed && !vadNoSpeech;
   console.error(
     `[voicelayer] Recording gate: duration=${noSpeechGate.durationMs}ms, ` +
@@ -2542,9 +2723,7 @@ export async function waitForInput(
       (sttTrim.trimmed ? `, raw_duration=${sttTrim.rawDurationMs}ms` : ""),
   );
   if (!transcriptionAllowed) {
-    const noSpeechReason = vadNoSpeech
-      ? "vad-no-speech"
-      : noSpeechGate.reason;
+    const noSpeechReason = vadNoSpeech ? "vad-no-speech" : noSpeechGate.reason;
     const captureFailure = vadNoSpeech
       ? null
       : classifyCaptureFailure(noSpeechGate);
@@ -2655,25 +2834,28 @@ export async function waitForInput(
     if (useChunkedTranscription) {
       chunkedSession.finalize();
       const segments = chunkedSession.consumeSegments();
-      const rawText = await transcribeChunkSequenceRaw(segments, async (chunk, prompt) => {
-        const chunkPath = recordingFilePath(
-          process.pid,
-          Date.now() + Math.random(),
-        );
-        try {
-          throwIfWaitForInputAborted(options.signal);
-          writeFileSync(chunkPath, createWavBuffer(chunk));
-          const result = await backend.transcribe(chunkPath, {
-            promptOverride: prompt,
-          });
-          throwIfWaitForInputAborted(options.signal);
-          return result.text;
-        } finally {
+      const rawText = await transcribeChunkSequenceRaw(
+        segments,
+        async (chunk, prompt) => {
+          const chunkPath = recordingFilePath(
+            process.pid,
+            Date.now() + Math.random(),
+          );
           try {
-            if (existsSync(chunkPath)) unlinkSync(chunkPath);
-          } catch {}
-        }
-      });
+            throwIfWaitForInputAborted(options.signal);
+            writeFileSync(chunkPath, createWavBuffer(chunk));
+            const result = await backend.transcribe(chunkPath, {
+              promptOverride: prompt,
+            });
+            throwIfWaitForInputAborted(options.signal);
+            return result.text;
+          } finally {
+            try {
+              if (existsSync(chunkPath)) unlinkSync(chunkPath);
+            } catch {}
+          }
+        },
+      );
       throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         rawText,
@@ -2732,12 +2914,13 @@ export async function waitForInput(
             });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
-        console.error(
-          `[voicelayer] Failed to archive recording: ${detail}`,
-        );
+        console.error(`[voicelayer] Failed to archive recording: ${detail}`);
         if (options.archiveSource === "voice_ask") {
           throw new Error(`voice_ask archive failed: ${detail}`);
         }
+      }
+      if (archivedRecordingPath) {
+        linkRetainedCaptureToArchive(join(archivedRecordingPath, "audio.wav"));
       }
     }
 
@@ -2828,10 +3011,19 @@ export function hasRetainedRecording(): boolean {
   return existsSync(retainedRecordingFilePath());
 }
 
-function updateArchivedTranscript(
+// AIDEV-NOTE: `transcribed_duration_ms` is the slice of audio STT actually saw,
+// which is shorter than `duration_ms`/`raw_duration_ms` (mic-on time) whenever the
+// trailing-silence trim fires. Retranscribing recomputes that slice, so the field
+// must be rewritten here or the archive keeps reporting the original capture's
+// value forever — which is what happened before this was threaded through.
+export function updateArchivedTranscript(
   audioPath: string,
   text: string,
-  transcription: { backend: string; languageMode: string },
+  transcription: {
+    backend: string;
+    languageMode: string;
+    transcribedDurationMs?: number;
+  },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
   atomicWriteFile(transcriptPath, text);
@@ -2840,6 +3032,9 @@ function updateArchivedTranscript(
     metadata.backend = transcription.backend;
     metadata.language_mode = transcription.languageMode;
     metadata.transcription_status = "transcribed";
+    if (transcription.transcribedDurationMs !== undefined) {
+      metadata.transcribed_duration_ms = transcription.transcribedDurationMs;
+    }
     metadata.voicelayer_transcript_chars = text.length;
     if (metadata.source === "voice_ask") {
       metadata.user_transcript_chars = text.length;
@@ -2914,34 +3109,44 @@ export async function retranscribeRecordingCapture(
     console.error(
       `[voicelayer] Retranscribing archived recording with ${backend.name}: ${wavPath}`,
     );
-    const result = await backend.transcribe(wavPath);
-    const finalized = await finalizeTranscriptionResultForSurface(
-      result.text,
-      "dictation",
-    );
-    const text = finalized.text;
-    if (result.text.trim() && !text) {
-      console.error(
-        `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
+    const { sttWavPath, cleanup, transcribedDurationMs } =
+      prepareRetranscribeWavForSTT(
+        wavPath,
+        pushToEndForArchivedAudio(wavPath),
       );
-    }
-    console.error(`[voicelayer] Archived retranscription: ${text}`);
+    try {
+      const result = await backend.transcribe(sttWavPath);
+      const finalized = await finalizeTranscriptionResultForSurface(
+        result.text,
+        "dictation",
+      );
+      const text = finalized.text;
+      if (result.text.trim() && !text) {
+        console.error(
+          `[voicelayer] Suppressed non-meaningful archived retranscription: ${JSON.stringify(result.text)}`,
+        );
+      }
+      console.error(`[voicelayer] Archived retranscription: ${text}`);
 
-    if (text) {
-      updateArchivedTranscript(wavPath, text, {
-        backend: backend.name,
-        languageMode: getLanguageModeFromEnv(),
-      });
-      broadcast({
-        type: "transcription",
-        text,
-        recording_path: eventAudioPath,
-        ...transcriptionPolishMetadata(finalized),
-      });
+      if (text) {
+        updateArchivedTranscript(wavPath, text, {
+          backend: backend.name,
+          languageMode: getLanguageModeFromEnv(),
+          transcribedDurationMs,
+        });
+        broadcast({
+          type: "transcription",
+          text,
+          recording_path: eventAudioPath,
+          ...transcriptionPolishMetadata(finalized),
+        });
+      }
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return text || null;
+    } finally {
+      cleanup();
     }
-    setRecordingState("idle");
-    broadcast({ type: "state", state: "idle", source: "recording" });
-    return text || null;
   } catch (err) {
     setRecordingState("idle");
     const detail = err instanceof Error ? err.message : String(err);
@@ -2991,30 +3196,51 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       status: "transcribing",
       message: "Transcribing",
     });
-    console.error(`[voicelayer] Retranscribing last capture with ${backend.name}...`);
-    const result = await backend.transcribe(wavPath);
-    const finalized = await finalizeTranscriptionResultForSurface(
-      result.text,
-      retainedPolishSurfaceForRetranscription(),
+    console.error(
+      `[voicelayer] Retranscribing last capture with ${backend.name}...`,
     );
-    const text = finalized.text;
-    if (result.text.trim() && !text) {
-      console.error(
-        `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+    const archivedAudioPath = retainedArchiveAudioPath();
+    const sourceWavPath = archivedAudioPath ?? wavPath;
+    const pushToEnd = archivedAudioPath
+      ? pushToEndForArchivedAudio(archivedAudioPath)
+      : false;
+    const { sttWavPath, cleanup, transcribedDurationMs } =
+      prepareRetranscribeWavForSTT(sourceWavPath, pushToEnd);
+    try {
+      const result = await backend.transcribe(sttWavPath);
+      const finalized = await finalizeTranscriptionResultForSurface(
+        result.text,
+        retainedPolishSurfaceForRetranscription(),
       );
-    }
-    console.error(`[voicelayer] Retranscription: ${text}`);
+      const text = finalized.text;
+      if (result.text.trim() && !text) {
+        console.error(
+          `[voicelayer] Suppressed non-meaningful retranscription: ${JSON.stringify(result.text)}`,
+        );
+      }
+      console.error(`[voicelayer] Retranscription: ${text}`);
 
-    if (text) {
-      broadcast({
-        type: "transcription",
-        text,
-        ...transcriptionPolishMetadata(finalized),
-      });
+      if (text) {
+        if (archivedAudioPath) {
+          updateArchivedTranscript(archivedAudioPath, text, {
+            backend: backend.name,
+            languageMode: getLanguageModeFromEnv(),
+            transcribedDurationMs,
+          });
+        }
+        broadcast({
+          type: "transcription",
+          text,
+          ...(archivedAudioPath ? { recording_path: archivedAudioPath } : {}),
+          ...transcriptionPolishMetadata(finalized),
+        });
+      }
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return text || null;
+    } finally {
+      cleanup();
     }
-    setRecordingState("idle");
-    broadcast({ type: "state", state: "idle", source: "recording" });
-    return text || null;
   } catch (err) {
     setRecordingState("idle");
     const retryableError = retainedRetranscriptionError(wavPath, err);
