@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.6] - 2026-08-19
+
+### Fixed
+- **Late-stop push-to-talk no longer hallucinates "All right / Thank you" outros.**
+  Isolated ~250ms clicks were pinning the last-active marker, so a long quiet
+  tail never trimmed and whisper invented a sign-off over the silence. Ignore
+  isolated clicks and silent tails so the trim reaches the real end of speech
+  (#430).
+- **Menu-bar re-transcribe now targets the Settings History entry it came from**,
+  and cancelled captures stay linked to their archived audio (#429).
+- **Archived recordings record the audio that was actually transcribed.**
+  Re-transcribing recomputed the trimmed duration, logged it, then discarded it,
+  so `transcribed_duration_ms` kept reporting the original capture forever.
+  Mic-on time (`duration_ms` / `raw_duration_ms`) is unchanged (#429).
+- **A replaced archive can no longer take another recording's transcript.**
+  The retained-capture link verified the retained WAV but never that the archive
+  still held that capture, so a re-transcription could overwrite a different
+  recording's transcript. The archived file's own checksum is now recorded at
+  link time and verified on use (#429).
+- **Archived WAVs with extra RIFF chunks are rejected before STT** instead of
+  having non-PCM bytes sliced in as audio (#429).
+
+### Added
+- **Settings → History: the date header stays pinned while scrolling**, so a long
+  history no longer loses track of which day you are looking at (#429).
+- **Settings → History shows audio length and transcribed length separately**,
+  the second only when trailing-silence trimming made them differ (#429).
+- **Settings → History gained an Ask tab** (#431).
+
 ## [2.2.5] - 2026-08-15
 
 ### Fixed
