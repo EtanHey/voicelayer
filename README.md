@@ -21,9 +21,7 @@
 
 VoiceLayer runs as a persistent singleton daemon on a Unix socket — every Claude session connects through a lightweight `socat` shim instead of spawning its own process. Exactly 2 canonical MCP tools ship with full [ToolAnnotations](https://spec.modelcontextprotocol.io/specification/2025-03-26/server/tools/#annotations).
 
-**Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
-
-**Current release: v2.1.17.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
+**Current release: v2.2.6.** The [VoiceBar **notch**](#voicebar--the-notch-surface-macos) is the canonical surface — Liquid-Glass wings around the camera housing, morph animations, a karaoke teleprompter, and a right-click menu. Install it with `brew install --cask etanhey/layers/voicebar`.
 
 ## Architecture
 
@@ -426,7 +424,7 @@ voicelayer/
 │   └── edge-tts-words.py         # Word-level TTS with timestamps
 ├── launchd/                      # VoiceBar LaunchAgent + retired daemon cleanup
 ├── models/                       # Silero VAD ONNX model
-└── package.json                  # v2.2.0
+└── package.json                  # version source of truth
 ```
 
 ## Platform Support
