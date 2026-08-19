@@ -77,7 +77,7 @@ That lifecycle is not solid yet, and it has broken F5 and left two VoiceLayers r
 
 - `src/` — TypeScript MCP server
 - `flow-bar/` — Swift VoiceBar app
-- `tests/` — 29 tests
+- `tests/` and `src/__tests__/` — run with `bun test`
 
 ## MCP Tools
 
@@ -89,7 +89,7 @@ That lifecycle is not solid yet, and it has broken F5 and left two VoiceLayers r
 ## Test & Build
 
 ```bash
-bun test           # 236 tests
+bun test                    # full suite (takes a few minutes; touches audio + sockets)
 bash flow-bar/build-app.sh  # Build VoiceBar
 ```
 
@@ -97,6 +97,29 @@ bash flow-bar/build-app.sh  # Build VoiceBar
 
 - `@codex review` + `@cursor @bugbot review` on every PR
 - VoiceLayer is enabled for Codex Cloud reviews
+
+## Releasing — npm publishing is AUTOMATED
+
+- `.github/workflows/publish.yml` triggers on `push: tags: ['v*']`. Pushing the tag publishes.
+- It uses **npm Trusted Publishing (OIDC)** — there is **no `NPM_TOKEN` secret and none is needed**.
+  `id-token: write` lets npm exchange the GitHub OIDC token for a short-lived publish token.
+- Do **not** run `npm publish` by hand, and do **not** report a release blocked on npm credentials.
+  Local npm tokens on this Mac are dead and irrelevant; CI does not use them. On 2026-08-19 a worker
+  burned a cycle "retrying publish" and reported a false 401 blocker to Etan because of this.
+- `npm view <pkg> version` is **not** evidence your publish worked — it shows whatever is on the
+  registry regardless of who put it there. Use the command's exit status and `npm view <pkg> time`.
+- Formula/cask checksums must come from the **published** artifact, never a local `npm pack`:
+  `npm publish` re-packs and gzip embeds a timestamp, so local bytes differ.
+
+## Deploying to the M1 Pro (ssh host `m1`)
+
+- **`brew` is NOT on the M1's non-interactive ssh PATH.** `ssh m1 'brew ...'` returns nothing and
+  reads as "not installed". Always use `/opt/homebrew/bin/brew`. This trap produced two false
+  "M1 is not brew-managed" reports on 2026-08-19, one of which reached Etan.
+- **Never rsync or unzip a bundle into `/Applications` on that box.** It is brew-managed; a
+  hand-placed bundle makes brew's registration and the filesystem disagree, which is what turned a
+  routine cask upgrade destructive and left the M1 with no VoiceBar at all on 2026-08-19.
+- Full procedure: `docs/m1-homebrew-voicebar-runbook.md`.
 
 ## BrainLayer
 
