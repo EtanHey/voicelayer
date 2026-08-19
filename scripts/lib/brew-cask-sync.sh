@@ -139,8 +139,34 @@ bcs_app_bundle_version() {
     fi
     local app_path="$1"
     local info_plist="$app_path/Contents/Info.plist"
+    local version=""
     [[ -f "$info_plist" ]] || return 0
-    /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info_plist" 2>/dev/null || true
+
+    local plist_buddy="${BREW_CASK_SYNC_PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
+    local plutil_bin="${BREW_CASK_SYNC_PLUTIL:-plutil}"
+
+    if [[ -x "$plist_buddy" ]]; then
+        version="$("$plist_buddy" -c 'Print :CFBundleShortVersionString' "$info_plist" 2>/dev/null || true)"
+    fi
+    if [[ -z "$version" ]] && command -v "$plutil_bin" >/dev/null 2>&1; then
+        version="$("$plutil_bin" -extract CFBundleShortVersionString raw -o - "$info_plist" 2>/dev/null || true)"
+    fi
+    # AIDEV-NOTE: last-resort XML parse. A real .app on a Mac always has
+    # PlistBuddy, so this branch is only reached where macOS plist tooling does
+    # not exist -- Linux CI. Reading the version had to stop being Darwin-only:
+    # with PlistBuddy absent every bundle read as "no app", which collapsed all
+    # five drift states to registered-without-app/absent and turned the whole
+    # brew-cask-sync suite red on ubuntu-latest while it passed locally.
+    if [[ -z "$version" ]]; then
+        version="$(awk '
+            /<key>CFBundleShortVersionString<\/key>/ { want = 1; next }
+            want && match($0, /<string>[^<]*<\/string>/) {
+                print substr($0, RSTART + 8, RLENGTH - 17); exit
+            }
+        ' "$info_plist" 2>/dev/null || true)"
+    fi
+
+    printf '%s\n' "$version"
 }
 
 bcs_cask_registered_version() {
@@ -314,6 +340,18 @@ bcs_sync_cask() {
     state="$(bcs_drift_state "$token" "$app_path")"
     app_version="$(bcs_app_bundle_version "$app_path")"
     offered="$(bcs_tap_offered_version "$token")"
+
+    # AIDEV-NOTE: a tapped token with no readable offer means the tap is missing,
+    # half-cloned, or renamed. Without it the post-condition below is skipped and
+    # bcs_sync_cask returns 0 having verified nothing -- a silent green on exactly
+    # the "tap behind / no tap at all" state this library exists to survive. Stop
+    # here, before anything is moved or installed.
+    if [[ -n "$tap" && -z "$offered" ]]; then
+        bcs_err "tap $tap offers no readable version for $name; refusing to act without a version to verify against."
+        bcs_err "Nothing has been changed. Check that $tap is tapped and has Casks/$name.rb, then re-run."
+        return 1
+    fi
+
     bcs_log "state: $state (app='${app_version:-none}' cask='$(bcs_cask_registered_version "$name")' offered='${offered:-unknown}')"
 
     case "$state" in

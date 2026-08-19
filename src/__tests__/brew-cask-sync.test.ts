@@ -355,6 +355,47 @@ describe("brew-cask-sync repair", () => {
 });
 
 describe("brew-cask-sync environment contract", () => {
+  test("the bundle version is readable without any macOS plist tooling", () => {
+    // CI is ubuntu-latest, where /usr/libexec/PlistBuddy does not exist. When
+    // reading the version was Darwin-only, every bundle read as "no app", which
+    // collapsed all five drift states and turned this whole suite red in CI
+    // while it passed locally. Pin the portable path so that cannot recur.
+    const box = sandbox({ appVersion: "2.2.6" });
+    const result = runInLib(box, `bcs_app_bundle_version "${box.appPath}"`, {
+      BREW_CASK_SYNC_PLIST_BUDDY: "/nonexistent/PlistBuddy",
+      BREW_CASK_SYNC_PLUTIL: "nonexistent-plutil",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout).trim()).toBe("2.2.6");
+  });
+
+  test("drift is still detected correctly with no plist tooling", () => {
+    const box = sandbox({ appVersion: "2.2.5", registeredVersion: "2.1.10" });
+    const result = runInLib(box, `bcs_drift_state ${token} "${box.appPath}"`, {
+      BREW_CASK_SYNC_PLIST_BUDDY: "/nonexistent/PlistBuddy",
+      BREW_CASK_SYNC_PLUTIL: "nonexistent-plutil",
+    });
+
+    expect(decode(result.stdout).trim()).toBe("version-drift");
+  });
+
+  test("a tapped token with no readable offer stops before touching anything", () => {
+    // Tap missing, half-cloned, or renamed. Without this guard the final
+    // post-condition is skipped and bcs_sync_cask returns 0 having verified
+    // nothing -- a silent green on the exact state it exists to survive.
+    const box = sandbox({ appVersion: "2.2.6", registeredVersion: "2.2.6" });
+    rmSync(join(box.tapRepo, "Casks", "voicebar.rb"), { force: true });
+    const result = sync(box);
+
+    expect(result.exitCode).toBe(1);
+    expect(decode(result.stderr)).toContain("no readable version");
+    expect(decode(result.stderr)).toContain("Nothing has been changed");
+    expect(brewCalls(box)).not.toContain("install --cask");
+    expect(brewCalls(box)).not.toContain("upgrade --cask");
+    expect(existsSync(box.backupRoot)).toBe(false);
+  });
+
   test("the tap is refreshed with an explicit remote and branch", () => {
     const box = sandbox({});
     Bun.spawnSync(["git", "init", "-q", box.tapRepo], { stderr: "ignore" });
