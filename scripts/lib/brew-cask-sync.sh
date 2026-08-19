@@ -92,9 +92,25 @@ bcs_commands_are_simulated() {
 }
 
 # Mutating brew call, routed through run_cmd so --dry-run prints instead of acts.
+#
+# AIDEV-NOTE: a missing brew is only fatal when the command would really run.
+# Under simulation (--dry-run, or a caller whose run_cmd only prints) there is
+# nothing to execute, so print the brew command that WOULD run and carry on --
+# otherwise the whole update dies mid-sync on Linux CI or on a Mac before
+# Homebrew is installed. bcs_sync_cask short-circuits the same way at its entry,
+# but callers make follow-up brew calls of their own (voicelayer-update.sh's
+# damaged-app `reinstall`), and those have to survive the same state.
+# A real run is still gated: main() calls bcs_require_brew before acting.
 bcs_brew_run() {
     local brew_bin
-    brew_bin="$(bcs_brew_bin)" || return 1
+    if ! brew_bin="$(bcs_brew_bin)"; then
+        if bcs_commands_are_simulated; then
+            bcs_run brew "$@"
+            return 0
+        fi
+        bcs_err "Homebrew not found. Expected /opt/homebrew/bin/brew (Apple silicon) or /usr/local/bin/brew."
+        return 1
+    fi
     bcs_run env HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1 "$brew_bin" "$@"
 }
 

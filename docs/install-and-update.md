@@ -33,9 +33,10 @@ ls -dt "$HOME/Library/Application Support/VoiceBar/Backups/"VoiceBar.backup-*.ap
 ## Update
 
 `voicelayer update` is a cross-machine updater and auto-detects a git checkout vs a global
-package install. It updates the package, rebuilds `/Applications/VoiceBar.app`, runs
-`launchd/install.sh`, pulls the Qwen3-TTS model into `~/.voicelayer` if missing, and restarts
-the VoiceBar stack.
+package install. It updates the package, brings `/Applications/VoiceBar.app` to the canonical
+version — through the drift-proof cask sync below on a brew-managed Mac, or `flow-bar/build-app.sh`
+on a source machine — pulls the Qwen3-TTS model into `~/.voicelayer` if missing, restores the F5
+hotkey path, and restarts the VoiceBar stack.
 
 ```bash
 voicelayer update            # one command, idempotent, correct from any starting state

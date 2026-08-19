@@ -453,6 +453,50 @@ describe("brew-cask-sync environment contract", () => {
     expect(decode(result.stdout)).toContain("already canonical at 2.2.6");
   });
 
+  // A machine with no Homebrew at all: Linux CI, or a Mac before brew is
+  // installed. bcs_sync_cask already short-circuits at its entry; its callers
+  // make follow-up brew calls of their own, and those have to survive too.
+  function runWithoutBrew(body: string) {
+    return Bun.spawnSync(
+      [
+        "bash",
+        "-c",
+        [
+          `. "${syncLib}"`,
+          "bcs_brew_bin() { return 1; }",
+          body,
+        ].join("\n"),
+      ],
+      { cwd: repoRoot, stdout: "pipe", stderr: "pipe", env: { ...process.env } },
+    );
+  }
+
+  test("a simulated brew call on a brew-less machine prints instead of dying", () => {
+    const result = runWithoutBrew(
+      [
+        "bcs_caller_simulates_commands() { return 0; }",
+        "run_cmd() { printf '+ %s\\n' \"$*\"; }",
+        `bcs_brew_run reinstall --cask ${token}`,
+      ].join("\n"),
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout)).toContain(`reinstall --cask ${token}`);
+  });
+
+  test("a real brew call on a brew-less machine fails loudly instead of silently", () => {
+    const result = runWithoutBrew(
+      [
+        "run_cmd() { printf '+ %s\\n' \"$*\"; \"$@\"; }",
+        `bcs_brew_run reinstall --cask ${token}`,
+      ].join("\n"),
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(decode(result.stderr)).toContain("Homebrew not found");
+    expect(decode(result.stdout)).not.toContain(`reinstall --cask ${token}`);
+  });
+
   test("function detection does not use the zsh-broken declare -F idiom", () => {
     const executable = readFileSync(syncLib, "utf8")
       .split("\n")
