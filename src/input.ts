@@ -148,6 +148,8 @@ interface RetainedRecordingMetadata {
   polish_surface: STTPolishSurface;
   audio_sha256: string;
   archive_audio_path?: string;
+  /** SHA-256 of the ARCHIVED file at link time, so a replaced archive is detectable. */
+  archive_audio_sha256?: string;
 }
 
 function clearRetainedRecordingMetadata(): void {
@@ -265,6 +267,9 @@ export function linkRetainedCaptureToArchive(archiveAudioPath: string): void {
           : "dictation",
       audio_sha256: audioSha256,
       archive_audio_path: trimmedPath,
+      archive_audio_sha256: existsSync(trimmedPath)
+        ? archivedAudioSha256(trimmedPath)
+        : undefined,
     };
     atomicWriteFile(
       retainedRecordingMetadataFilePath(),
@@ -282,7 +287,25 @@ function retainedArchiveAudioPath(): string | null {
   if (!metadata?.archive_audio_path?.trim()) return null;
   if (metadata.audio_sha256 !== retainedRecordingAudioSha256()) return null;
   try {
-    requireArchivedRecordingAudioPath(metadata.archive_audio_path);
+    const archivedPath = requireArchivedRecordingAudioPath(
+      metadata.archive_audio_path,
+    );
+    // AIDEV-NOTE: the retained hash only proves WHICH capture we still hold, not
+    // that the archive folder still holds that same capture. Archive and retained
+    // bytes are NOT required to be identical, so this compares against the hash
+    // taken of the ARCHIVED file at link time. Without it, a replaced audio.wav
+    // takes this retranscription and another recording's transcript is
+    // overwritten. Links written before this field existed have nothing to
+    // compare and keep the old trust-the-path behavior.
+    if (
+      metadata.archive_audio_sha256 !== undefined &&
+      metadata.archive_audio_sha256 !== archivedAudioSha256(archivedPath)
+    ) {
+      console.error(
+        `[voicelayer] Linked archive no longer matches the retained capture; skipping archive update: ${archivedPath}`,
+      );
+      return null;
+    }
     return metadata.archive_audio_path;
   } catch (err) {
     console.error(

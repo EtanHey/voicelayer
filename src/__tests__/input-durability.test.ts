@@ -1782,4 +1782,56 @@ describe("input recording durability", () => {
     expect(backendTranscribeCalls).toBe(0);
     expect(readFileSync(transcriptPath, "utf8")).toBe("Old riff transcript.");
   });
+
+  it("retranscribeLastCapture refuses an archive whose audio no longer matches the retained capture", async () => {
+    const archiveDir = join(
+      process.env.QA_VOICE_RECORDINGS_DIR!,
+      "2026-06-25",
+      "2026-06-25T10-11-12-000Z-swapped",
+    );
+    mkdirSync(archiveDir, { recursive: true });
+    const archivedAudioPath = join(archiveDir, "audio.wav");
+    const transcriptPath = join(archiveDir, "voicelayer-transcript.txt");
+    const retainedWav = makeWav(makePcmChunk());
+
+    // A DIFFERENT recording now occupies the linked archive path.
+    const otherWav = makeWav(makePcmChunk(600));
+    writeFileSync(archivedAudioPath, otherWav);
+    writeFileSync(transcriptPath, "Someone else's words.");
+    writeFileSync(
+      join(archiveDir, "metadata.json"),
+      JSON.stringify({ mode: "ptt", transcription_status: "transcribed" }),
+    );
+
+    writeFileSync(retainedPath, retainedWav);
+    writeFileSync(
+      `${retainedPath}.metadata.json`,
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          polish_surface: "dictation",
+          audio_sha256: createHash("sha256").update(retainedWav).digest("hex"),
+          archive_audio_path: archivedAudioPath,
+          // Hash captured when the link was made, i.e. of the ORIGINAL archive.
+          archive_audio_sha256: createHash("sha256")
+            .update(makeWav(makePcmChunk()))
+            .digest("hex"),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { retranscribeLastCapture } = await import("../input");
+
+    await expect(retranscribeLastCapture()).resolves.toBe(
+      "Retained transcript.",
+    );
+    // The other recording's transcript must not be overwritten.
+    expect(readFileSync(transcriptPath, "utf8")).toBe("Someone else's words.");
+    const transcriptionEvent = broadcasts.find(
+      (event) => event.type === "transcription",
+    );
+    expect(transcriptionEvent.recording_path).toBeUndefined();
+  });
 });
