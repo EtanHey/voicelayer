@@ -67,12 +67,7 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         locale: Locale = .current,
         timeZone: TimeZone = .current
     ) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.dateStyle = .none
-        formatter.timeStyle = .short
-        return formatter.string(from: createdAt)
+        SettingsArchiveScanner.shortTimestamp(for: createdAt, locale: locale, timeZone: timeZone)
     }
 }
 
@@ -93,11 +88,7 @@ public struct SettingsHistoryDayGroup: Identifiable, Equatable, Sendable {
         locale: Locale = .current,
         timeZone: TimeZone = .current
     ) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = timeZone
-        formatter.dateFormat = "MMM d, yyyy"
-        return formatter.string(from: date)
+        SettingsArchiveScanner.dayTitle(for: date, locale: locale, timeZone: timeZone)
     }
 }
 
@@ -117,6 +108,11 @@ public struct SettingsHistoryPage: Equatable, Sendable {
     }
 }
 
+/// The recording (F5 / VoiceBar) side of Settings → History.
+///
+/// AIDEV-NOTE: Ask exchanges live in the same day directories but are deliberately excluded
+/// here — Etan asked explicitly that ask recordings never merge into the left list. They are
+/// surfaced by `SettingsAskHistoryArchive` instead.
 public enum SettingsHistoryArchive {
     public static let defaultPageSize = 100
 
@@ -136,97 +132,19 @@ public enum SettingsHistoryArchive {
         from root: URL = defaultRoot,
         limit: Int = defaultPageSize
     ) -> SettingsHistoryPage {
-        let fileManager = FileManager.default
-        guard let dayURLs = try? fileManager.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: false)
+        let scan = SettingsArchiveScanner.scan(root: root, limit: limit, loadEntry: loadEntry)
+        let groups = scan.days.map { day in
+            SettingsHistoryDayGroup(
+                dayKey: day.dayKey,
+                date: day.date,
+                entries: newestFirst(day.entries)
+            )
         }
-
-        let boundedLimit = max(0, limit)
-        guard boundedLimit > 0 else {
-            return SettingsHistoryPage(groups: [], loadedEntryCount: 0, hasMore: !dayURLs.isEmpty)
-        }
-
-        let sortedDayURLs = dayURLs
-            .filter(\.isDirectory)
-            .sorted { $0.lastPathComponent > $1.lastPathComponent }
-
-        var groups: [SettingsHistoryDayGroup] = []
-        var loadedEntryCount = 0
-        var hasMore = false
-
-        for (dayIndex, dayURL) in sortedDayURLs.enumerated() {
-            let dayKey = dayURL.lastPathComponent
-            guard let dayDate = parseDayKey(dayKey),
-                  let entryURLs = try? fileManager.contentsOfDirectory(
-                      at: dayURL,
-                      includingPropertiesForKeys: [.isDirectoryKey],
-                      options: [.skipsHiddenFiles]
-                  )
-            else {
-                continue
-            }
-
-            let candidates = entryURLs
-                .filter { $0.isDirectory && !$0.lastPathComponent.hasPrefix(".tmp-") }
-                .sorted { $0.lastPathComponent > $1.lastPathComponent }
-            var entries: [SettingsHistoryEntry] = []
-            var shouldStopAfterDay = false
-
-            for (entryIndex, entryURL) in candidates.enumerated() {
-                guard let entry = loadEntry(from: entryURL, dayKey: dayKey, fallbackDate: dayDate) else {
-                    continue
-                }
-                entries.append(entry)
-                loadedEntryCount += 1
-                if loadedEntryCount == boundedLimit {
-                    hasMore = entryIndex < candidates.count - 1 || dayIndex < sortedDayURLs.count - 1
-                    shouldStopAfterDay = true
-                    break
-                }
-            }
-
-            if !entries.isEmpty {
-                groups.append(SettingsHistoryDayGroup(
-                    dayKey: dayKey,
-                    date: dayDate,
-                    entries: newestFirst(entries)
-                ))
-            }
-            if shouldStopAfterDay {
-                break
-            }
-        }
-
         return SettingsHistoryPage(
             groups: newestFirst(groups),
-            loadedEntryCount: loadedEntryCount,
-            hasMore: hasMore
+            loadedEntryCount: scan.loadedEntryCount,
+            hasMore: scan.hasMore
         )
-    }
-
-    private static func loadDayGroup(from dayURL: URL) -> SettingsHistoryDayGroup? {
-        let dayKey = dayURL.lastPathComponent
-        guard let dayDate = parseDayKey(dayKey),
-              let entryURLs = try? FileManager.default.contentsOfDirectory(
-                  at: dayURL,
-                  includingPropertiesForKeys: [.isDirectoryKey],
-                  options: [.skipsHiddenFiles]
-              )
-        else {
-            return nil
-        }
-
-        let entries = entryURLs
-            .filter { $0.isDirectory && !$0.lastPathComponent.hasPrefix(".tmp-") }
-            .compactMap { loadEntry(from: $0, dayKey: dayKey, fallbackDate: dayDate) }
-            .sorted(by: isNewerEntry)
-
-        guard !entries.isEmpty else { return nil }
-        return SettingsHistoryDayGroup(dayKey: dayKey, date: dayDate, entries: entries)
     }
 
     private static func loadEntry(
@@ -239,13 +157,21 @@ public enum SettingsHistoryArchive {
             return nil
         }
 
-        let metadata = loadMetadata(from: recordingURL.appendingPathComponent("metadata.json"))
-        let recordingID = metadata?.id?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
-            ?? recordingURL.lastPathComponent
-        let createdAt = metadata?.createdAt.flatMap(parseISODate) ?? fallbackDate
-        let transcriptURL = recordingURL.appendingPathComponent("voicelayer-transcript.txt")
-        let transcript = ((try? String(contentsOf: transcriptURL, encoding: .utf8)) ?? "")
+        let metadata = SettingsArchiveMetadata.load(
+            from: recordingURL.appendingPathComponent("metadata.json")
+        )
+        guard metadata?.isAskExchange != true else {
+            return nil
+        }
+
+        let recordingID = metadata?.id?
             .trimmingCharacters(in: .whitespacesAndNewlines)
+            .settingsArchiveNilIfEmpty
+            ?? recordingURL.lastPathComponent
+        let createdAt = metadata?.createdAt.flatMap(SettingsArchiveScanner.parseISODate) ?? fallbackDate
+        let transcript = SettingsArchiveScanner.readTrimmedText(
+            at: recordingURL.appendingPathComponent("voicelayer-transcript.txt")
+        )
 
         return SettingsHistoryEntry(
             id: audioURL.path,
@@ -257,43 +183,6 @@ public enum SettingsHistoryArchive {
             durationMs: metadata?.durationMs,
             transcribedDurationMs: metadata?.transcribedDurationMs
         )
-    }
-
-    private struct Metadata: Decodable {
-        let id: String?
-        let createdAt: String?
-        let durationMs: Int?
-        let transcribedDurationMs: Int?
-
-        enum CodingKeys: String, CodingKey {
-            case id
-            case createdAt = "created_at"
-            case durationMs = "duration_ms"
-            case transcribedDurationMs = "transcribed_duration_ms"
-        }
-    }
-
-    private static func loadMetadata(from url: URL) -> Metadata? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Metadata.self, from: data)
-    }
-
-    private static func parseDayKey(_ dayKey: String) -> Date? {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.date(from: dayKey)
-    }
-
-    private static func parseISODate(_ value: String) -> Date? {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = formatter.date(from: value) {
-            return date
-        }
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: value)
     }
 
     private static func newestFirst(_ groups: [SettingsHistoryDayGroup]) -> [SettingsHistoryDayGroup] {
@@ -314,17 +203,5 @@ public enum SettingsHistoryArchive {
             return lhs.recordingID > rhs.recordingID
         }
         return lhs.createdAt > rhs.createdAt
-    }
-}
-
-private extension URL {
-    var isDirectory: Bool {
-        (try? resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
-}
-
-private extension String {
-    var nilIfEmpty: String? {
-        isEmpty ? nil : self
     }
 }

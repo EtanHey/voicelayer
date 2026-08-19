@@ -109,6 +109,100 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
     }
 
+    func testHistoryTabExposesRecordingAndAskScopesWithRecordingFirst() {
+        XCTAssertEqual(SettingsHistoryScope.allCases, [.recording, .ask])
+        XCTAssertEqual(SettingsHistoryScope.allCases.first, .recording)
+        XCTAssertEqual(SettingsHistoryScope.recording.title, "Recording")
+        XCTAssertEqual(SettingsHistoryScope.ask.title, "Ask")
+    }
+
+    func testHistoryTabRendersASegmentedScopePickerDefaultingToRecording() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("historyScopePicker"))
+        XCTAssertTrue(source.contains("Picker(\"History scope\""))
+        XCTAssertTrue(source.contains(".pickerStyle(.segmented)"))
+        XCTAssertTrue(source.contains("initialHistoryScope: SettingsHistoryScope = .recording"))
+        XCTAssertTrue(source.contains("case .recording:"))
+        XCTAssertTrue(source.contains("case .ask:"))
+    }
+
+    func testAskScopeRendersBothSidesOfTheExchangeWithPlayableAudio() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("askEntryRow"))
+        XCTAssertTrue(source.contains("askSideRow"))
+        XCTAssertTrue(source.contains("entry.displayQuestionText"))
+        XCTAssertTrue(source.contains("entry.displayResponseTranscript"))
+        XCTAssertTrue(source.contains("entry.questionAudioPath"))
+        XCTAssertTrue(source.contains("entry.responseAudioPath"))
+        XCTAssertTrue(source.contains("askPlayback.toggle"))
+        XCTAssertTrue(source.contains("askPlayback.isPlaying"))
+    }
+
+    func testAskScopeLoadsItsOwnPagedArchiveOffMainThread() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertTrue(source.contains("askHistoryPage"))
+        XCTAssertTrue(source.contains("SettingsAskHistoryArchive.loadPage"))
+        XCTAssertTrue(source.contains("isAskHistoryLoading"))
+        XCTAssertTrue(source.contains("askHistoryLoadedEntryLimit"))
+        XCTAssertTrue(source.contains("loadOlderAskHistory"))
+    }
+
+    func testRecordingScopeStillReadsOnlyTheRecordingArchive() throws {
+        let source = try settingsViewSource()
+        let recordingLoad = try XCTUnwrap(source.range(of: "SettingsHistoryArchive.loadPage"))
+
+        XCTAssertNotNil(recordingLoad)
+        XCTAssertFalse(source.contains("SettingsHistoryArchive.loadAskPage"))
+        XCTAssertFalse(source.contains("historyDayGroups = Self.newestFirstAskHistoryGroups"))
+    }
+
+    func testRecentTranscriptsDropdownNeverReadsTheAskArchive() throws {
+        for file in ["PillContextMenuController.swift", "VoiceState.swift", "VoiceBarPresentation.swift"] {
+            let source = try uiSource(named: file)
+            XCTAssertFalse(
+                source.contains("SettingsAskHistoryArchive"),
+                "\(file) must not surface voice_ask exchanges in the recent-transcripts dropdown"
+            )
+            XCTAssertFalse(
+                source.contains("SettingsAskHistoryEntry"),
+                "\(file) must not surface voice_ask exchanges in the recent-transcripts dropdown"
+            )
+        }
+    }
+
+    func testCancellingHistoryLoadsAlsoClearsTheirLoadingFlags() throws {
+        let source = try settingsViewSource()
+
+        // A stranded `true` leaves the spinner up and "Load older" disabled for the session,
+        // because a scope with entries reopens without reloading.
+        XCTAssertTrue(source.contains("private func cancelHistoryLoads()"))
+        XCTAssertTrue(source.contains("cancelHistoryLoads()"))
+        XCTAssertFalse(source
+            .contains(
+                "historyRefreshTask?.cancel()\n            askHistoryRefreshTask?.cancel()\n            askPlayback.stop()"
+            ))
+
+        let helper = try XCTUnwrap(source.range(of: "private func cancelHistoryLoads() {"))
+        let helperBody = source[helper.upperBound...].prefix(400)
+        XCTAssertTrue(helperBody.contains("isHistoryLoading = false"))
+        XCTAssertTrue(helperBody.contains("isAskHistoryLoading = false"))
+    }
+
+    func testSwitchingScopeReloadsTheScopeBeingShown() throws {
+        let source = try settingsViewSource()
+        let onChange = try XCTUnwrap(source.range(of: "onChange(of: selectedHistoryScope)"))
+        let handler = source[onChange.upperBound...].prefix(400)
+
+        // An inactive scope misses voiceBarHistoryArchiveDidChange, so both sides must reload
+        // on switch rather than only when empty.
+        XCTAssertTrue(handler.contains("requestHistoryReload()"))
+        XCTAssertTrue(handler.contains("requestAskHistoryReload()"))
+        XCTAssertFalse(handler.contains("askHistoryDayGroups.isEmpty"))
+    }
+
     func testGeneralTabProvidesVoiceBarHideAndUnhideAffordance() throws {
         let source = try settingsViewSource()
 
@@ -138,6 +232,20 @@ final class SettingsViewContractTests: XCTestCase {
         let visibleFieldCount = source.components(separatedBy: ".dictionaryTextField()").count - 1
 
         XCTAssertGreaterThanOrEqual(visibleFieldCount, 3)
+    }
+
+    private func uiSource(named fileName: String) throws -> String {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let url = repoRoot
+            .appendingPathComponent("flow-bar")
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("VoiceBarUI")
+            .appendingPathComponent(fileName)
+        return try String(contentsOf: url)
     }
 
     private func settingsViewSource() throws -> String {

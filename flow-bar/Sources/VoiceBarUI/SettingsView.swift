@@ -8,6 +8,20 @@ public enum SettingsTab: Hashable {
     case dictionary
 }
 
+/// The two lists inside Settings → History. Order is the on-screen order: recording sits on the
+/// left and is the default; Ask sits on the right.
+public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
+    case recording
+    case ask
+
+    public var title: String {
+        switch self {
+        case .recording: "Recording"
+        case .ask: "Ask"
+        }
+    }
+}
+
 private enum DictEditorField: Hashable {
     case search
     case newTerm
@@ -46,12 +60,14 @@ public struct SettingsView: View {
     public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
     public let historyPage: @Sendable (Int) -> SettingsHistoryPage
+    public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
     public let isHistoryRetranscribing: (String) -> Bool
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
+    private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
     private static let historyPageSize = SettingsHistoryArchive.defaultPageSize
 
     @State private var selectedTab: SettingsTab
@@ -66,6 +82,15 @@ public struct SettingsView: View {
     @State private var isHistoryLoading = false
     @State private var historyLoadGeneration = 0
     @State private var historyRefreshTask: Task<Void, Never>?
+    @State private var selectedHistoryScope: SettingsHistoryScope
+    @State private var askHistoryDayGroups: [SettingsAskHistoryDayGroup]
+    @State private var askHistoryLoadedEntryCount: Int
+    @State private var askHistoryLoadedEntryLimit: Int
+    @State private var askHistoryHasMore: Bool
+    @State private var isAskHistoryLoading = false
+    @State private var askHistoryLoadGeneration = 0
+    @State private var askHistoryRefreshTask: Task<Void, Never>?
+    @State private var askPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var localEntries: [STTDictionaryEntry]
     @State private var editingCanonical: String?
@@ -111,11 +136,16 @@ public struct SettingsView: View {
         },
         historyGroups: (@Sendable () -> [SettingsHistoryDayGroup])? = nil,
         initialHistoryPage: SettingsHistoryPage? = nil,
+        askHistoryPage: @escaping @Sendable (Int) -> SettingsAskHistoryPage = { limit in
+            SettingsAskHistoryArchive.loadPage(limit: limit)
+        },
+        initialAskHistoryPage: SettingsAskHistoryPage? = nil,
         onCopyHistoryTranscript: @escaping (String) -> Void = { _ in },
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
-        initialTab: SettingsTab = .general
+        initialTab: SettingsTab = .general,
+        initialHistoryScope: SettingsHistoryScope = .recording
     ) {
         self.hotkeyEnabled = hotkeyEnabled
         self.missingPermissions = missingPermissions
@@ -153,6 +183,7 @@ public struct SettingsView: View {
         } else {
             self.historyPage = historyPage
         }
+        self.askHistoryPage = askHistoryPage
         self.onCopyHistoryTranscript = onCopyHistoryTranscript
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
@@ -161,6 +192,13 @@ public struct SettingsView: View {
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
         _selectedTab = State(initialValue: initialTab)
+        _selectedHistoryScope = State(initialValue: initialHistoryScope)
+        _askHistoryDayGroups = State(initialValue: initialAskHistoryPage?.groups ?? [])
+        _askHistoryLoadedEntryCount = State(initialValue: initialAskHistoryPage?.loadedEntryCount ?? 0)
+        _askHistoryLoadedEntryLimit = State(
+            initialValue: max(Self.historyPageSize, initialAskHistoryPage?.loadedEntryCount ?? 0)
+        )
+        _askHistoryHasMore = State(initialValue: initialAskHistoryPage?.hasMore ?? false)
         _selectedAnchorMode = State(initialValue: initialAnchorMode)
         _selectedPerformanceEffort = State(initialValue: initialPerformanceEffort)
         _localVoiceBarHidden = State(initialValue: isVoiceBarHidden())
@@ -199,11 +237,19 @@ public struct SettingsView: View {
         }
         .onChange(of: selectedTab) { _, tab in
             if tab == .history {
-                requestHistoryReload()
+                switch selectedHistoryScope {
+                case .recording:
+                    requestHistoryReload()
+                case .ask:
+                    requestAskHistoryReload()
+                }
+            } else {
+                askPlayback.stop()
             }
         }
         .onDisappear {
-            historyRefreshTask?.cancel()
+            cancelHistoryLoads()
+            askPlayback.stop()
         }
     }
 
@@ -415,6 +461,51 @@ public struct SettingsView: View {
     // MARK: - History Tab
 
     private var historyTab: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            historyScopePicker
+
+            switch selectedHistoryScope {
+            case .recording:
+                recordingHistoryScope
+            case .ask:
+                askHistoryScope
+            }
+        }
+        // AIDEV-NOTE: Always reload the scope being switched to. An inactive scope is out of the
+        // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
+        // this, switching back shows a list frozen at whenever that scope was last on screen.
+        .onChange(of: selectedHistoryScope) { _, scope in
+            askPlayback.stop()
+            switch scope {
+            case .recording:
+                requestHistoryReload()
+            case .ask:
+                requestAskHistoryReload()
+            }
+        }
+        .onDisappear {
+            cancelHistoryLoads()
+            askPlayback.stop()
+        }
+    }
+
+    // AIDEV-NOTE: Recording is deliberately first (left) and the default scope — the F5 list is
+    // unchanged by the Ask tab, and ask exchanges never appear in it.
+    private var historyScopePicker: some View {
+        Picker("History scope", selection: $selectedHistoryScope) {
+            ForEach(SettingsHistoryScope.allCases, id: \.self) { scope in
+                Text(scope.title).tag(scope)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
+        .accessibilityLabel("History scope")
+    }
+
+    private var recordingHistoryScope: some View {
         ScrollViewReader { proxy in
             VStack(alignment: .leading, spacing: 0) {
                 historyToolbar(proxy: proxy)
@@ -489,6 +580,234 @@ public struct SettingsView: View {
             .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
                 requestHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
             }
+        }
+    }
+
+    // MARK: - History Tab (Ask scope)
+
+    private var askHistoryScope: some View {
+        ScrollViewReader { proxy in
+            VStack(alignment: .leading, spacing: 0) {
+                askHistoryToolbar()
+                Divider()
+
+                if askHistoryDayGroups.isEmpty, isAskHistoryLoading {
+                    VStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading ask history...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if askHistoryDayGroups.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.secondary)
+                        Text("No ask exchanges yet")
+                            .font(.headline)
+                        Text("Questions VoiceLayer asks will appear here with your answer.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            Color.clear
+                                .frame(height: 1)
+                                .id(latestAskHistoryAnchorID)
+
+                            ForEach(askHistoryDayGroups) { group in
+                                askHistoryDaySection(group)
+                            }
+
+                            if askHistoryHasMore {
+                                Button {
+                                    loadOlderAskHistory()
+                                } label: {
+                                    if isAskHistoryLoading {
+                                        HStack(spacing: 6) {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                            Text("Loading older")
+                                        }
+                                    } else {
+                                        Label("Load older", systemImage: "chevron.down")
+                                    }
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isAskHistoryLoading)
+                                .frame(maxWidth: .infinity)
+                                .help("Load older ask history")
+                                .accessibilityLabel("Load older ask history")
+                            }
+                        }
+                        .padding(18)
+                    }
+                }
+            }
+            .onAppear {
+                if askHistoryDayGroups.isEmpty {
+                    requestAskHistoryReload(scrollProxy: proxy, animated: false)
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .voiceBarHistoryArchiveDidChange)) { _ in
+                requestAskHistoryReload(scrollProxy: proxy, debounce: true, scrollToLatest: false)
+            }
+        }
+    }
+
+    private func askHistoryToolbar(proxy: ScrollViewProxy? = nil) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Ask")
+                    .font(.title3.weight(.semibold))
+                Text("\(askHistoryLoadedEntryCount) exchanges")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if isAskHistoryLoading {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Button {
+                requestAskHistoryReload(scrollProxy: proxy)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .help("Refresh ask history")
+            .accessibilityLabel("Refresh ask history")
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    private func askHistoryDaySection(_ group: SettingsAskHistoryDayGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text(group.dayTitle())
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Rectangle()
+                    .fill(Color(nsColor: .separatorColor))
+                    .frame(height: 1)
+            }
+
+            ForEach(group.entries) { entry in
+                askEntryRow(entry)
+            }
+        }
+    }
+
+    /// One exchange: what VoiceLayer asked, and what Etan answered. Both sides are always shown,
+    /// including when the answer never transcribed — the archive is the only record of it.
+    private func askEntryRow(_ entry: SettingsAskHistoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(entry.timestamp())
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 64, alignment: .leading)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 10) {
+                askSideRow(
+                    label: "Question",
+                    systemImage: "speaker.wave.2.fill",
+                    text: entry.displayQuestionText,
+                    hasText: entry.hasQuestionText,
+                    audioPath: entry.questionAudioPath,
+                    accessibilityNoun: "question audio"
+                )
+
+                Divider()
+
+                askSideRow(
+                    label: "Response",
+                    systemImage: "mic.fill",
+                    text: entry.displayResponseTranscript,
+                    hasText: entry.hasResponseTranscript,
+                    audioPath: entry.responseAudioPath,
+                    accessibilityNoun: "response audio",
+                    copyText: entry.hasResponseTranscript ? entry.responseTranscript : nil
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func askSideRow(
+        label: String,
+        systemImage: String,
+        text: String,
+        hasText: Bool,
+        audioPath: URL?,
+        accessibilityNoun: String,
+        copyText: String? = nil
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(text)
+                .font(.body)
+                .foregroundStyle(hasText ? .primary : .secondary)
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                Button {
+                    guard let audioPath else { return }
+                    askPlayback.toggle(audioPath)
+                } label: {
+                    if let audioPath, askPlayback.isPlaying(audioPath) {
+                        Label("Stop", systemImage: "stop.fill")
+                    } else {
+                        Label("Play", systemImage: "play.fill")
+                    }
+                }
+                .disabled(audioPath == nil)
+                .help(audioPath == nil ? "No stored \(accessibilityNoun)" : "Play \(accessibilityNoun)")
+                .accessibilityLabel("Play \(accessibilityNoun)")
+
+                if let copyText {
+                    Button {
+                        onCopyHistoryTranscript(copyText)
+                    } label: {
+                        Label("Copy", systemImage: "doc.on.doc")
+                    }
+                    .help("Copy transcript")
+                    .accessibilityLabel("Copy transcript")
+
+                    Button {
+                        onPasteHistoryTranscript(copyText)
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                    }
+                    .help("Paste transcript")
+                    .accessibilityLabel("Paste transcript")
+                }
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
         }
     }
 
@@ -969,6 +1288,91 @@ public struct SettingsView: View {
         historyDayGroups = Self.newestFirstHistoryGroups(page.groups)
         historyLoadedEntryCount = page.loadedEntryCount
         historyHasMore = page.hasMore
+    }
+
+    /// Cancels both in-flight archive loads and clears their loading flags.
+    ///
+    /// AIDEV-NOTE: The flag must be cleared with the cancel. A scope reopens without reloading when
+    /// it already has entries, so a stranded `true` leaves the spinner up and "Load older" disabled
+    /// for the rest of the session.
+    private func cancelHistoryLoads() {
+        historyRefreshTask?.cancel()
+        historyRefreshTask = nil
+        isHistoryLoading = false
+        askHistoryRefreshTask?.cancel()
+        askHistoryRefreshTask = nil
+        isAskHistoryLoading = false
+    }
+
+    private func requestAskHistoryReload(
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        loadAskHistory(
+            limit: askHistoryLoadedEntryLimit,
+            scrollProxy: scrollProxy,
+            debounce: debounce,
+            scrollToLatest: shouldScrollToLatest,
+            animated: animated
+        )
+    }
+
+    private func loadOlderAskHistory() {
+        let nextLimit = askHistoryLoadedEntryLimit + Self.historyPageSize
+        askHistoryLoadedEntryLimit = nextLimit
+        loadAskHistory(limit: nextLimit, scrollToLatest: false)
+    }
+
+    private func loadAskHistory(
+        limit: Int,
+        scrollProxy: ScrollViewProxy? = nil,
+        debounce: Bool = false,
+        scrollToLatest shouldScrollToLatest: Bool = true,
+        animated: Bool = true
+    ) {
+        askHistoryLoadGeneration += 1
+        let generation = askHistoryLoadGeneration
+        let loader = askHistoryPage
+        isAskHistoryLoading = true
+        askHistoryRefreshTask?.cancel()
+        askHistoryRefreshTask = Task {
+            if debounce {
+                try? await Task.sleep(for: .milliseconds(300))
+            }
+            guard !Task.isCancelled else { return }
+            let page = await Task.detached(priority: .utility) {
+                loader(limit)
+            }.value
+            await MainActor.run {
+                guard generation == askHistoryLoadGeneration, !Task.isCancelled else { return }
+                applyAskHistoryPage(page)
+                isAskHistoryLoading = false
+                if shouldScrollToLatest, let scrollProxy {
+                    scrollToLatestAsk(scrollProxy, animated: animated)
+                }
+            }
+        }
+    }
+
+    private func applyAskHistoryPage(_ page: SettingsAskHistoryPage) {
+        askHistoryDayGroups = page.groups
+        askHistoryLoadedEntryCount = page.loadedEntryCount
+        askHistoryHasMore = page.hasMore
+    }
+
+    private func scrollToLatestAsk(_ proxy: ScrollViewProxy, animated: Bool = true) {
+        guard !askHistoryDayGroups.isEmpty else { return }
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(latestAskHistoryAnchorID, anchor: .top)
+                }
+            } else {
+                proxy.scrollTo(latestAskHistoryAnchorID, anchor: .top)
+            }
+        }
     }
 
     private func scrollToLatest(_ proxy: ScrollViewProxy, animated: Bool = true) {
