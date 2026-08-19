@@ -1,5 +1,9 @@
 # Architecture Overview
 
+> **Note:** this page describes the per-session stdio server (`mcp-server.ts`). The daily driver
+> today is a single persistent daemon shared by every session — see
+> [the daemon architecture](../architecture.md) for why and how.
+
 VoiceLayer is a lightweight MCP server that bridges Claude Code with your microphone and speakers. It's built with Bun and TypeScript, using system-level tools for audio I/O.
 
 ## System Architecture
