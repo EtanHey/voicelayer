@@ -12,12 +12,12 @@ import Foundation
 public final class SettingsAudioPlayback {
     public private(set) var playingURL: URL?
 
-    private let start: (URL) -> Bool
-    private let stopBackend: () -> Void
+    private let start: @MainActor (URL) -> Bool
+    private let stopBackend: @MainActor () -> Void
 
     public init(
-        start: @escaping (URL) -> Bool,
-        stop: @escaping () -> Void
+        start: @escaping @MainActor (URL) -> Bool,
+        stop: @escaping @MainActor () -> Void
     ) {
         self.start = start
         stopBackend = stop
@@ -62,18 +62,14 @@ public extension SettingsAudioPlayback {
             start: { url in holder.play(url) },
             stop: { holder.stop() }
         )
-        // AIDEV-NOTE: AVAudioPlayer delivers its delegate callback on the thread that ran the
-        // player, which is not guaranteed to be main — hop explicitly rather than asserting
-        // isolation, which would trap.
         holder.onFinish = { [weak playback] url in
-            Task { @MainActor in
-                playback?.playbackDidFinish(url)
-            }
+            playback?.playbackDidFinish(url)
         }
         return playback
     }
 }
 
+@MainActor
 private final class SystemPlayerHolder: NSObject, AVAudioPlayerDelegate {
     var onFinish: ((URL) -> Void)?
     private var player: AVAudioPlayer?
@@ -95,10 +91,16 @@ private final class SystemPlayerHolder: NSObject, AVAudioPlayerDelegate {
         currentURL = nil
     }
 
-    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully _: Bool) {
-        guard player === self.player, let url = currentURL else { return }
-        self.player = nil
-        currentURL = nil
-        onFinish?(url)
+    // AIDEV-NOTE: AVAudioPlayer calls this on its own thread, so the whole body must hop before
+    // touching `player`/`currentURL` — they are MainActor state and a finish racing play/stop
+    // would otherwise inspect or clear the wrong player. Hopping only the onFinish callback is
+    // not enough; the identity check itself reads shared state.
+    nonisolated func audioPlayerDidFinishPlaying(_ finished: AVAudioPlayer, successfully _: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self, finished === player, let url = currentURL else { return }
+            player = nil
+            currentURL = nil
+            onFinish?(url)
+        }
     }
 }
