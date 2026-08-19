@@ -26,9 +26,17 @@ bcs_err() {
     printf '[brew-cask-sync] ERROR: %s\n' "$*" >&2
 }
 
+# AIDEV-NOTE: `typeset -f`, not `declare -F`. zsh's `declare -F <name>` succeeds
+# for an UNDEFINED function, so the bash idiom silently calls a missing run_cmd.
+# The M1's non-interactive ssh shell is zsh, which is exactly where this library
+# has to work unattended.
+bcs_function_exists() {
+    typeset -f "$1" >/dev/null 2>&1
+}
+
 # Defer to the caller's run_cmd (which honours --dry-run) when one exists.
 bcs_run() {
-    if declare -F run_cmd >/dev/null 2>&1; then
+    if bcs_function_exists run_cmd; then
         run_cmd "$@"
     else
         printf '+ %s\n' "$*"
@@ -76,7 +84,7 @@ bcs_brew() {
 # True when the caller's run_cmd only prints. Post-conditions cannot be asserted
 # in that mode, because nothing was actually done.
 bcs_commands_are_simulated() {
-    if declare -F bcs_caller_simulates_commands >/dev/null 2>&1; then
+    if bcs_function_exists bcs_caller_simulates_commands; then
         bcs_caller_simulates_commands
         return
     fi

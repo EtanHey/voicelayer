@@ -373,6 +373,49 @@ describe("brew-cask-sync environment contract", () => {
     expect(brewCalls(box)).toContain("tap etanhey/layers");
   });
 
+  test("the library works when sourced from zsh, not just bash", () => {
+    // The M1's non-interactive ssh shell is zsh, where `declare -F <name>`
+    // succeeds for an UNDEFINED function -- the bash idiom silently calls a
+    // missing run_cmd. Caught on the real M1 on 2026-08-19.
+    const box = sandbox({ appVersion: "2.2.6", registeredVersion: "2.2.6" });
+    const result = Bun.spawnSync(
+      [
+        "zsh",
+        "-c",
+        `. "${syncLib}"\nbcs_sync_cask ${token} "${box.appPath}" "${box.backupRoot}"`,
+      ],
+      {
+        cwd: repoRoot,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...process.env,
+          BREW_CASK_SYNC_BREW_BIN: box.brewStub,
+          BREW_STUB_LOG: box.brewLog,
+          BREW_STUB_PREFIX: box.prefix,
+          BREW_STUB_REPOSITORY: join(box.root, "brew-repo"),
+          BREW_STUB_APP: box.appPath,
+          BREW_STUB_TAP_CASK: join(box.tapRepo, "Casks", "voicebar.rb"),
+          BREW_STUB_PLIST_TEMPLATE: infoPlist("__VERSION__"),
+        },
+      },
+    );
+
+    expect(decode(result.stderr)).not.toContain("command not found");
+    expect(result.exitCode).toBe(0);
+    expect(decode(result.stdout)).toContain("already canonical at 2.2.6");
+  });
+
+  test("function detection does not use the zsh-broken declare -F idiom", () => {
+    const executable = readFileSync(syncLib, "utf8")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("#"))
+      .join("\n");
+
+    expect(executable).not.toContain("declare -F");
+    expect(executable).toContain("typeset -f");
+  });
+
   test("brew is resolved by absolute path, not PATH", () => {
     const body = readFileSync(syncLib, "utf8");
 
