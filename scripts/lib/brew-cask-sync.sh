@@ -330,6 +330,15 @@ bcs_sync_cask() {
     local branch="${4:-main}"
     local name tap state app_version offered
 
+    # AIDEV-NOTE: under --dry-run-commands nothing is executed, so a missing brew
+    # is not a reason to fail -- say what would happen and stop. Detection needs a
+    # real brew, so this only short-circuits when there is none AND nothing would
+    # run anyway (Linux CI, or a Mac before Homebrew is installed).
+    if ! bcs_brew_bin >/dev/null 2>&1 && bcs_commands_are_simulated; then
+        bcs_log "no Homebrew on this machine; simulating the drift-proof cask sync of $token."
+        return 0
+    fi
+
     bcs_require_brew || return 1
 
     name="$(bcs_cask_name "$token")"

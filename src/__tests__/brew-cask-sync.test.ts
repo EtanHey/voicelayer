@@ -414,7 +414,13 @@ describe("brew-cask-sync environment contract", () => {
     expect(brewCalls(box)).toContain("tap etanhey/layers");
   });
 
-  test("the library works when sourced from zsh, not just bash", () => {
+  // zsh is not installed on the ubuntu-latest CI runner. The point of this test
+  // is the M1's non-interactive zsh, so skipping where there is no zsh keeps it
+  // meaningful on a Mac instead of failing for the wrong reason in CI.
+  const hasZsh = Bun.spawnSync(["which", "zsh"], { stdout: "ignore", stderr: "ignore" })
+    .exitCode === 0;
+
+  test.skipIf(!hasZsh)("the library works when sourced from zsh, not just bash", () => {
     // The M1's non-interactive ssh shell is zsh, where `declare -F <name>`
     // succeeds for an UNDEFINED function -- the bash idiom silently calls a
     // missing run_cmd. Caught on the real M1 on 2026-08-19.
