@@ -168,7 +168,7 @@ restore_last_known_good_main_build() {
   fi
 
   log "restoring installed VoiceBar.app from main checkout: $main_root"
-  if ! (cd "$main_root" && bash flow-bar/build-app.sh); then
+  if ! (cd "$main_root" && VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1 bash flow-bar/build-app.sh); then
     log "failed to rebuild VoiceBar.app from main checkout"
     return 1
   fi

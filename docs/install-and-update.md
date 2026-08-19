@@ -2,8 +2,17 @@
 
 ## Install
 ```bash
+brew install --cask etanhey/layers/voicebar   # the supported install
+voicelayer update                              # brings the Mac to canonical from any state
+```
+
+Building from source installs to `/Applications/VoiceBar.app`:
+```bash
 bash flow-bar/build-app.sh          # builds + installs /Applications/VoiceBar.app, installs the MCP daemon LaunchAgent
 ```
+On a Mac where the `voicebar` cask is registered this is **refused** — writing there behind brew's
+back is what desynchronises the ledger from the disk. Use `--install-path` for dev builds, or
+`VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1` for a deliberate resident swap (then `voicelayer update`).
 Add to Login Items so it starts on login: System Settings → General → Login Items → +, or:
 ```bash
 osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Applications/VoiceBar.app", hidden:true}'
@@ -29,13 +38,28 @@ package install. It updates the package, rebuilds `/Applications/VoiceBar.app`, 
 the VoiceBar stack.
 
 ```bash
+voicelayer update            # one command, idempotent, correct from any starting state
 voicelayer update --dry-run  # print the plan without executing
-voicelayer update            # package + app + model + restart
 
 # Optionally sync personal runtime data (voices, vocabulary, daemon secret):
 voicelayer update --data-mode direct       --data-source other-mac.local:/Users/<you>
 voicelayer update --data-mode brain-drive  --data-source /Volumes/BrainDrive/VoiceLayerBackup/<you>
 ```
+
+`voicelayer update` is drift-proof (`scripts/lib/brew-cask-sync.sh`):
+
+- refreshes the tap **explicitly** (`git -C <tap> pull --ff-only origin main`) — `brew update` does
+  not reliably refresh `etanhey/layers`
+- compares the tapped version, `brew list --versions --cask voicebar`, and the real
+  `CFBundleShortVersionString` on disk
+- on disagreement it **never** runs `brew upgrade`: an upgrade uninstalls the *old saved* cask
+  first, and a pre-2026-08-19 recipe shells out to `sudo rm`. It moves the stale Caskroom entry
+  into `~/Library/Application Support/VoiceBar/Backups/` and adopts the app with
+  `brew install --cask --force`
+- never needs sudo or a TTY — it works over unattended ssh, and stops with a clear message
+  *before* changing anything if a path would need root
+- ends with a green summary of app / cask / formula / process / launchd services / sockets, and
+  fails loudly if any row is not green
 
 Personal-data sync is opt-in (`--data-mode skip` is the default). When enabled it rsyncs
 `~/.voicelayer/voices`, `voices.json`, `pronunciation.yaml`, `daemon.secret`, and the STT

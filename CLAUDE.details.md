@@ -57,9 +57,9 @@
 - Outputs: `~/.voicelayer/reports/qa-{date}-{id}.md`, `~/.voicelayer/briefs/discovery-{date}-{id}.md`.
 
 ## CLI Commands
-- `voicelayer build-app` builds VoiceBar from source and installs `/Applications/VoiceBar.app` (override `--install-path`; refuses to overwrite a running VoiceBar; runs `launchd/install.sh` after). Routes to `flow-bar/build-app.sh`.
+- `voicelayer build-app` builds VoiceBar from source and installs `/Applications/VoiceBar.app` (**refused** when the `voicebar` cask is registered — that is how brew's ledger drifts from the disk; override `--install-path`, or `VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1` for a deliberate resident swap; refuses to overwrite a running VoiceBar; runs `launchd/install.sh` after). Routes to `flow-bar/build-app.sh`.
 - `voicelayer bar` launches the installed `/Applications/VoiceBar.app` via `open` (no longer builds a dev binary); errors out telling you to run `build-app` if the bundle is missing. `voicelayer bar-stop` stops it.
-- `voicelayer update` is a cross-machine updater (auto-detects git-checkout vs global-package install): updates the package, rebuilds the app, runs `launchd/install.sh`, pulls the Qwen3 model into `~/.voicelayer` if missing, and restarts the VoiceBar stack. Flags: `--dry-run`, `--data-mode skip|direct|brain-drive`, `--data-source SOURCE_HOME` (personal-data rsync is opt-in; default `skip`). Routes to `scripts/voicelayer-update.sh`.
+- `voicelayer update` is the drift-proof cross-machine updater (auto-detects git-checkout vs global-package install): refreshes the tap, detects brew-ledger-vs-disk drift and repairs it without sudo (`scripts/lib/brew-cask-sync.sh`), updates the package, pulls the Qwen3 model into `~/.voicelayer` if missing, restarts the VoiceBar stack, and prints a green app/cask/formula/process/launchd/socket summary. Idempotent: running it twice is a no-op. Flags: `--dry-run`, `--data-mode skip|direct|brain-drive`, `--data-source SOURCE_HOME` (personal-data rsync is opt-in; default `skip`). Routes to `scripts/voicelayer-update.sh`.
 - `voicelayer hotkey install|status` installs/inspects the F5/Dictation -> F18 `hidutil` relay LaunchAgent.
 - `voicelayer daemon --port 8880` to run Qwen3-TTS.
 - `voicelayer extract ...` to collect voice samples.

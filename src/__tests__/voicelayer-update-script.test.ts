@@ -12,7 +12,16 @@ import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const updateScript = join(repoRoot, "scripts", "voicelayer-update.sh");
+const syncLib = join(repoRoot, "scripts", "lib", "brew-cask-sync.sh");
 const cliScript = join(repoRoot, "src", "cli", "voicelayer.sh");
+
+// voicelayer-update.sh sources scripts/lib/brew-cask-sync.sh; any relocated copy
+// has to carry it, exactly as the published package does.
+function installUpdateScript(scriptsDir: string) {
+  mkdirSync(join(scriptsDir, "lib"), { recursive: true });
+  copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+  copyFileSync(syncLib, join(scriptsDir, "lib", "brew-cask-sync.sh"));
+}
 
 function run(command: string[], env: Record<string, string> = {}) {
   return Bun.spawnSync(command, {
@@ -83,7 +92,7 @@ describe("voicelayer-update.sh", () => {
     expect(stdout).not.toContain("--no-relaunch --no-relaunch");
   });
 
-  test("brew-cask-managed VoiceBar upgrades in place instead of forcing a reinstall", () => {
+  test("brew-cask-managed VoiceBar goes through the drift-proof cask sync", () => {
     const result = run(["bash", updateScript, "--dry-run"], {
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
     });
@@ -91,94 +100,38 @@ describe("voicelayer-update.sh", () => {
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      "VOICEBAR APP UPDATE: brew upgrade --cask etanhey/layers/voicebar",
+      "VOICEBAR APP UPDATE: drift-proof brew cask sync of etanhey/layers/voicebar",
     );
-    expect(stdout).toContain(
-      "+ brew upgrade --cask etanhey/layers/voicebar",
-    );
-    expect(stdout).not.toContain("brew reinstall --cask");
     expect(stdout).not.toContain("bash flow-bar/build-app.sh");
   });
 
-  test("non-dry-run cask path skips build-app when commands are dry-run-stubbed", () => {
-    const result = run(["bash", updateScript], {
-      VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
-      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
+  test("a machine with no cask registration still syncs through brew, not a local build", () => {
+    const result = run(["bash", updateScript, "--dry-run"], {
+      VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "0",
+      VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "global-package",
     });
     const stdout = text(result.stdout);
 
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain(
-      "+ brew upgrade --cask etanhey/layers/voicebar",
+      "VOICEBAR APP UPDATE: drift-proof brew cask sync of etanhey/layers/voicebar",
     );
-    expect(stdout).not.toContain("+ env VOICEBAR_CODESIGN_IDENTITY=");
-    expect(stdout).not.toContain(`bash ${repoRoot}/flow-bar/build-app.sh`);
   });
 
-  test("cask path reinstalls only when the upgraded resident app is still damaged", () => {
+  test("cask path reinstalls only when the synced resident app is still damaged", () => {
     const result = run(["bash", updateScript], {
       VOICELAYER_UPDATE_DRY_RUN_COMMANDS: "1",
       VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED: "1",
       VOICELAYER_UPDATE_TEST_CASK_REPAIR_NEEDED: "1",
     });
     const stdout = text(result.stdout);
-    const upgrade = stdout.indexOf(
-      "+ brew upgrade --cask etanhey/layers/voicebar",
-    );
-    const reinstall = stdout.indexOf(
-      "+ brew reinstall --cask etanhey/layers/voicebar",
-    );
+    const reinstall = stdout.indexOf("reinstall --cask etanhey/layers/voicebar");
 
     expect(result.exitCode).toBe(0);
-    expect(upgrade).toBeGreaterThanOrEqual(0);
-    expect(reinstall).toBeGreaterThan(upgrade);
+    expect(reinstall).toBeGreaterThan(stdout.indexOf("[brew-cask-sync]"));
     expect(stdout).toContain(
       "Resident VoiceBar failed canonical signature checks",
     );
-  });
-
-  test("an already-current cask skips upgrade without bypassing repair checks", () => {
-    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-cask-current-"));
-    const binDir = join(tempRoot, "bin");
-    const brewLog = join(tempRoot, "brew.log");
-    const brewStub = join(binDir, "brew");
-    mkdirSync(binDir, { recursive: true });
-    writeFileSync(
-      brewStub,
-      [
-        "#!/usr/bin/env bash",
-        'printf "%s\\n" "$*" >> "$VOICEBAR_TEST_BREW_LOG"',
-        '[[ "$1" == "outdated" ]] && exit 0',
-        '[[ "$1" == "upgrade" ]] && exit 7',
-        "exit 0",
-        "",
-      ].join("\n"),
-    );
-    chmodSync(brewStub, 0o755);
-
-    const result = run(
-      [
-        "bash",
-        "-c",
-        [
-          'source "$1"',
-          "voicebar_app_update_mode() { printf 'cask-upgrade\\n'; }",
-          "voicebar_cask_repair_needed() { return 1; }",
-          "update_voicebar_app",
-        ].join("; "),
-        "_",
-        updateScript,
-      ],
-      {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        VOICEBAR_TEST_BREW_LOG: brewLog,
-      },
-    );
-
-    expect(result.exitCode).toBe(0);
-    const calls = readFileSync(brewLog, "utf8");
-    expect(calls).toContain("outdated --cask --quiet");
-    expect(calls).not.toContain("upgrade --cask");
   });
 
   test("standard updates restore and verify the complete canonical hotkey path after the app update", () => {
@@ -345,9 +298,8 @@ describe("voicelayer-update.sh", () => {
     const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-global-"));
     const scriptsDir = join(tempRoot, "scripts");
     const binDir = join(tempRoot, "bin");
-    mkdirSync(scriptsDir, { recursive: true });
     mkdirSync(binDir, { recursive: true });
-    copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+    installUpdateScript(scriptsDir);
     writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
     Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
 
@@ -368,9 +320,8 @@ describe("voicelayer-update.sh", () => {
     const packageRoot = join(outerRepo, "node_modules", "voicelayer-mcp");
     const scriptsDir = join(packageRoot, "scripts");
     const binDir = join(outerRepo, "bin");
-    mkdirSync(scriptsDir, { recursive: true });
     mkdirSync(binDir, { recursive: true });
-    copyFileSync(updateScript, join(scriptsDir, "voicelayer-update.sh"));
+    installUpdateScript(scriptsDir);
     writeFileSync(join(binDir, "bun"), "#!/usr/bin/env bash\nexit 0\n");
     Bun.spawnSync(["chmod", "755", join(binDir, "bun")]);
     Bun.spawnSync(["git", "init", outerRepo], {
@@ -387,7 +338,7 @@ describe("voicelayer-update.sh", () => {
     expect(result.exitCode).toBe(0);
     expect(stdout).toContain("INSTALL TYPE: global-package");
     expect(stdout).toContain("+ bun update -g voicelayer-mcp");
-    expect(stdout).not.toContain("git -C");
+    expect(stdout).not.toContain(`git -C ${packageRoot}`);
     expect(stdout).not.toContain(`bun install --cwd ${packageRoot}`);
   });
 
@@ -409,6 +360,80 @@ describe("voicelayer-update.sh", () => {
     expect(body).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
     expect(body).toContain('open "/Applications/VoiceBar.app"');
     expect(body).not.toContain('exec ".build/release/VoiceBar"');
+  });
+
+  test("a green Mac prints a green summary and exits 0", () => {
+    const result = run(
+      [
+        "bash",
+        "-c",
+        [
+          'source "$1"',
+          "NO_RELAUNCH=1",
+          "verify_voicebar_stack",
+        ].join("; "),
+        "_",
+        updateScript,
+      ],
+      {
+        BREW_CASK_SYNC_TEST_APP_VERSION: "2.2.6",
+        BREW_CASK_SYNC_TEST_CASK_VERSION: "2.2.6",
+        BREW_CASK_SYNC_TEST_FORMULA_VERSION: "2.2.6",
+        BREW_CASK_SYNC_TEST_OFFERED_VERSION: "2.2.6",
+      },
+    );
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("OK    app bundle: 2.2.6");
+    expect(stdout).toContain("OK    cask ledger: 2.2.6");
+    expect(stdout).toContain("OK    formula: voicelayer 2.2.6");
+    expect(stdout).toContain("GREEN: this Mac is canonical at 2.2.6");
+  });
+
+  test("a Mac whose brew ledger disagrees with the disk fails loudly", () => {
+    const result = run(
+      [
+        "bash",
+        "-c",
+        [
+          'source "$1"',
+          "NO_RELAUNCH=1",
+          "verify_voicebar_stack",
+        ].join("; "),
+        "_",
+        updateScript,
+      ],
+      {
+        BREW_CASK_SYNC_TEST_APP_VERSION: "2.2.5",
+        BREW_CASK_SYNC_TEST_CASK_VERSION: "2.1.10",
+        BREW_CASK_SYNC_TEST_FORMULA_VERSION: "2.2.6",
+        BREW_CASK_SYNC_TEST_OFFERED_VERSION: "2.2.6",
+      },
+    );
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stdout)).toContain("FAIL  app bundle: 2.2.5");
+    expect(text(result.stdout)).toContain("FAIL  cask ledger: 2.1.10");
+    expect(text(result.stderr)).toContain("VoiceLayer is NOT canonical on this Mac");
+  });
+
+  test("a live update ends by verifying the machine is canonical", () => {
+    const body = readFileSync(updateScript, "utf8");
+    const repair = body.indexOf("    repair_and_verify_voicebar_hotkey_path\n");
+    const verify = body.indexOf("        verify_voicebar_stack\n");
+
+    expect(repair).toBeGreaterThan(0);
+    expect(verify).toBeGreaterThan(repair);
+  });
+
+  test("the cask path routes through the drift-proof library, never a bare brew upgrade", () => {
+    const body = readFileSync(updateScript, "utf8");
+
+    expect(body).toContain("bcs_sync_cask");
+    expect(body).not.toContain("run_cmd brew upgrade");
+    expect(body).not.toContain("run_cmd brew install");
+    expect(body).not.toContain("brew outdated");
   });
 
   test("script uses the shell hardening baseline", () => {

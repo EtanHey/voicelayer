@@ -97,6 +97,58 @@ normalize_app_dir_path() {
     done
 }
 
+# AIDEV-NOTE: Writing straight into /Applications on a brew-managed Mac is the
+# ROOT CAUSE of the 2026-08-19 outage: brew's ledger said 2.1.10 while the disk
+# held 2.2.5, so `brew upgrade --cask` ran 2.1.10's `sudo rm` uninstall recipe,
+# destroyed the LaunchAgents, and never got as far as installing. Refuse instead.
+voicebar_brew_cask_registered() {
+    case "${VOICEBAR_TEST_BREW_CASK_REGISTERED:-}" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+
+    local sync_lib="$REPO_ROOT/scripts/lib/brew-cask-sync.sh"
+    [ -f "$sync_lib" ] || return 1
+    # shellcheck source=../scripts/lib/brew-cask-sync.sh
+    . "$sync_lib"
+    bcs_brew_bin >/dev/null 2>&1 || return 1
+    [ -n "$(bcs_cask_registered_version voicebar)" ]
+}
+
+# Set when an override install is knowingly desynchronising brew's ledger, so
+# the end of the run can say exactly how to put it back.
+VOICEBAR_BREW_LEDGER_WILL_DRIFT=0
+
+refuse_brew_managed_install_path() {
+    [ "$APP_DIR" = "/Applications/VoiceBar.app" ] || return 0
+    if [ "${VOICEBAR_ALLOW_BREW_MANAGED_INSTALL:-0}" = "1" ]; then
+        if voicebar_brew_cask_registered; then
+            VOICEBAR_BREW_LEDGER_WILL_DRIFT=1
+        fi
+        return 0
+    fi
+    voicebar_brew_cask_registered || return 0
+
+    cat >&2 <<'EOF'
+[build-app] ERROR: /Applications/VoiceBar.app is managed by Homebrew (cask "voicebar").
+[build-app] Writing a local build there silently desynchronises brew's ledger from the
+[build-app] disk, and the next `brew upgrade --cask` then runs the OLD version's
+[build-app] uninstall recipe -- which shells out to `sudo rm` and takes the LaunchAgents
+[build-app] with it. Nothing has been built or installed.
+[build-app]
+[build-app] Build somewhere else and test from there:
+[build-app]   bash flow-bar/build-app.sh --install-path "$HOME/Applications/VoiceBar-dev.app"
+[build-app]
+[build-app] To bring this Mac back to the canonical release instead:
+[build-app]   voicelayer update
+[build-app]
+[build-app] If you really mean to overwrite the brew-managed bundle, re-run with
+[build-app] VOICEBAR_ALLOW_BREW_MANAGED_INSTALL=1 and expect to run `voicelayer update`
+[build-app] afterwards to re-register it with brew.
+EOF
+    exit 1
+}
+
 voicebar_ps_pid_ppid() {
     if [[ -n "${VOICEBAR_TEST_PS_PID_PPID:-}" ]]; then
         printf '%s\n' "$VOICEBAR_TEST_PS_PID_PPID"
@@ -773,6 +825,7 @@ fi
 
 parse_build_app_args "$@"
 normalize_app_dir_path
+refuse_brew_managed_install_path
 
 protect_notarized_resident_before_rebuild
 
@@ -929,6 +982,13 @@ if [[ "$RELAUNCH_APP" -eq 1 ]]; then
     relaunch_voicebar_app
 else
     echo "[build-app] Skipping VoiceBar relaunch because --no-relaunch was provided."
+fi
+
+if [ "$VOICEBAR_BREW_LEDGER_WILL_DRIFT" -eq 1 ]; then
+    echo "[build-app] WARNING: this build replaced the brew-managed /Applications/VoiceBar.app."
+    echo "[build-app] WARNING: brew's ledger now disagrees with the disk. Do NOT run"
+    echo "[build-app] WARNING: 'brew upgrade --cask voicebar' from here."
+    echo "[build-app] WARNING: Put this Mac back with:  voicelayer update"
 fi
 
 echo "[build-app] Done: $APP_DIR"
