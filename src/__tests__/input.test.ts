@@ -849,7 +849,22 @@ describe("input module", () => {
   });
 
   describe("trailing silence trim for STT", () => {
-    function pcmWithConstantSample(sample: number, durationMs: number): Uint8Array {
+    function concatPcm(parts: Uint8Array[]): Uint8Array {
+      const pcm = new Uint8Array(
+        parts.reduce((sum, part) => sum + part.byteLength, 0),
+      );
+      let offset = 0;
+      for (const part of parts) {
+        pcm.set(part, offset);
+        offset += part.byteLength;
+      }
+      return pcm;
+    }
+
+    function pcmWithConstantSample(
+      sample: number,
+      durationMs: number,
+    ): Uint8Array {
       const samples = Math.floor((16000 * durationMs) / 1000);
       const buffer = new Uint8Array(samples * 2);
       const view = new DataView(buffer.buffer);
@@ -886,11 +901,15 @@ describe("input module", () => {
     function pcmWithSparseQuietSpeechlikeBurst(
       peak: number,
       durationMs: number,
+      burstMs = 20,
     ): Uint8Array {
       const samples = Math.floor((16000 * durationMs) / 1000);
       const buffer = new Uint8Array(samples * 2);
       const view = new DataView(buffer.buffer);
-      const burstSamples = Math.min(samples, Math.floor(16000 * 0.02));
+      const burstSamples = Math.min(
+        samples,
+        Math.max(1, Math.floor((16000 * burstMs) / 1000)),
+      );
       const frequencyHz = 180;
       for (let i = 0; i < burstSamples; i++) {
         const sample = Math.round(
@@ -983,22 +1002,48 @@ describe("input module", () => {
       expect(result.transcribedDurationMs).toBe(22250);
     });
 
-    it("does not trim a low-RMS final speech burst after a long quiet push-to-end tail", () => {
+    it("trims a long quiet tail even when isolated quiet-speechlike clicks appear in it", () => {
       const opening = pcmWithConstantSample(2000, 2000);
-      const roomNoise = pcmWithConstantSample(45, 14000);
-      const finalQuietWord = pcmWithSparseQuietSpeechlikeBurst(450, 250);
-      const pcm = new Uint8Array(
-        opening.byteLength + roomNoise.byteLength + finalQuietWord.byteLength,
-      );
-      pcm.set(opening);
-      pcm.set(roomNoise, opening.byteLength);
-      pcm.set(finalQuietWord, opening.byteLength + roomNoise.byteLength);
+      const quietAfterSpeech = pcmWithConstantSample(0, 19250);
+      const midClick = pcmWithSparseQuietSpeechlikeBurst(655, 250, 4);
+      const longQuiet = pcmWithConstantSample(0, 29000);
+      const stopClick = pcmWithSparseQuietSpeechlikeBurst(413, 250, 4);
+      const trailingQuiet = pcmWithConstantSample(0, 353);
+      const pcm = concatPcm([
+        opening,
+        quietAfterSpeech,
+        midClick,
+        longQuiet,
+        stopClick,
+        trailingQuiet,
+      ]);
 
       const result = trimTrailingSilenceForSTT(pcm, true);
 
-      expect(result.trimmed).toBe(false);
-      expect(result.rawDurationMs).toBe(16250);
-      expect(result.transcribedDurationMs).toBe(16250);
+      expect(result.trimmed).toBe(true);
+      expect(result.rawDurationMs).toBe(51103);
+      expect(result.transcribedDurationMs).toBe(3000);
+    });
+
+    it("keeps a short cluster of consecutive quiet speech after a long pause and pads 1s", () => {
+      const opening = pcmWithConstantSample(2000, 2000);
+      const longPause = pcmWithConstantSample(0, 14000);
+      const quietSpeechCluster = concatPcm([
+        pcmWithSparseQuietSpeechlikeBurst(450, 250),
+        pcmWithSparseQuietSpeechlikeBurst(450, 250),
+      ]);
+      const trailingQuiet = pcmWithConstantSample(0, 6000);
+      const pcm = concatPcm([
+        opening,
+        longPause,
+        quietSpeechCluster,
+        trailingQuiet,
+      ]);
+
+      const result = trimTrailingSilenceForSTT(pcm, true);
+
+      expect(result.trimmed).toBe(true);
+      expect(result.transcribedDurationMs).toBe(17500);
     });
 
     it("does not trim ordinary short pauses before stop", () => {
@@ -1047,7 +1092,9 @@ describe("input module", () => {
       pcm.set(finalPartialSpeech, speech.byteLength + quietTail.byteLength);
       pcm.set(
         trailingQuiet,
-        speech.byteLength + quietTail.byteLength + finalPartialSpeech.byteLength,
+        speech.byteLength +
+          quietTail.byteLength +
+          finalPartialSpeech.byteLength,
       );
 
       const result = trimTrailingSilenceForSTT(pcm, true);
@@ -1059,7 +1106,9 @@ describe("input module", () => {
     it("keeps long low-energy push-to-end captures eligible for STT after trimming", () => {
       const speech = pcmWithConstantSample(1000, 2000);
       const veryLongSilence = pcmWithConstantSample(0, 1000000);
-      const pcm = new Uint8Array(speech.byteLength + veryLongSilence.byteLength);
+      const pcm = new Uint8Array(
+        speech.byteLength + veryLongSilence.byteLength,
+      );
       pcm.set(speech);
       pcm.set(veryLongSilence, speech.byteLength);
 
@@ -1082,8 +1131,11 @@ describe("input module", () => {
       const segments = session.consumeSegments();
 
       expect(segments.length).toBeGreaterThan(1);
-      expect(segments.reduce((sum, segment) => sum + segment.byteLength, 0)).toBe(
-        trimmedPcm.byteLength + session.currentOverlapBytes() * (segments.length - 1),
+      expect(
+        segments.reduce((sum, segment) => sum + segment.byteLength, 0),
+      ).toBe(
+        trimmedPcm.byteLength +
+          session.currentOverlapBytes() * (segments.length - 1),
       );
     });
   });

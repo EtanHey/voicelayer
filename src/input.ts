@@ -1171,9 +1171,11 @@ function pcmDurationMs(pcmData: Uint8Array, sampleRate = SAMPLE_RATE): number {
   return Math.round((samples / sampleRate) * 1000);
 }
 
-function isActiveTrimWindow(pcmData: Uint8Array): boolean {
+type TrimWindowKind = "inactive" | "speech" | "quiet-speechlike";
+
+function classifyTrimWindow(pcmData: Uint8Array): TrimWindowKind {
   const sampleCount = Math.floor(pcmData.byteLength / BYTES_PER_SAMPLE);
-  if (sampleCount === 0) return false;
+  if (sampleCount === 0) return "inactive";
 
   const view = new DataView(
     pcmData.buffer,
@@ -1203,24 +1205,32 @@ function isActiveTrimWindow(pcmData: Uint8Array): boolean {
   }
 
   const rms = Math.sqrt(sumSquares / sampleCount);
-  if (rms >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) return true;
+  if (rms >= TRAILING_SILENCE_TRIM_THRESHOLD_RMS) return "speech";
 
   const zeroCrossingRate = zeroCrossings / sampleCount;
   const speechlikeZeroCrossing =
     zeroCrossingRate <= TRAILING_SILENCE_TRIM_SPEECHLIKE_MAX_ZCR;
   if (
+    rms >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS &&
+    peak >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK &&
+    speechlikeZeroCrossing
+  ) {
+    return "speech";
+  }
+
+  if (
     rms >= TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_RMS &&
     peak >= TRAILING_SILENCE_TRIM_QUIET_SPEECHLIKE_MIN_PEAK &&
     speechlikeZeroCrossing
   ) {
-    return true;
+    return "quiet-speechlike";
   }
 
-  return (
-    rms >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_RMS &&
-    peak >= TRAILING_SILENCE_TRIM_SPEECHLIKE_MIN_PEAK &&
-    speechlikeZeroCrossing
-  );
+  return "inactive";
+}
+
+function isActiveTrimWindow(pcmData: Uint8Array): boolean {
+  return classifyTrimWindow(pcmData) !== "inactive";
 }
 
 export function trimTrailingSilenceForSTT(
@@ -1240,21 +1250,53 @@ export function trimTrailingSilenceForSTT(
     };
   }
 
-  const windowBytes =
-    Math.floor(
-      (sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS * BYTES_PER_SAMPLE) / 1000,
-    );
+  const windowBytes = Math.floor(
+    (sampleRate * TRAILING_SILENCE_TRIM_WINDOW_MS * BYTES_PER_SAMPLE) / 1000,
+  );
   const alignedWindowBytes = Math.max(
     BYTES_PER_SAMPLE,
     Math.floor(windowBytes / BYTES_PER_SAMPLE) * BYTES_PER_SAMPLE,
   );
 
   let lastActiveEnd = 0;
-  for (let offset = 0; offset < pcmData.byteLength; offset += alignedWindowBytes) {
+  const windows: Array<{ start: number; end: number; kind: TrimWindowKind }> =
+    [];
+  for (
+    let offset = 0;
+    offset < pcmData.byteLength;
+    offset += alignedWindowBytes
+  ) {
     const windowEnd = Math.min(offset + alignedWindowBytes, pcmData.byteLength);
     const window = pcmData.slice(offset, windowEnd);
-    if (isActiveTrimWindow(window)) {
-      lastActiveEnd = windowEnd;
+    windows.push({
+      start: offset,
+      end: windowEnd,
+      kind: classifyTrimWindow(window),
+    });
+  }
+
+  for (let index = 0; index < windows.length; index++) {
+    const current = windows[index];
+    if (current.kind === "inactive") continue;
+    if (current.kind === "speech") {
+      lastActiveEnd = current.end;
+      continue;
+    }
+
+    const previousActive = index > 0 && windows[index - 1].kind !== "inactive";
+    const nextActive =
+      index + 1 < windows.length && windows[index + 1].kind !== "inactive";
+    if (previousActive || nextActive) {
+      lastActiveEnd = current.end;
+      continue;
+    }
+
+    const gapMs = pcmDurationMs(
+      pcmData.slice(lastActiveEnd, current.start),
+      sampleRate,
+    );
+    if (lastActiveEnd === 0 || gapMs < TRAILING_SILENCE_TRIM_MIN_QUIET_MS) {
+      lastActiveEnd = current.end;
     }
   }
 
@@ -1267,10 +1309,9 @@ export function trimTrailingSilenceForSTT(
     };
   }
 
-  const padBytes =
-    Math.floor(
-      (sampleRate * TRAILING_SILENCE_TRIM_PAD_MS * BYTES_PER_SAMPLE) / 1000,
-    );
+  const padBytes = Math.floor(
+    (sampleRate * TRAILING_SILENCE_TRIM_PAD_MS * BYTES_PER_SAMPLE) / 1000,
+  );
   const trimEnd = Math.min(pcmData.byteLength, lastActiveEnd + padBytes);
   const quietTailMs = pcmDurationMs(pcmData.slice(trimEnd), sampleRate);
   if (quietTailMs < TRAILING_SILENCE_TRIM_MIN_QUIET_MS) {
