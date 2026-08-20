@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 _Nothing yet._
 
+## [2.2.7] - 2026-08-20
+
+### Fixed
+- **Homebrew-managed VoiceBar updates now recover safely from version drift.**
+  The updater refreshes the tap explicitly, compares the tapped, registered,
+  and installed app versions, and adopts the current cask when they disagree
+  instead of running an old destructive uninstall recipe. It resolves Homebrew
+  by absolute path for non-interactive SSH, refuses root-only repair paths, and
+  prevents ordinary builds from overwriting a brew-managed app (#435).
+
+### Changed
+- **The npm package page now has a focused 130-line README** with the correct
+  tagline and essential install instructions; detailed architecture,
+  configuration, and update material moved into dedicated docs (#436).
+- Documentation now reflects the current daemon owner, automated OIDC npm
+  publishing, VoiceBar 2.2.6 baseline, and the safe M1 Homebrew runbook (#434).
+
 ## [2.2.6] - 2026-08-19
 
 ### Fixed
