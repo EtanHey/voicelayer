@@ -14,8 +14,13 @@ import {
   getHistoryEntry,
   playAudioNonBlocking,
   awaitCurrentPlayback,
+  getPlaybackQueueDepth,
 } from "./tts";
-import { waitForInput, clearInput } from "./input";
+import {
+  waitForInput,
+  clearInput,
+  retranscribeVoiceAskArchive,
+} from "./input";
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
@@ -46,6 +51,7 @@ import { sanitizeTtsText } from "./sanitize";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
+  VoiceAskSchema,
   ThinkArgsSchema,
   ReplayArgsSchema,
   ToggleArgsSchema,
@@ -328,23 +334,65 @@ export async function handleVoiceAsk(
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
+  const parsed = VoiceAskSchema.safeParse(args);
+  if (!parsed.success) {
+    return textResult(
+      "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}.",
+      true,
+    );
+  }
+  const retranscribeArchiveId = parsed.data.retranscribe_archive_id;
+  if (typeof retranscribeArchiveId === "string") {
+    const currentState = getEffectiveRecordingState();
+    if (currentState !== "idle") {
+      return textResult(
+        `voice_ask archive retranscription requires idle voice state (current: ${currentState})`,
+        true,
+      );
+    }
+    const playbackQueueDepth = getPlaybackQueueDepth();
+    if (playbackQueueDepth > 0) {
+      return textResult(
+        `voice_ask archive retranscription refused because the playback queue is not empty (${playbackQueueDepth})`,
+        true,
+      );
+    }
+    try {
+      const text = await retranscribeVoiceAskArchive(
+        retranscribeArchiveId,
+        { delivery: "return-only" },
+      );
+      return textResult(
+        formatAsk(text, {
+          retranscribedArchiveId: retranscribeArchiveId,
+        }),
+      );
+    } catch (error) {
+      return textResult(
+        formatError(
+          "voice_ask",
+          error instanceof Error ? error.message : String(error),
+        ),
+        true,
+      );
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
-  const message = typeof a.message === "string" ? a.message.trim() : a.message;
   const refusal = refuseOverlongMessage(
-    message,
+    parsed.data.message,
     "voice_ask",
-    voiceAskMessageMaxCharsForTimeout(a.timeout_seconds),
+    voiceAskMessageMaxCharsForTimeout(parsed.data.timeout_seconds),
   );
   if (refusal) return refusal;
   return handleConverse(
     {
-      message,
-      voice: a.voice,
-      timeout_seconds: a.timeout_seconds,
-      silence_mode: a.silence_mode,
-      push_to_end: a.push_to_end,
+      message: parsed.data.message,
+      voice: parsed.data.voice,
+      timeout_seconds: parsed.data.timeout_seconds,
+      silence_mode: parsed.data.silence_mode,
+      push_to_end: parsed.data.push_to_end,
     },
     context,
   );
@@ -643,7 +691,12 @@ export async function handleConverse(
     }
 
     return textResult(
-      formatAsk(response, { promptPlayback: speech.playbackOutcome }),
+      formatAsk(response, {
+        ...(captureArchivePath
+          ? { archiveId: basename(captureArchivePath) }
+          : {}),
+        promptPlayback: speech.playbackOutcome,
+      }),
     );
   };
 

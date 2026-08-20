@@ -280,6 +280,30 @@ describe("mcp-handler", () => {
       expect(voiceAsk.description).toContain("do not ask the user to repeat");
     });
 
+    it("advertises an explicit exact-receipt retranscription mode", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 18,
+        method: "tools/list",
+      });
+
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
+      );
+      const receipt =
+        voiceAsk.inputSchema.properties.retranscribe_archive_id;
+
+      expect(receipt).toEqual(
+        expect.objectContaining({ type: "string", pattern: expect.any(String) }),
+      );
+      expect(receipt.description).toContain("exact archive receipt");
+      expect(voiceAsk.inputSchema.oneOf).toHaveLength(2);
+      expect(voiceAsk.description).toContain("complete retained response audio");
+      expect(voiceAsk.description).toContain("explicit only");
+      expect(voiceAsk.description).toContain("never automatic");
+      expect(voiceAsk.description).toContain("does not open the microphone");
+    });
+
     it("each tool has name, description, inputSchema", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",

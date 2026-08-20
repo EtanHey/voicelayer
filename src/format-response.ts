@@ -58,6 +58,8 @@ export function formatSpeak(
 export function formatAsk(
   transcript: string | null,
   opts?: {
+    archiveId?: string;
+    retranscribedArchiveId?: string;
     timeoutSeconds?: number;
     pushToEnd?: boolean;
     outcome?: "timeout" | "no-speech" | "captured";
@@ -74,6 +76,15 @@ export function formatAsk(
   if (transcript !== null && transcript !== undefined) {
     return boxed("voice_ask", [
       `🎤 "${transcript}"`,
+      ...(opts?.retranscribedArchiveId
+        ? [`↳ Re-transcribed archive: ${opts.retranscribedArchiveId}`]
+        : []),
+      ...(opts?.archiveId
+        ? [
+            `↳ Archive: ${opts.archiveId}`,
+            `↳ if this transcript is suspect, the agent must explicitly invoke voice_ask with {"retranscribe_archive_id":"${opts.archiveId}"}.`,
+          ]
+        : []),
       ...(promptInterruption ? [promptInterruption] : []),
     ]);
   }

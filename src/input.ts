@@ -29,6 +29,7 @@ import {
   existsSync,
   fstatSync,
   fsyncSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -3071,15 +3072,441 @@ function refreshArchivedAudioChecksum(audioPath: string): void {
   });
 }
 
+const VOICE_ASK_ARCHIVE_ID_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/;
+
+interface VoiceAskArchiveSnapshot {
+  archiveId: string;
+  archivePath: string;
+  audioPath: string;
+  transcriptPath: string;
+  metadataPath: string;
+  metadata: Record<string, unknown>;
+  metadataBytes: Buffer;
+  metadataHash: string;
+  audioBytes: Buffer;
+  audioHash: string;
+  archiveIdentity: string;
+  audioIdentity: string;
+  metadataIdentity: string;
+}
+
+function fileIdentity(path: string): string {
+  const stat = lstatSync(path);
+  return [stat.dev, stat.ino, stat.size, stat.mtimeMs].join(":");
+}
+
+function requireRegularFileWithoutSymlink(path: string, label: string): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    throw new Error(`voice_ask ${label} must be a regular file: ${path}`);
+  }
+  if (realpathSync(path) !== path) {
+    throw new Error(`voice_ask ${label} must not traverse a symlink: ${path}`);
+  }
+}
+
+function loadVoiceAskArchiveSnapshot(
+  archiveId: string,
+): VoiceAskArchiveSnapshot {
+  if (!VOICE_ASK_ARCHIVE_ID_PATTERN.test(archiveId)) {
+    throw new Error(`Invalid voice_ask archive receipt: ${archiveId}`);
+  }
+
+  const archiveRoot = resolvedRecordingsArchiveRoot();
+  const archivePath = join(archiveRoot, archiveId.slice(0, 10), archiveId);
+  const archiveStat = lstatSync(archivePath);
+  if (archiveStat.isSymbolicLink() || !archiveStat.isDirectory()) {
+    throw new Error(
+      `voice_ask archive receipt does not name a regular archive directory: ${archiveId}`,
+    );
+  }
+  if (realpathSync(archivePath) !== archivePath) {
+    throw new Error(
+      `voice_ask archive receipt must not traverse a symlink: ${archiveId}`,
+    );
+  }
+
+  const audioPath = join(archivePath, VOICE_ASK_ARTIFACT_NAMES.user_audio);
+  const agentAudioPath = join(
+    archivePath,
+    VOICE_ASK_ARTIFACT_NAMES.agent_audio,
+  );
+  const agentTranscriptPath = join(
+    archivePath,
+    VOICE_ASK_ARTIFACT_NAMES.agent_transcript,
+  );
+  const transcriptPath = join(
+    archivePath,
+    VOICE_ASK_ARTIFACT_NAMES.user_transcript,
+  );
+  const metadataPath = join(archivePath, "metadata.json");
+  requireRegularFileWithoutSymlink(audioPath, "audio");
+  requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
+  requireRegularFileWithoutSymlink(agentTranscriptPath, "agent transcript");
+  requireRegularFileWithoutSymlink(metadataPath, "metadata");
+
+  const metadataBytes = readFileSync(metadataPath);
+  let metadata: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(metadataBytes.toString("utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("metadata is not an object");
+    }
+    metadata = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(
+      `Invalid voice_ask archive metadata for ${archiveId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (
+    metadata.source !== "voice_ask" ||
+    metadata.id !== archiveId ||
+    (metadata.schema_version !== 2 && metadata.schema_version !== 3) ||
+    (metadata.transcription_status !== "captured" &&
+      metadata.transcription_status !== "transcribed")
+  ) {
+    throw new Error(`Invalid voice_ask archive metadata for ${archiveId}`);
+  }
+  const artifacts = metadata.artifacts;
+  if (
+    !artifacts ||
+    typeof artifacts !== "object" ||
+    Array.isArray(artifacts) ||
+    (artifacts as Record<string, unknown>).agent_audio !==
+      VOICE_ASK_ARTIFACT_NAMES.agent_audio ||
+    (artifacts as Record<string, unknown>).agent_transcript !==
+      VOICE_ASK_ARTIFACT_NAMES.agent_transcript ||
+    (artifacts as Record<string, unknown>).user_audio !==
+      VOICE_ASK_ARTIFACT_NAMES.user_audio ||
+    (artifacts as Record<string, unknown>).user_transcript !==
+      VOICE_ASK_ARTIFACT_NAMES.user_transcript
+  ) {
+    throw new Error(`Invalid voice_ask archive artifact map for ${archiveId}`);
+  }
+
+  const audioBytes = readFileSync(audioPath);
+  const wavError = wavHeaderValidationError(
+    audioPath,
+    audioBytes,
+    audioBytes.byteLength,
+  );
+  if (wavError) throw new Error(wavError);
+  const audioHash = createHash("sha256").update(audioBytes).digest("hex");
+  const agentAudioHash = createHash("sha256")
+    .update(readFileSync(agentAudioPath))
+    .digest("hex");
+  if (
+    metadata.audio_sha256 !== audioHash ||
+    metadata.user_audio_sha256 !== audioHash ||
+    metadata.agent_audio_sha256 !== agentAudioHash
+  ) {
+    throw new Error(
+      `voice_ask archive checksum mismatch for ${archiveId}; refusing retranscription`,
+    );
+  }
+
+  return {
+    archiveId,
+    archivePath,
+    audioPath,
+    transcriptPath,
+    metadataPath,
+    metadata,
+    metadataBytes,
+    metadataHash: createHash("sha256").update(metadataBytes).digest("hex"),
+    audioBytes,
+    audioHash,
+    archiveIdentity: fileIdentity(archivePath),
+    audioIdentity: fileIdentity(audioPath),
+    metadataIdentity: fileIdentity(metadataPath),
+  };
+}
+
+function revalidateVoiceAskArchiveSnapshot(
+  original: VoiceAskArchiveSnapshot,
+): VoiceAskArchiveSnapshot {
+  const current = loadVoiceAskArchiveSnapshot(original.archiveId);
+  if (
+    current.archivePath !== original.archivePath ||
+    current.audioPath !== original.audioPath ||
+    current.archiveIdentity !== original.archiveIdentity ||
+    current.audioIdentity !== original.audioIdentity ||
+    current.metadataIdentity !== original.metadataIdentity ||
+    current.audioHash !== original.audioHash ||
+    current.metadataHash !== original.metadataHash
+  ) {
+    throw new Error(
+      `voice_ask archive ${original.archiveId} changed during retranscription`,
+    );
+  }
+  return current;
+}
+
+function prepareFullVoiceAskWavForSTT(
+  snapshot: VoiceAskArchiveSnapshot,
+): { path: string; durationMs: number; cleanup: () => void } {
+  const completeCopy = Buffer.from(snapshot.audioBytes);
+  const fullPcmBytes = completeCopy.byteLength - 44;
+  if (completeCopy.readUInt32LE(40) !== fullPcmBytes) {
+    completeCopy.writeUInt32LE(36 + fullPcmBytes, 4);
+    completeCopy.writeUInt32LE(fullPcmBytes, 40);
+  }
+  const path = recordingFilePath(process.pid, Date.now());
+  writeFileSync(path, completeCopy, { mode: 0o600 });
+  return {
+    path,
+    durationMs: Math.round(
+      (fullPcmBytes / (SAMPLE_RATE * CHANNELS * BYTES_PER_SAMPLE)) * 1000,
+    ),
+    cleanup: () => {
+      try {
+        if (existsSync(path)) unlinkSync(path);
+      } catch {}
+    },
+  };
+}
+
+function fsyncPathStrict(path: string): void {
+  const fd = openSync(path, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function stageAskCommitFile(
+  archivePath: string,
+  token: string,
+  label: "transcript" | "metadata",
+  data: string | Uint8Array,
+): string {
+  const path = join(archivePath, `.retranscribe-${token}-${label}.new`);
+  let fd: number | undefined;
+  let completed = false;
+  try {
+    writeFileSync(path, data, { flag: "wx", mode: 0o600 });
+    fd = openSync(path, "r");
+    fsyncSync(fd);
+    completed = true;
+    return path;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+    if (!completed) {
+      try {
+        if (existsSync(path)) unlinkSync(path);
+      } catch {}
+    }
+  }
+}
+
+function restoreAskTranscriptPair(
+  snapshot: VoiceAskArchiveSnapshot,
+  previousTranscript: Buffer | null,
+): void {
+  if (previousTranscript === null) {
+    if (existsSync(snapshot.transcriptPath)) unlinkSync(snapshot.transcriptPath);
+  } else {
+    atomicWriteFile(snapshot.transcriptPath, previousTranscript);
+  }
+  atomicWriteFile(snapshot.metadataPath, snapshot.metadataBytes);
+  fsyncPathStrict(snapshot.archivePath);
+}
+
+function commitVoiceAskTranscriptPair(
+  snapshot: VoiceAskArchiveSnapshot,
+  transcript: string,
+  metadata: Record<string, unknown>,
+): void {
+  const previousTranscript = existsSync(snapshot.transcriptPath)
+    ? readFileSync(snapshot.transcriptPath)
+    : null;
+  const token = `${process.pid}-${Date.now()}-${randomBytes(4).toString("hex")}`;
+  let stagedTranscript: string | null = null;
+  let stagedMetadata: string | null = null;
+  let commitStarted = false;
+  try {
+    stagedTranscript = stageAskCommitFile(
+      snapshot.archivePath,
+      token,
+      "transcript",
+      transcript,
+    );
+    stagedMetadata = stageAskCommitFile(
+      snapshot.archivePath,
+      token,
+      "metadata",
+      `${JSON.stringify(metadata, null, 2)}\n`,
+    );
+    fsyncPathStrict(snapshot.archivePath);
+    commitStarted = true;
+    renameSync(stagedTranscript, snapshot.transcriptPath);
+    stagedTranscript = null;
+    renameSync(stagedMetadata, snapshot.metadataPath);
+    stagedMetadata = null;
+    fsyncPathStrict(snapshot.archivePath);
+  } catch (error) {
+    if (commitStarted) {
+      try {
+        restoreAskTranscriptPair(snapshot, previousTranscript);
+      } catch (rollbackError) {
+        throw new Error(
+          `voice_ask transcript pair commit failed (${error instanceof Error ? error.message : String(error)}) and rollback failed (${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)})`,
+        );
+      }
+    }
+    throw error;
+  } finally {
+    for (const path of [stagedTranscript, stagedMetadata]) {
+      if (!path) continue;
+      try {
+        if (existsSync(path)) unlinkSync(path);
+      } catch {}
+    }
+  }
+}
+
+let voiceAskRetranscriptionOwner: symbol | null = null;
+
+export async function retranscribeVoiceAskArchive(
+  archiveId: string,
+  options: {
+    delivery?: "return-only" | "history";
+    expectedAudioPath?: string;
+  } = {},
+): Promise<string> {
+  if (voiceAskRetranscriptionOwner) {
+    throw new Error("voice_ask archive retranscription is already in progress");
+  }
+  if (getEffectiveRecordingState() !== "idle") {
+    throw new Error(
+      `voice_ask archive retranscription requires idle voice state (current: ${getEffectiveRecordingState()})`,
+    );
+  }
+
+  const snapshot = loadVoiceAskArchiveSnapshot(archiveId);
+  if (
+    options.expectedAudioPath &&
+    requireArchivedRecordingAudioPath(options.expectedAudioPath) !==
+      snapshot.audioPath
+  ) {
+    throw new Error(
+      `voice_ask archive receipt ${archiveId} does not match the requested audio path`,
+    );
+  }
+  const owner = Symbol(archiveId);
+  voiceAskRetranscriptionOwner = owner;
+  let working: ReturnType<typeof prepareFullVoiceAskWavForSTT> | null = null;
+  try {
+    setRecordingState("transcribing");
+    broadcast({ type: "state", state: "transcribing" });
+    working = prepareFullVoiceAskWavForSTT(snapshot);
+    const backend = await getBackend();
+    const result = await backend.transcribe(working.path);
+    const text = result.text.trim();
+    if (!text) {
+      throw new Error(
+        `voice_ask archive ${archiveId} produced an empty retranscription`,
+      );
+    }
+    revalidateVoiceAskArchiveSnapshot(snapshot);
+    const metadata: Record<string, unknown> = {
+      ...snapshot.metadata,
+      backend: backend.name,
+      language_mode: getLanguageModeFromEnv(),
+      transcription_status: "transcribed",
+      transcribed_duration_ms: working.durationMs,
+      voicelayer_transcript_chars: text.length,
+      user_transcript_chars: text.length,
+      audio_sha256: snapshot.audioHash,
+      user_audio_sha256: snapshot.audioHash,
+    };
+    commitVoiceAskTranscriptPair(snapshot, text, metadata);
+    if (options.delivery === "history") {
+      broadcast({
+        type: "transcription",
+        text,
+        recording_path: snapshot.audioPath,
+      });
+    }
+    return text;
+  } catch (error) {
+    if (options.delivery === "history") {
+      broadcast({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+        recoverable: true,
+      });
+    }
+    throw error;
+  } finally {
+    working?.cleanup();
+    if (voiceAskRetranscriptionOwner === owner) {
+      voiceAskRetranscriptionOwner = null;
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
+  }
+}
+
+function voiceAskReceiptForArchivedAudio(audioPath: string): string | null {
+  const metadataPath = join(dirname(audioPath), "metadata.json");
+  const hasAskArtifacts =
+    existsSync(join(dirname(audioPath), VOICE_ASK_ARTIFACT_NAMES.agent_audio)) ||
+    existsSync(
+      join(dirname(audioPath), VOICE_ASK_ARTIFACT_NAMES.agent_transcript),
+    );
+  if (!existsSync(metadataPath)) {
+    if (hasAskArtifacts) {
+      throw new Error(`Invalid voice_ask archive metadata: ${metadataPath}`);
+    }
+    return null;
+  }
+  let metadata: unknown;
+  try {
+    metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+  } catch (error) {
+    if (hasAskArtifacts) {
+      throw new Error(
+        `Invalid voice_ask archive metadata: ${metadataPath} (${error instanceof Error ? error.message : String(error)})`,
+      );
+    }
+    return null;
+  }
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    if (hasAskArtifacts) {
+      throw new Error(`Invalid voice_ask archive metadata: ${metadataPath}`);
+    }
+    return null;
+  }
+  const record = metadata as Record<string, unknown>;
+  if (record.source !== "voice_ask") {
+    if (hasAskArtifacts) {
+      throw new Error(`Invalid voice_ask archive metadata: ${metadataPath}`);
+    }
+    return null;
+  }
+  if (typeof record.id !== "string") {
+    throw new Error(`Invalid voice_ask archive metadata: ${metadataPath}`);
+  }
+  return record.id;
+}
+
 export async function retranscribeRecordingCapture(
   audioPath: string,
 ): Promise<string | null> {
   const eventAudioPath = audioPath.trim();
   let wavPath: string;
+  let voiceAskReceipt: string | null = null;
   try {
     wavPath = requireArchivedRecordingAudioPath(audioPath);
-    requireValidRetainedWav(wavPath);
-    refreshArchivedAudioChecksum(wavPath);
+    voiceAskReceipt = voiceAskReceiptForArchivedAudio(wavPath);
+    if (!voiceAskReceipt) {
+      requireValidRetainedWav(wavPath);
+      refreshArchivedAudioChecksum(wavPath);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     broadcast({
@@ -3089,6 +3516,13 @@ export async function retranscribeRecordingCapture(
     });
     broadcast({ type: "state", state: "idle", source: "recording" });
     throw err;
+  }
+
+  if (voiceAskReceipt) {
+    return retranscribeVoiceAskArchive(voiceAskReceipt, {
+      delivery: "history",
+      expectedAudioPath: wavPath,
+    });
   }
 
   setRecordingState("transcribing");

@@ -92,6 +92,21 @@ describe("formatAsk edge cases", () => {
     expect(out).not.toContain("Try again");
   });
 
+  it("keeps recovery formatting independent from the normal-success receipt hint", () => {
+    const archiveId = "2026-08-01T13-14-02-000Z-abcd1234";
+    const out = formatAsk(null, {
+      outcome: "captured",
+      recovery: {
+        archiveId,
+        audioPath: `/isolated/recordings/2026-08-01/${archiveId}/audio.wav`,
+      },
+    });
+
+    expect(out).toContain(`Archive: ${archiveId}`);
+    expect(out).toContain("VoiceBar History");
+    expect(out).not.toContain("explicitly invoke");
+  });
+
   it("handles transcript with quotes", () => {
     const out = formatAsk('He said "hello"');
     expect(out).toContain("He said");
