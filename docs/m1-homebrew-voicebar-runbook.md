@@ -9,9 +9,9 @@ runbook unless the goal is explicitly to copy a prepared transfer bundle.
 ## Current Release Targets
 
 - Homebrew tap: `etanhey/layers`
-- VoiceBar cask: `2.2.6`
-- VoiceLayer formula: `2.2.6`
-- VoiceLayer npm package: `voicelayer-mcp@2.2.6`
+- VoiceBar cask: `2.2.7`
+- VoiceLayer formula: `2.2.7`
+- VoiceLayer npm package: `voicelayer-mcp@2.2.7`
 - npm tarball SHA256: take it from the **published** tarball, never a local `npm pack` —
   `npm publish` re-packs and gzip embeds a timestamp, so local bytes differ:
   `curl -sL https://registry.npmjs.org/voicelayer-mcp/-/voicelayer-mcp-<v>.tgz | shasum -a 256`
@@ -186,8 +186,8 @@ Verify the tap line before proceeding:
 
 Expected:
 
-- `voicelayer` reports `2.2.6`
-- `voicebar` reports `2.2.6`
+- `voicelayer` reports `2.2.7`
+- `voicebar` reports `2.2.7`
 - the formula has `bun`, `node`, `socat`, and `sox`
 - there is no `service do` block for VoiceLayer
 
