@@ -37,6 +37,61 @@ final class SettingsAskHistoryArchiveTests: XCTestCase {
         XCTAssertEqual(entry.responseAudioPath?.lastPathComponent, "audio.wav")
     }
 
+    func testAskResponseCarriesMicOnAndMeaningfullyDifferentSTTHeardDurations() throws {
+        try writeAsk(
+            day: "2026-08-01",
+            id: "2026-08-01T13-14-02-000Z-duration",
+            createdAt: "2026-08-01T13:14:02.000Z",
+            question: "How long was my answer?",
+            response: "Long enough to make the duration difference visible",
+            durationMs: 43400,
+            transcribedDurationMs: 40100
+        )
+
+        let entry = try XCTUnwrap(
+            SettingsAskHistoryArchive.load(from: tempRoot).first?.entries.first
+        )
+
+        XCTAssertEqual(entry.responseDurationMs, 43400)
+        XCTAssertEqual(entry.responseTranscribedDurationMs, 40100)
+    }
+
+    func testAskResponsePreservesLessThanOneSecondDurationDifference() throws {
+        try writeAsk(
+            day: "2026-08-01",
+            id: "2026-08-01T13-14-02-000Z-close-duration",
+            createdAt: "2026-08-01T13:14:02.000Z",
+            question: "Was the STT slice meaningfully shorter?",
+            response: "No",
+            durationMs: 43400,
+            transcribedDurationMs: 42500
+        )
+
+        let entry = try XCTUnwrap(
+            SettingsAskHistoryArchive.load(from: tempRoot).first?.entries.first
+        )
+
+        XCTAssertEqual(entry.responseDurationMs, 43400)
+        XCTAssertEqual(entry.responseTranscribedDurationMs, 42500)
+    }
+
+    func testLegacyAskMetadataWithoutDurationsDoesNotFabricateValues() throws {
+        try writeAsk(
+            day: "2026-08-01",
+            id: "2026-08-01T13-14-02-000Z-legacy",
+            createdAt: "2026-08-01T13:14:02.000Z",
+            question: "Does this old archive still load?",
+            response: "Yes"
+        )
+
+        let entry = try XCTUnwrap(
+            SettingsAskHistoryArchive.load(from: tempRoot).first?.entries.first
+        )
+
+        XCTAssertNil(entry.responseDurationMs)
+        XCTAssertNil(entry.responseTranscribedDurationMs)
+    }
+
     func testAskEntryExistsWhenTranscriptionNeverCameBack() throws {
         try writeAsk(
             day: "2026-08-01",
@@ -164,7 +219,9 @@ final class SettingsAskHistoryArchiveTests: XCTestCase {
         id: String,
         createdAt: String,
         question: String,
-        response: String?
+        response: String?,
+        durationMs: Int? = nil,
+        transcribedDurationMs: Int? = nil
     ) throws {
         let dir = tempRoot.appendingPathComponent(day).appendingPathComponent(id)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -182,11 +239,18 @@ final class SettingsAskHistoryArchiveTests: XCTestCase {
                 encoding: .utf8
             )
         }
+        let durationFields = [
+            durationMs.map { "  \"duration_ms\": \($0)," },
+            transcribedDurationMs.map { "  \"transcribed_duration_ms\": \($0)," },
+        ]
+        .compactMap { $0 }
+        .joined(separator: "\n")
         let metadata = """
         {
           "id": "\(id)",
           "created_at": "\(createdAt)",
           "source": "voice_ask",
+        \(durationFields)
           "transcription_status": "\(response == nil ? "captured" : "transcribed")",
           "schema_version": 3
         }

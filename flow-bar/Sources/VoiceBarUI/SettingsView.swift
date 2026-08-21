@@ -22,6 +22,147 @@ public enum SettingsHistoryScope: String, Hashable, CaseIterable, Sendable {
     }
 }
 
+enum SettingsHistoryPartRole: Hashable {
+    case recording
+    case question
+    case response
+}
+
+enum SettingsHistoryAction: Hashable {
+    case play
+    case copy
+    case paste
+    case retranscribe
+    case finder
+}
+
+/// The shared presentation unit for one independently actionable piece of retained History media.
+/// Recording rows contain one unlabeled part; Ask rows preserve two ordered, labeled parts.
+struct SettingsHistoryMediaPart: Equatable {
+    let role: SettingsHistoryPartRole
+    let displayText: String
+    let isPlaceholder: Bool
+    let actionableText: String?
+    let audioPath: URL?
+    let durationLabel: String?
+    let transcribedDurationLabel: String?
+
+    var label: String? {
+        switch role {
+        case .recording: nil
+        case .question: "Question"
+        case .response: "Response"
+        }
+    }
+
+    var systemImage: String? {
+        switch role {
+        case .recording: nil
+        case .question: "speaker.wave.2.fill"
+        case .response: "mic.fill"
+        }
+    }
+
+    var accessibilityNoun: String {
+        switch role {
+        case .recording: "recording audio"
+        case .question: "question audio"
+        case .response: "response audio"
+        }
+    }
+
+    var actions: [SettingsHistoryAction] {
+        switch role {
+        case .recording:
+            [.play, .copy, .paste, .retranscribe, .finder]
+        case .question:
+            [.play]
+        case .response:
+            // Ask-safe Re-transcribe is deliberately deferred to B2.
+            [.play, .copy, .paste, .finder]
+        }
+    }
+
+    func isEnabled(_ action: SettingsHistoryAction) -> Bool {
+        guard actions.contains(action) else { return false }
+        return switch action {
+        case .play, .retranscribe, .finder:
+            audioPath != nil
+        case .copy, .paste:
+            actionableText != nil
+        }
+    }
+}
+
+struct SettingsHistoryRowModel: Equatable {
+    let timestamp: String
+    let parts: [SettingsHistoryMediaPart]
+
+    static func recording(_ entry: SettingsHistoryEntry) -> SettingsHistoryRowModel {
+        let durationLabels = durationLabels(
+            durationMs: entry.durationMs,
+            transcribedDurationMs: entry.transcribedDurationMs
+        )
+        return SettingsHistoryRowModel(
+            timestamp: entry.timestamp(),
+            parts: [
+                SettingsHistoryMediaPart(
+                    role: .recording,
+                    displayText: entry.displayTranscript,
+                    isPlaceholder: !entry.hasTranscript,
+                    actionableText: entry.hasTranscript ? entry.transcript : nil,
+                    audioPath: entry.audioPath,
+                    durationLabel: durationLabels.audio,
+                    transcribedDurationLabel: durationLabels.transcribed
+                ),
+            ]
+        )
+    }
+
+    static func ask(_ entry: SettingsAskHistoryEntry) -> SettingsHistoryRowModel {
+        let durationLabels = durationLabels(
+            durationMs: entry.responseDurationMs,
+            transcribedDurationMs: entry.responseTranscribedDurationMs
+        )
+        return SettingsHistoryRowModel(
+            timestamp: entry.timestamp(),
+            parts: [
+                SettingsHistoryMediaPart(
+                    role: .question,
+                    displayText: entry.displayQuestionText,
+                    isPlaceholder: !entry.hasQuestionText,
+                    actionableText: nil,
+                    audioPath: entry.questionAudioPath,
+                    durationLabel: nil,
+                    transcribedDurationLabel: nil
+                ),
+                SettingsHistoryMediaPart(
+                    role: .response,
+                    displayText: entry.displayResponseTranscript,
+                    isPlaceholder: !entry.hasResponseTranscript,
+                    actionableText: entry.hasResponseTranscript ? entry.responseTranscript : nil,
+                    audioPath: entry.responseAudioPath,
+                    durationLabel: durationLabels.audio,
+                    transcribedDurationLabel: durationLabels.transcribed
+                ),
+            ]
+        )
+    }
+
+    /// Applies Recording's existing clock and one-second-difference rule to either domain model.
+    private static func durationLabels(
+        durationMs: Int?,
+        transcribedDurationMs: Int?
+    ) -> (audio: String?, transcribed: String?) {
+        let audio = SettingsHistoryEntry.clockLabel(durationMs)
+        guard let durationMs, let transcribedDurationMs,
+              abs(transcribedDurationMs - durationMs) >= 1000 else {
+            return (audio, nil)
+        }
+        return (audio, SettingsHistoryEntry.clockLabel(transcribedDurationMs))
+    }
+}
+
 private enum DictEditorField: Hashable {
     case search
     case newTerm
@@ -65,6 +206,7 @@ public struct SettingsView: View {
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
     public let isHistoryRetranscribing: (String) -> Bool
+    public let onRevealHistoryFile: (URL) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
     private let latestAskHistoryAnchorID = "settings-ask-history-latest-anchor"
@@ -90,7 +232,7 @@ public struct SettingsView: View {
     @State private var isAskHistoryLoading = false
     @State private var askHistoryLoadGeneration = 0
     @State private var askHistoryRefreshTask: Task<Void, Never>?
-    @State private var askPlayback = SettingsAudioPlayback.system()
+    @State private var historyPlayback = SettingsAudioPlayback.system()
     @State private var dictionarySearch = ""
     @State private var localEntries: [STTDictionaryEntry]
     @State private var editingCanonical: String?
@@ -144,6 +286,7 @@ public struct SettingsView: View {
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
+        onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
     ) {
@@ -188,6 +331,7 @@ public struct SettingsView: View {
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
         self.isHistoryRetranscribing = isHistoryRetranscribing
+        self.onRevealHistoryFile = onRevealHistoryFile
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
         let initialVocabulary = vocabularyPreview()
@@ -244,12 +388,12 @@ public struct SettingsView: View {
                     requestAskHistoryReload()
                 }
             } else {
-                askPlayback.stop()
+                historyPlayback.stop()
             }
         }
         .onDisappear {
             cancelHistoryLoads()
-            askPlayback.stop()
+            historyPlayback.stop()
         }
     }
 
@@ -475,7 +619,7 @@ public struct SettingsView: View {
         // view hierarchy, so its `.onReceive(voiceBarHistoryArchiveDidChange)` never fires — without
         // this, switching back shows a list frozen at whenever that scope was last on screen.
         .onChange(of: selectedHistoryScope) { _, scope in
-            askPlayback.stop()
+            historyPlayback.stop()
             switch scope {
             case .recording:
                 requestHistoryReload()
@@ -485,7 +629,7 @@ public struct SettingsView: View {
         }
         .onDisappear {
             cancelHistoryLoads()
-            askPlayback.stop()
+            historyPlayback.stop()
         }
     }
 
@@ -544,7 +688,11 @@ public struct SettingsView: View {
                                 .id(latestHistoryAnchorID)
 
                             ForEach(historyDayGroups) { group in
-                                historyDaySection(group)
+                                historyDaySection(title: group.dayTitle()) {
+                                    ForEach(group.entries) { entry in
+                                        historyEntryRow(SettingsHistoryRowModel.recording(entry))
+                                    }
+                                }
                             }
 
                             if historyHasMore {
@@ -615,13 +763,21 @@ public struct SettingsView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
+                        LazyVStack(
+                            alignment: .leading,
+                            spacing: 18,
+                            pinnedViews: [.sectionHeaders]
+                        ) {
                             Color.clear
                                 .frame(height: 1)
                                 .id(latestAskHistoryAnchorID)
 
                             ForEach(askHistoryDayGroups) { group in
-                                askHistoryDaySection(group)
+                                historyDaySection(title: group.dayTitle()) {
+                                    ForEach(group.entries) { entry in
+                                        historyEntryRow(SettingsHistoryRowModel.ask(entry))
+                                    }
+                                }
                             }
 
                             if askHistoryHasMore {
@@ -687,130 +843,6 @@ public struct SettingsView: View {
         .padding(.vertical, 14)
     }
 
-    private func askHistoryDaySection(_ group: SettingsAskHistoryDayGroup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Text(group.dayTitle())
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 1)
-            }
-
-            ForEach(group.entries) { entry in
-                askEntryRow(entry)
-            }
-        }
-    }
-
-    /// One exchange: what VoiceLayer asked, and what Etan answered. Both sides are always shown,
-    /// including when the answer never transcribed — the archive is the only record of it.
-    private func askEntryRow(_ entry: SettingsAskHistoryEntry) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(entry.timestamp())
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .leading)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 10) {
-                askSideRow(
-                    label: "Question",
-                    systemImage: "speaker.wave.2.fill",
-                    text: entry.displayQuestionText,
-                    hasText: entry.hasQuestionText,
-                    audioPath: entry.questionAudioPath,
-                    accessibilityNoun: "question audio"
-                )
-
-                Divider()
-
-                askSideRow(
-                    label: "Response",
-                    systemImage: "mic.fill",
-                    text: entry.displayResponseTranscript,
-                    hasText: entry.hasResponseTranscript,
-                    audioPath: entry.responseAudioPath,
-                    accessibilityNoun: "response audio",
-                    copyText: entry.hasResponseTranscript ? entry.responseTranscript : nil
-                )
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(10)
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    private func askSideRow(
-        label: String,
-        systemImage: String,
-        text: String,
-        hasText: Bool,
-        audioPath: URL?,
-        accessibilityNoun: String,
-        copyText: String? = nil
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(label)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-            }
-
-            Text(text)
-                .font(.body)
-                .foregroundStyle(hasText ? .primary : .secondary)
-                .textSelection(.enabled)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
-
-            HStack(spacing: 8) {
-                Button {
-                    guard let audioPath else { return }
-                    askPlayback.toggle(audioPath)
-                } label: {
-                    if let audioPath, askPlayback.isPlaying(audioPath) {
-                        Label("Stop", systemImage: "stop.fill")
-                    } else {
-                        Label("Play", systemImage: "play.fill")
-                    }
-                }
-                .disabled(audioPath == nil)
-                .help(audioPath == nil ? "No stored \(accessibilityNoun)" : "Play \(accessibilityNoun)")
-                .accessibilityLabel("Play \(accessibilityNoun)")
-
-                if let copyText {
-                    Button {
-                        onCopyHistoryTranscript(copyText)
-                    } label: {
-                        Label("Copy", systemImage: "doc.on.doc")
-                    }
-                    .help("Copy transcript")
-                    .accessibilityLabel("Copy transcript")
-
-                    Button {
-                        onPasteHistoryTranscript(copyText)
-                    } label: {
-                        Label("Paste", systemImage: "doc.on.clipboard")
-                    }
-                    .help("Paste transcript")
-                    .accessibilityLabel("Paste transcript")
-                }
-            }
-            .buttonStyle(.borderless)
-            .controlSize(.small)
-        }
-    }
-
     private func historyToolbar(proxy: ScrollViewProxy) -> some View {
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
@@ -848,24 +880,24 @@ public struct SettingsView: View {
         .padding(.vertical, 14)
     }
 
-    private func historyDaySection(_ group: SettingsHistoryDayGroup) -> some View {
+    private func historyDaySection(
+        title: String,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(group.entries) { entry in
-                    historyEntryRow(entry)
-                }
+                content()
             }
         } header: {
-            historyDayHeader(group)
+            historyDayHeader(title)
         }
     }
 
-    // AIDEV-NOTE: pinned via LazyVStack(pinnedViews: .sectionHeaders) so the date
-    // stays visible while scrolling a long history. The header must paint an opaque
-    // background or rows scroll through it.
-    private func historyDayHeader(_ group: SettingsHistoryDayGroup) -> some View {
+    // AIDEV-NOTE: both scope stacks pin this same Section header. Its opaque background keeps
+    // Recording's existing behavior and prevents tall Ask cards from scrolling through it.
+    private func historyDayHeader(_ title: String) -> some View {
         HStack(spacing: 10) {
-            Text(group.dayTitle())
+            Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
             Rectangle()
@@ -881,37 +913,21 @@ public struct SettingsView: View {
         )
     }
 
-    private func historyEntryRow(_ entry: SettingsHistoryEntry) -> some View {
-        let isRetranscribing = isHistoryRetranscribing(entry.audioPath.path)
-
-        return HStack(alignment: .top, spacing: 12) {
-            Text(entry.timestamp())
+    private func historyEntryRow(_ row: SettingsHistoryRowModel) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(row.timestamp)
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 64, alignment: .leading)
                 .padding(.top, 2)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(entry.displayTranscript)
-                    .font(.body)
-                    .foregroundStyle(entry.hasTranscript ? .primary : .secondary)
-                    .textSelection(.enabled)
-                    .lineLimit(nil)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                historyEntryStats(entry)
-
-                if isRetranscribing {
-                    HStack(spacing: 6) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Re-transcribing...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(Array(row.parts.enumerated()), id: \.element.role) { index, part in
+                    if index > 0 {
+                        Divider()
                     }
+                    historyMediaPartRow(part)
                 }
-
-                historyEntryActions(entry, isRetranscribing: isRetranscribing)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -922,17 +938,56 @@ public struct SettingsView: View {
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private func historyMediaPartRow(_ part: SettingsHistoryMediaPart) -> some View {
+        let isRetranscribing = part.actions.contains(.retranscribe)
+            && part.audioPath.map { isHistoryRetranscribing($0.path) } == true
+
+        VStack(alignment: .leading, spacing: 6) {
+            if let label = part.label, let systemImage = part.systemImage {
+                HStack(spacing: 6) {
+                    Image(systemName: systemImage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text(part.displayText)
+                .font(.body)
+                .foregroundStyle(part.isPlaceholder ? .secondary : .primary)
+                .textSelection(.enabled)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+
+            historyMediaPartStats(part)
+
+            if isRetranscribing {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Re-transcribing...")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            historyMediaPartActions(part, isRetranscribing: isRetranscribing)
+        }
         .opacity(isRetranscribing ? 0.62 : 1)
         .disabled(isRetranscribing)
     }
 
-    // AIDEV-NOTE: two separate facts, deliberately not merged into one number —
-    // "waveform" is mic-on time, "text.viewfinder" is the slice STT actually heard.
-    // The second only renders when the trailing-silence trim made them differ.
+    // AIDEV-NOTE: these remain two separate facts: waveform is mic-on time, while
+    // text.viewfinder is the meaningfully shorter slice sent to speech-to-text.
     @ViewBuilder
-    private func historyEntryStats(_ entry: SettingsHistoryEntry) -> some View {
-        let audioLabel = entry.durationLabel
-        let heardLabel = entry.transcribedDurationLabel
+    private func historyMediaPartStats(_ part: SettingsHistoryMediaPart) -> some View {
+        let audioLabel = part.durationLabel
+        let heardLabel = part.transcribedDurationLabel
 
         if audioLabel != nil || heardLabel != nil {
             HStack(spacing: 12) {
@@ -955,37 +1010,87 @@ public struct SettingsView: View {
         }
     }
 
-    private func historyEntryActions(_ entry: SettingsHistoryEntry, isRetranscribing: Bool) -> some View {
+    private func historyMediaPartActions(
+        _ part: SettingsHistoryMediaPart,
+        isRetranscribing: Bool
+    ) -> some View {
         HStack(spacing: 8) {
-            Button {
-                onCopyHistoryTranscript(entry.transcript)
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
+            ForEach(part.actions, id: \.self) { action in
+                historyActionButton(action, for: part, isRetranscribing: isRetranscribing)
             }
-            .disabled(!entry.hasTranscript || isRetranscribing)
-            .help("Copy transcript")
-            .accessibilityLabel("Copy transcript")
-
-            Button {
-                onPasteHistoryTranscript(entry.transcript)
-            } label: {
-                Label("Paste", systemImage: "doc.on.clipboard")
-            }
-            .disabled(!entry.hasTranscript || isRetranscribing)
-            .help("Paste transcript")
-            .accessibilityLabel("Paste transcript")
-
-            Button {
-                onRetranscribeHistoryEntry(entry.audioPath.path)
-            } label: {
-                Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
-            }
-            .disabled(isRetranscribing)
-            .help("Re-transcribe stored audio")
-            .accessibilityLabel("Re-transcribe stored audio")
         }
         .buttonStyle(.borderless)
         .controlSize(.small)
+    }
+
+    @ViewBuilder
+    private func historyActionButton(
+        _ action: SettingsHistoryAction,
+        for part: SettingsHistoryMediaPart,
+        isRetranscribing: Bool
+    ) -> some View {
+        let disabled = !part.isEnabled(action) || isRetranscribing
+
+        switch action {
+        case .play:
+            Button {
+                guard let audioPath = part.audioPath else { return }
+                historyPlayback.toggle(audioPath)
+            } label: {
+                if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {
+                    Label("Stop", systemImage: "stop.fill")
+                } else {
+                    Label("Play", systemImage: "play.fill")
+                }
+            }
+            .disabled(disabled)
+            .help(part.audioPath == nil ? "No stored \(part.accessibilityNoun)" : "Play \(part.accessibilityNoun)")
+            .accessibilityLabel("Play \(part.accessibilityNoun)")
+
+        case .copy:
+            Button {
+                guard let text = part.actionableText else { return }
+                onCopyHistoryTranscript(text)
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            .disabled(disabled)
+            .help("Copy transcript")
+            .accessibilityLabel("Copy transcript")
+
+        case .paste:
+            Button {
+                guard let text = part.actionableText else { return }
+                onPasteHistoryTranscript(text)
+            } label: {
+                Label("Paste", systemImage: "doc.on.clipboard")
+            }
+            .disabled(disabled)
+            .help("Paste transcript")
+            .accessibilityLabel("Paste transcript")
+
+        case .retranscribe:
+            Button {
+                guard let audioPath = part.audioPath else { return }
+                onRetranscribeHistoryEntry(audioPath.path)
+            } label: {
+                Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+            }
+            .disabled(disabled)
+            .help("Re-transcribe stored audio")
+            .accessibilityLabel("Re-transcribe stored audio")
+
+        case .finder:
+            Button {
+                guard let audioPath = part.audioPath else { return }
+                onRevealHistoryFile(audioPath)
+            } label: {
+                Label("Open in Finder", systemImage: "folder")
+            }
+            .disabled(disabled)
+            .help(part.audioPath == nil ? "No stored \(part.accessibilityNoun)" : "Open stored audio in Finder")
+            .accessibilityLabel("Open stored audio in Finder")
+        }
     }
 
     // MARK: - Dictionary Tab

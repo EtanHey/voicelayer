@@ -1,10 +1,10 @@
 import AVFoundation
 import Foundation
 
-/// Play/stop state for the Settings → History Ask rows.
+/// Play/stop state shared by Recording, Ask Question, and Ask Response History rows.
 ///
-/// AIDEV-NOTE: One clip plays at a time across the whole list — starting the response stops the
-/// question and vice versa. The AVAudioPlayer is injected so the state machine is testable
+/// AIDEV-NOTE: One clip plays at a time across both scopes. The AVAudioPlayer is injected so the
+/// state machine is testable
 /// without touching real audio hardware; this surface is playback only and never touches the
 /// capture path.
 @MainActor
