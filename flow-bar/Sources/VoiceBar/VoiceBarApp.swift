@@ -1253,6 +1253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
+        refreshSettingsWindowAnchorState()
         switch mode {
         case .recording:
             audioLevelMonitor.start()
@@ -2489,6 +2490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             isRecordingActive: { [weak self] in
                 self?.voiceState.mode == .recording
+            },
+            isTranscribingActive: { [weak self] in
+                self?.voiceState.mode == .transcribing
             },
             onRevealHistoryFile: { audioPath in
                 NSWorkspace.shared.activateFileViewerSelecting(

@@ -97,6 +97,7 @@ struct SettingsHistoryMediaPart: Equatable {
 struct SettingsHistoryActionEnablement: Equatable {
     let isRetranscribing: Bool
     let isRecording: Bool
+    let isTranscribing: Bool
 
     func isEnabled(
         _ action: SettingsHistoryAction,
@@ -104,7 +105,7 @@ struct SettingsHistoryActionEnablement: Equatable {
     ) -> Bool {
         guard part.isEnabled(action) else { return false }
 
-        if action == .retranscribe, isRetranscribing || isRecording {
+        if action == .retranscribe, isRetranscribing || isRecording || isTranscribing {
             return false
         }
         if isRetranscribing, action == .copy || action == .paste {
@@ -231,6 +232,7 @@ public struct SettingsView: View {
     public let isHistoryRetranscribing: (String) -> Bool
     public let isAnyHistoryRetranscribing: () -> Bool
     public let isRecordingActive: () -> Bool
+    public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
@@ -313,6 +315,7 @@ public struct SettingsView: View {
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
         isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
         isRecordingActive: @escaping () -> Bool = { false },
+        isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
@@ -360,6 +363,7 @@ public struct SettingsView: View {
         self.isHistoryRetranscribing = isHistoryRetranscribing
         self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
         self.isRecordingActive = isRecordingActive
+        self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
@@ -975,7 +979,8 @@ public struct SettingsView: View {
             && part.audioPath.map { isHistoryRetranscribing($0.path) } == true
         let enablement = SettingsHistoryActionEnablement(
             isRetranscribing: isAnyHistoryRetranscribing(),
-            isRecording: isRecordingActive()
+            isRecording: isRecordingActive(),
+            isTranscribing: isTranscribingActive()
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -1135,7 +1140,7 @@ public struct SettingsView: View {
                 )
             }
             .disabled(disabled)
-            .help("Re-transcribe")
+            .help(enablement.isTranscribing ? "Transcribing…" : "Re-transcribe")
             .accessibilityLabel(
                 isRetranscribing ? "Re-transcribing stored audio" : "Re-transcribe stored audio"
             )
