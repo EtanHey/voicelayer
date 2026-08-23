@@ -41,6 +41,15 @@ test_parse_no_stop_and_no_relaunch_flags() {
     assert_eq "0" "$RELAUNCH_APP" "--no-relaunch disables relaunch"
 }
 
+test_parse_rejects_empty_install_path() {
+    APP_DIR="/Applications/VoiceBar.app"
+
+    if parse_build_app_args --install-path "" >/dev/null 2>&1; then
+        fail "--install-path must reject an empty target before path normalization"
+    fi
+    assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "empty install path must not mutate APP_DIR"
+}
+
 test_nonresident_install_leaves_running_resident_instance_alone() {
     APP_DIR="/tmp/VoiceBar-Test.app"
     STOP_RUNNING=1
@@ -489,6 +498,7 @@ SH
 }
 
 test_parse_no_stop_and_no_relaunch_flags
+test_parse_rejects_empty_install_path
 test_nonresident_install_leaves_running_resident_instance_alone
 test_resolved_matching_install_path_keeps_requested_lifecycle
 test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop

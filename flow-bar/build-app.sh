@@ -57,8 +57,8 @@ parse_build_app_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --install-path)
-                if [[ $# -lt 2 ]]; then
-                    echo "[build-app] ERROR: --install-path requires a target path" >&2
+                if [[ $# -lt 2 || -z "$2" ]]; then
+                    echo "[build-app] ERROR: --install-path requires a non-empty target path" >&2
                     return 2
                 fi
                 APP_DIR="$2"
