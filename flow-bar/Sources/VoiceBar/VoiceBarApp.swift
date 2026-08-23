@@ -2490,6 +2490,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isRecordingActive: { [weak self] in
                 self?.voiceState.mode == .recording
             },
+            isTranscribingActive: { [weak self] in
+                self?.voiceState.mode == .transcribing
+            },
             onRevealHistoryFile: { audioPath in
                 NSWorkspace.shared.activateFileViewerSelecting(
                     Self.historyFileRevealSelection(for: audioPath)

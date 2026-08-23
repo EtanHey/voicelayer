@@ -112,6 +112,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
         XCTAssertTrue(barSource.contains("Re-transcribing..."))
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
+        XCTAssertTrue(settingsSource.contains("isTranscribingActive: () -> Bool"))
+        XCTAssertTrue(appSource.contains("isTranscribingActive: { [weak self] in"))
+        XCTAssertTrue(appSource.contains("self?.voiceState.mode == .transcribing"))
     }
 
     func testHistoryTabExposesRecordingAndAskScopesWithRecordingFirst() {
@@ -224,7 +227,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(parts[1].audioPath, retainedResponseURL)
     }
 
-    func testHistoryActionEnablementMatchesIndependentRetranscribingAndRecordingStates() {
+    func testHistoryActionEnablementMatchesIndependentRetranscribingRecordingAndTranscribingStates() {
         let part = SettingsHistoryMediaPart(
             role: .recording,
             displayText: "Stored transcript",
@@ -234,24 +237,31 @@ final class SettingsViewContractTests: XCTestCase {
             durationLabel: nil,
             transcribedDurationLabel: nil
         )
-        let cases: [(retranscribing: Bool, recording: Bool, enabled: Set<SettingsHistoryAction>)] = [
-            (false, false, [.play, .copy, .paste, .retranscribe, .finder]),
-            (true, false, [.play, .finder]),
-            (false, true, [.play, .copy, .paste, .finder]),
-            (true, true, [.play, .finder]),
+        let cases: [(
+            retranscribing: Bool,
+            recording: Bool,
+            transcribing: Bool,
+            enabled: Set<SettingsHistoryAction>
+        )] = [
+            (false, false, false, [.play, .copy, .paste, .retranscribe, .finder]),
+            (true, false, false, [.play, .finder]),
+            (false, true, false, [.play, .copy, .paste, .finder]),
+            (false, false, true, [.play, .copy, .paste, .finder]),
+            (true, true, true, [.play, .finder]),
         ]
 
         for testCase in cases {
             let enablement = SettingsHistoryActionEnablement(
                 isRetranscribing: testCase.retranscribing,
-                isRecording: testCase.recording
+                isRecording: testCase.recording,
+                isTranscribing: testCase.transcribing
             )
             let enabled = Set(part.actions.filter { enablement.isEnabled($0, for: part) })
 
             XCTAssertEqual(
                 enabled,
                 testCase.enabled,
-                "Unexpected actions for retranscribing=\(testCase.retranscribing), recording=\(testCase.recording)"
+                "Unexpected actions for retranscribing=\(testCase.retranscribing), recording=\(testCase.recording), transcribing=\(testCase.transcribing)"
             )
         }
     }
@@ -271,7 +281,8 @@ final class SettingsViewContractTests: XCTestCase {
             for isRecording in [false, true] {
                 let enablement = SettingsHistoryActionEnablement(
                     isRetranscribing: isRetranscribing,
-                    isRecording: isRecording
+                    isRecording: isRecording,
+                    isTranscribing: false
                 )
 
                 XCTAssertTrue(
@@ -294,7 +305,9 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(actions.contains(".help(isPlaying ? \"Stop\" : \"Play\")"))
         XCTAssertTrue(actions.contains(".help(\"Copy\")"))
         XCTAssertTrue(actions.contains(".help(\"Paste\")"))
-        XCTAssertTrue(actions.contains(".help(\"Re-transcribe\")"))
+        XCTAssertTrue(
+            actions.contains(".help(enablement.isTranscribing ? \"Transcribing…\" : \"Re-transcribe\")")
+        )
         XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
 
         for accessibleName in [
