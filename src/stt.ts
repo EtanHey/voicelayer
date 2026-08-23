@@ -576,7 +576,326 @@ const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
+const WAV_CHUNK_WITNESS_SECONDS =
+  WAV_CHUNK_SECONDS + WAV_CHUNK_OVERLAP_SECONDS;
+const MIN_SUSPECT_LOOP_WORDS = 6;
+const MAX_SUSPECT_LOOP_WORDS = 16;
+const MIN_SUSPECT_LOOP_OCCURRENCES = 3;
+const MAX_SUSPECT_LOOP_CANDIDATES = 2_048;
+const MAX_SUSPECT_LOOP_RESCAN_PASSES = 16;
+const SUSPECT_CONTEXT_WORDS = 6;
+const EXTENSION_BOUNDARY_ANCHOR_WORDS = 3;
+const WITNESS_AGREEMENT_ANCHOR_WORDS = 6;
 const CHUNK_NO_SPEECH_MIN_DBFS = -55;
+
+interface SuspectChunkLoop {
+  firstOccurrence: number;
+  lastOccurrenceEnd: number;
+  loopWordCount: number;
+  occurrenceStarts: number[];
+}
+
+function findSuspectChunkLoops(text: string): SuspectChunkLoop[] {
+  const words = normalizeChunkWords(text);
+  const maxLoopWords = Math.min(
+    MAX_SUSPECT_LOOP_WORDS,
+    Math.floor(words.length / MIN_SUSPECT_LOOP_OCCURRENCES),
+  );
+  const suspects: SuspectChunkLoop[] = [];
+
+  for (
+    let loopWords = maxLoopWords;
+    loopWords >= MIN_SUSPECT_LOOP_WORDS;
+    loopWords--
+  ) {
+    const occurrences = new Map<string, number[]>();
+    for (let index = 0; index + loopWords <= words.length; index++) {
+      const key = overlapKey(words.slice(index, index + loopWords));
+      const indexes = occurrences.get(key) ?? [];
+      if (
+        indexes.length === 0 ||
+        index >= indexes[indexes.length - 1] + loopWords
+      ) {
+        indexes.push(index);
+        occurrences.set(key, indexes);
+      }
+    }
+
+    for (const indexes of occurrences.values()) {
+      if (indexes.length < MIN_SUSPECT_LOOP_OCCURRENCES) continue;
+      const candidate = {
+        firstOccurrence: indexes[0],
+        lastOccurrenceEnd: indexes[indexes.length - 1] + loopWords,
+        loopWordCount: loopWords,
+        occurrenceStarts: indexes,
+      };
+      suspects.push(candidate);
+      if (suspects.length >= MAX_SUSPECT_LOOP_CANDIDATES) return suspects;
+    }
+  }
+
+  return suspects;
+}
+
+function findSuspectChunkLoop(text: string): SuspectChunkLoop | null {
+  return findSuspectChunkLoops(text)[0] ?? null;
+}
+
+function witnessCoversSuspectContext(
+  suspectText: string,
+  suspect: SuspectChunkLoop,
+  witnessText: string,
+): boolean {
+  const suspectWords = normalizeChunkWords(suspectText);
+  const prefix = suspectWords.slice(
+    Math.max(0, suspect.firstOccurrence - SUSPECT_CONTEXT_WORDS),
+    suspect.firstOccurrence,
+  );
+  const suffix = suspectWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const witnessKey = canonicalWitnessText(witnessText);
+  const anchor = prefix.length > 0 ? prefix : suffix;
+  return (
+    anchor.length > 0 &&
+    witnessKey.includes(canonicalWitnessText(anchor.join(" ")))
+  );
+}
+
+function canonicalWitnessText(text: string): string {
+  // AIDEV-NOTE: This compact form is comparison-only. It tolerates Whisper's
+  // contraction and split-token drift; never use it to construct emitted text,
+  // because it intentionally removes separators and fragment ellipses.
+  return text
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function collapseSuspectLoopWords(
+  text: string,
+  suspect: SuspectChunkLoop | null = findSuspectChunkLoop(text),
+  keepOccurrences = 1,
+): string[] {
+  const words = normalizeChunkWords(text);
+  if (!suspect) return words;
+  const duplicateStarts = new Set(
+    suspect.occurrenceStarts.slice(keepOccurrences),
+  );
+  const collapsed: string[] = [];
+  for (let index = 0; index < words.length;) {
+    if (duplicateStarts.has(index)) {
+      index += suspect.loopWordCount;
+      continue;
+    }
+    collapsed.push(words[index]);
+    index++;
+  }
+  return collapsed;
+}
+
+function collapsedWitnessKey(text: string): string {
+  return canonicalWitnessText(collapseSuspectLoopWords(text).join(" "));
+}
+
+function collapseAcousticallyRejectedLoop(
+  text: string,
+  suspect: SuspectChunkLoop,
+  supportedOccurrences: number,
+): string {
+  return collapseSuspectLoopWords(
+    text,
+    suspect,
+    supportedOccurrences,
+  ).join(" ");
+}
+
+function countSuspectPhraseOccurrences(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  witnessText: string,
+  extensionBoundaryText: string | null,
+): number | null {
+  const originalWords = normalizeChunkWords(originalText);
+  const phraseKey = canonicalWitnessText(
+    originalWords
+      .slice(
+        suspect.firstOccurrence,
+        suspect.firstOccurrence + suspect.loopWordCount,
+      )
+      .join(" "),
+  );
+  const witnessWords = normalizeChunkWords(witnessText);
+  const prefixWords = originalWords.slice(
+    Math.max(0, suspect.firstOccurrence - SUSPECT_CONTEXT_WORDS),
+    suspect.firstOccurrence,
+  );
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  // The witness is five seconds longer than the production chunk. A repeated
+  // phrase after the original suffix belongs to that extension and cannot
+  // authorize retaining another copy inside the original 30-second decode.
+  let searchFrom = 0;
+  if (prefixWords.length > 0) {
+    const prefixRange = findChunkWordSequence(
+      witnessWords,
+      prefixWords,
+      searchFrom,
+    );
+    if (!prefixRange) return null;
+    searchFrom = prefixRange.end;
+  }
+  const extensionBoundaryWords = normalizeChunkWords(
+    extensionBoundaryText ?? "",
+  ).slice(0, EXTENSION_BOUNDARY_ANCHOR_WORDS);
+  // A loop at the original chunk tail has no textual suffix. Decode the
+  // witness-only five seconds separately and use its first acoustic words as
+  // the boundary instead. If that decode is empty or cannot be located, leave
+  // the original unchanged rather than guessing at timing.
+  const suffixRange =
+    suffixWords.length > 0
+      ? findChunkWordSequence(witnessWords, suffixWords, searchFrom)
+      : null;
+  const extensionRange =
+    !suffixRange && extensionBoundaryWords.length > 0
+      ? findChunkWordSequence(
+          witnessWords,
+          extensionBoundaryWords,
+          searchFrom,
+        )
+      : null;
+  const boundaryRange = suffixRange ?? extensionRange;
+  if (!boundaryRange) return null;
+  const originalRegionKey = canonicalWitnessText(
+    witnessWords.slice(searchFrom, boundaryRange.start).join(" "),
+  );
+  let count = 0;
+  let searchOffset = 0;
+  while (phraseKey && searchOffset + phraseKey.length <= originalRegionKey.length) {
+    const matchOffset = originalRegionKey.indexOf(phraseKey, searchOffset);
+    if (matchOffset < 0) break;
+    count++;
+    searchOffset = matchOffset + phraseKey.length;
+  }
+  return count;
+}
+
+function findChunkWordSequence(
+  words: string[],
+  sequence: string[],
+  fromIndex: number,
+): { start: number; end: number } | null {
+  const sequenceKey = canonicalWitnessText(sequence.join(" "));
+  const minimumWords = Math.max(1, sequence.length - 2);
+  const maximumWords = sequence.length + 2;
+  let bestMatch: { start: number; end: number; extraCharacters: number } | null =
+    null;
+  for (let index = fromIndex; index < words.length; index++) {
+    for (let wordCount = minimumWords; wordCount <= maximumWords; wordCount++) {
+      if (index + wordCount > words.length) break;
+      const candidateKey = canonicalWitnessText(
+        words.slice(index, index + wordCount).join(" "),
+      );
+      if (!candidateKey.includes(sequenceKey)) continue;
+      const extraCharacters = candidateKey.length - sequenceKey.length;
+      if (extraCharacters === 0) {
+        return { start: index, end: index + wordCount };
+      }
+      if (!bestMatch || extraCharacters < bestMatch.extraCharacters) {
+        bestMatch = {
+          start: index,
+          end: index + wordCount,
+          extraCharacters,
+        };
+      }
+    }
+  }
+  return bestMatch
+    ? { start: bestMatch.start, end: bestMatch.end }
+    : null;
+}
+
+function witnessContainsSuspectSuffix(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  witnessText: string,
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  return (
+    suffixWords.length > 0 &&
+    findChunkWordSequence(normalizeChunkWords(witnessText), suffixWords, 0) !==
+      null
+  );
+}
+
+function witnessesAgree(leftText: string, rightText: string): boolean {
+  const leftKey = canonicalWitnessText(leftText);
+  const rightKey = canonicalWitnessText(rightText);
+  if (!leftKey || !rightKey) return false;
+  const canonicalContainment =
+    leftKey.includes(rightKey) || rightKey.includes(leftKey);
+  const leftLoop = findSuspectChunkLoop(leftText);
+  const rightLoop = findSuspectChunkLoop(rightText);
+  if (leftLoop || rightLoop) {
+    if (!leftLoop || !rightLoop) return false;
+    const collapsedLeft = collapsedWitnessKey(leftText);
+    const collapsedRight = collapsedWitnessKey(rightText);
+    return (
+      collapsedLeft.includes(collapsedRight) ||
+      collapsedRight.includes(collapsedLeft)
+    );
+  }
+  if (canonicalContainment) return true;
+
+  const leftWords = normalizeChunkWords(leftText);
+  const rightWords = normalizeChunkWords(rightText);
+  const shorterWords =
+    leftWords.length <= rightWords.length ? leftWords : rightWords;
+  const longerKey = leftWords.length <= rightWords.length ? rightKey : leftKey;
+  let firstAnchorEnd = -1;
+  for (
+    let index = 0;
+    index + WITNESS_AGREEMENT_ANCHOR_WORDS <= shorterWords.length;
+    index++
+  ) {
+    const anchorKey = canonicalWitnessText(
+      shorterWords
+        .slice(index, index + WITNESS_AGREEMENT_ANCHOR_WORDS)
+        .join(" "),
+    );
+    if (!longerKey.includes(anchorKey)) continue;
+    if (firstAnchorEnd < 0) {
+      firstAnchorEnd = index + WITNESS_AGREEMENT_ANCHOR_WORDS;
+    } else if (index >= firstAnchorEnd) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function chooseWordPreservingWitness(leftText: string, rightText: string): string {
+  return collapsedWitnessKey(rightText).length > collapsedWitnessKey(leftText).length
+    ? rightText
+    : leftText;
+}
+
+function witnessPreservesOriginalWords(
+  originalText: string,
+  originalLoop: SuspectChunkLoop | null,
+  witnessText: string,
+): boolean {
+  const originalKey = canonicalWitnessText(
+    collapseSuspectLoopWords(originalText, originalLoop).join(" "),
+  );
+  return collapsedWitnessKey(witnessText).includes(originalKey);
+}
 
 function readAscii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
@@ -1124,6 +1443,7 @@ export class WhisperServerBackend implements STTBackend {
       );
       if (chunkedResult) {
         const backendParts = [this.name, "chunks"];
+        if (chunkedResult.witnessed) backendParts.push("witness");
         if (chunkedResult.headChanged) backendParts.push("head");
         if (chunkedResult.cleaned) backendParts.push("clean");
         return {
@@ -1311,28 +1631,60 @@ export class WhisperServerBackend implements STTBackend {
   private async transcribeChunkedLongRecording(
     wavData: Uint8Array,
     options?: STTTranscribeOptions,
-  ): Promise<{ text: string; headChanged: boolean; cleaned: boolean } | null> {
+  ): Promise<{
+    text: string;
+    witnessed: boolean;
+    headChanged: boolean;
+    cleaned: boolean;
+  } | null> {
     const info = parseWavPcmInfo(wavData);
     if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
       return null;
     }
 
     const transcripts: string[] = [];
+    let witnessed = false;
+    let scheduleShiftedByWitness = false;
+    let fullUnpromptedWitness: Promise<string> | null = null;
+    const getFullUnpromptedWitness = (): Promise<string> => {
+      fullUnpromptedWitness ??= this.transcribeResident(
+        wavData,
+        buildWhisperServerOptions({
+          ...options,
+          promptOverride: undefined,
+        }),
+      );
+      return fullUnpromptedWitness;
+    };
     const stepSeconds = WAV_CHUNK_SECONDS - WAV_CHUNK_OVERLAP_SECONDS;
     for (
       let startSeconds = 0;
       startSeconds < info.durationSeconds;
-      startSeconds += stepSeconds
+      // startSeconds advances explicitly below because an accepted 35-second
+      // witness changes the next boundary while preserving the 5-second overlap.
     ) {
+      let nextStartSeconds = startSeconds + stepSeconds;
+      const remainingSeconds = info.durationSeconds - startSeconds;
+      const chunkSeconds =
+        scheduleShiftedByWitness &&
+        remainingSeconds < WAV_CHUNK_SECONDS + WAV_TAIL_VERIFY_MIN_SECONDS
+          ? remainingSeconds
+          : WAV_CHUNK_SECONDS;
       const isVeryShortFinalChunk =
-        startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds &&
-        info.durationSeconds - startSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
-      const segment = sliceWavSegment(wavData, startSeconds, WAV_CHUNK_SECONDS);
-      if (!segment) continue;
-      if (isLowEnergyWavSegment(segment)) continue;
+        chunkSeconds >= remainingSeconds &&
+        remainingSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
+      const segment = sliceWavSegment(wavData, startSeconds, chunkSeconds);
+      if (!segment) {
+        startSeconds = nextStartSeconds;
+        continue;
+      }
+      if (isLowEnergyWavSegment(segment)) {
+        startSeconds = nextStartSeconds;
+        continue;
+      }
 
       const mergedSoFar = mergeChunkTranscripts(transcripts);
-      const text = await this.transcribeResident(
+      let text = await this.transcribeResident(
         segment,
         buildWhisperServerOptions({
           promptOverride: mergedSoFar
@@ -1341,6 +1693,249 @@ export class WhisperServerBackend implements STTBackend {
         }),
       );
       if (!text.trim()) return null;
+      const suspectLoops = mergedSoFar ? findSuspectChunkLoops(text) : [];
+      const suspectLoop = suspectLoops[0] ?? null;
+      const droppedBoundaryOverlap =
+        Boolean(mergedSoFar) && !hasChunkBoundaryOverlap(mergedSoFar, text);
+      if (
+        (suspectLoop || droppedBoundaryOverlap) &&
+        startSeconds + chunkSeconds < info.durationSeconds
+      ) {
+        const witnessSegment = sliceWavSegment(
+          wavData,
+          startSeconds,
+          WAV_CHUNK_WITNESS_SECONDS,
+        );
+        const witnessInfo = witnessSegment
+          ? parseWavPcmInfo(witnessSegment)
+          : null;
+        if (
+          witnessSegment &&
+          witnessInfo &&
+          witnessInfo.durationSeconds > WAV_CHUNK_SECONDS
+        ) {
+          const promptedWitness = await this.transcribeResident(
+            witnessSegment,
+            buildWhisperServerOptions({
+              ...options,
+              promptOverride: combinePromptOverride(
+                options?.promptOverride,
+                mergedSoFar,
+              ),
+            }),
+          );
+          const unpromptedWitness = await this.transcribeResident(
+            witnessSegment,
+            buildWhisperServerOptions({
+              ...options,
+              promptOverride: undefined,
+            }),
+          );
+          const promptedCovers = suspectLoop
+            ? suspectLoops.some((candidate) =>
+                witnessCoversSuspectContext(text, candidate, promptedWitness),
+              )
+            : hasChunkBoundaryOverlap(mergedSoFar, promptedWitness);
+          const unpromptedCovers = suspectLoop
+            ? suspectLoops.some((candidate) =>
+                witnessCoversSuspectContext(text, candidate, unpromptedWitness),
+              )
+            : hasChunkBoundaryOverlap(mergedSoFar, unpromptedWitness);
+          let chosenWitness: string | null = null;
+          let supportingWitnesses: string[] = [];
+          let agreement = "none";
+          let rejectedByWordLossGuard = false;
+          let acousticallyRejectedLoop = false;
+          let genuineRepeatedSpeech = false;
+          let witnessCountDisagreement = false;
+
+          if (
+            promptedCovers &&
+            unpromptedCovers &&
+            witnessesAgree(promptedWitness, unpromptedWitness)
+          ) {
+            chosenWitness = chooseWordPreservingWitness(
+              promptedWitness,
+              unpromptedWitness,
+            );
+            supportingWitnesses = [promptedWitness, unpromptedWitness];
+            agreement = "extended-pair";
+          } else {
+            const fullWitness = await getFullUnpromptedWitness();
+            const fullSupportsPrompted =
+              promptedCovers && witnessesAgree(fullWitness, promptedWitness);
+            const fullSupportsUnprompted =
+              unpromptedCovers && witnessesAgree(fullWitness, unpromptedWitness);
+            if (fullSupportsPrompted !== fullSupportsUnprompted) {
+              chosenWitness = fullSupportsPrompted
+                ? promptedWitness
+                : unpromptedWitness;
+              supportingWitnesses = fullSupportsPrompted
+                ? [fullWitness, promptedWitness]
+                : [fullWitness, unpromptedWitness];
+              agreement = "full-window-third";
+            } else if (fullSupportsPrompted && fullSupportsUnprompted) {
+              chosenWitness = chooseWordPreservingWitness(
+                promptedWitness,
+                unpromptedWitness,
+              );
+              supportingWitnesses = [
+                fullWitness,
+                promptedWitness,
+                unpromptedWitness,
+              ];
+              agreement = "full-window-both";
+            }
+          }
+
+          let extensionBoundaryText: string | null = null;
+          const needsAcousticExtensionBoundary =
+            Boolean(suspectLoop) &&
+            supportingWitnesses.length >= 2 &&
+            suspectLoops.some((candidate) =>
+              supportingWitnesses.some(
+                (witness) =>
+                  !witnessContainsSuspectSuffix(text, candidate, witness),
+              ),
+            );
+          if (needsAcousticExtensionBoundary) {
+            const extensionSegment = sliceWavSegment(
+              wavData,
+              startSeconds + chunkSeconds,
+              WAV_CHUNK_OVERLAP_SECONDS,
+            );
+            if (extensionSegment && !isLowEnergyWavSegment(extensionSegment)) {
+              extensionBoundaryText = await this.transcribeResident(
+                extensionSegment,
+                buildWhisperServerOptions({
+                  ...options,
+                  promptOverride: undefined,
+                }),
+              );
+            }
+          }
+
+          if (
+            chosenWitness &&
+            suspectLoop &&
+            supportingWitnesses.length >= 2
+          ) {
+            for (
+              let pass = 0;
+              pass < MAX_SUSPECT_LOOP_RESCAN_PASSES;
+              pass++
+            ) {
+              const candidates = findSuspectChunkLoops(text);
+              if (candidates.length === 0) break;
+
+              const supportedCandidates: Array<{
+                candidate: SuspectChunkLoop;
+                acousticOccurrences: number;
+              }> = [];
+              let failClosedOnCountDisagreement = false;
+              for (const candidate of candidates) {
+                const occurrenceCounts = supportingWitnesses.map((witness) =>
+                  witnessCoversSuspectContext(text, candidate, witness)
+                    ? countSuspectPhraseOccurrences(
+                        text,
+                        candidate,
+                        witness,
+                        extensionBoundaryText,
+                      )
+                    : null,
+                );
+                const firstCount = occurrenceCounts[0];
+                if (firstCount === null || occurrenceCounts.includes(null)) {
+                  continue;
+                }
+                if (!occurrenceCounts.every((count) => count === firstCount)) {
+                  if (occurrenceCounts.every((count) => (count ?? 0) > 0)) {
+                    failClosedOnCountDisagreement = true;
+                    break;
+                  }
+                  continue;
+                }
+                supportedCandidates.push({
+                  candidate,
+                  acousticOccurrences: firstCount,
+                });
+              }
+              if (failClosedOnCountDisagreement) {
+                witnessCountDisagreement = true;
+                break;
+              }
+              supportedCandidates.sort(
+                (left, right) =>
+                  right.acousticOccurrences - left.acousticOccurrences ||
+                  right.candidate.loopWordCount - left.candidate.loopWordCount,
+              );
+              const supported = supportedCandidates[0];
+              if (!supported) break;
+              const supportedOccurrences = Math.max(
+                1,
+                supported.acousticOccurrences,
+              );
+              if (
+                supportedOccurrences >=
+                supported.candidate.occurrenceStarts.length
+              ) {
+                genuineRepeatedSpeech = true;
+                break;
+              }
+
+              // The acoustic witnesses authorize removal of unsupported loop
+              // copies only. Preserve their agreed repetition count and every
+              // other original token, including retractions/fragments.
+              text = collapseAcousticallyRejectedLoop(
+                text,
+                supported.candidate,
+                supportedOccurrences,
+              );
+              acousticallyRejectedLoop = true;
+            }
+            chosenWitness = null;
+          } else if (
+            chosenWitness &&
+            !witnessPreservesOriginalWords(text, null, chosenWitness)
+          ) {
+            chosenWitness = null;
+            rejectedByWordLossGuard = true;
+          }
+
+          console.error(
+            `[voicelayer] chunk witness ${JSON.stringify({
+              startSeconds,
+              reason: suspectLoop ? "repeated-loop" : "dropped-overlap",
+              retrySeconds: witnessInfo.durationSeconds,
+              promptedCovers,
+              unpromptedCovers,
+              agreement,
+              chosen: acousticallyRejectedLoop
+                ? "original-minus-acoustically-rejected-loop"
+                : witnessCountDisagreement
+                  ? "original-witness-count-disagreement"
+                  : genuineRepeatedSpeech
+                    ? "original-genuine-repeat"
+                    : chosenWitness
+                      ? "witness"
+                      : rejectedByWordLossGuard
+                        ? "original-word-loss-guard"
+                        : "original",
+            })}`,
+          );
+          if (acousticallyRejectedLoop) {
+            witnessed = true;
+          } else if (chosenWitness) {
+            text = chosenWitness;
+            witnessed = true;
+            scheduleShiftedByWitness = true;
+            nextStartSeconds =
+              startSeconds +
+              WAV_CHUNK_WITNESS_SECONDS -
+              WAV_CHUNK_OVERLAP_SECONDS;
+          }
+        }
+      }
       if (
         isVeryShortFinalChunk &&
         mergedSoFar &&
@@ -1356,9 +1951,10 @@ export class WhisperServerBackend implements STTBackend {
       }
       transcripts.push(text);
 
-      if (startSeconds + WAV_CHUNK_SECONDS >= info.durationSeconds) {
+      if (startSeconds + chunkSeconds >= info.durationSeconds) {
         break;
       }
+      startSeconds = nextStartSeconds;
     }
 
     const mergedText = mergeChunkTranscripts(transcripts);
@@ -1374,6 +1970,7 @@ export class WhisperServerBackend implements STTBackend {
     });
     return {
       text: cleanedText,
+      witnessed,
       headChanged: headResult.changed,
       cleaned: cleanedText !== headResult.text,
     };
