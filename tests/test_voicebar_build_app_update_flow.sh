@@ -90,6 +90,26 @@ test_canonical_path_resolves_dotdot_after_nonexistent_parent() {
     assert_eq "$expected" "$actual" "resident alias through nonexistent parent"
 }
 
+test_normalize_rejects_app_symlink_to_non_app_directory() {
+    local tmp_dir
+    local non_app_target
+    local app_alias
+    tmp_dir="$(mktemp -d)"
+    non_app_target="$tmp_dir/repository-root"
+    app_alias="$tmp_dir/build.app"
+    mkdir -p "$non_app_target"
+    ln -s "$non_app_target" "$app_alias"
+    APP_DIR="$app_alias"
+
+    if normalize_app_dir_path >/dev/null 2>&1; then
+        rm -rf "$tmp_dir"
+        fail "resolved install destination must still name an .app bundle"
+    fi
+
+    rm -rf "$tmp_dir"
+    assert_eq "$app_alias" "$APP_DIR" "unsafe resolved target must not replace APP_DIR"
+}
+
 test_nonresident_install_leaves_running_resident_instance_alone() {
     APP_DIR="/tmp/VoiceBar-Test.app"
     STOP_RUNNING=1
@@ -579,6 +599,7 @@ test_parse_rejects_empty_install_path
 test_parse_rejects_newline_install_path
 test_parse_rejects_non_app_install_targets
 test_canonical_path_resolves_dotdot_after_nonexistent_parent
+test_normalize_rejects_app_symlink_to_non_app_directory
 test_nonresident_install_leaves_running_resident_instance_alone
 test_resolved_matching_install_path_keeps_requested_lifecycle
 test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop

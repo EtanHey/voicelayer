@@ -168,7 +168,13 @@ canonical_app_dir_path() {
 }
 
 normalize_app_dir_path() {
-    APP_DIR="$(canonical_app_dir_path "$APP_DIR")"
+    local resolved_app_dir
+    resolved_app_dir="$(canonical_app_dir_path "$APP_DIR")"
+    if [[ "${resolved_app_dir##*/}" != *.app ]]; then
+        echo "[build-app] ERROR: resolved --install-path must name an .app bundle destination: $resolved_app_dir" >&2
+        return 2
+    fi
+    APP_DIR="$resolved_app_dir"
 }
 
 is_resident_app_dir() {
