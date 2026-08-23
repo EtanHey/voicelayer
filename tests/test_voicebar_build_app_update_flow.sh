@@ -248,6 +248,26 @@ test_target_app_pid_discovery_accepts_symlink_resolved_executable() {
     assert_eq "777" "$actual" "symlink-resolved target app pid"
 }
 
+test_running_app_path_discovery_preserves_spaces() {
+    local tmp_dir
+    local spaced_app
+    local actual
+    tmp_dir="$(mktemp -d)"
+    spaced_app="$tmp_dir/Voice Bar.app"
+    mkdir -p "$spaced_app/Contents/MacOS"
+
+    # shellcheck disable=SC2034 # Read by the sourced process helpers.
+    VOICEBAR_TEST_BUNDLE_PIDS="888"
+    # shellcheck disable=SC2034 # Read by the sourced process helpers.
+    VOICEBAR_TEST_PROCESS_TABLE="888 1 $spaced_app/Contents/MacOS/VoiceBar"
+
+    actual="$(voicebar_running_app_paths)"
+
+    unset VOICEBAR_TEST_BUNDLE_PIDS VOICEBAR_TEST_PROCESS_TABLE
+    rm -rf "$tmp_dir"
+    assert_eq "$(canonical_app_dir_path "$spaced_app")" "$actual" "running app path containing spaces"
+}
+
 test_relaunch_verification_requires_target_app_process() {
     APP_DIR="/Applications/VoiceBar.app"
 
@@ -555,6 +575,7 @@ test_no_running_instance_preserves_first_install_relaunch
 test_lifecycle_guard_is_wired_before_stop_and_at_relaunch
 test_target_pid_discovery_is_root_bundle_plus_descendants_only
 test_target_app_pid_discovery_accepts_symlink_resolved_executable
+test_running_app_path_discovery_preserves_spaces
 test_relaunch_verification_requires_target_app_process
 test_no_broad_process_killers
 test_update_delegates_relaunch_to_build_app

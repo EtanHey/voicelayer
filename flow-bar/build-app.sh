@@ -234,6 +234,15 @@ voicebar_process_table() {
     ps -axo pid=,ppid=,command=
 }
 
+voicebar_executable_from_process_command() {
+    local command="$1"
+    case "$command" in
+        */Contents/MacOS/VoiceBar|*/Contents/MacOS/VoiceBar\ *)
+            printf '%s/Contents/MacOS/VoiceBar\n' "${command%%/Contents/MacOS/VoiceBar*}"
+            ;;
+    esac
+}
+
 voicebar_bundle_pids() {
     if [[ -n "${VOICEBAR_TEST_BUNDLE_PIDS:-}" ]]; then
         printf '%s\n' "$VOICEBAR_TEST_BUNDLE_PIDS" | awk '/^[0-9]+$/ { print }'
@@ -250,15 +259,10 @@ voicebar_bundle_pids() {
     local bundle_id
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
-        set -- $line
-        pid="${1:-}"
-        _ppid="${2:-}"
-        shift 2 || true
-        command="$*"
-        executable="${command%% *}"
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
 
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
         case "$executable" in
             */Contents/MacOS/VoiceBar)
                 app_dir="${executable%/Contents/MacOS/VoiceBar}"
@@ -340,15 +344,10 @@ voicebar_running_app_paths() {
     [[ -n "$bundle_pids" ]] || return 0
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
-        set -- $line
-        pid="${1:-}"
-        _ppid="${2:-}"
-        shift 2 || true
-        command="$*"
-        executable="${command%% *}"
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
 
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
         printf '%s\n' "$bundle_pids" | grep -qx "$pid" || continue
         case "$executable" in
             */Contents/MacOS/VoiceBar)
@@ -427,15 +426,10 @@ voicebar_target_app_pids() {
     local executable
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
-        set -- $line
-        pid="${1:-}"
-        _ppid="${2:-}"
-        shift 2 || true
-        command="$*"
-        executable="${command%% *}"
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
 
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
         if [[ "$executable" = "$expected_executable" || "$executable" = "$expected_resolved_executable" ]]; then
             printf '%s\n' "$pid"
         fi
