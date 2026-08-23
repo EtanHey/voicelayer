@@ -81,6 +81,7 @@ import {
   getSTTCorrectorMode,
   type STTCorrectorEnv,
 } from "./stt-corrector";
+import { reserveArchiveRetranscription } from "./voice-operation-reservation";
 import {
   polishTranscriptionText,
   warmPolishEndpoint,
@@ -3086,9 +3087,12 @@ interface VoiceAskArchiveSnapshot {
   metadataHash: string;
   audioBytes: Buffer;
   audioHash: string;
+  transcriptBytes: Buffer | null;
+  transcriptHash: string | null;
   archiveIdentity: string;
   audioIdentity: string;
   metadataIdentity: string;
+  transcriptIdentity: string | null;
 }
 
 function fileIdentity(path: string): string {
@@ -3145,6 +3149,21 @@ function loadVoiceAskArchiveSnapshot(
   requireRegularFileWithoutSymlink(agentAudioPath, "agent audio");
   requireRegularFileWithoutSymlink(agentTranscriptPath, "agent transcript");
   requireRegularFileWithoutSymlink(metadataPath, "metadata");
+
+  let transcriptBytes: Buffer | null = null;
+  let transcriptIdentity: string | null = null;
+  try {
+    lstatSync(transcriptPath);
+    requireRegularFileWithoutSymlink(transcriptPath, "transcript");
+    transcriptBytes = readFileSync(transcriptPath);
+    transcriptIdentity = fileIdentity(transcriptPath);
+  } catch (error) {
+    const code =
+      error instanceof Object && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
+    if (code !== "ENOENT") throw error;
+  }
 
   const metadataBytes = readFileSync(metadataPath);
   let metadata: Record<string, unknown>;
@@ -3218,9 +3237,14 @@ function loadVoiceAskArchiveSnapshot(
     metadataHash: createHash("sha256").update(metadataBytes).digest("hex"),
     audioBytes,
     audioHash,
+    transcriptBytes,
+    transcriptHash: transcriptBytes
+      ? createHash("sha256").update(transcriptBytes).digest("hex")
+      : null,
     archiveIdentity: fileIdentity(archivePath),
     audioIdentity: fileIdentity(audioPath),
     metadataIdentity: fileIdentity(metadataPath),
+    transcriptIdentity,
   };
 }
 
@@ -3235,7 +3259,9 @@ function revalidateVoiceAskArchiveSnapshot(
     current.audioIdentity !== original.audioIdentity ||
     current.metadataIdentity !== original.metadataIdentity ||
     current.audioHash !== original.audioHash ||
-    current.metadataHash !== original.metadataHash
+    current.metadataHash !== original.metadataHash ||
+    current.transcriptIdentity !== original.transcriptIdentity ||
+    current.transcriptHash !== original.transcriptHash
   ) {
     throw new Error(
       `voice_ask archive ${original.archiveId} changed during retranscription`,
@@ -3377,29 +3403,39 @@ export async function retranscribeVoiceAskArchive(
     expectedAudioPath?: string;
   } = {},
 ): Promise<string> {
-  if (voiceAskRetranscriptionOwner) {
-    throw new Error("voice_ask archive retranscription is already in progress");
-  }
-  if (getEffectiveRecordingState() !== "idle") {
-    throw new Error(
-      `voice_ask archive retranscription requires idle voice state (current: ${getEffectiveRecordingState()})`,
-    );
-  }
-
-  const snapshot = loadVoiceAskArchiveSnapshot(archiveId);
-  if (
-    options.expectedAudioPath &&
-    requireArchivedRecordingAudioPath(options.expectedAudioPath) !==
-      snapshot.audioPath
-  ) {
-    throw new Error(
-      `voice_ask archive receipt ${archiveId} does not match the requested audio path`,
-    );
-  }
-  const owner = Symbol(archiveId);
-  voiceAskRetranscriptionOwner = owner;
+  let owner: symbol | null = null;
+  let operationReservation: ReturnType<
+    typeof reserveArchiveRetranscription
+  > = null;
   let working: ReturnType<typeof prepareFullVoiceAskWavForSTT> | null = null;
   try {
+    if (voiceAskRetranscriptionOwner) {
+      throw new Error("voice_ask archive retranscription is already in progress");
+    }
+    operationReservation = reserveArchiveRetranscription();
+    if (!operationReservation) {
+      throw new Error(
+        "voice_ask archive retranscription refused because another voice operation is in progress",
+      );
+    }
+    if (getEffectiveRecordingState() !== "idle") {
+      throw new Error(
+        `voice_ask archive retranscription requires idle voice state (current: ${getEffectiveRecordingState()})`,
+      );
+    }
+
+    const snapshot = loadVoiceAskArchiveSnapshot(archiveId);
+    if (
+      options.expectedAudioPath &&
+      requireArchivedRecordingAudioPath(options.expectedAudioPath) !==
+        snapshot.audioPath
+    ) {
+      throw new Error(
+        `voice_ask archive receipt ${archiveId} does not match the requested audio path`,
+      );
+    }
+    owner = Symbol(archiveId);
+    voiceAskRetranscriptionOwner = owner;
     setRecordingState("transcribing");
     broadcast({ type: "state", state: "transcribing" });
     working = prepareFullVoiceAskWavForSTT(snapshot);
@@ -3443,11 +3479,12 @@ export async function retranscribeVoiceAskArchive(
     throw error;
   } finally {
     working?.cleanup();
-    if (voiceAskRetranscriptionOwner === owner) {
+    if (owner && voiceAskRetranscriptionOwner === owner) {
       voiceAskRetranscriptionOwner = null;
       setRecordingState("idle");
       broadcast({ type: "state", state: "idle", source: "recording" });
     }
+    operationReservation?.release();
   }
 }
 

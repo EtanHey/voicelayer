@@ -27,7 +27,9 @@ import * as paths from "../paths";
 import * as socketClient from "../socket-client";
 import * as stt from "../stt";
 import * as sttPolish from "../stt-polish";
+import * as tts from "../tts";
 import * as vad from "../vad";
+import * as voiceBarLauncher from "../voice-bar-launcher";
 
 const VAD_CHUNK_SAMPLES = 512;
 const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2;
@@ -2012,6 +2014,68 @@ describe("input recording durability", () => {
       });
     });
 
+    it("blocks voice_speak while exact-path History retranscription is pending", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      backendMode = "hang";
+      const speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+      const launcherSpy = spyOn(
+        voiceBarLauncher,
+        "ensureVoiceBarRunning",
+      ).mockImplementation(() => {});
+      const { retranscribeRecordingCapture } = await import("../input");
+      const { handleVoiceSpeak } = await import("../handlers");
+      const pendingHistory = retranscribeRecordingCapture(audioPath);
+
+      try {
+        await waitUntil(
+          () => finishHangingTranscription !== undefined,
+          "hanging History retranscription",
+        );
+
+        const racedSpeak = await handleVoiceSpeak({
+          message: "Do not overlap History retranscription",
+          mode: "announce",
+        });
+
+        expect(racedSpeak.isError).toBe(true);
+        expect(racedSpeak.content[0].text).toContain(
+          "archive retranscription voice operation is in progress",
+        );
+        expect(speakSpy).not.toHaveBeenCalled();
+      } finally {
+        finishHangingTranscription?.();
+        await pendingHistory;
+        launcherSpy.mockRestore();
+        speakSpy.mockRestore();
+      }
+    });
+
+    it("broadcasts Ask validation failures to the exact-path History caller", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      metadata.user_audio_sha256 = "0".repeat(64);
+      writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      const { retranscribeRecordingCapture } = await import("../input");
+
+      await expect(retranscribeRecordingCapture(audioPath)).rejects.toThrow(
+        /checksum mismatch/,
+      );
+
+      expect(
+        broadcasts.filter((event) => event.type === "error"),
+      ).toEqual([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("checksum mismatch"),
+          recoverable: true,
+        }),
+      ]);
+      expect(backendTranscribeCalls).toBe(0);
+    });
+
     it("keeps the public receipt action bound to its exact archive and never falls back", async () => {
       backendText = "target raw retry";
       const target = writeAskArchive();
@@ -2416,6 +2480,39 @@ describe("input recording durability", () => {
       await expect(pending).rejects.toThrow(/changed during retranscription/);
       expect(readFileSync(transcriptPath, "utf8")).toBe(archive.transcript);
       expect(readFileSync(metadataPath)).toEqual(swappedMetadata);
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("rejects a concurrent transcript edit during the backend await", async () => {
+      const archive = writeAskArchive();
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const previousMetadata = readFileSync(metadataPath);
+      backendMode = "hang";
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const pending = retranscribeVoiceAskArchive(archive.id);
+      await waitUntil(
+        () => finishHangingTranscription !== undefined,
+        "hanging Ask retranscription",
+      );
+
+      writeFileSync(transcriptPath, "Concurrent transcript edit.");
+      finishHangingTranscription?.();
+
+      await expect(pending).rejects.toThrow(/changed during retranscription/);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(
+        "Concurrent transcript edit.",
+      );
+      expect(readFileSync(metadataPath)).toEqual(previousMetadata);
+      expect(readFileSync(join(archive.archiveDir, "audio.wav"))).toEqual(
+        Buffer.from(archive.audio),
+      );
       const { getEffectiveRecordingState } = await import(
         "../recording-state"
       );

@@ -71,6 +71,7 @@ import {
   warnLegacyPressToTalk,
 } from "./push-to-end";
 import { appendControlLayerEvent } from "./control-layer-journal";
+import { reserveStandardVoiceOperation } from "./voice-operation-reservation";
 
 // --- MCP result helper ---
 
@@ -314,15 +315,26 @@ export async function handleVoiceSpeak(
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  switch (mode) {
-    case "announce":
-      return handleAnnounce({ message, rate, voice }, context);
-    case "brief":
-      return handleBrief({ message, rate, voice }, context);
-    case "consult":
-      return handleConsult({ message, rate, voice }, context);
-    default:
-      return handleAnnounce({ message, rate, voice }, context);
+  const reservation = reserveStandardVoiceOperation();
+  if (!reservation) {
+    return textResult(
+      "voice_speak refused because an archive retranscription voice operation is in progress",
+      true,
+    );
+  }
+  try {
+    switch (mode) {
+      case "announce":
+        return await handleAnnounce({ message, rate, voice }, context);
+      case "brief":
+        return await handleBrief({ message, rate, voice }, context);
+      case "consult":
+        return await handleConsult({ message, rate, voice }, context);
+      default:
+        return await handleAnnounce({ message, rate, voice }, context);
+    }
+  } finally {
+    reservation.release();
   }
 }
 
@@ -343,21 +355,21 @@ export async function handleVoiceAsk(
   }
   const retranscribeArchiveId = parsed.data.retranscribe_archive_id;
   if (typeof retranscribeArchiveId === "string") {
-    const currentState = getEffectiveRecordingState();
-    if (currentState !== "idle") {
-      return textResult(
-        `voice_ask archive retranscription requires idle voice state (current: ${currentState})`,
-        true,
-      );
-    }
-    const playbackQueueDepth = getPlaybackQueueDepth();
-    if (playbackQueueDepth > 0) {
-      return textResult(
-        `voice_ask archive retranscription refused because the playback queue is not empty (${playbackQueueDepth})`,
-        true,
-      );
-    }
     try {
+      const currentState = getEffectiveRecordingState();
+      if (currentState !== "idle") {
+        return textResult(
+          `voice_ask archive retranscription requires idle voice state (current: ${currentState})`,
+          true,
+        );
+      }
+      const playbackQueueDepth = getPlaybackQueueDepth();
+      if (playbackQueueDepth > 0) {
+        return textResult(
+          `voice_ask archive retranscription refused because the playback queue is not empty (${playbackQueueDepth})`,
+          true,
+        );
+      }
       const text = await retranscribeVoiceAskArchive(
         retranscribeArchiveId,
         { delivery: "return-only" },
@@ -386,16 +398,27 @@ export async function handleVoiceAsk(
     voiceAskMessageMaxCharsForTimeout(parsed.data.timeout_seconds),
   );
   if (refusal) return refusal;
-  return handleConverse(
-    {
-      message: parsed.data.message,
-      voice: parsed.data.voice,
-      timeout_seconds: parsed.data.timeout_seconds,
-      silence_mode: parsed.data.silence_mode,
-      push_to_end: parsed.data.push_to_end,
-    },
-    context,
-  );
+  const reservation = reserveStandardVoiceOperation();
+  if (!reservation) {
+    return textResult(
+      "voice_ask refused because an archive retranscription voice operation is in progress",
+      true,
+    );
+  }
+  try {
+    return await handleConverse(
+      {
+        message: parsed.data.message,
+        voice: parsed.data.voice,
+        timeout_seconds: parsed.data.timeout_seconds,
+        silence_mode: parsed.data.silence_mode,
+        push_to_end: parsed.data.push_to_end,
+      },
+      context,
+    );
+  } finally {
+    reservation.release();
+  }
 }
 
 // --- Mode Handlers ---

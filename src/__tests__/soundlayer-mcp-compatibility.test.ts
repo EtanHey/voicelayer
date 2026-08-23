@@ -11,6 +11,7 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
+import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import {
   mkdtempSync,
   readFileSync,
@@ -79,7 +80,19 @@ describe("SoundLayer MCP compatibility regression", () => {
     retranscribeAskSpy = spyOn(
       input,
       "retranscribeVoiceAskArchive",
-    ).mockResolvedValue("raw retranscribed response");
+    ).mockImplementation(async () => {
+      const reservation = reserveArchiveRetranscription();
+      if (!reservation) {
+        throw new Error(
+          "voice_ask archive retranscription refused because another voice operation is in progress",
+        );
+      }
+      try {
+        return "raw retranscribed response";
+      } finally {
+        reservation.release();
+      }
+    });
     queueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0);
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
@@ -335,6 +348,89 @@ describe("SoundLayer MCP compatibility regression", () => {
     expect(result.content[0].text).toContain("playback queue is not empty");
     expect(retranscribeAskSpy).not.toHaveBeenCalled();
     expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+  });
+
+  it("reserves a normal voice_ask while its prompt synthesis is pending", async () => {
+    let markSynthesisStarted!: () => void;
+    const synthesisStarted = new Promise<void>((resolve) => {
+      markSynthesisStarted = resolve;
+    });
+    let releaseSynthesis!: () => void;
+    const synthesisRelease = new Promise<void>((resolve) => {
+      releaseSynthesis = resolve;
+    });
+    speakSpy.mockImplementation(async () => {
+      markSynthesisStarted();
+      await synthesisRelease;
+      return {
+        displayText: "Pending question",
+        engine: "edge-tts",
+        voice: "en-US-AndrewNeural",
+        audioArtifact: {
+          bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+          format: "mp3",
+        },
+      };
+    });
+
+    const pendingAsk = handleVoiceAsk({ message: "Pending question" });
+    await synthesisStarted;
+    const racedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+
+    expect(racedRetranscription.isError).toBe(true);
+    expect(racedRetranscription.content[0].text).toContain(
+      "voice operation is in progress",
+    );
+    expect(retranscribeAskSpy).toHaveBeenCalledTimes(1);
+
+    releaseSynthesis();
+    const completedAsk = await pendingAsk;
+    expect(completedAsk.isError).toBeUndefined();
+    const acceptedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+    expect(acceptedRetranscription.isError).toBeUndefined();
+  });
+
+  it("reserves voice_speak while its synthesis is pending", async () => {
+    let markSynthesisStarted!: () => void;
+    const synthesisStarted = new Promise<void>((resolve) => {
+      markSynthesisStarted = resolve;
+    });
+    let releaseSynthesis!: () => void;
+    const synthesisRelease = new Promise<void>((resolve) => {
+      releaseSynthesis = resolve;
+    });
+    speakSpy.mockImplementation(async () => {
+      markSynthesisStarted();
+      await synthesisRelease;
+      return {};
+    });
+
+    const pendingSpeak = handleVoiceSpeak({
+      message: "Pending announcement",
+      mode: "announce",
+    });
+    await synthesisStarted;
+    const racedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+
+    expect(racedRetranscription.isError).toBe(true);
+    expect(racedRetranscription.content[0].text).toContain(
+      "voice operation is in progress",
+    );
+    expect(retranscribeAskSpy).toHaveBeenCalledTimes(1);
+
+    releaseSynthesis();
+    const completedSpeak = await pendingSpeak;
+    expect(completedSpeak.isError).toBeUndefined();
+    const acceptedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+    expect(acceptedRetranscription.isError).toBeUndefined();
   });
 
   it("accepts a voice_ask message at the blocking limit", async () => {

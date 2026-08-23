@@ -304,6 +304,28 @@ describe("mcp-handler", () => {
       expect(voiceAsk.description).toContain("does not open the microphone");
     });
 
+    it("advertises the receipt-only branch as closed to extra properties", async () => {
+      const response = await handleMcpRequest({
+        jsonrpc: "2.0",
+        id: 19,
+        method: "tools/list",
+      });
+
+      const voiceAsk = response.result.tools.find(
+        (tool: { name: string }) => tool.name === "voice_ask",
+      );
+      const receiptBranch = voiceAsk.inputSchema.oneOf.find(
+        (branch: { required?: string[] }) =>
+          branch.required?.includes("retranscribe_archive_id"),
+      );
+
+      expect(receiptBranch).toMatchObject({
+        properties: { retranscribe_archive_id: {} },
+        required: ["retranscribe_archive_id"],
+        additionalProperties: false,
+      });
+    });
+
     it("each tool has name, description, inputSchema", async () => {
       const response = await handleMcpRequest({
         jsonrpc: "2.0",

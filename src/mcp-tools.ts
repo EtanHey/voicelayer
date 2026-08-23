@@ -175,7 +175,9 @@ export function getToolDefinitions() {
             not: { required: ["retranscribe_archive_id"] },
           },
           {
+            properties: { retranscribe_archive_id: {} },
             required: ["retranscribe_archive_id"],
+            additionalProperties: false,
             not: {
               anyOf: [
                 { required: ["message"] },
