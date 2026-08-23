@@ -761,11 +761,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("voiceState.copyTranscript(text)"))
         XCTAssertTrue(source.contains("voiceState.repasteTranscript(text, source: \"settings_history\")"))
         XCTAssertTrue(source.contains("voiceState.retranscribeHistoryEntry(recordingPath: recordingPath)"))
+        XCTAssertTrue(source.contains("onRevealHistoryFile: { audioPath in"))
+        XCTAssertTrue(source.contains("NSWorkspace.shared.activateFileViewerSelecting"))
         XCTAssertTrue(source.contains("isVoiceBarHidden: { [weak self] in"))
         XCTAssertTrue(source.contains("onHideVoiceBar: { [weak self] in"))
         XCTAssertTrue(source.contains("snoozeForOneHour()"))
         XCTAssertTrue(source.contains("onShowVoiceBar: { [weak self] in"))
         XCTAssertTrue(source.contains("unsnoozeNow()"))
+    }
+
+    @MainActor
+    func testHistoryFinderSelectionPreservesExactAudioURLWithSpaces() {
+        let audioURL = URL(fileURLWithPath: "/tmp/VoiceLayer Ask/retained response/audio.wav")
+
+        XCTAssertEqual(AppDelegate.historyFileRevealSelection(for: audioURL), [audioURL])
     }
 
     func testDictionaryAddWindowIsStandaloneAndClosable() throws {

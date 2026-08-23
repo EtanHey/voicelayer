@@ -64,7 +64,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(source.contains("onRetranscribeHistoryEntry"))
         XCTAssertTrue(source.contains("ScrollViewReader"))
         XCTAssertTrue(source.contains("latestHistoryAnchorID"))
-        XCTAssertTrue(source.contains("historyEntryActions"))
+        XCTAssertTrue(source.contains("historyMediaPartActions"))
         XCTAssertTrue(source.contains("voiceBarHistoryArchiveDidChange"))
     }
 
@@ -96,14 +96,19 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("historyRetranscriptionPasteSuppressionPaths"))
     }
 
-    func testHistoryRowsExposeRetranscribeInFlightFeedback() throws {
+    func testHistoryRowsUseOnlyTheSpinningButtonForInFlightFeedback() throws {
         let settingsSource = try settingsViewSource()
         let barSource = try barViewSource()
         let appSource = try voiceBarAppSource()
 
         XCTAssertTrue(settingsSource.contains("isHistoryRetranscribing"))
-        XCTAssertTrue(settingsSource.contains("Re-transcribing..."))
-        XCTAssertTrue(settingsSource.contains("historyEntryActions(entry, isRetranscribing: isRetranscribing)"))
+        XCTAssertFalse(settingsSource.contains("Text(\"Re-transcribing...\")"))
+        XCTAssertFalse(settingsSource.contains(".opacity(isRetranscribing ?"))
+        XCTAssertTrue(settingsSource.contains("isRetranscribing: isRetranscribing,"))
+        XCTAssertTrue(settingsSource.contains("isSpinning: isRetranscribing"))
+        XCTAssertTrue(settingsSource.contains(".rotationEffect(.degrees(isSpinning ? 360 : 0))"))
+        XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
+        XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
         XCTAssertTrue(barSource.contains("Re-transcribing..."))
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
@@ -130,14 +135,221 @@ final class SettingsViewContractTests: XCTestCase {
     func testAskScopeRendersBothSidesOfTheExchangeWithPlayableAudio() throws {
         let source = try settingsViewSource()
 
-        XCTAssertTrue(source.contains("askEntryRow"))
-        XCTAssertTrue(source.contains("askSideRow"))
-        XCTAssertTrue(source.contains("entry.displayQuestionText"))
-        XCTAssertTrue(source.contains("entry.displayResponseTranscript"))
-        XCTAssertTrue(source.contains("entry.questionAudioPath"))
-        XCTAssertTrue(source.contains("entry.responseAudioPath"))
-        XCTAssertTrue(source.contains("askPlayback.toggle"))
-        XCTAssertTrue(source.contains("askPlayback.isPlaying"))
+        XCTAssertTrue(source.contains("SettingsHistoryRowModel.ask(entry)"))
+        XCTAssertTrue(source.contains("historyEntryRow"))
+        XCTAssertTrue(source.contains("historyMediaPartRow"))
+        XCTAssertTrue(source.contains("historyPlayback.toggle"))
+        XCTAssertTrue(source.contains("historyPlayback.isPlaying"))
+        XCTAssertTrue(source.contains("onRevealHistoryFile(audioPath)"))
+    }
+
+    func testBothHistoryScopesUseTheSharedPinnedDayAndCardSeam() throws {
+        let source = try settingsViewSource()
+
+        XCTAssertEqual(
+            source.components(separatedBy: "pinnedViews: [.sectionHeaders]").count - 1,
+            2
+        )
+        XCTAssertTrue(source.contains("private func historyDaySection"))
+        XCTAssertTrue(source.contains("private func historyDayHeader"))
+        XCTAssertTrue(source.contains("private func historyEntryRow"))
+        XCTAssertTrue(source.contains("private func historyMediaPartRow"))
+        XCTAssertFalse(source.contains("askHistoryDaySection"))
+        XCTAssertFalse(source.contains("askEntryRow"))
+        XCTAssertFalse(source.contains("askSideRow"))
+        XCTAssertFalse(source.contains("historyEntryActions"))
+    }
+
+    func testSharedHistoryPresentationPreservesOrderedPartsAndCapabilities() {
+        let recordingURL = URL(fileURLWithPath: "/tmp/recording/audio.wav")
+        let recording = SettingsHistoryEntry(
+            id: recordingURL.path,
+            dayKey: "2026-08-21",
+            recordingID: "recording",
+            createdAt: Date(timeIntervalSince1970: 0),
+            transcript: "Recorded words",
+            audioPath: recordingURL
+        )
+        let recordingRow = SettingsHistoryRowModel.recording(recording)
+
+        XCTAssertEqual(recordingRow.parts.map(\.role), [.recording])
+        XCTAssertNil(recordingRow.parts[0].label)
+        XCTAssertEqual(
+            recordingRow.parts[0].actions,
+            [.play, .copy, .paste, .retranscribe, .finder]
+        )
+
+        let ask = SettingsAskHistoryEntry(
+            id: "/tmp/ask",
+            dayKey: "2026-08-21",
+            askID: "ask",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questionText: "Question",
+            questionAudioPath: URL(fileURLWithPath: "/tmp/ask/agent-audio.mp3"),
+            responseTranscript: "Response",
+            responseAudioPath: URL(fileURLWithPath: "/tmp/ask/audio.wav")
+        )
+        let askRow = SettingsHistoryRowModel.ask(ask)
+
+        XCTAssertEqual(askRow.parts.map(\.role), [.question, .response])
+        XCTAssertEqual(askRow.parts.map(\.label), ["Question", "Response"])
+        XCTAssertFalse(askRow.parts[0].isPlaceholder)
+        XCTAssertEqual(askRow.parts[0].actions, [.play])
+        XCTAssertEqual(askRow.parts[1].actions, [.play, .copy, .paste, .finder])
+    }
+
+    func testSharedHistoryCapabilitiesDisableActionsFromTheActualPart() {
+        let retainedResponseURL = URL(fileURLWithPath: "/tmp/ask-missing/audio.wav")
+        let ask = SettingsAskHistoryEntry(
+            id: "/tmp/ask-missing",
+            dayKey: "2026-08-21",
+            askID: "ask-missing",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questionText: "Question without audio",
+            questionAudioPath: nil,
+            responseTranscript: "",
+            responseAudioPath: retainedResponseURL
+        )
+        let parts = SettingsHistoryRowModel.ask(ask).parts
+
+        XCTAssertFalse(parts[0].isPlaceholder)
+        XCTAssertTrue(parts[1].isPlaceholder)
+        XCTAssertFalse(parts[0].isEnabled(.play))
+        XCTAssertFalse(parts[0].actions.contains(.copy))
+        XCTAssertFalse(parts[0].actions.contains(.finder))
+        XCTAssertTrue(parts[1].isEnabled(.play))
+        XCTAssertFalse(parts[1].isEnabled(.copy))
+        XCTAssertFalse(parts[1].isEnabled(.paste))
+        XCTAssertTrue(parts[1].isEnabled(.finder))
+        XCTAssertEqual(parts[1].audioPath, retainedResponseURL)
+    }
+
+    func testHistoryActionEnablementMatchesIndependentRetranscribingAndRecordingStates() {
+        let part = SettingsHistoryMediaPart(
+            role: .recording,
+            displayText: "Stored transcript",
+            isPlaceholder: false,
+            actionableText: "Stored transcript",
+            audioPath: URL(fileURLWithPath: "/tmp/recording/audio.wav"),
+            durationLabel: nil,
+            transcribedDurationLabel: nil
+        )
+        let cases: [(retranscribing: Bool, recording: Bool, enabled: Set<SettingsHistoryAction>)] = [
+            (false, false, [.play, .copy, .paste, .retranscribe, .finder]),
+            (true, false, [.play, .finder]),
+            (false, true, [.play, .copy, .paste, .finder]),
+            (true, true, [.play, .finder]),
+        ]
+
+        for testCase in cases {
+            let enablement = SettingsHistoryActionEnablement(
+                isRetranscribing: testCase.retranscribing,
+                isRecording: testCase.recording
+            )
+            let enabled = Set(part.actions.filter { enablement.isEnabled($0, for: part) })
+
+            XCTAssertEqual(
+                enabled,
+                testCase.enabled,
+                "Unexpected actions for retranscribing=\(testCase.retranscribing), recording=\(testCase.recording)"
+            )
+        }
+    }
+
+    func testHistoryActionEnablementAlwaysAndsWithPartCapabilities() {
+        let unavailablePart = SettingsHistoryMediaPart(
+            role: .recording,
+            displayText: "No retained media",
+            isPlaceholder: true,
+            actionableText: nil,
+            audioPath: nil,
+            durationLabel: nil,
+            transcribedDurationLabel: nil
+        )
+
+        for isRetranscribing in [false, true] {
+            for isRecording in [false, true] {
+                let enablement = SettingsHistoryActionEnablement(
+                    isRetranscribing: isRetranscribing,
+                    isRecording: isRecording
+                )
+
+                XCTAssertTrue(
+                    unavailablePart.actions.allSatisfy {
+                        !enablement.isEnabled($0, for: unavailablePart)
+                    }
+                )
+            }
+        }
+    }
+
+    func testHistoryActionsAreIconOnlyWithTooltipsAndAccessibleNames() throws {
+        let source = try settingsViewSource()
+        let actionsStart = try XCTUnwrap(source.range(of: "private func historyMediaPartActions"))
+        let actionsEnd = try XCTUnwrap(source.range(of: "// MARK: - Dictionary Tab"))
+        let actions = source[actionsStart.lowerBound ..< actionsEnd.lowerBound]
+
+        XCTAssertTrue(actions.contains(".labelStyle(.iconOnly)"))
+        XCTAssertTrue(actions.contains(".frame(minWidth: 28, minHeight: 28)"))
+        XCTAssertTrue(actions.contains(".help(isPlaying ? \"Stop\" : \"Play\")"))
+        XCTAssertTrue(actions.contains(".help(\"Copy\")"))
+        XCTAssertTrue(actions.contains(".help(\"Paste\")"))
+        XCTAssertTrue(actions.contains(".help(\"Re-transcribe\")"))
+        XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
+
+        for accessibleName in [
+            "\\(isPlaying ? \"Stop\" : \"Play\") \\(part.accessibilityNoun)",
+            "Copy transcript",
+            "Paste transcript",
+            "Open stored audio in Finder",
+        ] {
+            XCTAssertTrue(
+                actions.contains(".accessibilityLabel(\"\(accessibleName)\")"),
+                "Missing explicit accessible name: \(accessibleName)"
+            )
+        }
+        XCTAssertTrue(actions.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
+        XCTAssertTrue(actions.contains(": \"Re-transcribe stored audio\""))
+    }
+
+    func testSharedHistoryUsesRecordingDurationRuleForAskResponse() {
+        let ask = SettingsAskHistoryEntry(
+            id: "/tmp/ask-duration",
+            dayKey: "2026-08-21",
+            askID: "ask-duration",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questionText: "How long?",
+            questionAudioPath: nil,
+            responseTranscript: "Long enough",
+            responseAudioPath: URL(fileURLWithPath: "/tmp/ask-duration/audio.wav"),
+            responseDurationMs: 43400,
+            responseTranscribedDurationMs: 40100
+        )
+
+        let response = SettingsHistoryRowModel.ask(ask).parts[1]
+
+        XCTAssertEqual(response.durationLabel, "0:43")
+        XCTAssertEqual(response.transcribedDurationLabel, "0:40")
+    }
+
+    func testSharedHistoryDurationDifferenceDoesNotOverflow() {
+        let ask = SettingsAskHistoryEntry(
+            id: "/tmp/ask-duration-overflow",
+            dayKey: "2026-08-21",
+            askID: "ask-duration-overflow",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questionText: "How long?",
+            questionAudioPath: nil,
+            responseTranscript: "Long enough",
+            responseAudioPath: URL(fileURLWithPath: "/tmp/ask-duration-overflow/audio.wav"),
+            responseDurationMs: 2000,
+            responseTranscribedDurationMs: .min
+        )
+
+        let response = SettingsHistoryRowModel.ask(ask).parts[1]
+
+        XCTAssertEqual(response.durationLabel, "0:02")
+        XCTAssertNil(response.transcribedDurationLabel)
     }
 
     func testAskScopeLoadsItsOwnPagedArchiveOffMainThread() throws {

@@ -3,6 +3,7 @@ import XCTest
 
 @MainActor
 final class SettingsAudioPlaybackTests: XCTestCase {
+    private let recordingURL = URL(fileURLWithPath: "/tmp/voicelayer-recording/audio.wav")
     private let questionURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/agent-audio.mp3")
     private let responseURL = URL(fileURLWithPath: "/tmp/voicelayer-ask/audio.wav")
 
@@ -40,6 +41,21 @@ final class SettingsAudioPlaybackTests: XCTestCase {
         XCTAssertEqual(recorder.stopCount, 1)
         XCTAssertTrue(playback.isPlaying(responseURL))
         XCTAssertFalse(playback.isPlaying(questionURL))
+    }
+
+    func testRecordingQuestionAndResponseShareOnePlaybackSession() {
+        let recorder = Recorder()
+        let playback = playback(recorder)
+
+        playback.toggle(recordingURL)
+        playback.toggle(questionURL)
+        playback.toggle(responseURL)
+
+        XCTAssertEqual(recorder.started, [recordingURL, questionURL, responseURL])
+        XCTAssertEqual(recorder.stopCount, 2)
+        XCTAssertFalse(playback.isPlaying(recordingURL))
+        XCTAssertFalse(playback.isPlaying(questionURL))
+        XCTAssertTrue(playback.isPlaying(responseURL))
     }
 
     func testFailedStartLeavesNothingPlaying() {
