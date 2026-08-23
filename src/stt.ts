@@ -711,6 +711,36 @@ function collapseAcousticallyRejectedLoop(
   ).join(" ");
 }
 
+function hasDistinctSuspectSuffix(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const suffixWords = originalWords.slice(
+    suspect.lastOccurrenceEnd,
+    suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const suffixKey = canonicalWitnessText(suffixWords.join(" "));
+  const suspectRegionKey = canonicalWitnessText(
+    originalWords
+      .slice(suspect.firstOccurrence, suspect.lastOccurrenceEnd)
+      .join(" "),
+  );
+  return Boolean(suffixKey) && !suspectRegionKey.includes(suffixKey);
+}
+
+function hasDetectableResidualLoop(suspect: SuspectChunkLoop): boolean {
+  let minimumStride = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < suspect.occurrenceStarts.length; index++) {
+    minimumStride = Math.min(
+      minimumStride,
+      suspect.occurrenceStarts[index] - suspect.occurrenceStarts[index - 1],
+    );
+  }
+  const residualWords = minimumStride - suspect.loopWordCount;
+  return residualWords === 0 || residualWords >= MIN_SUSPECT_LOOP_WORDS;
+}
+
 function countSuspectPhraseOccurrences(
   originalText: string,
   suspect: SuspectChunkLoop,
@@ -726,6 +756,10 @@ function countSuspectPhraseOccurrences(
       )
       .join(" "),
   );
+  const phraseWords = originalWords.slice(
+    suspect.firstOccurrence,
+    suspect.firstOccurrence + suspect.loopWordCount,
+  );
   const witnessWords = normalizeChunkWords(witnessText);
   const prefixWords = originalWords.slice(
     Math.max(0, suspect.firstOccurrence - SUSPECT_CONTEXT_WORDS),
@@ -734,6 +768,10 @@ function countSuspectPhraseOccurrences(
   const suffixWords = originalWords.slice(
     suspect.lastOccurrenceEnd,
     suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
+  );
+  const suffixBoundaryIsDistinct = hasDistinctSuspectSuffix(
+    originalText,
+    suspect,
   );
   // The witness is five seconds longer than the production chunk. A repeated
   // phrase after the original suffix belongs to that extension and cannot
@@ -748,23 +786,47 @@ function countSuspectPhraseOccurrences(
     if (!prefixRange) return null;
     searchFrom = prefixRange.end;
   }
+  // The same suffix words may have been spoken earlier in the witness. Anchor
+  // the boundary search after an actual occurrence of the suspect phrase so
+  // an earlier suffix cannot make the original acoustic region look empty.
+  const firstPhraseRange = findChunkWordSequence(
+    witnessWords,
+    phraseWords,
+    searchFrom,
+  );
+  // A completely hallucinated loop is legitimately absent from both
+  // witnesses, so zero occurrences remains usable acoustic evidence. Only
+  // shift the boundary search when the phrase actually occurs.
+  const boundarySearchFrom = firstPhraseRange?.end ?? searchFrom;
   const extensionBoundaryWords = normalizeChunkWords(
     extensionBoundaryText ?? "",
   ).slice(0, EXTENSION_BOUNDARY_ANCHOR_WORDS);
+  const extensionBoundaryKey = canonicalWitnessText(
+    extensionBoundaryWords.join(" "),
+  );
+  const originalChunkKey = canonicalWitnessText(originalWords.join(" "));
+  // If the extension begins with the loop itself, text cannot distinguish the
+  // true time boundary from an in-chunk loop copy. Fail closed rather than
+  // deleting a genuine repetition on an ambiguous acoustic boundary.
+  const ambiguousExtensionBoundary =
+    Boolean(extensionBoundaryKey) &&
+    originalChunkKey.includes(extensionBoundaryKey);
   // A loop at the original chunk tail has no textual suffix. Decode the
   // witness-only five seconds separately and use its first acoustic words as
   // the boundary instead. If that decode is empty or cannot be located, leave
   // the original unchanged rather than guessing at timing.
   const suffixRange =
-    suffixWords.length > 0
-      ? findChunkWordSequence(witnessWords, suffixWords, searchFrom)
+    suffixBoundaryIsDistinct
+      ? findChunkWordSequence(witnessWords, suffixWords, boundarySearchFrom)
       : null;
   const extensionRange =
-    !suffixRange && extensionBoundaryWords.length > 0
+    !suffixRange &&
+    extensionBoundaryWords.length > 0 &&
+    !ambiguousExtensionBoundary
       ? findChunkWordSequence(
           witnessWords,
           extensionBoundaryWords,
-          searchFrom,
+          boundarySearchFrom,
         )
       : null;
   const boundaryRange = suffixRange ?? extensionRange;
@@ -829,7 +891,7 @@ function witnessContainsSuspectSuffix(
     suspect.lastOccurrenceEnd + SUSPECT_CONTEXT_WORDS,
   );
   return (
-    suffixWords.length > 0 &&
+    hasDistinctSuspectSuffix(originalText, suspect) &&
     findChunkWordSequence(normalizeChunkWords(witnessText), suffixWords, 0) !==
       null
   );
@@ -1831,6 +1893,8 @@ export class WhisperServerBackend implements STTBackend {
               const supportedCandidates: Array<{
                 candidate: SuspectChunkLoop;
                 acousticOccurrences: number;
+                distinctSuffixBoundary: boolean;
+                detectableResidualLoop: boolean;
               }> = [];
               let failClosedOnCountDisagreement = false;
               for (const candidate of candidates) {
@@ -1858,6 +1922,12 @@ export class WhisperServerBackend implements STTBackend {
                 supportedCandidates.push({
                   candidate,
                   acousticOccurrences: firstCount,
+                  distinctSuffixBoundary: hasDistinctSuspectSuffix(
+                    text,
+                    candidate,
+                  ),
+                  detectableResidualLoop:
+                    hasDetectableResidualLoop(candidate),
                 });
               }
               if (failClosedOnCountDisagreement) {
@@ -1865,9 +1935,27 @@ export class WhisperServerBackend implements STTBackend {
                 break;
               }
               supportedCandidates.sort(
-                (left, right) =>
-                  right.acousticOccurrences - left.acousticOccurrences ||
-                  right.candidate.loopWordCount - left.candidate.loopWordCount,
+                (left, right) => {
+                  const leftUnsupported =
+                    left.candidate.occurrenceStarts.length -
+                    Math.max(1, left.acousticOccurrences);
+                  const rightUnsupported =
+                    right.candidate.occurrenceStarts.length -
+                    Math.max(1, right.acousticOccurrences);
+                  // Prefer the candidate that explains the most unsupported
+                  // copies without leaving a repeated fragment below the
+                  // detector floor, then one ending at a distinct suffix.
+                  return (
+                    Number(right.detectableResidualLoop) -
+                      Number(left.detectableResidualLoop) ||
+                    rightUnsupported - leftUnsupported ||
+                    Number(right.distinctSuffixBoundary) -
+                      Number(left.distinctSuffixBoundary) ||
+                    right.acousticOccurrences - left.acousticOccurrences ||
+                    right.candidate.loopWordCount -
+                      left.candidate.loopWordCount
+                  );
+                },
               );
               const supported = supportedCandidates[0];
               if (!supported) break;
