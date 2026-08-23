@@ -1499,6 +1499,39 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks+witness");
     });
 
+    it("locates the original-chunk suffix after the witnessed loop phrase", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-suffix-before-loop-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "suffix ordering keeps these six spoken words";
+      const original = Array(3).fill(repeated).join(" ");
+      const witnessed = Array(2).fill(repeated).join(" ");
+      const suffix = "original suffix stays here after the loop";
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) {
+            return `the boundary ${original} ${suffix}`;
+          }
+          if (calls === 3 || calls === 4) {
+            return `the boundary ${suffix} before emphasis ${witnessed} ${suffix}`;
+          }
+          if (calls === 5) return "the loop continues onward";
+          return "continues onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        `intro reaches the boundary ${witnessed} ${suffix} continues onward to the end`,
+      );
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
     it("uses a separate extension decode to bound a loop at the chunk tail", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-chunked-tail-loop-boundary-test.wav";
@@ -1528,6 +1561,38 @@ describe("STT backends", () => {
         `intro reaches the boundary ${repeated} acoustic context continues onward to the end`,
       );
       expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("preserves a tail loop when the extension boundary repeats the same phrase", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-ambiguous-tail-boundary-test.wav";
+      const wav = makePcm16Wav(95);
+      addWavClick(wav, 57, 12_000);
+      await Bun.write(wavPath, wav);
+      const repeated = "ambiguous boundary repeats these exact spoken words";
+      const original = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) return `the boundary ${original}`;
+          if (calls === 3 || calls === 4) {
+            return `the boundary ${original} extension context follows`;
+          }
+          if (calls === 5) return `${repeated} extension context follows`;
+          if (calls === 6) return "extension context follows onward";
+          return "follows onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        `intro reaches the boundary ${original} extension context follows onward to the end`,
+      );
+      expect(result.backend).toBe("whisper-server+chunks");
     });
 
     it("keeps a suspect chunk unchanged when extended acoustic witnesses disagree", async () => {
