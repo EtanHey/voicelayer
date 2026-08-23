@@ -1346,6 +1346,71 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server+chunks");
     });
 
+    it("preserves witness-supported primitive copies when the raw loop also has a compound period", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-primitive-loop-period-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const repeated = "primitive period keeps these six spoken words";
+      const original = Array(6).fill(repeated).join(" ");
+      const witnessed = Array(3).fill(repeated).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the emphasis";
+          if (calls === 2) {
+            return `the emphasis ${original} original suffix stays here`;
+          }
+          if (calls === 3 || calls === 4) {
+            return `the emphasis ${witnessed} original suffix stays here`;
+          }
+          if (calls === 5) return "suffix stays here continue onward";
+          return "continue onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        `intro reaches the emphasis ${witnessed} original suffix stays here continue onward to the end`,
+      );
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
+    it("counts genuine witness repetitions across tokenization drift", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-chunked-loop-tokenization-drift-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(95));
+      const originalPhrase = "we re test this token drift today";
+      const witnessPhrase = "we retest this token drift today";
+      const original = Array(3).fill(originalPhrase).join(" ");
+      const witnessed = Array(2).fill(witnessPhrase).join(" ");
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => {
+          calls++;
+          if (calls === 1) return "intro reaches the boundary";
+          if (calls === 2) {
+            return `the boundary ${original} original suffix stays here`;
+          }
+          if (calls === 3 || calls === 4) {
+            return `the boundary ${witnessed} original suffix stays here`;
+          }
+          if (calls === 5) return "suffix stays here continue onward";
+          return "continue onward to the end";
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toBe(
+        `intro reaches the boundary ${originalPhrase} ${originalPhrase} original suffix stays here continue onward to the end`,
+      );
+      expect(result.backend).toBe("whisper-server+chunks+witness");
+    });
+
     it("independently repairs two distinct witnessed loops in one chunk", async () => {
       const wavPath =
         "/tmp/voicelayer-whisper-server-chunked-two-distinct-loops-test.wav";
