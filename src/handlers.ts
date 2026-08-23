@@ -80,6 +80,10 @@ type McpResult = {
   isError?: boolean;
 };
 
+type VoiceOperationLifecycle = {
+  deferReleaseUntil: (settlement: Promise<unknown>) => void;
+};
+
 function textResult(text: string, isError = false): McpResult {
   return {
     content: [{ type: "text" as const, text }],
@@ -405,6 +409,16 @@ export async function handleVoiceAsk(
       true,
     );
   }
+  let releaseDeferred = false;
+  const operationLifecycle: VoiceOperationLifecycle = {
+    deferReleaseUntil: (settlement) => {
+      releaseDeferred = true;
+      void settlement.then(
+        () => reservation.release(),
+        () => reservation.release(),
+      );
+    },
+  };
   try {
     return await handleConverse(
       {
@@ -415,9 +429,10 @@ export async function handleVoiceAsk(
         push_to_end: parsed.data.push_to_end,
       },
       context,
+      operationLifecycle,
     );
   } finally {
-    reservation.release();
+    if (!releaseDeferred) reservation.release();
   }
 }
 
@@ -498,6 +513,7 @@ export async function handleConsult(
 export async function handleConverse(
   args: unknown,
   context?: VoiceToolContext,
+  operationLifecycle?: VoiceOperationLifecycle,
 ): Promise<McpResult> {
   const validated = validateConverseArgs(args);
   if (!validated) {
@@ -725,8 +741,10 @@ export async function handleConverse(
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
+  const flowPromise = converseFlow();
+  operationLifecycle?.deferReleaseUntil(flowPromise);
   try {
-    const result = await Promise.race([converseFlow(), timeoutPromise]);
+    const result = await Promise.race([flowPromise, timeoutPromise]);
     if (timer) clearTimeout(timer);
     return result;
   } catch (err) {
