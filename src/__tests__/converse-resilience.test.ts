@@ -24,7 +24,8 @@ import * as tts from "../tts";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
-import { handleConverse } from "../handlers";
+import { handleConverse, handleVoiceAsk } from "../handlers";
+import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 
 const capturedPrompt = () => ({
   displayText: "test question",
@@ -339,6 +340,59 @@ describe("handleConverse resilience — P0-2", () => {
       expect(result.isError).toBe(true);
       expect(result.content[0].text).toContain("zero recoverable audio");
     } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("holds the standard-operation reservation after a hard-timeout fallback until the underlying flow settles", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    let finishInput: ((value: string) => void) | undefined;
+    let racedReservation: ReturnType<
+      typeof reserveArchiveRetranscription
+    > = null;
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        (_timeout, _silenceMode, _pushToEnd, options) => {
+          (
+            options as { onCaptureStart?: () => void } | undefined
+          )?.onCaptureStart?.();
+          return new Promise<string>((resolve) => {
+            finishInput = resolve;
+          });
+        },
+      );
+
+      const pending = handleVoiceAsk({
+        message: "Keep the reservation until late capture cleanup settles",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(20_000);
+      await Promise.resolve();
+      jest.advanceTimersByTime(15_000);
+      const fallback = await pending;
+      expect(fallback.isError).toBe(true);
+      expect(fallback.content[0].text).toContain("Hard timeout");
+
+      racedReservation = reserveArchiveRetranscription();
+      expect(racedReservation).toBeNull();
+
+      finishInput?.("late transcript after timeout");
+      for (let microtask = 0; microtask < 10; microtask++) {
+        await Promise.resolve();
+      }
+      const afterSettlement = reserveArchiveRetranscription();
+      expect(afterSettlement).not.toBeNull();
+      afterSettlement?.release();
+    } finally {
+      racedReservation?.release();
+      finishInput?.("cleanup");
       jest.useRealTimers();
       errorSpy.mockRestore();
     }

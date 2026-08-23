@@ -67,6 +67,29 @@ describe("formatAsk — success", () => {
     expect(out).toContain("I think we should refactor");
   });
 
+  it("returns the exact Ask receipt with a compact explicit retry example", () => {
+    const archiveId = "2026-08-20T10-11-12-000Z-abcd1234";
+    const out = formatAsk("I think we should refactor", { archiveId });
+
+    expect(out).toContain(`Archive: ${archiveId}`);
+    expect(out).toContain(
+      `{"retranscribe_archive_id":"${archiveId}"}`,
+    );
+    expect(out).toContain("explicitly invoke");
+    expect(out).toContain("if this transcript is suspect");
+  });
+
+  it("identifies an explicit archive retranscription without presenting it as a new capture", () => {
+    const archiveId = "2026-08-20T10-11-12-000Z-abcd1234";
+    const out = formatAsk("raw retranscribed response", {
+      retranscribedArchiveId: archiveId,
+    });
+
+    expect(out).toContain(`Re-transcribed archive: ${archiveId}`);
+    expect(out).toContain("raw retranscribed response");
+    expect(out).not.toContain("if this transcript is suspect");
+  });
+
   it("includes interrupted prompt position in the blocking result", () => {
     const out = formatAsk("I heard enough", {
       promptPlayback: {

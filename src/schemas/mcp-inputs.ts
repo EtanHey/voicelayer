@@ -45,13 +45,29 @@ export const VoiceSpeakSchema = z.object({
 });
 
 /** voice_ask tool input. */
-export const VoiceAskSchema = z.object({
+const voiceAskNormalSchema = z.object({
   message: nonEmptyTrimmed,
   voice: z.string().optional(),
   timeout_seconds: z.number().min(5).max(3600).default(30),
   silence_mode: silenceModeEnum.optional(),
   push_to_end: z.boolean().optional(),
+  retranscribe_archive_id: z.never().optional(),
 });
+
+const voiceAskArchiveId = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-[a-f0-9]{8}$/);
+
+const voiceAskRetranscriptionSchema = z
+  .object({
+    retranscribe_archive_id: voiceAskArchiveId,
+  })
+  .strict();
+
+export const VoiceAskSchema = z.union([
+  voiceAskNormalSchema,
+  voiceAskRetranscriptionSchema,
+]);
 
 /** Internal announce-mode args. */
 export const AnnounceArgsSchema = z.object({

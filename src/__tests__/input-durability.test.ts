@@ -8,7 +8,9 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
+  symlinkSync,
   writeSync,
   writeFileSync,
 } from "fs";
@@ -21,10 +23,13 @@ import {
   setCancelSignal,
 } from "../session-booking";
 import { STOP_FILE } from "../paths";
+import * as paths from "../paths";
 import * as socketClient from "../socket-client";
 import * as stt from "../stt";
 import * as sttPolish from "../stt-polish";
+import * as tts from "../tts";
 import * as vad from "../vad";
+import * as voiceBarLauncher from "../voice-bar-launcher";
 
 const VAD_CHUNK_SAMPLES = 512;
 const VAD_CHUNK_BYTES = VAD_CHUNK_SAMPLES * 2;
@@ -37,6 +42,7 @@ let backendMode: "ok" | "throw-on-get" | "hang" = "ok";
 let backendTranscribeCalls = 0;
 let backendTranscribedDataSize: number | undefined;
 let backendTranscribedFileBytes: number | undefined;
+let backendText = "retained transcript";
 let finishHangingTranscription: (() => void) | undefined;
 let broadcasts: any[] = [];
 let vadProcessSpy: ReturnType<typeof spyOn> | undefined;
@@ -286,6 +292,7 @@ describe("input recording durability", () => {
     backendTranscribeCalls = 0;
     backendTranscribedDataSize = undefined;
     backendTranscribedFileBytes = undefined;
+    backendText = "retained transcript";
     finishHangingTranscription = undefined;
     broadcasts = [];
     polishSurfaces = [];
@@ -317,7 +324,7 @@ describe("input recording durability", () => {
             });
           }
           return {
-            text: "retained transcript",
+            text: backendText,
             backend: "fake-stt",
             durationMs: 1,
           };
@@ -890,18 +897,19 @@ describe("input recording durability", () => {
 
     const { retranscribeRecordingCapture } = await import("../input");
     await expect(retranscribeRecordingCapture(archivedAudioPath)).resolves.toBe(
-      "Retained transcript.",
+      "retained transcript",
     );
     expect(
       readFileSync(join(archiveDir, "voicelayer-transcript.txt"), "utf8"),
-    ).toBe("Retained transcript.");
+    ).toBe("retained transcript");
+    expect(polishSurfaces).toEqual([]);
     expect(
       JSON.parse(readFileSync(join(archiveDir, "metadata.json"), "utf8")),
     ).toMatchObject({
       source: "voice_ask",
       transcription_status: "transcribed",
       backend: "fake-stt",
-      user_transcript_chars: "Retained transcript.".length,
+      user_transcript_chars: "retained transcript".length,
     });
   });
 
@@ -1833,5 +1841,857 @@ describe("input recording durability", () => {
       (event) => event.type === "transcription",
     );
     expect(transcriptionEvent.recording_path).toBeUndefined();
+  });
+
+  describe("ask-safe archive retranscription", () => {
+    function writeAskArchive(options: {
+      id?: string;
+      schemaVersion?: 2 | 3;
+      source?: "voice_ask" | "voicebar";
+      metadataId?: string;
+      audio?: Uint8Array;
+      transcript?: string | null;
+    } = {}) {
+      const id =
+        options.id ?? "2026-08-20T10-11-12-000Z-abcd1234";
+      const archiveDir = join(
+        process.env.QA_VOICE_RECORDINGS_DIR!,
+        id.slice(0, 10),
+        id,
+      );
+      mkdirSync(archiveDir, { recursive: true });
+      const audio = options.audio ?? makeWav(makePcmChunk(1800));
+      const audioHash = createHash("sha256").update(audio).digest("hex");
+      const agentAudio = Buffer.from([0x49, 0x44, 0x33, 1, 2, 3]);
+      const agentAudioHash = createHash("sha256")
+        .update(agentAudio)
+        .digest("hex");
+      const transcript = options.transcript === undefined
+        ? "Previous exact transcript."
+        : options.transcript;
+      const schemaVersion = options.schemaVersion ?? 3;
+      const metadata = {
+        id: options.metadataId ?? id,
+        created_at: "2026-08-20T10:11:12.000Z",
+        source: options.source ?? "voice_ask",
+        mode: "ptt",
+        silence_mode: "thoughtful",
+        duration_ms: 11_000,
+        raw_duration_ms: 11_000,
+        transcribed_duration_ms: 3_000,
+        sample_rate: 16_000,
+        channels: 1,
+        backend: transcript === null ? null : "old-stt",
+        agent_tts_engine: "edge-tts",
+        agent_tts_voice: "en-US-AndrewNeural",
+        language_mode: "english",
+        transcription_status: transcript === null ? "captured" : "transcribed",
+        retention_policy: "indefinite",
+        voicelayer_transcript_chars: transcript?.length ?? 0,
+        agent_transcript_chars: 17,
+        user_transcript_chars: transcript?.length ?? 0,
+        audio_sha256: audioHash,
+        agent_audio_sha256: agentAudioHash,
+        user_audio_sha256: audioHash,
+        artifacts: {
+          agent_audio: "agent-audio.mp3",
+          agent_transcript: "agent-transcript.txt",
+          user_audio: "audio.wav",
+          user_transcript: "voicelayer-transcript.txt",
+        },
+        app_version: null,
+        schema_version: schemaVersion,
+      };
+      writeFileSync(join(archiveDir, "audio.wav"), audio);
+      writeFileSync(join(archiveDir, "agent-audio.mp3"), agentAudio);
+      writeFileSync(
+        join(archiveDir, "agent-transcript.txt"),
+        "Archived question?",
+      );
+      writeFileSync(
+        join(archiveDir, "metadata.json"),
+        `${JSON.stringify(metadata, null, 2)}\n`,
+      );
+      if (transcript !== null) {
+        writeFileSync(
+          join(archiveDir, "voicelayer-transcript.txt"),
+          transcript,
+        );
+      }
+      return {
+        id,
+        archiveDir,
+        audio,
+        audioHash,
+        agentAudio,
+        agentAudioHash,
+        metadata,
+        transcript,
+      };
+    }
+
+    it("preserves raw words and sends the complete immutable Ask WAV to STT", async () => {
+      const raw = "  yes yes, I mean no, fu… carry on  ";
+      backendText = raw;
+      const archive = writeAskArchive({
+        audio: makePttWavWithLongQuietTail(),
+      });
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const beforeAudio = readFileSync(audioPath);
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await expect(retranscribeVoiceAskArchive(archive.id)).resolves.toBe(
+        raw.trim(),
+      );
+
+      expect(backendTranscribedDataSize).toBe(16_000 * 2 * 11);
+      expect(backendTranscribedFileBytes).toBe(beforeAudio.byteLength);
+      expect(readFileSync(audioPath)).toEqual(beforeAudio);
+      expect(
+        readFileSync(
+          join(archive.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe(raw.trim());
+      expect(polishSurfaces).toEqual([]);
+      expect(broadcasts.some((event) => event.type === "transcription")).toBe(
+        false,
+      );
+      expect(
+        JSON.parse(
+          readFileSync(join(archive.archiveDir, "metadata.json"), "utf8"),
+        ),
+      ).toMatchObject({
+        schema_version: 3,
+        source: "voice_ask",
+        duration_ms: 11_000,
+        raw_duration_ms: 11_000,
+        transcribed_duration_ms: 11_000,
+        backend: "fake-stt",
+        language_mode: "auto",
+        transcription_status: "transcribed",
+        voicelayer_transcript_chars: raw.trim().length,
+        user_transcript_chars: raw.trim().length,
+        audio_sha256: archive.audioHash,
+        user_audio_sha256: archive.audioHash,
+        created_at: "2026-08-20T10:11:12.000Z",
+        mode: "ptt",
+        silence_mode: "thoughtful",
+        agent_tts_engine: "edge-tts",
+        agent_tts_voice: "en-US-AndrewNeural",
+        agent_transcript_chars: 17,
+      });
+      expect(
+        readFileSync(join(archive.archiveDir, "agent-transcript.txt"), "utf8"),
+      ).toBe("Archived question?");
+    });
+
+    it("routes the existing exact-path History wrapper through the Ask-raw policy", async () => {
+      const raw = "  keep keep this retraction, fu… exactly  ";
+      backendText = raw;
+      const archive = writeAskArchive({
+        audio: makePttWavWithLongQuietTail(),
+      });
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const beforeAudio = readFileSync(audioPath);
+      const { retranscribeRecordingCapture } = await import("../input");
+
+      await expect(retranscribeRecordingCapture(audioPath)).resolves.toBe(
+        raw.trim(),
+      );
+
+      expect(backendTranscribedDataSize).toBe(16_000 * 2 * 11);
+      expect(readFileSync(audioPath)).toEqual(beforeAudio);
+      expect(polishSurfaces).toEqual([]);
+      expect(
+        broadcasts.find((event) => event.type === "transcription"),
+      ).toMatchObject({
+        type: "transcription",
+        text: raw.trim(),
+        recording_path: expect.stringContaining(
+          `${archive.id}/audio.wav`,
+        ),
+      });
+    });
+
+    it("blocks voice_speak while exact-path History retranscription is pending", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      backendMode = "hang";
+      const speakSpy = spyOn(tts, "speak").mockResolvedValue({});
+      const launcherSpy = spyOn(
+        voiceBarLauncher,
+        "ensureVoiceBarRunning",
+      ).mockImplementation(() => {});
+      const { retranscribeRecordingCapture } = await import("../input");
+      const { handleVoiceSpeak } = await import("../handlers");
+      const pendingHistory = retranscribeRecordingCapture(audioPath);
+
+      try {
+        await waitUntil(
+          () => finishHangingTranscription !== undefined,
+          "hanging History retranscription",
+        );
+
+        const racedSpeak = await handleVoiceSpeak({
+          message: "Do not overlap History retranscription",
+          mode: "announce",
+        });
+
+        expect(racedSpeak.isError).toBe(true);
+        expect(racedSpeak.content[0].text).toContain(
+          "archive retranscription voice operation is in progress",
+        );
+        expect(speakSpy).not.toHaveBeenCalled();
+      } finally {
+        finishHangingTranscription?.();
+        await pendingHistory;
+        launcherSpy.mockRestore();
+        speakSpy.mockRestore();
+      }
+    });
+
+    it("broadcasts Ask validation failures to the exact-path History caller", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      metadata.user_audio_sha256 = "0".repeat(64);
+      writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      const { retranscribeRecordingCapture } = await import("../input");
+
+      await expect(retranscribeRecordingCapture(audioPath)).rejects.toThrow(
+        /checksum mismatch/,
+      );
+
+      expect(
+        broadcasts.filter((event) => event.type === "error"),
+      ).toEqual([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("checksum mismatch"),
+          recoverable: true,
+        }),
+      ]);
+      expect(backendTranscribeCalls).toBe(0);
+    });
+
+    it("keeps the public receipt action bound to its exact archive and never falls back", async () => {
+      backendText = "target raw retry";
+      const target = writeAskArchive();
+      const newerF5 = writeAskArchive({
+        id: "2026-08-20T10-11-13-000Z-feedface",
+        source: "voicebar",
+        transcript: "Newer F5 transcript.",
+      });
+      const newerAsk = writeAskArchive({
+        id: "2026-08-20T10-11-14-000Z-deadbeef",
+        transcript: "Newer Ask transcript.",
+      });
+      const missingId = "2026-08-20T10-11-15-000Z-bad0cafe";
+      const { handleVoiceAsk } = await import("../handlers");
+
+      const exactResult = await handleVoiceAsk({
+        retranscribe_archive_id: target.id,
+      });
+      expect(exactResult.isError).toBeUndefined();
+      expect(exactResult.content[0].text).toContain("target raw retry");
+      expect(exactResult.content[0].text).toContain(target.id);
+      expect(
+        broadcasts.some((event) => event.type === "transcription"),
+      ).toBe(false);
+      expect(
+        readFileSync(
+          join(target.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe("target raw retry");
+      expect(
+        readFileSync(
+          join(newerF5.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe("Newer F5 transcript.");
+      expect(
+        readFileSync(
+          join(newerAsk.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe("Newer Ask transcript.");
+
+      const missingResult = await handleVoiceAsk({
+        retranscribe_archive_id: missingId,
+      });
+      expect(missingResult.isError).toBe(true);
+      expect(missingResult.content[0].text).toContain(missingId);
+      expect(backendTranscribeCalls).toBe(1);
+      expect(
+        readFileSync(
+          join(newerAsk.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe("Newer Ask transcript.");
+    });
+
+    it("keeps known schema v2 and checksum aliases coherent", async () => {
+      const archive = writeAskArchive({ schemaVersion: 2 });
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await retranscribeVoiceAskArchive(archive.id);
+
+      expect(
+        JSON.parse(
+          readFileSync(join(archive.archiveDir, "metadata.json"), "utf8"),
+        ),
+      ).toMatchObject({
+        schema_version: 2,
+        audio_sha256: archive.audioHash,
+        user_audio_sha256: archive.audioHash,
+      });
+    });
+
+    it("can recover a captured Ask that has no prior transcript", async () => {
+      const archive = writeAskArchive({ transcript: null });
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      expect(existsSync(transcriptPath)).toBe(false);
+      await expect(retranscribeVoiceAskArchive(archive.id)).resolves.toBe(
+        "retained transcript",
+      );
+      expect(readFileSync(transcriptPath, "utf8")).toBe(
+        "retained transcript",
+      );
+    });
+
+    it.each([
+      ["wrong source", { source: "voicebar" as const }],
+      ["mismatched metadata id", { metadataId: "other-id" }],
+    ])("fails closed for %s without changing the old transcript", async (_label, options) => {
+      const archive = writeAskArchive(options);
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow();
+      expect(backendTranscribeCalls).toBe(0);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(archive.transcript);
+    });
+
+    it.each([
+      ["missing audio", "missing"],
+      ["corrupt audio", "corrupt"],
+      ["incoherent checksum alias", "checksum"],
+      ["symlinked audio", "symlink"],
+      ["missing agent audio", "missing-agent-audio"],
+      ["missing agent transcript", "missing-agent-transcript"],
+      ["symlinked metadata", "symlink-metadata"],
+      ["symlinked agent audio", "symlink-agent-audio"],
+      ["symlinked agent transcript", "symlink-agent-transcript"],
+      ["tampered artifact map", "artifact-map"],
+    ])("fails closed for %s and preserves the prior pair", async (_label, mode) => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const previousMetadata = readFileSync(metadataPath);
+      if (mode === "missing") {
+        rmSync(audioPath);
+      } else if (mode === "corrupt") {
+        writeFileSync(audioPath, "not a wav");
+      } else if (mode === "checksum") {
+        const metadata = JSON.parse(previousMetadata.toString("utf8"));
+        metadata.user_audio_sha256 = "0".repeat(64);
+        writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      } else if (mode === "symlink") {
+        const outsideAudio = join(tmpRoot, "outside-ask-audio.wav");
+        writeFileSync(outsideAudio, archive.audio);
+        rmSync(audioPath);
+        symlinkSync(outsideAudio, audioPath);
+      } else if (mode === "missing-agent-audio") {
+        rmSync(join(archive.archiveDir, "agent-audio.mp3"));
+      } else if (mode === "missing-agent-transcript") {
+        rmSync(join(archive.archiveDir, "agent-transcript.txt"));
+      } else if (mode === "symlink-metadata") {
+        const outsideMetadata = join(tmpRoot, "outside-ask-metadata.json");
+        writeFileSync(outsideMetadata, previousMetadata);
+        rmSync(metadataPath);
+        symlinkSync(outsideMetadata, metadataPath);
+      } else if (mode === "symlink-agent-audio") {
+        const agentAudioPath = join(archive.archiveDir, "agent-audio.mp3");
+        const outsideAgentAudio = join(tmpRoot, "outside-agent-audio.mp3");
+        writeFileSync(outsideAgentAudio, archive.agentAudio);
+        rmSync(agentAudioPath);
+        symlinkSync(outsideAgentAudio, agentAudioPath);
+      } else if (mode === "symlink-agent-transcript") {
+        const agentTranscriptPath = join(
+          archive.archiveDir,
+          "agent-transcript.txt",
+        );
+        const outsideAgentTranscript = join(
+          tmpRoot,
+          "outside-agent-transcript.txt",
+        );
+        writeFileSync(outsideAgentTranscript, "Archived question?");
+        rmSync(agentTranscriptPath);
+        symlinkSync(outsideAgentTranscript, agentTranscriptPath);
+      } else {
+        const metadata = JSON.parse(previousMetadata.toString("utf8"));
+        metadata.artifacts.user_audio = "another.wav";
+        writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      }
+      const expectedMetadata = readFileSync(metadataPath);
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      const retranscription = expect(retranscribeVoiceAskArchive(archive.id))
+        .rejects;
+      if (mode === "corrupt") {
+        await retranscription.toThrow(/44-byte RIFF\/WAVE header/);
+      } else {
+        await retranscription.toThrow();
+      }
+      expect(backendTranscribeCalls).toBe(0);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(archive.transcript);
+      expect(readFileSync(metadataPath)).toEqual(expectedMetadata);
+    });
+
+    it("rejects a full-sized malformed Ask WAV with the explicit header error", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const malformed = Buffer.alloc(46, 0x20);
+      writeFileSync(audioPath, malformed);
+      const malformedHash = createHash("sha256").update(malformed).digest("hex");
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      metadata.audio_sha256 = malformedHash;
+      metadata.user_audio_sha256 = malformedHash;
+      writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+        /missing the RIFF\/WAVE header/,
+      );
+      expect(backendTranscribeCalls).toBe(0);
+    });
+
+    it("does not reinterpret corrupt Ask metadata as a Recording retranscription", async () => {
+      const archive = writeAskArchive();
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      writeFileSync(join(archive.archiveDir, "metadata.json"), "{broken");
+      const { retranscribeRecordingCapture } = await import("../input");
+
+      await expect(retranscribeRecordingCapture(audioPath)).rejects.toThrow(
+        /metadata/i,
+      );
+      expect(backendTranscribeCalls).toBe(0);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(archive.transcript);
+    });
+
+    it("rejects traversal-shaped and symlinked archive receipts", async () => {
+      const target = writeAskArchive();
+      const linkId = "2026-08-20T10-11-13-000Z-deadbeef";
+      const linkPath = join(
+        process.env.QA_VOICE_RECORDINGS_DIR!,
+        linkId.slice(0, 10),
+        linkId,
+      );
+      symlinkSync(target.archiveDir, linkPath, "dir");
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await expect(
+        retranscribeVoiceAskArchive(`../${target.id}`),
+      ).rejects.toThrow(/receipt/i);
+      await expect(retranscribeVoiceAskArchive(linkId)).rejects.toThrow(
+        /regular archive directory|symlink/i,
+      );
+      expect(backendTranscribeCalls).toBe(0);
+    });
+
+    it.each([
+      ["backend startup failure", "throw"],
+      ["empty backend text", "empty"],
+    ])("preserves the prior transcript and metadata on %s", async (_label, mode) => {
+      const archive = writeAskArchive();
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const previousTranscript = readFileSync(transcriptPath);
+      const previousMetadata = readFileSync(metadataPath);
+      if (mode === "throw") backendMode = "throw-on-get";
+      else backendText = "   ";
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow();
+      expect(readFileSync(transcriptPath)).toEqual(previousTranscript);
+      expect(readFileSync(metadataPath)).toEqual(previousMetadata);
+      expect(readFileSync(join(archive.archiveDir, "audio.wav"))).toEqual(
+        Buffer.from(archive.audio),
+      );
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it.each(["recording", "transcribing"] as const)(
+      "refuses direct Ask retranscription while voice state is %s",
+      async (state) => {
+        const archive = writeAskArchive();
+        const recordingState = await import("../recording-state");
+        const { retranscribeVoiceAskArchive } = await import("../input");
+        recordingState.setRecordingState(state);
+
+        try {
+          await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+            "requires idle voice state",
+          );
+        } finally {
+          recordingState.setRecordingState("idle");
+        }
+
+        expect(backendTranscribeCalls).toBe(0);
+      },
+    );
+
+    it("gives one simultaneous Ask caller exclusive ownership until it releases", async () => {
+      const firstArchive = writeAskArchive();
+      const secondArchive = writeAskArchive({
+        id: "2026-08-20T10-11-13-000Z-b16b00b5",
+      });
+      let releaseFirst!: () => void;
+      const firstBackendCall = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+      getBackendSpy!.mockImplementation(async () => ({
+        name: "fake-stt",
+        isAvailable: async () => true,
+        transcribe: async () => {
+          backendTranscribeCalls++;
+          if (backendTranscribeCalls === 1) {
+            await firstBackendCall;
+            return {
+              text: "first raw result",
+              backend: "fake-stt",
+              durationMs: 1,
+            };
+          }
+          throw new Error("second caller entered the backend");
+        },
+      }));
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+
+      const first = retranscribeVoiceAskArchive(firstArchive.id);
+      await waitUntil(
+        () => backendTranscribeCalls === 1,
+        "first Ask backend entry",
+      );
+      await expect(
+        retranscribeVoiceAskArchive(secondArchive.id),
+      ).rejects.toThrow("already in progress");
+      expect(backendTranscribeCalls).toBe(1);
+      expect(getEffectiveRecordingState()).toBe("transcribing");
+
+      releaseFirst();
+      await expect(first).resolves.toBe("first raw result");
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("rejects a same-name archive replacement during the backend await", async () => {
+      const archive = writeAskArchive();
+      const oldTranscriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      backendMode = "hang";
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const pending = retranscribeVoiceAskArchive(archive.id);
+      await waitUntil(
+        () => finishHangingTranscription !== undefined,
+        "hanging Ask retranscription",
+      );
+
+      const movedArchivePath = `${archive.archiveDir}-moved`;
+      renameSync(archive.archiveDir, movedArchivePath);
+      const replacement = writeAskArchive({
+        id: archive.id,
+        transcript: "Replacement transcript.",
+        audio: makeWav(makePcmChunk(700)),
+      });
+      finishHangingTranscription?.();
+
+      await expect(pending).rejects.toThrow(/changed during retranscription/);
+      expect(
+        readFileSync(
+          join(movedArchivePath, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe(archive.transcript);
+      expect(
+        readFileSync(
+          join(replacement.archiveDir, "voicelayer-transcript.txt"),
+          "utf8",
+        ),
+      ).toBe("Replacement transcript.");
+      expect(existsSync(oldTranscriptPath)).toBe(true);
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("rejects an in-place metadata-only swap during the backend await", async () => {
+      const archive = writeAskArchive();
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      backendMode = "hang";
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const pending = retranscribeVoiceAskArchive(archive.id);
+      await waitUntil(
+        () => finishHangingTranscription !== undefined,
+        "hanging Ask retranscription",
+      );
+
+      const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+      metadata.agent_tts_voice = "mutated-during-stt";
+      writeFileSync(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+      const swappedMetadata = readFileSync(metadataPath);
+      finishHangingTranscription?.();
+
+      await expect(pending).rejects.toThrow(/changed during retranscription/);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(archive.transcript);
+      expect(readFileSync(metadataPath)).toEqual(swappedMetadata);
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("rejects a concurrent transcript edit during the backend await", async () => {
+      const archive = writeAskArchive();
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const previousMetadata = readFileSync(metadataPath);
+      backendMode = "hang";
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const pending = retranscribeVoiceAskArchive(archive.id);
+      await waitUntil(
+        () => finishHangingTranscription !== undefined,
+        "hanging Ask retranscription",
+      );
+
+      writeFileSync(transcriptPath, "Concurrent transcript edit.");
+      finishHangingTranscription?.();
+
+      await expect(pending).rejects.toThrow(/changed during retranscription/);
+      expect(readFileSync(transcriptPath, "utf8")).toBe(
+        "Concurrent transcript edit.",
+      );
+      expect(readFileSync(metadataPath)).toEqual(previousMetadata);
+      expect(readFileSync(join(archive.archiveDir, "audio.wav"))).toEqual(
+        Buffer.from(archive.audio),
+      );
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("uses exclusive-create staging for both Ask transcript pair files", async () => {
+      const archive = writeAskArchive();
+      const originalWrite = fsModule.writeFileSync;
+      const stageOptions: Array<Record<string, unknown>> = [];
+      const writeSpy = spyOn(fsModule, "writeFileSync").mockImplementation(
+        ((path: any, data: any, options?: any) => {
+          if (typeof path === "string" && path.endsWith(".new")) {
+            stageOptions.push(options);
+          }
+          return (originalWrite as any)(path, data, options);
+        }) as typeof fsModule.writeFileSync,
+      );
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      try {
+        await retranscribeVoiceAskArchive(archive.id);
+      } finally {
+        writeSpy.mockRestore();
+      }
+
+      expect(stageOptions).toHaveLength(2);
+      expect(stageOptions.every((options) => options.flag === "wx")).toBe(
+        true,
+      );
+    });
+
+    it.each([
+      ["transcript stage write", "transcript-write"],
+      ["metadata stage write", "metadata-write"],
+      ["metadata rename", "metadata-rename"],
+      ["post-commit fsync", "post-commit-fsync"],
+    ])("rolls back the transcript/metadata pair after an injected %s failure", async (_label, mode) => {
+      const archive = writeAskArchive();
+      const transcriptPath = join(
+        archive.archiveDir,
+        "voicelayer-transcript.txt",
+      );
+      const metadataPath = join(archive.archiveDir, "metadata.json");
+      const audioPath = join(archive.archiveDir, "audio.wav");
+      const previousTranscript = readFileSync(transcriptPath);
+      const previousMetadata = readFileSync(metadataPath);
+      const previousAudio = readFileSync(audioPath);
+      let injectedSpy: { mockRestore(): void };
+
+      if (mode.endsWith("write")) {
+        const originalWrite = fsModule.writeFileSync;
+        const suffix = mode === "transcript-write"
+          ? "-transcript.new"
+          : "-metadata.new";
+        injectedSpy = spyOn(fsModule, "writeFileSync").mockImplementation(
+          ((path: any, ...args: any[]) => {
+            if (typeof path === "string" && path.endsWith(suffix)) {
+              throw new Error(`injected ${mode}`);
+            }
+            return (originalWrite as any)(path, ...args);
+          }) as typeof fsModule.writeFileSync,
+        );
+      } else if (mode === "metadata-rename") {
+        const originalRename = fsModule.renameSync;
+        let injected = false;
+        injectedSpy = spyOn(fsModule, "renameSync").mockImplementation(
+          ((from: any, to: any) => {
+            if (
+              !injected &&
+              typeof to === "string" &&
+              to.endsWith("/metadata.json")
+            ) {
+              injected = true;
+              throw new Error("injected metadata rename");
+            }
+            return originalRename(from, to);
+          }) as typeof fsModule.renameSync,
+        );
+      } else {
+        const originalFsync = fsModule.fsyncSync;
+        let fsyncCalls = 0;
+        injectedSpy = spyOn(fsModule, "fsyncSync").mockImplementation(
+          ((fd: number) => {
+            fsyncCalls++;
+            if (fsyncCalls === 4) {
+              throw new Error("injected post-commit fsync");
+            }
+            return originalFsync(fd);
+          }) as typeof fsModule.fsyncSync,
+        );
+      }
+
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      try {
+        await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+          /injected/,
+        );
+      } finally {
+        injectedSpy.mockRestore();
+      }
+
+      expect(readFileSync(transcriptPath)).toEqual(previousTranscript);
+      expect(readFileSync(metadataPath)).toEqual(previousMetadata);
+      expect(readFileSync(audioPath)).toEqual(previousAudio);
+      expect(
+        readdirSync(archive.archiveDir).some((name) =>
+          name.startsWith(".retranscribe-"),
+        ),
+      ).toBe(false);
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
+
+    it("releases the Ask owner when publishing transcribing state fails", async () => {
+      const archive = writeAskArchive();
+      const stateWriteSpy = spyOn(
+        paths,
+        "safeWriteFileSync",
+      ).mockImplementation(() => {
+        throw new Error("injected state publish failure");
+      });
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+
+      try {
+        await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+          /Unable to publish recording state \(transcribing\)/,
+        );
+      } finally {
+        stateWriteSpy.mockRestore();
+      }
+
+      expect(getEffectiveRecordingState()).toBe("idle");
+      expect(backendTranscribeCalls).toBe(0);
+      await expect(retranscribeVoiceAskArchive(archive.id)).resolves.toBe(
+        "retained transcript",
+      );
+    });
+
+    it("releases the Ask owner and recording state when the working-copy write fails", async () => {
+      const archive = writeAskArchive();
+      const originalWrite = fsModule.writeFileSync;
+      const workingCopyWriteSpy = spyOn(
+        fsModule,
+        "writeFileSync",
+      ).mockImplementation(
+        ((path: any, ...args: any[]) => {
+          if (
+            typeof path === "string" &&
+            path.startsWith("/tmp/voicelayer-recording-")
+          ) {
+            throw new Error("injected working-copy write failure");
+          }
+          return (originalWrite as any)(path, ...args);
+        }) as typeof fsModule.writeFileSync,
+      );
+      const { retranscribeVoiceAskArchive } = await import("../input");
+      const { getEffectiveRecordingState } = await import(
+        "../recording-state"
+      );
+
+      try {
+        await expect(retranscribeVoiceAskArchive(archive.id)).rejects.toThrow(
+          "injected working-copy write failure",
+        );
+      } finally {
+        workingCopyWriteSpy.mockRestore();
+      }
+
+      expect(getEffectiveRecordingState()).toBe("idle");
+      await expect(retranscribeVoiceAskArchive(archive.id)).resolves.toBe(
+        "retained transcript",
+      );
+      expect(getEffectiveRecordingState()).toBe("idle");
+    });
   });
 });

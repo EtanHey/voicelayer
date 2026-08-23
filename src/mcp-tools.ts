@@ -113,6 +113,8 @@ export function getToolDefinitions() {
         "Captured user audio is always kept, including cancel, abort, and hard-timeout paths. " +
         "If transcription cannot finish after audio exists, the non-fatal result includes an archive ID and audio path. " +
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
+        "Optional archive retranscription is explicit only and never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
+        "It binds to that exact receipt, sends the complete retained response audio to STT, does not speak and does not open the microphone, and returns the result only to this caller.\n" +
         "Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, error if busy or the pipeline is stuck with zero recoverable audio.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       annotations: {
@@ -158,8 +160,35 @@ export function getToolDefinitions() {
               "Ignored unless VOICELAYER_ALLOW_PUSH_TO_END=1.",
             default: false,
           },
+          retranscribe_archive_id: {
+            type: "string",
+            description:
+              "The exact archive receipt returned by the preceding successful voice_ask. Use by itself for explicit retranscription of that retained Ask response.",
+            pattern:
+              "^\\d{4}-\\d{2}-\\d{2}T\\d{2}-\\d{2}-\\d{2}-\\d{3}Z-[a-f0-9]{8}$",
+          },
         },
-        required: ["message"],
+        required: [],
+        oneOf: [
+          {
+            required: ["message"],
+            not: { required: ["retranscribe_archive_id"] },
+          },
+          {
+            properties: { retranscribe_archive_id: {} },
+            required: ["retranscribe_archive_id"],
+            additionalProperties: false,
+            not: {
+              anyOf: [
+                { required: ["message"] },
+                { required: ["voice"] },
+                { required: ["timeout_seconds"] },
+                { required: ["silence_mode"] },
+                { required: ["push_to_end"] },
+              ],
+            },
+          },
+        ],
       },
     },
 

@@ -167,6 +167,58 @@ describe("MCP input schemas", () => {
         expect(result.data.timeout_seconds).toBe(30);
       }
     });
+
+    it("accepts an exact archive receipt as the only retranscription mode", () => {
+      const result = VoiceAskSchema.safeParse({
+        retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data).toEqual({
+          retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+        });
+      }
+    });
+
+    it("rejects input with neither normal nor retranscription mode", () => {
+      expect(VoiceAskSchema.safeParse({}).success).toBe(false);
+    });
+
+    it("rejects ambiguous input containing both modes", () => {
+      expect(
+        VoiceAskSchema.safeParse({
+          message: "What changed?",
+          retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+        }).success,
+      ).toBe(false);
+    });
+
+    it.each([
+      "",
+      "   ",
+      "../2026-08-20T10-11-12-000Z-abcd1234",
+      "2026-08-20/2026-08-20T10-11-12-000Z-abcd1234",
+      "/tmp/2026-08-20T10-11-12-000Z-abcd1234",
+    ])("rejects whitespace or path-like archive receipt %p", (receipt) => {
+      expect(
+        VoiceAskSchema.safeParse({ retranscribe_archive_id: receipt }).success,
+      ).toBe(false);
+    });
+
+    it.each([
+      { timeout_seconds: 60 },
+      { silence_mode: "quick" },
+      { push_to_end: true },
+      { voice: "theo" },
+    ])("rejects normal-only options in retranscription mode: %o", (options) => {
+      expect(
+        VoiceAskSchema.safeParse({
+          retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+          ...options,
+        }).success,
+      ).toBe(false);
+    });
   });
 
   describe("ConverseArgsSchema", () => {

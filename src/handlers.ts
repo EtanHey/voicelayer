@@ -14,8 +14,13 @@ import {
   getHistoryEntry,
   playAudioNonBlocking,
   awaitCurrentPlayback,
+  getPlaybackQueueDepth,
 } from "./tts";
-import { waitForInput, clearInput } from "./input";
+import {
+  waitForInput,
+  clearInput,
+  retranscribeVoiceAskArchive,
+} from "./input";
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
@@ -46,6 +51,7 @@ import { sanitizeTtsText } from "./sanitize";
 import {
   AnnounceArgsSchema,
   ConverseArgsSchema,
+  VoiceAskSchema,
   ThinkArgsSchema,
   ReplayArgsSchema,
   ToggleArgsSchema,
@@ -65,12 +71,17 @@ import {
   warnLegacyPressToTalk,
 } from "./push-to-end";
 import { appendControlLayerEvent } from "./control-layer-journal";
+import { reserveStandardVoiceOperation } from "./voice-operation-reservation";
 
 // --- MCP result helper ---
 
 type McpResult = {
   content: { type: "text"; text: string }[];
   isError?: boolean;
+};
+
+type VoiceOperationLifecycle = {
+  deferReleaseUntil: (settlement: Promise<unknown>) => void;
 };
 
 function textResult(text: string, isError = false): McpResult {
@@ -308,15 +319,26 @@ export async function handleVoiceSpeak(
     return textResult("Missing or empty required parameter: message", true);
   }
 
-  switch (mode) {
-    case "announce":
-      return handleAnnounce({ message, rate, voice }, context);
-    case "brief":
-      return handleBrief({ message, rate, voice }, context);
-    case "consult":
-      return handleConsult({ message, rate, voice }, context);
-    default:
-      return handleAnnounce({ message, rate, voice }, context);
+  const reservation = reserveStandardVoiceOperation();
+  if (!reservation) {
+    return textResult(
+      "voice_speak refused because an archive retranscription voice operation is in progress",
+      true,
+    );
+  }
+  try {
+    switch (mode) {
+      case "announce":
+        return await handleAnnounce({ message, rate, voice }, context);
+      case "brief":
+        return await handleBrief({ message, rate, voice }, context);
+      case "consult":
+        return await handleConsult({ message, rate, voice }, context);
+      default:
+        return await handleAnnounce({ message, rate, voice }, context);
+    }
+  } finally {
+    reservation.release();
   }
 }
 
@@ -328,26 +350,90 @@ export async function handleVoiceAsk(
     return textResult("Missing arguments", true);
   }
   const a = args as Record<string, unknown>;
+  const parsed = VoiceAskSchema.safeParse(args);
+  if (!parsed.success) {
+    return textResult(
+      "Invalid voice_ask arguments: provide exactly one mode — {message: ...} or {retranscribe_archive_id: ...}.",
+      true,
+    );
+  }
+  const retranscribeArchiveId = parsed.data.retranscribe_archive_id;
+  if (typeof retranscribeArchiveId === "string") {
+    try {
+      const currentState = getEffectiveRecordingState();
+      if (currentState !== "idle") {
+        return textResult(
+          `voice_ask archive retranscription requires idle voice state (current: ${currentState})`,
+          true,
+        );
+      }
+      const playbackQueueDepth = getPlaybackQueueDepth();
+      if (playbackQueueDepth > 0) {
+        return textResult(
+          `voice_ask archive retranscription refused because the playback queue is not empty (${playbackQueueDepth})`,
+          true,
+        );
+      }
+      const text = await retranscribeVoiceAskArchive(
+        retranscribeArchiveId,
+        { delivery: "return-only" },
+      );
+      return textResult(
+        formatAsk(text, {
+          retranscribedArchiveId: retranscribeArchiveId,
+        }),
+      );
+    } catch (error) {
+      return textResult(
+        formatError(
+          "voice_ask",
+          error instanceof Error ? error.message : String(error),
+        ),
+        true,
+      );
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(a, "press_to_talk")) {
     warnLegacyPressToTalk("mcp.voice_ask");
   }
-  const message = typeof a.message === "string" ? a.message.trim() : a.message;
   const refusal = refuseOverlongMessage(
-    message,
+    parsed.data.message,
     "voice_ask",
-    voiceAskMessageMaxCharsForTimeout(a.timeout_seconds),
+    voiceAskMessageMaxCharsForTimeout(parsed.data.timeout_seconds),
   );
   if (refusal) return refusal;
-  return handleConverse(
-    {
-      message,
-      voice: a.voice,
-      timeout_seconds: a.timeout_seconds,
-      silence_mode: a.silence_mode,
-      push_to_end: a.push_to_end,
+  const reservation = reserveStandardVoiceOperation();
+  if (!reservation) {
+    return textResult(
+      "voice_ask refused because an archive retranscription voice operation is in progress",
+      true,
+    );
+  }
+  let releaseDeferred = false;
+  const operationLifecycle: VoiceOperationLifecycle = {
+    deferReleaseUntil: (settlement) => {
+      releaseDeferred = true;
+      void settlement.then(
+        () => reservation.release(),
+        () => reservation.release(),
+      );
     },
-    context,
-  );
+  };
+  try {
+    return await handleConverse(
+      {
+        message: parsed.data.message,
+        voice: parsed.data.voice,
+        timeout_seconds: parsed.data.timeout_seconds,
+        silence_mode: parsed.data.silence_mode,
+        push_to_end: parsed.data.push_to_end,
+      },
+      context,
+      operationLifecycle,
+    );
+  } finally {
+    if (!releaseDeferred) reservation.release();
+  }
 }
 
 // --- Mode Handlers ---
@@ -427,6 +513,7 @@ export async function handleConsult(
 export async function handleConverse(
   args: unknown,
   context?: VoiceToolContext,
+  operationLifecycle?: VoiceOperationLifecycle,
 ): Promise<McpResult> {
   const validated = validateConverseArgs(args);
   if (!validated) {
@@ -643,14 +730,21 @@ export async function handleConverse(
     }
 
     return textResult(
-      formatAsk(response, { promptPlayback: speech.playbackOutcome }),
+      formatAsk(response, {
+        ...(captureArchivePath
+          ? { archiveId: basename(captureArchivePath) }
+          : {}),
+        promptPlayback: speech.playbackOutcome,
+      }),
     );
   };
 
   // P0-2: catch pipeline errors cleanly; keep active recording UI intact
   // when v1 refuses voice_ask before question TTS.
+  const flowPromise = converseFlow();
+  operationLifecycle?.deferReleaseUntil(flowPromise);
   try {
-    const result = await Promise.race([converseFlow(), timeoutPromise]);
+    const result = await Promise.race([flowPromise, timeoutPromise]);
     if (timer) clearTimeout(timer);
     return result;
   } catch (err) {

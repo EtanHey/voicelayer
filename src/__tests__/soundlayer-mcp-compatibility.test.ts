@@ -11,6 +11,7 @@ import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
 import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
+import { reserveArchiveRetranscription } from "../voice-operation-reservation";
 import {
   mkdtempSync,
   readFileSync,
@@ -31,6 +32,9 @@ describe("SoundLayer MCP compatibility regression", () => {
   let bookSpy: ReturnType<typeof spyOn>;
   let clearInputSpy: ReturnType<typeof spyOn>;
   let clearStopSpy: ReturnType<typeof spyOn>;
+  let retranscribeAskSpy: ReturnType<typeof spyOn>;
+  let queueDepthSpy: ReturnType<typeof spyOn>;
+  let broadcastSpy: ReturnType<typeof spyOn>;
   let savedAllowPushToEnd: string | undefined;
   let savedControlLayerDisable: string | undefined;
   let savedControlLayerBase: string | undefined;
@@ -73,6 +77,26 @@ describe("SoundLayer MCP compatibility regression", () => {
     clearStopSpy = spyOn(sessionBooking, "clearStopSignal").mockImplementation(
       () => {},
     );
+    retranscribeAskSpy = spyOn(
+      input,
+      "retranscribeVoiceAskArchive",
+    ).mockImplementation(async () => {
+      const reservation = reserveArchiveRetranscription();
+      if (!reservation) {
+        throw new Error(
+          "voice_ask archive retranscription refused because another voice operation is in progress",
+        );
+      }
+      try {
+        return "raw retranscribed response";
+      } finally {
+        reservation.release();
+      }
+    });
+    queueDepthSpy = spyOn(tts, "getPlaybackQueueDepth").mockReturnValue(0);
+    broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
+      () => {},
+    );
   });
 
   afterEach(() => {
@@ -86,6 +110,9 @@ describe("SoundLayer MCP compatibility regression", () => {
     bookSpy.mockRestore();
     clearInputSpy.mockRestore();
     clearStopSpy.mockRestore();
+    retranscribeAskSpy.mockRestore();
+    queueDepthSpy.mockRestore();
+    broadcastSpy.mockRestore();
     if (savedAllowPushToEnd === undefined) {
       delete process.env.VOICELAYER_ALLOW_PUSH_TO_END;
     } else {
@@ -239,6 +266,171 @@ describe("SoundLayer MCP compatibility regression", () => {
       false,
       expect.any(Object),
     );
+  });
+
+  it.each([
+    ["missing mode", {}],
+    [
+      "ambiguous modes",
+      {
+        message: "What changed?",
+        retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+      },
+    ],
+    [
+      "normal option crossed into retranscription mode",
+      {
+        retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+        timeout_seconds: 60,
+      },
+    ],
+  ])("rejects %s before any voice side effect", async (_label, args) => {
+    const result = await handleVoiceAsk(args);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("exactly one mode");
+    expect(speakSpy).not.toHaveBeenCalled();
+    expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+    expect(bookSpy).not.toHaveBeenCalled();
+    expect(clearInputSpy).not.toHaveBeenCalled();
+    expect(clearStopSpy).not.toHaveBeenCalled();
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+  });
+
+  it("routes an exact receipt directly to return-only Ask retranscription", async () => {
+    const archiveId = "2026-08-20T10-11-12-000Z-abcd1234";
+
+    const result = await handleVoiceAsk({
+      retranscribe_archive_id: archiveId,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toContain("raw retranscribed response");
+    expect(result.content[0].text).toContain(
+      `Re-transcribed archive: ${archiveId}`,
+    );
+    expect(retranscribeAskSpy).toHaveBeenCalledWith(archiveId, {
+      delivery: "return-only",
+    });
+    expect(speakSpy).not.toHaveBeenCalled();
+    expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+    expect(bookSpy).not.toHaveBeenCalled();
+    expect(clearInputSpy).not.toHaveBeenCalled();
+    expect(clearStopSpy).not.toHaveBeenCalled();
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["recording", "transcribing"] as const)(
+    "rejects receipt retranscription while voice state is %s",
+    async (state) => {
+      recordingStateSpy.mockReturnValue(state);
+
+      const result = await handleVoiceAsk({
+        retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("requires idle voice state");
+      expect(retranscribeAskSpy).not.toHaveBeenCalled();
+      expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects receipt retranscription while playback is queued without waiting", async () => {
+    queueDepthSpy.mockReturnValue(2);
+
+    const result = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("playback queue is not empty");
+    expect(retranscribeAskSpy).not.toHaveBeenCalled();
+    expect(awaitPlaybackSpy).not.toHaveBeenCalled();
+  });
+
+  it("reserves a normal voice_ask while its prompt synthesis is pending", async () => {
+    let markSynthesisStarted!: () => void;
+    const synthesisStarted = new Promise<void>((resolve) => {
+      markSynthesisStarted = resolve;
+    });
+    let releaseSynthesis!: () => void;
+    const synthesisRelease = new Promise<void>((resolve) => {
+      releaseSynthesis = resolve;
+    });
+    speakSpy.mockImplementation(async () => {
+      markSynthesisStarted();
+      await synthesisRelease;
+      return {
+        displayText: "Pending question",
+        engine: "edge-tts",
+        voice: "en-US-AndrewNeural",
+        audioArtifact: {
+          bytes: new Uint8Array([0x49, 0x44, 0x33, 1]),
+          format: "mp3",
+        },
+      };
+    });
+
+    const pendingAsk = handleVoiceAsk({ message: "Pending question" });
+    await synthesisStarted;
+    const racedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+
+    expect(racedRetranscription.isError).toBe(true);
+    expect(racedRetranscription.content[0].text).toContain(
+      "voice operation is in progress",
+    );
+    expect(retranscribeAskSpy).toHaveBeenCalledTimes(1);
+
+    releaseSynthesis();
+    const completedAsk = await pendingAsk;
+    expect(completedAsk.isError).toBeUndefined();
+    const acceptedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+    expect(acceptedRetranscription.isError).toBeUndefined();
+  });
+
+  it("reserves voice_speak while its synthesis is pending", async () => {
+    let markSynthesisStarted!: () => void;
+    const synthesisStarted = new Promise<void>((resolve) => {
+      markSynthesisStarted = resolve;
+    });
+    let releaseSynthesis!: () => void;
+    const synthesisRelease = new Promise<void>((resolve) => {
+      releaseSynthesis = resolve;
+    });
+    speakSpy.mockImplementation(async () => {
+      markSynthesisStarted();
+      await synthesisRelease;
+      return {};
+    });
+
+    const pendingSpeak = handleVoiceSpeak({
+      message: "Pending announcement",
+      mode: "announce",
+    });
+    await synthesisStarted;
+    const racedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+
+    expect(racedRetranscription.isError).toBe(true);
+    expect(racedRetranscription.content[0].text).toContain(
+      "voice operation is in progress",
+    );
+    expect(retranscribeAskSpy).toHaveBeenCalledTimes(1);
+
+    releaseSynthesis();
+    const completedSpeak = await pendingSpeak;
+    expect(completedSpeak.isError).toBeUndefined();
+    const acceptedRetranscription = await handleVoiceAsk({
+      retranscribe_archive_id: "2026-08-20T10-11-12-000Z-abcd1234",
+    });
+    expect(acceptedRetranscription.isError).toBeUndefined();
   });
 
   it("accepts a voice_ask message at the blocking limit", async () => {
@@ -499,7 +691,7 @@ describe("SoundLayer MCP compatibility regression", () => {
     });
     waitForInputSpy.mockImplementation(
       async (timeoutMs, silenceMode, pushToEnd, options) => {
-        input.archiveWaitForInputRecording({
+        const archivePath = input.archiveWaitForInputRecording({
           options: options!,
           audioBytes: input.createWavBuffer(new Uint8Array([1, 2, 3, 4])),
           transcript: "Paired answer",
@@ -508,6 +700,7 @@ describe("SoundLayer MCP compatibility regression", () => {
           durationMs: timeoutMs / 10,
           backend: "fake-stt",
         });
+        if (archivePath) options?.onArchiveCreated?.(archivePath);
         return "Paired answer";
       },
     );
@@ -523,6 +716,10 @@ describe("SoundLayer MCP compatibility regression", () => {
       expect(dayDirs).toHaveLength(1);
       const archiveIds = readdirSync(join(archiveRoot, dayDirs[0]));
       expect(archiveIds).toHaveLength(1);
+      expect(result.content[0].text).toContain(`Archive: ${archiveIds[0]}`);
+      expect(result.content[0].text).toContain(
+        `{"retranscribe_archive_id":"${archiveIds[0]}"}`,
+      );
       const folder = join(archiveRoot, dayDirs[0], archiveIds[0]);
       expect(readdirSync(folder).sort()).toEqual([
         "agent-audio.mp3",
