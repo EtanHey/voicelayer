@@ -32,12 +32,124 @@ test_parse_no_stop_and_no_relaunch_flags() {
     APP_DIR="/Applications/VoiceBar.app"
     STOP_RUNNING=1
     RELAUNCH_APP=1
+    LEAVE_RUNNING_INSTANCE_ALONE=0
 
     parse_build_app_args --no-stop --no-relaunch --install-path /tmp/VoiceBar-Test.app
 
     assert_eq "/tmp/VoiceBar-Test.app" "$APP_DIR" "install path"
     assert_eq "0" "$STOP_RUNNING" "--no-stop disables stopping"
     assert_eq "0" "$RELAUNCH_APP" "--no-relaunch disables relaunch"
+}
+
+test_nonresident_install_leaves_running_resident_instance_alone() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    STOP_RUNNING=1
+    RELAUNCH_APP=1
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # shellcheck disable=SC2034 # Read by the sourced lifecycle helper.
+    VOICEBAR_TEST_RUNNING_APP_PATHS="/Applications/VoiceBar.app"
+
+    local output_file
+    local output
+    output_file="$(mktemp)"
+    guard_build_lifecycle_for_running_instances > "$output_file"
+    output="$(<"$output_file")"
+    rm -f "$output_file"
+
+    unset VOICEBAR_TEST_RUNNING_APP_PATHS
+
+    assert_eq "0" "$STOP_RUNNING" "nonresident install must not stop the running resident app"
+    assert_eq "0" "$RELAUNCH_APP" "nonresident install must not launch a second VoiceBar owner"
+    assert_eq "1" "$LEAVE_RUNNING_INSTANCE_ALONE" "nonresident install records why lifecycle actions are disabled"
+    if [[ "$output" != *"Leaving the running VoiceBar instance alone"* ]]; then
+        fail "nonresident lifecycle guard must explain why the running resident app was left alone"
+    fi
+}
+
+test_resolved_matching_install_path_keeps_requested_lifecycle() {
+    local tmp_dir
+    local actual_app
+    local symlink_app
+    tmp_dir="$(mktemp -d)"
+    actual_app="$tmp_dir/VoiceBarActual.app"
+    symlink_app="$tmp_dir/VoiceBar.app"
+    mkdir -p "$actual_app"
+    ln -s "$actual_app" "$symlink_app"
+
+    APP_DIR="$symlink_app/"
+    normalize_app_dir_path
+    STOP_RUNNING=1
+    RELAUNCH_APP=1
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # shellcheck disable=SC2034 # Read by the sourced lifecycle helper.
+    VOICEBAR_TEST_RUNNING_APP_PATHS="$actual_app"
+
+    guard_build_lifecycle_for_running_instances
+
+    unset VOICEBAR_TEST_RUNNING_APP_PATHS
+    rm -rf "$tmp_dir"
+
+    assert_eq "1" "$STOP_RUNNING" "resolved matching install keeps requested stop"
+    assert_eq "1" "$RELAUNCH_APP" "resolved matching install keeps requested relaunch"
+}
+
+test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    normalize_app_dir_path
+    STOP_RUNNING=1
+    RELAUNCH_APP=1
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # shellcheck disable=SC2034 # Read by the sourced lifecycle helper.
+    VOICEBAR_TEST_RUNNING_APP_PATHS=$'/Applications/VoiceBar.app\n/tmp/VoiceBar-Test.app'
+
+    local output_file
+    output_file="$(mktemp)"
+    if guard_build_lifecycle_for_running_instances > "$output_file" 2>&1; then
+        unset VOICEBAR_TEST_RUNNING_APP_PATHS
+        rm -f "$output_file"
+        fail "mixed resident and target instances must refuse before the broad stop can kill both"
+    fi
+    if ! grep -q "both the install target and another bundle path are running" "$output_file"; then
+        unset VOICEBAR_TEST_RUNNING_APP_PATHS
+        rm -f "$output_file"
+        fail "mixed-instance refusal must explain the unsafe state"
+    fi
+
+    unset VOICEBAR_TEST_RUNNING_APP_PATHS
+    rm -f "$output_file"
+}
+
+test_no_running_instance_preserves_first_install_relaunch() {
+    APP_DIR="/tmp/VoiceBar-First-Install.app"
+    normalize_app_dir_path
+    STOP_RUNNING=1
+    RELAUNCH_APP=1
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # shellcheck disable=SC2034 # Nonempty override representing no process rows.
+    VOICEBAR_TEST_PROCESS_TABLE=" "
+
+    guard_build_lifecycle_for_running_instances
+
+    unset VOICEBAR_TEST_PROCESS_TABLE
+
+    assert_eq "1" "$STOP_RUNNING" "first install preserves the no-op stop request"
+    assert_eq "1" "$RELAUNCH_APP" "first install still relaunches the new target"
+}
+
+test_lifecycle_guard_is_wired_before_stop_and_at_relaunch() {
+    local guard_call_line
+    local stop_gate_line
+    local relaunch_gate_line
+    local gate_count
+    guard_call_line="$(grep -n '^guard_build_lifecycle_for_running_instances$' "$BUILD_SCRIPT" | cut -d: -f1)"
+    stop_gate_line="$(grep -n '^if \[\[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 \]\]; then$' "$BUILD_SCRIPT" | head -1 | cut -d: -f1)"
+    relaunch_gate_line="$(grep -n '^if \[\[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 \]\]; then$' "$BUILD_SCRIPT" | tail -1 | cut -d: -f1)"
+    gate_count="$(grep -c '^if \[\[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 \]\]; then$' "$BUILD_SCRIPT")"
+
+    assert_eq "2" "$gate_count" "stop and relaunch must both consult the path-aware guard"
+    if [[ "$guard_call_line" -ge "$stop_gate_line" || "$stop_gate_line" -ge "$relaunch_gate_line" ]]; then
+        fail "path-aware guard must run before the stop gate and remain wired at relaunch"
+    fi
 }
 
 test_target_pid_discovery_is_root_bundle_plus_descendants_only() {
@@ -377,6 +489,11 @@ SH
 }
 
 test_parse_no_stop_and_no_relaunch_flags
+test_nonresident_install_leaves_running_resident_instance_alone
+test_resolved_matching_install_path_keeps_requested_lifecycle
+test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop
+test_no_running_instance_preserves_first_install_relaunch
+test_lifecycle_guard_is_wired_before_stop_and_at_relaunch
 test_target_pid_discovery_is_root_bundle_plus_descendants_only
 test_target_app_pid_discovery_accepts_symlink_resolved_executable
 test_relaunch_verification_requires_target_app_process
