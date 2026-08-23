@@ -57,8 +57,8 @@ parse_build_app_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --install-path)
-                if [[ $# -lt 2 || -z "$2" ]]; then
-                    echo "[build-app] ERROR: --install-path requires a non-empty target path" >&2
+                if [[ $# -lt 2 || -z "$2" || "$2" == *$'\n'* ]]; then
+                    echo "[build-app] ERROR: --install-path requires a non-empty target path without newlines" >&2
                     return 2
                 fi
                 APP_DIR="$2"
@@ -365,6 +365,11 @@ guard_build_lifecycle_for_running_instances() {
     local matching_target=0
     local unrelated_path=0
     LEAVE_RUNNING_INSTANCE_ALONE=0
+    # When callers disable both lifecycle actions, there is no broad stop or
+    # second launch for this guard to prevent.
+    if [[ "$STOP_RUNNING" -eq 0 && "$RELAUNCH_APP" -eq 0 ]]; then
+        return 0
+    fi
     running_app_paths="$(voicebar_running_app_paths | sort -u)"
     # Preserve first-install behavior: with no VoiceBar owner, the requested
     # relaunch still starts the newly built target.

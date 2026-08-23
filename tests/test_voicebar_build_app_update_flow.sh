@@ -50,6 +50,15 @@ test_parse_rejects_empty_install_path() {
     assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "empty install path must not mutate APP_DIR"
 }
 
+test_parse_rejects_newline_install_path() {
+    APP_DIR="/Applications/VoiceBar.app"
+
+    if parse_build_app_args --install-path $'/tmp/VoiceBar\nUnexpected.app' >/dev/null 2>&1; then
+        fail "--install-path must reject newline-containing targets before path normalization"
+    fi
+    assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "newline install path must not mutate APP_DIR"
+}
+
 test_canonical_path_resolves_dotdot_after_nonexistent_parent() {
     local tmp_dir
     local absent_applications_parent
@@ -146,6 +155,23 @@ test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop() {
 
     unset VOICEBAR_TEST_RUNNING_APP_PATHS
     rm -f "$output_file"
+}
+
+test_mixed_instances_honor_explicit_no_lifecycle_flags() {
+    APP_DIR="/tmp/VoiceBar-Test.app"
+    normalize_app_dir_path
+    STOP_RUNNING=0
+    RELAUNCH_APP=0
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # shellcheck disable=SC2034 # Read by the sourced lifecycle helper.
+    VOICEBAR_TEST_RUNNING_APP_PATHS=$'/Applications/VoiceBar.app\n/tmp/VoiceBar-Test.app'
+
+    guard_build_lifecycle_for_running_instances
+
+    unset VOICEBAR_TEST_RUNNING_APP_PATHS
+    assert_eq "0" "$STOP_RUNNING" "explicit --no-stop remains disabled with mixed instances"
+    assert_eq "0" "$RELAUNCH_APP" "explicit --no-relaunch remains disabled with mixed instances"
+    assert_eq "0" "$LEAVE_RUNNING_INSTANCE_ALONE" "explicit lifecycle opt-out does not need the automatic guard"
 }
 
 test_no_running_instance_preserves_first_install_relaunch() {
@@ -519,10 +545,12 @@ SH
 
 test_parse_no_stop_and_no_relaunch_flags
 test_parse_rejects_empty_install_path
+test_parse_rejects_newline_install_path
 test_canonical_path_resolves_dotdot_after_nonexistent_parent
 test_nonresident_install_leaves_running_resident_instance_alone
 test_resolved_matching_install_path_keeps_requested_lifecycle
 test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop
+test_mixed_instances_honor_explicit_no_lifecycle_flags
 test_no_running_instance_preserves_first_install_relaunch
 test_lifecycle_guard_is_wired_before_stop_and_at_relaunch
 test_target_pid_discovery_is_root_bundle_plus_descendants_only
