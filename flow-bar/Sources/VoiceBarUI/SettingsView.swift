@@ -966,20 +966,8 @@ public struct SettingsView: View {
 
             historyMediaPartStats(part)
 
-            if isRetranscribing {
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Re-transcribing...")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             historyMediaPartActions(part, isRetranscribing: isRetranscribing)
         }
-        .opacity(isRetranscribing ? 0.62 : 1)
-        .disabled(isRetranscribing)
     }
 
     // AIDEV-NOTE: these remain two separate facts: waveform is mic-on time, while
@@ -1023,6 +1011,28 @@ public struct SettingsView: View {
         .controlSize(.small)
     }
 
+    private func historyActionLabel(
+        _ title: String,
+        systemImage: String,
+        isSpinning: Bool = false
+    ) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: systemImage)
+                .rotationEffect(.degrees(isSpinning ? 360 : 0))
+                .animation(
+                    isSpinning
+                        ? .linear(duration: 0.8).repeatForever(autoreverses: false)
+                        : .default,
+                    value: isSpinning
+                )
+        }
+        .labelStyle(.iconOnly)
+        .frame(minWidth: 28, minHeight: 28)
+        .contentShape(Rectangle())
+    }
+
     @ViewBuilder
     private func historyActionButton(
         _ action: SettingsHistoryAction,
@@ -1030,6 +1040,7 @@ public struct SettingsView: View {
         isRetranscribing: Bool
     ) -> some View {
         let disabled = !part.isEnabled(action) || isRetranscribing
+        let isPlaying = part.audioPath.map(historyPlayback.isPlaying) ?? false
 
         switch action {
         case .play:
@@ -1037,14 +1048,13 @@ public struct SettingsView: View {
                 guard let audioPath = part.audioPath else { return }
                 historyPlayback.toggle(audioPath)
             } label: {
-                if let audioPath = part.audioPath, historyPlayback.isPlaying(audioPath) {
-                    Label("Stop", systemImage: "stop.fill")
-                } else {
-                    Label("Play", systemImage: "play.fill")
-                }
+                historyActionLabel(
+                    isPlaying ? "Stop" : "Play",
+                    systemImage: isPlaying ? "stop.fill" : "play.fill"
+                )
             }
             .disabled(disabled)
-            .help(part.audioPath == nil ? "No stored \(part.accessibilityNoun)" : "Play \(part.accessibilityNoun)")
+            .help(isPlaying ? "Stop" : "Play")
             .accessibilityLabel("Play \(part.accessibilityNoun)")
 
         case .copy:
@@ -1052,10 +1062,10 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onCopyHistoryTranscript(text)
             } label: {
-                Label("Copy", systemImage: "doc.on.doc")
+                historyActionLabel("Copy", systemImage: "doc.on.doc")
             }
             .disabled(disabled)
-            .help("Copy transcript")
+            .help("Copy")
             .accessibilityLabel("Copy transcript")
 
         case .paste:
@@ -1063,10 +1073,10 @@ public struct SettingsView: View {
                 guard let text = part.actionableText else { return }
                 onPasteHistoryTranscript(text)
             } label: {
-                Label("Paste", systemImage: "doc.on.clipboard")
+                historyActionLabel("Paste", systemImage: "doc.on.clipboard")
             }
             .disabled(disabled)
-            .help("Paste transcript")
+            .help("Paste")
             .accessibilityLabel("Paste transcript")
 
         case .retranscribe:
@@ -1074,21 +1084,27 @@ public struct SettingsView: View {
                 guard let audioPath = part.audioPath else { return }
                 onRetranscribeHistoryEntry(audioPath.path)
             } label: {
-                Label("Re-transcribe", systemImage: "arrow.triangle.2.circlepath")
+                historyActionLabel(
+                    "Re-transcribe",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    isSpinning: isRetranscribing
+                )
             }
             .disabled(disabled)
-            .help("Re-transcribe stored audio")
-            .accessibilityLabel("Re-transcribe stored audio")
+            .help("Re-transcribe")
+            .accessibilityLabel(
+                isRetranscribing ? "Re-transcribing stored audio" : "Re-transcribe stored audio"
+            )
 
         case .finder:
             Button {
                 guard let audioPath = part.audioPath else { return }
                 onRevealHistoryFile(audioPath)
             } label: {
-                Label("Open in Finder", systemImage: "folder")
+                historyActionLabel("Open in Finder", systemImage: "folder")
             }
             .disabled(disabled)
-            .help(part.audioPath == nil ? "No stored \(part.accessibilityNoun)" : "Open stored audio in Finder")
+            .help("Open in Finder")
             .accessibilityLabel("Open stored audio in Finder")
         }
     }

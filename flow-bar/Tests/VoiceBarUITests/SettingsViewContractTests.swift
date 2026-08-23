@@ -96,14 +96,20 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(source.contains("historyRetranscriptionPasteSuppressionPaths"))
     }
 
-    func testHistoryRowsExposeRetranscribeInFlightFeedback() throws {
+    func testHistoryRowsUseOnlyTheSpinningButtonForInFlightFeedback() throws {
         let settingsSource = try settingsViewSource()
         let barSource = try barViewSource()
         let appSource = try voiceBarAppSource()
 
         XCTAssertTrue(settingsSource.contains("isHistoryRetranscribing"))
-        XCTAssertTrue(settingsSource.contains("Re-transcribing..."))
+        XCTAssertFalse(settingsSource.contains("Text(\"Re-transcribing...\")"))
+        XCTAssertFalse(settingsSource.contains(".opacity(isRetranscribing ?"))
         XCTAssertTrue(settingsSource.contains("historyMediaPartActions(part, isRetranscribing: isRetranscribing)"))
+        XCTAssertTrue(settingsSource.contains("isSpinning: isRetranscribing"))
+        XCTAssertTrue(settingsSource.contains(".rotationEffect(.degrees(isSpinning ? 360 : 0))"))
+        XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
+        XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
+        XCTAssertTrue(settingsSource.contains("let disabled = !part.isEnabled(action) || isRetranscribing"))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
         XCTAssertTrue(barSource.contains("Re-transcribing..."))
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
@@ -217,6 +223,35 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertFalse(parts[1].isEnabled(.paste))
         XCTAssertTrue(parts[1].isEnabled(.finder))
         XCTAssertEqual(parts[1].audioPath, retainedResponseURL)
+    }
+
+    func testHistoryActionsAreIconOnlyWithTooltipsAndAccessibleNames() throws {
+        let source = try settingsViewSource()
+        let actionsStart = try XCTUnwrap(source.range(of: "private func historyMediaPartActions"))
+        let actionsEnd = try XCTUnwrap(source.range(of: "// MARK: - Dictionary Tab"))
+        let actions = source[actionsStart.lowerBound ..< actionsEnd.lowerBound]
+
+        XCTAssertTrue(actions.contains(".labelStyle(.iconOnly)"))
+        XCTAssertTrue(actions.contains(".frame(minWidth: 28, minHeight: 28)"))
+        XCTAssertTrue(actions.contains(".help(isPlaying ? \"Stop\" : \"Play\")"))
+        XCTAssertTrue(actions.contains(".help(\"Copy\")"))
+        XCTAssertTrue(actions.contains(".help(\"Paste\")"))
+        XCTAssertTrue(actions.contains(".help(\"Re-transcribe\")"))
+        XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
+
+        for accessibleName in [
+            "Play \\(part.accessibilityNoun)",
+            "Copy transcript",
+            "Paste transcript",
+            "Open stored audio in Finder",
+        ] {
+            XCTAssertTrue(
+                actions.contains(".accessibilityLabel(\"\(accessibleName)\")"),
+                "Missing explicit accessible name: \(accessibleName)"
+            )
+        }
+        XCTAssertTrue(actions.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
+        XCTAssertTrue(actions.contains(": \"Re-transcribe stored audio\""))
     }
 
     func testSharedHistoryUsesRecordingDurationRuleForAskResponse() {
