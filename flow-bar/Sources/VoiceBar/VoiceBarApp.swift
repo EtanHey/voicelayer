@@ -1253,6 +1253,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         logDiagnostic(event: "mode_changed", details: [
             "newMode": mode.rawValue,
         ])
+        refreshSettingsWindowAnchorState()
         switch mode {
         case .recording:
             audioLevelMonitor.start()

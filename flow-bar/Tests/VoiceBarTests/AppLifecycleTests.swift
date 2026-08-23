@@ -770,6 +770,20 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertTrue(source.contains("unsnoozeNow()"))
     }
 
+    func testVoiceModeChangesRefreshOpenSettingsActionEnablement() throws {
+        let source = try voiceBarAppSource()
+        let modeChangeStart = try XCTUnwrap(source.range(of: "private func handleVoiceModeChange"))
+        let nextFunction = try XCTUnwrap(
+            source.range(
+                of: "private func synchronizeRetainedReadbackLifecycle",
+                range: modeChangeStart.upperBound ..< source.endIndex
+            )
+        )
+        let modeChangeHandler = source[modeChangeStart.lowerBound ..< nextFunction.lowerBound]
+
+        XCTAssertTrue(modeChangeHandler.contains("refreshSettingsWindowAnchorState()"))
+    }
+
     @MainActor
     func testHistoryFinderSelectionPreservesExactAudioURLWithSpaces() {
         let audioURL = URL(fileURLWithPath: "/tmp/VoiceLayer Ask/retained response/audio.wav")
