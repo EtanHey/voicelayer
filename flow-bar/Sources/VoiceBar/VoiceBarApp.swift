@@ -2484,6 +2484,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             isHistoryRetranscribing: { [weak self] recordingPath in
                 self?.voiceState.activeHistoryRetranscriptionPath == recordingPath
             },
+            isAnyHistoryRetranscribing: { [weak self] in
+                self?.voiceState.isHistoryRetranscriptionPending ?? false
+            },
+            isRecordingActive: { [weak self] in
+                self?.voiceState.mode == .recording
+            },
             onRevealHistoryFile: { audioPath in
                 NSWorkspace.shared.activateFileViewerSelecting(
                     Self.historyFileRevealSelection(for: audioPath)

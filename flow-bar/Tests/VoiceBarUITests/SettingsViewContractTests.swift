@@ -104,12 +104,11 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(settingsSource.contains("isHistoryRetranscribing"))
         XCTAssertFalse(settingsSource.contains("Text(\"Re-transcribing...\")"))
         XCTAssertFalse(settingsSource.contains(".opacity(isRetranscribing ?"))
-        XCTAssertTrue(settingsSource.contains("historyMediaPartActions(part, isRetranscribing: isRetranscribing)"))
+        XCTAssertTrue(settingsSource.contains("isRetranscribing: isRetranscribing,"))
         XCTAssertTrue(settingsSource.contains("isSpinning: isRetranscribing"))
         XCTAssertTrue(settingsSource.contains(".rotationEffect(.degrees(isSpinning ? 360 : 0))"))
         XCTAssertTrue(settingsSource.contains(".repeatForever(autoreverses: false)"))
         XCTAssertTrue(settingsSource.contains("isRetranscribing ? \"Re-transcribing stored audio\""))
-        XCTAssertTrue(settingsSource.contains("let disabled = !part.isEnabled(action) || isRetranscribing"))
         XCTAssertTrue(barSource.contains("activeHistoryRetranscriptionPath"))
         XCTAssertTrue(barSource.contains("Re-transcribing..."))
         XCTAssertTrue(appSource.contains("voiceState.activeHistoryRetranscriptionPath == recordingPath"))
@@ -225,6 +224,65 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertEqual(parts[1].audioPath, retainedResponseURL)
     }
 
+    func testHistoryActionEnablementMatchesIndependentRetranscribingAndRecordingStates() {
+        let part = SettingsHistoryMediaPart(
+            role: .recording,
+            displayText: "Stored transcript",
+            isPlaceholder: false,
+            actionableText: "Stored transcript",
+            audioPath: URL(fileURLWithPath: "/tmp/recording/audio.wav"),
+            durationLabel: nil,
+            transcribedDurationLabel: nil
+        )
+        let cases: [(retranscribing: Bool, recording: Bool, enabled: Set<SettingsHistoryAction>)] = [
+            (false, false, [.play, .copy, .paste, .retranscribe, .finder]),
+            (true, false, [.play, .finder]),
+            (false, true, [.play, .copy, .paste, .finder]),
+            (true, true, [.play, .finder]),
+        ]
+
+        for testCase in cases {
+            let enablement = SettingsHistoryActionEnablement(
+                isRetranscribing: testCase.retranscribing,
+                isRecording: testCase.recording
+            )
+            let enabled = Set(part.actions.filter { enablement.isEnabled($0, for: part) })
+
+            XCTAssertEqual(
+                enabled,
+                testCase.enabled,
+                "Unexpected actions for retranscribing=\(testCase.retranscribing), recording=\(testCase.recording)"
+            )
+        }
+    }
+
+    func testHistoryActionEnablementAlwaysAndsWithPartCapabilities() {
+        let unavailablePart = SettingsHistoryMediaPart(
+            role: .recording,
+            displayText: "No retained media",
+            isPlaceholder: true,
+            actionableText: nil,
+            audioPath: nil,
+            durationLabel: nil,
+            transcribedDurationLabel: nil
+        )
+
+        for isRetranscribing in [false, true] {
+            for isRecording in [false, true] {
+                let enablement = SettingsHistoryActionEnablement(
+                    isRetranscribing: isRetranscribing,
+                    isRecording: isRecording
+                )
+
+                XCTAssertTrue(
+                    unavailablePart.actions.allSatisfy {
+                        !enablement.isEnabled($0, for: unavailablePart)
+                    }
+                )
+            }
+        }
+    }
+
     func testHistoryActionsAreIconOnlyWithTooltipsAndAccessibleNames() throws {
         let source = try settingsViewSource()
         let actionsStart = try XCTUnwrap(source.range(of: "private func historyMediaPartActions"))
@@ -240,7 +298,7 @@ final class SettingsViewContractTests: XCTestCase {
         XCTAssertTrue(actions.contains(".help(\"Open in Finder\")"))
 
         for accessibleName in [
-            "Play \\(part.accessibilityNoun)",
+            "\\(isPlaying ? \"Stop\" : \"Play\") \\(part.accessibilityNoun)",
             "Copy transcript",
             "Paste transcript",
             "Open stored audio in Finder",
@@ -272,6 +330,26 @@ final class SettingsViewContractTests: XCTestCase {
 
         XCTAssertEqual(response.durationLabel, "0:43")
         XCTAssertEqual(response.transcribedDurationLabel, "0:40")
+    }
+
+    func testSharedHistoryDurationDifferenceDoesNotOverflow() {
+        let ask = SettingsAskHistoryEntry(
+            id: "/tmp/ask-duration-overflow",
+            dayKey: "2026-08-21",
+            askID: "ask-duration-overflow",
+            createdAt: Date(timeIntervalSince1970: 0),
+            questionText: "How long?",
+            questionAudioPath: nil,
+            responseTranscript: "Long enough",
+            responseAudioPath: URL(fileURLWithPath: "/tmp/ask-duration-overflow/audio.wav"),
+            responseDurationMs: 2000,
+            responseTranscribedDurationMs: .min
+        )
+
+        let response = SettingsHistoryRowModel.ask(ask).parts[1]
+
+        XCTAssertEqual(response.durationLabel, "0:02")
+        XCTAssertNil(response.transcribedDurationLabel)
     }
 
     func testAskScopeLoadsItsOwnPagedArchiveOffMainThread() throws {

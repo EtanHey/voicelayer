@@ -94,6 +94,26 @@ struct SettingsHistoryMediaPart: Equatable {
     }
 }
 
+struct SettingsHistoryActionEnablement: Equatable {
+    let isRetranscribing: Bool
+    let isRecording: Bool
+
+    func isEnabled(
+        _ action: SettingsHistoryAction,
+        for part: SettingsHistoryMediaPart
+    ) -> Bool {
+        guard part.isEnabled(action) else { return false }
+
+        if action == .retranscribe, isRetranscribing || isRecording {
+            return false
+        }
+        if isRetranscribing, action == .copy || action == .paste {
+            return false
+        }
+        return true
+    }
+}
+
 struct SettingsHistoryRowModel: Equatable {
     let timestamp: String
     let parts: [SettingsHistoryMediaPart]
@@ -155,8 +175,11 @@ struct SettingsHistoryRowModel: Equatable {
         transcribedDurationMs: Int?
     ) -> (audio: String?, transcribed: String?) {
         let audio = SettingsHistoryEntry.clockLabel(durationMs)
-        guard let durationMs, let transcribedDurationMs,
-              abs(transcribedDurationMs - durationMs) >= 1000 else {
+        guard let durationMs, let transcribedDurationMs else {
+            return (audio, nil)
+        }
+        let difference = transcribedDurationMs.subtractingReportingOverflow(durationMs)
+        guard difference.overflow || difference.partialValue.magnitude >= 1000 else {
             return (audio, nil)
         }
         return (audio, SettingsHistoryEntry.clockLabel(transcribedDurationMs))
@@ -206,6 +229,8 @@ public struct SettingsView: View {
     public let onPasteHistoryTranscript: (String) -> Void
     public let onRetranscribeHistoryEntry: (String) -> Void
     public let isHistoryRetranscribing: (String) -> Bool
+    public let isAnyHistoryRetranscribing: () -> Bool
+    public let isRecordingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
@@ -286,6 +311,8 @@ public struct SettingsView: View {
         onPasteHistoryTranscript: @escaping (String) -> Void = { _ in },
         onRetranscribeHistoryEntry: @escaping (String) -> Void = { _ in },
         isHistoryRetranscribing: @escaping (String) -> Bool = { _ in false },
+        isAnyHistoryRetranscribing: @escaping () -> Bool = { false },
+        isRecordingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
         initialTab: SettingsTab = .general,
         initialHistoryScope: SettingsHistoryScope = .recording
@@ -331,6 +358,8 @@ public struct SettingsView: View {
         self.onPasteHistoryTranscript = onPasteHistoryTranscript
         self.onRetranscribeHistoryEntry = onRetranscribeHistoryEntry
         self.isHistoryRetranscribing = isHistoryRetranscribing
+        self.isAnyHistoryRetranscribing = isAnyHistoryRetranscribing
+        self.isRecordingActive = isRecordingActive
         self.onRevealHistoryFile = onRevealHistoryFile
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
@@ -944,6 +973,10 @@ public struct SettingsView: View {
     private func historyMediaPartRow(_ part: SettingsHistoryMediaPart) -> some View {
         let isRetranscribing = part.actions.contains(.retranscribe)
             && part.audioPath.map { isHistoryRetranscribing($0.path) } == true
+        let enablement = SettingsHistoryActionEnablement(
+            isRetranscribing: isAnyHistoryRetranscribing(),
+            isRecording: isRecordingActive()
+        )
 
         VStack(alignment: .leading, spacing: 6) {
             if let label = part.label, let systemImage = part.systemImage {
@@ -966,7 +999,11 @@ public struct SettingsView: View {
 
             historyMediaPartStats(part)
 
-            historyMediaPartActions(part, isRetranscribing: isRetranscribing)
+            historyMediaPartActions(
+                part,
+                isRetranscribing: isRetranscribing,
+                enablement: enablement
+            )
         }
     }
 
@@ -1000,11 +1037,17 @@ public struct SettingsView: View {
 
     private func historyMediaPartActions(
         _ part: SettingsHistoryMediaPart,
-        isRetranscribing: Bool
+        isRetranscribing: Bool,
+        enablement: SettingsHistoryActionEnablement
     ) -> some View {
         HStack(spacing: 8) {
             ForEach(part.actions, id: \.self) { action in
-                historyActionButton(action, for: part, isRetranscribing: isRetranscribing)
+                historyActionButton(
+                    action,
+                    for: part,
+                    isRetranscribing: isRetranscribing,
+                    enablement: enablement
+                )
             }
         }
         .buttonStyle(.borderless)
@@ -1037,9 +1080,10 @@ public struct SettingsView: View {
     private func historyActionButton(
         _ action: SettingsHistoryAction,
         for part: SettingsHistoryMediaPart,
-        isRetranscribing: Bool
+        isRetranscribing: Bool,
+        enablement: SettingsHistoryActionEnablement
     ) -> some View {
-        let disabled = !part.isEnabled(action) || isRetranscribing
+        let disabled = !enablement.isEnabled(action, for: part)
         let isPlaying = part.audioPath.map(historyPlayback.isPlaying) ?? false
 
         switch action {
@@ -1055,7 +1099,7 @@ public struct SettingsView: View {
             }
             .disabled(disabled)
             .help(isPlaying ? "Stop" : "Play")
-            .accessibilityLabel("Play \(part.accessibilityNoun)")
+            .accessibilityLabel("\(isPlaying ? "Stop" : "Play") \(part.accessibilityNoun)")
 
         case .copy:
             Button {
