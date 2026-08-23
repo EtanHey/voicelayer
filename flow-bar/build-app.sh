@@ -54,11 +54,20 @@ EOF
 }
 
 parse_build_app_args() {
+    local install_target
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --install-path)
                 if [[ $# -lt 2 || -z "$2" || "$2" == *$'\n'* ]]; then
                     echo "[build-app] ERROR: --install-path requires a non-empty target path without newlines" >&2
+                    return 2
+                fi
+                install_target="$2"
+                while [[ "$install_target" != "/" && "$install_target" == */ ]]; do
+                    install_target="${install_target%/}"
+                done
+                if [[ "${install_target##*/}" != *.app ]]; then
+                    echo "[build-app] ERROR: --install-path must name an .app bundle destination" >&2
                     return 2
                 fi
                 APP_DIR="$2"

@@ -59,6 +59,17 @@ test_parse_rejects_newline_install_path() {
     assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "newline install path must not mutate APP_DIR"
 }
 
+test_parse_rejects_non_app_install_targets() {
+    local unsafe_target
+    for unsafe_target in . .. / /tmp/not-an-app; do
+        APP_DIR="/Applications/VoiceBar.app"
+        if parse_build_app_args --install-path "$unsafe_target" >/dev/null 2>&1; then
+            fail "--install-path must reject unsafe non-app target: $unsafe_target"
+        fi
+        assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "unsafe install target must not mutate APP_DIR"
+    done
+}
+
 test_canonical_path_resolves_dotdot_after_nonexistent_parent() {
     local tmp_dir
     local absent_applications_parent
@@ -566,6 +577,7 @@ SH
 test_parse_no_stop_and_no_relaunch_flags
 test_parse_rejects_empty_install_path
 test_parse_rejects_newline_install_path
+test_parse_rejects_non_app_install_targets
 test_canonical_path_resolves_dotdot_after_nonexistent_parent
 test_nonresident_install_leaves_running_resident_instance_alone
 test_resolved_matching_install_path_keeps_requested_lifecycle
