@@ -93,11 +93,41 @@ parse_build_app_args() {
     done
 }
 
+lexically_normalize_absolute_path() {
+    local path="$1"
+    local component
+    local -a path_components=()
+    local -a normalized_components=()
+    local component_count
+    local IFS=/
+
+    read -r -a path_components <<< "$path"
+    for component in "${path_components[@]}"; do
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                component_count="${#normalized_components[@]}"
+                if [[ "$component_count" -gt 0 ]]; then
+                    unset 'normalized_components[component_count-1]'
+                fi
+                ;;
+            *)
+                normalized_components+=("$component")
+                ;;
+        esac
+    done
+
+    printf '/%s\n' "${normalized_components[*]}"
+}
+
 canonical_app_dir_path() {
     local path="$1"
-    local dir
+    local ancestor
     local base
+    local parent
     local physical_path
+    local unresolved_suffix=""
 
     while [ "$path" != "/" ] && [[ "$path" == */ ]]; do
         path="${path%/}"
@@ -110,13 +140,22 @@ canonical_app_dir_path() {
         return 0
     fi
 
-    dir="$(dirname "$path")"
-    base="$(basename "$path")"
-    if physical_path="$(cd "$dir" 2>/dev/null && pwd -P)"; then
-        printf '%s/%s\n' "$physical_path" "$base"
+    ancestor="$path"
+    while [[ ! -d "$ancestor" ]]; do
+        base="$(basename "$ancestor")"
+        unresolved_suffix="/$base$unresolved_suffix"
+        parent="$(dirname "$ancestor")"
+        if [[ "$parent" == "$ancestor" ]]; then
+            break
+        fi
+        ancestor="$parent"
+    done
+
+    if physical_path="$(cd "$ancestor" 2>/dev/null && pwd -P)"; then
+        lexically_normalize_absolute_path "$physical_path$unresolved_suffix"
         return 0
     fi
-    printf '%s\n' "$path"
+    lexically_normalize_absolute_path "$path"
 }
 
 normalize_app_dir_path() {

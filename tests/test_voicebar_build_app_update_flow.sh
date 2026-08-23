@@ -50,6 +50,26 @@ test_parse_rejects_empty_install_path() {
     assert_eq "/Applications/VoiceBar.app" "$APP_DIR" "empty install path must not mutate APP_DIR"
 }
 
+test_canonical_path_resolves_dotdot_after_nonexistent_parent() {
+    local tmp_dir
+    local absent_applications_parent
+    local expected
+    local actual
+    tmp_dir="$(mktemp -d)"
+    expected="$(cd "$tmp_dir" && pwd -P)/VoiceBar.app"
+
+    actual="$(canonical_app_dir_path "$tmp_dir/not-created/../VoiceBar.app")"
+
+    rm -rf "$tmp_dir"
+    assert_eq "$expected" "$actual" "canonical path through nonexistent parent"
+
+    absent_applications_parent="/Applications/.voicelayer-buildapp-test-$$"
+    [[ ! -e "$absent_applications_parent" ]] || fail "test path unexpectedly exists: $absent_applications_parent"
+    actual="$(canonical_app_dir_path "$absent_applications_parent/../VoiceBar.app")"
+    expected="$(canonical_app_dir_path "/Applications/VoiceBar.app")"
+    assert_eq "$expected" "$actual" "resident alias through nonexistent parent"
+}
+
 test_nonresident_install_leaves_running_resident_instance_alone() {
     APP_DIR="/tmp/VoiceBar-Test.app"
     STOP_RUNNING=1
@@ -499,6 +519,7 @@ SH
 
 test_parse_no_stop_and_no_relaunch_flags
 test_parse_rejects_empty_install_path
+test_canonical_path_resolves_dotdot_after_nonexistent_parent
 test_nonresident_install_leaves_running_resident_instance_alone
 test_resolved_matching_install_path_keeps_requested_lifecycle
 test_mixed_target_and_resident_instances_refuse_instead_of_broad_stop
