@@ -159,7 +159,9 @@ test_developer_id_signature_guard_rejects_apple_development() {
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/codesign" <<'SH'
 #!/usr/bin/env bash
-if [[ "$*" == *"-d -r-"* ]]; then
+if [[ "$*" == *"--verify"* ]]; then
+    exit 0
+elif [[ "$*" == *"-d -r-"* ]]; then
     printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Etan Heyman (DXHB5E7P2D)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
     printf 'Authority=Apple Development: Etan Heyman (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
@@ -187,7 +189,9 @@ test_developer_id_signature_guard_allows_apple_development_with_dangerous_overri
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/codesign" <<'SH'
 #!/usr/bin/env bash
-if [[ "$*" == *"-d -r-"* ]]; then
+if [[ "$*" == *"--verify"* ]]; then
+    exit 0
+elif [[ "$*" == *"-d -r-"* ]]; then
     printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "DXHB5E7P2D" and certificate leaf[subject.CN] = "Apple Development: Etan Heyman (DXHB5E7P2D)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
     printf 'Authority=Apple Development: Etan Heyman (DXHB5E7P2D)\nTeamIdentifier=DXHB5E7P2D\n' >&2
@@ -216,7 +220,9 @@ test_developer_id_signature_guard_accepts_developer_id() {
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/codesign" <<'SH'
 #!/usr/bin/env bash
-if [[ "$*" == *"-d -r-"* ]]; then
+if [[ "$*" == *"--verify"* ]]; then
+    exit 0
+elif [[ "$*" == *"-d -r-"* ]]; then
     printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
     printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nAuthority=Developer ID Certification Authority\nAuthority=Apple Root CA\nTeamIdentifier=PPN23G925Y\n' >&2
@@ -243,7 +249,9 @@ test_developer_id_signature_guard_rejects_partial_chain() {
     bin_dir="$(mktemp -d)"
     cat > "$bin_dir/codesign" <<'SH'
 #!/usr/bin/env bash
-if [[ "$*" == *"-d -r-"* ]]; then
+if [[ "$*" == *"--verify"* ]]; then
+    exit 0
+elif [[ "$*" == *"-d -r-"* ]]; then
     printf 'designated => identifier "com.voicelayer.voicebar" and anchor apple generic and certificate leaf[subject.OU] = "PPN23G925Y" and certificate leaf[subject.CN] = "Developer ID Application: Etan Heyman (PPN23G925Y)"\n' >&2
 elif [[ "$*" == *"-dvvv"* || "$*" == *"-dv"* ]]; then
     printf 'Authority=Developer ID Application: Etan Heyman (PPN23G925Y)\nTeamIdentifier=PPN23G925Y\n' >&2
