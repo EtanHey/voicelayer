@@ -38,13 +38,15 @@ VOICEBAR_NOTARIZED=0
 VOICEBAR_NOTARY_PROFILE_PREFLIGHT_OK=""
 STOP_RUNNING=1
 RELAUNCH_APP=1
+LEAVE_RUNNING_INSTANCE_ALONE=0
 
 usage() {
     cat <<'EOF'
 Usage: bash flow-bar/build-app.sh [--install-path /Applications/VoiceBar.app] [--no-stop] [--no-relaunch] [--zip-path VoiceBar.zip]
 
 Options:
-  --install-path PATH  Install the built app at PATH
+  --install-path PATH  Install the built app at PATH; a VoiceBar running from
+                       another bundle path is left alone and this build is not launched
   --no-stop           Do not stop running com.voicelayer.voicebar instances first
   --no-relaunch       Do not relaunch the installed app after signing
   --zip-path PATH      Write a notarized Homebrew release zip at PATH
@@ -52,11 +54,20 @@ EOF
 }
 
 parse_build_app_args() {
+    local install_target
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --install-path)
-                if [[ $# -lt 2 ]]; then
-                    echo "[build-app] ERROR: --install-path requires a target path" >&2
+                if [[ $# -lt 2 || -z "$2" || "$2" == *$'\n'* ]]; then
+                    echo "[build-app] ERROR: --install-path requires a non-empty target path without newlines" >&2
+                    return 2
+                fi
+                install_target="$2"
+                while [[ "$install_target" != "/" && "$install_target" == */ ]]; do
+                    install_target="${install_target%/}"
+                done
+                if [[ "${install_target##*/}" != *.app ]]; then
+                    echo "[build-app] ERROR: --install-path must name an .app bundle destination" >&2
                     return 2
                 fi
                 APP_DIR="$2"
@@ -91,10 +102,83 @@ parse_build_app_args() {
     done
 }
 
-normalize_app_dir_path() {
-    while [ "$APP_DIR" != "/" ] && [[ "$APP_DIR" == */ ]]; do
-        APP_DIR="${APP_DIR%/}"
+lexically_normalize_absolute_path() {
+    local path="$1"
+    local component
+    local -a path_components=()
+    local -a normalized_components=()
+    local component_count
+    local IFS=/
+
+    read -r -a path_components <<< "$path"
+    for component in "${path_components[@]}"; do
+        case "$component" in
+            ""|.)
+                ;;
+            ..)
+                component_count="${#normalized_components[@]}"
+                if [[ "$component_count" -gt 0 ]]; then
+                    unset 'normalized_components[component_count-1]'
+                fi
+                ;;
+            *)
+                normalized_components+=("$component")
+                ;;
+        esac
     done
+
+    printf '/%s\n' "${normalized_components[*]}"
+}
+
+canonical_app_dir_path() {
+    local path="$1"
+    local ancestor
+    local base
+    local parent
+    local physical_path
+    local unresolved_suffix=""
+
+    while [ "$path" != "/" ] && [[ "$path" == */ ]]; do
+        path="${path%/}"
+    done
+    if [[ "$path" != /* ]]; then
+        path="$PWD/$path"
+    fi
+    if [ -d "$path" ] && physical_path="$(cd "$path" 2>/dev/null && pwd -P)"; then
+        printf '%s\n' "$physical_path"
+        return 0
+    fi
+
+    ancestor="$path"
+    while [[ ! -d "$ancestor" ]]; do
+        base="$(basename "$ancestor")"
+        unresolved_suffix="/$base$unresolved_suffix"
+        parent="$(dirname "$ancestor")"
+        if [[ "$parent" == "$ancestor" ]]; then
+            break
+        fi
+        ancestor="$parent"
+    done
+
+    if physical_path="$(cd "$ancestor" 2>/dev/null && pwd -P)"; then
+        lexically_normalize_absolute_path "$physical_path$unresolved_suffix"
+        return 0
+    fi
+    lexically_normalize_absolute_path "$path"
+}
+
+normalize_app_dir_path() {
+    local resolved_app_dir
+    resolved_app_dir="$(canonical_app_dir_path "$APP_DIR")"
+    if [[ "${resolved_app_dir##*/}" != *.app ]]; then
+        echo "[build-app] ERROR: resolved --install-path must name an .app bundle destination: $resolved_app_dir" >&2
+        return 2
+    fi
+    APP_DIR="$resolved_app_dir"
+}
+
+is_resident_app_dir() {
+    [[ "$APP_DIR" = "$(canonical_app_dir_path "/Applications/VoiceBar.app")" ]]
 }
 
 # AIDEV-NOTE: Writing straight into /Applications on a brew-managed Mac is the
@@ -120,7 +204,7 @@ voicebar_brew_cask_registered() {
 VOICEBAR_BREW_LEDGER_WILL_DRIFT=0
 
 refuse_brew_managed_install_path() {
-    [ "$APP_DIR" = "/Applications/VoiceBar.app" ] || return 0
+    is_resident_app_dir || return 0
     if [ "${VOICEBAR_ALLOW_BREW_MANAGED_INSTALL:-0}" = "1" ]; then
         if voicebar_brew_cask_registered; then
             VOICEBAR_BREW_LEDGER_WILL_DRIFT=1
@@ -165,6 +249,15 @@ voicebar_process_table() {
     ps -axo pid=,ppid=,command=
 }
 
+voicebar_executable_from_process_command() {
+    local command="$1"
+    case "$command" in
+        */Contents/MacOS/VoiceBar|*/Contents/MacOS/VoiceBar\ *)
+            printf '%s/Contents/MacOS/VoiceBar\n' "${command%%/Contents/MacOS/VoiceBar*}"
+            ;;
+    esac
+}
+
 voicebar_bundle_pids() {
     if [[ -n "${VOICEBAR_TEST_BUNDLE_PIDS:-}" ]]; then
         printf '%s\n' "$VOICEBAR_TEST_BUNDLE_PIDS" | awk '/^[0-9]+$/ { print }'
@@ -181,15 +274,10 @@ voicebar_bundle_pids() {
     local bundle_id
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
-        set -- $line
-        pid="${1:-}"
-        _ppid="${2:-}"
-        shift 2 || true
-        command="$*"
-        executable="${command%% *}"
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
 
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
         case "$executable" in
             */Contents/MacOS/VoiceBar)
                 app_dir="${executable%/Contents/MacOS/VoiceBar}"
@@ -254,6 +342,75 @@ voicebar_target_pids() {
     printf '%s\n%s\n' "$roots" "$descendants" | awk '/^[0-9]+$/ { print }' | sort -n -u
 }
 
+voicebar_running_app_paths() {
+    if [[ -n "${VOICEBAR_TEST_RUNNING_APP_PATHS:-}" ]]; then
+        printf '%s\n' "$VOICEBAR_TEST_RUNNING_APP_PATHS"
+        return 0
+    fi
+
+    local bundle_pids
+    local line
+    local pid
+    local _ppid
+    local command
+    local executable
+    local app_dir
+    bundle_pids="$(voicebar_bundle_pids | sort -n -u)"
+    [[ -n "$bundle_pids" ]] || return 0
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
+
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
+        printf '%s\n' "$bundle_pids" | grep -qx "$pid" || continue
+        case "$executable" in
+            */Contents/MacOS/VoiceBar)
+                app_dir="${executable%/Contents/MacOS/VoiceBar}"
+                canonical_app_dir_path "$app_dir"
+                ;;
+        esac
+    done < <(voicebar_process_table)
+}
+
+guard_build_lifecycle_for_running_instances() {
+    local running_app_paths
+    local running_app_path
+    local matching_target=0
+    local unrelated_path=0
+    LEAVE_RUNNING_INSTANCE_ALONE=0
+    # When callers disable both lifecycle actions, there is no broad stop or
+    # second launch for this guard to prevent.
+    if [[ "$STOP_RUNNING" -eq 0 && "$RELAUNCH_APP" -eq 0 ]]; then
+        return 0
+    fi
+    running_app_paths="$(voicebar_running_app_paths | sort -u)"
+    # Preserve first-install behavior: with no VoiceBar owner, the requested
+    # relaunch still starts the newly built target.
+    [[ -n "$running_app_paths" ]] || return 0
+
+    while IFS= read -r running_app_path || [[ -n "$running_app_path" ]]; do
+        if [[ "$(canonical_app_dir_path "$running_app_path")" = "$APP_DIR" ]]; then
+            matching_target=1
+        else
+            unrelated_path=1
+        fi
+    done <<< "$running_app_paths"
+
+    if [[ "$matching_target" -eq 1 && "$unrelated_path" -eq 1 ]]; then
+        echo "[build-app] ERROR: both the install target and another bundle path are running; refusing before a broad stop can terminate the unrelated VoiceBar instance." >&2
+        echo "[build-app] Running VoiceBar bundle paths: $(printf '%s' "$running_app_paths" | paste -sd, -)" >&2
+        echo "[build-app] Quit the unrelated VoiceBar instance, then run this build again." >&2
+        return 1
+    fi
+    [[ "$matching_target" -eq 0 ]] || return 0
+
+    STOP_RUNNING=0
+    RELAUNCH_APP=0
+    LEAVE_RUNNING_INSTANCE_ALONE=1
+    echo "[build-app] Leaving the running VoiceBar instance alone because install path $APP_DIR does not match its bundle path: $(printf '%s' "$running_app_paths" | paste -sd, -). The new build will not be launched."
+}
+
 canonical_executable_path() {
     local path="$1"
     local dir
@@ -284,15 +441,10 @@ voicebar_target_app_pids() {
     local executable
 
     while IFS= read -r line || [[ -n "$line" ]]; do
-        # shellcheck disable=SC2086 # Split ps columns into pid, ppid, and command.
-        set -- $line
-        pid="${1:-}"
-        _ppid="${2:-}"
-        shift 2 || true
-        command="$*"
-        executable="${command%% *}"
+        read -r pid _ppid command <<< "$line"
+        executable="$(voicebar_executable_from_process_command "$command")"
 
-        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$pid" =~ ^[0-9]+$ && -n "$executable" ]] || continue
         if [[ "$executable" = "$expected_executable" || "$executable" = "$expected_resolved_executable" ]]; then
             printf '%s\n' "$pid"
         fi
@@ -538,7 +690,7 @@ notarytool_auth_args() {
 }
 
 validate_signing_identity() {
-    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ] && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
+    if is_resident_app_dir && [[ "$SIGN_IDENTITY" == Apple\ Development:* ]] && [ "${VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL:-0}" != "1" ]; then
         echo "[build-app] ERROR: Refusing Apple Development signing for resident /Applications/VoiceBar.app." >&2
         echo "[build-app] This would change the app identity and can invalidate TCC grants." >&2
         echo "[build-app] Set VOICEBAR_ALLOW_DANGEROUS_DEV_RESIDENT_INSTALL=1 only for an intentional local dev-signed resident install." >&2
@@ -705,7 +857,7 @@ lsregister_path() {
 }
 
 unregister_throwaway_bundle() {
-    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+    if is_resident_app_dir; then
         echo "[build-app] Skipping LaunchServices unregister for resident app."
         return 0
     fi
@@ -769,7 +921,7 @@ notarize_and_staple() {
 }
 
 protect_notarized_resident_before_rebuild() {
-    if [ "$APP_DIR" != "/Applications/VoiceBar.app" ] || [ ! -d "$APP_DIR" ]; then
+    if ! is_resident_app_dir || [ ! -d "$APP_DIR" ]; then
         return 0
     fi
 
@@ -808,7 +960,7 @@ create_release_zip() {
 }
 
 clear_app_bundle_for_rebuild() {
-    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+    if is_resident_app_dir; then
         # Preserve the canonical bundle root so updater churn cannot replace the
         # path with a different directory identity. Contents are recreated and
         # the finished bundle is signed below.
@@ -826,10 +978,13 @@ fi
 parse_build_app_args "$@"
 normalize_app_dir_path
 refuse_brew_managed_install_path
+guard_build_lifecycle_for_running_instances
 
 protect_notarized_resident_before_rebuild
 
-if [[ "$STOP_RUNNING" -eq 1 ]]; then
+if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
+    : # The path-aware guard already explained why lifecycle actions are disabled.
+elif [[ "$STOP_RUNNING" -eq 1 ]]; then
     stop_voicebar_instances
 else
     echo "[build-app] Skipping VoiceBar stop because --no-stop was provided."
@@ -849,7 +1004,7 @@ fi
 # Clean stale bundle before recreating. The old production bundle is moved to a
 # pruned backup dir (outside /Applications) rather than rm'd.
 if [ -d "$APP_DIR" ]; then
-    if [ "$APP_DIR" = "/Applications/VoiceBar.app" ]; then
+    if is_resident_app_dir; then
         mkdir -p "$VOICEBAR_BACKUP_DIR"
         backup_path="$VOICEBAR_BACKUP_DIR/VoiceBar.backup-$(date +%Y%m%d-%H%M%S).app.zip"
         echo "[build-app] Archiving old bundle to $backup_path..."
@@ -971,14 +1126,16 @@ unregister_throwaway_bundle
 
 if [ "${VOICEBAR_SKIP_LAUNCHD_INSTALL:-0}" = "1" ]; then
     echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."
-elif [ "$APP_DIR" != "/Applications/VoiceBar.app" ]; then
+elif ! is_resident_app_dir; then
     echo "[build-app] Skipping retired MCP daemon LaunchAgent cleanup."
 else
     echo "[build-app] Retiring MCP daemon LaunchAgent..."
     bash "$REPO_ROOT/launchd/install.sh"
 fi
 
-if [[ "$RELAUNCH_APP" -eq 1 ]]; then
+if [[ "$LEAVE_RUNNING_INSTANCE_ALONE" -eq 1 ]]; then
+    echo "[build-app] Built $APP_DIR without launching it; the existing VoiceBar instance is still running."
+elif [[ "$RELAUNCH_APP" -eq 1 ]]; then
     relaunch_voicebar_app
 else
     echo "[build-app] Skipping VoiceBar relaunch because --no-relaunch was provided."
