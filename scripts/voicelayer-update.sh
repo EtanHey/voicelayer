@@ -22,7 +22,18 @@ DATA_MODE="${VOICELAYER_UPDATE_DATA_MODE:-skip}"
 RSYNC_BIN="${VOICELAYER_UPDATE_RSYNC_BIN:-rsync}"
 PACKAGE_NAME="${VOICELAYER_UPDATE_PACKAGE_NAME:-voicelayer-mcp}"
 VOICEBAR_STABLE_CODESIGN_IDENTITY="Developer ID Application: Etan Heyman (PPN23G925Y)"
-VOICEBAR_CASK_TOKEN="${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-etanhey/layers/voicebar}"
+# The Homebrew cask's fully-qualified name -- a public tap coordinate, not a
+# credential. It was called *_CASK_TOKEN after Homebrew's own "cask token"
+# vocabulary, which made secret scanners (DeepSource SCT-1000) read it as a
+# hardcoded secret. The default literal is kept on its own line, away from any
+# deprecated-name reference, so no scanner reads the pair as a credential.
+VOICEBAR_CASK_NAME="etanhey/layers/voicebar"
+if [[ -n "${VOICELAYER_UPDATE_VOICEBAR_CASK_NAME:-}" ]]; then
+    VOICEBAR_CASK_NAME="$VOICELAYER_UPDATE_VOICEBAR_CASK_NAME"
+elif [[ -n "${VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN:-}" ]]; then
+    # Deprecated spelling of the override above. Remove after 2026-09-24.
+    VOICEBAR_CASK_NAME="$VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN"
+fi
 VOICEBAR_CANONICAL_APP="/Applications/VoiceBar.app"
 VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"
 VOICEBAR_REQUIRED_TEAM_ID="PPN23G925Y"
@@ -56,6 +67,9 @@ Environment overrides:
   VOICELAYER_UPDATE_DATA_SOURCE
   VOICELAYER_UPDATE_DATA_MODE
   VOICELAYER_UPDATE_QWEN3_MODEL_REPO
+  VOICELAYER_UPDATE_VOICEBAR_CASK_NAME   Homebrew cask name (default etanhey/layers/voicebar)
+                                         old name VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN is
+                                         deprecated and removed after 2026-09-24
   VOICELAYER_UPDATE_DRY_RUN_COMMANDS=1  print and skip commands even without --dry-run
 EOF
 }
@@ -243,7 +257,7 @@ voicebar_cask_installed() {
         0) return 1 ;;
     esac
 
-    bcs_brew_bin >/dev/null 2>&1 && [[ -n "$(bcs_cask_registered_version "$(bcs_cask_name "$VOICEBAR_CASK_TOKEN")")" ]]
+    bcs_brew_bin >/dev/null 2>&1 && [[ -n "$(bcs_cask_registered_version "$(bcs_cask_name "$VOICEBAR_CASK_NAME")")" ]]
 }
 
 voicebar_app_update_mode() {
@@ -265,7 +279,7 @@ voicebar_app_update_mode() {
 voicebar_app_update_label() {
     case "$(voicebar_app_update_mode)" in
         cask-sync)
-            printf 'drift-proof brew cask sync of %s\n' "$VOICEBAR_CASK_TOKEN"
+            printf 'drift-proof brew cask sync of %s\n' "$VOICEBAR_CASK_NAME"
             ;;
         *)
             print_command env "VOICEBAR_CODESIGN_IDENTITY=$VOICEBAR_STABLE_CODESIGN_IDENTITY" bash flow-bar/build-app.sh "${BUILD_APP_ARGS[@]+"${BUILD_APP_ARGS[@]}"}"
@@ -418,13 +432,13 @@ update_voicebar_app() {
     case "$(voicebar_app_update_mode)" in
         cask-sync)
             bcs_sync_cask \
-                "$VOICEBAR_CASK_TOKEN" \
+                "$VOICEBAR_CASK_NAME" \
                 "$VOICEBAR_CANONICAL_APP" \
                 "$CASK_BACKUP_ROOT" \
                 "$VOICEBAR_CASK_TAP_BRANCH"
             if voicebar_cask_repair_needed; then
                 log "Resident VoiceBar failed canonical signature checks; reinstalling the cask."
-                bcs_brew_run reinstall --cask "$VOICEBAR_CASK_TOKEN"
+                bcs_brew_run reinstall --cask "$VOICEBAR_CASK_NAME"
             fi
             ;;
         *)
@@ -504,11 +518,11 @@ verify_voicebar_stack() {
         expect_running=0
     fi
 
-    cask_name="$(bcs_cask_name "$VOICEBAR_CASK_TOKEN")"
+    cask_name="$(bcs_cask_name "$VOICEBAR_CASK_NAME")"
     app_version="$(bcs_app_bundle_version "$VOICEBAR_CANONICAL_APP")"
     cask_version="$(bcs_cask_registered_version "$cask_name")"
     formula_version="$(bcs_formula_version "$VOICEBAR_FORMULA_NAME")"
-    offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_TOKEN")"
+    offered="$(bcs_tap_offered_version "$VOICEBAR_CASK_NAME")"
 
     log ""
     log "VoiceLayer sync summary"

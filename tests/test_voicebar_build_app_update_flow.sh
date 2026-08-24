@@ -371,6 +371,64 @@ test_update_delegates_relaunch_to_build_app() {
     fi
 }
 
+# DeepSource SCT-1000 read `VOICEBAR_CASK_TOKEN` as a hardcoded secret. It never
+# was one -- it is the Homebrew cask's name. The variable is named for what it
+# holds so no scanner (and no reader) mistakes a public tap coordinate for a
+# credential.
+update_cask_plan_line() {
+    # Print the cask-sync plan line the update script emits for the configured
+    # cask name. Forcing the installed-cask branch keeps this off the developer
+    # machine's real Homebrew state.
+    env VOICELAYER_UPDATE_TEST_BREW_CASK_INSTALLED=1 \
+        VOICELAYER_UPDATE_TEST_INSTALL_TYPE=global-package \
+        "$@" \
+        bash "$UPDATE_SCRIPT" --dry-run 2>/dev/null |
+        sed -n 's/^VOICEBAR APP UPDATE: //p'
+}
+
+test_update_script_names_the_cask_without_the_word_token() {
+    # No variable in the script may be NAMED *_CASK_TOKEN -- that spelling is what
+    # secret scanners key on. The deprecated env var may still be READ by the
+    # back-compat branch, which the override tests below cover.
+    if grep -qE '^[[:space:]]*[A-Z_]*CASK_TOKEN=' "$UPDATE_SCRIPT"; then
+        fail "voicelayer-update.sh must not define a *_CASK_TOKEN variable; the cask name is not a secret"
+    fi
+    if ! grep -q 'VOICEBAR_CASK_NAME' "$UPDATE_SCRIPT"; then
+        fail "voicelayer-update.sh should carry the cask name in VOICEBAR_CASK_NAME"
+    fi
+}
+
+test_update_script_defaults_to_the_voicebar_cask() {
+    local line
+    line="$(update_cask_plan_line)"
+    assert_eq "drift-proof brew cask sync of etanhey/layers/voicebar" "$line" \
+        "default cask name"
+}
+
+test_update_script_honors_the_new_cask_name_override() {
+    local line
+    line="$(update_cask_plan_line VOICELAYER_UPDATE_VOICEBAR_CASK_NAME=example/tap/newname)"
+    assert_eq "drift-proof brew cask sync of example/tap/newname" "$line" \
+        "VOICELAYER_UPDATE_VOICEBAR_CASK_NAME override"
+}
+
+test_update_script_still_honors_the_deprecated_cask_token_override() {
+    # Back-compat shim: remove after 2026-09-24.
+    local line
+    line="$(update_cask_plan_line VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN=example/tap/oldname)"
+    assert_eq "drift-proof brew cask sync of example/tap/oldname" "$line" \
+        "deprecated VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN override"
+}
+
+test_new_cask_name_override_wins_over_the_deprecated_one() {
+    local line
+    line="$(update_cask_plan_line \
+        VOICELAYER_UPDATE_VOICEBAR_CASK_NAME=example/tap/newname \
+        VOICELAYER_UPDATE_VOICEBAR_CASK_TOKEN=example/tap/oldname)"
+    assert_eq "drift-proof brew cask sync of example/tap/newname" "$line" \
+        "new name must win when both env vars are set"
+}
+
 test_developer_id_signature_guard_rejects_apple_development() {
     APP_DIR="/tmp/VoiceBar-Test.app"
     local bin_dir
@@ -612,6 +670,11 @@ test_running_app_path_discovery_preserves_spaces
 test_relaunch_verification_requires_target_app_process
 test_no_broad_process_killers
 test_update_delegates_relaunch_to_build_app
+test_update_script_names_the_cask_without_the_word_token
+test_update_script_defaults_to_the_voicebar_cask
+test_update_script_honors_the_new_cask_name_override
+test_update_script_still_honors_the_deprecated_cask_token_override
+test_new_cask_name_override_wins_over_the_deprecated_one
 test_developer_id_signature_guard_rejects_apple_development
 test_developer_id_signature_guard_allows_apple_development_with_dangerous_override
 test_developer_id_signature_guard_accepts_developer_id
