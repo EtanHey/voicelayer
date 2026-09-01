@@ -7,6 +7,14 @@ on:
     branches: [main]
 
 jobs:
+  docs-local-guard:
+    name: No tracked docs.local
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard against tracked docs.local
+        run: bash scripts/guard-no-docslocal.sh
+
   test:
     runs-on: ubuntu-latest
     steps:
