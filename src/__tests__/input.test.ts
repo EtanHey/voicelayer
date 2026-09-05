@@ -50,6 +50,7 @@ import {
   setCancelSignal,
 } from "../session-booking";
 import { STOP_FILE } from "../paths";
+import { PACKAGE_VERSION } from "../version";
 import { retainedRecordingFilePath } from "../paths";
 
 describe("input module", () => {
@@ -253,12 +254,21 @@ describe("input module", () => {
         language_mode: "hebrew",
         transcription_status: "transcribed",
         voicelayer_transcript_chars: transcript.length,
-        app_version: null,
-        schema_version: 1,
+        app_version: PACKAGE_VERSION,
+        schema_version: 2,
       });
       expect(metadata.audio_sha256).toBe(
         createHash("sha256").update(audioBytes).digest("hex"),
       );
+      // Provenance (metadata v2) — see input-metadata-provenance.test.ts for
+      // the field-by-field contract.
+      expect(metadata.provenance).toMatchObject({
+        whisper_backend: "whisper.cpp",
+        language_mode: "hebrew",
+        app_version: PACKAGE_VERSION,
+        app_version_source: "package.json",
+      });
+      expect(typeof metadata.provenance.host).toBe("string");
     });
 
     it("skips archive creation when a recording is cancelled before transcription", () => {
@@ -413,7 +423,7 @@ describe("input module", () => {
         user_transcript_chars: "The archive now keeps both sides.".length,
         agent_audio_sha256: createHash("sha256").update(agentAudio).digest("hex"),
         user_audio_sha256: createHash("sha256").update(userAudio).digest("hex"),
-        schema_version: 3,
+        schema_version: 4,
       });
     });
 
@@ -454,7 +464,7 @@ describe("input module", () => {
         backend: null,
         transcription_status: "captured",
         user_transcript_chars: 0,
-        schema_version: 3,
+        schema_version: 4,
       });
 
       finalizeVoiceAskArchive(archivedPath, {
