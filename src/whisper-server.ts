@@ -16,9 +16,16 @@ import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
   configureWhisperPerformanceRestart,
   getWhisperPerformanceEffort,
+  parseWhisperPerformanceEffort,
   whisperPerformanceArgsForEffort,
   type WhisperPerformanceEffort,
 } from "./whisper-performance";
+import {
+  clearWhisperServerOwnership,
+  portOwnerPids,
+  readWhisperServerOwnership,
+  writeWhisperServerOwnership,
+} from "./whisper-server-ownership";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -50,9 +57,15 @@ const MODEL_SEARCH_PATHS = [
 ];
 
 interface WhisperServerState {
-  proc: ReturnType<typeof Bun.spawn>;
+  /**
+   * Null when the server was adopted rather than launched here. An adopted
+   * server is not ours to signal: every kill path must check this first.
+   */
+  proc: ReturnType<typeof Bun.spawn> | null;
   port: number;
   pid: number;
+  /** True when another process launched this server and we are reusing it. */
+  adopted: boolean;
 }
 
 type WhisperServerProcess = ReturnType<typeof Bun.spawn>;
@@ -206,9 +219,12 @@ async function resolveFirstBinaryAsync(
 /**
  * Provenance of the resident whisper-server: the model and flags it was
  * actually launched with. Recorded so every archived recording can say which
- * whisper build produced it (see src/recording-provenance.ts). Null until this
- * process has started a server — external servers on the port are reclaimed
- * (killed) rather than adopted, so the record is never stale-but-plausible.
+ * whisper build produced it (see src/recording-provenance.ts).
+ *
+ * Null when this process neither launched the resident server nor found an
+ * ownership record naming its launcher — an adopted server whose launcher left
+ * no record has no provenance, and reporting the flags we *would* have used
+ * would be a guess.
  */
 export interface WhisperServerLaunchRecord {
   binary: string;
@@ -220,6 +236,16 @@ export interface WhisperServerLaunchRecord {
   pid: number;
   /** ISO-8601 instant the server was observed healthy. */
   startedAt: string;
+  /** True when another process launched this server and we adopted it. */
+  adopted?: boolean;
+  /** PID of the process that launched an adopted server. */
+  ownerPid?: number;
+  /**
+   * False when an adopted server was launched with a model or effort tier that
+   * differs from what this process would have used. Not a reason to kill it —
+   * transcription still works — but the caller deserves to know.
+   */
+  flagsMatch?: boolean;
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
@@ -590,16 +616,7 @@ function findPortListenerPids(port: number): number[] {
   if (testHooks.findPortListenerPids) {
     return testHooks.findPortListenerPids(port);
   }
-  const result = Bun.spawnSync(
-    ["lsof", "-nP", `-tiTCP:${port}`, "-sTCP:LISTEN"],
-    { stdout: "pipe", stderr: "ignore", timeout: PORT_OWNER_PROBE_TIMEOUT },
-  );
-  if (result.exitCode !== 0) return [];
-  return result.stdout
-    .toString()
-    .split(/\s+/)
-    .map((raw) => Number.parseInt(raw, 10))
-    .filter((pid) => Number.isFinite(pid) && pid > 0);
+  return portOwnerPids(port, PORT_OWNER_PROBE_TIMEOUT);
 }
 
 /**
@@ -641,6 +658,89 @@ async function waitForPidExit(
     await sleep(100);
   }
   return !isPidAlive(pid);
+}
+
+/**
+ * Does an adopted server's configuration match what this process would launch?
+ *
+ * Deliberately narrow: model and effort tier are what actually change the
+ * transcript. A mismatch is reported, never acted on.
+ */
+function adoptedFlagsMatch(record: {
+  model_path: string;
+  performance_effort: string;
+}): boolean {
+  const ourModel = testHooks.findModel?.() ?? findModel();
+  if (record.model_path && ourModel && record.model_path !== ourModel) {
+    return false;
+  }
+  const ourEffort = getWhisperPerformanceEffort();
+  const theirEffort = parseWhisperPerformanceEffort(record.performance_effort);
+  if (theirEffort && theirEffort !== ourEffort) return false;
+  return true;
+}
+
+/**
+ * Reuse a healthy server on `port` that this process did not launch.
+ *
+ * AIDEV-NOTE: This is the whole point of the ownership guard, and it is a
+ * hard rule: a server that answers the health page is NEVER killed by a
+ * process that did not launch it. On 2026-09-05 the old code read "healthy
+ * server + my serverState is null" as "stale orphan" and SIGKILLed the live
+ * daemon-owned sidecar five times in one evening. A second process cannot see
+ * the first one's in-memory state; absence of *our* record is not evidence of
+ * absence of *an* owner. Reclaim now belongs only to the unhealthy branch.
+ */
+function adoptHealthyServer(port: number): void {
+  const record = readWhisperServerOwnership(port);
+  const listeners = findPortListenerPids(port);
+
+  if (record && listeners.includes(record.pid) && isPidAlive(record.pid)) {
+    const flagsMatch = adoptedFlagsMatch(record);
+    console.error(
+      `[voicelayer] Adopting whisper-server on port ${port} (PID ${record.pid}, launched by PID ${record.owner_pid}) — not ours to restart.`,
+    );
+    if (!flagsMatch) {
+      console.error(
+        `[voicelayer] Adopted whisper-server on port ${port} was launched with different settings than this process would use (model ${record.model_path || "unknown"}, effort ${record.performance_effort || "unknown"}); using it as-is.`,
+      );
+    }
+    serverState = { proc: null, port, pid: record.pid, adopted: true };
+    lastLaunchRecord = {
+      binary: record.binary,
+      modelPath: record.model_path,
+      args: record.args,
+      performanceEffort:
+        parseWhisperPerformanceEffort(record.performance_effort) ??
+        getWhisperPerformanceEffort(),
+      accelerationMode: normalizeAdoptedAccelerationMode(
+        record.acceleration_mode,
+      ),
+      pid: record.pid,
+      startedAt: record.started_at,
+      adopted: true,
+      ownerPid: record.owner_pid,
+      flagsMatch,
+    };
+    return;
+  }
+
+  const pid = listeners[0] ?? 0;
+  console.error(
+    `[voicelayer] Healthy whisper-server on port ${port}${pid ? ` (PID ${pid})` : ""} has no live ownership record; adopting it rather than killing a server this process did not launch.`,
+  );
+  serverState = { proc: null, port, pid, adopted: true };
+  // No ownership record means no provenance. Reporting the flags we *would*
+  // have used would be a guess, not provenance.
+  lastLaunchRecord = null;
+}
+
+function normalizeAdoptedAccelerationMode(
+  value: string,
+): WhisperAccelerationMode {
+  return value === "metal" || value === "coreml" || value === "cpu"
+    ? value
+    : "cpu";
 }
 
 async function reclaimExternalWhisperServers(port: number): Promise<boolean> {
@@ -699,20 +799,23 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     lastLaunchRecord = null;
   }
 
-  // Port 8178 is reserved for the daemon-owned VoiceLayer sidecar. Do not
-  // silently reuse stale orphan servers: they can have incompatible launch
-  // flags while still answering the health page.
+  // A healthy occupant is somebody's live server. Adopt it — never kill it,
+  // never relaunch over it. Incompatible launch flags are surfaced on the
+  // launch record, not resolved with a signal.
   if (await checkServerHealthy(port)) {
-    if (await reclaimExternalWhisperServers(port)) {
-      if (await checkServerHealthy(port)) {
-        throw new Error(
-          `whisper-server port ${port} is still occupied after reclaim attempt`,
-        );
-      }
-    } else {
-      throw new Error(
-        `whisper-server port ${port} is already occupied by a non-VoiceLayer process`,
-      );
+    adoptHealthyServer(port);
+    return port;
+  }
+
+  // The port is occupied but not serving: a wedged whisper-server from a
+  // crashed launch. Nothing can bind until it is gone, and it is not serving
+  // anyone, so reclaiming it is safe.
+  if (await reclaimExternalWhisperServers(port)) {
+    if (await checkServerHealthy(port)) {
+      // Something healthy appeared while we were reclaiming — adopt, do not
+      // race it.
+      adoptHealthyServer(port);
+      return port;
     }
   }
 
@@ -830,10 +933,14 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           );
           break;
         }
+        // One instant for both the launch record and the on-disk ownership
+        // record: a reader that compares them must not see them disagree.
+        const startedAt = new Date().toISOString();
         serverState = {
           proc: proc as WhisperServerProcess,
           port,
           pid: proc.pid,
+          adopted: false,
         };
         lastLaunchRecord = {
           binary,
@@ -842,8 +949,20 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           performanceEffort: launchedPerformanceEffort,
           accelerationMode: plan.acceleration.mode,
           pid: proc.pid,
-          startedAt: new Date().toISOString(),
+          startedAt,
         };
+        // Tell every other process on this machine who owns this server, so
+        // none of them mistakes it for an orphan and kills it.
+        writeWhisperServerOwnership(port, {
+          pid: proc.pid,
+          owner_pid: process.pid,
+          started_at: startedAt,
+          binary,
+          args: plan.args,
+          model_path: model,
+          performance_effort: launchedPerformanceEffort,
+          acceleration_mode: plan.acceleration.mode,
+        });
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
         );
@@ -872,19 +991,34 @@ async function ensureServerUnlocked(port: number): Promise<number> {
   );
 }
 
-/** Stop the whisper-server sidecar. */
+/**
+ * Stop the whisper-server sidecar this process launched.
+ *
+ * AIDEV-NOTE: This runs on `process.on("exit")`, which makes it a kill path
+ * for anything that adopted a server it does not own — a `bun test` run that
+ * touched ensureServer() would otherwise take down Etan's live sidecar on the
+ * way out. An adopted server is detached from, never signalled.
+ */
 export function stopServer(): void {
   launchPromises.clear();
-  if (serverState) {
+  if (!serverState) return;
+
+  const state = serverState;
+  serverState = null;
+  lastLaunchRecord = null;
+
+  if (state.adopted || !state.proc) {
     console.error(
-      `[voicelayer] Stopping whisper-server (PID ${serverState.pid})`,
+      `[voicelayer] Detaching from adopted whisper-server (PID ${state.pid}) — this process did not launch it.`,
     );
-    try {
-      serverState.proc.kill();
-    } catch {}
-    serverState = null;
-    lastLaunchRecord = null;
+    return;
   }
+
+  console.error(`[voicelayer] Stopping whisper-server (PID ${state.pid})`);
+  try {
+    state.proc.kill();
+  } catch {}
+  clearWhisperServerOwnership(state.port);
 }
 
 configureWhisperPerformanceRestart(stopServer);
@@ -988,7 +1122,11 @@ async function markServerUnhealthy(): Promise<void> {
   const unhealthyState = serverState;
   serverState = null;
   lastLaunchRecord = null;
+  // An adopted server is not ours to terminate, however sick it looks: the
+  // process that launched it owns its lifecycle. Drop our reference instead.
+  if (unhealthyState.adopted || !unhealthyState.proc) return;
   await terminateFailedLaunch(unhealthyState.proc);
+  clearWhisperServerOwnership(unhealthyState.port);
 }
 
 export function __resetWhisperServerStateForTests(
