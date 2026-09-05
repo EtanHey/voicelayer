@@ -70,6 +70,17 @@ exit 0
   );
   chmodSync(launchctl, 0o755);
 
+  // plutil is macOS-only; stub it so the suite also runs on the Linux CI box.
+  const plutil = join(stubDir, "plutil");
+  writeFileSync(
+    plutil,
+    `#!/usr/bin/env bash
+printf 'plutil %s\\n' "$*" >> "$STUB_LOG"
+exit 0
+`,
+  );
+  chmodSync(plutil, 0o755);
+
   if (options.withXattr !== false) {
     const xattr = join(stubDir, "xattr");
     writeFileSync(
