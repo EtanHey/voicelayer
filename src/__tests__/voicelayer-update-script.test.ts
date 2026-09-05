@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  symlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -38,6 +39,29 @@ function run(command: string[], env: Record<string, string> = {}) {
 
 function text(bytes: Uint8Array) {
   return new TextDecoder().decode(bytes);
+}
+
+const QWEN3_MODEL_REPO = "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit";
+
+// A venv whose bin/ holds only the named CLIs, each a no-op stub.
+function fakeVenv(root: string, ...binaries: string[]) {
+  const venvDir = join(root, "venv");
+  mkdirSync(join(venvDir, "bin"), { recursive: true });
+  for (const name of binaries) {
+    const path = join(venvDir, "bin", name);
+    writeFileSync(path, "#!/usr/bin/env bash\nexit 0\n");
+    chmodSync(path, 0o755);
+  }
+  return venvDir;
+}
+
+// A model directory holding what mlx-audio's load_tts_model() opens.
+function populatedModelDir(root: string, name: string) {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.json"), "{}\n");
+  writeFileSync(join(dir, "model.safetensors"), "weights\n");
+  return dir;
 }
 
 describe("voicelayer-update.sh", () => {
@@ -596,6 +620,107 @@ describe("voicelayer-update.sh", () => {
     expect(stdout.indexOf("model")).toBeLessThan(stdout.indexOf("repair"));
     expect(stdout.indexOf("data")).toBeLessThan(stdout.indexOf("repair"));
     expect(stdout).not.toContain("VoiceLayer update complete.");
+  });
+
+  test("the model step uses `hf download`, not the retired huggingface-cli", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-hf-"));
+    const venvDir = fakeVenv(tempRoot, "hf", "huggingface-cli");
+    const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
+    mkdirSync(modelDir, { recursive: true });
+
+    const result = run(["bash", updateScript, "--dry-run"], {
+      HOME: tempRoot,
+      VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "git-checkout",
+      VOICELAYER_UPDATE_VENV_DIR: venvDir,
+      VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      `${venvDir}/bin/hf download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`,
+    );
+    expect(stdout).not.toContain("huggingface-cli download");
+  });
+
+  test("the model step falls back to huggingface-cli only when hf is absent", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-hf-absent-"));
+    const venvDir = fakeVenv(tempRoot, "huggingface-cli");
+    const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
+    mkdirSync(modelDir, { recursive: true });
+
+    const result = run(["bash", updateScript, "--dry-run"], {
+      HOME: tempRoot,
+      // No `hf` anywhere on this PATH; the real one lives in Homebrew.
+      PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+      VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "git-checkout",
+      VOICELAYER_UPDATE_VENV_DIR: venvDir,
+      VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain(
+      `${venvDir}/bin/huggingface-cli download ${QWEN3_MODEL_REPO} --local-dir ${modelDir}`,
+    );
+  });
+
+  test("the model step is skipped when the model is already on disk", () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-model-present-"));
+    const modelDir = populatedModelDir(tempRoot, "model-present");
+
+    const result = run(["bash", updateScript, "--dry-run"], {
+      HOME: tempRoot,
+      VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "git-checkout",
+      VOICELAYER_UPDATE_VENV_DIR: fakeVenv(tempRoot, "hf"),
+      VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("skipping the fetch");
+    expect(stdout).toContain(modelDir);
+    expect(stdout).not.toContain("hf download");
+    expect(stdout).not.toContain("--local-dir");
+  });
+
+  test("a model dir symlinked into the HF cache still counts as present", () => {
+    // The 2026-09-05 rc=1 receipt: ~/.voicelayer/models/qwen3-tts-4bit is a
+    // symlink into ~/.cache/huggingface, and `find <symlink>` never descends,
+    // so the old presence probe re-downloaded a model that was already there.
+    const tempRoot = mkdtempSync(join(tmpdir(), "voicelayer-update-model-link-"));
+    const cacheDir = populatedModelDir(tempRoot, "hf-cache-snapshot");
+    const modelDir = join(tempRoot, "models", "qwen3-tts-4bit");
+    mkdirSync(join(tempRoot, "models"), { recursive: true });
+    symlinkSync(cacheDir, modelDir, "dir");
+
+    const result = run(["bash", updateScript, "--dry-run"], {
+      HOME: tempRoot,
+      VOICELAYER_UPDATE_TEST_INSTALL_TYPE: "git-checkout",
+      VOICELAYER_UPDATE_VENV_DIR: fakeVenv(tempRoot, "hf"),
+      VOICELAYER_UPDATE_MODEL_DIR: modelDir,
+    });
+    const stdout = text(result.stdout);
+
+    expect(result.exitCode).toBe(0);
+    expect(stdout).toContain("skipping the fetch");
+    expect(stdout).not.toContain("hf download");
+    expect(stdout).not.toContain("--local-dir");
+  });
+
+  test("a failed model fetch is a red summary row, not an aborted restore", () => {
+    const body = readFileSync(updateScript, "utf8");
+
+    // install_qwen3_model returns non-zero instead of tripping errexit, and
+    // main routes it through the wrapper that keeps the restore going.
+    expect(body).toContain("run_qwen3_model_step");
+    expect(body).toContain(
+      'check_row "qwen3 model" "$QWEN3_MODEL_STEP_OK" "$QWEN3_MODEL_STEP_DETAIL"',
+    );
+    expect(body).not.toContain("\n    install_qwen3_model\n");
+    expect(body).toContain(
+      'err "Qwen3 model step failed; continuing with the personal-data and VoiceBar restore."',
+    );
   });
 
   test("pins mlx-audio to the 0.4 release line for Qwen3", () => {

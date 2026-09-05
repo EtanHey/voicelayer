@@ -14,6 +14,11 @@ VENV_DIR="${VOICELAYER_UPDATE_VENV_DIR:-$VOICELAYER_HOME/venv}"
 MODEL_DIR="${VOICELAYER_UPDATE_MODEL_DIR:-$VOICELAYER_HOME/models/qwen3-tts-4bit}"
 QWEN3_MODEL_REPO="${VOICELAYER_UPDATE_QWEN3_MODEL_REPO:-mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-4bit}"
 MLX_AUDIO_VERSION_SPEC="${VOICELAYER_UPDATE_MLX_AUDIO_VERSION_SPEC:-mlx-audio>=0.4,<0.5}"
+# What mlx-audio's load_tts_model() opens first (src/tts_daemon.py); its
+# presence next to the safetensors weights is how we know the model is here.
+QWEN3_MODEL_SENTINEL="config.json"
+QWEN3_MODEL_STEP_OK=0
+QWEN3_MODEL_STEP_DETAIL="not run"
 
 DRY_RUN=0
 DRY_RUN_COMMANDS="${VOICELAYER_UPDATE_DRY_RUN_COMMANDS:-0}"
@@ -350,7 +355,8 @@ print_plan() {
             log "  3. + $app_update (refresh the tap, detect drift, adopt with --force instead of a destructive upgrade)"
             ;;
     esac
-    log "  4. create/update $VENV_DIR and pull Qwen3 model if missing"
+    log "  4. create/update $VENV_DIR and pull the Qwen3 model if missing"
+    log "     $(qwen3_model_step_plan)"
     if [[ "$DATA_MODE" != "skip" ]]; then
         log "  5. rsync personal data:"
         log "     $(source_path ".voicelayer/voices/") -> $VOICELAYER_HOME/voices/"
@@ -376,20 +382,78 @@ warn_if_dirty() {
     fi
 }
 
+# AIDEV-NOTE: -f/-d follow symlinks but `find <symlink>` does not descend into
+# one, so the old `find "$MODEL_DIR" -mindepth 1` probe read an already-populated
+# model as empty whenever ~/.voicelayer/models/qwen3-tts-4bit was a symlink into
+# ~/.cache/huggingface -- which is how the 2026-09-05 restore reached the
+# download at all. Test the sentinel file directly instead.
+qwen3_model_present() {
+    local weights
+    [[ -f "$MODEL_DIR/$QWEN3_MODEL_SENTINEL" ]] || return 1
+    for weights in "$MODEL_DIR"/*.safetensors; do
+        [[ -f "$weights" ]] && return 0
+    done
+    return 1
+}
+
+# `huggingface-cli` was retired upstream: it now only prints "huggingface-cli is
+# deprecated and no longer works. Use hf instead." and exits 1. Prefer `hf`, and
+# fall back to the old name only where `hf` genuinely is not installed yet.
+qwen3_download_bin() {
+    if [[ -x "$VENV_DIR/bin/hf" ]]; then
+        printf '%s\n' "$VENV_DIR/bin/hf"
+    elif command -v hf >/dev/null 2>&1; then
+        command -v hf
+    elif [[ -x "$VENV_DIR/bin/huggingface-cli" ]]; then
+        printf '%s\n' "$VENV_DIR/bin/huggingface-cli"
+    else
+        # Neither exists yet; the pip step below installs huggingface_hub, which
+        # ships `hf`.
+        printf '%s\n' "$VENV_DIR/bin/hf"
+    fi
+}
+
+qwen3_model_skip_reason() {
+    printf '%s\n' "Qwen3 model already present at $MODEL_DIR ($QWEN3_MODEL_SENTINEL + weights); skipping the fetch."
+}
+
+qwen3_model_step_plan() {
+    if qwen3_model_present; then
+        qwen3_model_skip_reason
+    else
+        printf 'will run: %s' "$(print_command "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR")"
+    fi
+}
+
 install_qwen3_model() {
-    if [[ -d "$MODEL_DIR" && -n "$(find "$MODEL_DIR" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
-        log "Qwen3 model already present: $MODEL_DIR"
-        return
+    if qwen3_model_present; then
+        log "$(qwen3_model_skip_reason)"
+        QWEN3_MODEL_STEP_DETAIL="already present at $MODEL_DIR"
+        return 0
     fi
 
-    run_cmd mkdir -p "$VOICELAYER_HOME/models"
+    run_cmd mkdir -p "$VOICELAYER_HOME/models" || return 1
     if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-        run_cmd python3 -m venv "$VENV_DIR"
+        run_cmd python3 -m venv "$VENV_DIR" || return 1
     fi
-    run_cmd "$VENV_DIR/bin/python" -m pip install --upgrade pip
-    run_cmd "$VENV_DIR/bin/python" -m pip install "$MLX_AUDIO_VERSION_SPEC" huggingface_hub uvicorn fastapi pydantic soundfile numpy
-    run_cmd mkdir -p "$MODEL_DIR"
-    run_cmd "$VENV_DIR/bin/huggingface-cli" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR"
+    run_cmd "$VENV_DIR/bin/python" -m pip install --upgrade pip || return 1
+    run_cmd "$VENV_DIR/bin/python" -m pip install "$MLX_AUDIO_VERSION_SPEC" huggingface_hub uvicorn fastapi pydantic soundfile numpy || return 1
+    run_cmd mkdir -p "$MODEL_DIR" || return 1
+    run_cmd "$(qwen3_download_bin)" download "$QWEN3_MODEL_REPO" --local-dir "$MODEL_DIR" || return 1
+    QWEN3_MODEL_STEP_DETAIL="fetched into $MODEL_DIR"
+}
+
+# The model is optional cargo; putting VoiceBar, the cask ledger and the launchd
+# agents back is the point of `voicelayer update`. A dead model step belongs in
+# the summary as a red row, not as an abort before the restore runs.
+run_qwen3_model_step() {
+    if install_qwen3_model; then
+        QWEN3_MODEL_STEP_OK=0
+        return 0
+    fi
+    QWEN3_MODEL_STEP_OK=1
+    QWEN3_MODEL_STEP_DETAIL="fetch failed; the rest of the restore continued ($MODEL_DIR)"
+    err "Qwen3 model step failed; continuing with the personal-data and VoiceBar restore."
 }
 
 sync_personal_data() {
@@ -535,6 +599,7 @@ verify_voicebar_stack() {
         "${cask_version:-not registered with brew}"
     check_row "formula" "$([[ -n "$formula_version" && ( -z "$offered" || "$formula_version" = "$offered" ) ]] && printf 0 || printf 1)" \
         "$VOICEBAR_FORMULA_NAME ${formula_version:-not installed}"
+    check_row "qwen3 model" "$QWEN3_MODEL_STEP_OK" "$QWEN3_MODEL_STEP_DETAIL"
 
     if [[ "$expect_running" -eq 1 ]]; then
         check_row "process" "$(pgrep -f "$VOICEBAR_CANONICAL_APP/Contents/MacOS/" >/dev/null 2>&1 && printf 0 || printf 1)" \
@@ -592,7 +657,7 @@ main() {
 
     update_package
     update_voicebar_app
-    install_qwen3_model
+    run_qwen3_model_step
     sync_personal_data
     repair_and_verify_voicebar_hotkey_path
     if [[ "$DRY_RUN_COMMANDS" != "1" ]]; then
