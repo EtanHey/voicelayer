@@ -38,11 +38,16 @@ const FAKE_PROBE: RecordingProvenanceProbe = {
   machine: () => ({
     host: "test-mac",
     chip: "Apple M1 Pro",
-    whisper_cpp_version: "1.7.4",
+    status: "ready",
   }),
+  whisperCppVersion: () => ({ version: "1.7.4", source: "cellar-path" }),
   whisperModelPath: () => "/fake/.cache/whisper/ggml-large-v3-turbo.bin",
   whisperModelSha256: () => "a".repeat(64),
   whisperServerArgs: () => "-t 4 -bo 5 -bs 5",
+  whisperServerProcess: () => ({
+    pid: 4242,
+    startedAt: "2026-09-05T07:00:00.000Z",
+  }),
   performanceEffort: () => "accurate",
   polishMode: () => "shadow",
   appVersion: () => ({ version: "9.9.9", source: "package.json" }),
@@ -64,7 +69,10 @@ describe("recording provenance builder", () => {
       whisper_model_path: "/fake/.cache/whisper/ggml-large-v3-turbo.bin",
       whisper_model_sha256: "a".repeat(64),
       whisper_cpp_version: "1.7.4",
+      whisper_cpp_version_source: "cellar-path",
       whisper_server_args: "-t 4 -bo 5 -bs 5",
+      whisper_server_pid: 4242,
+      whisper_server_started_at: "2026-09-05T07:00:00.000Z",
       performance_effort: "accurate",
       polish_mode: "shadow",
       polish_reachable: true,
@@ -72,6 +80,7 @@ describe("recording provenance builder", () => {
       language_mode: "auto",
       app_version: "9.9.9",
       app_version_source: "package.json",
+      provenance_probe: "ready",
     });
   });
 

@@ -12,7 +12,7 @@
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
-import { resolveBinary } from "./resolve-binary";
+import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
   configureWhisperPerformanceRestart,
   getWhisperPerformanceEffort,
@@ -34,6 +34,9 @@ const HELP_PROBE_TIMEOUT = 2000;
 
 /** Max time to wait for a killed failed launch to release its port. */
 const FAILED_LAUNCH_EXIT_TIMEOUT = 1000;
+
+/** Max time to wait for the `lsof` port-ownership probe. */
+const PORT_OWNER_PROBE_TIMEOUT = 1000;
 
 /** Known whisper-server binary names. */
 const SERVER_BINARY_NAMES = ["whisper-server"];
@@ -63,6 +66,8 @@ type WhisperServerSpawn = (
 ) => Pick<WhisperServerProcess, "pid" | "kill"> & {
   exited?: Promise<number>;
   stderr?: ReadableStream<Uint8Array> | null;
+  /** null/undefined while running; a number once the child has exited. */
+  exitCode?: number | null;
 };
 
 export type WhisperAccelerationRequest = "auto" | "metal" | "coreml" | "cpu";
@@ -139,6 +144,7 @@ interface WhisperServerTestHooks {
   spawn?: WhisperServerSpawn;
   isServerHealthy?: (port: number) => Promise<boolean>;
   findExternalWhisperServerPids?: (port: number) => number[];
+  findPortListenerPids?: (port: number) => number[];
   killExternalPid?: (pid: number, signal: NodeJS.Signals) => void;
   isPidAlive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
@@ -166,6 +172,38 @@ function findServerBinary(): string | null {
 }
 
 /**
+ * The whisper-server binary this process would launch, resolved WITHOUT
+ * blocking the event loop. Exported so provenance can report the version of the
+ * binary actually in play instead of whatever `brew list --versions whisper-cpp`
+ * happens to say is installed.
+ *
+ * AIDEV-NOTE: async on purpose. The sync `findServerBinary()` goes through
+ * `resolveBinary`, which spawns `which` and `<candidate> --version` with
+ * `Bun.spawnSync` and no timeout — a hanging binary would block daemon startup.
+ * Anything on the provenance prime path must use this, never `findServerBinary`.
+ */
+export function resolveWhisperServerBinaryAsync(
+  timeoutMs?: number,
+): Promise<string | null> {
+  return resolveFirstBinaryAsync(SERVER_BINARY_NAMES, timeoutMs);
+}
+
+async function resolveFirstBinaryAsync(
+  names: readonly string[],
+  timeoutMs?: number,
+): Promise<string | null> {
+  for (const name of names) {
+    const resolved = await resolveBinaryAsync(
+      name,
+      [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`],
+      timeoutMs,
+    );
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/**
  * Provenance of the resident whisper-server: the model and flags it was
  * actually launched with. Recorded so every archived recording can say which
  * whisper build produced it (see src/recording-provenance.ts). Null until this
@@ -178,6 +216,10 @@ export interface WhisperServerLaunchRecord {
   args: string[];
   performanceEffort: WhisperPerformanceEffort;
   accelerationMode: WhisperAccelerationMode;
+  /** PID of the resident server, so a server log line ties to a recording. */
+  pid: number;
+  /** ISO-8601 instant the server was observed healthy. */
+  startedAt: string;
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
@@ -188,6 +230,12 @@ export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
 
 export function __clearWhisperServerLaunchRecordForTests(): void {
   lastLaunchRecord = null;
+}
+
+export function __setWhisperServerLaunchRecordForTests(
+  record: WhisperServerLaunchRecord,
+): void {
+  lastLaunchRecord = record;
 }
 
 /** The model this process's configuration resolves to, or null if none found. */
@@ -207,7 +255,9 @@ function findModel(): string | null {
   return null;
 }
 
-function normalizeAccelerationRequest(value?: string): WhisperAccelerationRequest {
+function normalizeAccelerationRequest(
+  value?: string,
+): WhisperAccelerationRequest {
   const normalized = (value || "auto").trim().toLowerCase();
   if (
     normalized === "auto" ||
@@ -530,6 +580,57 @@ function findExternalWhisperServerPids(port: number): number[] {
     .filter((pid) => isWhisperServerCommand(commandForPid(pid)));
 }
 
+/**
+ * PIDs listening on `port`, whatever they are — unlike
+ * `findExternalWhisperServerPids` this does NOT filter by command, because the
+ * question here is "is the healthy listener *our* child", not "is there a stale
+ * whisper-server to reclaim".
+ */
+function findPortListenerPids(port: number): number[] {
+  if (testHooks.findPortListenerPids) {
+    return testHooks.findPortListenerPids(port);
+  }
+  const result = Bun.spawnSync(
+    ["lsof", "-nP", `-tiTCP:${port}`, "-sTCP:LISTEN"],
+    { stdout: "pipe", stderr: "ignore", timeout: PORT_OWNER_PROBE_TIMEOUT },
+  );
+  if (result.exitCode !== 0) return [];
+  return result.stdout
+    .toString()
+    .split(/\s+/)
+    .map((raw) => Number.parseInt(raw, 10))
+    .filter((pid) => Number.isFinite(pid) && pid > 0);
+}
+
+/**
+ * Is the healthy listener on `port` the child we just spawned?
+ *
+ * A passing health check only proves *something* answers on the port. If our
+ * child lost the race (or died on startup) and another process is serving,
+ * publishing `serverState`/`lastLaunchRecord` would stamp every subsequent
+ * recording with a binary, args and PID that did not produce the transcript.
+ *
+ * Two independent signals, cheapest first:
+ *  - the child has already exited (a concrete `exitCode`) — it cannot be the
+ *    listener, full stop;
+ *  - the PID owning the port is not ours.
+ *
+ * `lsof` returning nothing is treated as "cannot tell" rather than "not ours":
+ * the tool may be missing or restricted, and refusing every launch on that
+ * basis would be worse than the bug being fixed. The liveness check still holds
+ * in that case. Fakes in tests carry no `exitCode` field at all — `undefined`
+ * means unknown, not exited.
+ */
+function launchIsOwnedByChild(
+  proc: { pid: number; exitCode?: number | null },
+  port: number,
+): boolean {
+  if (typeof proc.exitCode === "number") return false;
+  const owners = findPortListenerPids(port);
+  if (owners.length === 0) return true;
+  return owners.includes(proc.pid);
+}
+
 async function waitForPidExit(
   pid: number,
   timeoutMs: number,
@@ -658,6 +759,12 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     console.error(`[voicelayer] ${helpProbe.warning}`);
   }
 
+  // Captured ONCE, before the launch plan is built, and reused for the launch
+  // record below. Re-reading the setting after the async health wait would let
+  // a mid-startup settings change relabel a server that was launched with the
+  // old effort.
+  const launchedPerformanceEffort = getWhisperPerformanceEffort();
+
   const buildLaunch = (
     requestedAcceleration: WhisperAccelerationRequest,
   ): WhisperServerLaunchPlan =>
@@ -669,7 +776,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       metalResourcesPath: metalPath,
       coreMLModelPath: process.env.QA_VOICE_WHISPER_COREML_MODEL,
       requestedAcceleration,
-      performanceEffort: getWhisperPerformanceEffort(),
+      performanceEffort: launchedPerformanceEffort,
       inheritedEnv: process.env,
     });
 
@@ -715,6 +822,14 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     const deadline = Date.now() + startupTimeoutMs;
     while (Date.now() < deadline) {
       if (await checkServerHealthy(port)) {
+        // Healthy is not the same as ours. Publishing an unowned listener would
+        // stamp every recording with a binary/args/PID that did not produce it.
+        if (!launchIsOwnedByChild(proc, port)) {
+          console.error(
+            `[voicelayer] Port ${port} is served by another process, not our whisper-server child (PID ${proc.pid}); not adopting it.`,
+          );
+          break;
+        }
         serverState = {
           proc: proc as WhisperServerProcess,
           port,
@@ -724,8 +839,10 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           binary,
           modelPath: model,
           args: plan.args,
-          performanceEffort: getWhisperPerformanceEffort(),
+          performanceEffort: launchedPerformanceEffort,
           accelerationMode: plan.acceleration.mode,
+          pid: proc.pid,
+          startedAt: new Date().toISOString(),
         };
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,

@@ -15,7 +15,7 @@ import { existsSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { calculateRMS } from "./audio-utils";
-import { resolveBinary } from "./resolve-binary";
+import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
 import {
   isServerAvailable,
   transcribeViaServer,
@@ -1285,6 +1285,27 @@ function findWhisperBinary(): string | null {
       `/opt/homebrew/bin/${name}`,
       `/usr/local/bin/${name}`,
     ]);
+    if (resolved) return resolved;
+  }
+  return null;
+}
+
+/**
+ * The CLI binary `WhisperCppBackend` would run, resolved WITHOUT blocking the
+ * event loop. Same names and same preference order as `findWhisperBinary()` —
+ * one source of truth — but every probe is bounded, so provenance can ask which
+ * executable produced a `whisper.cpp` transcript without a hanging binary
+ * stalling daemon startup. See `src/recording-provenance.ts`.
+ */
+export async function resolveWhisperCliBinaryAsync(
+  timeoutMs?: number,
+): Promise<string | null> {
+  for (const name of WHISPER_BINARY_NAMES) {
+    const resolved = await resolveBinaryAsync(
+      name,
+      [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`],
+      timeoutMs,
+    );
     if (resolved) return resolved;
   }
   return null;

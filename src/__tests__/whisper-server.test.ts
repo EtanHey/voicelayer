@@ -1,5 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import {
+  __clearWhisperServerLaunchRecordForTests,
   __resetWhisperServerStateForTests,
   __setWhisperServerTestHooksForTests,
   buildWhisperServerLaunchPlan,
@@ -9,6 +10,7 @@ import {
   readWhisperServerHelpText,
   resolveWhisperAccelerationPlan,
   transcribeViaServer,
+  whisperServerLaunchRecord,
 } from "../whisper-server";
 import {
   parseWhisperPerformanceEffort,
@@ -215,6 +217,115 @@ usage: whisper-server [options]
   });
 
   describe("ensureServer lifecycle", () => {
+    it("does not publish a launch record when our child lost the port race", async () => {
+      // The health check only proves *something* answers on the port. Here our
+      // child died on startup and another process is serving: adopting it would
+      // stamp every recording with a binary, args and PID that never produced
+      // the transcript.
+      let healthy = false;
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        readHelpText: () => ({ helpText: "" }),
+        spawn: () => {
+          // Our child died immediately; something else is answering the port.
+          healthy = true;
+          return {
+            pid: 31337,
+            stderr: null,
+            kill: () => {},
+            exitCode: 1,
+          };
+        },
+        isServerHealthy: async () => healthy,
+        findPortListenerPids: () => [99999],
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        __clearWhisperServerLaunchRecordForTests();
+        await expect(ensureServer(18991)).rejects.toThrow(
+          /failed to start within/,
+        );
+        expect(whisperServerLaunchRecord()).toBe(null);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    });
+
+    it("does not publish a launch record when another PID owns the healthy port", async () => {
+      // Child still alive, but lsof says the listener is somebody else.
+      let healthy = false;
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        readHelpText: () => ({ helpText: "" }),
+        spawn: () => {
+          healthy = true;
+          return {
+            pid: 31338,
+            stderr: null,
+            kill: () => {},
+            exitCode: null,
+          };
+        },
+        isServerHealthy: async () => healthy,
+        findPortListenerPids: () => [70001],
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        __clearWhisperServerLaunchRecordForTests();
+        await expect(ensureServer(18992)).rejects.toThrow(
+          /failed to start within/,
+        );
+        expect(whisperServerLaunchRecord()).toBe(null);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    });
+
+    it("publishes the launch record when our own child owns the healthy port", async () => {
+      let healthy = false;
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        readHelpText: () => ({ helpText: "" }),
+        spawn: () => {
+          healthy = true;
+          return {
+            pid: 31339,
+            stderr: null,
+            kill: () => {},
+            exitCode: null,
+          };
+        },
+        isServerHealthy: async () => healthy,
+        findPortListenerPids: () => [31339],
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        __clearWhisperServerLaunchRecordForTests();
+        await expect(ensureServer(18993)).resolves.toBe(18993);
+        const record = whisperServerLaunchRecord();
+        expect(record?.pid).toBe(31339);
+        expect(record?.binary).toBe("/tmp/whisper-server");
+        expect(typeof record?.startedAt).toBe("string");
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+      }
+    });
+
     it("coalesces concurrent launches for the same port", async () => {
       let healthy = false;
       let spawnCalls = 0;
