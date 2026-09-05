@@ -189,6 +189,9 @@ describe("mcp-handler", () => {
       const voiceAsk = response.result.tools.find(
         (tool: { name: string }) => tool.name === "voice_ask",
       );
+      expect(voiceAsk.description.split("\n")[0]).toBe(
+        "Ask ONE short question aloud (≤600 chars — longer is refused).",
+      );
       expect(voiceAsk.description).toContain("spoken before the microphone opens");
       expect(voiceAsk.description).toContain(
         "blocks for the entire playback plus the response",

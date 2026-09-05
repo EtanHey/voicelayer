@@ -95,7 +95,8 @@ export function getToolDefinitions() {
     {
       name: "voice_ask",
       description:
-        "Ask one short question aloud and wait for the user's voice response. BLOCKING: " +
+        "Ask ONE short question aloud (≤600 chars — longer is refused).\n" +
+        "Waits for the user's voice response. BLOCKING: " +
         "the question is spoken before the microphone opens, and the caller blocks for the entire playback plus the response.\n" +
         "HARD LIMIT: 600 characters maximum; the effective per-request limit may be lower for short timeout_seconds values. " +
         "Longer messages are refused, not truncated. " +
