@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -11,6 +18,23 @@ const installScript = join(
   "scripts",
   "install-voicebar-autostart.sh",
 );
+
+// The stub directory is the ENTIRE PATH the script runs under, so `xattr` is
+// genuinely absent when we say it is -- inheriting /usr/bin would hand the
+// script the real macOS `xattr` and quietly invalidate the absence case. That
+// means every external command the script (and our stubs) reach for has to be
+// linked in explicitly. `bash` is on the list because the stubs' `/usr/bin/env
+// bash` shebang resolves the interpreter through PATH.
+const REAL_TOOLS = [
+  "bash",
+  "cat",
+  "cmp",
+  "cp",
+  "dirname",
+  "id",
+  "mkdir",
+  "sleep",
+];
 
 const workspaces: string[] = [];
 
@@ -26,10 +50,14 @@ afterEach(() => {
 type StubOptions = {
   /** How many `launchctl print` calls report the job as loaded. */
   printLoaded: number;
-  /** Exit status the stub `xattr` returns (1 == attribute absent). */
-  xattrStatus?: number;
+  /** Exit status of the stub's `xattr -d` (non-zero == removal failed). */
+  xattrDeleteStatus?: number;
+  /** Exit status of the stub's `xattr -p` (0 == attribute still present). */
+  xattrProbeStatus?: number;
   /** Omit the `xattr` stub entirely, simulating a machine without xattr. */
   withXattr?: boolean;
+  /** Omit the app bundle, simulating a machine with no VoiceBar installed. */
+  withAppBundle?: boolean;
 };
 
 type Workspace = {
@@ -38,6 +66,11 @@ type Workspace = {
   stubDir: string;
   log: string;
 };
+
+function writeStub(path: string, body: string) {
+  writeFileSync(path, `#!/usr/bin/env bash\n${body}`);
+  chmodSync(path, 0o755);
+}
 
 function makeWorkspace(options: StubOptions): Workspace {
   const root = mkdtempSync(join(tmpdir(), "voicebar-autostart-"));
@@ -49,14 +82,22 @@ function makeWorkspace(options: StubOptions): Workspace {
   const log = join(root, "calls.log");
   mkdirSync(home, { recursive: true });
   mkdirSync(stubDir, { recursive: true });
-  mkdirSync(appBundle, { recursive: true });
+  if (options.withAppBundle !== false) {
+    mkdirSync(appBundle, { recursive: true });
+  }
   writeFileSync(log, "");
 
-  const launchctl = join(stubDir, "launchctl");
-  writeFileSync(
-    launchctl,
-    `#!/usr/bin/env bash
-printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
+  for (const tool of REAL_TOOLS) {
+    const resolved = Bun.which(tool);
+    if (!resolved) {
+      throw new Error(`test harness needs ${tool} on PATH`);
+    }
+    symlinkSync(resolved, join(stubDir, tool));
+  }
+
+  writeStub(
+    join(stubDir, "launchctl"),
+    `printf 'launchctl %s\\n' "$*" >> "$STUB_LOG"
 if [ "\${1:-}" = "print" ]; then
   count=0
   if [ -f "$STUB_STATE" ]; then count="$(cat "$STUB_STATE")"; fi
@@ -68,29 +109,23 @@ fi
 exit 0
 `,
   );
-  chmodSync(launchctl, 0o755);
 
   // plutil is macOS-only; stub it so the suite also runs on the Linux CI box.
-  const plutil = join(stubDir, "plutil");
-  writeFileSync(
-    plutil,
-    `#!/usr/bin/env bash
-printf 'plutil %s\\n' "$*" >> "$STUB_LOG"
+  writeStub(
+    join(stubDir, "plutil"),
+    `printf 'plutil %s\\n' "$*" >> "$STUB_LOG"
 exit 0
 `,
   );
-  chmodSync(plutil, 0o755);
 
   if (options.withXattr !== false) {
-    const xattr = join(stubDir, "xattr");
-    writeFileSync(
-      xattr,
-      `#!/usr/bin/env bash
-printf 'xattr %s\\n' "$*" >> "$STUB_LOG"
-exit ${options.xattrStatus ?? 0}
+    writeStub(
+      join(stubDir, "xattr"),
+      `printf 'xattr %s\\n' "$*" >> "$STUB_LOG"
+if [ "\${1:-}" = "-p" ]; then exit ${options.xattrProbeStatus ?? 1}; fi
+exit ${options.xattrDeleteStatus ?? 0}
 `,
     );
-    chmodSync(xattr, 0o755);
   }
 
   return { home, appBundle, stubDir, log };
@@ -98,12 +133,11 @@ exit ${options.xattrStatus ?? 0}
 
 function runInstaller(workspace: Workspace, args: string[] = []) {
   const root = join(workspace.stubDir, "..");
-  return spawnSync("bash", [installScript, ...args], {
+  return spawnSync(join(workspace.stubDir, "bash"), [installScript, ...args], {
     encoding: "utf8",
     env: {
-      ...process.env,
       HOME: workspace.home,
-      PATH: `${workspace.stubDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+      PATH: workspace.stubDir,
       STUB_LOG: workspace.log,
       STUB_STATE: join(root, "print-count"),
       VOICEBAR_APP_PATH: workspace.appBundle,
@@ -116,21 +150,31 @@ async function readLog(workspace: Workspace): Promise<string[]> {
   return text.split("\n").filter((line) => line.trim().length > 0);
 }
 
+function indexesOf(lines: string[], predicate: (line: string) => boolean) {
+  return lines
+    .map((line, index) => ({ line, index }))
+    .filter(({ line }) => predicate(line))
+    .map(({ index }) => index);
+}
+
+function stripIndexes(lines: string[]) {
+  return indexesOf(lines, (line) =>
+    line.includes("xattr -d -r com.apple.quarantine"),
+  );
+}
+
+function bootstrapIndexes(lines: string[]) {
+  return indexesOf(lines, (line) => line.startsWith("launchctl bootstrap"));
+}
+
 function expectQuarantineStrippedBeforeBootstrap(lines: string[]) {
-  const bootstrapIndexes = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line }) => line.startsWith("launchctl bootstrap"))
-    .map(({ index }) => index);
-  expect(bootstrapIndexes.length).toBeGreaterThan(0);
+  const bootstraps = bootstrapIndexes(lines);
+  const strips = stripIndexes(lines);
+  expect(bootstraps.length).toBeGreaterThan(0);
+  expect(strips.length).toBeGreaterThan(0);
 
-  const stripIndexes = lines
-    .map((line, index) => ({ line, index }))
-    .filter(({ line }) => line.includes("xattr -d -r com.apple.quarantine"))
-    .map(({ index }) => index);
-  expect(stripIndexes.length).toBeGreaterThan(0);
-
-  for (const bootstrapIndex of bootstrapIndexes) {
-    expect(stripIndexes.some((index) => index < bootstrapIndex)).toBe(true);
+  for (const bootstrap of bootstraps) {
+    expect(strips.some((strip) => strip < bootstrap)).toBe(true);
   }
 }
 
@@ -162,6 +206,37 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     expectQuarantineStrippedBeforeBootstrap(lines);
   });
 
+  // The cask's postflight is `voicelayer setup` -> `voicelayer autostart install`
+  // with NO --reload, so on an upgrade the agent is already loaded and the script
+  // never reaches a bootstrap. This is the path that produced the outage.
+  test("strips com.apple.quarantine on the already-loaded path that never bootstraps", async () => {
+    const workspace = makeWorkspace({ printLoaded: 1 });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("applies on next login");
+    const lines = await readLog(workspace);
+    expect(bootstrapIndexes(lines)).toHaveLength(0);
+    expect(
+      lines.some((line) =>
+        line.includes(
+          `xattr -d -r com.apple.quarantine ${workspace.appBundle}`,
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  test("strips com.apple.quarantine even when the agent is left unloaded", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+
+    const result = runInstaller(workspace, ["--no-start"]);
+
+    expect(result.status).toBe(0);
+    const lines = await readLog(workspace);
+    expect(stripIndexes(lines).length).toBeGreaterThan(0);
+  });
+
   test("still succeeds when xattr is absent from PATH", async () => {
     const workspace = makeWorkspace({ printLoaded: 0, withXattr: false });
 
@@ -170,18 +245,56 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
     expect(result.stderr).not.toContain("xattr");
     expect(result.status).toBe(0);
     const lines = await readLog(workspace);
-    expect(lines.some((line) => line.startsWith("launchctl bootstrap"))).toBe(
-      true,
-    );
+    expect(stripIndexes(lines)).toHaveLength(0);
+    expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
   });
 
-  test("still succeeds when the quarantine attribute is absent", async () => {
-    const workspace = makeWorkspace({ printLoaded: 0, xattrStatus: 1 });
+  test("stays silent and succeeds when the quarantine attribute is absent", async () => {
+    const workspace = makeWorkspace({
+      printLoaded: 0,
+      xattrDeleteStatus: 1,
+      xattrProbeStatus: 1,
+    });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("WARNING");
+    const lines = await readLog(workspace);
+    expectQuarantineStrippedBeforeBootstrap(lines);
+    expect(
+      indexesOf(lines, (line) => line.startsWith("xattr -p")),
+    ).toHaveLength(1);
+  });
+
+  test("warns loudly, naming the bundle, when the strip fails and quarantine remains", async () => {
+    const workspace = makeWorkspace({
+      printLoaded: 0,
+      xattrDeleteStatus: 1,
+      xattrProbeStatus: 0,
+    });
+
+    const result = runInstaller(workspace);
+
+    // A warned-about bundle still beats leaving the machine with no LaunchAgent.
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      `WARNING: could not strip com.apple.quarantine from ${workspace.appBundle}`,
+    );
+    const lines = await readLog(workspace);
+    expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
+  });
+
+  test("does not call xattr when no bundle is installed yet", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0, withAppBundle: false });
 
     const result = runInstaller(workspace);
 
     expect(result.status).toBe(0);
     const lines = await readLog(workspace);
-    expectQuarantineStrippedBeforeBootstrap(lines);
+    expect(indexesOf(lines, (line) => line.startsWith("xattr"))).toHaveLength(
+      0,
+    );
+    expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
   });
 });
