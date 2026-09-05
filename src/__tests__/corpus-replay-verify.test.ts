@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "os";
 import { join } from "path";
 import {
+  allocateFreeLocalhostPort,
   assertCorpusReplayResult,
   assertIsolatedVerifyPaths,
   buildCorpusDaemonEnvironment,
@@ -404,11 +405,13 @@ describe("corpus replay verification", () => {
       stagedRoot: join(workDir, "recordings"),
       audioFixture: join(workDir, "audio.wav"),
       recorderBinDirectory: join(workDir, "bin"),
+      whisperServerPort: 18179,
       baseEnvironment: {
         HOME: "/real/user/home",
         PATH: "/usr/bin:/bin",
         VOICELAYER_CONTROL_LAYER_BASE: "/real/user/journal",
         QA_VOICE_STT_POLISH_LOG_PATH: "/real/user/polish-shadow.jsonl",
+        QA_VOICE_WHISPER_SERVER_PORT: "8178",
       },
     });
 
@@ -419,6 +422,48 @@ describe("corpus replay verification", () => {
     expect(environment.QA_VOICE_STT_POLISH_LOG_PATH).toBe(
       join(workDir, "polish-shadow.jsonl"),
     );
+  });
+
+  test("isolates the corpus daemon's whisper-server port off the live default", () => {
+    const workDir = makeTempRoot();
+    const environment = buildCorpusDaemonEnvironment({
+      workDir,
+      voiceBarSocketPath: join(workDir, "voicebar.sock"),
+      mcpSocketPath: join(workDir, "mcp.sock"),
+      stagedRoot: join(workDir, "recordings"),
+      audioFixture: join(workDir, "audio.wav"),
+      recorderBinDirectory: join(workDir, "bin"),
+      whisperServerPort: 18179,
+      baseEnvironment: {
+        PATH: "/usr/bin:/bin",
+        QA_VOICE_WHISPER_SERVER_PORT: "8178",
+      },
+    });
+
+    expect(environment.QA_VOICE_WHISPER_SERVER_PORT).toBe("18179");
+    expect(environment.QA_VOICE_WHISPER_SERVER_PORT).not.toBe("8178");
+  });
+
+  test("allocates a bindable localhost port outside the live whisper defaults", async () => {
+    const first = await allocateFreeLocalhostPort();
+    const second = await allocateFreeLocalhostPort();
+
+    for (const port of [first, second]) {
+      expect(Number.isInteger(port)).toBe(true);
+      expect(port).toBeGreaterThanOrEqual(1024);
+      expect(port).toBeLessThanOrEqual(65535);
+      expect(port).not.toBe(8178);
+      expect(port).not.toBe(8179);
+    }
+
+    // The allocated port must actually be bindable by the daemon we hand it to.
+    const probe = Bun.listen({
+      hostname: "127.0.0.1",
+      port: first,
+      socket: { data() {} },
+    });
+    expect(probe.port).toBe(first);
+    probe.stop(true);
   });
 
   test("escalates isolated daemon teardown to SIGKILL after the grace period", async () => {

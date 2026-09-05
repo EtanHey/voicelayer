@@ -192,6 +192,7 @@ describe("voicelayer-verify.sh", () => {
         'printf "interaction:%s\\n" "$VOICELAYER_SOCKET_PATH" >> "$RUNNER_LOG"',
         'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"',
         'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"',
+        'printf "18179\\n" > "$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH"',
         "",
       ].join("\n"),
       { mode: 0o755 },
@@ -235,6 +236,62 @@ describe("voicelayer-verify.sh", () => {
     expect(body).toContain("f5_finish_paste_terminal_very_long: pass");
     expect(body).toContain("corpus_count: 2");
     expect(body).toContain(`corpus_manifest: ${corpusManifest}`);
+    expect(body).toContain("whisper_server_port: 18179");
+    expect(body).not.toContain("whisper_server_port: 8178");
+    const pidBefore = body.match(/^live_whisper_8178_pid_before: (.+)$/m);
+    const pidAfter = body.match(/^live_whisper_8178_pid_after: (.+)$/m);
+    expect(pidBefore).not.toBeNull();
+    expect(pidAfter).not.toBeNull();
+    expect(pidAfter?.[1]).toBe(pidBefore?.[1]);
+  });
+
+  test("refuses to certify a corpus run that killed the live whisper-server", () => {
+    run(["git", "checkout", "-b", "feature/corpus-whisper-pid-hop"]);
+    const changed = join(tempRoot, "changed.txt");
+    // Kept outside the fake repo so the pid stub cannot dirty the worktree.
+    const pidsDir = mkdtempSync(join(tmpdir(), "voicelayer-verify-whisper-pids-"));
+    const pidsCmd = join(pidsDir, "live-whisper-pids.sh");
+    const runner = join(tempRoot, "corpus-runner.sh");
+    writeFileSync(changed, "src/mcp-server-daemon.ts\n");
+    // Emulates the pid hop Etan saw on :8178: a live server reclaimed mid-run.
+    writeFileSync(
+      pidsCmd,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'counter="$TMPDIR_PIDS/count"',
+        'if [ -f "$counter" ]; then printf "63610\\n"; else printf "4633\\n" && : > "$counter"; fi',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      runner,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"',
+        'printf "pass\\n" > "$VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH"',
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const result = run(["bash", scriptPath, "--corpus", "1"], {
+      env: {
+        TMPDIR_PIDS: pidsDir,
+        VOICELAYER_VERIFY_REPO_ROOT: tempRoot,
+        VOICELAYER_VERIFY_CHANGED_FILES_FILE: changed,
+        VOICELAYER_VERIFY_CORPUS_RUNNER: runner,
+        VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD: pidsCmd,
+      },
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(text(result.stderr)).toContain(
+      "corpus run touched the live whisper-server",
+    );
+    expect(existsSync(join(tempRoot, ".verified"))).toBe(false);
   });
 
   test("refuses to certify a corpus runner that omits the very-long terminal proof", () => {
