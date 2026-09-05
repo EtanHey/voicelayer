@@ -15,6 +15,7 @@ LABEL="com.voicelayer.voicebar"
 PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="gui/$(id -u)"
+VOICEBAR_APP="${VOICEBAR_APP_PATH:-/Applications/VoiceBar.app}"
 RELOAD=0
 NO_START=0
 PRESERVE_LOAD_STATE=0
@@ -48,8 +49,20 @@ unload_launch_agent() {
   fi
 }
 
+# Homebrew stamps com.apple.quarantine on the downloaded cask unconditionally
+# (cask/download.rb) and only `brew upgrade --cask` ever offers to release it, so
+# `brew install/reinstall --cask voicebar` leaves the bundle Gatekeeper-parked.
+# launchd then starts an app macOS refuses to run without a user "Open?" click,
+# which reads exactly like "the daemon never starts". Strip it before bootstrap.
+release_quarantine() {
+  if command -v xattr >/dev/null 2>&1 && [[ -d "$VOICEBAR_APP" ]]; then
+    xattr -d -r com.apple.quarantine "$VOICEBAR_APP" 2>/dev/null || true
+  fi
+}
+
 reload_launch_agent() {
   unload_launch_agent
+  release_quarantine
   launchctl bootstrap "$DOMAIN" "$PLIST_DST"
   launchctl kickstart "$DOMAIN/$LABEL"
 }
@@ -137,6 +150,7 @@ if [[ "$NO_START" -eq 1 || "$PRESERVE_LOAD_STATE" -eq 1 ]]; then
   exit 0
 fi
 
+release_quarantine
 launchctl bootstrap "$DOMAIN" "$PLIST_DST"
 launchctl kickstart "$DOMAIN/$LABEL"
 
