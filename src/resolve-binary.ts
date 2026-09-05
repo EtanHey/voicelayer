@@ -84,23 +84,121 @@ export function getEnrichedPATH(): string {
   return enrichedPATH || process.env.PATH || "";
 }
 
+/** Per-spawn wall-clock bound for a single `which` / `--version` probe. */
+const SPAWN_TIMEOUT_MS = 1_500;
+
+/**
+ * Total bound across one `resolveBinary()` call.
+ *
+ * The per-spawn timeout stops one wedged child; without a total budget the
+ * sequence (`which`, then up to four candidate probes) could still hold a
+ * caller for five times that. Resolution on a healthy machine is milliseconds.
+ */
+const RESOLVE_BUDGET_MS = 3_000;
+
+/** The `Bun.spawnSync` surface this module uses — injectable for tests. */
+export type BinarySpawnSync = (
+  cmd: string[],
+  options: { stdout: "pipe"; stderr: "ignore"; timeout: number },
+) => {
+  exitCode?: number | null;
+  stdout?: { toString(): string } | string;
+  exitedDueToTimeout?: boolean;
+};
+
+const defaultBinarySpawn: BinarySpawnSync = (cmd, options) =>
+  Bun.spawnSync(cmd, options);
+
+let binarySpawn: BinarySpawnSync = defaultBinarySpawn;
+
+export function __setBinarySpawnForTests(spawn: BinarySpawnSync): void {
+  binarySpawn = spawn;
+}
+
+export function __resetBinarySpawnForTests(): void {
+  binarySpawn = defaultBinarySpawn;
+}
+
+export interface ResolveBinaryOptions {
+  /** Bound for a single probe. Defaults to `SPAWN_TIMEOUT_MS`. */
+  spawnTimeoutMs?: number;
+  /** Bound across the whole call. Defaults to `RESOLVE_BUDGET_MS`. */
+  budgetMs?: number;
+}
+
+interface ProbeOutcome {
+  exitCode: number | null;
+  stdout: string;
+  timedOut: boolean;
+}
+
+function runProbe(cmd: string[], timeoutMs: number): ProbeOutcome {
+  try {
+    const result = binarySpawn(cmd, {
+      stdout: "pipe",
+      stderr: "ignore",
+      timeout: timeoutMs,
+    });
+    const exitCode = result.exitCode ?? null;
+    const raw = result.stdout;
+    return {
+      exitCode,
+      stdout: typeof raw === "string" ? raw : (raw?.toString() ?? ""),
+      timedOut: result.exitedDueToTimeout === true,
+    };
+  } catch {
+    // ENOENT — the candidate does not exist. Not a timeout.
+    return { exitCode: null, stdout: "", timedOut: false };
+  }
+}
+
 /**
  * Resolve a binary by name. Tries `which` with enriched PATH, then probes
  * candidate paths directly. Returns full path or null.
+ *
+ * AIDEV-NOTE: every spawn here is bounded — a `Bun.spawnSync` with no `timeout`
+ * holds the Bun event loop for as long as the child takes, and this function
+ * sits on the capture path (`rec`/sox in `src/input.ts` and `src/audio-utils.ts`)
+ * as well as on `python3`, `brew` and whisper lookups. A wedged binary must cost
+ * a bounded wait and a null, never a stalled recording. Prefer the async
+ * `resolveBinaryAsync()` (added in PR #9) for new callers that can await —
+ * it never blocks the loop at all, where this one still blocks for up to
+ * `budgetMs`.
  */
 export function resolveBinary(
   name: string,
   candidates: string[] = [],
+  options: ResolveBinaryOptions = {},
 ): string | null {
-  // Try `which` with enriched PATH
-  try {
-    const result = Bun.spawnSync(["which", name]);
-    if (result.exitCode === 0) {
-      const path = result.stdout.toString().trim();
-      if (path) return path;
+  const spawnTimeoutMs = options.spawnTimeoutMs ?? SPAWN_TIMEOUT_MS;
+  const budgetMs = options.budgetMs ?? RESOLVE_BUDGET_MS;
+  const started = Date.now();
+  let timedOut = false;
+
+  /** Remaining budget, or null once it is spent. */
+  const nextTimeout = (): number | null => {
+    const remaining = budgetMs - (Date.now() - started);
+    if (remaining <= 0) return null;
+    return Math.min(spawnTimeoutMs, remaining);
+  };
+
+  const giveUp = (): null => {
+    if (timedOut) {
+      console.error(
+        `[voicelayer] Binary resolution for '${name}' timed out after ${Date.now() - started}ms — treating as not found`,
+      );
     }
-  } catch {
-    // which not found — fall through
+    return null;
+  };
+
+  // Try `which` with enriched PATH
+  const whichTimeout = nextTimeout();
+  if (whichTimeout === null) return giveUp();
+  const which = runProbe(["which", name], whichTimeout);
+  if (which.timedOut) timedOut = true;
+  if (which.exitCode === 0) {
+    const path = which.stdout.trim();
+    if (path) return path;
   }
 
   // Probe candidate paths directly
@@ -112,16 +210,15 @@ export function resolveBinary(
   ];
 
   for (const candidate of allCandidates) {
-    try {
-      const check = Bun.spawnSync([candidate, "--version"]);
-      if (check.exitCode === 0) {
-        console.error(`[voicelayer] Resolved ${name} at: ${candidate}`);
-        return candidate;
-      }
-    } catch {
-      // ENOENT — candidate doesn't exist
+    const timeout = nextTimeout();
+    if (timeout === null) return giveUp();
+    const check = runProbe([candidate, "--version"], timeout);
+    if (check.timedOut) timedOut = true;
+    if (check.exitCode === 0) {
+      console.error(`[voicelayer] Resolved ${name} at: ${candidate}`);
+      return candidate;
     }
   }
 
-  return null;
+  return giveUp();
 }
