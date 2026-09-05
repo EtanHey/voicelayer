@@ -431,6 +431,74 @@ describe("handleConverse resilience — P0-2", () => {
     expect(result.content[0].text).toContain("Re-transcribe");
   });
 
+  it("names the unfinished prompt, not zero recoverable audio, when the prompt stage times out", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockImplementation(
+        () => new Promise(() => {}),
+      );
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      const pending = handleConverse({
+        message: "Never finish speaking this prompt",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(20_000);
+      const result = await pending;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("Hard timeout");
+      expect(result.content[0].text).toContain("prompt stage");
+      expect(result.content[0].text).toContain("microphone never opened");
+      expect(result.content[0].text).not.toContain("zero recoverable audio");
+      expect(waitSpy).not.toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("blames the recorder, not zero recoverable audio, when capture never starts", async () => {
+    jest.useFakeTimers();
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      speakSpy = spyOn(tts, "speak").mockResolvedValue(capturedPrompt());
+      // No onCaptureStart callback: the recorder never opens the microphone, so
+      // the timeout fires while the flow is still in the capture-start stage.
+      waitSpy = spyOn(input, "waitForInput").mockImplementation(
+        () => new Promise(() => {}),
+      );
+
+      const pending = handleConverse({
+        message: "Never open the microphone for this request",
+        timeout_seconds: 5,
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(20_000);
+      const result = await pending;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain(
+        "Hard timeout during capture-start stage",
+      );
+      expect(result.content[0].text).toContain("microphone never opened");
+      expect(result.content[0].text).not.toContain("zero recoverable audio");
+    } finally {
+      jest.useRealTimers();
+      errorSpy.mockRestore();
+    }
+  });
+
   it("does not start a heartbeat or recording after prompt speech outlives the outer timeout", async () => {
     jest.useFakeTimers();
     const errorSpy = spyOn(console, "error").mockImplementation(() => {});
