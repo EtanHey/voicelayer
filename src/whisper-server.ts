@@ -166,6 +166,15 @@ function findServerBinary(): string | null {
 }
 
 /**
+ * The whisper-server binary this process would launch. Exported so provenance
+ * can report the version of the binary actually in play instead of whatever
+ * `brew list --versions whisper-cpp` happens to say is installed.
+ */
+export function resolveWhisperServerBinary(): string | null {
+  return findServerBinary();
+}
+
+/**
  * Provenance of the resident whisper-server: the model and flags it was
  * actually launched with. Recorded so every archived recording can say which
  * whisper build produced it (see src/recording-provenance.ts). Null until this
@@ -178,6 +187,10 @@ export interface WhisperServerLaunchRecord {
   args: string[];
   performanceEffort: WhisperPerformanceEffort;
   accelerationMode: WhisperAccelerationMode;
+  /** PID of the resident server, so a server log line ties to a recording. */
+  pid: number;
+  /** ISO-8601 instant the server was observed healthy. */
+  startedAt: string;
 }
 
 let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
@@ -188,6 +201,12 @@ export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
 
 export function __clearWhisperServerLaunchRecordForTests(): void {
   lastLaunchRecord = null;
+}
+
+export function __setWhisperServerLaunchRecordForTests(
+  record: WhisperServerLaunchRecord,
+): void {
+  lastLaunchRecord = record;
 }
 
 /** The model this process's configuration resolves to, or null if none found. */
@@ -207,7 +226,9 @@ function findModel(): string | null {
   return null;
 }
 
-function normalizeAccelerationRequest(value?: string): WhisperAccelerationRequest {
+function normalizeAccelerationRequest(
+  value?: string,
+): WhisperAccelerationRequest {
   const normalized = (value || "auto").trim().toLowerCase();
   if (
     normalized === "auto" ||
@@ -658,6 +679,12 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     console.error(`[voicelayer] ${helpProbe.warning}`);
   }
 
+  // Captured ONCE, before the launch plan is built, and reused for the launch
+  // record below. Re-reading the setting after the async health wait would let
+  // a mid-startup settings change relabel a server that was launched with the
+  // old effort.
+  const launchedPerformanceEffort = getWhisperPerformanceEffort();
+
   const buildLaunch = (
     requestedAcceleration: WhisperAccelerationRequest,
   ): WhisperServerLaunchPlan =>
@@ -669,7 +696,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       metalResourcesPath: metalPath,
       coreMLModelPath: process.env.QA_VOICE_WHISPER_COREML_MODEL,
       requestedAcceleration,
-      performanceEffort: getWhisperPerformanceEffort(),
+      performanceEffort: launchedPerformanceEffort,
       inheritedEnv: process.env,
     });
 
@@ -724,8 +751,10 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           binary,
           modelPath: model,
           args: plan.args,
-          performanceEffort: getWhisperPerformanceEffort(),
+          performanceEffort: launchedPerformanceEffort,
           accelerationMode: plan.acceleration.mode,
+          pid: proc.pid,
+          startedAt: new Date().toISOString(),
         };
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,

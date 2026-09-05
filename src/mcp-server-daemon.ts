@@ -50,6 +50,7 @@ import { resolvePython3Path } from "./tts-health";
 import { acquireProcessLock, releaseProcessLock } from "./process-lock";
 import { startLogRotation, stopLogRotation } from "./log-rotation";
 import { initEnrichedPATH } from "./resolve-binary";
+import { primeRecordingProvenanceProbes } from "./recording-provenance";
 import {
   ensureSTTPolishServer,
   onSTTPolishServerStatus,
@@ -70,10 +71,7 @@ import {
   startParentProcessWatchdog,
   type ParentProcessWatchdog,
 } from "./daemon-parent-watchdog";
-import {
-  handleVoiceSpeak,
-  handleVoiceAsk,
-} from "./handlers";
+import { handleVoiceSpeak, handleVoiceAsk } from "./handlers";
 import type { VoiceToolContext } from "./mcp-notifications";
 
 // --- Tool dispatch table ---
@@ -81,7 +79,10 @@ const DISABLE_POLL_INTERVAL_MS = 5000;
 
 const toolDispatch: Record<
   string,
-  (args: Record<string, unknown>, context?: VoiceToolContext) => Promise<{
+  (
+    args: Record<string, unknown>,
+    context?: VoiceToolContext,
+  ) => Promise<{
     content: Array<{ type: string; text: string }>;
     isError?: boolean;
   }>
@@ -121,6 +122,11 @@ async function main() {
   console.error(
     `[voicelayer-daemon] PATH enriched (${enrichedPath.split(":").length} dirs)`,
   );
+
+  // Warm the provenance subprocess probes off the recording hot path. Not
+  // awaited: a recording never waits on these, it just gets `pending` fields
+  // if it happens to land before they resolve.
+  void primeRecordingProvenanceProbes();
 
   // Startup validation: yield cleanly if another healthy daemon already owns
   // the socket. Exit 0 prevents launchd KeepAlive from tight-respawning a
