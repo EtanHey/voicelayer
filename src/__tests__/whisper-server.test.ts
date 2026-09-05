@@ -1,4 +1,7 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import {
   __clearWhisperServerLaunchRecordForTests,
   __resetWhisperServerStateForTests,
@@ -9,15 +12,41 @@ import {
   isServerHealthy,
   readWhisperServerHelpText,
   resolveWhisperAccelerationPlan,
+  stopServer,
   transcribeViaServer,
   whisperServerLaunchRecord,
 } from "../whisper-server";
+import {
+  clearWhisperServerOwnership,
+  portOwnerPids,
+  readWhisperServerOwnership,
+  writeWhisperServerOwnership,
+} from "../whisper-server-ownership";
 import {
   parseWhisperPerformanceEffort,
   whisperPerformanceArgsForEffort,
 } from "../whisper-performance";
 
 describe("whisper-server", () => {
+  // Ownership records are real files. Point the whole suite at a scratch dir so
+  // a test launch never stamps a bogus owner into ~/.local/state/voicelayer/.
+  let ownershipDir = "";
+  let previousOwnershipDir: string | undefined;
+
+  beforeAll(() => {
+    previousOwnershipDir = process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR;
+    ownershipDir = mkdtempSync(join(tmpdir(), "voicelayer-whisper-owner-"));
+    process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR = ownershipDir;
+  });
+
+  afterAll(() => {
+    if (previousOwnershipDir === undefined) {
+      delete process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR;
+    } else {
+      process.env.VOICELAYER_WHISPER_OWNERSHIP_DIR = previousOwnershipDir;
+    }
+    rmSync(ownershipDir, { recursive: true, force: true });
+  });
   describe("isServerAvailable", () => {
     it("returns a boolean", () => {
       const result = isServerAvailable();
@@ -172,9 +201,24 @@ usage: whisper-server [options]
     });
 
     it("maps performance effort to whisper beam/search args", () => {
-      expect(whisperPerformanceArgsForEffort("fast")).toEqual(["-bo", "1", "-bs", "1"]);
-      expect(whisperPerformanceArgsForEffort("balanced")).toEqual(["-bo", "3", "-bs", "3"]);
-      expect(whisperPerformanceArgsForEffort("accurate")).toEqual(["-bo", "5", "-bs", "5"]);
+      expect(whisperPerformanceArgsForEffort("fast")).toEqual([
+        "-bo",
+        "1",
+        "-bs",
+        "1",
+      ]);
+      expect(whisperPerformanceArgsForEffort("balanced")).toEqual([
+        "-bo",
+        "3",
+        "-bs",
+        "3",
+      ]);
+      expect(whisperPerformanceArgsForEffort("accurate")).toEqual([
+        "-bo",
+        "5",
+        "-bs",
+        "5",
+      ]);
       expect(parseWhisperPerformanceEffort("FAST")).toBe("fast");
       expect(parseWhisperPerformanceEffort("invalid")).toBeNull();
     });
@@ -404,8 +448,10 @@ usage: whisper-server [options]
       }
     });
 
-    it("reclaims a stale whisper-server on the reserved port before launching its own sidecar", async () => {
-      let externalServerAlive = true;
+    it("reclaims a wedged whisper-server that fails the health page before launching its own sidecar", async () => {
+      // Reclaim survives, but only for an occupant that does NOT answer /health.
+      // A wedged server holds the port without serving; nothing else can bind.
+      let wedgedServerAlive = true;
       let managedServerHealthy = false;
       let spawnCalls = 0;
       const killed: Array<{ pid: number; signal: string }> = [];
@@ -414,13 +460,12 @@ usage: whisper-server [options]
         findServerBinary: () => "/tmp/whisper-server",
         findModel: () => "/tmp/ggml-large-v3-turbo.bin",
         readHelpText: () => ({ helpText: "" }),
-        findExternalWhisperServerPids: () =>
-          externalServerAlive ? [99881] : [],
+        findExternalWhisperServerPids: () => (wedgedServerAlive ? [99881] : []),
         killExternalPid: (pid, signal) => {
           killed.push({ pid, signal });
-          externalServerAlive = false;
+          wedgedServerAlive = false;
         },
-        isPidAlive: (pid) => pid === 99881 && externalServerAlive,
+        isPidAlive: (pid) => pid === 99881 && wedgedServerAlive,
         spawn: () => {
           spawnCalls += 1;
           managedServerHealthy = true;
@@ -430,7 +475,8 @@ usage: whisper-server [options]
             kill: () => {},
           };
         },
-        isServerHealthy: async () => externalServerAlive || managedServerHealthy,
+        // The wedged occupant never answers the health page.
+        isServerHealthy: async () => managedServerHealthy,
         sleep: async () => {},
         startupTimeoutMs: 25,
       });
@@ -442,22 +488,41 @@ usage: whisper-server [options]
       } finally {
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
       }
     });
 
-    it("refuses to reuse a port occupied by a non-VoiceLayer process", async () => {
+    it("adopts an unidentified healthy occupant instead of refusing the port", async () => {
+      // Previously this threw "already occupied by a non-VoiceLayer process".
+      // A healthy occupant we cannot identify is still someone's live server:
+      // use it, do not refuse and do not kill it.
+      let spawnCalls = 0;
+      const killed: Array<{ pid: number; signal: string }> = [];
+
       __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        readHelpText: () => ({ helpText: "" }),
         findExternalWhisperServerPids: () => [],
+        findPortListenerPids: () => [],
+        killExternalPid: (pid, signal) => killed.push({ pid, signal }),
+        spawn: () => {
+          spawnCalls += 1;
+          return { pid: 12349, stderr: null, kill: () => {} };
+        },
         isServerHealthy: async () => true,
+        sleep: async () => {},
+        startupTimeoutMs: 25,
       });
 
       try {
-        await expect(ensureServer(18887)).rejects.toThrow(
-          "already occupied by a non-VoiceLayer process",
-        );
+        await expect(ensureServer(18887)).resolves.toBe(18887);
+        expect(killed).toEqual([]);
+        expect(spawnCalls).toBe(0);
       } finally {
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
       }
     });
 
@@ -585,13 +650,323 @@ usage: whisper-server [options]
     });
   });
 
+  describe("ownership guard", () => {
+    // AIDEV-NOTE: The regression these tests exist for — 2026-09-05, five live
+    // whisper-server kills in one evening. Any second process (a worker script,
+    // `bun test`, the corpus verify daemon) called ensureServer(), found a
+    // healthy daemon-owned server on the port, saw its own serverState was
+    // null, called it a stale orphan and SIGKILLed it. Each kill cost Etan a
+    // cold model load on his next dictation.
+    const FAKE_MODEL = "/tmp/ggml-large-v3-turbo.bin";
+
+    function startFakeHealthyServer(): {
+      port: number;
+      stop: () => void;
+      alive: () => Promise<boolean>;
+    } {
+      const server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          if (new URL(req.url).pathname === "/health") {
+            return Response.json({ status: "ok" });
+          }
+          return new Response("not found", { status: 404 });
+        },
+      });
+      return {
+        port: server.port,
+        stop: () => server.stop(true),
+        alive: async () => {
+          try {
+            const resp = await fetch(`http://127.0.0.1:${server.port}/health`);
+            return resp.ok;
+          } catch {
+            return false;
+          }
+        },
+      };
+    }
+
+    function resetWhisperServerModule(): void {
+      __setWhisperServerTestHooksForTests({});
+      __resetWhisperServerStateForTests(null);
+      __clearWhisperServerLaunchRecordForTests();
+    }
+
+    it("adopts a healthy server another process launched instead of killing it", async () => {
+      const fake = startFakeHealthyServer();
+      const killed: Array<{ pid: number; signal: string }> = [];
+      let spawnCalls = 0;
+
+      writeWhisperServerOwnership(fake.port, {
+        pid: process.pid,
+        owner_pid: process.pid,
+        started_at: "2026-09-05T18:40:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: [
+          "/opt/homebrew/bin/whisper-server",
+          "-m",
+          FAKE_MODEL,
+          "--port",
+          String(fake.port),
+        ],
+        model_path: FAKE_MODEL,
+        performance_effort: "accurate",
+        acceleration_mode: "metal",
+      });
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        // Pretend the reclaim helper WOULD find a killable target: the guard
+        // must refuse to kill it anyway.
+        findExternalWhisperServerPids: () => [process.pid],
+        killExternalPid: (pid, signal) => killed.push({ pid, signal }),
+        findPortListenerPids: () => [process.pid],
+        spawn: () => {
+          spawnCalls += 1;
+          return { pid: 4242, stderr: null, kill: () => {} };
+        },
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+        // isServerHealthy deliberately NOT stubbed: the real health check runs
+        // against the real fake server above.
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(killed).toEqual([]);
+        expect(spawnCalls).toBe(0);
+        expect(await fake.alive()).toBe(true);
+
+        const record = whisperServerLaunchRecord();
+        expect(record?.adopted).toBe(true);
+        expect(record?.ownerPid).toBe(process.pid);
+        expect(record?.pid).toBe(process.pid);
+        expect(record?.modelPath).toBe(FAKE_MODEL);
+        expect(record?.startedAt).toBe("2026-09-05T18:40:00.000Z");
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
+    it("adopts a healthy server with no ownership record rather than killing it", async () => {
+      const fake = startFakeHealthyServer();
+      const killed: Array<{ pid: number; signal: string }> = [];
+      let spawnCalls = 0;
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        findExternalWhisperServerPids: () => [777001],
+        killExternalPid: (pid, signal) => killed.push({ pid, signal }),
+        findPortListenerPids: () => [777001],
+        spawn: () => {
+          spawnCalls += 1;
+          return { pid: 4243, stderr: null, kill: () => {} };
+        },
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(killed).toEqual([]);
+        expect(spawnCalls).toBe(0);
+        expect(await fake.alive()).toBe(true);
+        // No ownership record means no provenance: reporting the flags we
+        // *would* have used would be a guess, not provenance.
+        expect(whisperServerLaunchRecord()).toBeNull();
+      } finally {
+        resetWhisperServerModule();
+        fake.stop();
+      }
+    });
+
+    it("adopts a server whose ownership record names a dead pid", async () => {
+      const fake = startFakeHealthyServer();
+      const killed: Array<{ pid: number; signal: string }> = [];
+
+      writeWhisperServerOwnership(fake.port, {
+        pid: 777002,
+        owner_pid: 777003,
+        started_at: "2026-09-05T18:00:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: ["/opt/homebrew/bin/whisper-server", "--port", String(fake.port)],
+        model_path: FAKE_MODEL,
+        performance_effort: "accurate",
+        acceleration_mode: "metal",
+      });
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        findExternalWhisperServerPids: () => [777004],
+        killExternalPid: (pid, signal) => killed.push({ pid, signal }),
+        findPortListenerPids: () => [777004],
+        isPidAlive: () => false,
+        spawn: () => {
+          throw new Error("must not relaunch over a healthy server");
+        },
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(killed).toEqual([]);
+        expect(await fake.alive()).toBe(true);
+        expect(whisperServerLaunchRecord()).toBeNull();
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
+    it("records a flag mismatch on the adopted server instead of killing it", async () => {
+      const fake = startFakeHealthyServer();
+      const killed: Array<{ pid: number; signal: string }> = [];
+
+      writeWhisperServerOwnership(fake.port, {
+        pid: process.pid,
+        owner_pid: process.pid,
+        started_at: "2026-09-05T18:40:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: ["/opt/homebrew/bin/whisper-server", "--port", String(fake.port)],
+        model_path: "/tmp/ggml-base.en.bin",
+        performance_effort: "fast",
+        acceleration_mode: "cpu",
+      });
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        // This process would have launched a different model entirely.
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        findExternalWhisperServerPids: () => [process.pid],
+        killExternalPid: (pid, signal) => killed.push({ pid, signal }),
+        findPortListenerPids: () => [process.pid],
+        spawn: () => {
+          throw new Error("must not relaunch over a healthy server");
+        },
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        expect(killed).toEqual([]);
+        expect(await fake.alive()).toBe(true);
+        const record = whisperServerLaunchRecord();
+        expect(record?.adopted).toBe(true);
+        expect(record?.flagsMatch).toBe(false);
+        expect(record?.modelPath).toBe("/tmp/ggml-base.en.bin");
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
+    it("does not stop an adopted server on shutdown", async () => {
+      // process.on("exit", stopServer) is a kill path too: a `bun test` run
+      // that adopted the live server must not take it down when it exits.
+      const fake = startFakeHealthyServer();
+
+      writeWhisperServerOwnership(fake.port, {
+        pid: process.pid,
+        owner_pid: process.pid,
+        started_at: "2026-09-05T18:40:00.000Z",
+        binary: "/opt/homebrew/bin/whisper-server",
+        args: ["/opt/homebrew/bin/whisper-server", "--port", String(fake.port)],
+        model_path: FAKE_MODEL,
+        performance_effort: "accurate",
+        acceleration_mode: "metal",
+      });
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        findPortListenerPids: () => [process.pid],
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(fake.port)).resolves.toBe(fake.port);
+        stopServer();
+        expect(await fake.alive()).toBe(true);
+        // The adopted server's ownership record belongs to its launcher; a
+        // non-owner shutdown must leave it in place.
+        expect(whisperServerLaunchRecord()).toBeNull();
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(fake.port);
+        fake.stop();
+      }
+    });
+
+    it("records ownership when this process launches the server", async () => {
+      let healthy = false;
+
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => FAKE_MODEL,
+        readHelpText: () => ({ helpText: "" }),
+        findPortListenerPids: () => [],
+        spawn: () => {
+          healthy = true;
+          return { pid: 55501, stderr: null, kill: () => {} };
+        },
+        isServerHealthy: async () => healthy,
+        sleep: async () => {},
+        startupTimeoutMs: 25,
+      });
+
+      try {
+        await expect(ensureServer(18890)).resolves.toBe(18890);
+        const owned = readWhisperServerOwnership(18890);
+        expect(owned?.pid).toBe(55501);
+        expect(owned?.owner_pid).toBe(process.pid);
+        expect(owned?.model_path).toBe(FAKE_MODEL);
+        expect(whisperServerLaunchRecord()?.adopted).toBeUndefined();
+
+        // The launcher clears its own record when it stops the server.
+        stopServer();
+        expect(readWhisperServerOwnership(18890)).toBeNull();
+      } finally {
+        resetWhisperServerModule();
+        clearWhisperServerOwnership(18890);
+      }
+    });
+
+    it("resolves the listening pid of a port it can see", () => {
+      const fake = startFakeHealthyServer();
+      try {
+        expect(portOwnerPids(fake.port)).toContain(process.pid);
+      } finally {
+        fake.stop();
+      }
+    });
+  });
+
   describe("transcribeViaServer", () => {
     it("sends language and prompt fields to whisper-server inference", async () => {
       const originalFetch = globalThis.fetch;
       let inferenceForm: FormData | undefined;
 
       // @ts-ignore - test double
-      globalThis.fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
         inferenceForm = init?.body as FormData;
         return new Response(JSON.stringify({ text: "שלום" }), {
           status: 200,
