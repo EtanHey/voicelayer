@@ -145,6 +145,24 @@ assert_corpus_tree_clean() {
   fi
 }
 
+# AIDEV-NOTE: The corpus daemon used to inherit QA_VOICE_WHISPER_SERVER_PORT's default
+# (8178), where whisper-server's stale-orphan reclaim SIGKILLs the daily-driver's live
+# server. This reports the live listener so a verify run that still kills it fails loudly
+# instead of costing Etan a cold model load on his next utterance.
+live_whisper_default_port_pids() {
+  local pids
+  if [ -n "${VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD:-}" ]; then
+    pids="$("$VOICELAYER_VERIFY_LIVE_WHISPER_PIDS_CMD" 2>/dev/null | sort -n | tr '\n' ',' | sed 's/,$//')"
+  else
+    pids="$(lsof -nP -iTCP:8178 -sTCP:LISTEN -t 2>/dev/null | sort -n | tr '\n' ',' | sed 's/,$//')"
+  fi
+  if [ -z "$pids" ]; then
+    printf 'none'
+  else
+    printf '%s' "$pids"
+  fi
+}
+
 is_voicebar_launchd_managed() {
   command -v launchctl >/dev/null 2>&1 || return 1
   launchctl list "$VOICEBAR_LAUNCHD_LABEL" >/dev/null 2>&1
@@ -308,6 +326,9 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
   export VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal.proof"
   export VOICELAYER_VERIFY_F5_TERMINAL_VERY_LONG_PROOF_PATH="$corpus_work_dir/f5-finish-paste-terminal-very-long.proof"
+  export VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH="$corpus_work_dir/whisper-server-port.proof"
+  live_whisper_pid_before="$(live_whisper_default_port_pids)"
+  printf '[voicelayer-verify] live whisper-server :8178 pid(s) before: %s\n' "$live_whisper_pid_before"
 
   assert_corpus_tree_clean
 
@@ -325,6 +346,17 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
       --manifest "$corpus_manifest" \
       --work-dir "$corpus_work_dir" \
       --repo-root "$REPO_ROOT"
+  fi
+  live_whisper_pid_after="$(live_whisper_default_port_pids)"
+  printf '[voicelayer-verify] live whisper-server :8178 pid(s) after: %s\n' "$live_whisper_pid_after"
+  if [ "$live_whisper_pid_before" != "$live_whisper_pid_after" ]; then
+    printf '[voicelayer-verify] corpus run touched the live whisper-server (:8178 pid %s -> %s).\n' \
+      "$live_whisper_pid_before" "$live_whisper_pid_after" >&2
+    exit 1
+  fi
+  whisper_server_port='unknown'
+  if [ -s "$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH" ]; then
+    whisper_server_port="$(tr -d '[:space:]' <"$VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH")"
   fi
   if [ ! -f "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH" ] ||
     ! grep -Fqx 'pass' "$VOICELAYER_VERIFY_F5_TERMINAL_PROOF_PATH"; then
@@ -355,6 +387,9 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
     printf 'f5_finish_paste_terminal_very_long: pass\n'
     printf 'corpus_count: %s\n' "$CORPUS_COUNT"
     printf 'corpus_manifest: %s\n' "$corpus_manifest"
+    printf 'whisper_server_port: %s\n' "$whisper_server_port"
+    printf 'live_whisper_8178_pid_before: %s\n' "$live_whisper_pid_before"
+    printf 'live_whisper_8178_pid_after: %s\n' "$live_whisper_pid_after"
     printf 'daemon_files:\n'
     printf '%s' "$daemon_files" | sed 's/^/- /'
   } >"$tmp_artifact"

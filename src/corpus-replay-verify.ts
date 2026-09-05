@@ -577,6 +577,35 @@ function createVerifyRecorderShim(workDir: string): string {
   return binDirectory;
 }
 
+// AIDEV-NOTE: The corpus daemon must never inherit the live whisper-server port.
+// On the default 8178, whisper-server's `ensureServerUnlocked` reads the daily-driver's
+// running server as a stale orphan and SIGKILLs it, so a verify run costs Etan a cold
+// model reload on his next utterance. 8179 belongs to the whisper-server-ownership lane.
+const RESERVED_WHISPER_PORTS = new Set([8178, 8179]);
+
+export async function allocateFreeLocalhostPort(attempts = 8): Promise<number> {
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const probe = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { data() {} },
+    });
+    const port = probe.port;
+    probe.stop(true);
+    if (
+      Number.isInteger(port) &&
+      port >= 1024 &&
+      port <= 65535 &&
+      !RESERVED_WHISPER_PORTS.has(port)
+    ) {
+      return port;
+    }
+  }
+  throw new Error(
+    "could not allocate a free localhost port for the isolated corpus whisper-server",
+  );
+}
+
 export function buildCorpusDaemonEnvironment(options: {
   workDir: string;
   voiceBarSocketPath: string;
@@ -584,6 +613,7 @@ export function buildCorpusDaemonEnvironment(options: {
   stagedRoot: string;
   audioFixture: string;
   recorderBinDirectory: string;
+  whisperServerPort: number;
   baseEnvironment?: NodeJS.ProcessEnv;
 }): NodeJS.ProcessEnv {
   const baseEnvironment = options.baseEnvironment ?? process.env;
@@ -601,6 +631,7 @@ export function buildCorpusDaemonEnvironment(options: {
     QA_VOICE_RETAINED_RECORDING_PATH: join(options.workDir, "retained.wav"),
     QA_VOICE_RECORDINGS_DIR: options.stagedRoot,
     VOICELAYER_VERIFY_AUDIO_FIXTURE: options.audioFixture,
+    QA_VOICE_WHISPER_SERVER_PORT: String(options.whisperServerPort),
     PATH: `${options.recorderBinDirectory}:${baseEnvironment.PATH ?? "/usr/bin:/bin"}`,
   };
 }
@@ -736,6 +767,15 @@ async function runCorpusReplay(options: {
     stageSpecimen(item, options.corpusRoot, stagedRoot),
   );
   const recorderBinDirectory = createVerifyRecorderShim(options.workDir);
+  const whisperServerPort = await allocateFreeLocalhostPort();
+  console.log(
+    `[corpus-replay] isolated whisper-server port: ${whisperServerPort}`,
+  );
+  const whisperPortProofPath =
+    process.env.VOICELAYER_VERIFY_WHISPER_PORT_PROOF_PATH?.trim();
+  if (whisperPortProofPath) {
+    writeFileSync(whisperPortProofPath, `${whisperServerPort}\n`);
+  }
   const bar = createVerifyBarServer(voiceBarSocketPath);
   const daemonLogPath = join(options.workDir, "daemon.log");
   const daemonProcess = Bun.spawn(
@@ -752,6 +792,7 @@ async function runCorpusReplay(options: {
         stagedRoot,
         audioFixture: staged[0].audioPath,
         recorderBinDirectory,
+        whisperServerPort,
       }),
     },
   );
