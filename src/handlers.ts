@@ -590,12 +590,21 @@ export async function handleConverse(
     const recovery = recoveryOptions(
       `Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s`,
     );
+    // AIDEV-NOTE: prompt/capture-start time out before the microphone opens, so
+    // "zero recoverable audio" would blame the capture pipeline for a prompt that
+    // never finished. Say what actually did not happen, per stage.
+    const cause =
+      stage === "prompt"
+        ? "the spoken prompt did not finish within the budget; the microphone never opened"
+        : stage === "capture-start"
+          ? "the recorder did not start after the prompt finished; the microphone never opened"
+          : "the voice pipeline may be stuck with zero recoverable audio";
     resolveTimeout(
       recovery
         ? textResult(formatAsk(null, { outcome: "captured", recovery }))
         : textResult(
-            `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s. ` +
-              "The voice pipeline may be stuck with zero recoverable audio.",
+            `[converse] Hard timeout during ${stage} stage after ${Math.round(timeoutMs / 1000)}s: ` +
+              `${cause}.`,
             true,
           ),
     );

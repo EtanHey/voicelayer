@@ -115,7 +115,8 @@ export function getToolDefinitions() {
         "Recover it with Re-transcribe in VoiceBar History; do not ask the user to repeat.\n" +
         "Optional archive retranscription is explicit only and never automatic: call voice_ask with only retranscribe_archive_id from the preceding successful Ask. " +
         "It binds to that exact receipt, sends the complete retained response audio to STT, does not speak and does not open the microphone, and returns the result only to this caller.\n" +
-        "Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, error if busy or the pipeline is stuck with zero recoverable audio.\n" +
+        "Returns: transcribed text on success, recoverable archive details when captured audio needs retranscription, " +
+        "error if busy, if the prompt or the recorder never finished so the microphone never opened, or if the capture pipeline is stuck with zero recoverable audio.\n" +
         "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
       annotations: {
         readOnlyHint: false,
