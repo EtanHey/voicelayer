@@ -125,3 +125,97 @@ export function resolveBinary(
 
   return null;
 }
+
+/** Default per-probe bound for the async resolver. */
+const ASYNC_RESOLVE_TIMEOUT_MS = 1_500;
+
+/**
+ * Run one probe command with an enforced wall-clock bound, without ever
+ * blocking the event loop. Returns exit code 0/non-zero, or null on timeout.
+ */
+async function probeExitCode(
+  cmd: string[],
+  timeoutMs: number,
+): Promise<number | null> {
+  try {
+    const proc = Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+    }, timeoutMs);
+    try {
+      const exitCode = await proc.exited;
+      return timedOut ? null : exitCode;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Async, bounded twin of `resolveBinary`.
+ *
+ * AIDEV-NOTE: `resolveBinary` shells out with `Bun.spawnSync` and no timeout —
+ * a hanging `which` or `<candidate> --version` holds the Bun event loop for as
+ * long as the child takes. That is tolerable where it is already used (one-shot
+ * setup paths), but NOT on any path a daemon startup or a recording waits on.
+ * Every probe here is `Bun.spawn` plus an enforced timer, so a wedged binary
+ * costs `timeoutMs` and a SIGKILL rather than the whole process.
+ *
+ * The sync twin is deliberately left alone: changing it would touch the capture
+ * path's `rec`/sox resolution, which is out of scope here. New callers on
+ * latency-sensitive paths should use this one.
+ */
+export async function resolveBinaryAsync(
+  name: string,
+  candidates: string[] = [],
+  timeoutMs: number = ASYNC_RESOLVE_TIMEOUT_MS,
+): Promise<string | null> {
+  try {
+    const proc = Bun.spawn(["which", name], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+    }, timeoutMs);
+    try {
+      const [out, exitCode] = await Promise.all([
+        new Response(proc.stdout).text(),
+        proc.exited,
+      ]);
+      if (!timedOut && exitCode === 0) {
+        const path = out.trim();
+        if (path) return path;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    // which not found — fall through to the candidate probes
+  }
+
+  const allCandidates = [
+    ...candidates,
+    `/opt/homebrew/bin/${name}`,
+    `/usr/local/bin/${name}`,
+    `/usr/bin/${name}`,
+  ];
+
+  for (const candidate of allCandidates) {
+    if ((await probeExitCode([candidate, "--version"], timeoutMs)) === 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}

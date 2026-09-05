@@ -9,13 +9,18 @@
  * mode produced a transcript. This module answers that, and only that: it reads
  * facts, it never changes what is recorded or when.
  *
- * AIDEV-NOTE: the shell-outs (`scutil`, `sysctl`, `whisper-server --help`) never
- * run on the archive path. They run once, asynchronously, off the hot path —
- * primed at daemon start (see `primeRecordingProvenanceProbes`) and otherwise
- * kicked off by the first archive write, which does NOT wait for them. Until a
- * probe resolves, its fields are null and `provenance_probe` is `"pending"`, so
- * a slow `scutil` can never stall the archive write between the user's last word
- * and the file hitting disk. Every other field is an in-process lookup.
+ * AIDEV-NOTE: the shell-outs (`scutil`, `sysctl`, binary resolution,
+ * `<binary> --help`) never run on the archive path, and never through
+ * `Bun.spawnSync`. They run once, asynchronously and each bounded by
+ * PROBE_TIMEOUT_MS, off the hot path — primed at daemon start (see
+ * `primeRecordingProvenanceProbes`) and otherwise kicked off by the first
+ * archive write, which does NOT wait for them. Until a probe resolves, its
+ * fields are null and `provenance_probe` is `"pending"`, so a slow `scutil` can
+ * never stall the archive write between the user's last word and the file
+ * hitting disk, and a wedged `whisper-server --version` can never stall daemon
+ * startup. Note this rules out the sync `resolveBinary()` on every path here:
+ * it spawns `which` and `<candidate> --version` with no timeout. Every other
+ * field is an in-process lookup.
  */
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { hostname } from "os";
@@ -27,9 +32,10 @@ import {
   getWhisperPerformanceEffort,
   type WhisperPerformanceEffort,
 } from "./whisper-performance";
+import { resolveWhisperCliBinaryAsync } from "./stt";
 import {
   resolveWhisperModelPath,
-  resolveWhisperServerBinary,
+  resolveWhisperServerBinaryAsync,
   whisperServerLaunchRecord,
 } from "./whisper-server";
 
@@ -130,15 +136,50 @@ const APP_VERSION_ENV = "VOICELAYER_APP_VERSION";
 const PROBE_TIMEOUT_MS = 1_500;
 
 /**
- * The backends whose transcripts a local whisper build actually produced.
- * Anything else (`wispr-flow`, `not-transcribed`, null before finalization)
- * gets null whisper fields — a Wispr transcript stamped with the local model
- * path is plausible-but-false provenance, which is worse than no provenance.
+ * Which local whisper executable produced a transcript: the resident HTTP
+ * server, or the one-shot CLI (`whisper-cli`/`whisper-cpp`). They are different
+ * binaries with different versions, and only the server has a launch record.
  */
-const WHISPER_BACKENDS = new Set(["whisper-server", "whisper.cpp"]);
+export type WhisperBackendKind = "server" | "cli";
 
+/** Base backend name -> which binary actually ran. */
+const WHISPER_BACKEND_KINDS: Record<string, WhisperBackendKind> = {
+  "whisper-server": "server",
+  "whisper.cpp": "cli",
+};
+
+/**
+ * Reduce a recorded backend string to the local whisper executable that
+ * produced the text, or null when no local whisper did.
+ *
+ * `STTResult.backend` is decorated, not a bare name (see `src/stt.ts`):
+ *  - `a->b` is a fallback chain, so the LAST segment is what produced the text
+ *    (`whisper-server->whisper.cpp` means the CLI transcribed it);
+ *  - `+suffix` marks post-processing passes on the same backend
+ *    (`whisper-server+chunks+witness`, `whisper-server+head+clean`), so the
+ *    FIRST token is the base name.
+ *
+ * Matching exact names only — which is what this did before — nulled the
+ * whisper provenance for the *common* case, since a plain undecorated
+ * `whisper-server` result is the exception rather than the rule.
+ */
+export function normalizeWhisperBackend(
+  backend: string | null,
+): WhisperBackendKind | null {
+  if (!backend) return null;
+  const produced = backend.split("->").pop()?.trim() ?? "";
+  const base = produced.split("+")[0]?.trim() ?? "";
+  return WHISPER_BACKEND_KINDS[base] ?? null;
+}
+
+/**
+ * Did a local whisper build produce this transcript? Anything else
+ * (`wispr-flow`, `not-transcribed`, null before finalization) gets null whisper
+ * fields — a Wispr transcript stamped with the local model path is
+ * plausible-but-false provenance, which is worse than no provenance.
+ */
 export function isWhisperBackend(backend: string | null): boolean {
-  return backend !== null && WHISPER_BACKENDS.has(backend);
+  return normalizeWhisperBackend(backend) !== null;
 }
 
 type ProbeRunner = (cmd: string[], timeoutMs: number) => Promise<string | null>;
@@ -300,24 +341,91 @@ export function resetMachineProvenanceCacheForTests(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Cached per resolved binary path, not per process: if a whisper-server launch
- * later resolves a different binary than the one on PATH at daemon start, the
- * version follows the binary instead of going stale.
+ * Cached per (kind, resolved binary path), not per process: the server and the
+ * CLI are different executables with independent versions, and if a later
+ * whisper-server launch resolves a different binary than the one on PATH at
+ * daemon start, the version follows the binary instead of going stale.
  */
 const whisperCppVersionCache = new Map<string, WhisperCppVersion>();
 const whisperCppVersionInFlight = new Map<string, Promise<WhisperCppVersion>>();
 
 /**
- * Cache key for the binary that produced (or would produce) this transcript.
+ * Sentinel for "no launch record — resolve this kind's binary from PATH".
  *
  * Reading the launch record is an in-process lookup, so it is safe on the hot
- * path; *resolving* a binary from PATH is not (`resolveBinary` can spawn a
- * login shell), so that only ever happens inside the async prime below.
+ * path; *resolving* a binary from PATH is not — even the async resolver spawns
+ * `which` — so resolution only ever happens inside the async prime below.
+ *
+ * The launch record describes the resident server and nothing else, so it is
+ * consulted for `kind: "server"` alone: a `whisper.cpp` transcript came out of
+ * the CLI, whose version has nothing to do with a whisper-server that happens
+ * to be up.
  */
-const RESOLVED_BINARY_KEY = " resolve-from-path";
+const RESOLVED_BINARY_KEY = "resolve-from-path";
 
-function whisperCppVersionCacheKey(): string {
+function whisperCppVersionBinaryKey(kind: WhisperBackendKind): string {
+  if (kind !== "server") return RESOLVED_BINARY_KEY;
   return whisperServerLaunchRecord()?.binary ?? RESOLVED_BINARY_KEY;
+}
+
+function whisperCppVersionCacheKey(kind: WhisperBackendKind): string {
+  return `${kind}\u0000${whisperCppVersionBinaryKey(kind)}`;
+}
+
+/** Injection seam for the two async binary resolvers (tests + the RED case). */
+type BinaryResolver = () => Promise<string | null>;
+
+/**
+ * Total budget for resolving one whisper binary, on top of the per-probe bound
+ * inside the resolver itself.
+ *
+ * The per-probe timeout stops a single wedged child; this stops the *sequence*
+ * (`which`, then up to four `<candidate> --version` probes) from leaving the
+ * prime promise outstanding for the life of the process. Resolution is normally
+ * milliseconds on a warm PATH, so exceeding this means something is wrong and
+ * `"unresolved"` is the honest answer.
+ *
+ * A timeout is deliberately NOT cached: the next prime retries rather than
+ * pinning the session to a null version because of one bad moment.
+ */
+const RESOLVE_BUDGET_MS = 1_500;
+
+const RESOLVE_TIMED_OUT = Symbol("resolve-timed-out");
+
+async function resolveWithinBudget(
+  resolver: BinaryResolver,
+): Promise<string | null | typeof RESOLVE_TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<typeof RESOLVE_TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(RESOLVE_TIMED_OUT), RESOLVE_BUDGET_MS);
+  });
+  try {
+    return await Promise.race([resolver(), budget]);
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+const defaultServerResolver: BinaryResolver = () =>
+  resolveWhisperServerBinaryAsync(PROBE_TIMEOUT_MS);
+const defaultCliResolver: BinaryResolver = () =>
+  resolveWhisperCliBinaryAsync(PROBE_TIMEOUT_MS);
+
+let serverBinaryResolver: BinaryResolver = defaultServerResolver;
+let cliBinaryResolver: BinaryResolver = defaultCliResolver;
+
+export function __setWhisperBinaryResolversForTests(resolvers: {
+  server?: BinaryResolver;
+  cli?: BinaryResolver;
+}): void {
+  serverBinaryResolver = resolvers.server ?? defaultServerResolver;
+  cliBinaryResolver = resolvers.cli ?? defaultCliResolver;
+}
+
+export function __resetWhisperBinaryResolversForTests(): void {
+  __setWhisperBinaryResolversForTests({});
 }
 
 /** `/opt/homebrew/Cellar/whisper-cpp/1.7.4/bin/whisper-server` -> `1.7.4`. */
@@ -356,34 +464,58 @@ async function probeWhisperCppVersion(
   return { version: null, source: "unresolved" };
 }
 
-/** Kick off (or join) the version probe for the currently resolved binary. */
-export function primeWhisperCppVersion(): Promise<WhisperCppVersion> {
-  const key = whisperCppVersionCacheKey();
+/**
+ * Kick off (or join) the version probe for the binary of the given kind.
+ *
+ * Every step here is async and bounded, including the PATH resolution: the sync
+ * `resolveBinary` spawns `which` and `<candidate> --version` through
+ * `Bun.spawnSync` with no timeout, so a wedged binary would block the daemon
+ * startup this prime is called from.
+ */
+export function primeWhisperCppVersion(
+  kind: WhisperBackendKind = "server",
+): Promise<WhisperCppVersion> {
+  const key = whisperCppVersionCacheKey(kind);
   const cached = whisperCppVersionCache.get(key);
   if (cached) return Promise.resolve(cached);
   const inFlight = whisperCppVersionInFlight.get(key);
   if (inFlight) return inFlight;
+  const launchBinary = whisperCppVersionBinaryKey(kind);
   // `.then()` for the same reason as the machine probe: nothing here — not even
   // the PATH resolution — may run inside an archive write's synchronous frame.
   const probe = Promise.resolve().then(async () => {
-    const binaryPath =
-      key === RESOLVED_BINARY_KEY ? resolveWhisperServerBinary() : key;
-    const result: WhisperCppVersion = binaryPath
-      ? await probeWhisperCppVersion(binaryPath)
-      : { version: null, source: "unresolved" };
-    whisperCppVersionCache.set(key, result);
-    whisperCppVersionInFlight.delete(key);
-    return result;
+    try {
+      const binaryPath =
+        launchBinary === RESOLVED_BINARY_KEY
+          ? await resolveWithinBudget(
+              kind === "server" ? serverBinaryResolver : cliBinaryResolver,
+            )
+          : launchBinary;
+      if (binaryPath === RESOLVE_TIMED_OUT) {
+        // Not cached — a wedged resolver must not pin the whole session to a
+        // null version. The next prime tries again.
+        return { version: null, source: "unresolved" } as WhisperCppVersion;
+      }
+      const result: WhisperCppVersion = binaryPath
+        ? await probeWhisperCppVersion(binaryPath)
+        : { version: null, source: "unresolved" };
+      whisperCppVersionCache.set(key, result);
+      return result;
+    } finally {
+      whisperCppVersionInFlight.delete(key);
+    }
   });
   whisperCppVersionInFlight.set(key, probe);
   return probe;
 }
 
 /** The version as of *now*, never waiting. `pending` until the probe resolves. */
-export function whisperCppVersion(): WhisperCppVersion {
-  const cached = whisperCppVersionCache.get(whisperCppVersionCacheKey());
+export function whisperCppVersion(
+  kind: WhisperBackendKind = "server",
+): WhisperCppVersion {
+  const cached = whisperCppVersionCache.get(whisperCppVersionCacheKey(kind));
   if (cached) return cached;
-  void primeWhisperCppVersion();
+  void primeWhisperCppVersion(kind);
   return { version: null, source: "pending" };
 }
 
@@ -398,9 +530,13 @@ export function resetWhisperCppVersionCacheForTests(): void {
  * never wait on it either way.
  */
 export function primeRecordingProvenanceProbes(): Promise<void> {
-  return Promise.all([primeMachineProvenance(), primeWhisperCppVersion()]).then(
-    () => undefined,
-  );
+  return Promise.all([
+    primeMachineProvenance(),
+    // Both executables: a session can produce `whisper-server` transcripts and
+    // `whisper.cpp` ones (the fallback chain), and they are different binaries.
+    primeWhisperCppVersion("server"),
+    primeWhisperCppVersion("cli"),
+  ]).then(() => undefined);
 }
 
 /**
@@ -467,9 +603,9 @@ export function buildRecordingProvenance(
   const machine = (probe.machine ?? machineProvenance)();
   const version = (probe.appVersion ?? appVersion)();
   const polishStatus = input.polishStatus ?? null;
-  const whisperBackend = isWhisperBackend(input.backend);
+  const kind = normalizeWhisperBackend(input.backend);
 
-  if (!whisperBackend) {
+  if (kind === null) {
     // Not a whisper transcript: every whisper-specific field stays null rather
     // than describing a local build that had nothing to do with this text.
     return {
@@ -494,11 +630,21 @@ export function buildRecordingProvenance(
     };
   }
 
-  const modelPath = (probe.whisperModelPath ?? defaultWhisperModelPath)();
-  const launchArgs = (probe.whisperServerArgs ?? defaultWhisperServerArgs)();
-  const cppVersion = (probe.whisperCppVersion ?? whisperCppVersion)();
+  // A `whisper.cpp` transcript came out of the one-shot CLI, so nothing about
+  // the resident server describes it: not its binary version, not its launch
+  // flags, not its PID, and not the effort it was launched with. Only the
+  // `server` kind reads the launch record.
+  const modelPath = (
+    probe.whisperModelPath ?? (() => defaultWhisperModelPath(kind))
+  )();
+  const launchArgs = (
+    probe.whisperServerArgs ?? (() => defaultWhisperServerArgs(kind))
+  )();
+  const cppVersion = (
+    probe.whisperCppVersion ?? (() => whisperCppVersion(kind))
+  )();
   const serverProcess = (
-    probe.whisperServerProcess ?? defaultWhisperServerProcess
+    probe.whisperServerProcess ?? (() => defaultWhisperServerProcess(kind))
   )();
 
   return {
@@ -514,7 +660,9 @@ export function buildRecordingProvenance(
     whisper_server_args: launchArgs,
     whisper_server_pid: serverProcess.pid,
     whisper_server_started_at: serverProcess.startedAt,
-    performance_effort: (probe.performanceEffort ?? defaultPerformanceEffort)(),
+    performance_effort: (
+      probe.performanceEffort ?? (() => defaultPerformanceEffort(kind))
+    )(),
     polish_mode: (probe.polishMode ?? (() => getSTTPolishMode()))(),
     polish_reachable: polishReachabilityForStatus(polishStatus),
     polish_status: polishStatus,
@@ -531,8 +679,11 @@ export function buildRecordingProvenance(
 /**
  * The model the resident whisper-server was launched with, falling back to the
  * model this process's configuration resolves to when no server is resident.
+ * The CLI resolves its own model per invocation and never adopts the server's,
+ * so `kind: "cli"` always reports the configured model.
  */
-function defaultWhisperModelPath(): string | null {
+function defaultWhisperModelPath(kind: WhisperBackendKind): string | null {
+  if (kind === "cli") return resolveWhisperModelPath();
   return whisperServerLaunchRecord()?.modelPath ?? resolveWhisperModelPath();
 }
 
@@ -541,7 +692,8 @@ function defaultWhisperModelPath(): string | null {
  * process launched it. Null when no resident server has been started here —
  * reporting the flags we *would* use would be a guess, not provenance.
  */
-function defaultWhisperServerArgs(): string | null {
+function defaultWhisperServerArgs(kind: WhisperBackendKind): string | null {
+  if (kind === "cli") return null;
   const record = whisperServerLaunchRecord();
   if (!record) return null;
   // Drop the binary path (argv[0]) — the flags are the interesting part, and
@@ -550,10 +702,11 @@ function defaultWhisperServerArgs(): string | null {
 }
 
 /** PID + start time of the resident server, so a log line can be tied to a recording. */
-function defaultWhisperServerProcess(): {
+function defaultWhisperServerProcess(kind: WhisperBackendKind): {
   pid: number | null;
   startedAt: string | null;
 } {
+  if (kind === "cli") return { pid: null, startedAt: null };
   const record = whisperServerLaunchRecord();
   return {
     pid: record?.pid ?? null,
@@ -566,7 +719,12 @@ function defaultWhisperServerProcess(): {
  * changing the setting mid-transcription must not retroactively relabel the
  * recording. Falls back to the configured effort only when no server is resident.
  */
-function defaultPerformanceEffort(): WhisperPerformanceEffort {
+function defaultPerformanceEffort(
+  kind: WhisperBackendKind,
+): WhisperPerformanceEffort {
+  // The CLI reads the effort setting per invocation, so the configured value is
+  // the truth for it; only a resident server has a launched-with effort.
+  if (kind === "cli") return getWhisperPerformanceEffort();
   return (
     whisperServerLaunchRecord()?.performanceEffort ??
     getWhisperPerformanceEffort()

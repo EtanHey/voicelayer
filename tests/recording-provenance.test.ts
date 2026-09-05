@@ -22,11 +22,15 @@ import { join } from "path";
 import { archiveVoiceBarRecording, createWavBuffer } from "../src/input";
 import {
   __resetProvenanceProbeRunnersForTests,
+  __resetWhisperBinaryResolversForTests,
   __runProbeCommandForTests,
   __setProvenanceProbeRunnersForTests,
+  __setWhisperBinaryResolversForTests,
   buildRecordingProvenance,
   isWhisperBackend,
+  normalizeWhisperBackend,
   primeMachineProvenance,
+  primeRecordingProvenanceProbes,
   primeWhisperCppVersion,
   resetMachineProvenanceCacheForTests,
   resetWhisperCppVersionCacheForTests,
@@ -52,6 +56,7 @@ function resetProbeState(): void {
   resetMachineProvenanceCacheForTests();
   resetWhisperCppVersionCacheForTests();
   __resetProvenanceProbeRunnersForTests();
+  __resetWhisperBinaryResolversForTests();
   __clearWhisperServerLaunchRecordForTests();
 }
 
@@ -342,6 +347,226 @@ describe("performance_effort describes the launched server", () => {
       });
       expect(provenance.performance_effort).toBe("fast");
       expect(provenance.whisper_server_pid).toBe(null);
+    } finally {
+      if (savedEffort === undefined) {
+        delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+      } else {
+        process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = savedEffort;
+      }
+    }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Review round 2 (PR #9)
+// ---------------------------------------------------------------------------
+
+describe("the prime path never blocks on binary resolution", () => {
+  beforeEach(resetProbeState);
+  afterEach(resetProbeState);
+
+  it("settles well inside the bound even when both resolvers hang forever", async () => {
+    // Stands in for the real hazard: `resolveBinary` spawns `which` and
+    // `<candidate> --version` through Bun.spawnSync with no timeout, so a
+    // wedged binary would hold the event loop through daemon startup.
+    const neverResolves: Promise<string | null> = new Promise(() => {});
+    __setWhisperBinaryResolversForTests({
+      server: () => neverResolves,
+      cli: () => neverResolves,
+    });
+    __setProvenanceProbeRunnersForTests({
+      run: async (cmd) => (cmd[0] === "scutil" ? "test-mac" : "Apple M1 Pro"),
+    });
+
+    const started = Date.now();
+    const settled = await Promise.race([
+      primeRecordingProvenanceProbes().then(() => "settled" as const),
+      // The prime must not be what loses this race.
+      sleep(2_000).then(() => "timed-out" as const),
+    ]);
+    const elapsed = Date.now() - started;
+
+    expect(settled).toBe("settled");
+    expect(elapsed).toBeLessThan(2_000);
+  });
+
+  it("keeps the event loop responsive while a resolver is outstanding", async () => {
+    let resolveLate: ((value: string | null) => void) | undefined;
+    __setWhisperBinaryResolversForTests({
+      server: () =>
+        new Promise<string | null>((resolve) => {
+          resolveLate = resolve;
+        }),
+      cli: async () => null,
+    });
+
+    let tickRan = false;
+    const tick = new Promise<void>((resolve) =>
+      setTimeout(() => {
+        tickRan = true;
+        resolve();
+      }, 10),
+    );
+    const prime = primeWhisperCppVersion("server");
+    await tick;
+
+    // A blocking spawnSync inside the prime would have starved this timer.
+    expect(tickRan).toBe(true);
+    resolveLate?.(null);
+    expect(await prime).toEqual({ version: null, source: "unresolved" });
+  });
+});
+
+describe("decorated backend names are normalised, not rejected", () => {
+  beforeEach(resetProbeState);
+  afterEach(resetProbeState);
+
+  const PROBE: RecordingProvenanceProbe = {
+    machine: READY_MACHINE,
+    whisperCppVersion: () => ({ version: "1.7.4", source: "cellar-path" }),
+    whisperModelPath: () => "/fake/model.bin",
+    whisperModelSha256: () => "c".repeat(64),
+    whisperServerArgs: () => "-t 4",
+    whisperServerProcess: () => ({ pid: 11, startedAt: "2026-09-05T07:00:00.000Z" }),
+    performanceEffort: () => "accurate",
+    polishMode: () => "shadow",
+    appVersion: () => ({ version: "9.9.9", source: "package.json" }),
+  };
+
+  it("reduces a decorated name to the executable that produced the text", () => {
+    // "+suffix" marks post-processing on the same backend.
+    expect(normalizeWhisperBackend("whisper-server")).toBe("server");
+    expect(normalizeWhisperBackend("whisper-server+chunks")).toBe("server");
+    expect(normalizeWhisperBackend("whisper-server+chunks+witness+head")).toBe(
+      "server",
+    );
+    expect(normalizeWhisperBackend("whisper-server+head+clean")).toBe("server");
+    // "a->b" is a fallback chain: b produced the text.
+    expect(normalizeWhisperBackend("whisper-server->whisper.cpp")).toBe("cli");
+    expect(normalizeWhisperBackend("whisper-server->whisper.cpp+clean")).toBe(
+      "cli",
+    );
+    expect(normalizeWhisperBackend("whisper.cpp")).toBe("cli");
+    // Still not whisper.
+    expect(normalizeWhisperBackend("wispr-flow")).toBe(null);
+    expect(normalizeWhisperBackend("whisper-server->wispr-flow")).toBe(null);
+    expect(normalizeWhisperBackend("not-transcribed")).toBe(null);
+    expect(normalizeWhisperBackend(null)).toBe(null);
+    expect(normalizeWhisperBackend("")).toBe(null);
+  });
+
+  it("populates whisper fields for whisper-server+chunks", () => {
+    const provenance = buildRecordingProvenance({
+      backend: "whisper-server+chunks",
+      languageMode: "auto",
+      probe: PROBE,
+    });
+    expect(isWhisperBackend("whisper-server+chunks")).toBe(true);
+    expect(provenance.whisper_model_path).toBe("/fake/model.bin");
+    expect(provenance.whisper_cpp_version).toBe("1.7.4");
+    expect(provenance.whisper_cpp_version_source).toBe("cellar-path");
+    expect(provenance.performance_effort).toBe("accurate");
+  });
+
+  it("populates whisper fields for whisper-server->whisper.cpp", () => {
+    const provenance = buildRecordingProvenance({
+      backend: "whisper-server->whisper.cpp",
+      languageMode: "auto",
+      probe: PROBE,
+    });
+    expect(isWhisperBackend("whisper-server->whisper.cpp")).toBe(true);
+    expect(provenance.whisper_model_path).toBe("/fake/model.bin");
+    expect(provenance.whisper_cpp_version).toBe("1.7.4");
+  });
+});
+
+describe("a whisper.cpp transcript is attributed to the CLI, not the server", () => {
+  beforeEach(resetProbeState);
+  afterEach(resetProbeState);
+
+  function residentServer(): void {
+    __setWhisperServerLaunchRecordForTests({
+      binary: "/opt/homebrew/Cellar/whisper-cpp/1.7.6/bin/whisper-server",
+      modelPath: "/server/model.bin",
+      args: [
+        "/opt/homebrew/Cellar/whisper-cpp/1.7.6/bin/whisper-server",
+        "-bo",
+        "5",
+      ],
+      performanceEffort: "accurate",
+      accelerationMode: "metal",
+      pid: 4242,
+      startedAt: "2026-09-05T07:00:00.000Z",
+    });
+  }
+
+  it("probes the CLI binary, not the resident server's, for kind cli", async () => {
+    residentServer();
+    let cliResolved = 0;
+    let serverResolved = 0;
+    __setWhisperBinaryResolversForTests({
+      cli: async () => {
+        cliResolved += 1;
+        return "/opt/homebrew/Cellar/whisper-cpp/1.7.2/bin/whisper-cli";
+      },
+      server: async () => {
+        serverResolved += 1;
+        return "/should/not/be/used/whisper-server";
+      },
+    });
+
+    expect(await primeWhisperCppVersion("cli")).toEqual({
+      version: "1.7.2",
+      source: "cellar-path",
+    });
+    expect(cliResolved).toBe(1);
+    // The launch record must not be consulted for a CLI transcript, and the
+    // server resolver must not run for it either.
+    expect(serverResolved).toBe(0);
+
+    // The server kind still reads the launch record's binary — 1.7.6, not 1.7.2.
+    expect(await primeWhisperCppVersion("server")).toEqual({
+      version: "1.7.6",
+      source: "cellar-path",
+    });
+    expect(serverResolved).toBe(0);
+  });
+
+  it("does not stamp the resident server's args, pid or effort on a CLI transcript", () => {
+    residentServer();
+    const savedEffort = process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
+    process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT = "fast";
+    try {
+      const provenance = buildRecordingProvenance({
+        backend: "whisper-server->whisper.cpp",
+        languageMode: "auto",
+        probe: {
+          machine: READY_MACHINE,
+          whisperCppVersion: () => ({ version: "1.7.2", source: "cellar-path" }),
+        },
+      });
+
+      expect(provenance.whisper_server_args).toBe(null);
+      expect(provenance.whisper_server_pid).toBe(null);
+      expect(provenance.whisper_server_started_at).toBe(null);
+      // The CLI reads the effort setting per invocation, so "fast" is the truth
+      // for it — not the "accurate" the resident server was launched under.
+      expect(provenance.performance_effort).toBe("fast");
+      expect(provenance.whisper_model_path).not.toBe("/server/model.bin");
+
+      // The same recording via the server keeps all of them.
+      const viaServer = buildRecordingProvenance({
+        backend: "whisper-server+chunks",
+        languageMode: "auto",
+        probe: {
+          machine: READY_MACHINE,
+          whisperCppVersion: () => ({ version: "1.7.6", source: "cellar-path" }),
+        },
+      });
+      expect(viaServer.whisper_server_args).toBe("-bo 5");
+      expect(viaServer.whisper_server_pid).toBe(4242);
+      expect(viaServer.performance_effort).toBe("accurate");
     } finally {
       if (savedEffort === undefined) {
         delete process.env.QA_VOICE_WHISPER_PERFORMANCE_EFFORT;
