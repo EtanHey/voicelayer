@@ -165,6 +165,36 @@ function findServerBinary(): string | null {
   return null;
 }
 
+/**
+ * Provenance of the resident whisper-server: the model and flags it was
+ * actually launched with. Recorded so every archived recording can say which
+ * whisper build produced it (see src/recording-provenance.ts). Null until this
+ * process has started a server — external servers on the port are reclaimed
+ * (killed) rather than adopted, so the record is never stale-but-plausible.
+ */
+export interface WhisperServerLaunchRecord {
+  binary: string;
+  modelPath: string;
+  args: string[];
+  performanceEffort: WhisperPerformanceEffort;
+  accelerationMode: WhisperAccelerationMode;
+}
+
+let lastLaunchRecord: WhisperServerLaunchRecord | null = null;
+
+export function whisperServerLaunchRecord(): WhisperServerLaunchRecord | null {
+  return lastLaunchRecord;
+}
+
+export function __clearWhisperServerLaunchRecordForTests(): void {
+  lastLaunchRecord = null;
+}
+
+/** The model this process's configuration resolves to, or null if none found. */
+export function resolveWhisperModelPath(): string | null {
+  return testHooks.findModel?.() ?? findModel();
+}
+
 /** Find a whisper model file. */
 function findModel(): string | null {
   const envModel = process.env.QA_VOICE_WHISPER_MODEL;
@@ -565,6 +595,7 @@ async function ensureServerUnlocked(port: number): Promise<number> {
     // Server died — clean up and restart
     console.error("[voicelayer] whisper-server died, restarting...");
     serverState = null;
+    lastLaunchRecord = null;
   }
 
   // Port 8178 is reserved for the daemon-owned VoiceLayer sidecar. Do not
@@ -689,6 +720,13 @@ async function ensureServerUnlocked(port: number): Promise<number> {
           port,
           pid: proc.pid,
         };
+        lastLaunchRecord = {
+          binary,
+          modelPath: model,
+          args: plan.args,
+          performanceEffort: getWhisperPerformanceEffort(),
+          accelerationMode: plan.acceleration.mode,
+        };
         console.error(
           `[voicelayer] whisper-server ready (PID ${proc.pid}, port ${port})`,
         );
@@ -728,6 +766,7 @@ export function stopServer(): void {
       serverState.proc.kill();
     } catch {}
     serverState = null;
+    lastLaunchRecord = null;
   }
 }
 
@@ -831,6 +870,7 @@ async function markServerUnhealthy(): Promise<void> {
   if (!serverState) return;
   const unhealthyState = serverState;
   serverState = null;
+  lastLaunchRecord = null;
   await terminateFailedLaunch(unhealthyState.proc);
 }
 

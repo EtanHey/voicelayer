@@ -91,6 +91,11 @@ import {
   type STTPolishStatus,
 } from "./stt-polish";
 import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
+import {
+  buildRecordingProvenance,
+  type RecordingProvenance,
+  type RecordingProvenanceProbe,
+} from "./recording-provenance";
 import { resolveBinary } from "./resolve-binary";
 import {
   buildChunkPrompt,
@@ -575,6 +580,10 @@ export interface VoiceBarRecordingArchiveInput {
   durationMs: number;
   transcribedDurationMs?: number;
   backend: string;
+  /** Polish outcome for this utterance, recorded in metadata provenance. */
+  polishStatus?: STTPolishStatus | null;
+  /** Injectable provenance probes — tests pass fakes so nothing shells out. */
+  provenanceProbe?: RecordingProvenanceProbe;
 }
 
 export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
@@ -674,6 +683,7 @@ interface WaitForInputArchiveInput {
   durationMs: number;
   transcribedDurationMs?: number;
   backend: string;
+  polishStatus?: STTPolishStatus | null;
 }
 
 export interface VoiceAskCaptureArchiveInput {
@@ -683,12 +693,15 @@ export interface VoiceAskCaptureArchiveInput {
   pushToEnd: boolean;
   durationMs: number;
   transcribedDurationMs?: number;
+  provenanceProbe?: RecordingProvenanceProbe;
 }
 
 export interface VoiceAskArchiveFinalizationInput {
   transcript: string;
   backend: string;
   transcribedDurationMs?: number;
+  polishStatus?: STTPolishStatus | null;
+  provenanceProbe?: RecordingProvenanceProbe;
 }
 
 interface VoiceBarRecordingMetadata {
@@ -708,6 +721,7 @@ interface VoiceBarRecordingMetadata {
   transcription_status: "transcribed" | "cancelled";
   audio_sha256: string;
   app_version: string | null;
+  provenance: RecordingProvenance;
   schema_version: number;
 }
 
@@ -742,8 +756,9 @@ interface VoiceAskRecordingMetadata {
   agent_audio_sha256: string;
   user_audio_sha256: string;
   artifacts: typeof VOICE_ASK_ARTIFACT_NAMES;
-  app_version: null;
-  schema_version: 3;
+  app_version: string | null;
+  provenance: RecordingProvenance;
+  schema_version: 4;
 }
 
 function recordingsArchiveRoot(): string {
@@ -1037,6 +1052,13 @@ function writeVoiceBarRecordingArchive(
   const dayDir = join(archiveRoot, createdAtIso.slice(0, 10));
   const stagingDir = join(dayDir, `.tmp-${id}`);
   const finalDir = join(dayDir, id);
+  const languageMode = getLanguageModeFromEnv();
+  const provenance = buildRecordingProvenance({
+    backend: input.backend,
+    languageMode,
+    polishStatus: input.polishStatus,
+    probe: input.provenanceProbe,
+  });
   const metadata: VoiceBarRecordingMetadata = {
     id,
     created_at: createdAtIso,
@@ -1049,12 +1071,13 @@ function writeVoiceBarRecordingArchive(
     sample_rate: SAMPLE_RATE,
     channels: CHANNELS,
     backend: input.backend,
-    language_mode: getLanguageModeFromEnv(),
+    language_mode: languageMode,
     voicelayer_transcript_chars: input.transcript?.length ?? 0,
     transcription_status: input.transcriptionStatus,
     audio_sha256: createHash("sha256").update(input.audioBytes).digest("hex"),
-    app_version: null,
-    schema_version: 1,
+    app_version: provenance.app_version,
+    provenance,
+    schema_version: 2,
   };
 
   try {
@@ -1121,6 +1144,14 @@ export function archiveVoiceAskCapture(
   const userAudioSha256 = createHash("sha256")
     .update(input.audioBytes)
     .digest("hex");
+  const languageMode = getLanguageModeFromEnv();
+  const provenance = buildRecordingProvenance({
+    // The transcript does not exist yet at capture time — the backend that
+    // produced it is stamped in by finalizeVoiceAskArchive().
+    backend: null,
+    languageMode,
+    probe: input.provenanceProbe,
+  });
   const metadata: VoiceAskRecordingMetadata = {
     id,
     created_at: createdAtIso,
@@ -1135,7 +1166,7 @@ export function archiveVoiceAskCapture(
     backend: null,
     agent_tts_engine: artifacts.agentTtsEngine,
     agent_tts_voice: artifacts.agentTtsVoice,
-    language_mode: getLanguageModeFromEnv(),
+    language_mode: languageMode,
     transcription_status: "captured",
     retention_policy: "indefinite",
     voicelayer_transcript_chars: 0,
@@ -1147,8 +1178,9 @@ export function archiveVoiceAskCapture(
       .digest("hex"),
     user_audio_sha256: userAudioSha256,
     artifacts: VOICE_ASK_ARTIFACT_NAMES,
-    app_version: null,
-    schema_version: 3,
+    app_version: provenance.app_version,
+    provenance,
+    schema_version: 4,
   };
 
   let stagingCreated = false;
@@ -1187,9 +1219,21 @@ export function archiveVoiceAskCapture(
   return finalDir;
 }
 
+/**
+ * A voice_ask metadata.json as found on disk: schema_version is whatever that
+ * recording was written with, and `provenance` is absent on pre-v4 archives.
+ */
+type StoredVoiceAskRecordingMetadata = Omit<
+  VoiceAskRecordingMetadata,
+  "schema_version" | "provenance"
+> & {
+  schema_version: number;
+  provenance?: RecordingProvenance;
+};
+
 function requireVoiceAskArchiveDirectory(archivePath: string): {
   path: string;
-  metadata: VoiceAskRecordingMetadata;
+  metadata: StoredVoiceAskRecordingMetadata;
 } {
   const resolvedPath = realpathSync(archivePath);
   const archiveRoot = resolvedRecordingsArchiveRoot();
@@ -1204,12 +1248,16 @@ function requireVoiceAskArchiveDirectory(archivePath: string): {
     );
   }
 
+  // Read as a widened schema_version: a v3 capture on disk must still finalize
+  // (every recording is kept), even though this build only writes v4.
   const metadata = JSON.parse(
     readFileSync(join(resolvedPath, "metadata.json"), "utf8"),
-  ) as VoiceAskRecordingMetadata;
+  ) as StoredVoiceAskRecordingMetadata;
   if (
     metadata.source !== "voice_ask" ||
-    metadata.schema_version !== 3 ||
+    // Accept 3 and 4: v4 only adds the provenance block, and every recording
+    // is kept — a v3 capture must still finalize.
+    (metadata.schema_version !== 3 && metadata.schema_version !== 4) ||
     metadata.id !== basename(resolvedPath)
   ) {
     throw new Error(`Invalid voice_ask archive metadata: ${archivePath}`);
@@ -1245,6 +1293,15 @@ export function finalizeVoiceAskArchive(
     transcription_status: "transcribed",
     voicelayer_transcript_chars: input.transcript.length,
     user_transcript_chars: input.transcript.length,
+    provenance: buildRecordingProvenance({
+      backend: input.backend,
+      languageMode:
+        archive.metadata.provenance?.language_mode ??
+        archive.metadata.language_mode,
+      polishStatus: input.polishStatus,
+      probe: input.provenanceProbe,
+    }),
+    schema_version: 4,
   };
   atomicWriteFile(
     join(archive.path, "metadata.json"),
@@ -1268,6 +1325,7 @@ export function archiveWaitForInputRecording(
       durationMs: input.durationMs,
       transcribedDurationMs: input.transcribedDurationMs,
       backend: input.backend,
+      polishStatus: input.polishStatus,
     });
   }
 
@@ -1285,6 +1343,7 @@ export function archiveWaitForInputRecording(
     transcript: input.transcript,
     backend: input.backend,
     transcribedDurationMs: input.transcribedDurationMs,
+    polishStatus: input.polishStatus,
   });
 }
 
@@ -2903,6 +2962,7 @@ export async function waitForInput(
               transcript: text,
               backend: backend.name,
               transcribedDurationMs: sttTrim.transcribedDurationMs,
+              polishStatus: finalized.polishStatus,
             })
           : archiveWaitForInputRecording({
               options,
@@ -2913,6 +2973,7 @@ export async function waitForInput(
               durationMs: sttTrim.rawDurationMs,
               transcribedDurationMs: sttTrim.transcribedDurationMs,
               backend: backend.name,
+              polishStatus: finalized.polishStatus,
             });
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
@@ -3040,6 +3101,16 @@ export function updateArchivedTranscript(
     metadata.voicelayer_transcript_chars = text.length;
     if (metadata.source === "voice_ask") {
       metadata.user_transcript_chars = text.length;
+    }
+    // Keep the provenance block honest about the backend that produced the
+    // transcript now on disk. A pre-provenance recording is left as it is —
+    // backfilling this machine's facts onto an old recording would be a lie.
+    const provenance = metadata.provenance;
+    if (provenance && typeof provenance === "object") {
+      (provenance as Record<string, unknown>).whisper_backend =
+        transcription.backend;
+      (provenance as Record<string, unknown>).language_mode =
+        transcription.languageMode;
     }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
   });
@@ -3182,7 +3253,9 @@ function loadVoiceAskArchiveSnapshot(
   if (
     metadata.source !== "voice_ask" ||
     metadata.id !== archiveId ||
-    (metadata.schema_version !== 2 && metadata.schema_version !== 3) ||
+    (metadata.schema_version !== 2 &&
+      metadata.schema_version !== 3 &&
+      metadata.schema_version !== 4) ||
     (metadata.transcription_status !== "captured" &&
       metadata.transcription_status !== "transcribed")
   ) {
