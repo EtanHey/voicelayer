@@ -37,6 +37,8 @@ import {
 } from "../paths";
 import {
   LIVE_HOST_SKIP_REASON,
+  __setLiveHostSkipReasonForTests,
+  describeMicTouching,
   isBoundSocket,
   liveHostSkipReason,
 } from "./setup/live-host-guard";
@@ -229,5 +231,77 @@ describe("R-014 live-host guard", () => {
 
   it("is inert under the preload — this very run is already isolated", () => {
     expect(liveHostSkipReason()).toBeNull();
+  });
+});
+
+// --- R-014: every `describe` variant must consult the live-host guard ---------
+//
+// Cursor's review note on PR #26: the statics used to forward straight to bun,
+// so `.only`, `.if(true)` and `.skipIf(false)` inside a guarded file would have
+// run a mic-touching suite against a live VoiceBar. Registered at module scope
+// (bun collects suites at import), with the reason forced so the assertion is
+// the same on Etan's Mac — where /tmp/voicelayer.sock really is bound — and in
+// CI, where it is not.
+
+let blockedVariantBodiesRan = 0;
+let allowedVariantBodiesRan = 0;
+
+__setLiveHostSkipReasonForTests(() => "forced: live VoiceBar (test)");
+
+describeMicTouching("guard variant: bare", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.only("guard variant: only", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.if(true)("guard variant: if(true)", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.skipIf(false)("guard variant: skipIf(false)", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.todoIf(false)("guard variant: todoIf(false)", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.each([[1]])("guard variant: each %i", () => {
+  it("must not execute while blocked", () => {
+    blockedVariantBodiesRan += 1;
+  });
+});
+
+// Positive control: with no reason, the same variants must still run — a guard
+// that skips everything unconditionally would pass the assertion above.
+__setLiveHostSkipReasonForTests(() => null);
+
+describeMicTouching.if(true)("guard variant: if(true), host clear", () => {
+  it("runs when nothing is blocking", () => {
+    allowedVariantBodiesRan += 1;
+  });
+});
+describeMicTouching.skipIf(false)("guard variant: skipIf(false), host clear", () => {
+  it("runs when nothing is blocking", () => {
+    allowedVariantBodiesRan += 1;
+  });
+});
+
+__setLiveHostSkipReasonForTests(null);
+
+describe("R-014 guard covers every describe variant", () => {
+  it("skipped every variant while the host was blocked", () => {
+    expect(blockedVariantBodiesRan).toBe(0);
+  });
+
+  it("still ran the variants once the host was clear", () => {
+    expect(allowedVariantBodiesRan).toBe(2);
   });
 });
