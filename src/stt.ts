@@ -34,6 +34,10 @@ import {
   SMART_CHUNK_MIN_SECONDS,
   type PauseSpan,
 } from "./stt-pause-map";
+import {
+  smartBoundariesEnabled,
+  type TranscriptSegment,
+} from "./stt-sentence-boundaries";
 import type {
   SpeechToTextBackend,
   SpeechToTextBackendSelector,
@@ -47,6 +51,13 @@ export interface STTResult extends TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
+  /**
+   * Whisper segment timestamps, present only under
+   * `VOICELAYER_STT_SMART_BOUNDARIES=1` on the single-shot whisper-server path.
+   * The chunked path does not set them: each chunk's times are chunk-relative,
+   * and stitching them is lane C1's seam, not this one's.
+   */
+  segments?: TranscriptSegment[];
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
@@ -1615,10 +1626,18 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const text = await this.transcribeResident(
-        wavData,
-        buildWhisperServerOptions(options),
-      );
+      const smartBoundaries = smartBoundariesEnabled(process.env);
+      let segments: TranscriptSegment[] | undefined;
+      const text = await this.transcribeResident(wavData, {
+        ...buildWhisperServerOptions(options),
+        ...(smartBoundaries
+          ? {
+              onSegments: (found: TranscriptSegment[]) => {
+                segments = found;
+              },
+            }
+          : {}),
+      });
       if (!text.trim()) {
         console.error(
           "[voicelayer] whisper-server returned empty text, falling back to whisper-cli",
@@ -1657,6 +1676,7 @@ export class WhisperServerBackend implements STTBackend {
         text: cleanedText,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
+        ...(segments && segments.length > 0 ? { segments } : {}),
       };
     } catch (err) {
       console.error(

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import type { TranscriptSegment } from "../stt-sentence-boundaries";
 import { mkdtempSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -958,6 +959,93 @@ usage: whisper-server [options]
   });
 
   describe("transcribeViaServer", () => {
+    it("asks for plain json, and no segments, when nothing opts in", async () => {
+      // The default-OFF guarantee for VOICELAYER_STT_SMART_BOUNDARIES: without
+      // an onSegments callback the request is byte-for-byte the shipped one.
+      const originalFetch = globalThis.fetch;
+      let inferenceForm: FormData | undefined;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        inferenceForm = init?.body as FormData;
+        return new Response(JSON.stringify({ text: "hello" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      try {
+        await transcribeViaServer(new Uint8Array([1, 2]), 5555);
+        expect(inferenceForm?.get("response_format")).toBe("json");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("asks for verbose_json and reports segments when opted in", async () => {
+      const originalFetch = globalThis.fetch;
+      let inferenceForm: FormData | undefined;
+      const seen: TranscriptSegment[][] = [];
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        inferenceForm = init?.body as FormData;
+        return new Response(
+          JSON.stringify({
+            text: "hello there",
+            segments: [
+              { text: " hello", start: 0, end: 1.5 },
+              { text: " there", start: 2.5, end: 3 },
+              { text: " bad", start: "x", end: 4 },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      };
+
+      try {
+        const text = await transcribeViaServer(new Uint8Array([1, 2]), 5555, {
+          onSegments: (segments) => seen.push(segments),
+        });
+        expect(text).toBe("hello there");
+        expect(inferenceForm?.get("response_format")).toBe("verbose_json");
+        // The malformed third entry is dropped, not thrown on.
+        expect(seen[0]).toEqual([
+          { text: " hello", startS: 0, endS: 1.5 },
+          { text: " there", startS: 2.5, endS: 3 },
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reports no segments when the server omits them", async () => {
+      const originalFetch = globalThis.fetch;
+      const seen: TranscriptSegment[][] = [];
+
+      // @ts-ignore - test double
+      globalThis.fetch = async () =>
+        new Response(JSON.stringify({ text: "hello" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+
+      try {
+        await transcribeViaServer(new Uint8Array([1, 2]), 5555, {
+          onSegments: (segments) => seen.push(segments),
+        });
+        expect(seen[0]).toEqual([]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
     it("sends language and prompt fields to whisper-server inference", async () => {
       const originalFetch = globalThis.fetch;
       let inferenceForm: FormData | undefined;
