@@ -30,31 +30,9 @@ export const MIN_PAUSE_SECONDS = 0.3;
 export const SMART_CHUNK_MIN_SECONDS = 20;
 export const SMART_CHUNK_MAX_SECONDS = 30;
 
-/** Mirrors `WAV_CHUNK_OVERLAP_SECONDS` in `src/stt.ts`; overridable per call. */
-export const SMART_CHUNK_OVERLAP_SECONDS = 5;
-
-/**
- * How far into a pause a boundary may land.
- *
- * The next chunk starts `overlap` seconds BEFORE the cut, and that overlap is
- * the only anchor the merge has for stitching two chunks together. Cutting at
- * the far end of a long pause puts the whole overlap inside the silence: no
- * shared words, no anchor, and the seam falls into the dropped-overlap /
- * witness fallback path — the failure this lane exists to remove. So a cut goes
- * at most half an overlap into a pause, which leaves at least half of it
- * carrying speech. Short pauses are unaffected: the cut is still their end.
- */
-export function maxSecondsIntoPause(
-  overlapSeconds: number = SMART_CHUNK_OVERLAP_SECONDS,
-): number {
-  return Math.max(MIN_PAUSE_SECONDS, overlapSeconds / 2);
-}
-
 export interface ChunkEndWindow {
   min: number;
   max: number;
-  /** Chunk overlap in seconds; sets how deep into a pause a cut may go. */
-  overlapSeconds?: number;
 }
 
 interface WavAudioInfo {
@@ -231,14 +209,20 @@ export async function computePauseMap(
 /**
  * Where the chunk starting at `startS` should end.
  *
- * Prefers the LATEST boundary that is still inside a pause, so the next chunk
- * opens on a word start. Two rules shape the choice:
- *  - never more than `maxSecondsIntoPause()` past a pause's start, so the next
- *    chunk's overlap still carries speech and the merge keeps its anchor;
- *  - never outside `[startS+min, startS+max]`.
- * With no usable pause it falls back to `startS + max` — exactly today's fixed
- * cut. Smart chunking never makes a boundary worse than the wall clock; it only
- * takes a better one when the audio offers one.
+ * Prefers the END of the last pause landing inside `[startS+min, startS+max]` —
+ * the latest legal boundary that is still silence, so the next chunk opens on a
+ * word start. With no pause in the window it falls back to `startS + max`, i.e.
+ * exactly today's fixed cut: smart chunking never makes a boundary worse than
+ * the wall clock, it only takes a better one when the audio offers it.
+ *
+ * AIDEV-NOTE: a pause at least as long as the chunk overlap makes the next
+ * chunk's whole overlap silent, so that seam has no shared words to anchor on
+ * (Macroscope flagged this on #21). Capping how far into a pause the cut may go
+ * was tried and measured WORSE — on golden clip B it moved the boundary into a
+ * region with 1.82 s of speech across 17 s and cost a phrase in 5/5 runs. The
+ * fix belongs in the merge, not the cut: a seam that lands in silence needs no
+ * anchor at all and should simply concatenate. That is lane C1-b. Until it
+ * lands, `VOICELAYER_STT_SMART_CHUNKS` stays default-OFF.
  */
 export function chooseChunkEnd(
   startS: number,
@@ -248,21 +232,14 @@ export function chooseChunkEnd(
     max: SMART_CHUNK_MAX_SECONDS,
   },
 ): number {
-  const ceiling = startS + window.max;
-  if (window.min >= window.max) return ceiling;
+  const fallback = startS + window.max;
+  if (window.min >= window.max) return fallback;
 
-  const floor = startS + window.min;
-  const maxIntoPause = maxSecondsIntoPause(window.overlapSeconds);
+  const earliest = startS + window.min;
   let best: number | null = null;
-
   for (const span of pauseMap) {
-    // The latest point in this pause we are allowed to cut at...
-    const latest = Math.min(span.endS, span.startS + maxIntoPause, ceiling);
-    // ...and the earliest. A pause that reaches the window only by cutting
-    // deeper than maxIntoPause is rejected, not clamped into a silent overlap.
-    const earliest = Math.max(span.startS, floor);
-    if (latest < earliest) continue;
-    if (best === null || latest > best) best = latest;
+    if (span.endS < earliest || span.endS > fallback) continue;
+    if (best === null || span.endS > best) best = span.endS;
   }
-  return best ?? ceiling;
+  return best ?? fallback;
 }

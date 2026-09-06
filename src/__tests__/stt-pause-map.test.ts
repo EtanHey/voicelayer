@@ -11,13 +11,11 @@ import { createVADSession, processVADChunk, resetVAD } from "../vad";
 import {
   chooseChunkEnd,
   computePauseMap,
-  maxSecondsIntoPause,
   MIN_PAUSE_SECONDS,
   parseWavAudioInfo,
   pauseSpansFromProbabilities,
   SMART_CHUNK_MAX_SECONDS,
   SMART_CHUNK_MIN_SECONDS,
-  SMART_CHUNK_OVERLAP_SECONDS,
   type PauseSpan,
 } from "../stt-pause-map";
 
@@ -219,35 +217,29 @@ describe("chooseChunkEnd", () => {
       expected: 53.344,
     },
     {
-      // A 6.9 s pause: cutting at 29.088 would put the next chunk's whole 5 s
-      // overlap inside the silence, leaving the merge no anchor.
-      name: "cuts 2.5 s into a long pause, not at its far end",
+      // A 6.9 s pause. Round 1 capped the cut at 2.5 s in, to keep speech in
+      // the next chunk's overlap; measured worse on clip B (see the AIDEV-NOTE
+      // on chooseChunkEnd), so the cut is the pause's end again and the silent
+      // seam is C1-b's problem, in the merge.
+      name: "cuts at the end of a long pause",
       startS: 0,
       pauses: [{ startS: 22.176, endS: 29.088 }],
-      expected: 24.676,
+      expected: 29.088,
     },
     {
-      name: "a 7 s pause is entered by exactly half an overlap",
-      startS: 0,
-      pauses: [{ startS: 21, endS: 28 }],
-      expected: 23.5,
-    },
-    {
-      name: "a 0.4 s pause is still cut at its end",
+      name: "a 0.4 s pause is cut at its end",
       startS: 0,
       pauses: [{ startS: 24, endS: 24.4 }],
       expected: 24.4,
     },
     {
-      // endS is inside the window but the only legal cut (12.256 + 2.5) is far
-      // below the floor, so this pause offers nothing and the clock wins.
-      name: "rejects a pause the window can only reach by cutting too deep",
+      name: "takes a long pause whose end lands in the window",
       startS: 0,
       pauses: [{ startS: 12.256, endS: 20.352 }],
-      expected: 30,
+      expected: 20.352,
     },
     {
-      name: "clamps to the ceiling when a pause runs past it",
+      name: "ignores a pause that runs past the ceiling",
       startS: 0,
       pauses: [{ startS: 29.5, endS: 40 }],
       expected: 30,
@@ -283,44 +275,26 @@ describe("chooseChunkEnd", () => {
     expect(chooseChunkEnd(0, [{ startS: 24, endS: 25 }])).toBe(25);
   });
 
-  test("never cuts deeper into a pause than half an overlap", () => {
-    const cap = maxSecondsIntoPause();
-    expect(cap).toBe(SMART_CHUNK_OVERLAP_SECONDS / 2);
-    for (let length = 0.4; length <= 12; length += 0.37) {
-      const span = { startS: 21, endS: 21 + length };
-      const end = chooseChunkEnd(0, [span], window);
-      if (end === SMART_CHUNK_MAX_SECONDS && length > 9) continue; // clock fallback
-      expect(end - span.startS).toBeLessThanOrEqual(cap + 1e-9);
-      expect(end).toBeLessThanOrEqual(span.endS + 1e-9);
-    }
+  test("a pause longer than the overlap leaves the next overlap silent", () => {
+    // Documented limitation, not a bug to fix here. Round 1 capped the cut to
+    // keep speech in the overlap and it cost a phrase on clip B in 5/5 runs.
+    // C1-b handles it in the MERGE: a seam whose cut sits at least `overlap`
+    // deep into a pause needs no anchor and should simply concatenate.
+    const overlap = 5;
+    const longPause = { startS: 22, endS: 29 };
+    const end = chooseChunkEnd(0, [longPause], window);
+    expect(end).toBe(longPause.endS);
+    const nextStart = end - overlap;
+    expect(nextStart).toBeGreaterThan(longPause.startS); // overlap is all silence
+    expect(longPause.endS - longPause.startS).toBeGreaterThanOrEqual(overlap);
   });
 
-  test("a tiny overlap still allows a 300 ms cut into a pause", () => {
-    // max(MIN_PAUSE_SECONDS, overlap/2) — the floor stops the cap collapsing to
-    // the pause start, which would make every long pause unusable.
-    expect(maxSecondsIntoPause(0.2)).toBe(MIN_PAUSE_SECONDS);
-    expect(
-      chooseChunkEnd(0, [{ startS: 21, endS: 28 }], {
-        min: 20,
-        max: 30,
-        overlapSeconds: 0.2,
-      }),
-    ).toBeCloseTo(21.3, 6);
-  });
-
-  test("the overlap that follows a chosen cut still contains speech", () => {
-    // The real invariant behind the depth cap: nextStart = end - overlap must
-    // land before the pause began, so the merge has shared words to anchor on.
-    const pauses: PauseSpan[] = [
-      { startS: 6.752, endS: 11.808 },
-      { startS: 12.256, endS: 20.352 },
-      { startS: 22.176, endS: 29.088 },
-    ];
-    const end = chooseChunkEnd(0, pauses, window);
-    const nextStart = end - SMART_CHUNK_OVERLAP_SECONDS;
-    const containing = pauses.find((p) => end >= p.startS && end <= p.endS);
-    expect(containing).toBeDefined();
-    expect(nextStart).toBeLessThan((containing as PauseSpan).startS);
+  test("a pause shorter than the overlap keeps speech in the next overlap", () => {
+    const overlap = 5;
+    const shortPause = { startS: 24, endS: 24.4 };
+    const end = chooseChunkEnd(0, [shortPause], window);
+    const nextStart = end - overlap;
+    expect(nextStart).toBeLessThan(shortPause.startS);
   });
 
   test("never returns a boundary outside the window", () => {
