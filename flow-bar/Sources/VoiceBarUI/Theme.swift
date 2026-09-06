@@ -20,6 +20,9 @@ public enum Theme {
     public static let recordingColor = Color(hex: 0xE54D4D) // Red
     public static let idleColor = Color(hex: 0xAEAEB2) // Light gray (legible on dark bg)
     public static let errorColor = Color.red
+    /// Pressed, but the recorder has not delivered a frame yet. Reuses the
+    /// vetted idle gray so the waveform never shows red before capture exists.
+    public static let captureBootingColor = idleColor
 
     // MARK: - Pill background
 

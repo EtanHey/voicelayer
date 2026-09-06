@@ -233,6 +233,13 @@ public final class VoiceState {
     private var recordCommandUptimeMs: Int?
     private var recordingStateUptimeMs: Int?
     private var didLogFirstRecordingAudioLevel = false
+    // AIDEV-NOTE: capture-truth sub-state inside `.recording`. The mode flips
+    // optimistically at hold-start (record(pressToTalk:)) 543–1281 ms — median
+    // 603 — before the recorder's first PCM byte, and the app's own local meter
+    // starts hearing the room at that same instant, so neither is evidence the
+    // capture path is live. Only the daemon's first `audio_level` frame is.
+    // `.recording` + false = booting; `.recording` + true = live.
+    public private(set) var captureLive = false
     public var recordingTimingClock: () -> TimeInterval = {
         ProcessInfo.processInfo.systemUptime
     }
@@ -934,6 +941,7 @@ public final class VoiceState {
         recordCommandUptimeMs = commandUptimeMs
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
+        captureLive = false
         cancelDeferredFinalTranscriptionUnlessHistoryRetranscription()
         pendingRecordingIdleAfterFinal = false
         pendingIdleAfterAutoPasteCompletion = false
@@ -1125,6 +1133,7 @@ public final class VoiceState {
                 if recordingStateUptimeMs == nil {
                     recordingStateUptimeMs = currentRecordingUptimeMs()
                     didLogFirstRecordingAudioLevel = false
+                    captureLive = false
                 }
                 clearRetainedTeleprompter()
                 if startsNewRecording {
@@ -1270,7 +1279,7 @@ public final class VoiceState {
                 if mode == .recording, localRecordingLevel == nil {
                     appendRecordingWaveformSample()
                 }
-                logFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
+                noteFirstRecordingAudioLevelIfNeeded(socketRMS: socketAudioLevel)
             }
 
         case "command_mode":
@@ -1564,6 +1573,7 @@ public final class VoiceState {
         recordCommandUptimeMs = nil
         recordingStateUptimeMs = nil
         didLogFirstRecordingAudioLevel = false
+        captureLive = false
         resetPlaybackAmplitude()
     }
 
@@ -2440,13 +2450,17 @@ public final class VoiceState {
         }
     }
 
-    private func logFirstRecordingAudioLevelIfNeeded(socketRMS: Double?) {
+    /// The recorder's first delivered frame — the one honest "the mic is
+    /// capturing" edge the app has. It both promotes the pill out of booting
+    /// and logs the press -> first-audio gap.
+    private func noteFirstRecordingAudioLevelIfNeeded(socketRMS: Double?) {
         guard mode == .recording,
               !didLogFirstRecordingAudioLevel,
               let socketRMS
         else { return }
         let firstAudioUptimeMs = currentRecordingUptimeMs()
         didLogFirstRecordingAudioLevel = true
+        captureLive = true
         var details = [
             "firstAudioLevelUptimeMs": String(firstAudioUptimeMs),
             "socketRms": Self.formatAudioLevel(socketRMS),

@@ -130,12 +130,21 @@ public struct WaveformView: View {
         color: Color,
         isListening: Bool = false,
         isProcessing: Bool = false,
+        isBooting: Bool = false,
         currentLevel: @escaping () -> Double?
     ) {
         self.color = color
         self.isListening = isListening
         self.currentLevel = currentLevel
-        mode = isProcessing ? .processing : .audioDriven
+        // Booting outranks every other treatment: until the recorder delivers a
+        // frame there is nothing truthful to animate.
+        mode = if isBooting {
+            .booting
+        } else if isProcessing {
+            .processing
+        } else {
+            .audioDriven
+        }
     }
 
     public init(processingColor color: Color) {
@@ -172,6 +181,8 @@ public struct WaveformView: View {
     private enum RenderMode: Equatable {
         case audioDriven
         case processing
+        /// Pressed, mic not yet capturing — a flat, unanimated, gray bed.
+        case booting
     }
 
     private struct TimelineSample: View {
@@ -210,6 +221,8 @@ public struct WaveformView: View {
                 )
             case .processing:
                 WaveformMetrics.processingLevels(time: time, barCount: barCount)
+            case .booting:
+                WaveformMetrics.bootingLevels(barCount: barCount)
             }
         }
 
@@ -217,6 +230,7 @@ public struct WaveformView: View {
             switch mode {
             case .audioDriven: isListening ? 0.25 : 0.45
             case .processing: 0.35
+            case .booting: 0
             }
         }
 
@@ -224,6 +238,7 @@ public struct WaveformView: View {
             switch mode {
             case .audioDriven: isListening ? 3 : 5
             case .processing: 4
+            case .booting: 0
             }
         }
     }
@@ -232,34 +247,41 @@ public struct WaveformView: View {
 public struct VoiceBarNotchWaveform: View {
     public let mode: VoiceMode
     public let isListening: Bool
+    /// False while `.recording` is still optimistic — the press registered but
+    /// the recorder has not handed over a frame yet.
+    public let isCaptureLive: Bool
     private let recordingLevel: () -> Double?
     private let playbackLevel: () -> Double?
 
     public init(
         mode: VoiceMode,
         isListening: Bool,
+        isCaptureLive: Bool,
         recordingLevel: @escaping () -> Double?,
         playbackLevel: @escaping () -> Double?
     ) {
         self.mode = mode
         self.isListening = isListening
+        self.isCaptureLive = isCaptureLive
         self.recordingLevel = recordingLevel
         self.playbackLevel = playbackLevel
     }
 
     public var body: some View {
         WaveformView(
-            color: color,
+            color: Self.waveformColor(mode: mode, isCaptureLive: isCaptureLive),
             isListening: mode == .recording && isListening,
             isProcessing: mode == .transcribing,
+            isBooting: isBooting,
             currentLevel: currentLevel
         )
     }
 
-    private var color: Color {
+    /// Red is reserved for a capture that actually exists.
+    public static func waveformColor(mode: VoiceMode, isCaptureLive: Bool) -> Color {
         switch mode {
         case .recording:
-            Theme.recordingColor
+            isCaptureLive ? Theme.recordingColor : Theme.captureBootingColor
         case .transcribing:
             Theme.stateColor(for: .transcribing)
         case .speaking:
@@ -267,6 +289,10 @@ public struct VoiceBarNotchWaveform: View {
         case .idle, .error, .disconnected:
             .clear
         }
+    }
+
+    private var isBooting: Bool {
+        mode == .recording && !isCaptureLive
     }
 
     private func currentLevel() -> Double? {
@@ -320,6 +346,14 @@ public enum WaveformMetrics {
                 centerWeight: centerWeight(index: index, barCount: barCount)
             )
         }
+    }
+
+    /// A booting waveform carries no amplitude: every bar collapses to the
+    /// shared minimum height, so the seven dots sit flat on the centerline and
+    /// nothing moves until real audio arrives.
+    public static func bootingLevels(barCount: Int) -> [Double] {
+        guard barCount > 0 else { return [] }
+        return Array(repeating: 0, count: barCount)
     }
 
     public static func processingLevels(time: Double, barCount: Int) -> [Double] {

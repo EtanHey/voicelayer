@@ -399,6 +399,7 @@ public struct BarView: View {
         VoiceBarNotchWaveform(
             mode: state.mode,
             isListening: !state.speechDetected,
+            isCaptureLive: state.captureLive,
             recordingLevel: { state.recordingWaveformLevel },
             playbackLevel: { state.playbackAudioLevel() }
         )
