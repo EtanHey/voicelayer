@@ -172,6 +172,73 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
+  // CodeRabbit on PR #32.
+  describe("adjacent commands share a delimiter", () => {
+    it("unwraps a whole run, not one command at a time", () => {
+      // Taking them singly consumed the comma after "colon", leaving "dash"
+      // with no leading delimiter: main "A,:, -, b", first fix "A: -, b".
+      expect(applyRules("a, colon, dash, b")).toBe("A: - b");
+    });
+
+    it("still leaves the left operand alone", () => {
+      // The "a" here is an OPERAND, not an article shielding a noun — gating
+      // the run on NOUN_DETERMINERS_BEFORE re-broke this exact case once.
+      expect(applyRules("a, colon, dash, b")).not.toContain(",");
+    });
+  });
+
+  // Macroscope #2 on PR #32: preserveCodeTokens rewrites "open paren" to "("
+  // before the unwrap could see it, so whisper's commas survived around it.
+  // The unwrap now runs before every other substitution.
+  describe("commands another stage rewrites early", () => {
+    it("unwraps multi-word ALWAYS commands too", () => {
+      expect(applyRules("foo, open paren, bar")).toBe("Foo (bar");
+    });
+
+    it("keeps a newline through the number-folding stage", () => {
+      // Folding joins tokens with a single space; running the unwrap first
+      // means a "\n" now exists while that stage runs, and it must survive.
+      expect(applyRules("three, new line, four")).toMatch(/^3\s*\n\s*4$/);
+    });
+  });
+
+  // Macroscope #3 and #4 on PR #32 — both WORD LOSSES under AGENTS.md, and main
+  // loses them too. Etan talks about dictation commands, and whisper punctuates
+  // a meta-mention exactly like a dictated one.
+  describe("meta-mentions of command words", () => {
+    it("keeps an appositive naming a command", () => {
+      expect(applyRules("The phrase, new line, is ordinary prose")).toBe(
+        "The phrase, new line, is ordinary prose",
+      );
+    });
+
+    it("keeps an enumeration of command words", () => {
+      expect(
+        applyRules("The words colon, comma, and period are punctuation"),
+      ).toBe("The words colon, comma, and period are punctuation");
+    });
+
+    it("keeps prose that follows the run with a preposition", () => {
+      expect(applyRules("if you want a break, new line is what you need")).toBe(
+        "If you want a break, new line is what you need",
+      );
+    });
+
+    // The cue must be introduced by a determiner. Bare "words" is ordinary
+    // English and gating on the noun alone ate a real dictated period.
+    it("does not fire on a bare plural that merely looks like a cue", () => {
+      expect(applyRules("the space between words period")).toBe(
+        "The space between words.",
+      );
+      expect(applyRules("I saw outer space period")).toBe("I saw outer space.");
+    });
+
+    it("still fires for a command Etan actually dictated", () => {
+      expect(applyRules("foo comma bar period")).toBe("Foo, bar.");
+      expect(applyRules("update, colon, Q3")).toBe("Update: Q3");
+    });
+  });
+
   // The corpus gate caught this: 5 shadow rows open a sentence with the
   // connective "Plus,", which the unwrap read as a comma-isolated operator and
   // ate. ARITHMETIC_ONLY commands want operands on both sides, and whisper's

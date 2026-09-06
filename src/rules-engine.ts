@@ -34,6 +34,15 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = removeFillers(result, config?.aggressiveFillerRemoval ?? false);
   }
 
+  // Whisper's comma-wrapped commands are unwrapped FIRST, before any other
+  // substitution. preserveCodeTokens rewrites "open paren" to "(" and would
+  // otherwise hide the command from the unwrap, shipping "foo, (, bar" with
+  // whisper's commas still in it (Macroscope, PR #32).
+  if (!disabled?.has("punctuation")) {
+    result = dropWhisperCommaBeforeNewline(result);
+    result = unwrapCommaWrappedCommands(result);
+  }
+
   // Stage 7: Custom aliases (before tech vocab to allow user overrides)
   if (!disabled?.has("aliases") && config?.aliases) {
     result = applyAliases(result, config.aliases);
@@ -60,8 +69,6 @@ export function applyRules(text: string, config?: RulesConfig): string {
 
   // Stage 2: Spoken punctuation
   if (!disabled?.has("punctuation")) {
-    result = dropWhisperCommaBeforeNewline(result);
-    result = unwrapCommaWrappedCommands(result);
     result = applyPunctuation(result);
     result = normalizePunctuationClusters(result);
   }
@@ -287,19 +294,31 @@ const COMMAND_REPLACEMENTS: Map<string, string> = new Map(
     .filter(([phrase]) => !ARITHMETIC_ONLY.has(phrase)),
 );
 
+const AMBIGUOUS_COMMAND_PHRASES: Set<string> = new Set(
+  AMBIGUOUS_PUNCTUATION_MAP.map(([pattern]) => spokenPhraseOf(pattern)),
+);
+
 // Longest first so "new paragraph" is not matched as "new" would be, and
 // "question mark" wins over any shorter overlap.
+const COMMAND_ALTERNATION = [...COMMAND_REPLACEMENTS.keys()]
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+
+// AIDEV-NOTE: this matches a RUN of adjacent commands, not a single one,
+// because neighbours SHARE a delimiter. Taking them one at a time consumes the
+// comma after "colon", which leaves "dash" with no leading delimiter and so
+// un-unwrapped: "a, colon, dash, b" shipped as "A: -, b", whisper's comma still
+// in it (CodeRabbit, PR #32). Consuming the whole run emits every command.
 const COMMA_WRAPPED_COMMAND_PATTERN = new RegExp(
-  `[,.]\\s*(${[...COMMAND_REPLACEMENTS.keys()]
-    .sort((a, b) => b.length - a.length)
-    .join("|")})\\s*[,.]`,
+  `[,.]\\s*(?:${COMMAND_ALTERNATION})(?:\\s*[,.]\\s*(?:${COMMAND_ALTERNATION}))*\\s*[,.]`,
   "gi",
 );
 
+/** Pulls the individual command phrases back out of a matched run. */
+const SINGLE_COMMAND_PATTERN = new RegExp(`(?:${COMMAND_ALTERNATION})`, "gi");
+
 const COMMAND_TRAILING_PATTERN = new RegExp(
-  `(?:^|[^\\p{L}\\p{N}])(?:${[...COMMAND_REPLACEMENTS.keys()]
-    .sort((a, b) => b.length - a.length)
-    .join("|")})\\s*$`,
+  `(?:^|[^\\p{L}\\p{N}])(?:${COMMAND_ALTERNATION})\\s*$`,
   "iu",
 );
 
@@ -336,9 +355,9 @@ function dropWhisperCommaBeforeNewline(text: string): string {
         return match;
       }
       const tail = text.slice(offset + match.length);
-      const candidate = `${head} ${gap}${phrase}${tail}`;
-      const start = head.length + 1 + gap.length;
-      if (isSpokenAsNoun(candidate, start, start + phrase.length)) {
+      // Same follower test as runIsSpokenAsNoun: "a break, new line is what
+      // you need" keeps its comma AND its words.
+      if (NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(tail, 0))) {
         return match;
       }
       return ` ${gap}${phrase}`;
@@ -346,11 +365,88 @@ function dropWhisperCommaBeforeNewline(text: string): string {
   );
 }
 
+/**
+ * The next real word after a run, looking past whisper's delimiters.
+ *
+ * AIDEV-NOTE: wordAfter stops dead on the comma, so an appositive read as
+ * "The phrase, new line, is ordinary prose" never saw its noun-follower "is"
+ * and the phrase was treated as a command (CodeRabbit, PR #32). Only the
+ * delimiters a run is allowed to be wrapped in are skipped.
+ */
+function wordAfterDelimiters(text: string, index: number): string {
+  const match = /^[\s,.]*([\p{L}\p{N}][\p{L}\p{N}'’]*)/u.exec(text.slice(index));
+  return match ? match[1].toLowerCase() : "";
+}
+
+/**
+ * A comma-isolated run is still prose when the word AFTER the whole run is a
+ * preposition or auxiliary: "The phrase, new line, is ordinary prose".
+ *
+ * Consulted only for runs containing an ambiguous command — ALWAYS entries fire
+ * unconditionally everywhere else, and gating them here would contradict the
+ * #17/#20 policy rather than preserve it.
+ *
+ * AIDEV-NOTE: deliberately only the follower test, never NOUN_DETERMINERS_BEFORE.
+ * At a run boundary whisper's comma sits between the determiner and the command,
+ * so "a" in "a, colon, dash, b" is the left OPERAND, not an article shielding a
+ * noun — reading it as a determiner is the exact bug #17's operand check exists
+ * to prevent, and it re-broke that case here once.
+ */
+function runIsSpokenAsNoun(
+  text: string,
+  phrases: string[],
+  end: number,
+): boolean {
+  if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
+    return false;
+  }
+  return NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, end));
+}
+
+// AIDEV-NOTE: the unwrap runs before applyNumberFormatting, which folds with
+// split(/\s+/).join(" ") and would flatten a real newline. It emits these
+// non-whitespace placeholders instead; applyPunctuation restores them.
+//
+// A plain newline here also LOOKS like one whisper itself put in the raw text,
+// and those are collapsed by that same fold on main. Preserving both would have
+// re-flowed 80 of Etan's existing dictations — a real latent bug, but not this
+// lane's call to make. The placeholder keeps the blast radius to commands.
+const NEWLINE_PLACEHOLDER = "\uE000";
+const PARAGRAPH_PLACEHOLDER = "\uE001";
+
+function placeholderFor(replacement: string): string {
+  if (replacement === "\n") return NEWLINE_PLACEHOLDER;
+  if (replacement === "\n\n") return PARAGRAPH_PLACEHOLDER;
+  return replacement;
+}
+
+function restoreNewlinePlaceholders(text: string): string {
+  return text
+    .replaceAll(PARAGRAPH_PLACEHOLDER, "\n\n")
+    .replaceAll(NEWLINE_PLACEHOLDER, "\n");
+}
+
 function unwrapCommaWrappedCommands(text: string): string {
-  return text.replace(COMMA_WRAPPED_COMMAND_PATTERN, (match, phrase: string) => {
-    const replacement = COMMAND_REPLACEMENTS.get(phrase.toLowerCase());
-    return replacement === undefined ? match : ` ${replacement} `;
-  });
+  return text.replace(
+    COMMA_WRAPPED_COMMAND_PATTERN,
+    (match: string, offset: number) => {
+      const phrases = (match.match(SINGLE_COMMAND_PATTERN) ?? []).map((phrase) =>
+        phrase.toLowerCase(),
+      );
+      const end = offset + match.length;
+      if (
+        runIsSpokenAsNoun(text, phrases, end) ||
+        isMetaMention(text, offset, end)
+      ) {
+        return match;
+      }
+      const replacements = phrases
+        .map((phrase) => COMMAND_REPLACEMENTS.get(phrase))
+        .filter((replacement): replacement is string => replacement !== undefined)
+        .map(placeholderFor);
+      return replacements.length === 0 ? match : ` ${replacements.join(" ")} `;
+    },
+  );
 }
 
 function wordBefore(text: string, index: number): string {
@@ -368,6 +464,79 @@ function isOperandToken(token: string): boolean {
   if (/^\d+$/.test(token)) return true;
   // camelCase / single-letter identifiers ("i", "makeCounter") read as code.
   return /^[a-z]$/.test(token) || /^[a-z][\w$]*[A-Z][\w$]*$/.test(token);
+}
+
+// AIDEV-NOTE: Etan talks ABOUT dictation commands, and whisper punctuates a
+// meta-mention exactly like a dictated one: "The words colon, comma, and period
+// are punctuation" lost the word "comma" outright (Macroscope, PR #32). A
+// mention cue in front, or membership in a list of other command words, is what
+// separates talking about a command from issuing one. AGENTS.md: a fix that
+// loses Etan's words is worse than the bug, so this outranks every substitution.
+
+/**
+ * Noun cues count only when a determiner introduces them — "the word", "The
+ * words". Bare "words" is ordinary English: "the space between words period"
+ * really does end with a dictated period, and gating on the noun alone ate it.
+ */
+const MENTION_NOUN_CUES = new Set([
+  "word", "words", "phrase", "phrases", "term", "terms",
+]);
+const MENTION_CUE_DETERMINERS = new Set([
+  "the", "a", "an", "this", "that", "these", "those", "my", "your", "our",
+  "its", "their", "two", "three",
+]);
+/** Verbs that introduce a quoted token on their own — no determiner to look for. */
+const MENTION_VERB_CUES = new Set([
+  "say", "said", "says", "called", "named", "typed", "literally", "spelled",
+]);
+
+/** Only list punctuation separates two enumerated items — ", " or ", and ". */
+const LIST_SEPARATOR_ONLY = /^[\s,]*(?:and|or)?[\s,]*$/i;
+
+/** The nearest word before `index`, looking past whisper's delimiters. */
+function wordBeforeDelimiters(text: string, index: number): string {
+  const match = /([\p{L}\p{N}][\p{L}\p{N}'\u2019]*)[\s,.]*$/u.exec(
+    text.slice(0, index),
+  );
+  return match ? match[1].toLowerCase() : "";
+}
+
+/** A neighbouring list item is itself a command word — "colon, comma, and period". */
+function hasAdjacentCommandInList(
+  text: string,
+  start: number,
+  end: number,
+): boolean {
+  const before = text.slice(0, start);
+  const previous = [...before.matchAll(SINGLE_COMMAND_PATTERN)].pop();
+  if (
+    previous?.index !== undefined &&
+    LIST_SEPARATOR_ONLY.test(before.slice(previous.index + previous[0].length))
+  ) {
+    return true;
+  }
+  const after = text.slice(end);
+  const [next] = after.matchAll(SINGLE_COMMAND_PATTERN);
+  return next?.index !== undefined && LIST_SEPARATOR_ONLY.test(after.slice(0, next.index));
+}
+
+/** True when the speaker is naming a command rather than issuing one. */
+function isMetaMention(text: string, start: number, end: number): boolean {
+  const before = wordBeforeDelimiters(text, start);
+  if (MENTION_VERB_CUES.has(before)) return true;
+  if (MENTION_NOUN_CUES.has(before)) {
+    const cueStart = text.slice(0, start).toLowerCase().lastIndexOf(before);
+    if (
+      cueStart <= 0 ||
+      MENTION_CUE_DETERMINERS.has(wordBeforeDelimiters(text, cueStart))
+    ) {
+      return true;
+    }
+  }
+  const after = wordAfterDelimiters(text, end);
+  const inList =
+    before === "and" || before === "or" || after === "and" || after === "or";
+  return inList && hasAdjacentCommandInList(text, start, end);
 }
 
 /**
@@ -469,7 +638,8 @@ function replaceUnlessSpokenAsNoun(
   replacement: string,
 ): string {
   return text.replace(pattern, (match: string, offset: number) => {
-    if (isSpokenAsNoun(text, offset, offset + match.length)) {
+    const end = offset + match.length;
+    if (isSpokenAsNoun(text, offset, end) || isMetaMention(text, offset, end)) {
       return match;
     }
     return ` ${replacement}`;
@@ -477,10 +647,14 @@ function replaceUnlessSpokenAsNoun(
 }
 
 function applyPunctuation(text: string): string {
-  let result = text;
+  let result = restoreNewlinePlaceholders(text);
 
   for (const [pattern, replacement] of ALWAYS_PUNCTUATION_MAP) {
-    result = result.replace(pattern, () => ` ${replacement}`);
+    result = result.replace(pattern, (match: string, offset: number) =>
+      isMetaMention(result, offset, offset + match.length)
+        ? match
+        : ` ${replacement}`,
+    );
   }
 
   for (const [pattern, replacement] of AMBIGUOUS_PUNCTUATION_MAP) {
