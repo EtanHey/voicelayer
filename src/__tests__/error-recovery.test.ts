@@ -78,7 +78,7 @@ Bun.spawnSync = function (...args: any[]) {
       };
     }
     // Block direct path probes for rec (resolveBinary candidates)
-    if (typeof cmd[0] === "string" && cmd[0].endsWith("/rec")) {
+    if (typeof cmd[0] === "string" && (cmd[0] === "rec" || cmd[0].endsWith("/rec"))) {
       return {
         exitCode: 1,
         stdout: new Uint8Array(),

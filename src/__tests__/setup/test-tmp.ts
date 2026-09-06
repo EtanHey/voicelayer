@@ -7,10 +7,12 @@
  * file order. Reads the env the preload set, and falls back to /tmp for a run
  * that bypassed the preload entirely.
  *
- * Unix domain sockets are the one thing that stays in /tmp: macOS caps
- * sun_path at 104 bytes and this worktree's own path already spends 68 of them,
- * so a socket under the run root cannot bind. Test socket fixtures are named
- * `*-test-*.sock` and never collide with the live `/tmp/voicelayer.sock`.
+ * Unix domain sockets that a suite binds itself still live under `/tmp`:
+ * macOS caps sun_path at 104 bytes and this worktree's own path already spends
+ * 68 of them, so a long fixture under the run root cannot bind. Those fixtures
+ * are named `*-test-*.sock` and never collide with the live `/tmp/voicelayer.sock`.
+ * The preload's own VoiceBar/MCP sockets are short (`v.sock`/`m.sock`) under
+ * `.test-tmp/<pid>/`.
  */
 
 import { join } from "path";

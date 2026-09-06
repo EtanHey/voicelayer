@@ -104,9 +104,10 @@ every run deleted his replay ring buffer. Do not run with `--preload=` disabled,
 and **never run real-mic tests (`VOICELAYER_TEST_REAL_MIC=1`) while someone is
 dictating** — that flag is the only way a test opens the device. If the preload
 is ever bypassed, mic-touching suites skip loudly rather than race the live app
-(`src/__tests__/setup/live-host-guard.ts`). Unix sockets are the one thing still
-under `/tmp`: macOS caps `sun_path` at 104 bytes, and test socket fixtures are
-named `*-test-*.sock` so they never collide with `/tmp/voicelayer.sock`.
+(`src/__tests__/setup/live-host-guard.ts`). Preload sockets are `v.sock`/`m.sock`
+under `.test-tmp/<pid>/` (short names: macOS caps `sun_path` at 104 bytes).
+Suites that bind their own sockets still use `/tmp/*-test-*.sock` and never
+collide with the live `/tmp/voicelayer.sock`.
 
 ## PR Workflow
 

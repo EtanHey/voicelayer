@@ -22,6 +22,7 @@ import {
   TTS_DISABLED_FILE,
   TTS_HISTORY_FILE,
   VOICE_DISABLED_FILE,
+  defaultStateDir,
   getMcpSocketPath,
   getStateDir,
   getTmpRoot,
@@ -137,6 +138,29 @@ describe("R-014 preload isolates every VoiceLayer path", () => {
   it("opens the real device only when a test opts in by name", () => {
     const optedIn = { ...process.env, VOICELAYER_TEST_REAL_MIC: "1" };
     expect(isFakeRecorderActive(optedIn)).toBe(false);
+  });
+
+  it("refuses PATH rec when the stub is selected but has no binary", () => {
+    expect(
+      resolveRecorderBinary({
+        VOICELAYER_TEST_FAKE_REC: "1",
+      } as NodeJS.ProcessEnv),
+    ).toBeNull();
+  });
+
+  it("env-taking helpers read the passed env's roots, not the frozen module consts", () => {
+    expect(getVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(
+      "/tmp/voicelayer.sock",
+    );
+    expect(
+      getVoiceBarSocketPath({
+        VOICELAYER_TMP_ROOT: "/isolated-root",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/isolated-root/voicelayer.sock");
+    expect(recordingStateFilePath({} as NodeJS.ProcessEnv)).toBe(
+      join(defaultStateDir(), "recording-state.json"),
+    );
+    expect(SOCKET_PATH.startsWith(ISOLATION_ROOT)).toBe(true);
   });
 });
 

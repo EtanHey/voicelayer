@@ -50,6 +50,10 @@ setIfUnset("VOICELAYER_STATE_DIR", join(RUN_ROOT, "state"));
 // Sockets: redirected explicitly as well as via the root, because
 // isDefaultVoiceBarSocketPath()/isDefaultMcpSocketPath() key off these names —
 // and shouldAcceptVoiceBarCommands() needs both sides to agree.
+// Canonical names win over QA_VOICE_* aliases in src/paths.ts. Filling them
+// here is deliberate: a leftover QA_VOICE_SOCKET_PATH pointing at the live
+// VoiceBar must not win. A caller who already set VOICELAYER_SOCKET_PATH keeps
+// it (setIfUnset). To isolate via the alias alone, also set the canonical name.
 setIfUnset("VOICELAYER_SOCKET_PATH", voiceBarSocket);
 setIfUnset("VOICELAYER_MCP_SOCKET_PATH", mcpSocket);
 
@@ -61,7 +65,11 @@ setIfUnset("QA_VOICE_RECORDINGS_DIR", join(RUN_ROOT, "recordings"));
 setIfUnset("QA_VOICE_THINK_FILE", join(RUN_ROOT, "thinking.md"));
 
 // No test opens the real microphone unless it asks for it by name.
-setIfUnset("VOICELAYER_TEST_FAKE_REC", "1");
+// REAL_MIC is the only opt-in; a leftover VOICELAYER_TEST_FAKE_REC=0 must not
+// disable the stub (that would be setIfUnset swallowing the isolation contract).
+if (process.env.VOICELAYER_TEST_REAL_MIC?.trim() !== "1") {
+  process.env.VOICELAYER_TEST_FAKE_REC = "1";
+}
 setIfUnset(
   "VOICELAYER_TEST_FAKE_REC_BIN",
   join(process.cwd(), "src", "__tests__", "setup", "fake-rec.sh"),

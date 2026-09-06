@@ -45,14 +45,11 @@ export function resolveRecorderBinary(
 ): string | null {
   if (isFakeRecorderActive(env)) {
     const stub = env[FAKE_REC_BIN_ENV]?.trim();
-    if (!stub) {
-      throw new Error(
-        `${FAKE_REC_ENV}=1 but ${FAKE_REC_BIN_ENV} is unset — the fake recorder ` +
-          `has no stub to spawn. Set ${FAKE_REC_BIN_ENV}, or set ${REAL_MIC_ENV}=1 ` +
-          `to use the real microphone.`,
-      );
-    }
-    return stub;
+    // Missing stub is treated like a missing binary: callers already map null
+    // to "sox not installed". Throwing here used to escape the device probe's
+    // catch and crash `detectNativeInputFormat` (and would have spawned PATH
+    // `rec` when that probe still had a `|| "rec"` fallback).
+    return stub || null;
   }
   return resolveBinary("rec", REC_CANDIDATES);
 }

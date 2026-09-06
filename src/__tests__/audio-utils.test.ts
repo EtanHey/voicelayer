@@ -80,6 +80,21 @@ describe("native input format cache", () => {
     resetNativeInputFormatCache();
   });
 
+  it("does not fall back to PATH rec when the stub binary is missing", () => {
+    const savedBin = process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+    delete process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+    try {
+      expect(detectNativeInputFormat()).toEqual({
+        sampleRate: 16000,
+        channels: 1,
+      });
+    } finally {
+      if (savedBin !== undefined) {
+        process.env.VOICELAYER_TEST_FAKE_REC_BIN = savedBin;
+      }
+    }
+  });
+
   const PROBE_OUTPUT = `
 Input File     : 'default' (coreaudio)
 Channels       : 2
