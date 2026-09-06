@@ -434,6 +434,38 @@ final class AppLifecycleTests: XCTestCase {
         XCTAssertEqual(successfulExit, false, "SuccessfulExit:false means only restart on crash, not clean quit")
     }
 
+    /// The stderr file this plist names is VoiceBar's own log, and it held a
+    /// keystroke log of everything typed while the app ran (fixed 2026-09-06).
+    /// /tmp is world-readable and the path is predictable, so it is the wrong
+    /// place for it regardless of what ends up in the file.
+    func testLaunchAgentPlistKeepsLogsOutOfTmp() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let plistURL = repoRoot
+            .appendingPathComponent("launchd")
+            .appendingPathComponent("com.voicelayer.voicebar.plist")
+
+        let data = try Data(contentsOf: plistURL)
+        let plist = try PropertyListSerialization.propertyList(from: data, format: nil)
+        let dict = try XCTUnwrap(plist as? [String: Any], "Plist is not a dictionary")
+
+        for key in ["StandardOutPath", "StandardErrorPath"] {
+            let path = try XCTUnwrap(dict[key] as? String, "\(key) should be a string")
+            XCTAssertFalse(
+                path.hasPrefix("/tmp"),
+                "\(key) must not live in world-readable /tmp — got \(path)"
+            )
+            XCTAssertTrue(
+                path.contains("__VOICEBAR_LOG_DIR__"),
+                "\(key) should carry the install-time placeholder, because launchd does not "
+                    + "expand $HOME inside a plist string — got \(path)"
+            )
+        }
+    }
+
     func testF5HidutilLaunchAgentRunsMergeHelper() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

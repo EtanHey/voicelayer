@@ -4,7 +4,9 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "fs";
@@ -28,6 +30,7 @@ const installScript = join(
 const REAL_TOOLS = [
   "bash",
   "cat",
+  "chmod",
   "cmp",
   "cp",
   "dirname",
@@ -296,5 +299,97 @@ describe("install-voicebar-autostart.sh quarantine release", () => {
       0,
     );
     expect(bootstrapIndexes(lines).length).toBeGreaterThan(0);
+  });
+});
+
+// The LaunchAgent's stderr file is VoiceBar's own log. It held a keystroke log of
+// everything Etan typed (fixed 2026-09-06), and it sat in /tmp at a predictable
+// path with mode 644 — world-readable on a multi-user Mac. launchd does not
+// expand $HOME inside a plist string, so the absolute path has to be baked in
+// here, at install time.
+describe("install-voicebar-autostart.sh log paths", () => {
+  function installedPlist(workspace: Workspace): string {
+    return readFileSync(
+      join(
+        workspace.home,
+        "Library",
+        "LaunchAgents",
+        "com.voicelayer.voicebar.plist",
+      ),
+      "utf8",
+    );
+  }
+
+  function logDir(workspace: Workspace): string {
+    return join(workspace.home, "Library", "Logs", "voicelayer");
+  }
+
+  test("installs a plist with no /tmp log paths", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(installedPlist(workspace)).not.toContain("/tmp");
+  });
+
+  test("bakes the absolute per-user log paths into the installed plist", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    const plist = installedPlist(workspace);
+    expect(plist).toContain(`<string>${logDir(workspace)}/voicebar.log</string>`);
+    expect(plist).toContain(
+      `<string>${logDir(workspace)}/voicebar-err.log</string>`,
+    );
+    // launchd would take these literally rather than expanding them.
+    expect(plist).not.toContain("$HOME");
+    expect(plist).not.toContain("~/");
+    expect(plist).not.toContain("__VOICEBAR_LOG_DIR__");
+  });
+
+  test("creates the log directory and files private to the user", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(statSync(logDir(workspace)).mode & 0o777).toBe(0o700);
+    for (const name of ["voicebar.log", "voicebar-err.log"]) {
+      expect(statSync(join(logDir(workspace), name)).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  test("tightens the mode of log files an earlier install left world-readable", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    mkdirSync(logDir(workspace), { recursive: true });
+    const leaked = join(logDir(workspace), "voicebar-err.log");
+    writeFileSync(leaked, "pre-existing log content\n");
+    chmodSync(leaked, 0o644);
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(statSync(leaked).mode & 0o777).toBe(0o600);
+    // Repairing the mode must not throw away the operator's existing log.
+    expect(readFileSync(leaked, "utf8")).toBe("pre-existing log content\n");
+  });
+
+  // The in-place-update branch compares what it is about to write against what
+  // is on disk. Rendering the template at install time must not make every run
+  // look like a change, or a routine `voicelayer setup` would rewrite the plist
+  // forever.
+  test("recognises its own rendered plist as already current", async () => {
+    const workspace = makeWorkspace({ printLoaded: 99 });
+
+    const first = runInstaller(workspace);
+    expect(first.status).toBe(0);
+    expect(first.stdout).toContain("applies on next login");
+
+    const repeat = runInstaller(workspace);
+    expect(repeat.status).toBe(0);
+    expect(repeat.stdout).toContain("already current");
   });
 });
