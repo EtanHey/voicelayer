@@ -34,6 +34,16 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = removeFillers(result, config?.aggressiveFillerRemoval ?? false);
   }
 
+  // Whisper's comma-wrapped commands are unwrapped FIRST, before any other
+  // substitution. preserveCodeTokens rewrites "open paren" to "(" and would
+  // otherwise hide the command from the unwrap, shipping "foo, (, bar" with
+  // whisper's commas still in it (Macroscope, PR #32).
+  if (!disabled?.has("punctuation")) {
+    result = dropWhisperCommaBeforeNewline(result);
+    result = unwrapCommaWrappedCommands(result);
+    result = dropWhisperDelimiterAfterNewline(result);
+  }
+
   // Stage 7: Custom aliases (before tech vocab to allow user overrides)
   if (!disabled?.has("aliases") && config?.aliases) {
     result = applyAliases(result, config.aliases);
@@ -243,6 +253,246 @@ const BINARY_OPERATOR_COMMANDS = new Set([
   "colon", "dash", "arrow", "equals", "plus", "minus", "slash", "pipe",
 ]);
 
+// AIDEV-NOTE: Whisper punctuates each spoken command as its own comma-delimited
+// token. "update colon Q3 ... new line hey Sarah comma new paragraph" came back
+// as "update, colon, Q3, ... new line, hey, Sarah, comma, new paragraph."
+// (Etan's v2.2.12 acceptance dictation, shadow row 2026-09-06T14:42:25Z). Those
+// delimiters are whisper's, not Etan's, and they broke stage 2 twice over: the
+// attach-left cleanup collapsed ", : ," to ",:,", and it ate every "\n" that
+// "new line" produced. The identical words without the commas already cleaned
+// correctly.
+//
+// A command whisper isolated between two of its OWN delimiters is a command.
+// That isolation is stronger evidence than isSpokenAsNoun, which sees a comma
+// on both sides, finds neither a determiner nor a preposition, and abstains —
+// and it is evidence prose never carries, because whisper does not wrap
+// "a new line on codex agents" in commas. So this pass substitutes the symbol
+// directly and drops both delimiters, leaving the #17/#20 ALWAYS/AMBIGUOUS
+// policy to decide every command it does not match.
+//
+// "comma" is the one command whose own replacement is a comma, so the speaker's
+// single comma survives while whisper's two do not.
+
+/** The literal phrase each spoken-command pattern matches ("\bnew line\b" -> "new line"). */
+function spokenPhraseOf(pattern: RegExp): string {
+  const phrase = pattern.source.replace(/^\\b/, "").replace(/\\b$/, "");
+  // Guard, not a parser: the phrase goes straight into an alternation, so a
+  // pattern that is anything other than plain words must fail loudly here
+  // rather than become a wildcard.
+  if (!/^[a-z]+(?: [a-z]+)*$/.test(phrase)) {
+    throw new Error(`Spoken-command pattern is not a literal phrase: ${pattern}`);
+  }
+  return phrase;
+}
+
+const COMMAND_REPLACEMENTS: Map<string, string> = new Map(
+  [...ALWAYS_PUNCTUATION_MAP, ...AMBIGUOUS_PUNCTUATION_MAP]
+    .map(([pattern, replacement]): [string, string] => [
+      spokenPhraseOf(pattern),
+      replacement,
+    ])
+    // "Plus," and "Minus," open a sentence as ordinary connectives — "Plus, I
+    // don't know if we can match it" (5 shadow rows, e.g. the MLX-vs-Flex
+    // dictation). Comma-isolation is not operand evidence, and ARITHMETIC_ONLY
+    // demands operands on both sides, so these keep the #17 guard and never
+    // unwrap. AGENTS.md: a fix that loses Etan's words is worse than the bug.
+    .filter(([phrase]) => !ARITHMETIC_ONLY.has(phrase)),
+);
+
+const AMBIGUOUS_COMMAND_PHRASES: Set<string> = new Set(
+  AMBIGUOUS_PUNCTUATION_MAP.map(([pattern]) => spokenPhraseOf(pattern)),
+);
+
+// Longest first so "new paragraph" is not matched as "new" would be, and
+// "question mark" wins over any shorter overlap.
+const COMMAND_ALTERNATION = [...COMMAND_REPLACEMENTS.keys()]
+  .sort((a, b) => b.length - a.length)
+  .join("|");
+
+// AIDEV-NOTE: this matches a RUN of adjacent commands, not a single one,
+// because neighbours SHARE a delimiter. Taking them one at a time consumes the
+// comma after "colon", which leaves "dash" with no leading delimiter and so
+// un-unwrapped: "a, colon, dash, b" shipped as "A: -, b", whisper's comma still
+// in it (CodeRabbit, PR #32). Consuming the whole run emits every command.
+const COMMA_WRAPPED_COMMAND_PATTERN = new RegExp(
+  `[,.]\\s*(?:${COMMAND_ALTERNATION})(?:\\s*[,.]\\s*(?:${COMMAND_ALTERNATION}))*\\s*[,.]`,
+  "gi",
+);
+
+/** Pulls the individual command phrases back out of a matched run. */
+const SINGLE_COMMAND_PATTERN = new RegExp(`(?:${COMMAND_ALTERNATION})`, "gi");
+
+const COMMAND_TRAILING_PATTERN = new RegExp(
+  `(?:^|[^\\p{L}\\p{N}])(?:${COMMAND_ALTERNATION})\\s*$`,
+  "iu",
+);
+
+/** True when `text` ends with a spoken command, so a comma after it is that command's delimiter. */
+function endsWithSpokenCommand(text: string): boolean {
+  return COMMAND_TRAILING_PATTERN.test(text);
+}
+
+// Lead's ruling (2026-09-06): "DROP the comma whisper inserted immediately
+// before a newline/paragraph command — Etan said 'update new line', not 'update
+// comma new line'; a comma survives only when he actually dictated 'comma'".
+//
+// unwrapCommaWrappedCommands already drops it wherever whisper supplied BOTH
+// delimiters. This covers the rest — a leading comma with no trailing one, as in
+// "Here are a few things, new line first of all", which kept the comma.
+//
+// AIDEV-NOTE: order is load-bearing. This runs BEFORE the unwrap and before any
+// substitution, while a comma Etan actually dictated is still the *word*
+// "comma" and cannot be matched here. Run it afterwards and it eats the real
+// comma in "hey, Sarah, comma, new paragraph" — the v2.2.12 specimen.
+//
+// The command still has to fire: isSpokenAsNoun is consulted on the text as it
+// will look with the comma gone, so prose ("if you want a break, new line is
+// what you need") keeps both its comma and its words.
+function dropWhisperCommaBeforeNewline(text: string): string {
+  return text.replace(
+    /,(\s*)(new paragraph|new line)\b/gi,
+    (match: string, gap: string, phrase: string, offset: number) => {
+      const head = text.slice(0, offset);
+      // This comma is the RIGHT delimiter of the command before it — in
+      // "week. Colon, new line" it is what lets the unwrap see ". Colon," and
+      // drop whisper's stray period. Taking it here leaves "week.:".
+      if (endsWithSpokenCommand(head)) {
+        return match;
+      }
+      const tail = text.slice(offset + match.length);
+      // Same follower test as runIsSpokenAsNoun: "a break, new line is what
+      // you need" keeps its comma AND its words.
+      if (NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(tail, 0))) {
+        return match;
+      }
+      return ` ${gap}${phrase}`;
+    },
+  );
+}
+
+/**
+ * The next real word after a run, looking past whisper's delimiters.
+ *
+ * AIDEV-NOTE: wordAfter stops dead on the comma, so an appositive read as
+ * "The phrase, new line, is ordinary prose" never saw its noun-follower "is"
+ * and the phrase was treated as a command (CodeRabbit, PR #32). Only the
+ * delimiters a run is allowed to be wrapped in are skipped.
+ */
+function wordAfterDelimiters(text: string, index: number): string {
+  const match = /^[\s,.]*([\p{L}\p{N}][\p{L}\p{N}'’]*)/u.exec(text.slice(index));
+  return match ? match[1].toLowerCase() : "";
+}
+
+/**
+ * A comma-isolated run is still prose when the word AFTER the whole run is a
+ * preposition or auxiliary: "The phrase, new line, is ordinary prose".
+ *
+ * Consulted only for runs containing an ambiguous command — ALWAYS entries fire
+ * unconditionally everywhere else, and gating them here would contradict the
+ * #17/#20 policy rather than preserve it.
+ *
+ * AIDEV-NOTE: deliberately only the follower test, never NOUN_DETERMINERS_BEFORE.
+ * At a run boundary whisper's comma sits between the determiner and the command,
+ * so "a" in "a, colon, dash, b" is the left OPERAND, not an article shielding a
+ * noun — reading it as a determiner is the exact bug #17's operand check exists
+ * to prevent, and it re-broke that case here once.
+ */
+function runIsSpokenAsNoun(
+  text: string,
+  phrases: string[],
+  end: number,
+): boolean {
+  if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
+    return false;
+  }
+  return NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, end));
+}
+
+// AIDEV-NOTE: these placeholders are how a DICTATED line break is told apart
+// from one whisper put in its own raw text, and they do two jobs.
+//
+// 1. Provenance. Only a break Etan asked for may swallow the delimiter that
+//    follows it. Keying that off a bare "\n" also caught raw input newlines, so
+//    applyRules("foo\n, bar") dropped the comma (Macroscope, PR #32). A raw
+//    newline now keeps main's behaviour exactly; every rule below tests the
+//    placeholder, never "\n".
+// 2. Surviving the pipeline. The unwrap runs before applyNumberFormatting,
+//    which folds with split(/\s+/).join(" ") and would flatten a real newline.
+//    These are non-whitespace, so the fold leaves them alone.
+//
+// That same fold also eats newlines whisper puts in its raw text — a real latent
+// bug on main, but fixing it re-flows 80 of Etan's existing dictations, so it is
+// the lead's call and not this lane's.
+const NEWLINE_PLACEHOLDER = "\uE000";
+const PARAGRAPH_PLACEHOLDER = "\uE001";
+
+function placeholderFor(replacement: string): string {
+  if (replacement === "\n") return NEWLINE_PLACEHOLDER;
+  if (replacement === "\n\n") return PARAGRAPH_PLACEHOLDER;
+  return replacement;
+}
+
+function restoreNewlinePlaceholders(text: string): string {
+  return text
+    .replaceAll(PARAGRAPH_PLACEHOLDER, "\n\n")
+    .replaceAll(NEWLINE_PLACEHOLDER, "\n");
+}
+
+// AIDEV-NOTE: the mirror of dropWhisperCommaBeforeNewline, and it must run in
+// WORD space, before any substitution. An earlier version deleted any delimiter
+// sitting after a restored placeholder, which cannot tell whisper's leftover
+// comma from one Etan dictated: "foo new line comma bar" shipped as "Foo \n Bar"
+// — his comma gone, and the lead's ruling is that a comma survives wherever he
+// actually said "comma" (Macroscope, PR #32). Here every "," and "." still
+// belongs to whisper, because no command has produced one yet.
+function dropWhisperDelimiterAfterNewline(text: string): string {
+  return text.replace(
+    /\b(new paragraph|new line)((?:\s*[,.])+)/gi,
+    (match: string, phrase: string, delimiters: string, offset: number) => {
+      const end = offset + phrase.length;
+      if (
+        isSpokenAsNoun(text, offset, end) ||
+        isMetaMention(text, offset, end) ||
+        NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, offset + match.length))
+      ) {
+        return match;
+      }
+      return phrase;
+    },
+  );
+}
+
+function unwrapCommaWrappedCommands(text: string): string {
+  return text.replace(
+    COMMA_WRAPPED_COMMAND_PATTERN,
+    (match: string, offset: number) => {
+      // AIDEV-NOTE: each phrase is tested at its OWN position, not at the run's
+      // leading delimiter. isMetaMention measures the separator between list
+      // items from `start`, and a run's start IS that delimiter — so the
+      // separator came back empty and "The words colon, comma, and period"
+      // lost the word "comma" again (Macroscope round 2, PR #32).
+      const found = [...match.matchAll(SINGLE_COMMAND_PATTERN)];
+      const phrases = found.map((phrase) => phrase[0].toLowerCase());
+      const end = offset + match.length;
+      const anyMetaMention = found.some((phrase) =>
+        isMetaMention(
+          text,
+          offset + (phrase.index ?? 0),
+          offset + (phrase.index ?? 0) + phrase[0].length,
+        ),
+      );
+      if (runIsSpokenAsNoun(text, phrases, end) || anyMetaMention) {
+        return match;
+      }
+      const replacements = phrases
+        .map((phrase) => COMMAND_REPLACEMENTS.get(phrase))
+        .filter((replacement): replacement is string => replacement !== undefined)
+        .map(placeholderFor);
+      return replacements.length === 0 ? match : ` ${replacements.join(" ")} `;
+    },
+  );
+}
+
 function wordBefore(text: string, index: number): string {
   const match = /([\p{L}\p{N}][\p{L}\p{N}'’]*)\s*$/u.exec(text.slice(0, index));
   return match ? match[1].toLowerCase() : "";
@@ -258,6 +508,87 @@ function isOperandToken(token: string): boolean {
   if (/^\d+$/.test(token)) return true;
   // camelCase / single-letter identifiers ("i", "makeCounter") read as code.
   return /^[a-z]$/.test(token) || /^[a-z][\w$]*[A-Z][\w$]*$/.test(token);
+}
+
+// AIDEV-NOTE: Etan talks ABOUT dictation commands, and whisper punctuates a
+// meta-mention exactly like a dictated one: "The words colon, comma, and period
+// are punctuation" lost the word "comma" outright (Macroscope, PR #32). A
+// mention cue in front, or membership in a list of other command words, is what
+// separates talking about a command from issuing one. AGENTS.md: a fix that
+// loses Etan's words is worse than the bug, so this outranks every substitution.
+
+/**
+ * Noun cues count only when a determiner introduces them — "the word", "The
+ * words". Bare "words" is ordinary English: "the space between words period"
+ * really does end with a dictated period, and gating on the noun alone ate it.
+ */
+const MENTION_NOUN_CUES = new Set([
+  "word", "words", "phrase", "phrases", "term", "terms",
+]);
+const MENTION_CUE_DETERMINERS = new Set([
+  "the", "a", "an", "this", "that", "these", "those", "my", "your", "our",
+  "its", "their", "two", "three",
+  // Number formatting has already folded these by the time the maps run.
+  "2", "3",
+]);
+/** Verbs that introduce a quoted token on their own — no determiner to look for. */
+const MENTION_VERB_CUES = new Set([
+  "say", "said", "says", "called", "named", "typed", "literally", "spelled",
+]);
+
+/** Only list punctuation separates two enumerated items — ", " or ", and ". */
+// The comma is required: " and " alone joins two dictated commands in ordinary
+// speech — "update colon and new line details" issues both, it does not name
+// them — and treating that as a list suppressed both (Macroscope, PR #32).
+const LIST_SEPARATOR_ONLY = /^\s*,\s*(?:and|or)?\s*$/i;
+
+/** The nearest word before `index`, looking past whisper's delimiters. */
+function wordBeforeDelimiters(text: string, index: number): string {
+  const match = /([\p{L}\p{N}][\p{L}\p{N}'\u2019]*)[\s,.]*$/u.exec(
+    text.slice(0, index),
+  );
+  return match ? match[1].toLowerCase() : "";
+}
+
+/** A neighbouring list item is itself a command word — "colon, comma, and period". */
+function hasAdjacentCommandInList(
+  text: string,
+  start: number,
+  end: number,
+): boolean {
+  const before = text.slice(0, start);
+  const previous = [...before.matchAll(SINGLE_COMMAND_PATTERN)].pop();
+  if (
+    previous?.index !== undefined &&
+    LIST_SEPARATOR_ONLY.test(before.slice(previous.index + previous[0].length))
+  ) {
+    return true;
+  }
+  const after = text.slice(end);
+  const [next] = after.matchAll(SINGLE_COMMAND_PATTERN);
+  return next?.index !== undefined && LIST_SEPARATOR_ONLY.test(after.slice(0, next.index));
+}
+
+/** True when the speaker is naming a command rather than issuing one. */
+function isMetaMention(text: string, start: number, end: number): boolean {
+  const before = wordBeforeDelimiters(text, start);
+  if (MENTION_VERB_CUES.has(before)) return true;
+  if (MENTION_NOUN_CUES.has(before)) {
+    // The determiner is REQUIRED. A bare sentence-initial "Words period" is an
+    // ordinary sentence ending in a dictated period, and an earlier version
+    // bypassed the check whenever lastIndexOf returned 0 (Macroscope, PR #32).
+    const cueStart = text.slice(0, start).toLowerCase().lastIndexOf(before);
+    if (
+      cueStart > 0 &&
+      MENTION_CUE_DETERMINERS.has(wordBeforeDelimiters(text, cueStart))
+    ) {
+      return true;
+    }
+  }
+  const after = wordAfterDelimiters(text, end);
+  const inList =
+    before === "and" || before === "or" || after === "and" || after === "or";
+  return inList && hasAdjacentCommandInList(text, start, end);
 }
 
 /**
@@ -359,7 +690,8 @@ function replaceUnlessSpokenAsNoun(
   replacement: string,
 ): string {
   return text.replace(pattern, (match: string, offset: number) => {
-    if (isSpokenAsNoun(text, offset, offset + match.length)) {
+    const end = offset + match.length;
+    if (isSpokenAsNoun(text, offset, end) || isMetaMention(text, offset, end)) {
       return match;
     }
     return ` ${replacement}`;
@@ -370,11 +702,15 @@ function applyPunctuation(text: string): string {
   let result = text;
 
   for (const [pattern, replacement] of ALWAYS_PUNCTUATION_MAP) {
-    result = result.replace(pattern, () => ` ${replacement}`);
+    result = result.replace(pattern, (match: string, offset: number) =>
+      isMetaMention(result, offset, offset + match.length)
+        ? match
+        : ` ${replacement}`,
+    );
   }
 
   for (const [pattern, replacement] of AMBIGUOUS_PUNCTUATION_MAP) {
-    result = replaceUnlessSpokenAsNoun(result, pattern, replacement);
+    result = replaceUnlessSpokenAsNoun(result, pattern, placeholderFor(replacement));
   }
 
   // Last, and only in code-shaped speech: "space" is the sole command that
@@ -431,7 +767,7 @@ function applyPunctuation(text: string): string {
     },
   );
   result = spaceAfterClosingProseQuotes(result);
-  return result;
+  return restoreNewlinePlaceholders(result);
 }
 
 function normalizePunctuationClusters(text: string): string {

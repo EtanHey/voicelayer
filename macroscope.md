@@ -23,6 +23,24 @@
 - **Session booking is lockfile-based** (`/tmp/voicelayer-session.lock`). It prevents mic conflicts between concurrent sessions. Do not remove or weaken this mutex.
 - **Audio pipeline order matters:** native sample rate recording → 16kHz resampling → Silero VAD → whisper.cpp. Changing the order or skipping resampling will break STT accuracy.
 
+## Dictation cleanup (`src/rules-engine.ts`)
+
+- **The governing law is AGENTS.md: "a fix that loses my words is worse than the bug."** Rank a
+  finding that drops a spoken word above any finding about punctuation tidiness. Where the two
+  conflict, verbatim wins.
+- **Etan talks ABOUT dictation commands.** "The words colon, comma, and period are punctuation" and
+  "there's still sometimes a new line on codex agents" are prose, not commands. Whisper punctuates a
+  meta-mention exactly like a dictated one, so surrounding commas are not evidence either way.
+- **Whisper isolates each spoken command in its own commas** — "update, colon, Q3" is one dictated
+  "colon", not a list. Adjacent commands SHARE a delimiter, so anything matching them one at a time
+  leaves the second one wrapped.
+- **`applyRules` stage order is load-bearing** and changing it silently breaks things: the
+  comma-unwrap must run before every other substitution (`preserveCodeTokens` rewrites "open paren"
+  early), and any stage that does `split(/\s+/).join(" ")` will flatten a newline a command
+  produced. Check both before proposing a reorder.
+- **Before claiming a cleanup bug is a regression, diff against `main`.** Several long-standing
+  defects in this file predate any given PR; the useful report says which.
+
 ## Testing
 
 - Test both TTS and STT paths independently — they have different backends and failure modes.
