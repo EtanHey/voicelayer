@@ -39,6 +39,7 @@ import {
   smartBoundariesEnabled,
   type TranscriptSegment,
 } from "./stt-sentence-boundaries";
+import { outroGateEnabled, stripHallucinatedOutro } from "./stt-outro-gate";
 import type {
   SpeechToTextBackend,
   SpeechToTextBackendSelector,
@@ -1626,6 +1627,11 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       if (chunkedResult) {
+        // The outro gate does not run here. Each chunk's segment timestamps are
+        // chunk-relative, so stitching them across C1's overlap seam into one
+        // timeline is a separate change — and a span measured against the wrong
+        // offset is exactly how this gate would delete a real word. Same
+        // exclusion the pause-aware boundaries carry (PR #30).
         const backendParts = [this.name, "chunks"];
         if (chunkedResult.witnessed) backendParts.push("witness");
         if (chunkedResult.headChanged) backendParts.push("head");
@@ -1638,10 +1644,13 @@ export class WhisperServerBackend implements STTBackend {
       }
 
       const smartBoundaries = smartBoundariesEnabled(process.env);
+      const outroGate = outroGateEnabled(process.env);
       let segments: TranscriptSegment[] | undefined;
+      // Either flag needs `verbose_json`; with both off the request stays
+      // byte-for-byte the shipped `json` one.
       const text = await this.transcribeResident(wavData, {
         ...buildWhisperServerOptions(options),
-        ...(smartBoundaries
+        ...(smartBoundaries || outroGate
           ? {
               onSegments: (found: TranscriptSegment[]) => {
                 segments = found;
@@ -1677,14 +1686,28 @@ export class WhisperServerBackend implements STTBackend {
       const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
         allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
       });
+      // Last, on the finished text: whatever the earlier stages produced, an
+      // invented closer is only removable against the audio it was attributed
+      // to, and `segments` describe THIS decode of THIS wav.
+      const gated = outroGate
+        ? stripHallucinatedOutro(cleanedText, wavData, { segments })
+        : { text: cleanedText, removed: [] };
+      for (const removal of gated.removed) {
+        console.error(
+          `[voicelayer] outro gate: dropped ${JSON.stringify(removal.phrase)} at ` +
+            `${removal.startS.toFixed(2)}-${removal.endS.toFixed(2)}s ` +
+            `(${removal.spanDbfs.toFixed(1)} dBFS mean, ${removal.peakDbfs.toFixed(1)} peak)`,
+        );
+      }
       const backendParts = [this.name];
       if (headResult.changed) {
         backendParts.push(headResult.backendSuffix ?? "head");
       }
       if (verifiedText !== headResult.text) backendParts.push("tail");
       if (cleanedText !== verifiedText) backendParts.push("clean");
+      if (gated.removed.length > 0) backendParts.push("outro");
       return {
-        text: cleanedText,
+        text: gated.text,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
         ...(segments && segments.length > 0
