@@ -174,6 +174,16 @@ final class CommandModeAXHelperTests: XCTestCase {
     /// The regression the cmux test used to guard - a finished F5 transcript
     /// driving exactly one reliable AX insertion that actually renders - still
     /// applies wherever AX is still the delivery path.
+    ///
+    /// The original wrapped its insertion in an `insertionStrategy` call because
+    /// cmux accepts selected-text AX writes without rendering them, so only the
+    /// atomic value rewrite was visible. That simulation is deliberately NOT
+    /// carried over: for this fixture the strategy resolves to `.valueRewrite`
+    /// for any bundle id on length alone, so the branch would gate nothing while
+    /// reading as coverage it is not. The cmux atomic override is a pure
+    /// function and is pinned as one by
+    /// `testVeryLongCmuxTerminalInsertionUsesSingleValueRewritePlan` — the only
+    /// test whose lengths force `.selectedTextStreaming` without it.
     func testF5FinishTranscriptionFiresReliableAXInsertionIntoNonTerminalTarget() {
         let state = VoiceState()
         let editor = FakeRunningApplication(
@@ -195,14 +205,7 @@ final class CommandModeAXHelperTests: XCTestCase {
             captureCount += 1
             return { text, completion in
                 insertionAttempts += 1
-                let strategy = CommandModeAXHelper.insertionStrategy(
-                    text: text,
-                    focusedValueLength: (scratchDocument as NSString).length,
-                    targetBundleIdentifier: editor.bundleIdentifier
-                )
-                if strategy == .valueRewrite {
-                    scratchDocument.append(text)
-                }
+                scratchDocument.append(text)
                 completion()
                 return true
             }
