@@ -1116,3 +1116,19 @@ function applyAliases(text: string, aliases: Record<string, string>): string {
 function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+// --- Stage 4b: spoken enumerators (LANE L — NOT IMPLEMENTED, PARKED) ---
+//
+// AIDEV-TODO: Lane L is parked for Codex (2026-09-07). This is a signature
+// placeholder ONLY so the RED suite
+// `src/__tests__/rules-engine-spoken-enumerators.test.ts` loads and fails on
+// its own assertions instead of on a missing export. It deliberately returns
+// the input unchanged and removes nothing. The real stage, its wiring into
+// applyRules() and the "enumerators" disabledStages key are all still to be
+// written — see docs.local/recon-2026-09-06/briefs/lane-l-codex-2026-09-07.md.
+export function applySpokenEnumeratorsWithDetail(text: string): {
+  text: string;
+  removedWords: string[];
+} {
+  return { text, removedWords: [] };
+}
