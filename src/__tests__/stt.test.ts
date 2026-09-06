@@ -2019,6 +2019,19 @@ describe("STT backends", () => {
       ).toBe("so that is the plan is fine");
     });
 
+    it("keeps a repeated phrase across a gap left by a skipped chunk", () => {
+      // Chunk B was skipped as low-energy, so A and C are separated by audio
+      // that was never decoded and cannot share words. Anchor-merging them lets
+      // findChunkOverlap fold a genuine repeat away — a word loss, which
+      // AGENTS.md ranks worse than the duplicate it would be preventing.
+      expect(
+        mergeChunkTranscripts(
+          ["and then we ship it", "we ship it on Friday"],
+          ["anchor", "silence"],
+        ),
+      ).toBe("and then we ship it we ship it on Friday");
+    });
+
     it("still reconciles anchor seams when some other seam is silence", () => {
       expect(
         mergeChunkTranscripts(

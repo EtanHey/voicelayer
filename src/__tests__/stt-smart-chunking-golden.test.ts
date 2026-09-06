@@ -140,28 +140,33 @@ async function runGolden(
   fixture: SmartChunkGolden,
   smartChunks: boolean,
 ): Promise<RunOutcome[]> {
-  // AIDEV-NOTE: the fixed column must set "0", NOT unset. Since C1-b the
-  // default is ON, so deleting the variable silently ran the SMART path in both
-  // columns and made the comparison meaningless — it looked like the fixed cuts
-  // had stopped losing words.
+  // AIDEV-NOTE: pin BOTH columns explicitly, never by unsetting. While the
+  // default was briefly ON, deleting the variable silently ran the SMART path
+  // in both columns and the comparison looked clean when it was not.
+  const savedFlag = process.env[SMART_CHUNK_ENV];
   process.env[SMART_CHUNK_ENV] = smartChunks ? "1" : "0";
 
   const backend = new WhisperServerBackend();
   const outcomes: RunOutcome[] = [];
-  for (let run = 1; run <= N_RUNS; run++) {
-    const result = await backend.transcribe(fixture.wav);
-    outcomes.push({
-      run,
-      text: result.text,
-      backend: result.backend,
-      durationMs: result.durationMs,
-      missingAnchors: findMissingAnchors(result.text, fixture.anchors),
-      adjacentDuplicate: findAdjacentDuplicateRun(result.text),
-      nearRepeat: findNearRepeat(result.text),
-      inventedBreaks: findInventedBreaks(result.text, fixture.forbiddenBreaks),
-    });
+  try {
+    for (let run = 1; run <= N_RUNS; run++) {
+      const result = await backend.transcribe(fixture.wav);
+      outcomes.push({
+        run,
+        text: result.text,
+        backend: result.backend,
+        durationMs: result.durationMs,
+        missingAnchors: findMissingAnchors(result.text, fixture.anchors),
+        adjacentDuplicate: findAdjacentDuplicateRun(result.text),
+        nearRepeat: findNearRepeat(result.text),
+        inventedBreaks: findInventedBreaks(result.text, fixture.forbiddenBreaks),
+      });
+    }
+  } finally {
+    // Restore on failure too, or a thrown decode leaves the next suite pinned.
+    if (savedFlag === undefined) delete process.env[SMART_CHUNK_ENV];
+    else process.env[SMART_CHUNK_ENV] = savedFlag;
   }
-  delete process.env[SMART_CHUNK_ENV];
   return outcomes;
 }
 

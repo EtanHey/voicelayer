@@ -311,29 +311,20 @@ describe("chooseChunkEnd", () => {
 });
 
 describe("isSmartWavChunkingEnabled", () => {
-  // Default ON as of C1-b. The escape hatch is an explicit off-value, so a
-  // machine with the variable unset gets silence-aware boundaries.
-  test("is ON when unset or empty", () => {
-    expect(isSmartWavChunkingEnabled({})).toBe(true);
-    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: undefined })).toBe(
-      true,
-    );
-    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: "" })).toBe(true);
-    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: "   " })).toBe(
-      true,
-    );
-  });
-
-  test("is OFF only for an explicit off-value", () => {
-    for (const value of ["0", "false", "off", "no", " OFF ", "False"]) {
+  // Opt-in. It was briefly default-ON in this branch and the 18-clip corpus
+  // gate reversed that: ON removed every looped repeat and halved decode time
+  // but lost more content, which AGENTS.md ranks worse. See PR #31.
+  test("is OFF when unset, empty, or an off-value", () => {
+    expect(isSmartWavChunkingEnabled({})).toBe(false);
+    for (const value of [undefined, "", "  ", "0", "off", "no", "false", "maybe"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         false,
       );
     }
   });
 
-  test("stays ON for an on-value or anything unrecognised", () => {
-    for (const value of ["1", "true", "yes", "on", "maybe"]) {
+  test("is ON only for an explicit opt-in", () => {
+    for (const value of ["1", "true", "yes", "on", " ON ", "True"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         true,
       );

@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { WhisperServerBackend } from "../stt";
-import { computePauseMap, parseWavAudioInfo } from "../stt-pause-map";
+import {
+  chooseChunkEnd,
+  computePauseMap,
+  isSilenceSeam,
+  parseWavAudioInfo,
+  type PauseSpan,
+} from "../stt-pause-map";
 import { findAdjacentDuplicateRun, findNearRepeat } from "./transcript-defects";
 
 /**
@@ -63,6 +69,47 @@ if (!ready) {
 }
 const seamTest = ready ? test : test.skip;
 
+const SMART_CHUNK_ENV = "VOICELAYER_STT_SMART_CHUNKS";
+const SILENCE_SEAM_OVERLAP = 0.5;
+const ANCHOR_OVERLAP = 5;
+
+/** Run `body` with the flag pinned, restoring whatever the caller had. */
+async function withSmartChunks<T>(
+  value: string | undefined,
+  body: () => Promise<T>,
+): Promise<T> {
+  const saved = process.env[SMART_CHUNK_ENV];
+  if (value === undefined) delete process.env[SMART_CHUNK_ENV];
+  else process.env[SMART_CHUNK_ENV] = value;
+  try {
+    return await body();
+  } finally {
+    if (saved === undefined) delete process.env[SMART_CHUNK_ENV];
+    else process.env[SMART_CHUNK_ENV] = saved;
+  }
+}
+
+/** The schedule production will choose, recomputed from the same functions. */
+function expectedSchedule(
+  pauseMap: PauseSpan[],
+  duration: number,
+): Array<{ startS: number; endS: number; silence: boolean }> {
+  const chunks: Array<{ startS: number; endS: number; silence: boolean }> = [];
+  let start = 0;
+  while (start < duration) {
+    const end = Math.min(chooseChunkEnd(start, pauseMap, { min: 20, max: 30 }), duration);
+    const silence = isSilenceSeam(end, pauseMap, SILENCE_SEAM_OVERLAP);
+    chunks.push({ startS: start, endS: end, silence });
+    if (end >= duration) break;
+    start = end - (silence ? SILENCE_SEAM_OVERLAP : ANCHOR_OVERLAP);
+  }
+  return chunks;
+}
+
+function wavSeconds(bytes: number): number {
+  return (bytes - 44) / (16000 * 2);
+}
+
 function run(cmd: string[]): void {
   const proc = Bun.spawnSync(cmd, { cwd: FIXTURE_DIR });
   if (proc.exitCode !== 0) {
@@ -106,16 +153,51 @@ describe("silence seams end to end", () => {
       // re-decodes only silence. Sharing wording between chunks would make the
       // repeat detectors fire on the fixture rather than on the merge.
       const decoded: string[] = [];
+      const requestedSeconds: number[] = [];
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
-        transcribeViaServer: async () => {
+        transcribeViaServer: async (wavData) => {
+          requestedSeconds.push(wavSeconds(wavData.byteLength));
           const text = DISTINCT_CHUNK_TEXTS[decoded.length % DISTINCT_CHUNK_TEXTS.length];
           decoded.push(text);
           return text;
         },
       });
 
-      const result = await backend.transcribe(LONG_WAV);
+      const result = await withSmartChunks("1", () => backend.transcribe(LONG_WAV));
+
+      // The mock ignores the audio, so without this the test would still pass
+      // if the decoder silently reverted to fixed 30 s cuts. Assert the actual
+      // request sizes match the schedule the pause map dictates.
+      const expected = expectedSchedule(pauseMap, duration);
+      expect(expected.length).toBeGreaterThan(2);
+      expect(expected.some((chunk) => chunk.endS - chunk.startS !== 30)).toBe(true);
+      // The first N requests are the chunks themselves; anything after is a
+      // verification decode (short-final confirmation, head punctuation), which
+      // re-reads audio already covered rather than adding a chunk.
+      expect(requestedSeconds.length).toBeGreaterThanOrEqual(expected.length);
+      expect(requestedSeconds.length).toBeLessThanOrEqual(expected.length + 2);
+      expected.forEach((chunk, index) => {
+        expect({ index, seconds: +requestedSeconds[index].toFixed(2) }).toEqual({
+          index,
+          seconds: +(chunk.endS - chunk.startS).toFixed(2),
+        });
+      });
+
+      // Every interior cut sits inside a pause, and each one is a silence seam,
+      // so the following chunk re-decodes only SILENCE_SEAM_OVERLAP seconds.
+      for (const chunk of expected.slice(0, -1)) {
+        const span = pauseMap.find(
+          (p) => chunk.endS >= p.startS && chunk.endS <= p.endS,
+        );
+        expect({ cut: chunk.endS, inPause: Boolean(span), silenceSeam: chunk.silence }).toEqual(
+          { cut: chunk.endS, inPause: true, silenceSeam: true },
+        );
+      }
+      expect(expected[1].startS).toBeCloseTo(expected[0].endS - SILENCE_SEAM_OVERLAP, 6);
+
+      // A silence seam must never trigger the anchor witness machinery.
+      expect(result.backend).not.toContain("witness");
 
       expect(result.backend).toContain("chunks");
       expect(findAdjacentDuplicateRun(result.text)).toBeNull();
@@ -133,7 +215,7 @@ describe("silence seams end to end", () => {
   );
 
   seamTest(
-    "the escape hatch restores the fixed-cut schedule",
+    "the default (unset) and an explicit off both use the fixed-cut schedule",
     async () => {
       buildLongFixture();
       const sizes: number[] = [];
@@ -145,15 +227,15 @@ describe("silence seams end to end", () => {
         },
       });
 
-      process.env.VOICELAYER_STT_SMART_CHUNKS = "0";
-      try {
-        await backend.transcribe(LONG_WAV);
-      } finally {
-        delete process.env.VOICELAYER_STT_SMART_CHUNKS;
-      }
-
-      // Fixed cuts are always exactly WAV_CHUNK_SECONDS of audio (+44 header).
       const thirtySeconds = 30 * 16000 * 2 + 44;
+
+      // Unset is the shipped default and must be the fixed schedule.
+      await withSmartChunks(undefined, () => backend.transcribe(LONG_WAV));
+      expect(sizes[0]).toBe(thirtySeconds);
+
+      // ...and so is an explicit off-value.
+      sizes.length = 0;
+      await withSmartChunks("0", () => backend.transcribe(LONG_WAV));
       expect(sizes[0]).toBe(thirtySeconds);
     },
     300_000,

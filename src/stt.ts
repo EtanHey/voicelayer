@@ -615,17 +615,24 @@ const SILENCE_SEAM_OVERLAP_SECONDS = 0.5;
 const MIN_SMART_CHUNK_SPEECH_RATIO = 0.05;
 
 /**
- * Silence-aware boundaries for the saved-WAV chunk path.
+ * Silence-aware boundaries for the saved-WAV chunk path. Opt-in.
  *
- * Default ON. `VOICELAYER_STT_SMART_CHUNKS=0|false|off|no` is the escape hatch
- * back to fixed `WAV_CHUNK_SECONDS` cuts with the anchor merge at every seam.
+ * Default OFF: unset, every boundary is exactly `WAV_CHUNK_SECONDS` and every
+ * seam uses the anchor merge, i.e. the shipped decode.
+ *
+ * It was briefly flipped ON by default and the 18-clip corpus gate said no. ON
+ * is the only configuration in that run that produced NO looped text at all
+ * (0 looped words against 109, 0/18 adjacent duplicates against 4/18) and it is
+ * 1.9x faster — but it lost more CONTENT (337 words against 210, 110 of them
+ * within 5 s of a chosen cut). AGENTS.md ranks a lost word above a duplicated
+ * one, so it stays opt-in until the seam losses are understood. Numbers and
+ * method: PR #31.
  */
 export function isSmartWavChunkingEnabled(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
   const raw = env.VOICELAYER_STT_SMART_CHUNKS?.trim().toLowerCase();
-  if (raw === undefined || raw === "") return true;
-  return !(raw === "0" || raw === "false" || raw === "off" || raw === "no");
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 const MIN_SUSPECT_LOOP_WORDS = 6;
@@ -1890,16 +1897,22 @@ export class WhisperServerBackend implements STTBackend {
       const isVeryShortFinalChunk =
         chunkSeconds >= remainingSeconds &&
         remainingSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
+      // AIDEV-NOTE: a skipped chunk means audio was OMITTED between the last
+      // decoded chunk and the next one, so they cannot share words and the
+      // anchor merge would be free to "dedupe" a genuine repeat across the gap
+      // and lose it (CodeRabbit, PR #31). Only applied on the smart path: with
+      // the pause map empty this is the shipped fixed-cut decode, and the same
+      // hazard there is pre-existing and out of scope for an opt-in flag.
+      const seamAfterSkip: ChunkSeamKind =
+        pauseMap.length > 0 ? "silence" : seamKindAfterThisChunk;
       const segment = sliceWavSegment(wavData, startSeconds, chunkSeconds);
       if (!segment) {
-        // The cut still happened, so the seam it created is the one the next
-        // decoded chunk inherits.
-        nextSeamKind = seamKindAfterThisChunk;
+        nextSeamKind = seamAfterSkip;
         startSeconds = nextStartSeconds;
         continue;
       }
       if (isLowEnergyWavSegment(segment)) {
-        nextSeamKind = seamKindAfterThisChunk;
+        nextSeamKind = seamAfterSkip;
         startSeconds = nextStartSeconds;
         continue;
       }
@@ -2190,9 +2203,13 @@ export class WhisperServerBackend implements STTBackend {
           }
         }
       }
+      // AIDEV-NOTE: NOT skipped at a silence seam. The trigger is a missing
+      // overlap, which a silence seam always has, but the check itself compares
+      // a prompted and an unprompted decode of the SAME audio — it never uses
+      // the anchor. Skipping it let a hallucinated very short final chunk be
+      // appended unconfirmed (Macroscope, PR #31).
       if (
         isVeryShortFinalChunk &&
-        seamKindBeforeThisChunk !== "silence" &&
         mergedSoFar &&
         !hasChunkBoundaryOverlap(mergedSoFar, text)
       ) {
