@@ -239,6 +239,47 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
+  // Macroscope round 2 on PR #32. None of these lost a word, but all three were
+  // regressions against main — main handled each one correctly.
+  describe("round 2 regressions against main", () => {
+    it("treats a bare sentence-initial 'Words' as prose, not a mention cue", () => {
+      // The determiner is required. An earlier version bypassed that check
+      // whenever lastIndexOf returned 0, so this kept "period" as a word.
+      expect(applyRules("Words period")).toBe("Words.");
+      expect(applyRules("Word comma")).toBe("Word,");
+    });
+
+    it("does not let a RAW input newline swallow the following comma", () => {
+      // Only a break Etan dictated may do that. Keying it off a bare "\n"
+      // caught newlines whisper put in its own raw text.
+      expect(
+        applyRules("foo\n, bar", { disabledStages: new Set(["numbers"]) }),
+      ).toBe("Foo, bar");
+      expect(applyRules("foo\n, bar")).toBe("Foo, bar");
+    });
+
+    it("still lets a DICTATED break swallow the delimiter", () => {
+      // The other side of the same rule — this is the lane's whole point.
+      expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
+        "Hey, Sarah, \n\n Here are",
+      );
+    });
+
+    it("issues both commands when 'and' merely joins them", () => {
+      // "X and Y" is two dictated commands, not a list naming them. An
+      // enumeration needs a comma.
+      expect(applyRules("update colon and new line details")).toBe(
+        "Update: and \n Details",
+      );
+    });
+
+    it("still protects a real comma-separated enumeration", () => {
+      expect(
+        applyRules("The words colon, comma, and period are punctuation"),
+      ).toBe("The words colon, comma, and period are punctuation");
+    });
+  });
+
   // The corpus gate caught this: 5 shadow rows open a sentence with the
   // connective "Plus,", which the unwrap read as a comma-isolated operator and
   // ate. ARITHMETIC_ONLY commands want operands on both sides, and whisper's

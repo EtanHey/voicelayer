@@ -403,14 +403,21 @@ function runIsSpokenAsNoun(
   return NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, end));
 }
 
-// AIDEV-NOTE: the unwrap runs before applyNumberFormatting, which folds with
-// split(/\s+/).join(" ") and would flatten a real newline. It emits these
-// non-whitespace placeholders instead; applyPunctuation restores them.
+// AIDEV-NOTE: these placeholders are how a DICTATED line break is told apart
+// from one whisper put in its own raw text, and they do two jobs.
 //
-// A plain newline here also LOOKS like one whisper itself put in the raw text,
-// and those are collapsed by that same fold on main. Preserving both would have
-// re-flowed 80 of Etan's existing dictations — a real latent bug, but not this
-// lane's call to make. The placeholder keeps the blast radius to commands.
+// 1. Provenance. Only a break Etan asked for may swallow the delimiter that
+//    follows it. Keying that off a bare "\n" also caught raw input newlines, so
+//    applyRules("foo\n, bar") dropped the comma (Macroscope, PR #32). A raw
+//    newline now keeps main's behaviour exactly; every rule below tests the
+//    placeholder, never "\n".
+// 2. Surviving the pipeline. The unwrap runs before applyNumberFormatting,
+//    which folds with split(/\s+/).join(" ") and would flatten a real newline.
+//    These are non-whitespace, so the fold leaves them alone.
+//
+// That same fold also eats newlines whisper puts in its raw text — a real latent
+// bug on main, but fixing it re-flows 80 of Etan's existing dictations, so it is
+// the lead's call and not this lane's.
 const NEWLINE_PLACEHOLDER = "\uE000";
 const PARAGRAPH_PLACEHOLDER = "\uE001";
 
@@ -419,6 +426,11 @@ function placeholderFor(replacement: string): string {
   if (replacement === "\n\n") return PARAGRAPH_PLACEHOLDER;
   return replacement;
 }
+
+const DELIMITER_AFTER_DICTATED_BREAK = new RegExp(
+  `([${NEWLINE_PLACEHOLDER}${PARAGRAPH_PLACEHOLDER}])\\s*[,.]`,
+  "g",
+);
 
 function restoreNewlinePlaceholders(text: string): string {
   return text
@@ -430,14 +442,22 @@ function unwrapCommaWrappedCommands(text: string): string {
   return text.replace(
     COMMA_WRAPPED_COMMAND_PATTERN,
     (match: string, offset: number) => {
-      const phrases = (match.match(SINGLE_COMMAND_PATTERN) ?? []).map((phrase) =>
-        phrase.toLowerCase(),
-      );
+      // AIDEV-NOTE: each phrase is tested at its OWN position, not at the run's
+      // leading delimiter. isMetaMention measures the separator between list
+      // items from `start`, and a run's start IS that delimiter — so the
+      // separator came back empty and "The words colon, comma, and period"
+      // lost the word "comma" again (Macroscope round 2, PR #32).
+      const found = [...match.matchAll(SINGLE_COMMAND_PATTERN)];
+      const phrases = found.map((phrase) => phrase[0].toLowerCase());
       const end = offset + match.length;
-      if (
-        runIsSpokenAsNoun(text, phrases, end) ||
-        isMetaMention(text, offset, end)
-      ) {
+      const anyMetaMention = found.some((phrase) =>
+        isMetaMention(
+          text,
+          offset + (phrase.index ?? 0),
+          offset + (phrase.index ?? 0) + phrase[0].length,
+        ),
+      );
+      if (runIsSpokenAsNoun(text, phrases, end) || anyMetaMention) {
         return match;
       }
       const replacements = phrases
@@ -491,7 +511,10 @@ const MENTION_VERB_CUES = new Set([
 ]);
 
 /** Only list punctuation separates two enumerated items — ", " or ", and ". */
-const LIST_SEPARATOR_ONLY = /^[\s,]*(?:and|or)?[\s,]*$/i;
+// The comma is required: " and " alone joins two dictated commands in ordinary
+// speech — "update colon and new line details" issues both, it does not name
+// them — and treating that as a list suppressed both (Macroscope, PR #32).
+const LIST_SEPARATOR_ONLY = /^\s*,\s*(?:and|or)?\s*$/i;
 
 /** The nearest word before `index`, looking past whisper's delimiters. */
 function wordBeforeDelimiters(text: string, index: number): string {
@@ -525,9 +548,12 @@ function isMetaMention(text: string, start: number, end: number): boolean {
   const before = wordBeforeDelimiters(text, start);
   if (MENTION_VERB_CUES.has(before)) return true;
   if (MENTION_NOUN_CUES.has(before)) {
+    // The determiner is REQUIRED. A bare sentence-initial "Words period" is an
+    // ordinary sentence ending in a dictated period, and an earlier version
+    // bypassed the check whenever lastIndexOf returned 0 (Macroscope, PR #32).
     const cueStart = text.slice(0, start).toLowerCase().lastIndexOf(before);
     if (
-      cueStart <= 0 ||
+      cueStart > 0 &&
       MENTION_CUE_DETERMINERS.has(wordBeforeDelimiters(text, cueStart))
     ) {
       return true;
@@ -647,7 +673,7 @@ function replaceUnlessSpokenAsNoun(
 }
 
 function applyPunctuation(text: string): string {
-  let result = restoreNewlinePlaceholders(text);
+  let result = text;
 
   for (const [pattern, replacement] of ALWAYS_PUNCTUATION_MAP) {
     result = result.replace(pattern, (match: string, offset: number) =>
@@ -658,7 +684,7 @@ function applyPunctuation(text: string): string {
   }
 
   for (const [pattern, replacement] of AMBIGUOUS_PUNCTUATION_MAP) {
-    result = replaceUnlessSpokenAsNoun(result, pattern, replacement);
+    result = replaceUnlessSpokenAsNoun(result, pattern, placeholderFor(replacement));
   }
 
   // Last, and only in code-shaped speech: "space" is the sole command that
@@ -677,18 +703,8 @@ function applyPunctuation(text: string): string {
   }
   // Clean up space before punctuation that should attach left
   result = result.replace(
-    /(\s+)([.,;:?%)}\]`'"]|!(?!=))/g,
-    (match: string, whitespace: string, punctuation: string, offset: number) => {
-      // AIDEV-NOTE: a newline in this run came from "new line"/"new paragraph",
-      // and nothing Etan said can follow it with a bare comma or period — a
-      // sentence never opens on one. That delimiter is whisper's, left over
-      // from the comma-wrapped command. Attaching it left deleted the newline,
-      // which is the whole payload of the command (specimen 2026-09-06).
-      if (whitespace.includes("\n")) {
-        return punctuation === "," || punctuation === "."
-          ? whitespace
-          : match;
-      }
+    /\s+([.,;:?%)}\]`'"]|!(?!=))/g,
+    (match: string, punctuation: string, offset: number) => {
       const nextChar = result[offset + match.length] ?? "";
       if (punctuation === "." && /[A-Za-z_]/u.test(nextChar)) {
         return match;
@@ -725,19 +741,17 @@ function applyPunctuation(text: string): string {
     },
   );
   result = spaceAfterClosingProseQuotes(result);
-  return result;
+  // A dictated line break may swallow the comma or period that follows it —
+  // nothing Etan said opens a sentence on one, so that delimiter is whisper's,
+  // left over from the comma-wrapped command. Only placeholders qualify.
+  result = result.replace(DELIMITER_AFTER_DICTATED_BREAK, "$1");
+  return restoreNewlinePlaceholders(result);
 }
 
 function normalizePunctuationClusters(text: string): string {
-  // A newline between the two marks is a dictated line break, not a cluster:
-  // collapsing across it would delete the break the speaker asked for.
   return text
-    .replace(/,\s*\.{1,}(?=\s|$)/g, (match) =>
-      match.includes("\n") ? match : ".",
-    )
-    .replace(/,(\s*)([!?])(?=\s|$)/g, (match, gap: string, mark: string) =>
-      gap.includes("\n") ? match : mark,
-    );
+    .replace(/,\s*\.{1,}(?=\s|$)/g, ".")
+    .replace(/,\s*([!?])(?=\s|$)/g, "$1");
 }
 
 function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boolean {
