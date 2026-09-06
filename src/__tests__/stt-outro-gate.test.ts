@@ -248,6 +248,24 @@ describe("findOutroCandidates", () => {
     expect(findOutroCandidates("Ship it. Thank you!")).toEqual([]);
   });
 
+  test("mixed terminal punctuation is never a candidate", () => {
+    // `normalizeOutroKey` strips punctuation, so a trailing-dot-only check let
+    // these reach the lexicon as plain "thank you" / "okay". (Macroscope #3.)
+    expect(findOutroCandidates("Ship it. Thank you?.")).toEqual([]);
+    expect(findOutroCandidates("Ship it. Okay!.")).toEqual([]);
+    expect(findOutroCandidates("Ship it. Thank you!?.")).toEqual([]);
+  });
+
+  test("the six-word subtitles credit is actually reachable", () => {
+    // It sits in the lexicon but the 5-word cap ran first, so it was dead
+    // code that read as covered. (Macroscope #4.)
+    expect(
+      findTrailingOutroCandidate(
+        "And that is the whole plan. Subtitles by the Amara.org community.",
+      )?.phrase,
+    ).toBe("Subtitles by the Amara.org community.");
+  });
+
   test("a cut-off fragment is never a candidate, whatever its words", () => {
     expect(findOutroCandidates("Say it again. Thank you…")).toEqual([]);
     expect(findOutroCandidates("Say it again. Thank you...")).toEqual([]);
@@ -311,9 +329,95 @@ describe("stripHallucinatedOutro — the audio decides", () => {
       ],
     });
 
-    expect(decision.reason).toBe("energy-present");
+    // Either acoustic condition is a legitimate keep here. This fixture is
+    // tone wall to wall, so its 10th-percentile "floor" is measured INSIDE the
+    // speech and the relative threshold lands above it — the exact case the
+    // dropped -35 dBFS upper clamp used to paper over, now caught by the
+    // speech-level backstop instead. What matters is that nothing is cut.
+    expect(["energy-present", "near-speech-level"]).toContain(decision.reason);
     expect(decision.text).toBe(text);
     expect(decision.removed).toEqual([]);
+  });
+
+  test("keeps a closer in a recording that is speech wall to wall", () => {
+    // No pauses at all, so the measured floor sits inside speech and the
+    // relative threshold is meaningless. `speechLevelDbfs` is what protects
+    // the words here. (Macroscope HIGH #1, PR #34.)
+    const wav = makeWav(6, [{ startS: 0, endS: 6 }]);
+    const windows = measureWavWindows(wav)!;
+    expect(windows.speechThresholdDbfs).toBeGreaterThan(
+      windows.speechLevelDbfs,
+    );
+
+    const text = "Ship the release today. Thank you.";
+    const decision = stripHallucinatedOutro(text, wav, {
+      segments: [
+        segment(" Ship the release today.", 0, 5.2),
+        segment(" Thank you.", 5.2, 5.9),
+      ],
+    });
+    expect(decision.reason).toBe("near-speech-level");
+    expect(decision.text).toBe(text);
+  });
+
+  test("keeps a closer in a LOW-GAIN recording whose speech is near its floor", () => {
+    // Speech at roughly -42 dBFS over a -48 dBFS floor. Under the old -35 dBFS
+    // upper clamp this recording's own speech scored as silence and a real
+    // closer was deletable. (Macroscope HIGH #1, PR #34.)
+    const quiet = makeWav(
+      6,
+      [
+        { startS: 0, endS: 3.6, peak: 260 },
+        { startS: 3.8, endS: 4.4, peak: 260 },
+      ],
+      130,
+    );
+    const windows = measureWavWindows(quiet)!;
+    expect(windows.floorDbfs).toBeLessThan(-40);
+    expect(windows.speechLevelDbfs).toBeLessThan(-35);
+
+    const text = "Ship the release today. Thank you.";
+    const decision = stripHallucinatedOutro(text, quiet, {
+      segments: [
+        segment(" Ship the release today.", 0, 3.6),
+        // On the quiet second burst — he said it, softly.
+        segment(" Thank you.", 3.8, 4.4),
+      ],
+    });
+    expect(decision.removed).toEqual([]);
+    expect(decision.text).toBe(text);
+  });
+
+  test("refuses when the text is no longer the text the segments describe", () => {
+    // `verifyLeadingPunctuation` swapped in a retry decode that added leading
+    // words; every later word position has shifted. (Macroscope HIGH #2.)
+    const wav = makeWav(5, [{ startS: 0, endS: 3 }], 40);
+    const decoded = "Ship the release today. Thank you.";
+    const repaired = `So, look. ${decoded}`;
+    const decision = stripHallucinatedOutro(repaired, wav, {
+      segments: [
+        segment(" Ship the release today.", 0, 3),
+        segment(" Thank you.", 4.2, 4.6),
+      ],
+      segmentsText: decoded,
+    });
+    expect(decision.reason).toBe("segments-stale");
+    expect(decision.text).toBe(repaired);
+    expect(decision.removed).toEqual([]);
+  });
+
+  test("still runs when the text is byte-identical to the decode", () => {
+    const wav = makeWav(5, [{ startS: 0, endS: 3 }], 40);
+    const decoded = "Ship the release today. Thank you.";
+    const decision = stripHallucinatedOutro(decoded, wav, {
+      segments: [
+        segment(" Ship the release today.", 0, 3),
+        segment(" Thank you.", 4.2, 4.6),
+      ],
+      segmentsText: decoded,
+    });
+    expect(decision.reason).toBe("removed");
+    expect(decision.text).toBe("Ship the release today.");
   });
 
   test("keeps a farewell spoken just before the VAD's trailing silence", () => {
@@ -1006,6 +1110,43 @@ describe("WhisperServerBackend with the outro gate", () => {
     expect(sawVerboseRequest).toBe(true);
     expect(result.text).toBe(SPOKEN);
     expect(result.backend).toContain("outro");
+  });
+
+  test("skips the gate when head repair rewrote the transcript", async () => {
+    mkdirSync(FIXTURE_DIR, { recursive: true });
+    await Bun.write(wavPath, makeWav(5, [{ startS: 0, endS: 3 }], 40));
+    // First decode starts with punctuation, so `verifyLeadingPunctuation`
+    // retries and replaces the whole text — the segments then describe a
+    // transcript that no longer exists. (Macroscope HIGH #2, PR #34.)
+    //
+    // This asserts the END-TO-END behaviour: a repaired transcript keeps its
+    // closer. It is not by itself proof the staleness check fires — on this
+    // particular shift the word verification in `findCandidateSpan` also
+    // catches the misalignment. The unit case "refuses when the text is no
+    // longer the text the segments describe" is what pins `segments-stale`.
+    let call = 0;
+    const backend = new WhisperServerBackend({
+      isServerAvailable: () => true,
+      transcribeViaServer: async (_wavData, options) => {
+        call++;
+        if (call === 1) {
+          options?.onSegments?.([
+            { text: ", ship the release today.", startS: 0, endS: 3 },
+            { text: " Thank you.", startS: 4.2, endS: 4.6 },
+          ]);
+          return `, ship the release today. Thank you.`;
+        }
+        return `Well, ship the release today. Thank you.`;
+      },
+    });
+
+    const result = await withOutroGate("1", () => backend.transcribe(wavPath));
+
+    expect(call).toBeGreaterThan(1);
+    // The closer survives — deliberately. Skipping a hallucination is
+    // recoverable; deleting a real word on a misaligned span is not.
+    expect(result.text).toContain("Thank you.");
+    expect(result.backend).not.toContain("outro");
   });
 
   test("with the flag off the text and the request are untouched", async () => {

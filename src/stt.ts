@@ -1686,12 +1686,35 @@ export class WhisperServerBackend implements STTBackend {
       const cleanedText = trimEchoedTrailingPhrase(verifiedText, {
         allowAdjacentEcho: allowsAdjacentTailEchoCleanup(wavData),
       });
-      // Last, on the finished text: whatever the earlier stages produced, an
-      // invented closer is only removable against the audio it was attributed
-      // to, and `segments` describe THIS decode of THIS wav.
+      // Last, on the finished text: an invented closer is only removable
+      // against the audio it was attributed to, and `segments` describe THIS
+      // decode of THIS wav.
+      //
+      // `segmentsText` is the raw decode output, so the gate can refuse when an
+      // earlier stage rewrote the transcript out from under those timings.
+      // `verifyLeadingPunctuation` can swap in a whole retry decode,
+      // `verifyTailForLongRecording` can merge in recovered tail words, and
+      // `trimEchoedTrailingPhrase` can remove some — each shifts the word
+      // positions the span lookup counts on. A repaired transcript therefore
+      // gets NO outro gating, which is the deliberate trade: skipping a
+      // hallucinated closer is recoverable, deleting a real word is not.
+      //
+      // AIDEV-NOTE: that is also the answer to "a long recording through
+      // `verifyTailForLongRecording` can still keep its closer" — it can, by
+      // design, whenever that stage changed the text. Widening this needs the
+      // repaired text's own decode segments, not a looser check here.
       const gated = outroGate
-        ? stripHallucinatedOutro(cleanedText, wavData, { segments })
-        : { text: cleanedText, removed: [] };
+        ? stripHallucinatedOutro(cleanedText, wavData, {
+            segments,
+            segmentsText: text,
+          })
+        : { text: cleanedText, removed: [], reason: "no-candidate" as const };
+      if (outroGate && gated.reason === "segments-stale") {
+        console.error(
+          "[voicelayer] outro gate: transcript was repaired after the decode; " +
+            "segment timings no longer describe it, skipping",
+        );
+      }
       for (const removal of gated.removed) {
         console.error(
           `[voicelayer] outro gate: dropped ${JSON.stringify(removal.phrase)} at ` +

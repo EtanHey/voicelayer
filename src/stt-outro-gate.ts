@@ -59,9 +59,34 @@ import type { TranscriptSegment } from "./stt-sentence-boundaries";
  */
 const SPEECH_OVER_FLOOR_DB = 16;
 
-/** Clamps on the relative threshold. See `speechThresholdFor`. */
+/**
+ * Floor on the relative threshold, for a recording whose measured floor is
+ * digital silence — without it the threshold would sit at -Infinity.
+ *
+ * There is deliberately NO upper clamp. One was here (-35 dBFS) and Macroscope
+ * was right to call it a real-word-deletion risk on PR #34: a low-gain
+ * recording whose speech sits near -42 dBFS over a -48 dBFS floor would have
+ * had its threshold clamped to -35, scoring its own speech as silence, so
+ * `containsSustainedSpeech` protected nothing and a REAL closer was deletable.
+ *
+ * The clamp existed to stop a wall-to-wall-speech recording — one whose 10th
+ * percentile is measured INSIDE speech — pushing the threshold up above real
+ * words. `SPEECH_LEVEL_GUARD_DB` now covers that case directly and correctly,
+ * by comparing the span against how loud this recording's speech actually is
+ * rather than against a fixed line.
+ */
 const SPEECH_THRESHOLD_MIN_DBFS = -50;
-const SPEECH_THRESHOLD_MAX_DBFS = -35;
+
+/**
+ * A span is never deleted when its peak comes within this many dB of the
+ * recording's own measured speech level (`speechLevelDbfs`).
+ *
+ * This is the backstop that lets the upper clamp go. It asks the question the
+ * fixed threshold could not: not "is this quiet in absolute terms" but "is this
+ * as loud as this speaker's speech". On the RED specimens the invented spans
+ * sit 15-30 dB under their clip's speech level, so 6 dB is a wide moat.
+ */
+const SPEECH_LEVEL_GUARD_DB = 6;
 
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
@@ -194,7 +219,9 @@ export type OutroGateReason =
   | "no-segments"
   | "segment-not-found"
   | "energy-present"
+  | "near-speech-level"
   | "not-clear-of-speech"
+  | "segments-stale"
   | "removed";
 
 export interface OutroRemoval {
@@ -223,6 +250,22 @@ export interface OutroGateOptions {
    * every span, so the gate refuses. Defaults to true.
    */
   segmentsMatchAudio?: boolean;
+  /**
+   * The EXACT text `segments` describe — the raw decode output, before any
+   * later stage rewrote it.
+   *
+   * Macroscope, PR #34: the span lookup counts words to find a candidate's
+   * position, so it is only sound while the text still matches the segment
+   * stream. `verifyLeadingPunctuation` can swap in a retry decode that adds
+   * leading words, `verifyTailForLongRecording` can merge in recovered tail
+   * words, and `trimEchoedTrailingPhrase` can remove some — each shifts every
+   * later offset, and the word-verification check catches most but not all
+   * misalignments. When this is given and differs from `text`, the gate
+   * refuses outright rather than measuring a span it cannot vouch for.
+   *
+   * Omitting it means the caller asserts the two are aligned.
+   */
+  segmentsText?: string;
 }
 
 /** `VOICELAYER_STT_OUTRO_GATE=1` opts in. Anything else stays off. */
@@ -245,10 +288,15 @@ export function normalizeOutroKey(text: string): string {
 
 function isKnownOutroKey(key: string): boolean {
   if (!key) return false;
-  const words = key.split(" ");
-  if (words.length > MAX_OUTRO_WORDS) return false;
+  // The lexicon is an exact whole-string match, so its own entries bound their
+  // length and the word cap must not be applied to them. Macroscope, PR #34:
+  // the cap ran FIRST, which made `subtitles by the amara org community` (six
+  // words) unreachable — a dead entry that read as covered.
   if (KNOWN_OUTRO_PHRASES.has(key)) return true;
   // A single invented token, or that token stuttered — "So, so, so, so, so."
+  // The cap belongs here, where the pattern is open-ended.
+  const words = key.split(" ");
+  if (words.length > MAX_OUTRO_WORDS) return false;
   const first = words[0];
   if (!first || !OUTRO_SINGLE_TOKENS.has(first)) return false;
   return words.every((word) => word === first);
@@ -316,8 +364,14 @@ export function findOutroCandidates(text: string): OutroCandidate[] {
     // rows end with a `okay?` he KEPT (`…4489474c`, `…1b8b103c`), and whisper's
     // invented closers are never questions. `!` goes with it for the same
     // reason — an exclaimed farewell is a spoken one.
-    if (/(?:…|\.{2,})$/u.test(sentence.text)) continue;
-    if (!/\.$/u.test(sentence.text)) continue;
+    // Exactly one `.`, and no `?` or `!` anywhere in the sentence.
+    //
+    // Macroscope, PR #34: `/\.$/` alone let `Thank you?.` and `Okay!.` through,
+    // because `normalizeOutroKey` strips punctuation before the lexicon sees
+    // the words. Mixed terminal punctuation is a spoken-question artefact, and
+    // the doc promises a single full stop, so require it literally.
+    if (/[?!]/u.test(sentence.text)) continue;
+    if (!/(?:^|[^.…])\.$/u.test(sentence.text)) continue;
 
     const key = normalizeOutroKey(sentence.text);
     if (!isKnownOutroKey(key)) continue;
@@ -351,6 +405,14 @@ export interface WavWindows {
   floorDbfs: number;
   /** Loudest a window may be and still count as silence HERE, in dBFS. */
   speechThresholdDbfs: number;
+  /**
+   * How loud this recording's speech actually is: the median of the loudest
+   * 20 % of windows. Used by the `SPEECH_LEVEL_GUARD_DB` backstop, and robust
+   * to both a clip that is nearly all speech and one that is nearly all
+   * silence — in the second case it is dragged down toward the noise, which
+   * makes the guard MORE protective, which is the safe direction.
+   */
+  speechLevelDbfs: number;
 }
 
 /**
@@ -419,6 +481,8 @@ export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
     durationSeconds: frameCount / info.sampleRate,
     floorDbfs,
     speechThresholdDbfs: speechThresholdFor(floorDbfs),
+    // Median of the top 20 %: the 90th percentile of all windows.
+    speechLevelDbfs: percentileDbfs(dbfs, 0.9),
   };
 }
 
@@ -458,10 +522,7 @@ function speechThresholdFor(floorDbfs: number): number {
   const relative = Number.isFinite(floorDbfs)
     ? floorDbfs + SPEECH_OVER_FLOOR_DB
     : SPEECH_THRESHOLD_MIN_DBFS;
-  return Math.min(
-    SPEECH_THRESHOLD_MAX_DBFS,
-    Math.max(SPEECH_THRESHOLD_MIN_DBFS, relative),
-  );
+  return Math.max(SPEECH_THRESHOLD_MIN_DBFS, relative);
 }
 
 function windowIndex(windows: WavWindows, seconds: number): number {
@@ -699,6 +760,15 @@ export function stripHallucinatedOutro(
     return { text, removed: [], reason: "no-segments" };
   }
 
+  // The span lookup is positional, so it is only valid while `text` is still
+  // the text these segments describe.
+  if (
+    options.segmentsText !== undefined &&
+    options.segmentsText !== text
+  ) {
+    return { text, removed: [], reason: "segments-stale" };
+  }
+
   // Every candidate is judged against the ORIGINAL text, because that is the
   // text `segments` describes: an excision would shift the word positions the
   // span lookup counts on. Approved cuts are then applied back-to-front, so
@@ -726,6 +796,17 @@ export function stripHallucinatedOutro(
     // around a real word, and a peak can be tripped by a lone click.
     if (measured.hasSpeech) {
       reason = "energy-present";
+      continue;
+    }
+    // The backstop that replaces the old fixed upper clamp: however the
+    // threshold landed, a span as loud as this recording's own speech is not
+    // silence. Protects the low-gain recording whose speech sits only a little
+    // over its noise floor.
+    if (
+      Number.isFinite(windows.speechLevelDbfs) &&
+      measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB
+    ) {
+      reason = "near-speech-level";
       continue;
     }
     // (c) The silence must extend clear of the span on both sides.
