@@ -79,6 +79,7 @@
 - `VOICELAYER_STT_AGGRESSIVE_FILLERS=1` opts into legacy removal of meaning-bearing English hedges/intensifiers; `QA_VOICE_STT_AGGRESSIVE_FILLERS` remains a legacy alias. Default cleanup preserves those words.
 - `QA_VOICE_TTS_VOICE`, `QA_VOICE_TTS_RATE`, `QA_VOICE_THINK_FILE`
 - `VOICELAYER_ALLOW_PUSH_TO_END=1` enables the MCP manual-stop mode; unset/other values keep it disabled.
+- `VOICELAYER_STT_SMART_CHUNKS=1` opts the ≥90 s saved-WAV decode path into silence-aware chunk boundaries (Silero pause map over the finished WAV, `src/stt-pause-map.ts`; cut at the end of the last pause in a 20-30 s window, else the fixed 30 s cut). Default off — unset, every boundary is exactly `WAV_CHUNK_SECONDS`.
 - `VOICELAYER_SOCKET_PATH` and `VOICELAYER_MCP_SOCKET_PATH` isolate dev VoiceBar/MCP sockets; legacy `QA_VOICE_SOCKET_PATH` and `QA_VOICE_MCP_SOCKET_PATH` remain supported.
 
 ## Dependencies (setup)
