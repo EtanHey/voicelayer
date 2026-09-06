@@ -41,6 +41,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
   if (!disabled?.has("punctuation")) {
     result = dropWhisperCommaBeforeNewline(result);
     result = unwrapCommaWrappedCommands(result);
+    result = dropWhisperDelimiterAfterNewline(result);
   }
 
   // Stage 7: Custom aliases (before tech vocab to allow user overrides)
@@ -427,15 +428,34 @@ function placeholderFor(replacement: string): string {
   return replacement;
 }
 
-const DELIMITER_AFTER_DICTATED_BREAK = new RegExp(
-  `([${NEWLINE_PLACEHOLDER}${PARAGRAPH_PLACEHOLDER}])(?:\\s*[,.])+`,
-  "g",
-);
-
 function restoreNewlinePlaceholders(text: string): string {
   return text
     .replaceAll(PARAGRAPH_PLACEHOLDER, "\n\n")
     .replaceAll(NEWLINE_PLACEHOLDER, "\n");
+}
+
+// AIDEV-NOTE: the mirror of dropWhisperCommaBeforeNewline, and it must run in
+// WORD space, before any substitution. An earlier version deleted any delimiter
+// sitting after a restored placeholder, which cannot tell whisper's leftover
+// comma from one Etan dictated: "foo new line comma bar" shipped as "Foo \n Bar"
+// — his comma gone, and the lead's ruling is that a comma survives wherever he
+// actually said "comma" (Macroscope, PR #32). Here every "," and "." still
+// belongs to whisper, because no command has produced one yet.
+function dropWhisperDelimiterAfterNewline(text: string): string {
+  return text.replace(
+    /\b(new paragraph|new line)((?:\s*[,.])+)/gi,
+    (match: string, phrase: string, delimiters: string, offset: number) => {
+      const end = offset + phrase.length;
+      if (
+        isSpokenAsNoun(text, offset, end) ||
+        isMetaMention(text, offset, end) ||
+        NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, offset + match.length))
+      ) {
+        return match;
+      }
+      return phrase;
+    },
+  );
 }
 
 function unwrapCommaWrappedCommands(text: string): string {
@@ -504,6 +524,8 @@ const MENTION_NOUN_CUES = new Set([
 const MENTION_CUE_DETERMINERS = new Set([
   "the", "a", "an", "this", "that", "these", "those", "my", "your", "our",
   "its", "their", "two", "three",
+  // Number formatting has already folded these by the time the maps run.
+  "2", "3",
 ]);
 /** Verbs that introduce a quoted token on their own — no determiner to look for. */
 const MENTION_VERB_CUES = new Set([
@@ -741,10 +763,6 @@ function applyPunctuation(text: string): string {
     },
   );
   result = spaceAfterClosingProseQuotes(result);
-  // A dictated line break may swallow the comma or period that follows it —
-  // nothing Etan said opens a sentence on one, so that delimiter is whisper's,
-  // left over from the comma-wrapped command. Only placeholders qualify.
-  result = result.replace(DELIMITER_AFTER_DICTATED_BREAK, "$1");
   return restoreNewlinePlaceholders(result);
 }
 

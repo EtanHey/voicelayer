@@ -279,6 +279,22 @@ describe("comma-wrapped spoken commands", () => {
       expect(applyRules("foo, new line,. bar")).toBe("Foo \n Bar");
     });
 
+    // Macroscope round 3. A WORD LOSS, and a direct violation of the lead's
+    // ruling: a comma survives wherever Etan actually said "comma".
+    it("keeps a mark the speaker dictated AFTER a line break", () => {
+      expect(applyRules("foo new line comma bar")).toBe("Foo \n, bar");
+      expect(applyRules("foo new line period bar")).toBe("Foo \n. Bar");
+    });
+
+    // Round 3: the determiner list is consulted after stage 4 has folded
+    // "two" into "2", so the numeric form has to be in it. Better than main,
+    // which returns "The 2 words. Are punctuation" and loses the word.
+    it("recognises a determiner that number formatting already folded", () => {
+      expect(applyRules("the two words period are punctuation")).toBe(
+        "The 2 words period are punctuation",
+      );
+    });
+
     it("still protects a real comma-separated enumeration", () => {
       expect(
         applyRules("The words colon, comma, and period are punctuation"),
