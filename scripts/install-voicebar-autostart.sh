@@ -29,15 +29,33 @@ PRESERVE_LOAD_STATE=0
 # literal characters and create a directory called "$HOME" next to whatever it
 # was launched from. So the template ships a placeholder and the absolute path is
 # baked in here, at install time, where $HOME is real.
+# Substitute by splitting, not by ${var//pat/rep}.
+#
+# bash 5.2 gave `&` a special meaning in the replacement half of ${var//pat/rep}
+# -- it expands to the matched text -- and bash 3.2, which is what macOS ships,
+# did not. Everything substituted below is either a filesystem path or an XML
+# entity, and both can contain `&`, so the pattern form silently produces
+# different output on the two shells. Ubuntu CI caught exactly that: `R&D` came
+# out as `R__VOICEBAR_LOG_DIR__amp;D`. Splitting on the needle has no replacement
+# string at all, so it behaves the same everywhere.
+str_replace_all() {
+  local needle="$2" replacement="$3" out="" rest="$1"
+  while [[ "$rest" == *"$needle"* ]]; do
+    out+="${rest%%"$needle"*}$replacement"
+    rest="${rest#*"$needle"}"
+  done
+  printf '%s' "$out$rest"
+}
+
 # The path is being spliced into an XML document, so it has to survive as XML.
 # `cp` never interpolated anything, so this failure mode is new: a $HOME holding
 # & < or > would emit a malformed plist and `plutil -lint` would abort the
 # install outright.
 xml_escape() {
   local value="$1"
-  value="${value//&/&amp;}" # must come first, or it re-escapes the ones below
-  value="${value//</&lt;}"
-  value="${value//>/&gt;}"
+  value="$(str_replace_all "$value" '&' '&amp;')" # first, or it re-escapes the rest
+  value="$(str_replace_all "$value" '<' '&lt;')"
+  value="$(str_replace_all "$value" '>' '&gt;')"
   printf '%s' "$value"
 }
 
@@ -45,7 +63,8 @@ rendered_plist() {
   local template escaped_log_dir
   template="$(cat "$PLIST_SRC")"
   escaped_log_dir="$(xml_escape "$LOG_DIR")"
-  printf '%s\n' "${template//$LOG_DIR_PLACEHOLDER/$escaped_log_dir}"
+  str_replace_all "$template" "$LOG_DIR_PLACEHOLDER" "$escaped_log_dir"
+  printf '\n'
 }
 
 # These files are VoiceBar's own stdout/stderr. They used to sit in /tmp at a

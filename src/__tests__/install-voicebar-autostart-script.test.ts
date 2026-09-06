@@ -420,6 +420,10 @@ describe("install-voicebar-autostart.sh log paths", () => {
     expect(plist).toContain(
       `<string>${hostileHome.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}/Library/Logs/voicelayer/voicebar-err.log</string>`,
     );
+    // bash 5.2 expands a bare `&` in a ${var//pat/rep} replacement to the matched
+    // text, which spliced the placeholder back INTO the path on Ubuntu CI while
+    // macOS bash 3.2 rendered it correctly. Nothing may survive substitution.
+    expect(plist).not.toContain("__VOICEBAR_LOG_DIR__");
     // The log directory is still created at the real, unescaped path.
     expect(
       statSync(join(hostileHome, "Library", "Logs", "voicelayer")).mode & 0o777,
