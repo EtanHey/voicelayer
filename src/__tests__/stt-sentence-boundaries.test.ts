@@ -15,6 +15,7 @@ import {
   pauseStartsAt,
   pauseSupportedWordIndices,
   continuesSameClause,
+  endsWithAbbreviation,
   smartBoundariesEnabled,
   speechRunsWithin,
   WORD_ALIGNMENT_TOLERANCE,
@@ -461,9 +462,10 @@ describe("applyPauseAwareBoundaries", () => {
     expect(
       applyPauseAwareBoundaries("Alpha bravo.", [], PAUSES).skippedReason,
     ).toBe("no segments");
+    // An empty pause map is NOT a skip any more — see "no pause map" above.
     expect(
       applyPauseAwareBoundaries("Alpha bravo.", SEGMENTS, []).skippedReason,
-    ).toBe("no pause map");
+    ).toBeUndefined();
     const unrelated = applyPauseAwareBoundaries(
       "Totally different text here.",
       SEGMENTS,
@@ -536,6 +538,113 @@ describe("word preservation (property)", () => {
   });
 });
 
+describe("abbreviations are never demoted", () => {
+  const segments: TranscriptSegment[] = [
+    {
+      text: "alpha bravo dr smith echo foxtrot golf hotel",
+      startS: 0,
+      endS: 8,
+    },
+    { text: "india juliett kilo lima mike", startS: 9, endS: 14 },
+  ];
+  const pauses: PauseSpan[] = [
+    { startS: 8, endS: 9 },
+    { startS: 14, endS: 15 },
+  ];
+
+  test("endsWithAbbreviation recognises the shared rules-engine set", () => {
+    for (const text of ["Dr.", "Mr.", "e.g.", "vs.", "Ph.D.", "etc."]) {
+      expect(endsWithAbbreviation(text, text.length)).toBe(true);
+    }
+  });
+
+  test("it recognises dotted initialisms like U.S.", () => {
+    expect(endsWithAbbreviation("in the U.S.", "in the U.S.".length)).toBe(true);
+    expect(endsWithAbbreviation("a.m.", "a.m.".length)).toBe(true);
+  });
+
+  test("an ordinary word ending a sentence is not an abbreviation", () => {
+    expect(endsWithAbbreviation("the words.", "the words.".length)).toBe(false);
+    expect(endsWithAbbreviation("", 0)).toBe(false);
+  });
+
+  test("'Dr. Smith' keeps its period even with no pause under it", () => {
+    // Demoting it would corrupt the word into "Dr, Smith".
+    const text =
+      "Alpha bravo Dr. Smith echo foxtrot golf hotel india juliett kilo lima mike.";
+    const result = applyPauseAwareBoundaries(text, segments, pauses);
+    expect(result.text).toContain("Dr. Smith");
+    expect(result.demotions).toEqual([]);
+  });
+
+  test("a question mark is still judged — only periods can be abbreviations", () => {
+    const withHedge: TranscriptSegment[] = [
+      { text: "alpha bravo charlie i mean echo golf hotel", startS: 0, endS: 8 },
+      segments[1],
+    ];
+    const result = applyPauseAwareBoundaries(
+      "Alpha bravo charlie? I mean echo golf hotel india juliett kilo lima mike.",
+      withHedge,
+      pauses,
+    );
+    expect(result.demotions).toHaveLength(1);
+  });
+});
+
+describe("no pause map (Rule B arm (ii) alone)", () => {
+  const segments: TranscriptSegment[] = [
+    { text: "alpha bravo charlie i guess foxtrot golf hotel", startS: 0, endS: 8 },
+    { text: "india juliett kilo lima mike", startS: 9, endS: 14 },
+  ];
+
+  test("it still judges, instead of skipping", () => {
+    // Macroscope round 1: an empty pause map used to skip the stage entirely.
+    // Rule B's second arm needs no audio, so it must still run.
+    const result = applyPauseAwareBoundaries(
+      "Alpha bravo charlie. I guess foxtrot golf hotel india juliett kilo lima mike.",
+      segments,
+      [],
+    );
+    expect(result.skippedReason).toBeUndefined();
+    expect(result.text).toContain("charlie, I guess");
+  });
+
+  test("a mark followed by a new subject still survives with no pauses", () => {
+    const fresh: TranscriptSegment[] = [
+      { text: "alpha bravo charlie delta echo foxtrot golf hotel", startS: 0, endS: 8 },
+      segments[1],
+    ];
+    const text =
+      "Alpha bravo charlie. Delta echo foxtrot golf hotel india juliett kilo lima mike.";
+    expect(applyPauseAwareBoundaries(text, fresh, []).text).toBe(text);
+  });
+});
+
+describe("decomposed Unicode", () => {
+  test("a combining mark does not split a word in two", () => {
+    // "café" as c-a-f-e + U+0301. Before the fix the tokenizer cut after "cafe".
+    const decomposed = "cafe\u0301";
+    const segments: TranscriptSegment[] = [
+      {
+        text: `alpha bravo ${decomposed} i guess foxtrot golf hotel`,
+        startS: 0,
+        endS: 8,
+      },
+      { text: "india juliett kilo lima mike", startS: 9, endS: 14 },
+    ];
+    const result = applyPauseAwareBoundaries(
+      `Alpha bravo ${decomposed}. I guess foxtrot golf hotel india juliett kilo lima mike.`,
+      segments,
+      [
+        { startS: 8, endS: 9 },
+        { startS: 14, endS: 15 },
+      ],
+    );
+    expect(result.skippedReason).toBeUndefined();
+    expect(result.demotions[0]?.word).toBe(decomposed);
+  });
+});
+
 describe("continuesSameClause (Rule B)", () => {
   const carriesOn: string[][] = [
     ["i", "guess", "like"],
@@ -579,6 +688,17 @@ describe("continuesSameClause (Rule B)", () => {
   test("case and curly apostrophes do not matter", () => {
     expect(continuesSameClause(["I", "Guess"], 0)).toBe(true);
   });
+});
+
+describe("known limitations", () => {
+  // Macroscope round 1, finding 7. The LCS backtrack can anchor a position to a
+  // different occurrence of a repeated word. The alignment stays monotonic, so
+  // the effect is a word or two of timing drift that WORD_ALIGNMENT_TOLERANCE
+  // already absorbs — documented rather than fixed until a real transcript
+  // breaks on it.
+  test.todo(
+    "alignWords should anchor a repeated word to its nearest occurrence",
+  );
 });
 
 describe("smartBoundariesEnabled", () => {

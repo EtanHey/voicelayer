@@ -41,6 +41,7 @@
  */
 
 import type { PauseSpan } from "./stt-pause-map";
+import { TERMINAL_PERIOD_ABBREVIATIONS } from "./rules-engine";
 
 /** One whisper segment: its text and where it sits in the recording. */
 export interface TranscriptSegment {
@@ -167,7 +168,38 @@ const CONTINUATION_OPENER_WORDS = new Set([
 /** Terminal marks a sentence can end on. */
 const TERMINAL_MARKS = new Set([".", "?", "!"]);
 
-const WORD_PATTERN = /[\p{L}\p{N}'’]+/gu;
+/**
+ * The token ending at `end`, including any internal periods — "e.g.", "U.S.",
+ * "Dr." — so an abbreviation can be recognised. `tokenizeWords` splits on the
+ * periods, so the plain word before the mark is not enough on its own.
+ */
+function abbreviationCandidate(text: string, end: number): string {
+  const match = /[\p{L}\p{N}.]+$/u.exec(text.slice(0, end));
+  if (!match) return "";
+  return match[0].replace(/\.+$/u, "").normalize("NFC").toLowerCase();
+}
+
+/**
+ * True when the period at `end` is part of an abbreviation rather than the end
+ * of a sentence. Demoting "Dr." to "Dr," would corrupt the word itself, so these
+ * are never touched (Macroscope round 1). The set is shared with
+ * `src/rules-engine.ts` so the two stages cannot drift apart.
+ */
+export function endsWithAbbreviation(text: string, end: number): boolean {
+  const candidate = abbreviationCandidate(text, end);
+  if (!candidate) return false;
+  if (TERMINAL_PERIOD_ABBREVIATIONS.has(candidate)) return true;
+  // Dotted initialisms: U.S., a.m., Ph.D already covered above.
+  return /^(?:\p{L}\.)+\p{L}$/u.test(candidate);
+}
+
+/**
+ * `\p{M}` keeps a DECOMPOSED grapheme together: "é" written as e + U+0301 would
+ * otherwise split into two words. Matching the marks instead of NFC-normalising
+ * the whole input means the text we return is byte-identical to the text we were
+ * given apart from the marks we deliberately demote (Macroscope round 1).
+ */
+const WORD_PATTERN = /[\p{L}\p{N}\p{M}'’]+/gu;
 
 interface TextWord {
   value: string;
@@ -176,7 +208,9 @@ interface TextWord {
 }
 
 function normalizeWord(word: string): string {
-  return word.toLowerCase().replace(/[’]/g, "'");
+  // NFC first: a decomposed "é" is L + combining mark, and the combining mark
+  // is not in WORD_PATTERN, so the word would otherwise split in two.
+  return word.normalize("NFC").toLowerCase().replace(/[’]/g, "'");
 }
 
 function tokenizeWords(text: string): TextWord[] {
@@ -351,6 +385,15 @@ export function pauseSupportedWordIndices(
  * always the raw one. Only positions that actually match are returned; a final
  * word with no match is one we have no timing for, and the caller leaves its
  * boundary alone.
+ *
+ * AIDEV-NOTE: known limitation (Macroscope round 1, finding 7). With a repeated
+ * word the LCS backtrack can anchor a position to a different occurrence than
+ * the one a human would pick. The alignment stays MONOTONIC either way, so a
+ * mis-anchor moves a mark's timing by a word or two — which the +/-1 word
+ * tolerance already absorbs — rather than mixing up the order. Fixing it
+ * properly needs a positional tie-break through the whole DP table; it is not
+ * worth that until a real transcript is seen to break on it. See the `.todo`
+ * case in `stt-sentence-boundaries.test.ts`.
  */
 function alignWords(
   finalWords: string[],
@@ -438,6 +481,13 @@ export interface PauseAwareBoundaryOptions {
  * Returns the input verbatim (with `skippedReason`) whenever the evidence is not
  * good enough to judge, which is the documented "leave today's behaviour alone"
  * answer.
+ *
+ * An EMPTY `pauses` is not one of those cases. Under Rule B arm (ii) is
+ * audio-independent, so with no pause map every mark is judged on the clause and
+ * on what follows it alone: nothing is pause-supported, so a mark survives
+ * exactly when its clause is complete and the next words start a new subject.
+ * That is the documented behaviour for a recording whose VAD pass failed or was
+ * aborted (Macroscope round 1).
  */
 export function applyPauseAwareBoundaries(
   text: string,
@@ -449,10 +499,6 @@ export function applyPauseAwareBoundaries(
   if (segments.length === 0) {
     return { text, demotions: [], skippedReason: "no segments" };
   }
-  if (pauses.length === 0) {
-    return { text, demotions: [], skippedReason: "no pause map" };
-  }
-
   const finalWords = tokenizeWords(text);
   if (finalWords.length === 0) {
     return { text, demotions: [], skippedReason: "no words" };
@@ -489,6 +535,8 @@ export function applyPauseAwareBoundaries(
     if (!match) continue;
     const [, mark, gap] = match;
     if (!TERMINAL_MARKS.has(mark)) continue;
+    // "Dr. Smith", "e.g.", "vs." — demoting these would corrupt the word.
+    if (mark === "." && endsWithAbbreviation(text, word.end + 1)) continue;
 
     const rawIndex = alignment.get(index);
     if (rawIndex === undefined) continue; // no timing for this word — leave it.

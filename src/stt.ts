@@ -27,6 +27,7 @@ import {
   getLanguageModeFromEnv,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import { createHash } from "crypto";
 import {
   chooseChunkEnd,
   computePauseMap,
@@ -54,10 +55,20 @@ export interface STTResult extends TranscriptionResult {
   /**
    * Whisper segment timestamps, present only under
    * `VOICELAYER_STT_SMART_BOUNDARIES=1` on the single-shot whisper-server path.
-   * The chunked path does not set them: each chunk's times are chunk-relative,
-   * and stitching them is lane C1's seam, not this one's.
+   * The chunked path (>= 90 s) does NOT set them, so those recordings get no
+   * boundary validation: each chunk's times are chunk-relative, and stitching
+   * them across C1's overlap seam is a separate change. Deliberate and
+   * documented in CLAUDE.details.md (Macroscope round 1, finding 5).
    */
   segments?: TranscriptSegment[];
+  /**
+   * sha256 of the EXACT audio `segments` were decoded from. The boundary stage
+   * refuses to use segments whose audio does not match the WAV it computes the
+   * pause map over, so a retranscribe that swapped the file underneath cannot
+   * silently pair one decode's segments with another's timings (Macroscope
+   * round 1).
+   */
+  segmentsAudioSha256?: string;
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
@@ -1676,7 +1687,14 @@ export class WhisperServerBackend implements STTBackend {
         text: cleanedText,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
-        ...(segments && segments.length > 0 ? { segments } : {}),
+        ...(segments && segments.length > 0
+          ? {
+              segments,
+              segmentsAudioSha256: createHash("sha256")
+                .update(wavData)
+                .digest("hex"),
+            }
+          : {}),
       };
     } catch (err) {
       console.error(

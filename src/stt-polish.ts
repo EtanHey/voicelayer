@@ -1518,11 +1518,14 @@ export async function polishTranscriptionText(
   // a period survives only where a pause AND a complete clause coincide.
   // Default OFF, and a no-op without the audio evidence to judge with.
   const boundaryContext = input.boundaryContext;
+  // An EMPTY pause map does NOT disable the stage: Rule B's second arm (the
+  // clause and what follows it) is audio-independent, so a recording whose VAD
+  // pass failed or was aborted still gets judged on that arm alone. Only a
+  // missing segment list leaves nothing to align against (Macroscope round 1).
   const boundariesOn =
     smartBoundariesEnabled(env) &&
     boundaryContext !== undefined &&
-    boundaryContext.segments.length > 0 &&
-    boundaryContext.pauses.length > 0;
+    boundaryContext.segments.length > 0;
 
   const validateBoundaries = (
     text: string,
@@ -1553,14 +1556,18 @@ export async function polishTranscriptionText(
   ): STTPolishResult => {
     const polished = status === "applied";
     const validated = validateBoundaries(text);
+    // Shadow mode observes and never changes what Etan gets: the demotions are
+    // recorded on the row, the returned text stays exactly as it was
+    // (Macroscope round 1).
+    const finalText = mode === "shadow" ? text : validated.text;
     return {
       inputText: input.cleanedText,
-      text: validated.text,
+      text: finalText,
       polishedText,
       mode,
       status,
       surface,
-      changed: validated.text !== input.cleanedText,
+      changed: finalText !== input.cleanedText,
       retried,
       latencyMs: performance.now() - startedAt,
       polished,
