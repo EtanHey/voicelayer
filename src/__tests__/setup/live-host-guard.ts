@@ -82,15 +82,19 @@ function micTouchingDescribe(label: string, body: () => void): void {
   describe.skip(`${label} — SKIPPED (${reason})`, body);
 }
 
-export const describeMicTouching: typeof describe = Object.assign(
-  micTouchingDescribe,
-  {
-    skip: describe.skip,
-    only: describe.only,
-    todo: describe.todo,
-    if: describe.if,
-    skipIf: describe.skipIf,
-    todoIf: describe.todoIf,
-    each: describe.each,
-  },
-) as unknown as typeof describe;
+// AIDEV-NOTE: forwarded LAZILY, via getters. `describe.only` is an accessor that
+// THROWS under CI ("`.only` is disabled in CI environments"), so eagerly reading
+// it into an Object.assign literal blew up at module load on every guarded file
+// — 15 CI failures on the first push of this branch, invisible locally until
+// `CI=true bun test`. A getter only touches the property if a suite really uses it.
+export const describeMicTouching: typeof describe = (() => {
+  const forwarded = ["skip", "only", "todo", "if", "skipIf", "todoIf", "each"];
+  for (const key of forwarded) {
+    Object.defineProperty(micTouchingDescribe, key, {
+      configurable: true,
+      enumerable: true,
+      get: () => (describe as unknown as Record<string, unknown>)[key],
+    });
+  }
+  return micTouchingDescribe as unknown as typeof describe;
+})();
