@@ -231,6 +231,14 @@ const NOUN_FOLLOWERS_AFTER = new Set([
 // operands — a number or a code identifier on both sides.
 const ARITHMETIC_ONLY = new Set(["plus", "minus"]);
 
+// Binary operators: with an operand on both sides there is no noun reading left
+// to protect, so the operand test outranks the determiner one. "a plus b" is
+// `a + b`, not the article "a" shielding the noun "plus". "hash", "percent" and
+// the newline commands are absent on purpose — they are not infix operators.
+const BINARY_OPERATOR_COMMANDS = new Set([
+  "colon", "dash", "arrow", "equals", "plus", "minus", "slash", "pipe",
+]);
+
 function wordBefore(text: string, index: number): string {
   const match = /([\p{L}\p{N}][\p{L}\p{N}'’]*)\s*$/u.exec(text.slice(0, index));
   return match ? match[1].toLowerCase() : "";
@@ -255,12 +263,18 @@ function isOperandToken(token: string): boolean {
 function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
+  const command = text.slice(start, end).trim().toLowerCase();
+
+  // Operand context first: "a plus b" and "a equals b" are code, and the "a"
+  // is the left operand, not a determiner shielding a noun.
+  if (BINARY_OPERATOR_COMMANDS.has(command)) {
+    if (isOperandToken(before) && isOperandToken(after)) return false;
+    // Arithmetic needs that operand evidence; without it the word is prose.
+    if (ARITHMETIC_ONLY.has(command)) return true;
+  }
+
   if (NOUN_DETERMINERS_BEFORE.has(before)) return true;
   if (NOUN_FOLLOWERS_AFTER.has(after)) return true;
-  const command = text.slice(start, end).trim().toLowerCase();
-  if (ARITHMETIC_ONLY.has(command)) {
-    return !isOperandToken(before) || !isOperandToken(after);
-  }
   return false;
 }
 
@@ -339,44 +353,39 @@ function replaceUnlessSpokenAsNoun(
   text: string,
   pattern: RegExp,
   replacement: string,
-  onFire: () => void,
 ): string {
   return text.replace(pattern, (match: string, offset: number) => {
     if (isSpokenAsNoun(text, offset, offset + match.length)) {
       return match;
     }
-    onFire();
     return ` ${replacement}`;
   });
 }
 
 function applyPunctuation(text: string): string {
   let result = text;
-  let commandFired = false;
 
   for (const [pattern, replacement] of ALWAYS_PUNCTUATION_MAP) {
-    result = result.replace(pattern, () => {
-      commandFired = true;
-      return ` ${replacement}`;
-    });
+    result = result.replace(pattern, () => ` ${replacement}`);
   }
 
   for (const [pattern, replacement] of AMBIGUOUS_PUNCTUATION_MAP) {
-    result = replaceUnlessSpokenAsNoun(result, pattern, replacement, () => {
-      commandFired = true;
-    });
+    result = replaceUnlessSpokenAsNoun(result, pattern, replacement);
   }
 
   // Last, and only in code-shaped speech: "space" is the sole command that
   // removes a word instead of swapping one for a symbol.
-  if (commandFired || isCodeShaped(text)) {
+  //
+  // AIDEV-NOTE: the gate is the SHAPE of the utterance, never the fact that
+  // some other command fired. Arming it on "a command fired somewhere" made
+  // every sentence ending in a dictated "period" a candidate for word loss:
+  // "I saw outer space period" -> "I saw outer." (Macroscope, PR #17).
+  // The shape is read off `result` rather than `text` so the symbols the maps
+  // above just produced count — "foo space bar open paren close paren" is code
+  // only once "open paren" has become "(".
+  if (isCodeShaped(result)) {
     const [spacePattern, spaceReplacement] = SPACE_COMMAND;
-    result = replaceUnlessSpokenAsNoun(
-      result,
-      spacePattern,
-      spaceReplacement,
-      () => {},
-    );
+    result = replaceUnlessSpokenAsNoun(result, spacePattern, spaceReplacement);
   }
   // Clean up space before punctuation that should attach left
   result = result.replace(
