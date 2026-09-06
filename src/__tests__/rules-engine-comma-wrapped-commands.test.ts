@@ -133,30 +133,30 @@ describe("comma-wrapped spoken commands", () => {
   // dictated 'comma' (its own command token)."
   describe("whisper's comma before a newline command", () => {
     it("is dropped when whisper supplied both delimiters", () => {
-      expect(applyRules("update, new line, hey")).toBe("Update \n Hey");
+      expect(applyRules("update, new line, hey")).toBe("Update\nHey");
     });
 
     it("is dropped when whisper supplied only the leading one", () => {
       // Neither lane specimen covers this shape, but the ruling does.
       expect(applyRules("Here are a few things, new line first of all")).toBe(
-        "Here are a few things \n First of all",
+        "Here are a few things\nFirst of all",
       );
       expect(applyRules("hey Sarah, new line and then next")).toBe(
-        "Hey Sarah \n And then next",
+        "Hey Sarah\nAnd then next",
       );
       expect(
         applyRules("update, new paragraph here are my priorities"),
-      ).toBe("Update \n\n Here are my priorities");
+      ).toBe("Update\n\nHere are my priorities");
     });
 
     it("survives when Etan actually dictated the word 'comma'", () => {
       // The comma command is still the WORD "comma" when the drop pass runs,
       // so it cannot be matched — this is why that pass runs before the unwrap.
       expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
-        "Hey, Sarah, \n\n Here are",
+        "Hey, Sarah,\n\nHere are",
       );
       expect(applyRules("hey Sarah, comma, new line and then")).toBe(
-        "Hey Sarah, \n And then",
+        "Hey Sarah,\nAnd then",
       );
     });
 
@@ -261,7 +261,7 @@ describe("comma-wrapped spoken commands", () => {
     it("still lets a DICTATED break swallow the delimiter", () => {
       // The other side of the same rule — this is the lane's whole point.
       expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
-        "Hey, Sarah, \n\n Here are",
+        "Hey, Sarah,\n\nHere are",
       );
     });
 
@@ -269,21 +269,21 @@ describe("comma-wrapped spoken commands", () => {
       // "X and Y" is two dictated commands, not a list naming them. An
       // enumeration needs a comma.
       expect(applyRules("update colon and new line details")).toBe(
-        "Update: and \n Details",
+        "Update: and\nDetails",
       );
     });
 
     it("drops every whisper delimiter after a dictated break, not just one", () => {
       // "foo, new line,. bar" reaches the rule with both a comma and a period
       // trailing the break; dropping one left "Foo \n. Bar".
-      expect(applyRules("foo, new line,. bar")).toBe("Foo \n Bar");
+      expect(applyRules("foo, new line,. bar")).toBe("Foo\nBar");
     });
 
     // Macroscope round 3. A WORD LOSS, and a direct violation of the lead's
     // ruling: a comma survives wherever Etan actually said "comma".
     it("keeps a mark the speaker dictated AFTER a line break", () => {
-      expect(applyRules("foo new line comma bar")).toBe("Foo \n, bar");
-      expect(applyRules("foo new line period bar")).toBe("Foo \n. Bar");
+      expect(applyRules("foo new line comma bar")).toBe("Foo\n, bar");
+      expect(applyRules("foo new line period bar")).toBe("Foo\n. Bar");
     });
 
     // Round 3: the determiner list is consulted after stage 4 has folded
