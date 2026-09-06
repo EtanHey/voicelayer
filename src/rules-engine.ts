@@ -60,6 +60,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
 
   // Stage 2: Spoken punctuation
   if (!disabled?.has("punctuation")) {
+    result = dropWhisperCommaBeforeNewline(result);
     result = unwrapCommaWrappedCommands(result);
     result = applyPunctuation(result);
     result = normalizePunctuationClusters(result);
@@ -294,6 +295,56 @@ const COMMA_WRAPPED_COMMAND_PATTERN = new RegExp(
     .join("|")})\\s*[,.]`,
   "gi",
 );
+
+const COMMAND_TRAILING_PATTERN = new RegExp(
+  `(?:^|[^\\p{L}\\p{N}])(?:${[...COMMAND_REPLACEMENTS.keys()]
+    .sort((a, b) => b.length - a.length)
+    .join("|")})\\s*$`,
+  "iu",
+);
+
+/** True when `text` ends with a spoken command, so a comma after it is that command's delimiter. */
+function endsWithSpokenCommand(text: string): boolean {
+  return COMMAND_TRAILING_PATTERN.test(text);
+}
+
+// Lead's ruling (2026-09-06): "DROP the comma whisper inserted immediately
+// before a newline/paragraph command — Etan said 'update new line', not 'update
+// comma new line'; a comma survives only when he actually dictated 'comma'".
+//
+// unwrapCommaWrappedCommands already drops it wherever whisper supplied BOTH
+// delimiters. This covers the rest — a leading comma with no trailing one, as in
+// "Here are a few things, new line first of all", which kept the comma.
+//
+// AIDEV-NOTE: order is load-bearing. This runs BEFORE the unwrap and before any
+// substitution, while a comma Etan actually dictated is still the *word*
+// "comma" and cannot be matched here. Run it afterwards and it eats the real
+// comma in "hey, Sarah, comma, new paragraph" — the v2.2.12 specimen.
+//
+// The command still has to fire: isSpokenAsNoun is consulted on the text as it
+// will look with the comma gone, so prose ("if you want a break, new line is
+// what you need") keeps both its comma and its words.
+function dropWhisperCommaBeforeNewline(text: string): string {
+  return text.replace(
+    /,(\s*)(new paragraph|new line)\b/gi,
+    (match: string, gap: string, phrase: string, offset: number) => {
+      const head = text.slice(0, offset);
+      // This comma is the RIGHT delimiter of the command before it — in
+      // "week. Colon, new line" it is what lets the unwrap see ". Colon," and
+      // drop whisper's stray period. Taking it here leaves "week.:".
+      if (endsWithSpokenCommand(head)) {
+        return match;
+      }
+      const tail = text.slice(offset + match.length);
+      const candidate = `${head} ${gap}${phrase}${tail}`;
+      const start = head.length + 1 + gap.length;
+      if (isSpokenAsNoun(candidate, start, start + phrase.length)) {
+        return match;
+      }
+      return ` ${gap}${phrase}`;
+    },
+  );
+}
 
 function unwrapCommaWrappedCommands(text: string): string {
   return text.replace(COMMA_WRAPPED_COMMAND_PATTERN, (match, phrase: string) => {

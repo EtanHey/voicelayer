@@ -110,12 +110,10 @@ describe("comma-wrapped spoken commands", () => {
       const cleaned = applyRules(RUN_SPECIMEN);
       // "new line" + "new line" + "new paragraph" = 4 newlines, in that order.
       expect(cleaned.match(/\n/g) ?? []).toHaveLength(4);
-      // AIDEV-QUESTION: whether whisper's comma after "things" survives is an
-      // open call with the lead — the specimen above wants it gone after
-      // "update", this row reads better with it kept. The assertion accepts
-      // either; what is NOT negotiable is that none of the three collapse.
+      // Lead's ruling: whisper's comma before a newline command is dropped —
+      // Etan said "things new line", not "things comma new line".
       expect(cleaned).toMatch(
-        /^Here are a few things[,:]?\s*\n\s*\n\s*\n\s*\n\s*First of all I went there/,
+        /^Here are a few things\s*\n\s*\n\s*\n\s*\n\s*First of all I went there/,
       );
     });
 
@@ -126,6 +124,51 @@ describe("comma-wrapped spoken commands", () => {
         (w) => !commands.has(w) && !cleaned.includes(w),
       );
       expect(lost).toEqual([]);
+    });
+  });
+
+  // Lead's ruling (2026-09-06), verbatim: "DROP the comma whisper inserted
+  // immediately before a newline/paragraph command — Etan said 'update new
+  // line', not 'update comma new line'; a comma survives only when he actually
+  // dictated 'comma' (its own command token)."
+  describe("whisper's comma before a newline command", () => {
+    it("is dropped when whisper supplied both delimiters", () => {
+      expect(applyRules("update, new line, hey")).toBe("Update \n Hey");
+    });
+
+    it("is dropped when whisper supplied only the leading one", () => {
+      // Neither lane specimen covers this shape, but the ruling does.
+      expect(applyRules("Here are a few things, new line first of all")).toBe(
+        "Here are a few things \n First of all",
+      );
+      expect(applyRules("hey Sarah, new line and then next")).toBe(
+        "Hey Sarah \n And then next",
+      );
+      expect(
+        applyRules("update, new paragraph here are my priorities"),
+      ).toBe("Update \n\n Here are my priorities");
+    });
+
+    it("survives when Etan actually dictated the word 'comma'", () => {
+      // The comma command is still the WORD "comma" when the drop pass runs,
+      // so it cannot be matched — this is why that pass runs before the unwrap.
+      expect(applyRules("hey, Sarah, comma, new paragraph. Here are")).toBe(
+        "Hey, Sarah, \n\n Here are",
+      );
+      expect(applyRules("hey Sarah, comma, new line and then")).toBe(
+        "Hey Sarah, \n And then",
+      );
+    });
+
+    it("survives in prose, where the command never fires", () => {
+      // "is" marks the noun reading, so "new line" stays a word — and the
+      // comma that precedes it stays a comma.
+      const cleaned = applyRules(
+        "if you want a break, new line is what you need",
+      );
+      expect(cleaned).toContain(",");
+      expect(cleaned.toLowerCase()).toContain("new line is");
+      expect(cleaned).not.toContain("\n");
     });
   });
 
