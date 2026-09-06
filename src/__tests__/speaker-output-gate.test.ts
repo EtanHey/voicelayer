@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as handlers from "../handlers";
 import * as input from "../input";
@@ -7,8 +8,8 @@ import * as socketClient from "../socket-client";
 import * as tts from "../tts";
 import * as launcher from "../voice-bar-launcher";
 
-const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-speaker-gate-${process.pid}.json`;
-const TEST_REPLAY_FILE = `/tmp/voicelayer-speaker-gate-replay-${process.pid}.mp3`;
+const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-speaker-gate-${process.pid}.json`;
+const TEST_REPLAY_FILE = `${TEST_TMP}/voicelayer-speaker-gate-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 async function waitFor(

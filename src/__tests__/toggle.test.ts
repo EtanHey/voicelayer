@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, writeFileSync, unlinkSync } from "fs";
 import * as actualPaths from "../paths";
 import { isTTSDisabled } from "../tts";
 
-const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-toggle-${process.pid}-tts-disabled`;
-const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-toggle-${process.pid}-mic-disabled`;
+const TEST_TTS_DISABLED_FILE = `${TEST_TMP}/voicelayer-toggle-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `${TEST_TMP}/voicelayer-toggle-${process.pid}-mic-disabled`;
 
 mock.module("../paths", () => ({
   ...actualPaths,

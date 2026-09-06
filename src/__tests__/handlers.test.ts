@@ -5,15 +5,12 @@
  * directly, without going through the MCP server transport.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  spyOn,
-  beforeEach,
-  afterEach,
-  mock,
-} from "bun:test";
+import { it, expect, spyOn, beforeEach, afterEach, mock } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, unlinkSync, readFileSync } from "fs";
 import * as socketClient from "../socket-client";
 import * as voiceBarLauncher from "../voice-bar-launcher";
@@ -26,9 +23,9 @@ import {
   handleVoiceSpeak,
 } from "../handlers";
 
-const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-tts-disabled`;
-const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-mic-disabled`;
-const TEST_VOICE_DISABLED_FILE = `/tmp/voicelayer-handlers-${process.pid}-voice-disabled`;
+const TEST_TTS_DISABLED_FILE = `${TEST_TMP}/voicelayer-handlers-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `${TEST_TMP}/voicelayer-handlers-${process.pid}-mic-disabled`;
+const TEST_VOICE_DISABLED_FILE = `${TEST_TMP}/voicelayer-handlers-${process.pid}-voice-disabled`;
 
 mock.module("../paths", () => ({
   ...actualPaths,
@@ -54,9 +51,12 @@ function cleanHistory() {
   try {
     if (existsSync(TTS_HISTORY_FILE)) unlinkSync(TTS_HISTORY_FILE);
   } catch {}
+  // AIDEV-NOTE: R-014 — this loop used to hardcode `${TEST_TMP}/voicelayer-history-N.mp3`
+  // and so deleted the RESIDENT VoiceBar's replay ring buffer on every run.
+  // Go through paths.ts so the preload's redirect applies.
   for (let i = 0; i < 20; i++) {
     try {
-      unlinkSync(`/tmp/voicelayer-history-${i}.mp3`);
+      unlinkSync(actualPaths.ttsHistoryFilePath(i));
     } catch {}
   }
 }
@@ -167,7 +167,7 @@ describe("handleReplay", () => {
 
 describe("handleThink", () => {
   const THINK_FILE =
-    process.env.QA_VOICE_THINK_FILE || "/tmp/voicelayer-thinking.md";
+    process.env.QA_VOICE_THINK_FILE || `${TEST_TMP}/voicelayer-thinking.md`;
 
   afterEach(() => {
     try {

@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, rmSync, mkdirSync } from "fs";
 import { join } from "path";
 
 // Override HOME to use temp dir for tests
-const TEST_HOME = "/tmp/voicelayer-test-home";
+const TEST_HOME = `${TEST_TMP}/voicelayer-test-home`;
 process.env.HOME = TEST_HOME;
 
 import {

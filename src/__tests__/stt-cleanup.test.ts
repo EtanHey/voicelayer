@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { mkdtempSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -419,7 +420,7 @@ describe("stt-cleanup", () => {
   });
 
   it("loads prompt terms from the VoiceBar vocabulary snapshot", async () => {
-    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-prompt-test.json";
+    const snapshotPath = `${TEST_TMP}/voicelayer-stt-vocabulary-prompt-test.json`;
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -450,7 +451,7 @@ describe("stt-cleanup", () => {
   });
 
   it("allows callers to disable the VoiceBar vocabulary snapshot", async () => {
-    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-disabled-test.json";
+    const snapshotPath = `${TEST_TMP}/voicelayer-stt-vocabulary-disabled-test.json`;
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -476,7 +477,7 @@ describe("stt-cleanup", () => {
   });
 
   it("applies aliases from the VoiceBar vocabulary snapshot", async () => {
-    const snapshotPath = "/tmp/voicelayer-stt-vocabulary-alias-test.json";
+    const snapshotPath = `${TEST_TMP}/voicelayer-stt-vocabulary-alias-test.json`;
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -517,7 +518,7 @@ describe("stt-cleanup", () => {
 
   it("derives spoken slash-command aliases from vocabulary prompt terms", async () => {
     const snapshotPath =
-      "/tmp/voicelayer-stt-vocabulary-slash-command-test.json";
+      `${TEST_TMP}/voicelayer-stt-vocabulary-slash-command-test.json`;
     await Bun.write(
       snapshotPath,
       JSON.stringify({
@@ -683,7 +684,7 @@ describe("stt-cleanup", () => {
 
   it("ignores unsafe broad aliases from the VoiceBar vocabulary snapshot", async () => {
     const snapshotPath =
-      "/tmp/voicelayer-stt-vocabulary-unsafe-alias-test.json";
+      `${TEST_TMP}/voicelayer-stt-vocabulary-unsafe-alias-test.json`;
     await Bun.write(
       snapshotPath,
       JSON.stringify({

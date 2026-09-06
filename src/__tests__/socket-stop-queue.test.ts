@@ -10,7 +10,11 @@
  * stopPlayback() to properly drain the queue and reset state.
  */
 
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import * as tts from "../tts";
 import * as socketClient from "../socket-client";
 import * as sessionBooking from "../session-booking";

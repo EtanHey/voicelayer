@@ -1,4 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { unlinkSync, writeFileSync } from "fs";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
@@ -8,7 +13,7 @@ import * as recordingHold from "../recording-hold";
 import * as tts from "../tts";
 import * as whisperPerformance from "../whisper-performance";
 
-const REPLAY_FILE = `/tmp/voicelayer-socket-replay-${process.pid}.mp3`;
+const REPLAY_FILE = `${TEST_TMP}/voicelayer-socket-replay-${process.pid}.mp3`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 describe("socket handler idempotency matrix", () => {

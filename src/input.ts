@@ -97,7 +97,7 @@ import {
   type RecordingProvenance,
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
-import { resolveBinary } from "./resolve-binary";
+import { resolveRecorderBinary } from "./recorder-binary";
 import {
   buildChunkPrompt,
   mergeChunkTranscripts,
@@ -1984,10 +1984,7 @@ export interface MicChunkStreamHandle {
 export function startMicChunkStream(options: {
   onChunk: (chunk: Uint8Array, capturedAtMs: number) => Promise<boolean | void>;
 }): MicChunkStreamHandle {
-  const recPath = resolveBinary("rec", [
-    "/opt/homebrew/bin/rec",
-    "/usr/local/bin/rec",
-  ]);
+  const recPath = resolveRecorderBinary();
   if (!recPath) {
     throw new Error("sox not installed. Install: brew install sox");
   }
@@ -2178,10 +2175,7 @@ export async function recordToBuffer(
     : Math.ceil(PRE_SPEECH_TIMEOUT_SECONDS * (SAMPLE_RATE / VAD_CHUNK_SAMPLES));
 
   // Resolve rec (sox) binary — probes Homebrew paths for daemon/LaunchAgent context
-  const recPath = resolveBinary("rec", [
-    "/opt/homebrew/bin/rec",
-    "/usr/local/bin/rec",
-  ]);
+  const recPath = resolveRecorderBinary();
   if (!recPath) {
     setRecordingState("idle");
     throw new Error(

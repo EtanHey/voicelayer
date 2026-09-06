@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 
 // Test with a temp pronunciation file
-const TEST_DIR = "/tmp/voicelayer-pronunciation-test";
+const TEST_DIR = `${TEST_TMP}/voicelayer-pronunciation-test`;
 const TEST_FILE = join(TEST_DIR, "pronunciation.yaml");
 
 // We need to override the file path for testing

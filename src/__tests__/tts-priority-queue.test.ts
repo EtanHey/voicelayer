@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as socketClient from "../socket-client";
 
@@ -14,7 +15,7 @@ describe("tts priority queue", () => {
   let playerMocks: MockPlayer[];
   const originalSpawn = Bun.spawn;
   const originalSpawnSync = Bun.spawnSync;
-  const recordingStatePath = `/tmp/voicelayer-tts-priority-queue-state-${process.pid}.json`;
+  const recordingStatePath = `${TEST_TMP}/voicelayer-tts-priority-queue-state-${process.pid}.json`;
   let originalRecordingStatePath: string | undefined;
 
   beforeEach(() => {
@@ -106,12 +107,12 @@ describe("tts priority queue", () => {
   it("critical playback barges in and discards stale queued low-priority items", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/low-current.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/low-current.mp3`, {
       text: "low current",
       voice: "voice",
       priority: "low",
     });
-    playAudioNonBlocking("/tmp/low-queued.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/low-queued.mp3`, {
       text: "low queued",
       voice: "voice",
       priority: "low",
@@ -120,7 +121,7 @@ describe("tts priority queue", () => {
     await Bun.sleep(30);
     expect(playerMocks.length).toBe(1);
 
-    playAudioNonBlocking("/tmp/critical.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/critical.mp3`, {
       text: "critical now",
       voice: "voice",
       priority: "critical",
@@ -130,7 +131,7 @@ describe("tts priority queue", () => {
 
     expect(playerMocks[0].killed).toBe(true);
     expect(playerMocks.length).toBe(2);
-    expect(playerMocks[1].cmd).toContain("/tmp/critical.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/critical.mp3`);
 
     playerMocks[1].resolveExit();
     await awaitCurrentPlayback();
@@ -143,24 +144,24 @@ describe("tts priority queue", () => {
   it("collapses bursty low-priority chatter to the newest queued item", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/current.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/current.mp3`, {
       text: "current",
       voice: "voice",
       priority: "normal",
     });
     await Bun.sleep(30);
 
-    playAudioNonBlocking("/tmp/low-a.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/low-a.mp3`, {
       text: "low a",
       voice: "voice",
       priority: "low",
     });
-    playAudioNonBlocking("/tmp/low-b.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/low-b.mp3`, {
       text: "low b",
       voice: "voice",
       priority: "low",
     });
-    playAudioNonBlocking("/tmp/low-c.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/low-c.mp3`, {
       text: "low c",
       voice: "voice",
       priority: "low",
@@ -170,7 +171,7 @@ describe("tts priority queue", () => {
     await Bun.sleep(40);
 
     expect(playerMocks.length).toBe(2);
-    expect(playerMocks[1].cmd).toContain("/tmp/low-c.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/low-c.mp3`);
 
     playerMocks[1].resolveExit();
     await awaitCurrentPlayback();
@@ -179,12 +180,12 @@ describe("tts priority queue", () => {
   it("emits queue depth updates when items enter and leave the queue", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/depth-1.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/depth-1.mp3`, {
       text: "depth 1",
       voice: "voice",
       priority: "normal",
     });
-    playAudioNonBlocking("/tmp/depth-2.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/depth-2.mp3`, {
       text: "depth 2",
       voice: "voice",
       priority: "normal",
@@ -210,21 +211,21 @@ describe("tts priority queue", () => {
   it("preserves unrelated low-priority chatter when collapse keys differ", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/current-collapse.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/current-collapse.mp3`, {
       text: "current",
       voice: "voice",
       priority: "normal",
     });
     await Bun.sleep(30);
 
-    playAudioNonBlocking("/tmp/clip-a.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/clip-a.mp3`, {
       text: "clip a",
       voice: "voice",
       priority: "low",
       // @ts-expect-error Phase 8 metadata
       collapseKey: "clip-markers",
     });
-    playAudioNonBlocking("/tmp/queue-a.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/queue-a.mp3`, {
       text: "queue a",
       voice: "voice",
       priority: "low",
@@ -236,13 +237,13 @@ describe("tts priority queue", () => {
     await Bun.sleep(40);
 
     expect(playerMocks.length).toBe(2);
-    expect(playerMocks[1].cmd).toContain("/tmp/clip-a.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/clip-a.mp3`);
 
     playerMocks[1].resolveExit();
     await Bun.sleep(40);
 
     expect(playerMocks.length).toBe(3);
-    expect(playerMocks[2].cmd).toContain("/tmp/queue-a.mp3");
+    expect(playerMocks[2].cmd).toContain(`${TEST_TMP}/queue-a.mp3`);
 
     playerMocks[2].resolveExit();
     await awaitCurrentPlayback();
@@ -251,7 +252,7 @@ describe("tts priority queue", () => {
   it("emits a clip marker event when playback metadata marks a clip boundary", async () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/marker.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/marker.mp3`, {
       text: "marker audio",
       voice: "voice",
       priority: "high",

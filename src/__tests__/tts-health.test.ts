@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 
 /**
  * Regression tests for the edge-tts argparse exit-2 bug and its misleading
@@ -59,8 +60,8 @@ describe("edge-tts argparse exit-2 regression", () => {
       "-hello there", // dash-leading text that broke the two-token form
       "en-US-JennyNeural",
       "-25%",
-      "/tmp/out.mp3",
-      "/tmp/out.meta.ndjson",
+      `${TEST_TMP}/out.mp3`,
+      `${TEST_TMP}/out.meta.ndjson`,
     );
 
     expect(args).toContain("--text=-hello there");
@@ -99,7 +100,7 @@ describe("edge-tts argparse exit-2 regression", () => {
       "test text",
       "en-US-JennyNeural",
       "+0%",
-      `/tmp/voicelayer-health-test-${process.pid}.mp3`,
+      `${TEST_TMP}/voicelayer-health-test-${process.pid}.mp3`,
       "src/scripts/edge-tts-words.py",
     );
 
@@ -140,7 +141,7 @@ describe("edge-tts argparse exit-2 regression", () => {
       "test text",
       "en-US-JennyNeural",
       "+0%",
-      `/tmp/voicelayer-health-test-${process.pid}.mp3`,
+      `${TEST_TMP}/voicelayer-health-test-${process.pid}.mp3`,
       "src/scripts/edge-tts-words.py",
     );
 

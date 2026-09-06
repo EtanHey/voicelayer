@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import {
   __resetNativeInputFormatProbesForTests,
   __setNativeInputFormatProbesForTests,
@@ -74,6 +78,21 @@ describe("native input format cache", () => {
   afterEach(() => {
     __resetNativeInputFormatProbesForTests();
     resetNativeInputFormatCache();
+  });
+
+  it("does not fall back to PATH rec when the stub binary is missing", () => {
+    const savedBin = process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+    delete process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+    try {
+      expect(detectNativeInputFormat()).toEqual({
+        sampleRate: 16000,
+        channels: 1,
+      });
+    } finally {
+      if (savedBin !== undefined) {
+        process.env.VOICELAYER_TEST_FAKE_REC_BIN = savedBin;
+      }
+    }
   });
 
   const PROBE_OUTPUT = `

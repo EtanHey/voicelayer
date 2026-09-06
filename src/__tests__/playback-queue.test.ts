@@ -12,7 +12,12 @@
  *        is still pending.
  */
 
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as recordingState from "../recording-state";
 import * as socketClient from "../socket-client";
@@ -51,7 +56,7 @@ function pcm16(samples: number[]): Uint8Array {
   return bytes;
 }
 
-const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-playback-queue-state-${process.pid}.json`;
+const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-playback-queue-state-${process.pid}.json`;
 const SPEAKER_REFUSED = "user is recording — speaker output refused";
 
 function writeRecordingState(state: "idle" | "recording" | "transcribing") {
@@ -249,14 +254,14 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("plays audio files sequentially — second spawns only after first finishes", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/pq-seq1.mp3");
-    playAudioNonBlocking("/tmp/pq-seq2.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-seq1.mp3`);
+    playAudioNonBlocking(`${TEST_TMP}/pq-seq2.mp3`);
 
     await Bun.sleep(50);
 
     // Only first player should be spawned (queue serializes)
     expect(playerMocks.length).toBe(1);
-    expect(playerMocks[0].cmd).toContain("/tmp/pq-seq1.mp3");
+    expect(playerMocks[0].cmd).toContain(`${TEST_TMP}/pq-seq1.mp3`);
 
     // Finish first playback
     playerMocks[0].resolveExit();
@@ -264,7 +269,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     // Now second player should be spawned
     expect(playerMocks.length).toBe(2);
-    expect(playerMocks[1].cmd).toContain("/tmp/pq-seq2.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/pq-seq2.mp3`);
 
     // Finish second
     playerMocks[1].resolveExit();
@@ -274,13 +279,13 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("waits for killed playback to exit and collapses rapid restart attempts", async () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/pq-replay-original.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-replay-original.mp3`);
     await waitFor(() => playerMocks.length === 1, "original player creation");
 
     stopPlayback();
-    playAudioNonBlocking("/tmp/pq-replay-superseded.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-replay-superseded.mp3`);
     stopPlayback();
-    playAudioNonBlocking("/tmp/pq-replay-final.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-replay-final.mp3`);
 
     // SIGTERM is asynchronous. A replacement must not spawn while the old
     // afplay process is still alive, even across rapid repeated Replay clicks.
@@ -289,10 +294,10 @@ describe("playback queue — P0-1 sequential playback", () => {
     playerMocks[0].resolveExit();
     await waitFor(() => playerMocks.length === 2, "final replay player creation");
 
-    expect(playerMocks[1].cmd).toContain("/tmp/pq-replay-final.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/pq-replay-final.mp3`);
     expect(
       playerMocks.some((player) =>
-        player.cmd.includes("/tmp/pq-replay-superseded.mp3"),
+        player.cmd.includes(`${TEST_TMP}/pq-replay-superseded.mp3`),
       ),
     ).toBe(false);
 
@@ -303,7 +308,7 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("atomically restarts active playback without resolving its blocking handle", async () => {
     const { playAudioNonBlocking, restartPlayback } = await import("../tts");
 
-    const playback = playAudioNonBlocking("/tmp/pq-atomic-replay.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-atomic-replay.mp3`, {
       text: "Question remains blocking until replay finishes",
       voice: "TestVoice",
       nextState: "recording",
@@ -321,7 +326,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     playerMocks[0].resolveExit();
     await waitFor(() => playerMocks.length === 2, "replacement replay player");
-    expect(playerMocks[1].cmd).toContain("/tmp/pq-atomic-replay.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/pq-atomic-replay.mp3`);
     expect(resolved).toBe(false);
     expect(
       broadcasts.filter(
@@ -360,16 +365,16 @@ describe("playback queue — P0-1 sequential playback", () => {
     };
 
     const active = playAudioNonBlocking(
-      "/tmp/pq-selective-replay.mp3",
+      `${TEST_TMP}/pq-selective-replay.mp3`,
       replayMetadata,
     );
     await waitFor(() => playerMocks.length === 1, "selective replay player");
 
     const duplicate = playAudioNonBlocking(
-      "/tmp/pq-selective-replay.mp3",
+      `${TEST_TMP}/pq-selective-replay.mp3`,
       replayMetadata,
     );
-    const unrelated = playAudioNonBlocking("/tmp/pq-after-replay.mp3", {
+    const unrelated = playAudioNonBlocking(`${TEST_TMP}/pq-after-replay.mp3`, {
       text: "Keep this queued item",
       voice: "OtherVoice",
     });
@@ -388,12 +393,12 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     playerMocks[0].resolveExit();
     await waitFor(() => playerMocks.length === 2, "selective replay restart");
-    expect(playerMocks[1].cmd).toContain("/tmp/pq-selective-replay.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/pq-selective-replay.mp3`);
     playerMocks[1].resolveExit();
     expect(await active.exited).toMatchObject({ status: "completed" });
 
     await waitFor(() => playerMocks.length === 3, "preserved queued player");
-    expect(playerMocks[2].cmd).toContain("/tmp/pq-after-replay.mp3");
+    expect(playerMocks[2].cmd).toContain(`${TEST_TMP}/pq-after-replay.mp3`);
     playerMocks[2].resolveExit();
     expect(await unrelated.exited).toMatchObject({ status: "completed" });
   });
@@ -401,7 +406,7 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("collapses rapid replay while the replacement is still preparing", async () => {
     const { playAudioNonBlocking, restartPlayback } = await import("../tts");
 
-    const playback = playAudioNonBlocking("/tmp/pq-preparing-replay.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-preparing-replay.mp3`, {
       text: "Keep the blocking turn attached to one replacement",
       voice: "TestVoice",
       nextState: "recording",
@@ -435,11 +440,11 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("does not acknowledge replay while an unrelated queued job is preparing", async () => {
     const { playAudioNonBlocking, restartPlayback } = await import("../tts");
 
-    const first = playAudioNonBlocking("/tmp/pq-unrelated-first.mp3");
+    const first = playAudioNonBlocking(`${TEST_TMP}/pq-unrelated-first.mp3`);
     await waitFor(() => playerMocks.length === 1, "first queued player");
 
     holdDecoderExits = true;
-    const second = playAudioNonBlocking("/tmp/pq-unrelated-preparing.mp3", {
+    const second = playAudioNonBlocking(`${TEST_TMP}/pq-unrelated-preparing.mp3`, {
       text: "This preparation was not created by Replay",
       voice: "TestVoice",
     });
@@ -453,7 +458,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     expect(restartPlayback()).toBe(false);
     decoderMocks[0].resolveExit();
     await waitFor(() => playerMocks.length === 2, "second queued player");
-    expect(playerMocks[1].cmd).toContain("/tmp/pq-unrelated-preparing.mp3");
+    expect(playerMocks[1].cmd).toContain(`${TEST_TMP}/pq-unrelated-preparing.mp3`);
     playerMocks[1].resolveExit();
     expect(await second.exited).toMatchObject({ status: "completed" });
   });
@@ -462,7 +467,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking } = await import("../tts");
     const { handleSocketCommand } = await import("../socket-handlers");
 
-    playAudioNonBlocking("/tmp/pq-stop-ack-original.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-stop-ack-original.mp3`);
     await waitFor(() => playerMocks.length === 1, "stop-ack player creation");
 
     let acknowledged = false;
@@ -488,11 +493,11 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking } = await import("../tts");
 
     // Queue two items WITH metadata — this param doesn't exist yet (TDD RED)
-    playAudioNonBlocking("/tmp/pq-meta1.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/pq-meta1.mp3`, {
       text: "First message",
       voice: "TestVoice",
     });
-    playAudioNonBlocking("/tmp/pq-meta2.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/pq-meta2.mp3`, {
       text: "Second message",
       voice: "TestVoice",
     });
@@ -535,7 +540,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking } = await import("../tts");
     decodeSucceeds = false;
 
-    const playback = playAudioNonBlocking("/tmp/pq-replay-corrupt.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-replay-corrupt.mp3`, {
       text: "Cached replay",
       voice: "TestVoice",
     });
@@ -562,7 +567,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
   it("announces the recording follow-up on the playback-finished idle edge", async () => {
     const { playAudioNonBlocking } = await import("../tts");
-    const playback = playAudioNonBlocking("/tmp/pq-converse.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-converse.mp3`, {
       text: "Ask prompt",
       voice: "TestVoice",
       nextState: "recording",
@@ -587,7 +592,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking } = await import("../tts");
     holdDecoderExits = true;
 
-    const playback = playAudioNonBlocking("/tmp/pq-nonblocking.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-nonblocking.mp3`, {
       text: "Nonblocking",
       voice: "TestVoice",
     });
@@ -615,7 +620,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
 
     try {
-      const playback = playAudioNonBlocking("/tmp/pq-slow-preparation.mp3", {
+      const playback = playAudioNonBlocking(`${TEST_TMP}/pq-slow-preparation.mp3`, {
         text: "Prepared fallback must still play",
         voice: "TestVoice",
       });
@@ -638,7 +643,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
     holdDecoderExits = true;
 
-    const playback = playAudioNonBlocking("/tmp/pq-cancel-preparing.mp3", {
+    const playback = playAudioNonBlocking(`${TEST_TMP}/pq-cancel-preparing.mp3`, {
       text: "Cancel preparing",
       voice: "TestVoice",
     });
@@ -662,13 +667,13 @@ describe("playback queue — P0-1 sequential playback", () => {
     const { playAudioNonBlocking, stopPlayback } = await import("../tts");
     holdDecoderExits = true;
 
-    playAudioNonBlocking("/tmp/pq-barge-preparing.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/pq-barge-preparing.mp3`, {
       text: "Preparing",
       voice: "TestVoice",
     });
     expect(decoderMocks).toHaveLength(1);
 
-    playAudioNonBlocking("/tmp/pq-barge-preparing-critical.mp3", {
+    playAudioNonBlocking(`${TEST_TMP}/pq-barge-preparing-critical.mp3`, {
       text: "Critical",
       voice: "TestVoice",
       priority: "critical",
@@ -683,30 +688,30 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("defers envelope decoding for queued audio until that job can start", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
-    const first = playAudioNonBlocking("/tmp/pq-decode-first.mp3", {
+    const first = playAudioNonBlocking(`${TEST_TMP}/pq-decode-first.mp3`, {
       text: "First",
       voice: "TestVoice",
     });
-    const second = playAudioNonBlocking("/tmp/pq-decode-second.mp3", {
+    const second = playAudioNonBlocking(`${TEST_TMP}/pq-decode-second.mp3`, {
       text: "Second",
       voice: "TestVoice",
     });
     await waitFor(() => playerMocks.length === 1, "first prepared player");
 
     expect(queueEvents.filter((event) => event.startsWith("decode:"))).toEqual([
-      "decode:/tmp/pq-decode-first.mp3",
+      `decode:${TEST_TMP}/pq-decode-first.mp3`,
     ]);
 
     playerMocks[0].resolveExit();
     await first.exited;
     await waitFor(
-      () => queueEvents.includes("decode:/tmp/pq-decode-second.mp3"),
+      () => queueEvents.includes(`decode:${TEST_TMP}/pq-decode-second.mp3`),
       "second decoder start",
     );
 
     expect(queueEvents.filter((event) => event.startsWith("decode:"))).toEqual([
-      "decode:/tmp/pq-decode-first.mp3",
-      "decode:/tmp/pq-decode-second.mp3",
+      `decode:${TEST_TMP}/pq-decode-first.mp3`,
+      `decode:${TEST_TMP}/pq-decode-second.mp3`,
     ]);
 
     await waitFor(() => playerMocks.length === 2, "second prepared player");
@@ -717,21 +722,21 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("interrupts active playback before decoding a critical barge-in", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
-    const current = playAudioNonBlocking("/tmp/pq-barge-current.mp3", {
+    const current = playAudioNonBlocking(`${TEST_TMP}/pq-barge-current.mp3`, {
       text: "Current",
       voice: "TestVoice",
     });
     await waitFor(() => playerMocks.length === 1, "current player start");
     queueEvents = [];
 
-    const critical = playAudioNonBlocking("/tmp/pq-barge-critical.mp3", {
+    const critical = playAudioNonBlocking(`${TEST_TMP}/pq-barge-critical.mp3`, {
       text: "Critical",
       voice: "TestVoice",
       priority: "critical",
     });
     await current.exited;
     expect(playerMocks).toHaveLength(1);
-    expect(queueEvents).toEqual(["kill:/tmp/pq-barge-current.mp3"]);
+    expect(queueEvents).toEqual([`kill:${TEST_TMP}/pq-barge-current.mp3`]);
 
     playerMocks[0].resolveExit();
     await waitFor(
@@ -740,8 +745,8 @@ describe("playback queue — P0-1 sequential playback", () => {
     );
 
     expect(queueEvents.slice(0, 2)).toEqual([
-      "kill:/tmp/pq-barge-current.mp3",
-      "decode:/tmp/pq-barge-critical.mp3",
+      `kill:${TEST_TMP}/pq-barge-current.mp3`,
+      `decode:${TEST_TMP}/pq-barge-critical.mp3`,
     ]);
 
     playerMocks[1].resolveExit();
@@ -755,7 +760,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     try {
       const playback = playAudioNonBlocking(
-        "/tmp/pq-barge-restarting.mp3",
+        `${TEST_TMP}/pq-barge-restarting.mp3`,
         {
           text: "one two three",
           voice: "TestVoice",
@@ -772,7 +777,7 @@ describe("playback queue — P0-1 sequential playback", () => {
       now = 10_300;
       expect(restartPlayback()).toBe(true);
       now = 10_550;
-      const critical = playAudioNonBlocking("/tmp/pq-barge-after-replay.mp3", {
+      const critical = playAudioNonBlocking(`${TEST_TMP}/pq-barge-after-replay.mp3`, {
         text: "Critical",
         voice: "TestVoice",
         priority: "critical",
@@ -807,7 +812,7 @@ describe("playback queue — P0-1 sequential playback", () => {
 
     try {
       const playback = playAudioNonBlocking(
-        "/tmp/pq-interrupted-position.mp3",
+        `${TEST_TMP}/pq-interrupted-position.mp3`,
         {
           text: "one two three",
           voice: "TestVoice",
@@ -851,7 +856,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     const nowSpy = spyOn(Date, "now").mockImplementation(() => now);
 
     try {
-      const playback = playAudioNonBlocking("/tmp/pq-visual-cut-position.mp3", {
+      const playback = playAudioNonBlocking(`${TEST_TMP}/pq-visual-cut-position.mp3`, {
         text: "one two three four",
         voice: "TestVoice",
         durationMs: 1_600,
@@ -881,8 +886,8 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("broadcasts idle only when queue fully drains, not between items", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/pq-idle1.mp3");
-    playAudioNonBlocking("/tmp/pq-idle2.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-idle1.mp3`);
+    playAudioNonBlocking(`${TEST_TMP}/pq-idle2.mp3`);
 
     await Bun.sleep(50);
 
@@ -910,7 +915,7 @@ describe("playback queue — P0-1 sequential playback", () => {
   it("single item broadcasts idle immediately after finishing", async () => {
     const { playAudioNonBlocking } = await import("../tts");
 
-    playAudioNonBlocking("/tmp/pq-single.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-single.mp3`);
 
     await Bun.sleep(50);
     playerMocks[0].resolveExit();
@@ -930,8 +935,8 @@ describe("playback queue — P0-1 sequential playback", () => {
       process.env.QA_VOICE_RECORDING_STATE_PATH = TEST_RECORDING_STATE_FILE;
       writeRecordingState("idle");
 
-      playAudioNonBlocking("/tmp/pq-recording-skip-1.mp3");
-      playAudioNonBlocking("/tmp/pq-recording-skip-2.mp3");
+      playAudioNonBlocking(`${TEST_TMP}/pq-recording-skip-1.mp3`);
+      playAudioNonBlocking(`${TEST_TMP}/pq-recording-skip-2.mp3`);
 
       await Bun.sleep(50);
       writeRecordingState("recording");
@@ -970,7 +975,7 @@ describe("playback queue — P0-1 sequential playback", () => {
     });
 
     try {
-      playAudioNonBlocking("/tmp/pq-replay-late-recording.mp3", {
+      playAudioNonBlocking(`${TEST_TMP}/pq-replay-late-recording.mp3`, {
         text: "Replay",
         voice: "TestVoice",
       });
@@ -1069,8 +1074,8 @@ describe("awaitCurrentPlayback — P0-2 queue awareness", () => {
     const { playAudioNonBlocking, awaitCurrentPlayback } =
       await import("../tts");
 
-    playAudioNonBlocking("/tmp/pq-aw1.mp3");
-    playAudioNonBlocking("/tmp/pq-aw2.mp3");
+    playAudioNonBlocking(`${TEST_TMP}/pq-aw1.mp3`);
+    playAudioNonBlocking(`${TEST_TMP}/pq-aw2.mp3`);
 
     let awaited = false;
     awaitCurrentPlayback().then(() => {

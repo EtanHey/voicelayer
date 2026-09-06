@@ -321,6 +321,16 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
 
   export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
   export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"
+  # AIDEV-NOTE: R-014. Isolating the sockets was never enough: the corpus daemon
+  # speaks, and TTS output lands in the ring buffer at /tmp/voicelayer-history*,
+  # which is the LIVE replay buffer. Verified on 2026-09-06 — a --corpus run
+  # replaced Etan's replay index with its own two prompts. These two roots move
+  # every remaining path (ring buffer, TTS audio, disable flags, stop/cancel
+  # signals, session locks) into the run's own work dir. The explicit socket
+  # paths above still win over the root, so nothing else changes.
+  mkdir -p "$corpus_work_dir/tmp" "$corpus_work_dir/state"
+  export VOICELAYER_TMP_ROOT="$corpus_work_dir/tmp"
+  export VOICELAYER_STATE_DIR="$corpus_work_dir/state"
   export VOICELAYER_VERIFY_WORK_DIR="$corpus_work_dir"
   export QA_VOICE_SOCKET_PATH="$VOICELAYER_SOCKET_PATH"
   export QA_VOICE_MCP_SOCKET_PATH="$VOICELAYER_MCP_SOCKET_PATH"
@@ -336,6 +346,8 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
   printf '[voicelayer-verify] pinned corpus manifest: %s\n' "$corpus_manifest"
   printf '[voicelayer-verify] isolated VoiceBar socket: %s\n' "$VOICELAYER_SOCKET_PATH"
   printf '[voicelayer-verify] isolated MCP socket: %s\n' "$VOICELAYER_MCP_SOCKET_PATH"
+  printf '[voicelayer-verify] isolated ephemeral root: %s\n' "$VOICELAYER_TMP_ROOT"
+  printf '[voicelayer-verify] isolated state root: %s\n' "$VOICELAYER_STATE_DIR"
 
   if [ -n "${VOICELAYER_VERIFY_CORPUS_RUNNER:-}" ]; then
     "$VOICELAYER_VERIFY_CORPUS_RUNNER" "$CORPUS_COUNT" "$corpus_root" "$corpus_manifest"

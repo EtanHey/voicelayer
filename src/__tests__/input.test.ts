@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, it, expect, spyOn } from "bun:test";
+import { afterEach, beforeEach, it, expect, spyOn } from "bun:test";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { Database } from "bun:sqlite";
 import { createHash } from "crypto";
 import * as crypto from "crypto";

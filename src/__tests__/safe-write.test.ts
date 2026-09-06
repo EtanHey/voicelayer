@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import {
   existsSync,
   unlinkSync,
@@ -21,7 +22,7 @@ import {
 import { join } from "path";
 import { safeWriteFileSync } from "../paths";
 
-const TEST_DIR = "/tmp/voicelayer-test-safe-write";
+const TEST_DIR = `${TEST_TMP}/voicelayer-test-safe-write`;
 const TARGET_FILE = join(TEST_DIR, "target.txt");
 const SYMLINK_PATH = join(TEST_DIR, "evil-symlink");
 const NORMAL_PATH = join(TEST_DIR, "normal-file.txt");

@@ -9,7 +9,13 @@
 import { describe, it, expect } from "bun:test";
 import { getToolDefinitions } from "../mcp-tools";
 import { sanitizeTtsText } from "../sanitize";
-import { STOP_FILE, CANCEL_FILE, STATE_DIR } from "../paths";
+import {
+  STOP_FILE,
+  CANCEL_FILE,
+  STATE_DIR,
+  defaultStateDir,
+  getStateDir,
+} from "../paths";
 import { homedir } from "os";
 import { join } from "path";
 
@@ -75,12 +81,17 @@ describe("B3: ToolAnnotations on all MCP tools", () => {
 describe("B4: Stop signal path uses ~/.local/state/voicelayer/", () => {
   it("STATE_DIR is under home directory", () => {
     const home = homedir();
+    expect(defaultStateDir().startsWith(home)).toBe(true);
     expect(STATE_DIR.startsWith(home)).toBe(true);
   });
 
-  it("STATE_DIR is ~/.local/state/voicelayer", () => {
+  // AIDEV-NOTE: R-014 — STATE_DIR is now process-scoped (VOICELAYER_STATE_DIR),
+  // so assert the DEFAULT resolver rather than the value this run happens to
+  // hold: under the test preload that value points into .test-tmp/ by design.
+  it("STATE_DIR is ~/.local/state/voicelayer when nothing overrides it", () => {
     const expected = join(homedir(), ".local", "state", "voicelayer");
-    expect(STATE_DIR).toBe(expected);
+    expect(getStateDir({} as NodeJS.ProcessEnv)).toBe(expected);
+    expect(defaultStateDir()).toBe(expected);
   });
 
   it("STOP_FILE is under STATE_DIR, not /tmp", () => {

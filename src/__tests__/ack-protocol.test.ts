@@ -1,12 +1,9 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
 import * as input from "../input";
@@ -20,10 +17,10 @@ import {
 } from "../socket-protocol";
 import * as tts from "../tts";
 
-const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-ack-${process.pid}-tts-disabled`;
-const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-ack-${process.pid}-mic-disabled`;
-const TEST_VOICE_DISABLED_FILE = `/tmp/voicelayer-ack-${process.pid}-voice-disabled`;
-const TEST_REPLAY_FILE = `/tmp/voicelayer-ack-${process.pid}-replay.mp3`;
+const TEST_TTS_DISABLED_FILE = `${TEST_TMP}/voicelayer-ack-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `${TEST_TMP}/voicelayer-ack-${process.pid}-mic-disabled`;
+const TEST_VOICE_DISABLED_FILE = `${TEST_TMP}/voicelayer-ack-${process.pid}-voice-disabled`;
+const TEST_REPLAY_FILE = `${TEST_TMP}/voicelayer-ack-${process.pid}-replay.mp3`;
 
 mock.module("../paths", () => ({
   ...actualPaths,

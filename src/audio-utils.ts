@@ -5,13 +5,10 @@
  * while input.ts imported getBackend from stt.ts.
  */
 
-import { resolveBinary } from "./resolve-binary";
+import { resolveRecorderBinary } from "./recorder-binary";
 
 const BYTES_PER_SAMPLE = 2;
 const DEFAULT_NATIVE_INPUT_FORMAT = { sampleRate: 16000, channels: 1 };
-
-/** Homebrew/Intel fallbacks for `rec`. */
-const REC_CANDIDATES = ["/opt/homebrew/bin/rec", "/usr/local/bin/rec"];
 
 /**
  * Proof that the probe actually reached the device. `parseNativeInputFormat`
@@ -109,15 +106,22 @@ export function parseNativeInputFormat(output: string): NativeInputFormat {
  * the full audio stream and blocks forever. trim 0 0 opens the device, prints
  * the preamble (with Sample Rate), then exits immediately.
  */
-function probeArgs(): string[] {
-  const recBin = resolveBinary("rec", REC_CANDIDATES) || "rec";
+function probeArgs(): string[] | null {
+  // AIDEV-NOTE: R-014 — never fall back to PATH `rec`. `resolveRecorderBinary()`
+  // returning null means "sox is not installed"; spawning the bare name would
+  // still open the microphone if `rec` is on PATH. The test stub is the other
+  // success path, and it never returns null.
+  const recBin = resolveRecorderBinary();
+  if (!recBin) return null;
   return [recBin, "-n", "trim", "0", "0"];
 }
 
 /** Blocking probe. Only ever runs on a cold cache — see `detectNativeInputFormat`. */
 const defaultProbe: NativeInputFormatProbe = () => {
   try {
-    const probe = Bun.spawnSync(probeArgs(), {
+    const args = probeArgs();
+    if (!args) return null;
+    const probe = Bun.spawnSync(args, {
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -126,7 +130,7 @@ const defaultProbe: NativeInputFormatProbe = () => {
       stderr: probe.stderr.toString("utf-8"),
       stdout: probe.stdout.toString("utf-8"),
     };
-  } catch {
+  } catch (_err) {
     return null;
   }
 };

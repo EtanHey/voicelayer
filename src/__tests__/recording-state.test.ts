@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import {
   lstatSync,
   mkdirSync,
@@ -14,7 +15,7 @@ import {
   setRecordingState,
 } from "../recording-state";
 
-const TEST_DIR = `/tmp/voicelayer-recording-state-${process.pid}`;
+const TEST_DIR = `${TEST_TMP}/voicelayer-recording-state-${process.pid}`;
 const NORMAL_STATE_FILE = join(TEST_DIR, "recording-state.json");
 const TARGET_FILE = join(TEST_DIR, "target.json");
 const SYMLINK_STATE_FILE = join(TEST_DIR, "recording-state-symlink.json");

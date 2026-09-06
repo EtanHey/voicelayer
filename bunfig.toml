@@ -1,0 +1,7 @@
+# AIDEV-NOTE: R-014 — the suite touches audio, sockets and signal files. This
+# preload redirects every VoiceLayer path to <repo>/.test-tmp/<pid>/ and swaps
+# the recorder for a silence stub, so `bun test` is safe to run while someone is
+# dictating on this Mac. Removing it re-opens the 2026-09-06 cancelled-dictation
+# bug; see src/__tests__/setup/preload.ts.
+[test]
+preload = ["./src/__tests__/setup/preload.ts"]

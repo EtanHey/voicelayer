@@ -1,4 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { it, expect, beforeEach, afterEach, mock } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { platform } from "os";
 import { existsSync, unlinkSync, readFileSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
@@ -22,7 +27,7 @@ async function waitFor(
   }
 }
 
-const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-tts-${process.pid}-disabled`;
+const TEST_TTS_DISABLED_FILE = `${TEST_TMP}/voicelayer-tts-${process.pid}-disabled`;
 
 mock.module("../paths", () => ({
   ...actualPaths,
@@ -81,7 +86,7 @@ describe("tts module", () => {
 
     // Clean up history file before each test
     try {
-      unlinkSync("/tmp/voicelayer-history.json");
+      unlinkSync(actualPaths.TTS_HISTORY_FILE);
     } catch {}
     // Clean up TTS disabled flag
     try {
@@ -96,7 +101,7 @@ describe("tts module", () => {
     Bun.spawn = originalSpawn;
     Bun.spawnSync = originalSpawnSync;
     try {
-      unlinkSync("/tmp/voicelayer-history.json");
+      unlinkSync(actualPaths.TTS_HISTORY_FILE);
     } catch {}
     try {
       unlinkSync(TEST_TTS_DISABLED_FILE);
@@ -231,18 +236,18 @@ describe("tts module", () => {
 describe("tts ring buffer", () => {
   beforeEach(() => {
     try {
-      unlinkSync("/tmp/voicelayer-history.json");
+      unlinkSync(actualPaths.TTS_HISTORY_FILE);
     } catch {}
   });
 
   afterEach(() => {
     try {
-      unlinkSync("/tmp/voicelayer-history.json");
+      unlinkSync(actualPaths.TTS_HISTORY_FILE);
     } catch {}
     // Clean up history audio files
     for (let i = 0; i < 20; i++) {
       try {
-        unlinkSync(`/tmp/voicelayer-history-${i}.mp3`);
+        unlinkSync(actualPaths.ttsHistoryFilePath(i));
       } catch {}
     }
   });
@@ -253,7 +258,7 @@ describe("tts ring buffer", () => {
   });
 
   it("loadHistory returns empty array for corrupt JSON", async () => {
-    writeFileSync("/tmp/voicelayer-history.json", "not json{{{");
+    writeFileSync(actualPaths.TTS_HISTORY_FILE, "not json{{{");
     const { loadHistory } = await import("../tts");
     expect(loadHistory()).toEqual([]);
   });
@@ -286,7 +291,7 @@ describe("mergeWordBoundaryChunks", () => {
 
     const merged = mergeWordBoundaryChunks([
       {
-        audioFile: "/tmp/chunk-1.mp3",
+        audioFile: `${TEST_TMP}/chunk-1.mp3`,
         durationMs: 420,
         wordBoundaries: [
           { offset_ms: 0, duration_ms: 90, text: "chunk" },
@@ -294,7 +299,7 @@ describe("mergeWordBoundaryChunks", () => {
         ],
       },
       {
-        audioFile: "/tmp/chunk-2.mp3",
+        audioFile: `${TEST_TMP}/chunk-2.mp3`,
         durationMs: 380,
         wordBoundaries: [
           { offset_ms: 0, duration_ms: 80, text: "chunk" },
