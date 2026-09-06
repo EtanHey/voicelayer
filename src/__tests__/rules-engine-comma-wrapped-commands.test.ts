@@ -97,6 +97,38 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
+  // Lead's addition — Etan's 2026-09-06T14:56:58.449Z row. Three commands in a
+  // row, each isolated by whisper's own commas. Main dropped all three and
+  // shipped one flat line; every one of them has to land.
+  describe("a run of consecutive commands", () => {
+    const RUN_SPECIMEN =
+      "Here are a few things, new line, new line, new paragraph, " +
+      "first of all I went there, and then next I returned back home, " +
+      "and lastly I went to the store.";
+
+    it("honours all three commands — one blank line, then a paragraph", () => {
+      const cleaned = applyRules(RUN_SPECIMEN);
+      // "new line" + "new line" + "new paragraph" = 4 newlines, in that order.
+      expect(cleaned.match(/\n/g) ?? []).toHaveLength(4);
+      // AIDEV-QUESTION: whether whisper's comma after "things" survives is an
+      // open call with the lead — the specimen above wants it gone after
+      // "update", this row reads better with it kept. The assertion accepts
+      // either; what is NOT negotiable is that none of the three collapse.
+      expect(cleaned).toMatch(
+        /^Here are a few things[,:]?\s*\n\s*\n\s*\n\s*\n\s*First of all I went there/,
+      );
+    });
+
+    it("keeps every word of the prose around the run", () => {
+      const cleaned = applyRules(RUN_SPECIMEN).toLowerCase();
+      const commands = new Set(["new", "line", "paragraph"]);
+      const lost = tokenize(RUN_SPECIMEN).filter(
+        (w) => !commands.has(w) && !cleaned.includes(w),
+      );
+      expect(lost).toEqual([]);
+    });
+  });
+
   // The corpus gate caught this: 5 shadow rows open a sentence with the
   // connective "Plus,", which the unwrap read as a comma-isolated operator and
   // ate. ARITHMETIC_ONLY commands want operands on both sides, and whisper's
