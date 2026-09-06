@@ -1526,6 +1526,136 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(state.confirmationText, "paste into the focus that is current on release")
     }
 
+    // AIDEV-NOTE: Lane P — a multi-line transcript pasted into a terminal composer
+    // submitted itself. The AX insertion path delivers text unbracketed, so each
+    // newline reached Claude Code's composer as a Return. Terminals must always
+    // take clipboard + Cmd+V, which the terminal wraps in ESC[200~ … ESC[201~.
+    private static let multiLineSpecimen = """
+    So, here are a few things:
+    1. I went there, and then I came back here.
+    2. I went to the store.
+    """
+
+    func testAutoPasteToTerminalTargetUsesClipboardInsteadOfAXInsertion() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        let terminalApp = FakeRunningApplication(
+            bundleIdentifier: "com.cmuxterm.app",
+            processIdentifier: 9191
+        )
+        state.frontmostAppProvider = { terminalApp }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        var pasteboardString: String?
+        var pasteShortcutPosted = false
+        state.asyncDictationInsertionHandlerProvider = {
+            { text, completion in
+                insertedTexts.append(text)
+                completion()
+                return true
+            }
+        }
+        state.pasteboardWriter = {
+            clipboardWrites.append($0)
+            pasteboardString = $0
+        }
+        state.pasteboardStringProvider = { pasteboardString }
+        state.simulatedPasteHandler = {
+            pasteShortcutPosted = true
+            return true
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": Self.multiLineSpecimen,
+        ])
+
+        XCTAssertEqual(insertedTexts, [], "a terminal target must never take the AX path")
+        XCTAssertEqual(clipboardWrites, [Self.multiLineSpecimen])
+        XCTAssertTrue(pasteShortcutPosted)
+        XCTAssertEqual(state.confirmationText, Self.multiLineSpecimen)
+    }
+
+    // Transcription cleanup already trims trailing whitespace upstream; the terminal
+    // strip in TerminalPasteTargets is the backstop. This asserts the end-to-end
+    // contract: a terminal never receives a trailing newline, whoever removed it.
+    func testAutoPasteToTerminalTargetNeverDeliversATrailingNewline() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        let terminalApp = FakeRunningApplication(
+            bundleIdentifier: "com.apple.Terminal",
+            processIdentifier: 9292
+        )
+        state.frontmostAppProvider = { terminalApp }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var clipboardWrites: [String] = []
+        var pasteboardString: String?
+        state.asyncDictationInsertionHandlerProvider = {
+            { _, _ in
+                XCTFail("a terminal target must never take the AX path")
+                return false
+            }
+        }
+        state.pasteboardWriter = {
+            clipboardWrites.append($0)
+            pasteboardString = $0
+        }
+        state.pasteboardStringProvider = { pasteboardString }
+        state.simulatedPasteHandler = { true }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": Self.multiLineSpecimen + "\n",
+        ])
+
+        XCTAssertEqual(clipboardWrites, [Self.multiLineSpecimen])
+    }
+
+    func testAutoPasteToNonTerminalTargetStillUsesAXInsertion() {
+        let state = VoiceState()
+        state.sendCommand = { _ in }
+        let editorApp = FakeRunningApplication(
+            bundleIdentifier: "com.example.Editor",
+            processIdentifier: 9393
+        )
+        state.frontmostAppProvider = { editorApp }
+        state.pasteScheduler = { _, block in block() }
+        state.targetAppActivator = { _ in }
+
+        var insertedTexts: [String] = []
+        var clipboardWrites: [String] = []
+        state.asyncDictationInsertionHandlerProvider = {
+            { text, completion in
+                insertedTexts.append(text)
+                completion()
+                return true
+            }
+        }
+        state.pasteboardWriter = { clipboardWrites.append($0) }
+        state.simulatedPasteHandler = {
+            XCTFail("a non-terminal target keeps today's AX-first behaviour")
+            return false
+        }
+
+        state.record()
+        state.handleEvent([
+            "type": "transcription",
+            "text": Self.multiLineSpecimen + "\n",
+        ])
+
+        // Upstream transcription cleanup trims the trailing newline before delivery;
+        // what matters here is that the AX path is still the one that fires.
+        XCTAssertEqual(insertedTexts, [Self.multiLineSpecimen])
+        XCTAssertEqual(clipboardWrites, [])
+    }
+
     func testAutoPasteUsesFreshFocusedInsertionInsteadOfStaleCapturedInsertionWhenTargetIsFrontmost() {
         let state = VoiceState()
         state.sendCommand = { _ in }

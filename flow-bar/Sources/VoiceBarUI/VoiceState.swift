@@ -2049,8 +2049,24 @@ public final class VoiceState {
                         ])
                     }
 
+                    // AIDEV-NOTE: terminals only ever get clipboard + Cmd+V. The AX path
+                    // delivers the text unbracketed, so each newline lands as a Return and
+                    // submits the line. See TerminalPasteTargets.
+                    let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
+                    if isTerminalTarget {
+                        logDiagnostic("paste_ax_insert_skipped", details: [
+                            "plan": String(describing: plan),
+                            "targetApp": pasteTargetBundleID,
+                            "reason": "terminal_target",
+                        ])
+                    }
+                    let deliveredText = isTerminalTarget
+                        ? TerminalPasteTargets.strippingSingleTrailingNewline(text)
+                        : text
+
                     let freshInsertionHandler =
-                        plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil)
+                        !isTerminalTarget
+                            && (plan == .autoPaste || (allowAXInsertion && capturedInsertionHandler == nil))
                             ? captureDictationInsertionHandler()
                             : nil
                     if let freshInsertionHandler {
@@ -2070,7 +2086,7 @@ public final class VoiceState {
                         }
                     }
 
-                    if let capturedInsertionHandler {
+                    if !isTerminalTarget, let capturedInsertionHandler {
                         let attempt = beginAXInsertion(
                             capturedInsertionHandler,
                             text: text,
@@ -2100,12 +2116,19 @@ public final class VoiceState {
                         "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
                         "axTrusted": boolString(accessibilityTrustChecker(false)),
                     ])
+                    logDiagnostic("paste_path", details: [
+                        "plan": String(describing: plan),
+                        "targetApp": pasteTargetBundleID,
+                        "path": "clipboard",
+                        "terminalTarget": boolString(isTerminalTarget),
+                        "trailingNewlineStripped": boolString(deliveredText != text),
+                    ])
                     let pasteboardSnapshot = pasteboardSnapshotter()
                     let changeCountBeforeWrite = pasteboardChangeCountProvider()
-                    pasteboardWriter(text)
+                    pasteboardWriter(deliveredText)
                     let changeCountAfterWrite = pasteboardChangeCountProvider()
                     let pasteboardTextAfterWrite = pasteboardStringProvider()
-                    let clipboardVerified = pasteboardTextAfterWrite == text
+                    let clipboardVerified = pasteboardTextAfterWrite == deliveredText
                     logDiagnostic("paste_clipboard_write_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
@@ -2113,7 +2136,7 @@ public final class VoiceState {
                         "changeCountBefore": String(changeCountBeforeWrite),
                         "changeCountAfter": String(changeCountAfterWrite),
                         "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                        "expectedTextLength": String(text.count),
+                        "expectedTextLength": String(deliveredText.count),
                     ])
                     guard clipboardVerified else {
                         logDiagnostic("paste_clipboard_write_failed", details: [
@@ -2122,9 +2145,9 @@ public final class VoiceState {
                             "changeCountBefore": String(changeCountBeforeWrite),
                             "changeCountAfter": String(changeCountAfterWrite),
                             "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                            "expectedTextLength": String(text.count),
+                            "expectedTextLength": String(deliveredText.count),
                         ])
-                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: deliveredText)
                         return
                     }
                     let pasted = simulatedPasteHandler()
@@ -2142,7 +2165,7 @@ public final class VoiceState {
                             pasted: pasted,
                             plan: plan
                         ),
-                        text: text
+                        text: deliveredText
                     )
                 }
             }
@@ -2214,6 +2237,12 @@ public final class VoiceState {
             activeAXInsertionTargetBundleID = nil
             return .failed
         }
+        logDiagnostic("paste_path", details: [
+            "plan": String(describing: plan),
+            "targetApp": targetBundleID,
+            "path": "ax",
+            "source": source,
+        ])
         if completionArrived {
             finishSuccess()
         } else {
