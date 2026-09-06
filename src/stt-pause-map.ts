@@ -49,7 +49,7 @@ interface WavAudioInfo {
  * 0xFFFE (extensible) — is not the integer PCM this module decodes by hand,
  * even when its rate, channel count and bit depth happen to match.
  */
-const WAVE_FORMAT_PCM = 1;
+export const WAVE_FORMAT_PCM = 1;
 
 function readAscii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));

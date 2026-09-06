@@ -38,7 +38,7 @@
  * ellipsis. Nothing here may start trimming for tidiness.
  */
 
-import { parseWavAudioInfo } from "./stt-pause-map";
+import { parseWavAudioInfo, WAVE_FORMAT_PCM } from "./stt-pause-map";
 import type { TranscriptSegment } from "./stt-sentence-boundaries";
 
 /**
@@ -90,13 +90,6 @@ const SPEECH_LEVEL_GUARD_DB = 6;
 
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
-
-/**
- * WAVE_FORMAT_PCM. Anything else — 3 (IEEE float), 6/7 (A-law/mu-law), 0xFFFE
- * (extensible) — is not the integer PCM `measureWavWindows` decodes by hand,
- * even when its bit depth and channel count happen to match.
- */
-const WAVE_FORMAT_PCM = 1;
 
 /** RMS window. 20 ms is short enough to catch a single quiet syllable. */
 const WINDOW_SECONDS = 0.02;
@@ -446,6 +439,10 @@ export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
   );
   const frameCount = Math.floor(available / bytesPerFrame);
   if (frameCount <= 0) return null;
+  // A truncated data chunk that still parsed would make getInt16 throw
+  // (RangeError) rather than return null. Refuse instead of guessing energy.
+  const pcmEnd = info.dataOffset + frameCount * bytesPerFrame;
+  if (pcmEnd > wavData.byteLength) return null;
 
   const view = new DataView(
     wavData.buffer,
@@ -465,7 +462,9 @@ export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
     for (let frame = start; frame < end; frame++) {
       const frameOffset = info.dataOffset + frame * bytesPerFrame;
       for (let channel = 0; channel < info.channels; channel++) {
-        const sample = view.getInt16(frameOffset + channel * 2, true);
+        const sampleOffset = frameOffset + channel * 2;
+        if (sampleOffset + 2 > wavData.byteLength) return null;
+        const sample = view.getInt16(sampleOffset, true);
         sumSquares += sample * sample;
         samples++;
       }
@@ -637,10 +636,12 @@ function isSilentThroughout(windows: WavWindows): boolean {
  * twice — "Ship it. Thank you. Thank you." has two identical tails and only one
  * of them sits over silence.
  *
- * The located words are then verified against the candidate key. They can
- * disagree when an earlier stage rewrote the transcript after the decode (head
- * repair, echo trim), and a segment run we cannot verify is one we do not know
- * the audio for — so it is never deleted.
+ * The located words are then verified against the candidate key. A mismatch
+ * returns null rather than a guessed span — never an off-by-one interpolation.
+ * `stripHallucinatedOutro` also refuses when the whole word stream of `text`
+ * disagrees with the segments (head repair / echo trim rewrote the
+ * transcript), because a matching key at the wrong *index* would otherwise
+ * still pass this check.
  *
  * When the run also carries real words — whisper merged the invented phrase
  * into a segment with genuine speech — the returned span covers that speech
@@ -652,8 +653,11 @@ export function findCandidateSpan(
   fullText: string,
 ): { startS: number; endS: number } | null {
   const prefixKey = normalizeOutroKey(fullText.slice(0, candidate.startIndex));
-  const skipWords = prefixKey ? prefixKey.split(" ").length : 0;
-  const wantWords = candidate.key.split(" ");
+  const skipWords = prefixKey
+    ? prefixKey.split(" ").filter(Boolean).length
+    : 0;
+  const wantWords = candidate.key.split(" ").filter(Boolean);
+  if (wantWords.length === 0) return null;
 
   let consumed = 0;
   let firstIndex = -1;
@@ -762,9 +766,16 @@ export function stripHallucinatedOutro(
 
   // The span lookup is positional, so it is only valid while `text` is still
   // the text these segments describe.
+  if (options.segmentsText !== undefined && options.segmentsText !== text) {
+    return { text, removed: [], reason: "segments-stale" };
+  }
+  // Same class of bug when the caller omitted `segmentsText` (or the decode
+  // `text` and the segment stream already disagree): a word-count prefix into
+  // a longer stream can still land on an earlier copy of the SAME closer,
+  // verification passes, and we measure the wrong span. Never delete then.
   if (
-    options.segmentsText !== undefined &&
-    options.segmentsText !== text
+    normalizeOutroKey(text) !==
+    normalizeOutroKey(segments.map((entry) => entry.text).join(" "))
   ) {
     return { text, removed: [], reason: "segments-stale" };
   }

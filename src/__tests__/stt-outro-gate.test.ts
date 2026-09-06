@@ -694,6 +694,112 @@ describe("stripHallucinatedOutro — the audio decides", () => {
       ),
     ).toBeNull();
   });
+
+  test("will not measure a closer against a span from a rewritten transcript", () => {
+    // Head repair / echo trim dropped a leading hallucinated closer that the
+    // segments still describe. The remaining "Thank you." is the one he said
+    // (speech at 2.6–3.4 s). Word-count lookup into the original segments
+    // would land on the LEADING silent copy and delete the spoken one.
+    const wav = makeWav(6, [{ startS: 0.5, endS: 3.4 }], 40);
+    const decision = stripHallucinatedOutro("Thank you.", wav, {
+      segments: [
+        segment(" Thank you.", 0.0, 0.3),
+        segment(" Ship it.", 0.5, 2.4),
+        segment(" Thank you.", 2.6, 3.4),
+      ],
+    });
+    expect(decision.reason).toBe("segments-stale");
+    expect(decision.text).toBe("Thank you.");
+    expect(decision.removed).toEqual([]);
+  });
+});
+
+describe("measureWavWindows", () => {
+  test("refuses IEEE float PCM even when rate/channels/bits look like ours", () => {
+    const pcmBytes = 320;
+    const wav = new Uint8Array(44 + pcmBytes);
+    const view = new DataView(wav.buffer);
+    const ascii = (offset: number, text: string) => {
+      for (let i = 0; i < text.length; i++)
+        wav[offset + i] = text.charCodeAt(i);
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 3, true); // IEEE float
+    view.setUint16(22, 1, true);
+    view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, pcmBytes, true);
+    expect(measureWavWindows(wav)).toBeNull();
+  });
+
+  test("refuses 24-bit PCM rather than mis-reading it as int16", () => {
+    const pcmBytes = 480;
+    const wav = new Uint8Array(44 + pcmBytes);
+    const view = new DataView(wav.buffer);
+    const ascii = (offset: number, text: string) => {
+      for (let i = 0; i < text.length; i++)
+        wav[offset + i] = text.charCodeAt(i);
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 3, true);
+    view.setUint16(32, 3, true);
+    view.setUint16(34, 24, true);
+    ascii(36, "data");
+    view.setUint32(40, pcmBytes, true);
+    expect(measureWavWindows(wav)).toBeNull();
+  });
+
+  test("averages stereo frames instead of reading one channel as two samples", () => {
+    // Left channel has a tone, right is digital zero. Frame size is 4 bytes.
+    // The RMS of (tone, 0) is tone/sqrt(2) — still well above the silence floor.
+    const seconds = 1;
+    const frames = SAMPLE_RATE * seconds;
+    const dataBytes = frames * 4;
+    const wav = new Uint8Array(44 + dataBytes);
+    const view = new DataView(wav.buffer);
+    const ascii = (offset: number, text: string) => {
+      for (let i = 0; i < text.length; i++)
+        wav[offset + i] = text.charCodeAt(i);
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + dataBytes, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 2, true);
+    view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 4, true);
+    view.setUint16(32, 4, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, dataBytes, true);
+    for (let i = 0; i < frames; i++) {
+      const tone = Math.round(
+        4000 * Math.sin((2 * Math.PI * 180 * i) / SAMPLE_RATE),
+      );
+      view.setInt16(44 + i * 4, tone, true);
+      view.setInt16(44 + i * 4 + 2, 0, true);
+    }
+    const windows = measureWavWindows(wav);
+    expect(windows).not.toBeNull();
+    expect(windows!.durationSeconds).toBeCloseTo(1, 2);
+    expect(windows!.dbfs.some((level) => level > -30)).toBe(true);
+  });
 });
 
 describe("outroGateEnabled", () => {
@@ -1058,19 +1164,27 @@ describe("stripHallucinatedOutro — specimen 6, one real closer and one invente
 
 const OUTRO_FLAG = "VOICELAYER_STT_OUTRO_GATE";
 
+const SMART_BOUNDARIES_FLAG = "VOICELAYER_STT_SMART_BOUNDARIES";
+
 /** Run `body` with the flag pinned, restoring whatever the caller had. */
 async function withOutroGate<T>(
   value: string | undefined,
   body: () => Promise<T>,
 ): Promise<T> {
   const saved = process.env[OUTRO_FLAG];
+  const savedBoundaries = process.env[SMART_BOUNDARIES_FLAG];
   if (value === undefined) delete process.env[OUTRO_FLAG];
   else process.env[OUTRO_FLAG] = value;
+  // Either flag requests verbose_json. Pin this off so "outro flag unset"
+  // actually means the request stays `json`.
+  delete process.env[SMART_BOUNDARIES_FLAG];
   try {
     return await body();
   } finally {
     if (saved === undefined) delete process.env[OUTRO_FLAG];
     else process.env[OUTRO_FLAG] = saved;
+    if (savedBoundaries === undefined) delete process.env[SMART_BOUNDARIES_FLAG];
+    else process.env[SMART_BOUNDARIES_FLAG] = savedBoundaries;
   }
 }
 
