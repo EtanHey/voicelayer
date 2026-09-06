@@ -596,6 +596,52 @@ describe("stripHallucinatedOutro — the audio decides", () => {
     ]);
   });
 
+  test("does not empty a digital-silence clip that holds quiet speech", () => {
+    // True digital silence (not noise) plus quiet speech. Filtering the
+    // -Infinity windows out of the percentile put the "floor" inside the
+    // speech, classified that speech as silent, and let the no-segments path
+    // empty the transcript with no segment evidence at all — the one place this
+    // gate deletes without it. (Macroscope HIGH, PR #34 round 2.)
+    const wav = makeWav(10, [{ startS: 0, endS: 3, peak: 300 }]);
+    const windows = measureWavWindows(wav)!;
+    expect(windows.speechLevelDbfs - windows.floorDbfs).toBeGreaterThan(6);
+
+    const decision = stripHallucinatedOutro("Thank you.", wav, {});
+    expect(decision.text).toBe("Thank you.");
+    expect(decision.removed).toEqual([]);
+  });
+
+  test("still empties a clip that is genuinely flat silence", () => {
+    const wav = makeWav(15, [], 40);
+    expect(stripHallucinatedOutro("Thank you.", wav, {}).text).toBe("");
+  });
+
+  test("keeps a word that only just reaches into the clearance zone", () => {
+    // The tail clearance is 0.16 s (8 windows of 20 ms). This word runs
+    // 4.60-4.88 s and the span starts at 5.00 s, so the zone begins at window
+    // 242 (4.84 s) and exactly TWO of the word's windows fall inside it.
+    // `containsSustainedSpeech` restarts its run counter at the slice edge, so
+    // those two windows read as a click and the word — the very thing the
+    // clearance protects — was deletable. (Macroscope HIGH, PR #34 round 2.)
+    const wav = makeWav(
+      7,
+      [
+        { startS: 0, endS: 3 },
+        { startS: 4.6, endS: 4.88 },
+      ],
+      40,
+    );
+    const decision = stripHallucinatedOutro("Ship it today. Thank you.", wav, {
+      segments: [
+        segment(" Ship it today.", 0, 3),
+        segment(" Thank you.", 5.0, 5.4),
+      ],
+    });
+
+    expect(decision.reason).toBe("not-clear-of-speech");
+    expect(decision.removed).toEqual([]);
+  });
+
   test("is inert on a WAV whose format tag is not integer PCM", () => {
     // A 16-bit, 1-channel, 16 kHz header that claims A-law (format 6). Bit
     // depth and channel count match, so only the format check stops it being

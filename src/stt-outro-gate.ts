@@ -61,7 +61,8 @@ const SPEECH_OVER_FLOOR_DB = 16;
 
 /**
  * Floor on the relative threshold, for a recording whose measured floor is
- * digital silence — without it the threshold would sit at -Infinity.
+ * digital silence — without it the threshold would sit near `SILENT_WINDOW_DBFS`
+ * and score genuine quiet speech as silence.
  *
  * There is deliberately NO upper clamp. One was here (-35 dBFS) and Macroscope
  * was right to call it a real-word-deletion risk on PR #34: a low-gain
@@ -90,6 +91,17 @@ const SPEECH_LEVEL_GUARD_DB = 6;
 
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
+
+/**
+ * The level recorded for a window of true digital silence.
+ *
+ * A finite sentinel rather than -Infinity, deliberately. 16-bit PCM cannot
+ * represent anything quieter than one LSB (-90.3 dBFS), so -120 sits below
+ * every level a real recording can carry while still being a NUMBER — and
+ * `-Infinity - -Infinity` is NaN, which silently corrupts both the percentile
+ * sort's comparator and the spread arithmetic that reads its result.
+ */
+const SILENT_WINDOW_DBFS = -120;
 
 /** RMS window. 20 ms is short enough to catch a single quiet syllable. */
 const WINDOW_SECONDS = 0.02;
@@ -470,7 +482,7 @@ export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
       }
     }
     const rms = samples > 0 ? Math.sqrt(sumSquares / samples) : 0;
-    dbfs.push(rms > 0 ? 20 * Math.log10(rms / 32768) : -Infinity);
+    dbfs.push(rms > 0 ? 20 * Math.log10(rms / 32768) : SILENT_WINDOW_DBFS);
   }
 
   const floorDbfs = percentileDbfs(dbfs, 0.1);
@@ -485,17 +497,30 @@ export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
   };
 }
 
-/** The `fraction` quantile of `dbfs`, ignoring digital-silence windows' -Infinity. */
+/**
+ * The `fraction` quantile of `dbfs`, digital-silence windows INCLUDED.
+ *
+ * Macroscope, PR #34: filtering the silent windows out was a real-word deletion
+ * path. A recording with true digital silence plus quiet speech had every
+ * silent window dropped, so the 10th percentile was computed over the SPEECH —
+ * putting the "noise floor" inside the speech, the threshold above it, and the
+ * speech itself into the silent class. `isSilentThroughout` would then empty a
+ * sole `Thank you.` needing no segments at all, which is the one path here that
+ * deletes without segment evidence.
+ *
+ * A silent window is the quietest thing a recording can contain, so it belongs
+ * in the percentile — carried as `SILENT_WINDOW_DBFS` so this comparator stays
+ * well-defined. When enough of them drag the floor down, `speechThresholdFor`
+ * falls back to its lower clamp.
+ */
 function percentileDbfs(dbfs: number[], fraction: number): number {
-  const finite = dbfs
-    .filter((level) => Number.isFinite(level))
-    .sort((a, b) => a - b);
-  if (finite.length === 0) return -Infinity;
+  if (dbfs.length === 0) return SILENT_WINDOW_DBFS;
+  const sorted = [...dbfs].sort((a, b) => a - b);
   const index = Math.min(
-    finite.length - 1,
-    Math.max(0, Math.floor(finite.length * fraction)),
+    sorted.length - 1,
+    Math.max(0, Math.floor(sorted.length * fraction)),
   );
-  return finite[index] ?? -Infinity;
+  return sorted[index] ?? SILENT_WINDOW_DBFS;
 }
 
 /**
@@ -512,16 +537,12 @@ function percentileDbfs(dbfs: number[], fraction: number): number {
  * four clips runs 1000-16000 RMS, at least 13x the highest measured floor,
  * while the loudest non-speech window is about 5x its floor.
  *
- * The clamps stop the relative rule going wrong at either extreme — digital
- * silence would otherwise put the threshold at -Infinity, and a recording with
- * no pauses at all (floor measured inside speech) would otherwise push the
- * threshold up into real words.
+ * The lower clamp stops a digital-silence recording driving the threshold down
+ * to the sentinel; a recording with no pauses at all, whose floor is measured
+ * INSIDE speech, is handled by `SPEECH_LEVEL_GUARD_DB` instead.
  */
 function speechThresholdFor(floorDbfs: number): number {
-  const relative = Number.isFinite(floorDbfs)
-    ? floorDbfs + SPEECH_OVER_FLOOR_DB
-    : SPEECH_THRESHOLD_MIN_DBFS;
-  return Math.max(SPEECH_THRESHOLD_MIN_DBFS, relative);
+  return Math.max(SPEECH_THRESHOLD_MIN_DBFS, floorDbfs + SPEECH_OVER_FLOOR_DB);
 }
 
 function windowIndex(windows: WavWindows, seconds: number): number {
@@ -582,19 +603,19 @@ function measureSpan(
 
   let sumSquares = 0;
   let count = 0;
-  let peak = -Infinity;
+  let peak = SILENT_WINDOW_DBFS;
   for (let index = first; index < last; index++) {
     const level = windows.dbfs[index];
     if (level === undefined) continue;
     if (level > peak) peak = level;
-    const amplitude = level === -Infinity ? 0 : Math.pow(10, level / 20);
+    const amplitude = Math.pow(10, level / 20);
     sumSquares += amplitude * amplitude;
     count++;
   }
   if (count === 0) return null;
   const rms = Math.sqrt(sumSquares / count);
   return {
-    meanDbfs: rms > 0 ? 20 * Math.log10(rms) : -Infinity,
+    meanDbfs: rms > 0 ? 20 * Math.log10(rms) : SILENT_WINDOW_DBFS,
     peakDbfs: peak,
     hasSpeech: containsSustainedSpeech(windows, first, last),
   };
@@ -618,7 +639,17 @@ function isClearOfSpeech(
   const margin = Math.max(1, Math.round(marginSeconds / windows.windowSeconds));
   const first = windowIndex(windows, startS) - margin;
   const last = Math.ceil(endS / windows.windowSeconds) + margin;
-  return !containsSustainedSpeech(windows, first, last);
+  // `containsSustainedSpeech` starts its run counter at the slice edge, so a
+  // real word that began just before the clearance zone and reaches only a
+  // window or two into it would be counted as a click and missed — and that
+  // word is exactly what the clearance exists to protect. Widen the scan by one
+  // window less than a sustained run, so any run crossing either edge is still
+  // long enough to be recognised inside it. (Macroscope, PR #34.)
+  const context = Math.max(
+    0,
+    Math.round(MIN_SPEECH_RUN_SECONDS / windows.windowSeconds) - 1,
+  );
+  return !containsSustainedSpeech(windows, first - context, last + context);
 }
 
 /** True when no window in the whole recording carries sustained speech. */
@@ -735,7 +766,14 @@ export function stripHallucinatedOutro(
   // transcript that is nothing BUT the invented phrase is safe to empty. This
   // is the 15 s silent `voice_ask` that came back "Thank you." — and it needs
   // no segments, because there is no audio anywhere to attribute.
-  if (isSilentThroughout(windows)) {
+  // The path below is the only place the gate deletes without segment
+  // evidence, so it carries one extra condition: the recording must be
+  // acoustically FLAT, its loud windows no further over its floor than a single
+  // speech step. A clip holding quiet speech has that spread even where the
+  // sustained-run test misses it, and a spread means words.
+  const flat =
+    windows.speechLevelDbfs - windows.floorDbfs < SPEECH_OVER_FLOOR_DB;
+  if (flat && isSilentThroughout(windows)) {
     const only = candidates[0];
     if (candidates.length === 1 && only && splitSentences(text).length === 1) {
       return {
@@ -746,8 +784,8 @@ export function stripHallucinatedOutro(
             isTail: true,
             startS: 0,
             endS: windows.durationSeconds,
-            spanDbfs: -Infinity,
-            peakDbfs: -Infinity,
+            spanDbfs: windows.floorDbfs,
+            peakDbfs: windows.speechLevelDbfs,
           },
         ],
         reason: "removed",
