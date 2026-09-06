@@ -492,6 +492,39 @@ describe("stripHallucinatedOutro — the audio decides", () => {
     ]);
   });
 
+  test("is inert on a WAV whose format tag is not integer PCM", () => {
+    // A 16-bit, 1-channel, 16 kHz header that claims A-law (format 6). Bit
+    // depth and channel count match, so only the format check stops it being
+    // read as integer PCM and measured into a meaningless energy figure —
+    // which is what would authorise a deletion. (CodeRabbit, PR #34.)
+    const wav = makeWav(5, [{ startS: 0, endS: 3 }], 40);
+    new DataView(wav.buffer, wav.byteOffset, wav.byteLength).setUint16(
+      20,
+      6,
+      true,
+    );
+
+    expect(measureWavWindows(wav)).toBeNull();
+
+    const text = "Ship the release today. Thank you.";
+    const decision = stripHallucinatedOutro(text, wav, {
+      segments: [
+        segment(" Ship the release today.", 0, 3),
+        segment(" Thank you.", 4.2, 4.6),
+      ],
+    });
+    expect(decision.reason).toBe("no-audio");
+    expect(decision.text).toBe(text);
+    expect(decision.removed).toEqual([]);
+  });
+
+  test("is inert on a truncated WAV whose data chunk is not there", () => {
+    const wav = makeWav(5, [{ startS: 0, endS: 3 }], 40).slice(0, 40);
+    expect(measureWavWindows(wav)).toBeNull();
+    const text = "Ship the release today. Thank you.";
+    expect(stripHallucinatedOutro(text, wav, {}).text).toBe(text);
+  });
+
   test("is inert without segments — a silent tail alone never justifies a cut", () => {
     const wav = makeWav(5, [{ startS: 0, endS: 3 }], 40);
     const decision = stripHallucinatedOutro(

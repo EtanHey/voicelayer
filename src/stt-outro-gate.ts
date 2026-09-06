@@ -66,6 +66,13 @@ const SPEECH_THRESHOLD_MAX_DBFS = -35;
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
 
+/**
+ * WAVE_FORMAT_PCM. Anything else — 3 (IEEE float), 6/7 (A-law/mu-law), 0xFFFE
+ * (extensible) — is not the integer PCM `measureWavWindows` decodes by hand,
+ * even when its bit depth and channel count happen to match.
+ */
+const WAVE_FORMAT_PCM = 1;
+
 /** RMS window. 20 ms is short enough to catch a single quiet syllable. */
 const WINDOW_SECONDS = 0.02;
 
@@ -354,7 +361,21 @@ export interface WavWindows {
  */
 export function measureWavWindows(wavData: Uint8Array): WavWindows | null {
   const info = parseWavAudioInfo(wavData);
-  if (!info || info.bitsPerSample !== 16 || info.channels < 1) return null;
+  // `audioFormat` matters as much as the bit depth: a 16-bit WAV carrying a
+  // non-PCM format tag (A-law, mu-law, IEEE float, 0xFFFE extensible) would
+  // sail past a bits-and-channels check and then be read sample-by-sample as
+  // integer PCM, producing an energy figure that means nothing. On this gate a
+  // meaningless measurement is not a cosmetic bug — it is what would authorise
+  // deleting a word Etan said. Same conservative check `computePauseMap`
+  // applies in `src/stt-pause-map.ts`.
+  if (
+    !info ||
+    info.audioFormat !== WAVE_FORMAT_PCM ||
+    info.bitsPerSample !== 16 ||
+    info.channels < 1
+  ) {
+    return null;
+  }
 
   const bytesPerFrame = (info.bitsPerSample / 8) * info.channels;
   const available = Math.min(
@@ -534,10 +555,7 @@ function isClearOfSpeech(
   endS: number,
   marginSeconds: number,
 ): boolean {
-  const margin = Math.max(
-    1,
-    Math.round(marginSeconds / windows.windowSeconds),
-  );
+  const margin = Math.max(1, Math.round(marginSeconds / windows.windowSeconds));
   const first = windowIndex(windows, startS) - margin;
   const last = Math.ceil(endS / windows.windowSeconds) + margin;
   return !containsSustainedSpeech(windows, first, last);
