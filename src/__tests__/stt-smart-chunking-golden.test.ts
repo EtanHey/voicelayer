@@ -5,6 +5,12 @@ import { allocateFreeLocalhostPort } from "../corpus-replay-verify";
 import { WhisperCppBackend, WhisperServerBackend } from "../stt";
 import { stopServer } from "../whisper-server";
 import {
+  findAdjacentDuplicateRun,
+  findInventedBreaks,
+  findMissingAnchors,
+  findNearRepeat,
+} from "./transcript-defects";
+import {
   GOLDEN_FIXTURE_PATH,
   loadSmartChunkGolden,
   type SmartChunkGolden,
@@ -64,62 +70,6 @@ function liveWhisperListenerPids(): string {
   return probe.stdout.toString().trim().split(/\s+/).filter(Boolean).sort().join(",");
 }
 
-/** Lowercase, strip punctuation, collapse whitespace — casing varies run to run. */
-function normalize(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s.']/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function words(text: string): string[] {
-  return normalize(text).replace(/[.']/g, "").split(" ").filter(Boolean);
-}
-
-/**
- * Longest run of ≥4 words that repeats immediately after itself.
- * This is AGENTS.md defect #2 — "a sentence sometimes repeats back-to-back".
- */
-export function findAdjacentDuplicateRun(text: string): string | null {
-  const list = words(text);
-  for (let length = Math.floor(list.length / 2); length >= 4; length--) {
-    for (let index = 0; index + 2 * length <= list.length; index++) {
-      const left = list.slice(index, index + length).join(" ");
-      const right = list.slice(index + length, index + 2 * length).join(" ");
-      if (left === right) return left;
-    }
-  }
-  return null;
-}
-
-/**
- * Anchor matching compares LETTER SEQUENCES, not tokens.
- *
- * Whisper splits the same audio as "CodeRabbit.yaml" or "code rabbit.yaml",
- * "ChatGPT" or "chat gpt", run to run. Those are spacing choices, not words
- * Etan lost, and a gate that fails on them measures the tokenizer instead of
- * the defect. Dropping separators keeps the check on the thing that matters:
- * did the sounds he actually said survive the chunk seam?
- */
-export function anchorKey(text: string): string {
-  return text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
-}
-
-export function findMissingAnchors(text: string, anchors: string[]): string[] {
-  const haystack = anchorKey(text);
-  return anchors.filter((anchor) => !haystack.includes(anchorKey(anchor)));
-}
-
-export function findInventedBreaks(
-  text: string,
-  breaks: Array<{ name: string; pattern: string }>,
-): string[] {
-  return breaks
-    .filter((entry) => new RegExp(entry.pattern, "i").test(text))
-    .map((entry) => entry.name);
-}
-
 interface RunOutcome {
   run: number;
   text: string;
@@ -127,6 +77,7 @@ interface RunOutcome {
   durationMs: number;
   missingAnchors: string[];
   adjacentDuplicate: string | null;
+  nearRepeat: string | null;
   inventedBreaks: string[];
 }
 
@@ -143,6 +94,7 @@ function summarize(label: string, outcomes: RunOutcome[]): string {
         `${(outcome.durationMs / 1000).toFixed(1)}s ${outcome.backend} ` +
         `missing=${outcome.missingAnchors.length} ` +
         `dup=${outcome.adjacentDuplicate ? `"${outcome.adjacentDuplicate}"` : "none"} ` +
+        `near=${outcome.nearRepeat ? `"${outcome.nearRepeat}"` : "none"} ` +
         `breaks=${outcome.inventedBreaks.length ? outcome.inventedBreaks.join("|") : "none"}` +
         (outcome.missingAnchors.length
           ? `\n         missing: ${outcome.missingAnchors.map((a) => `"${a}"`).join(", ")}`
@@ -188,24 +140,33 @@ async function runGolden(
   fixture: SmartChunkGolden,
   smartChunks: boolean,
 ): Promise<RunOutcome[]> {
-  if (smartChunks) process.env[SMART_CHUNK_ENV] = "1";
-  else delete process.env[SMART_CHUNK_ENV];
+  // AIDEV-NOTE: pin BOTH columns explicitly, never by unsetting. While the
+  // default was briefly ON, deleting the variable silently ran the SMART path
+  // in both columns and the comparison looked clean when it was not.
+  const savedFlag = process.env[SMART_CHUNK_ENV];
+  process.env[SMART_CHUNK_ENV] = smartChunks ? "1" : "0";
 
   const backend = new WhisperServerBackend();
   const outcomes: RunOutcome[] = [];
-  for (let run = 1; run <= N_RUNS; run++) {
-    const result = await backend.transcribe(fixture.wav);
-    outcomes.push({
-      run,
-      text: result.text,
-      backend: result.backend,
-      durationMs: result.durationMs,
-      missingAnchors: findMissingAnchors(result.text, fixture.anchors),
-      adjacentDuplicate: findAdjacentDuplicateRun(result.text),
-      inventedBreaks: findInventedBreaks(result.text, fixture.forbiddenBreaks),
-    });
+  try {
+    for (let run = 1; run <= N_RUNS; run++) {
+      const result = await backend.transcribe(fixture.wav);
+      outcomes.push({
+        run,
+        text: result.text,
+        backend: result.backend,
+        durationMs: result.durationMs,
+        missingAnchors: findMissingAnchors(result.text, fixture.anchors),
+        adjacentDuplicate: findAdjacentDuplicateRun(result.text),
+        nearRepeat: findNearRepeat(result.text),
+        inventedBreaks: findInventedBreaks(result.text, fixture.forbiddenBreaks),
+      });
+    }
+  } finally {
+    // Restore on failure too, or a thrown decode leaves the next suite pinned.
+    if (savedFlag === undefined) delete process.env[SMART_CHUNK_ENV];
+    else process.env[SMART_CHUNK_ENV] = savedFlag;
   }
-  delete process.env[SMART_CHUNK_ENV];
   return outcomes;
 }
 
@@ -220,6 +181,11 @@ function assertClean(outcomes: RunOutcome[]): void {
     expect({ run: outcome.run, duplicate: outcome.adjacentDuplicate }).toEqual({
       run: outcome.run,
       duplicate: null,
+    });
+    // (b2) ...and nothing repeated across a small gap at a seam either.
+    expect({ run: outcome.run, nearRepeat: outcome.nearRepeat }).toEqual({
+      run: outcome.run,
+      nearRepeat: null,
     });
     // (c) no sentence boundary invented at a seam.
     expect({ run: outcome.run, breaks: outcome.inventedBreaks }).toEqual({
@@ -260,7 +226,16 @@ describe("golden clip B through the ≥90 s chunk path", () => {
     900_000,
   );
 
-  goldenTest("the isolated run never touched the live :8178 listener", () => {
-    expect(liveWhisperListenerPids()).toBe(livePidsBefore);
+  goldenTest("the isolated run never killed the live :8178 listener", () => {
+    // A listener APPEARING is fine and expected — :8178 is lazy, so the daemon
+    // starts its own server on Etan's next utterance. What must never happen is
+    // one that was serving before this run being gone after it.
+    const after = liveWhisperListenerPids();
+    for (const pid of livePidsBefore.split(",").filter(Boolean)) {
+      expect({ pid, stillListening: after.split(",").includes(pid) }).toEqual({
+        pid,
+        stillListening: true,
+      });
+    }
   });
 });

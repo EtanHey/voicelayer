@@ -83,8 +83,14 @@ import {
   type STTCorrectorEnv,
 } from "./stt-corrector";
 import { reserveArchiveRetranscription } from "./voice-operation-reservation";
+import { computePauseMap } from "./stt-pause-map";
+import {
+  smartBoundariesEnabled,
+  type TranscriptSegment,
+} from "./stt-sentence-boundaries";
 import {
   polishTranscriptionText,
+  type STTPolishBoundaryContext,
   warmPolishEndpoint,
   type STTPolishEnv,
   type STTPolishWarmupResult,
@@ -436,6 +442,59 @@ export async function finalizeTranscriptionTextForSurface(
     .text;
 }
 
+/**
+ * Where Etan stopped, for the pause-aware boundary stage.
+ *
+ * Returns undefined — the documented "leave today's behaviour alone" answer —
+ * unless `VOICELAYER_STT_SMART_BOUNDARIES=1` AND the decode handed back segment
+ * timestamps. Costs one Silero pass over the finished WAV, so it runs only
+ * under the flag. Never throws: a recording it cannot analyse just gets no
+ * boundary validation, and the reason is logged.
+ */
+export async function buildBoundaryContext(
+  wavPath: string,
+  segments: TranscriptSegment[] | undefined,
+  segmentsAudioSha256: string | undefined,
+  env: STTFinalizeEnv = process.env,
+  signal?: AbortSignal,
+): Promise<STTPolishBoundaryContext | undefined> {
+  if (!smartBoundariesEnabled(env)) return undefined;
+  if (signal?.aborted) return undefined;
+  if (!segments || segments.length === 0) {
+    console.error(
+      "[voicelayer] pause-aware boundaries: decode returned no segments; skipping",
+    );
+    return undefined;
+  }
+  try {
+    const wavData = new Uint8Array(await Bun.file(wavPath).arrayBuffer());
+    // The segments must come from THIS audio. A retranscribe can hand us a
+    // different file than the one the decode ran on, and pairing one decode's
+    // words with another's timings would silently move every boundary.
+    if (segmentsAudioSha256) {
+      const digest = createHash("sha256").update(wavData).digest("hex");
+      if (digest !== segmentsAudioSha256) {
+        console.error(
+          "[voicelayer] pause-aware boundaries: segments belong to a different decode; skipping",
+        );
+        return undefined;
+      }
+    }
+    // An empty pause map is NOT a reason to skip: Rule B still judges the clause
+    // and what follows it. Only an abort or an unreadable file drops the stage.
+    const pauses = await computePauseMap(wavData, { signal });
+    if (signal?.aborted) return undefined;
+    return { segments, pauses };
+  } catch (err) {
+    console.error(
+      `[voicelayer] pause-aware boundaries: pause map failed, skipping: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return undefined;
+  }
+}
+
 export interface FinalizedTranscriptionResult {
   text: string;
   polished?: boolean;
@@ -447,6 +506,7 @@ export async function finalizeTranscriptionResultForSurface(
   rawText: string,
   surface: STTPolishSurface | null,
   env: STTFinalizeEnv = process.env,
+  boundaryContext?: STTPolishBoundaryContext,
 ): Promise<FinalizedTranscriptionResult> {
   const cleanedText = finalizeTranscriptionText(rawText, env);
   if (!surface) return { text: cleanedText };
@@ -455,6 +515,7 @@ export async function finalizeTranscriptionResultForSurface(
     cleanedText,
     surface,
     env,
+    ...(boundaryContext ? { boundaryContext } : {}),
   });
   appendControlLayerEvent(
     "transcription.polish",
@@ -472,6 +533,7 @@ export async function finalizeTranscriptionResultForSurface(
       polished: polished.polished,
       reason: polished.reason ?? null,
       error: polished.error ?? null,
+      boundary_demotions: polished.boundaryDemotions?.length ?? 0,
     },
     { topic: "voice.transcription" },
   );
@@ -3002,9 +3064,22 @@ export async function waitForInput(
     } else {
       const result = await backend.transcribe(wavPath);
       throwIfWaitForInputAborted(options.signal);
+      // Built BEFORE the finalize call, and abortable: the pause map is a
+      // whole-file VAD pass, and a cancelled voice_ask must settle now rather
+      // than after it (Macroscope round 1, HIGH).
+      const boundaryContext = await buildBoundaryContext(
+        wavPath,
+        result.segments,
+        result.segmentsAudioSha256,
+        process.env,
+        options.signal,
+      );
+      throwIfWaitForInputAborted(options.signal);
       finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         polishSurfaceForWaitOptions(options),
+        process.env,
+        boundaryContext,
       );
       if (result.text.trim() && !finalized.text) {
         console.error(
@@ -3740,6 +3815,12 @@ export async function retranscribeRecordingCapture(
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         "dictation",
+        process.env,
+        await buildBoundaryContext(
+          sttWavPath,
+          result.segments,
+          result.segmentsAudioSha256,
+        ),
       );
       const text = finalized.text;
       if (result.text.trim() && !text) {
@@ -3832,6 +3913,12 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       const finalized = await finalizeTranscriptionResultForSurface(
         result.text,
         retainedPolishSurfaceForRetranscription(),
+        process.env,
+        await buildBoundaryContext(
+          sttWavPath,
+          result.segments,
+          result.segmentsAudioSha256,
+        ),
       );
       const text = finalized.text;
       if (result.text.trim() && !text) {

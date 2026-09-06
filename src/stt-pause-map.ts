@@ -161,11 +161,18 @@ export function pauseSpansFromProbabilities(
  *
  * Runs on its OWN VAD session (`createVADSession`), never the module-global one
  * that belongs to whatever recording is live.
+ *
+ * Abortable: `options.signal` is checked before the model loads and between VAD
+ * chunks, and an abort returns `[]` like any other "cannot analyse" case rather
+ * than throwing. A whole-file pass over a long recording is seconds of work, and
+ * a `voice_ask` that Etan cancels must settle immediately — it must never wait
+ * for this to finish (Macroscope round 1, HIGH).
  */
 export async function computePauseMap(
   wavData: Uint8Array,
-  options?: { minPauseSeconds?: number },
+  options?: { minPauseSeconds?: number; signal?: AbortSignal },
 ): Promise<PauseSpan[]> {
+  if (options?.signal?.aborted) return [];
   const info = parseWavAudioInfo(wavData);
   if (!info) {
     console.error(
@@ -193,6 +200,7 @@ export async function computePauseMap(
 
   const vad = await createVADSession();
   for (let chunk = 0; chunk < usableChunks; chunk++) {
+    if (options?.signal?.aborted) return [];
     const start = info.dataOffset + chunk * chunkBytes;
     probabilities.push(
       await vad.process(wavData.subarray(start, start + chunkBytes)),
@@ -204,6 +212,36 @@ export async function computePauseMap(
     VAD_CHUNK_SAMPLES / info.sampleRate,
     options?.minPauseSeconds,
   );
+}
+
+/** The pause containing `seconds`, or null if that instant is speech. */
+export function pauseSpanContaining(
+  seconds: number,
+  pauseMap: PauseSpan[],
+): PauseSpan | null {
+  for (const span of pauseMap) {
+    if (seconds >= span.startS && seconds <= span.endS) return span;
+  }
+  return null;
+}
+
+/**
+ * Is a cut at `cutS` far enough inside a pause to be a SILENCE SEAM?
+ *
+ * A silence seam needs no overlap anchor: the two chunks meet in the middle of
+ * a pause, so their texts are disjoint by construction and can simply be
+ * concatenated. The depth requirement is what makes that true — with the cut at
+ * least `overlapSeconds` past the pause's start, the following chunk's small
+ * overlap is entirely silence and no speech is decoded twice. A pause too
+ * shallow for that keeps the ordinary anchor merge.
+ */
+export function isSilenceSeam(
+  cutS: number,
+  pauseMap: PauseSpan[],
+  overlapSeconds: number,
+): boolean {
+  const span = pauseSpanContaining(cutS, pauseMap);
+  return span !== null && cutS - span.startS >= overlapSeconds;
 }
 
 /**

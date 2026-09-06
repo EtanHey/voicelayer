@@ -10,6 +10,8 @@ import { isSmartWavChunkingEnabled } from "../stt";
 import { createVADSession, processVADChunk, resetVAD } from "../vad";
 import {
   chooseChunkEnd,
+  isSilenceSeam,
+  pauseSpanContaining,
   computePauseMap,
   MIN_PAUSE_SECONDS,
   parseWavAudioInfo,
@@ -309,23 +311,68 @@ describe("chooseChunkEnd", () => {
 });
 
 describe("isSmartWavChunkingEnabled", () => {
-  // Default OFF is the contract of this PR: with the flag unset the saved-WAV
-  // decode is byte-for-byte the shipped fixed-30 s one.
-  test("is off when unset, empty, or anything but an opt-in", () => {
+  // Opt-in. It was briefly default-ON in this branch and the 18-clip corpus
+  // gate reversed that: ON removed every looped repeat and halved decode time
+  // but lost more content, which AGENTS.md ranks worse. See PR #31.
+  test("is OFF when unset, empty, or an off-value", () => {
+    expect(isSmartWavChunkingEnabled({})).toBe(false);
     for (const value of [undefined, "", "  ", "0", "off", "no", "false", "maybe"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         false,
       );
     }
-    expect(isSmartWavChunkingEnabled({})).toBe(false);
   });
 
-  test("accepts the same opt-in spellings as QA_VOICE_CHUNKED_STT", () => {
+  test("is ON only for an explicit opt-in", () => {
     for (const value of ["1", "true", "yes", "on", " ON ", "True"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         true,
       );
     }
+  });
+});
+
+describe("pauseSpanContaining", () => {
+  const map: PauseSpan[] = [
+    { startS: 5, endS: 7 },
+    { startS: 20, endS: 26 },
+  ];
+
+  test("finds the span an instant sits in, edges included", () => {
+    expect(pauseSpanContaining(6, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(5, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(7, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(26, map)).toEqual({ startS: 20, endS: 26 });
+  });
+
+  test("returns null for an instant in speech", () => {
+    expect(pauseSpanContaining(10, map)).toBeNull();
+    expect(pauseSpanContaining(0, map)).toBeNull();
+    expect(pauseSpanContaining(30, map)).toBeNull();
+  });
+});
+
+describe("isSilenceSeam", () => {
+  const overlap = 0.5;
+
+  test("a cut deep inside a pause is a silence seam", () => {
+    expect(isSilenceSeam(26, [{ startS: 20, endS: 26 }], overlap)).toBe(true);
+  });
+
+  test("a cut in speech is not", () => {
+    expect(isSilenceSeam(10, [{ startS: 20, endS: 26 }], overlap)).toBe(false);
+    expect(isSilenceSeam(10, [], overlap)).toBe(false);
+  });
+
+  // The depth rule is what makes concatenation safe: the following chunk's
+  // small overlap must be silence, or it re-decodes speech that is already in
+  // the previous chunk and blind concatenation would duplicate it.
+  test("a pause too shallow for the overlap is NOT a silence seam", () => {
+    expect(isSilenceSeam(24.4, [{ startS: 24, endS: 24.4 }], overlap)).toBe(false);
+  });
+
+  test("exactly one overlap deep qualifies", () => {
+    expect(isSilenceSeam(24.5, [{ startS: 24, endS: 24.6 }], overlap)).toBe(true);
   });
 });
 
@@ -440,6 +487,43 @@ function buildSynthFixture(): void {
 }
 
 const synthTest = synthReady ? test : test.skip;
+
+describe("computePauseMap is abortable", () => {
+  /** 60 s of silence: long enough that a full VAD pass is clearly not instant. */
+  const longWav = (): Uint8Array => wavHeader(SAMPLE_RATE * 2 * 60);
+
+  test("an already-aborted signal returns [] without loading the model", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started = performance.now();
+    expect(await computePauseMap(longWav(), { signal: controller.signal })).toEqual(
+      [],
+    );
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  test("aborting mid-pass settles in well under 200 ms", async () => {
+    // Warm the ONNX model first, so this measures the abort and not the load.
+    await computePauseMap(wavHeader(SAMPLE_RATE * 2));
+
+    const controller = new AbortController();
+    const started = performance.now();
+    const pending = computePauseMap(longWav(), { signal: controller.signal });
+    // Land the abort between VAD chunks, which is where the check lives.
+    setTimeout(() => controller.abort(), 0);
+    expect(await pending).toEqual([]);
+    const elapsed = performance.now() - started;
+    console.error(`[pause-map] mid-pass abort settled in ${elapsed.toFixed(1)} ms`);
+    expect(elapsed).toBeLessThan(200);
+  }, 120_000);
+
+  test("without a signal the same audio is fully analysed", async () => {
+    // Guards the abort check against short-circuiting the normal path.
+    expect(await computePauseMap(longWav())).toEqual([
+      { startS: 0, endS: 60 },
+    ]);
+  }, 120_000);
+});
 
 describe("computePauseMap over synthesized speech", () => {
   synthTest(

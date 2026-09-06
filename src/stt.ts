@@ -27,12 +27,18 @@ import {
   getLanguageModeFromEnv,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import { createHash } from "crypto";
 import {
   chooseChunkEnd,
   computePauseMap,
+  isSilenceSeam,
   SMART_CHUNK_MIN_SECONDS,
   type PauseSpan,
 } from "./stt-pause-map";
+import {
+  smartBoundariesEnabled,
+  type TranscriptSegment,
+} from "./stt-sentence-boundaries";
 import type {
   SpeechToTextBackend,
   SpeechToTextBackendSelector,
@@ -46,6 +52,23 @@ export interface STTResult extends TranscriptionResult {
   text: string;
   backend: string;
   durationMs: number;
+  /**
+   * Whisper segment timestamps, present only under
+   * `VOICELAYER_STT_SMART_BOUNDARIES=1` on the single-shot whisper-server path.
+   * The chunked path (>= 90 s) does NOT set them, so those recordings get no
+   * boundary validation: each chunk's times are chunk-relative, and stitching
+   * them across C1's overlap seam is a separate change. Deliberate and
+   * documented in CLAUDE.details.md (Macroscope round 1, finding 5).
+   */
+  segments?: TranscriptSegment[];
+  /**
+   * sha256 of the EXACT audio `segments` were decoded from. The boundary stage
+   * refuses to use segments whose audio does not match the WAV it computes the
+   * pause map over, so a retranscribe that swapped the file underneath cannot
+   * silently pair one decode's segments with another's timings (Macroscope
+   * round 1).
+   */
+  segmentsAudioSha256?: string;
 }
 
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
@@ -584,11 +607,48 @@ const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
 
 /**
- * Opt-in silence-aware boundaries for the saved-WAV chunk path.
+ * Overlap kept at a SILENCE SEAM.
  *
- * Default OFF: with the flag unset every boundary below is exactly
- * `WAV_CHUNK_SECONDS`, so the decode is byte-for-byte the shipped one. This PR
- * only plumbs the choice through — the merge logic is untouched.
+ * An ordinary seam re-decodes `WAV_CHUNK_OVERLAP_SECONDS` of audio so the merge
+ * has shared words to align on. A seam that lands inside a pause has no shared
+ * words to find — that is the whole point — so it keeps only enough audio to
+ * guarantee no gap, and the two texts are concatenated instead of reconciled.
+ */
+const SILENCE_SEAM_OVERLAP_SECONDS = 0.5;
+
+/**
+ * Least fraction of a recording that must decode as speech before its pause map
+ * is trusted to place boundaries.
+ *
+ * A map that reports almost no speech carries no information about where the
+ * WORDS are, so "this cut is inside a pause" stops meaning "this cut is between
+ * two words" — and the silence seam's concatenate-without-reconcile step rests
+ * on exactly that. Found by turning the flag on by default: `stt.test.ts`
+ * builds its long fixtures from a 180 Hz sine, Silero correctly scores the
+ * whole thing as non-speech, and every seam was then classified as silence.
+ * Below this floor the decode keeps the fixed cuts and the anchor merge.
+ *
+ * 5 % is set from measurement, not taste: across the 18 recordings of >=90 s in
+ * the 2026-09-06 recon corpus the speech share runs 19.0 %-79.6 % (the 19.0 %
+ * one is a real, very pause-heavy 183 s dictation and must stay smart-chunked),
+ * while the synthetic tone fixtures score 0.0 %. The floor separates "no speech
+ * was detected at all" from "a quiet recording", and nothing real is near it.
+ */
+const MIN_SMART_CHUNK_SPEECH_RATIO = 0.05;
+
+/**
+ * Silence-aware boundaries for the saved-WAV chunk path. Opt-in.
+ *
+ * Default OFF: unset, every boundary is exactly `WAV_CHUNK_SECONDS` and every
+ * seam uses the anchor merge, i.e. the shipped decode.
+ *
+ * It was briefly flipped ON by default and the 18-clip corpus gate said no. ON
+ * is the only configuration in that run that produced NO looped text at all
+ * (0 looped words against 109, 0/18 adjacent duplicates against 4/18) and it is
+ * 1.9x faster — but it lost more CONTENT (337 words against 210, 110 of them
+ * within 5 s of a chosen cut). AGENTS.md ranks a lost word above a duplicated
+ * one, so it stays opt-in until the seam losses are understood. Numbers and
+ * method: PR #31.
  */
 export function isSmartWavChunkingEnabled(
   env: Record<string, string | undefined> = process.env,
@@ -1094,14 +1154,36 @@ function isLowEnergyWavSegment(wavData: Uint8Array): boolean {
   return dbfs < CHUNK_NO_SPEECH_MIN_DBFS;
 }
 
-export function mergeChunkTranscripts(chunks: string[]): string {
+/**
+ * How two consecutive chunk texts meet.
+ *
+ * `anchor` is the historical behaviour: the chunks share several seconds of
+ * re-decoded audio, so the merge finds the repeated words and folds them
+ * together. `silence` is the smart path's seam inside a pause — the chunks
+ * share only silence, so there is nothing to align and nothing to dedupe, and
+ * reconciling anyway is what invented the "and I mean … and I mean" repeat on
+ * golden clip B. Concatenating is not a shortcut here; it is the correct
+ * operation, because the two texts are disjoint by construction.
+ */
+export type ChunkSeamKind = "anchor" | "silence";
+
+export function mergeChunkTranscripts(
+  chunks: string[],
+  /** `seams[i]` describes the seam BEFORE `chunks[i]`; `seams[0]` is unused. */
+  seams: ChunkSeamKind[] = [],
+): string {
   const merged: string[] = [];
 
-  for (const chunk of chunks) {
+  for (const [chunkIndex, chunk] of chunks.entries()) {
     const nextWords = normalizeChunkWords(chunk);
     if (nextWords.length === 0) continue;
 
     if (merged.length === 0) {
+      merged.push(...nextWords);
+      continue;
+    }
+
+    if (seams[chunkIndex] === "silence") {
       merged.push(...nextWords);
       continue;
     }
@@ -1555,10 +1637,18 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const text = await this.transcribeResident(
-        wavData,
-        buildWhisperServerOptions(options),
-      );
+      const smartBoundaries = smartBoundariesEnabled(process.env);
+      let segments: TranscriptSegment[] | undefined;
+      const text = await this.transcribeResident(wavData, {
+        ...buildWhisperServerOptions(options),
+        ...(smartBoundaries
+          ? {
+              onSegments: (found: TranscriptSegment[]) => {
+                segments = found;
+              },
+            }
+          : {}),
+      });
       if (!text.trim()) {
         console.error(
           "[voicelayer] whisper-server returned empty text, falling back to whisper-cli",
@@ -1597,6 +1687,14 @@ export class WhisperServerBackend implements STTBackend {
         text: cleanedText,
         backend: backendParts.join("+"),
         durationMs: Date.now() - start,
+        ...(segments && segments.length > 0
+          ? {
+              segments,
+              segmentsAudioSha256: createHash("sha256")
+                .update(wavData)
+                .digest("hex"),
+            }
+          : {}),
       };
     } catch (err) {
       console.error(
@@ -1745,6 +1843,10 @@ export class WhisperServerBackend implements STTBackend {
     }
 
     const transcripts: string[] = [];
+    // seamKinds[i] describes the seam BEFORE transcripts[i]. A boundary chosen
+    // deep inside a pause makes the NEXT chunk's seam a silence seam.
+    const seamKinds: ChunkSeamKind[] = [];
+    let nextSeamKind: ChunkSeamKind = "anchor";
     let witnessed = false;
     let scheduleShiftedByWitness = false;
     let fullUnpromptedWitness: Promise<string> | null = null;
@@ -1765,10 +1867,25 @@ export class WhisperServerBackend implements STTBackend {
     let pauseMap: PauseSpan[] = [];
     if (isSmartWavChunkingEnabled()) {
       try {
-        pauseMap = await computePauseMap(wavData);
-        console.error(
-          `[voicelayer] smart chunk pause map: ${pauseMap.length} pause(s) >= 300ms`,
+        const candidate = await computePauseMap(wavData);
+        const pauseSeconds = candidate.reduce(
+          (total, span) => total + (span.endS - span.startS),
+          0,
         );
+        const speechRatio =
+          (info.durationSeconds - pauseSeconds) / info.durationSeconds;
+        if (speechRatio < MIN_SMART_CHUNK_SPEECH_RATIO) {
+          console.error(
+            `[voicelayer] smart chunking skipped: only ${(speechRatio * 100).toFixed(1)}% of ` +
+              `this recording decodes as speech; keeping fixed ${WAV_CHUNK_SECONDS}s cuts`,
+          );
+        } else {
+          pauseMap = candidate;
+          console.error(
+            `[voicelayer] smart chunk pause map: ${pauseMap.length} pause(s) >= 300ms, ` +
+              `${(speechRatio * 100).toFixed(1)}% speech`,
+          );
+        }
       } catch (err) {
         console.error(
           `[voicelayer] smart chunking unavailable; keeping fixed ${WAV_CHUNK_SECONDS}s cuts: ${
@@ -1793,8 +1910,22 @@ export class WhisperServerBackend implements STTBackend {
               max: WAV_CHUNK_SECONDS,
             }) - startSeconds
           : WAV_CHUNK_SECONDS;
+      // A cut inside a pause needs no anchor, so it keeps only enough overlap
+      // to guarantee no gap. Everything else keeps the full re-decoded overlap.
+      const cutIsSilenceSeam = isSilenceSeam(
+        startSeconds + plannedChunkSeconds,
+        pauseMap,
+        SILENCE_SEAM_OVERLAP_SECONDS,
+      );
+      const seamOverlapSeconds = cutIsSilenceSeam
+        ? SILENCE_SEAM_OVERLAP_SECONDS
+        : WAV_CHUNK_OVERLAP_SECONDS;
+      let seamKindAfterThisChunk: ChunkSeamKind = cutIsSilenceSeam
+        ? "silence"
+        : "anchor";
+      const seamKindBeforeThisChunk = nextSeamKind;
       let nextStartSeconds =
-        startSeconds + plannedChunkSeconds - WAV_CHUNK_OVERLAP_SECONDS;
+        startSeconds + plannedChunkSeconds - seamOverlapSeconds;
       const remainingSeconds = info.durationSeconds - startSeconds;
       const chunkSeconds =
         scheduleShiftedByWitness &&
@@ -1804,17 +1935,27 @@ export class WhisperServerBackend implements STTBackend {
       const isVeryShortFinalChunk =
         chunkSeconds >= remainingSeconds &&
         remainingSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
+      // AIDEV-NOTE: a skipped chunk means audio was OMITTED between the last
+      // decoded chunk and the next one, so they cannot share words and the
+      // anchor merge would be free to "dedupe" a genuine repeat across the gap
+      // and lose it (CodeRabbit, PR #31). Only applied on the smart path: with
+      // the pause map empty this is the shipped fixed-cut decode, and the same
+      // hazard there is pre-existing and out of scope for an opt-in flag.
+      const seamAfterSkip: ChunkSeamKind =
+        pauseMap.length > 0 ? "silence" : seamKindAfterThisChunk;
       const segment = sliceWavSegment(wavData, startSeconds, chunkSeconds);
       if (!segment) {
+        nextSeamKind = seamAfterSkip;
         startSeconds = nextStartSeconds;
         continue;
       }
       if (isLowEnergyWavSegment(segment)) {
+        nextSeamKind = seamAfterSkip;
         startSeconds = nextStartSeconds;
         continue;
       }
 
-      const mergedSoFar = mergeChunkTranscripts(transcripts);
+      const mergedSoFar = mergeChunkTranscripts(transcripts, seamKinds);
       let text = await this.transcribeResident(
         segment,
         buildWhisperServerOptions({
@@ -1826,8 +1967,13 @@ export class WhisperServerBackend implements STTBackend {
       if (!text.trim()) return null;
       const suspectLoops = mergedSoFar ? findSuspectChunkLoops(text) : [];
       const suspectLoop = suspectLoops[0] ?? null;
+      // At a silence seam the chunks share only silence, so a missing overlap
+      // is the expected outcome, not evidence of damage. Firing the witness
+      // machinery here is what produced the seam repeat on golden clip B.
       const droppedBoundaryOverlap =
-        Boolean(mergedSoFar) && !hasChunkBoundaryOverlap(mergedSoFar, text);
+        seamKindBeforeThisChunk !== "silence" &&
+        Boolean(mergedSoFar) &&
+        !hasChunkBoundaryOverlap(mergedSoFar, text);
       if (
         (suspectLoop || droppedBoundaryOverlap) &&
         startSeconds + chunkSeconds < info.durationSeconds
@@ -2087,11 +2233,19 @@ export class WhisperServerBackend implements STTBackend {
             text = chosenWitness;
             witnessed = true;
             scheduleShiftedByWitness = true;
+            // The witness moved the boundary off the pause it was chosen in,
+            // so the next seam is an ordinary anchor seam again.
+            seamKindAfterThisChunk = "anchor";
             nextStartSeconds =
               startSeconds + witnessSeconds - WAV_CHUNK_OVERLAP_SECONDS;
           }
         }
       }
+      // AIDEV-NOTE: NOT skipped at a silence seam. The trigger is a missing
+      // overlap, which a silence seam always has, but the check itself compares
+      // a prompted and an unprompted decode of the SAME audio — it never uses
+      // the anchor. Skipping it let a hallucinated very short final chunk be
+      // appended unconfirmed (Macroscope, PR #31).
       if (
         isVeryShortFinalChunk &&
         mergedSoFar &&
@@ -2105,7 +2259,9 @@ export class WhisperServerBackend implements STTBackend {
           break;
         }
       }
+      seamKinds[transcripts.length] = seamKindBeforeThisChunk;
       transcripts.push(text);
+      nextSeamKind = seamKindAfterThisChunk;
 
       if (startSeconds + chunkSeconds >= info.durationSeconds) {
         break;
@@ -2113,7 +2269,7 @@ export class WhisperServerBackend implements STTBackend {
       startSeconds = nextStartSeconds;
     }
 
-    const mergedText = mergeChunkTranscripts(transcripts);
+    const mergedText = mergeChunkTranscripts(transcripts, seamKinds);
     if (!mergedText) return null;
 
     const headResult = await this.verifyChunkedLeadingPunctuation(
