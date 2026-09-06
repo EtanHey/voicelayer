@@ -428,7 +428,7 @@ function placeholderFor(replacement: string): string {
 }
 
 const DELIMITER_AFTER_DICTATED_BREAK = new RegExp(
-  `([${NEWLINE_PLACEHOLDER}${PARAGRAPH_PLACEHOLDER}])\\s*[,.]`,
+  `([${NEWLINE_PLACEHOLDER}${PARAGRAPH_PLACEHOLDER}])(?:\\s*[,.])+`,
   "g",
 );
 

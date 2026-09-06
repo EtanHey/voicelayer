@@ -273,6 +273,12 @@ describe("comma-wrapped spoken commands", () => {
       );
     });
 
+    it("drops every whisper delimiter after a dictated break, not just one", () => {
+      // "foo, new line,. bar" reaches the rule with both a comma and a period
+      // trailing the break; dropping one left "Foo \n. Bar".
+      expect(applyRules("foo, new line,. bar")).toBe("Foo \n Bar");
+    });
+
     it("still protects a real comma-separated enumeration", () => {
       expect(
         applyRules("The words colon, comma, and period are punctuation"),
