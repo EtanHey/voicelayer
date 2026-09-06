@@ -18,6 +18,11 @@
  * following words carry on that same clause. Still never inserts a mark, and
  * still never loses a word.
  *
+ * A QUESTION MARK is never touched at all (Etan, 2026-09-06). A tag question —
+ * "can't you?", "right?", "isn't it?" — ends on a word the stop-list calls
+ * incomplete, and demoting it would throw the question away. The stop-list
+ * governs periods and exclamation marks only.
+ *
  * The regression this closes (recording `2026-09-06T12-56-44-855Z-28f3916c`):
  * he said "...i'm thinking [2.3 s pause] of the next couple of words i guess
  * [2.7 s pause] like i just did now". Polish put the period BEFORE "I guess",
@@ -535,6 +540,11 @@ export function applyPauseAwareBoundaries(
     if (!match) continue;
     const [, mark, gap] = match;
     if (!TERMINAL_MARKS.has(mark)) continue;
+    // Etan, 2026-09-06: a question mark is NEVER removed or demoted. A tag
+    // question — "can't you?", "right?", "isn't it?" — ends on a word the
+    // stop-list calls incomplete, and turning it into "can't you," loses the
+    // question. The stop-list governs periods and exclamation marks only.
+    if (mark === "?") continue;
     // "Dr. Smith", "e.g.", "vs." — demoting these would corrupt the word.
     if (mark === "." && endsWithAbbreviation(text, word.end + 1)) continue;
 

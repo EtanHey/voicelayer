@@ -68,6 +68,14 @@ export interface STTPolishResult {
   error?: string;
   /** Terminal marks the pause-aware stage turned into commas. Flag-gated. */
   boundaryDemotions?: BoundaryDemotion[];
+  /**
+   * `changed` as it was BEFORE boundary validation, i.e. whether the MODEL
+   * changed anything. The no-op retry logic must judge the model, not this
+   * stage: a demotion is a change to the text but not evidence that polish did
+   * its job, and reading `changed` there skipped the punctuation-repair retry
+   * and returned the unpunctuated run-on (Macroscope round 1).
+   */
+  candidateChanged?: boolean;
 }
 
 export type STTPolishWarmupStatus = "skipped" | "warmed" | "failed";
@@ -1563,6 +1571,7 @@ export async function polishTranscriptionText(
     return {
       inputText: input.cleanedText,
       text: finalText,
+      candidateChanged: text !== input.cleanedText,
       polishedText,
       mode,
       status,
@@ -1620,7 +1629,7 @@ export async function polishTranscriptionText(
       );
       const retryReason =
         result.status === "applied" &&
-        !result.changed &&
+        !(result.candidateChanged ?? result.changed) &&
         shouldRetryNoopPolish(input.cleanedText)
           ? "noop"
           : shouldRetryRejectedPolish(input.cleanedText, result)
@@ -1653,7 +1662,7 @@ export async function polishTranscriptionText(
               );
               if (
                 latestResult.status !== "applied" ||
-                latestResult.changed ||
+                (latestResult.candidateChanged ?? latestResult.changed) ||
                 !shouldRetryNoopPolish(input.cleanedText)
               ) {
                 writePolishLog(

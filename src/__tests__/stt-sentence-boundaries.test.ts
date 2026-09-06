@@ -437,7 +437,8 @@ describe("applyPauseAwareBoundaries", () => {
     expect(result.text).toContain("charlie, I guess VoiceLayer");
   });
 
-  test("demotes a question mark to a comma too", () => {
+  test("a question mark is NEVER demoted, even mid-clause", () => {
+    // Etan, 2026-09-06: C2 never removes or demotes a "?".
     const segments: TranscriptSegment[] = [
       {
         text: "alpha bravo charlie i mean echo golf hotel",
@@ -446,13 +447,49 @@ describe("applyPauseAwareBoundaries", () => {
       },
       SEGMENTS[1],
     ];
+    const text =
+      "Alpha bravo charlie? I mean echo golf hotel india juliett kilo lima mike.";
+    const result = applyPauseAwareBoundaries(text, segments, PAUSES);
+    expect(result.text).toBe(text);
+    expect(result.demotions).toEqual([]);
+  });
+
+  test("a tag question keeps its mark though it ends on a stop-list word", () => {
+    // RED case from the corpus: "...can't you? Like, if the worker..." used to
+    // become "...can't you, like, if the worker...", losing the question.
+    const segments: TranscriptSegment[] = [
+      {
+        text: "you can resume them from the id cant you",
+        startS: 0,
+        endS: 8,
+      },
+      { text: "like if the worker had work", startS: 9, endS: 14 },
+    ];
+    const text =
+      "You can resume them from the ID, can't you? Like if the worker had work.";
+    const result = applyPauseAwareBoundaries(text, segments, PAUSES);
+    expect(result.text).toContain("can't you?");
+    expect(result.demotions).toEqual([]);
+  });
+
+  test("an exclamation mark is still governed by the stop-list", () => {
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie and echo foxtrot golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      SEGMENTS[1],
+    ];
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie? I mean echo golf hotel india juliett kilo lima mike.",
+      "Alpha bravo charlie and! Echo foxtrot golf hotel india juliett kilo lima mike.",
       segments,
       PAUSES,
     );
-    expect(result.demotions[0]?.mark).toBe("?");
-    expect(result.text).toContain("charlie, I mean");
+    expect(result.demotions[0]).toMatchObject({
+      mark: "!",
+      reason: "incomplete-clause",
+    });
   });
 
   test("skips loudly rather than guessing", () => {
@@ -577,13 +614,13 @@ describe("abbreviations are never demoted", () => {
     expect(result.demotions).toEqual([]);
   });
 
-  test("a question mark is still judged — only periods can be abbreviations", () => {
+  test("an exclamation mark is judged — only periods can be abbreviations", () => {
     const withHedge: TranscriptSegment[] = [
       { text: "alpha bravo charlie i mean echo golf hotel", startS: 0, endS: 8 },
       segments[1],
     ];
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie? I mean echo golf hotel india juliett kilo lima mike.",
+      "Alpha bravo charlie! I mean echo golf hotel india juliett kilo lima mike.",
       withHedge,
       pauses,
     );
