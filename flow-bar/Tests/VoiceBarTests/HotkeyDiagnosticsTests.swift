@@ -72,6 +72,40 @@ final class HotkeyDiagnosticsTests: XCTestCase {
         )
     }
 
+    private func driveMouseCallback(buttonNumber: Int64, mouseDown: Bool) {
+        let context = TapContext(
+            gesture: GestureStateMachine(),
+            keycodes: HotkeyManager.defaultTargetKeycodes,
+            mouseButtons: HotkeyManager.defaultTargetMouseButtons,
+            enterMouseButtons: HotkeyManager.defaultEnterMouseButtons,
+            modifierMode: HotkeyManager.defaultUsesModifierMode,
+            onKeyDown: {},
+            onKeyUp: {},
+            onMouseDown: {},
+            onMouseUp: {},
+            onCancel: {},
+            onPasteLastTranscript: {},
+            shouldHandleEscape: { false }
+        )
+        guard let event = CGEvent(
+            mouseEventSource: CGEventSource(stateID: .privateState),
+            mouseType: mouseDown ? .otherMouseDown : .otherMouseUp,
+            mouseCursorPosition: .zero,
+            mouseButton: .center
+        ) else {
+            XCTFail("could not synthesize a mouse CGEvent for button \(buttonNumber)")
+            return
+        }
+        event.setIntegerValueField(.mouseEventButtonNumber, value: buttonNumber)
+        let pointer = Unmanaged.passUnretained(context).toOpaque()
+        _ = hotkeyCallback(
+            OpaquePointer(pointer),
+            type: mouseDown ? .otherMouseDown : .otherMouseUp,
+            event: event,
+            userInfo: pointer
+        )
+    }
+
     /// Keycodes for a plausible secret: "hunter2" plus the surrounding letters a
     /// password prompt would see. None of them is a VoiceBar hotkey.
     private static let nonHotkeyKeycodes: [CGKeyCode] = [
@@ -178,6 +212,29 @@ final class HotkeyDiagnosticsTests: XCTestCase {
         )
     }
 
+    func testTapCallbackLogsNothingForOrdinaryMouseButtonsByDefault() {
+        let lines = capturingDiagnostics {
+            driveMouseCallback(buttonNumber: 2, mouseDown: true)
+            driveMouseCallback(buttonNumber: 2, mouseDown: false)
+        }
+
+        XCTAssertEqual(
+            lines, [],
+            "non-hotkey mouse buttons must not write a per-event line by default"
+        )
+    }
+
+    func testMatchedMouseHotkeyStillEmitsDiagnostics() {
+        let lines = capturingDiagnostics {
+            driveMouseCallback(buttonNumber: 4, mouseDown: true)
+        }
+
+        XCTAssertTrue(
+            lines.contains { $0.contains("Matched mouse button 4") },
+            "matched-mouse diagnostics must survive the fix; got \(lines)"
+        )
+    }
+
     // MARK: - Source-level guard
 
     /// The gate only holds while the tap path routes through `HotkeyDiagnostics`.
@@ -191,18 +248,28 @@ final class HotkeyDiagnosticsTests: XCTestCase {
             .appendingPathComponent("Sources/VoiceBar/HotkeyManager.swift")
         let text = try String(contentsOf: source, encoding: .utf8)
 
-        let tapPath = try XCTUnwrap(
-            text.range(of: "func hotkeyAction(").map { text[$0.lowerBound...] },
-            "could not locate hotkeyAction() in HotkeyManager.swift"
-        )
-        let perEventRegion = try XCTUnwrap(
-            tapPath.range(of: "// MARK: - Hotkey Manager").map { tapPath[..<$0.lowerBound] },
-            "could not locate the end of the per-event tap path"
-        )
+        XCTAssertTrue(text.contains("func hotkeyCallback("), "hotkeyCallback() missing from HotkeyManager.swift")
+        XCTAssertTrue(text.contains("func hotkeyAction("), "hotkeyAction() missing from HotkeyManager.swift")
 
-        XCTAssertFalse(
-            perEventRegion.contains("NSLog("),
-            "the per-event tap path must log through HotkeyDiagnostics so the verbose gate applies"
-        )
+        func body(of function: String) throws -> Substring {
+            let header = "func \(function)("
+            let fromHeader = try XCTUnwrap(
+                text.range(of: header).map { text[$0.lowerBound...] },
+                "could not locate \(function)() in HotkeyManager.swift"
+            )
+            let nextMark = fromHeader.range(of: "\nfunc ") ?? fromHeader.range(of: "\n// MARK:")
+            if let nextMark {
+                return fromHeader[..<nextMark.lowerBound]
+            }
+            return fromHeader
+        }
+
+        for function in ["hotkeyCallback", "hotkeyAction", "mouseHotkeyAction", "sequenceAwareHotkeyAction"] {
+            let region = try body(of: function)
+            XCTAssertFalse(
+                region.contains("NSLog("),
+                "\(function) must log through HotkeyDiagnostics so the verbose gate applies"
+            )
+        }
     }
 }
