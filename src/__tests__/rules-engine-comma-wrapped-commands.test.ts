@@ -97,6 +97,30 @@ describe("comma-wrapped spoken commands", () => {
     });
   });
 
+  // The corpus gate caught this: 5 shadow rows open a sentence with the
+  // connective "Plus,", which the unwrap read as a comma-isolated operator and
+  // ate. ARITHMETIC_ONLY commands want operands on both sides, and whisper's
+  // delimiters are not operands, so they never unwrap.
+  describe("'plus' and 'minus' still need operand evidence", () => {
+    it("keeps the sentence-opening connective verbatim", () => {
+      // shadow row, verbatim opening
+      const raw =
+        "the same quality as what Google gives us in Flex. Plus, I don't know if we can match it";
+      const cleaned = applyRules(raw);
+      expect(cleaned.toLowerCase()).toContain("plus");
+      expect(cleaned).not.toContain("+");
+    });
+
+    it("keeps 'minus' verbatim when whisper isolated it", () => {
+      const cleaned = applyRules("we shipped the pill, minus, the teleprompter");
+      expect(cleaned.toLowerCase()).toContain("minus");
+    });
+
+    it("still fires between operands", () => {
+      expect(applyRules("a plus b")).toBe("A + b");
+    });
+  });
+
   // The guard from #17/#20 is unchanged: whisper does not wrap prose in commas,
   // so the determiner/preposition heuristics still decide the unwrapped cases.
   describe("prose is untouched", () => {

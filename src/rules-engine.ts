@@ -60,6 +60,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
 
   // Stage 2: Spoken punctuation
   if (!disabled?.has("punctuation")) {
+    result = unwrapCommaWrappedCommands(result);
     result = applyPunctuation(result);
     result = normalizePunctuationClusters(result);
   }
@@ -239,6 +240,68 @@ const BINARY_OPERATOR_COMMANDS = new Set([
   "colon", "dash", "arrow", "equals", "plus", "minus", "slash", "pipe",
 ]);
 
+// AIDEV-NOTE: Whisper punctuates each spoken command as its own comma-delimited
+// token. "update colon Q3 ... new line hey Sarah comma new paragraph" came back
+// as "update, colon, Q3, ... new line, hey, Sarah, comma, new paragraph."
+// (Etan's v2.2.12 acceptance dictation, shadow row 2026-09-06T14:42:25Z). Those
+// delimiters are whisper's, not Etan's, and they broke stage 2 twice over: the
+// attach-left cleanup collapsed ", : ," to ",:,", and it ate every "\n" that
+// "new line" produced. The identical words without the commas already cleaned
+// correctly.
+//
+// A command whisper isolated between two of its OWN delimiters is a command.
+// That isolation is stronger evidence than isSpokenAsNoun, which sees a comma
+// on both sides, finds neither a determiner nor a preposition, and abstains —
+// and it is evidence prose never carries, because whisper does not wrap
+// "a new line on codex agents" in commas. So this pass substitutes the symbol
+// directly and drops both delimiters, leaving the #17/#20 ALWAYS/AMBIGUOUS
+// policy to decide every command it does not match.
+//
+// "comma" is the one command whose own replacement is a comma, so the speaker's
+// single comma survives while whisper's two do not.
+
+/** The literal phrase each spoken-command pattern matches ("\bnew line\b" -> "new line"). */
+function spokenPhraseOf(pattern: RegExp): string {
+  const phrase = pattern.source.replace(/^\\b/, "").replace(/\\b$/, "");
+  // Guard, not a parser: the phrase goes straight into an alternation, so a
+  // pattern that is anything other than plain words must fail loudly here
+  // rather than become a wildcard.
+  if (!/^[a-z]+(?: [a-z]+)*$/.test(phrase)) {
+    throw new Error(`Spoken-command pattern is not a literal phrase: ${pattern}`);
+  }
+  return phrase;
+}
+
+const COMMAND_REPLACEMENTS: Map<string, string> = new Map(
+  [...ALWAYS_PUNCTUATION_MAP, ...AMBIGUOUS_PUNCTUATION_MAP]
+    .map(([pattern, replacement]): [string, string] => [
+      spokenPhraseOf(pattern),
+      replacement,
+    ])
+    // "Plus," and "Minus," open a sentence as ordinary connectives — "Plus, I
+    // don't know if we can match it" (5 shadow rows, e.g. the MLX-vs-Flex
+    // dictation). Comma-isolation is not operand evidence, and ARITHMETIC_ONLY
+    // demands operands on both sides, so these keep the #17 guard and never
+    // unwrap. AGENTS.md: a fix that loses Etan's words is worse than the bug.
+    .filter(([phrase]) => !ARITHMETIC_ONLY.has(phrase)),
+);
+
+// Longest first so "new paragraph" is not matched as "new" would be, and
+// "question mark" wins over any shorter overlap.
+const COMMA_WRAPPED_COMMAND_PATTERN = new RegExp(
+  `[,.]\\s*(${[...COMMAND_REPLACEMENTS.keys()]
+    .sort((a, b) => b.length - a.length)
+    .join("|")})\\s*[,.]`,
+  "gi",
+);
+
+function unwrapCommaWrappedCommands(text: string): string {
+  return text.replace(COMMA_WRAPPED_COMMAND_PATTERN, (match, phrase: string) => {
+    const replacement = COMMAND_REPLACEMENTS.get(phrase.toLowerCase());
+    return replacement === undefined ? match : ` ${replacement} `;
+  });
+}
+
 function wordBefore(text: string, index: number): string {
   const match = /([\p{L}\p{N}][\p{L}\p{N}'’]*)\s*$/u.exec(text.slice(0, index));
   return match ? match[1].toLowerCase() : "";
@@ -389,8 +452,18 @@ function applyPunctuation(text: string): string {
   }
   // Clean up space before punctuation that should attach left
   result = result.replace(
-    /\s+([.,;:?%)}\]`'"]|!(?!=))/g,
-    (match: string, punctuation: string, offset: number) => {
+    /(\s+)([.,;:?%)}\]`'"]|!(?!=))/g,
+    (match: string, whitespace: string, punctuation: string, offset: number) => {
+      // AIDEV-NOTE: a newline in this run came from "new line"/"new paragraph",
+      // and nothing Etan said can follow it with a bare comma or period — a
+      // sentence never opens on one. That delimiter is whisper's, left over
+      // from the comma-wrapped command. Attaching it left deleted the newline,
+      // which is the whole payload of the command (specimen 2026-09-06).
+      if (whitespace.includes("\n")) {
+        return punctuation === "," || punctuation === "."
+          ? whitespace
+          : match;
+      }
       const nextChar = result[offset + match.length] ?? "";
       if (punctuation === "." && /[A-Za-z_]/u.test(nextChar)) {
         return match;
@@ -431,9 +504,15 @@ function applyPunctuation(text: string): string {
 }
 
 function normalizePunctuationClusters(text: string): string {
+  // A newline between the two marks is a dictated line break, not a cluster:
+  // collapsing across it would delete the break the speaker asked for.
   return text
-    .replace(/,\s*\.{1,}(?=\s|$)/g, ".")
-    .replace(/,\s*([!?])(?=\s|$)/g, "$1");
+    .replace(/,\s*\.{1,}(?=\s|$)/g, (match) =>
+      match.includes("\n") ? match : ".",
+    )
+    .replace(/,(\s*)([!?])(?=\s|$)/g, (match, gap: string, mark: string) =>
+      gap.includes("\n") ? match : mark,
+    );
 }
 
 function hasCodeStringPrefixBeforeQuote(text: string, quoteIndex: number): boolean {
