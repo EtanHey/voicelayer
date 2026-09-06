@@ -14,6 +14,7 @@ import {
   MIN_BOUNDARY_PAUSE_SECONDS,
   pauseStartsAt,
   pauseSupportedWordIndices,
+  continuesSameClause,
   smartBoundariesEnabled,
   speechRunsWithin,
   WORD_ALIGNMENT_TOLERANCE,
@@ -273,18 +274,54 @@ describe("applyPauseAwareBoundaries", () => {
     expect(result.demotions).toEqual([]);
   });
 
-  test("demotes a break with no pause under it", () => {
+  test("Rule B keeps a break with no pause when a new subject follows", () => {
+    // Etan ruled B: no pause is fine as long as the next words really do start
+    // a new sentence. "Delta ..." is not a continuation of "alpha bravo charlie".
+    const text =
+      "Alpha bravo charlie. Delta echo foxtrot golf hotel india juliett kilo lima mike.";
+    const result = applyPauseAwareBoundaries(text, SEGMENTS, PAUSES);
+    expect(result.text).toBe(text);
+    expect(result.demotions).toEqual([]);
+  });
+
+  test("Rule B demotes a break the following words carry on", () => {
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie i guess foxtrot golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      SEGMENTS[1],
+    ];
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie. Delta echo foxtrot golf hotel india juliett kilo lima mike.",
-      SEGMENTS,
+      "Alpha bravo charlie. I guess foxtrot golf hotel india juliett kilo lima mike.",
+      segments,
       PAUSES,
     );
     expect(result.text).toBe(
-      "Alpha bravo charlie, delta echo foxtrot golf hotel india juliett kilo lima mike.",
+      "Alpha bravo charlie, I guess foxtrot golf hotel india juliett kilo lima mike.",
     );
     expect(result.demotions).toEqual([
-      { wordIndex: 2, word: "charlie", mark: ".", reason: "no-pause" },
+      { wordIndex: 2, word: "charlie", mark: ".", reason: "continues-clause" },
     ]);
+  });
+
+  test("a pause outranks the continuation test", () => {
+    // "hotel" sits on a real pause, so its mark survives even though "I guess"
+    // follows: (i) is satisfied and (ii) never has to be asked.
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie delta echo foxtrot golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      { text: "i guess kilo lima mike", startS: 9, endS: 14 },
+    ];
+    const text =
+      "Alpha bravo charlie delta echo foxtrot golf hotel. I guess kilo lima mike.";
+    const result = applyPauseAwareBoundaries(text, segments, PAUSES);
+    expect(result.text).toBe(text);
+    expect(result.demotions).toEqual([]);
   });
 
   test("demotes a break on a pause when the clause is incomplete", () => {
@@ -361,10 +398,30 @@ describe("applyPauseAwareBoundaries", () => {
     expect(result.text).toContain("charlie, I guess");
   });
 
+  test("demotes a break followed by a word that cannot open a sentence", () => {
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie of echo foxtrot golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      SEGMENTS[1],
+    ];
+    const result = applyPauseAwareBoundaries(
+      "Alpha bravo charlie. Of echo foxtrot golf hotel india juliett kilo lima mike.",
+      segments,
+      PAUSES,
+    );
+    expect(result.demotions[0]).toMatchObject({
+      word: "charlie",
+      reason: "continues-clause",
+    });
+  });
+
   test("keeps a proper noun capitalised after a demotion", () => {
     const segments: TranscriptSegment[] = [
       {
-        text: "alpha bravo charlie voicelayer echo foxtrot golf hotel",
+        text: "alpha bravo charlie i guess voicelayer golf hotel",
         startS: 0,
         endS: 8,
       },
@@ -372,21 +429,29 @@ describe("applyPauseAwareBoundaries", () => {
     ];
     // "VoiceLayer" is CamelCase, so it is a name and not a sentence start.
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie. VoiceLayer echo foxtrot golf hotel india juliett kilo lima mike.",
+      "Alpha bravo charlie. I guess VoiceLayer golf hotel india juliett kilo lima mike.",
       segments,
       PAUSES,
     );
-    expect(result.text).toContain("charlie, VoiceLayer");
+    expect(result.text).toContain("charlie, I guess VoiceLayer");
   });
 
   test("demotes a question mark to a comma too", () => {
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie i mean echo golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      SEGMENTS[1],
+    ];
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie? Delta echo foxtrot golf hotel india juliett kilo lima mike.",
-      SEGMENTS,
+      "Alpha bravo charlie? I mean echo golf hotel india juliett kilo lima mike.",
+      segments,
       PAUSES,
     );
     expect(result.demotions[0]?.mark).toBe("?");
-    expect(result.text).toContain("charlie, delta");
+    expect(result.text).toContain("charlie, I mean");
   });
 
   test("skips loudly rather than guessing", () => {
@@ -410,21 +475,21 @@ describe("applyPauseAwareBoundaries", () => {
 
   test("a word polish rewrote keeps its neighbours judgeable", () => {
     // Raw "1", polished "one": the rewritten word has no alignment of its own,
-    // but the break after "charlie" is still judged.
+    // but the break after "and" is still judged (incomplete clause).
     const segments: TranscriptSegment[] = [
       {
-        text: "alpha bravo charlie 1 echo foxtrot golf hotel",
+        text: "alpha bravo charlie and 1 foxtrot golf hotel",
         startS: 0,
         endS: 8,
       },
       SEGMENTS[1],
     ];
     const result = applyPauseAwareBoundaries(
-      "Alpha bravo charlie. One echo foxtrot golf hotel india juliett kilo lima mike.",
+      "Alpha bravo charlie and. One foxtrot golf hotel india juliett kilo lima mike.",
       segments,
       PAUSES,
     );
-    expect(result.text).toContain("charlie, one echo");
+    expect(result.text).toContain("and, one foxtrot");
   });
 });
 
@@ -453,12 +518,66 @@ describe("word preservation (property)", () => {
   });
 
   test("a demotion only rewrites the mark and the following word's case", () => {
-    const text = cases[0];
-    const result = applyPauseAwareBoundaries(text, SEGMENTS, PAUSES);
+    const segments: TranscriptSegment[] = [
+      {
+        text: "alpha bravo charlie i guess foxtrot golf hotel",
+        startS: 0,
+        endS: 8,
+      },
+      SEGMENTS[1],
+    ];
+    const text =
+      "Alpha bravo charlie. I guess foxtrot golf hotel india juliett kilo lima mike.";
+    const result = applyPauseAwareBoundaries(text, segments, PAUSES);
     expect(result.demotions).toHaveLength(1);
     expect(result.text.toLowerCase()).toBe(
-      text.toLowerCase().replace(". delta", ", delta"),
+      text.toLowerCase().replace(". i guess", ", i guess"),
     );
+  });
+});
+
+describe("continuesSameClause (Rule B)", () => {
+  const carriesOn: string[][] = [
+    ["i", "guess", "like"],
+    ["i", "think", "so"],
+    ["i", "mean", "really"],
+    ["you", "know", "what"],
+    ["or", "something", "else"],
+    ["kind", "of", "slow"],
+    ["of", "the", "thing"],
+    ["with", "them"],
+    ["than", "that"],
+  ];
+  const startsFresh: string[][] = [
+    ["it", "might", "have"],
+    ["delta", "echo"],
+    ["so", "here", "is"],
+    ["well", "anyway"],
+    ["voicelayer", "works"],
+    ["i", "went", "there"],
+    ["you", "should", "know"],
+    ["the", "recording", "died"],
+  ];
+
+  for (const words of carriesOn) {
+    test(`"${words.join(" ")}" carries on the clause`, () => {
+      expect(continuesSameClause(words, 0)).toBe(true);
+    });
+  }
+  for (const words of startsFresh) {
+    test(`"${words.join(" ")}" starts a new subject`, () => {
+      expect(continuesSameClause(words, 0)).toBe(false);
+    });
+  }
+
+  test("it reads from the given index, and past the end is not a continuation", () => {
+    expect(continuesSameClause(["alpha", "i", "guess"], 1)).toBe(true);
+    expect(continuesSameClause(["alpha", "i", "guess"], 0)).toBe(false);
+    expect(continuesSameClause(["alpha"], 5)).toBe(false);
+  });
+
+  test("case and curly apostrophes do not matter", () => {
+    expect(continuesSameClause(["I", "Guess"], 0)).toBe(true);
   });
 });
 

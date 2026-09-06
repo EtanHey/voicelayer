@@ -2,9 +2,21 @@
  * Pause-aware sentence boundaries — a period only where Etan actually stopped.
  *
  * Etan, 2026-09-06: "I might pause to think and then continue and finish the
- * sentence sometimes." A sentence boundary may be placed ONLY where a pause AND
- * a grammatically complete clause coincide. A pause inside an incomplete clause
- * must never insert or move a period, and a pause is not a period by itself.
+ * sentence sometimes."
+ *
+ * The first cut read that literally — a mark survived only where a pause AND a
+ * complete clause coincided. Measured over the 86 recon clips that demoted ~177
+ * marks across 56 of them, most of which were sentences he did mean to end, so
+ * he ruled RULE B instead (2026-09-06 17:32): "B, its more about
+ * subject/sentence building, this isnt inventing anything."
+ *
+ * RULE B, as implemented here. A terminal mark survives when the clause it
+ * closes is COMPLETE and either
+ *   (i)  a pause of at least 400 ms sits under it, or
+ *   (ii) there is no pause, but what follows starts a new subject.
+ * It is demoted to a comma only when the clause is incomplete, or when the
+ * following words carry on that same clause. Still never inserts a mark, and
+ * still never loses a word.
  *
  * The regression this closes (recording `2026-09-06T12-56-44-855Z-28f3916c`):
  * he said "...i'm thinking [2.3 s pause] of the next couple of words i guess
@@ -50,7 +62,7 @@ export interface BoundaryDemotion {
   /** The word the mark followed, as it appears in the final text. */
   word: string;
   mark: string;
-  reason: "no-pause" | "incomplete-clause";
+  reason: "continues-clause" | "incomplete-clause";
 }
 
 export interface PauseAwareBoundaryResult {
@@ -110,6 +122,48 @@ const INCOMPLETE_CLAUSE_ENDINGS = new Set([
   "when",
 ]);
 
+/**
+ * Openers that attach BACKWARDS — they finish the clause before them instead of
+ * starting a new one. This is the discriminator Rule B turns on.
+ *
+ * Etan, 2026-09-06 17:32, choosing Rule B over the literal rule: "B, its more
+ * about subject/sentence building, this isnt inventing anything." A mark with no
+ * pause under it is fine as long as what follows really does start a new
+ * subject; it is wrong only when the next words carry on the same clause. In the
+ * gold he said "...of the next couple of words i guess" — "I guess" is a tag on
+ * that clause, not a new sentence, so the period before it goes. Two words later
+ * "It might have been..." IS a new subject, so that period stays.
+ */
+const CONTINUATION_OPENER_PHRASES = [
+  "i guess",
+  "i think",
+  "i mean",
+  "i suppose",
+  "i believe",
+  "i hope",
+  "you know",
+  "you see",
+  "or something",
+  "or anything",
+  "or whatever",
+  "or so",
+  "kind of",
+  "sort of",
+  "more or less",
+].map((phrase) => phrase.split(" "));
+
+/** Single words that cannot open a sentence at all. */
+const CONTINUATION_OPENER_WORDS = new Set([
+  "of",
+  "for",
+  "with",
+  "than",
+  "which",
+  "nor",
+  "whom",
+  "whose",
+]);
+
 /** Terminal marks a sentence can end on. */
 const TERMINAL_MARKS = new Set([".", "?", "!"]);
 
@@ -149,6 +203,25 @@ export function isCompleteClauseEnding(word: string): boolean {
   const normalized = normalizeWord(word);
   if (!normalized) return false;
   return !INCOMPLETE_CLAUSE_ENDINGS.has(normalized);
+}
+
+/**
+ * True when the words starting at `index` carry on the clause before them
+ * rather than opening a new one — Rule B's operative test.
+ *
+ * Positive evidence only. Anything this does not recognise as a continuation is
+ * treated as a new subject and its mark is KEPT, because the failure this rule
+ * exists to correct is over-demotion: applied literally, the pause-only rule
+ * demoted ~177 marks across 56 of the 86 recon clips, most of them sentences
+ * Etan really did mean to end.
+ */
+export function continuesSameClause(words: string[], index: number): boolean {
+  if (index >= words.length) return false;
+  const normalized = words.slice(index).map(normalizeWord);
+  if (CONTINUATION_OPENER_WORDS.has(normalized[0])) return true;
+  return CONTINUATION_OPENER_PHRASES.some((phrase) =>
+    phrase.every((word, offset) => normalized[offset] === word),
+  );
 }
 
 /**
@@ -420,9 +493,17 @@ export function applyPauseAwareBoundaries(
     const rawIndex = alignment.get(index);
     if (rawIndex === undefined) continue; // no timing for this word — leave it.
 
+    // Rule B. The mark survives when the clause it closes is complete AND
+    // either a real pause sits under it, or what follows genuinely starts a new
+    // subject. It is demoted only when the clause is incomplete, or when the
+    // following words carry on that same clause with no pause to justify a stop.
     const hasPause = supported.has(rawIndex);
     const complete = isCompleteClauseEnding(word.value);
-    if (hasPause && complete) continue;
+    const continues = continuesSameClause(
+      finalWords.map((entry) => entry.value),
+      index + 1,
+    );
+    if (complete && (hasPause || !continues)) continue;
 
     const nextValue = ALWAYS_CAPITALISED.test(next.value)
       ? next.value
@@ -439,7 +520,7 @@ export function applyPauseAwareBoundaries(
       wordIndex: index,
       word: word.value,
       mark,
-      reason: hasPause ? "incomplete-clause" : "no-pause",
+      reason: complete ? "continues-clause" : "incomplete-clause",
     });
   }
 

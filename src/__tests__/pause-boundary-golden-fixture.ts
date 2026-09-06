@@ -16,10 +16,9 @@
  *     "durationSeconds": 40.45,
  *     "shippedText": "<the polished text VoiceLayer actually delivered>",
  *     "mustNotBreakAfter": ["words"],
- *     "mustBreakAfter": ["on"],
+ *     "mustBreakAfter": ["on", "itself"],
  *     "expectedDemotions": [
- *       { "word": "itself", "reason": "no-pause" },
- *       { "word": "words",  "reason": "no-pause" }
+ *       { "word": "words", "reason": "continues-clause" }
  *     ]
  *   }
  *
