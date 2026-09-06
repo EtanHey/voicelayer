@@ -120,6 +120,78 @@ final class CaptureBootingStateTests: XCTestCase {
         XCTAssertFalse(state.captureLive, "every press re-arms the booting state")
     }
 
+    func testTranscribingEndsTheLiveCapture() {
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.4])
+        XCTAssertTrue(state.captureLive)
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        XCTAssertEqual(state.mode, .transcribing)
+        XCTAssertFalse(state.captureLive, "the capture that was live has ended")
+    }
+
+    func testRecordingReenteredThroughTranscribingStartsBootingAgain() {
+        // The daemon can hand back `recording` straight after `transcribing`
+        // without passing through idle or a fresh record() — a VAD turn, or a
+        // second utterance on one ask. That path used to re-enter with
+        // captureLive still true, so the pill went red before the new capture
+        // existed: the exact head-cut this state was added to stop.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.4])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+
+        state.handleEvent(["type": "state", "state": "recording"])
+
+        XCTAssertEqual(state.mode, .recording)
+        XCTAssertFalse(state.captureLive, "a re-entered recording is booting until its own first frame")
+
+        state.handleEvent(["type": "audio_level", "rms": 0.5])
+
+        XCTAssertTrue(state.captureLive, "and the new capture's first frame still promotes it")
+    }
+
+    func testFirstAudioDiagnosticReArmsForARecordingReenteredThroughTranscribing() {
+        // The promotion shares its latch with the press -> first-audio
+        // diagnostic, so a stale latch would silence the measurement too, and
+        // a stale recording baseline would time it against the wrong press.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+        var clockValues = [10.0, 10.1, 10.7, 20.0, 20.6]
+        state.recordingTimingClock = { clockValues.removeFirst() }
+        var firstAudioEvents: [[String: String]] = []
+        state.diagnosticLogger = { event, details in
+            if event == "recording_first_audio_level" {
+                firstAudioEvents.append(details)
+            }
+        }
+
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.4])
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.5])
+
+        XCTAssertEqual(firstAudioEvents.count, 2, "the second recording measures its own first frame")
+        XCTAssertEqual(
+            firstAudioEvents.last?["msSinceRecordingState"],
+            "600",
+            "and times it against its own recording baseline, not the first press"
+        )
+    }
+
     // MARK: - Rendering
 
     func testBootingWaveformIsGrayAndLiveWaveformIsRed() {

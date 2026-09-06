@@ -1800,6 +1800,18 @@ public final class VoiceState {
         }
         statusText = ""
         localRecordingLevel = nil
+        if modeChanged {
+            // AIDEV-NOTE: the capture that was live has ended, so retire it and
+            // its first-audio baseline here. This cannot call resetAudioLevels()
+            // — transcribing replays `recordingWaveformHistory`, which that
+            // clears. Without this, a daemon `recording` event arriving straight
+            // after transcribing (a VAD turn, a second utterance on one ask)
+            // re-enters with captureLive still true and the pill goes red before
+            // the new capture exists.
+            captureLive = false
+            didLogFirstRecordingAudioLevel = false
+            recordingStateUptimeMs = nil
+        }
         refreshAudioLevel()
         startTranscriptionTimeout()
         hotkeyPhase = .idle
