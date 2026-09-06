@@ -79,7 +79,7 @@
 - `VOICELAYER_STT_AGGRESSIVE_FILLERS=1` opts into legacy removal of meaning-bearing English hedges/intensifiers; `QA_VOICE_STT_AGGRESSIVE_FILLERS` remains a legacy alias. Default cleanup preserves those words.
 - `QA_VOICE_TTS_VOICE`, `QA_VOICE_TTS_RATE`, `QA_VOICE_THINK_FILE`
 - `VOICELAYER_ALLOW_PUSH_TO_END=1` enables the MCP manual-stop mode; unset/other values keep it disabled.
-- `VOICELAYER_STT_SMART_CHUNKS=1` opts the ≥90 s saved-WAV decode path into silence-aware chunk boundaries (Silero pause map over the finished WAV, `src/stt-pause-map.ts`; cut at the end of the last pause in a 20-30 s window, else the fixed 30 s cut). Default off — unset, every boundary is exactly `WAV_CHUNK_SECONDS`.
+- `VOICELAYER_STT_SMART_CHUNKS` controls silence-aware chunking on the ≥90 s saved-WAV decode path. **Default ON**; `=0|false|off|no` is the escape hatch back to fixed `WAV_CHUNK_SECONDS` cuts with the anchor merge at every seam. When on, a Silero pause map is built over the finished WAV (`src/stt-pause-map.ts`) and each chunk ends at the last pause in a 20-30 s window, else at the fixed 30 s cut. A boundary landing at least 0.5 s inside a pause is a **silence seam**: it keeps only 0.5 s of overlap instead of 5 s, its chunk texts are concatenated rather than reconciled, and the dropped-overlap witness never fires there — the two chunks share only silence, so there is no anchor to find and nothing to dedupe. If under 5 % of a recording decodes as speech the pause map is not trusted and the fixed cuts are kept.
 - `VOICELAYER_SOCKET_PATH` and `VOICELAYER_MCP_SOCKET_PATH` isolate dev VoiceBar/MCP sockets; legacy `QA_VOICE_SOCKET_PATH` and `QA_VOICE_MCP_SOCKET_PATH` remain supported.
 
 ## Dependencies (setup)

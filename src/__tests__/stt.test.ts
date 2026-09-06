@@ -1990,6 +1990,50 @@ describe("STT backends", () => {
       ).toBe("אני בודק TypeScript היום עם עוד טקסט");
     });
 
+    it("concatenates across a silence seam instead of reconciling an overlap", () => {
+      // The two chunks met inside a pause, so they share only silence and the
+      // texts are disjoint by construction. Reconciling anyway is what invented
+      // "and I mean … and I mean" on golden clip B.
+      expect(
+        mergeChunkTranscripts(
+          ["I need to click and I mean", "ChatGPT Codex Connector, maybe we can remove it"],
+          ["anchor", "silence"],
+        ),
+      ).toBe(
+        "I need to click and I mean ChatGPT Codex Connector, maybe we can remove it",
+      );
+    });
+
+    it("keeps a coincidental repeat at a silence seam — losing words is worse", () => {
+      // The anchor merge would fold "the plan" away. Across a silence seam the
+      // chunks cannot really overlap, so a matching phrase is speech Etan said
+      // twice, and AGENTS.md is explicit that a genuine repeat must survive.
+      expect(
+        mergeChunkTranscripts(["so that is the plan", "the plan is fine"], [
+          "anchor",
+          "silence",
+        ]),
+      ).toBe("so that is the plan the plan is fine");
+      expect(
+        mergeChunkTranscripts(["so that is the plan", "the plan is fine"]),
+      ).toBe("so that is the plan is fine");
+    });
+
+    it("still reconciles anchor seams when some other seam is silence", () => {
+      expect(
+        mergeChunkTranscripts(
+          ["alpha beta gamma", "delta epsilon", "epsilon zeta eta"],
+          ["anchor", "silence", "anchor"],
+        ),
+      ).toBe("alpha beta gamma delta epsilon zeta eta");
+    });
+
+    it("treats every seam as an anchor when no seam kinds are supplied", () => {
+      expect(
+        mergeChunkTranscripts(["hello world", "world and then continue"]),
+      ).toBe("hello world and then continue");
+    });
+
     it("deduplicates chunk overlap when punctuation differs at the boundary", () => {
       expect(
         mergeChunkTranscripts(["hello world,", "world and then continue"]),

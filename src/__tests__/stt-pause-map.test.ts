@@ -10,6 +10,8 @@ import { isSmartWavChunkingEnabled } from "../stt";
 import { createVADSession, processVADChunk, resetVAD } from "../vad";
 import {
   chooseChunkEnd,
+  isSilenceSeam,
+  pauseSpanContaining,
   computePauseMap,
   MIN_PAUSE_SECONDS,
   parseWavAudioInfo,
@@ -309,23 +311,77 @@ describe("chooseChunkEnd", () => {
 });
 
 describe("isSmartWavChunkingEnabled", () => {
-  // Default OFF is the contract of this PR: with the flag unset the saved-WAV
-  // decode is byte-for-byte the shipped fixed-30 s one.
-  test("is off when unset, empty, or anything but an opt-in", () => {
-    for (const value of [undefined, "", "  ", "0", "off", "no", "false", "maybe"]) {
+  // Default ON as of C1-b. The escape hatch is an explicit off-value, so a
+  // machine with the variable unset gets silence-aware boundaries.
+  test("is ON when unset or empty", () => {
+    expect(isSmartWavChunkingEnabled({})).toBe(true);
+    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: undefined })).toBe(
+      true,
+    );
+    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: "" })).toBe(true);
+    expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: "   " })).toBe(
+      true,
+    );
+  });
+
+  test("is OFF only for an explicit off-value", () => {
+    for (const value of ["0", "false", "off", "no", " OFF ", "False"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         false,
       );
     }
-    expect(isSmartWavChunkingEnabled({})).toBe(false);
   });
 
-  test("accepts the same opt-in spellings as QA_VOICE_CHUNKED_STT", () => {
-    for (const value of ["1", "true", "yes", "on", " ON ", "True"]) {
+  test("stays ON for an on-value or anything unrecognised", () => {
+    for (const value of ["1", "true", "yes", "on", "maybe"]) {
       expect(isSmartWavChunkingEnabled({ VOICELAYER_STT_SMART_CHUNKS: value })).toBe(
         true,
       );
     }
+  });
+});
+
+describe("pauseSpanContaining", () => {
+  const map: PauseSpan[] = [
+    { startS: 5, endS: 7 },
+    { startS: 20, endS: 26 },
+  ];
+
+  test("finds the span an instant sits in, edges included", () => {
+    expect(pauseSpanContaining(6, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(5, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(7, map)).toEqual({ startS: 5, endS: 7 });
+    expect(pauseSpanContaining(26, map)).toEqual({ startS: 20, endS: 26 });
+  });
+
+  test("returns null for an instant in speech", () => {
+    expect(pauseSpanContaining(10, map)).toBeNull();
+    expect(pauseSpanContaining(0, map)).toBeNull();
+    expect(pauseSpanContaining(30, map)).toBeNull();
+  });
+});
+
+describe("isSilenceSeam", () => {
+  const overlap = 0.5;
+
+  test("a cut deep inside a pause is a silence seam", () => {
+    expect(isSilenceSeam(26, [{ startS: 20, endS: 26 }], overlap)).toBe(true);
+  });
+
+  test("a cut in speech is not", () => {
+    expect(isSilenceSeam(10, [{ startS: 20, endS: 26 }], overlap)).toBe(false);
+    expect(isSilenceSeam(10, [], overlap)).toBe(false);
+  });
+
+  // The depth rule is what makes concatenation safe: the following chunk's
+  // small overlap must be silence, or it re-decodes speech that is already in
+  // the previous chunk and blind concatenation would duplicate it.
+  test("a pause too shallow for the overlap is NOT a silence seam", () => {
+    expect(isSilenceSeam(24.4, [{ startS: 24, endS: 24.4 }], overlap)).toBe(false);
+  });
+
+  test("exactly one overlap deep qualifies", () => {
+    expect(isSilenceSeam(24.5, [{ startS: 24, endS: 24.6 }], overlap)).toBe(true);
   });
 });
 

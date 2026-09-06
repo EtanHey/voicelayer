@@ -206,6 +206,36 @@ export async function computePauseMap(
   );
 }
 
+/** The pause containing `seconds`, or null if that instant is speech. */
+export function pauseSpanContaining(
+  seconds: number,
+  pauseMap: PauseSpan[],
+): PauseSpan | null {
+  for (const span of pauseMap) {
+    if (seconds >= span.startS && seconds <= span.endS) return span;
+  }
+  return null;
+}
+
+/**
+ * Is a cut at `cutS` far enough inside a pause to be a SILENCE SEAM?
+ *
+ * A silence seam needs no overlap anchor: the two chunks meet in the middle of
+ * a pause, so their texts are disjoint by construction and can simply be
+ * concatenated. The depth requirement is what makes that true — with the cut at
+ * least `overlapSeconds` past the pause's start, the following chunk's small
+ * overlap is entirely silence and no speech is decoded twice. A pause too
+ * shallow for that keeps the ordinary anchor merge.
+ */
+export function isSilenceSeam(
+  cutS: number,
+  pauseMap: PauseSpan[],
+  overlapSeconds: number,
+): boolean {
+  const span = pauseSpanContaining(cutS, pauseMap);
+  return span !== null && cutS - span.startS >= overlapSeconds;
+}
+
 /**
  * Where the chunk starting at `startS` should end.
  *
