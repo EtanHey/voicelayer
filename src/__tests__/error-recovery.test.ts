@@ -8,15 +8,12 @@
  * Bun.spawnSync to simulate sox-not-found without depending on system PATH.
  */
 
-import {
-  describe,
-  it,
-  expect,
-  spyOn,
-  beforeEach,
-  afterEach,
-  mock,
-} from "bun:test";
+import { it, expect, spyOn, beforeEach, afterEach, mock } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
 import * as socketClient from "../socket-client";
 import * as actualPaths from "../paths";
@@ -24,9 +21,9 @@ import * as recordingState from "../recording-state";
 import { LOCK_FILE } from "../paths";
 import { handleSocketCommand } from "../socket-handlers";
 
-const TEST_TTS_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-tts-disabled`;
-const TEST_MIC_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-mic-disabled`;
-const TEST_VOICE_DISABLED_FILE = `/tmp/voicelayer-error-recovery-${process.pid}-voice-disabled`;
+const TEST_TTS_DISABLED_FILE = `${TEST_TMP}/voicelayer-error-recovery-${process.pid}-tts-disabled`;
+const TEST_MIC_DISABLED_FILE = `${TEST_TMP}/voicelayer-error-recovery-${process.pid}-mic-disabled`;
+const TEST_VOICE_DISABLED_FILE = `${TEST_TMP}/voicelayer-error-recovery-${process.pid}-voice-disabled`;
 
 mock.module("../paths", () => ({
   ...actualPaths,
@@ -39,6 +36,33 @@ mock.module("../paths", () => ({
 // Must block both `which rec` AND direct path probes (resolveBinary pattern)
 const realSpawnSync = Bun.spawnSync;
 let blockSox = false;
+
+// AIDEV-NOTE: R-014 — the test preload serves recorder spawns from a silence
+// stub (VOICELAYER_TEST_FAKE_REC), which never consults `which rec`, so
+// `blockSox` alone no longer simulates a missing sox. Every suite here that
+// relies on blockSox must also suspend the stub. Still safe on a live host:
+// with sox "missing", resolveBinary returns null and the caller throws before
+// any spawn, so the microphone is never opened. Scoped per suite — the process
+// is shared with every other test file in the run.
+let savedFakeRec: string | undefined;
+let fakeRecSuspended = false;
+
+function suspendFakeRecorder(): void {
+  if (fakeRecSuspended) return;
+  savedFakeRec = process.env.VOICELAYER_TEST_FAKE_REC;
+  delete process.env.VOICELAYER_TEST_FAKE_REC;
+  fakeRecSuspended = true;
+}
+
+function restoreFakeRecorder(): void {
+  if (!fakeRecSuspended) return;
+  if (savedFakeRec === undefined) {
+    delete process.env.VOICELAYER_TEST_FAKE_REC;
+  } else {
+    process.env.VOICELAYER_TEST_FAKE_REC = savedFakeRec;
+  }
+  fakeRecSuspended = false;
+}
 
 // @ts-expect-error — overriding for test
 Bun.spawnSync = function (...args: any[]) {
@@ -71,6 +95,7 @@ describe("H4: waitForInput broadcasts idle on recordToBuffer error", () => {
 
   beforeEach(() => {
     blockSox = true;
+    suspendFakeRecorder();
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
@@ -78,6 +103,7 @@ describe("H4: waitForInput broadcasts idle on recordToBuffer error", () => {
 
   afterEach(() => {
     blockSox = false;
+    restoreFakeRecorder();
     broadcastSpy.mockRestore();
   });
 
@@ -209,17 +235,25 @@ describe("H5: Socket record command checks session booking", () => {
   let broadcastSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
+    suspendFakeRecorder();
     broadcastSpy = spyOn(socketClient, "broadcast").mockImplementation(
       () => {},
     );
   });
 
   afterEach(() => {
+    restoreFakeRecorder();
     broadcastSpy.mockRestore();
     // Clean up lock file
     try {
       if (existsSync(LOCK_FILE)) unlinkSync(LOCK_FILE);
     } catch {}
+    // AIDEV-NOTE: R-014 — `handleSocketCommand({cmd:"record"})` flips the
+    // cross-process recording state. Leaving it at "recording" made every later
+    // test file in the run fail its speaker-output gate; before isolation this
+    // leaked into ~/.local/state/voicelayer and told the LIVE stack Etan was
+    // recording. Reset it here rather than relying on the next file to notice.
+    recordingState.setRecordingState("idle");
   });
 
   it("rejects record when voice session is booked by another process", () => {

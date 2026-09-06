@@ -29,8 +29,14 @@ describe("secure session paths", () => {
     expect(paths.STOP_FILE).toContain("stop-");
   });
 
+  // AIDEV-NOTE: R-014 — SOCKET_PATH is frozen from this process's env at module
+  // load, and the test preload redirects it. The invariant that matters is the
+  // DEFAULT: a fixed well-known path with no session token in it.
   it("SOCKET_PATH defaults to fixed well-known path (no session token)", () => {
-    expect(paths.SOCKET_PATH).toBe("/tmp/voicelayer.sock");
+    expect(paths.getVoiceBarSocketPath({} as NodeJS.ProcessEnv)).toBe(
+      "/tmp/voicelayer.sock",
+    );
+    expect(paths.SOCKET_PATH).toBe(paths.getVoiceBarSocketPath());
     // Should NOT contain session token — fixed path for VoiceBar server
     expect(paths.SOCKET_PATH).not.toContain(paths.SESSION_TOKEN);
   });

@@ -105,23 +105,35 @@ describe("provenance probes stay off the recording hot path", () => {
   }
 
   it("returns from the archive write without waiting for a slow probe", async () => {
-    // Every probe takes far longer than an archive write is allowed to take.
+    // AIDEV-NOTE: this used to assert a wall-clock budget (elapsed < 100 ms
+    // against a 400 ms sleep) and flaked twice in CI on 2026-09-06 at 285 ms.
+    // The property under test is ordering, not duration: the archive write must
+    // return while the probe is still outstanding. Gate the probe on a promise
+    // the test releases by hand, so a stalled CI box cannot change the answer.
+    let releaseProbe!: () => void;
+    const probeGate = new Promise<void>((resolve) => {
+      releaseProbe = resolve;
+    });
+    let probeSettled = false;
+
     __setProvenanceProbeRunnersForTests({
       run: async (cmd) => {
-        await sleep(400);
+        await probeGate;
+        probeSettled = true;
         return cmd[0] === "scutil" ? "Slow Mac" : "Apple M4 Max";
       },
       runMergingStderr: async () => {
-        await sleep(400);
+        await probeGate;
+        probeSettled = true;
         return null;
       },
     });
 
-    const started = Date.now();
     const archivePath = archive("hot path");
-    const elapsed = Date.now() - started;
 
-    expect(elapsed).toBeLessThan(100);
+    // Nothing has released the gate, so a write that awaited the probe could
+    // not have returned at all.
+    expect(probeSettled).toBe(false);
     const provenance = readProvenance(archivePath);
     expect(provenance.chip).toBe(null);
     expect(provenance.provenance_probe).toBe("pending");
@@ -132,6 +144,7 @@ describe("provenance probes stay off the recording hot path", () => {
 
     // Once the probe the write kicked off resolves, later writes carry the
     // real facts without any recording ever having waited for them.
+    releaseProbe();
     await primeMachineProvenance();
     const second = readProvenance(archive("after probe"));
     expect(second.chip).toBe("Apple M4 Max");

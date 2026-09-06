@@ -5,13 +5,10 @@
  * while input.ts imported getBackend from stt.ts.
  */
 
-import { resolveBinary } from "./resolve-binary";
+import { resolveRecorderBinary } from "./recorder-binary";
 
 const BYTES_PER_SAMPLE = 2;
 const DEFAULT_NATIVE_INPUT_FORMAT = { sampleRate: 16000, channels: 1 };
-
-/** Homebrew/Intel fallbacks for `rec`. */
-const REC_CANDIDATES = ["/opt/homebrew/bin/rec", "/usr/local/bin/rec"];
 
 /**
  * Proof that the probe actually reached the device. `parseNativeInputFormat`
@@ -110,7 +107,7 @@ export function parseNativeInputFormat(output: string): NativeInputFormat {
  * the preamble (with Sample Rate), then exits immediately.
  */
 function probeArgs(): string[] {
-  const recBin = resolveBinary("rec", REC_CANDIDATES) || "rec";
+  const recBin = resolveRecorderBinary() || "rec";
   return [recBin, "-n", "trim", "0", "0"];
 }
 

@@ -51,3 +51,6 @@ site/use-cases/
 site/what-is-voicelayer/
 .worktrees/
 .cmux/worktrees/
+
+# Per-run test isolation tree (see bunfig.toml / R-014)
+.test-tmp/

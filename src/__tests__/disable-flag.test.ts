@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, expect, it } from "bun:test";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, mkdirSync, rmSync, unlinkSync, writeFileSync } from "fs";
 
 const TEST_DIR = `/tmp/voicelayer-disable-flag-${process.pid}`;
@@ -40,6 +44,13 @@ function spawnDaemon(extraEnv: Record<string, string | undefined> = {}) {
     stderr: "pipe",
     env: {
       ...process.env,
+      // AIDEV-NOTE: R-014 — the child inherits this process's env, and the test
+      // preload sets the CANONICAL VOICELAYER_* names, which win over the legacy
+      // QA_VOICE_* aliases in src/paths.ts. Set both, or the daemon listens on
+      // the preload's socket instead of this suite's and the waits time out.
+      // VOICELAYER_SOCKET_PATH is deliberately left inherited: it keeps the
+      // child off the resident VoiceBar at /tmp/voicelayer.sock.
+      VOICELAYER_MCP_SOCKET_PATH: TEST_MCP_SOCKET_PATH,
       QA_VOICE_MCP_SOCKET_PATH: TEST_MCP_SOCKET_PATH,
       QA_VOICE_MCP_PID_PATH: TEST_MCP_PID_PATH,
       QA_VOICE_DISABLE_FLAG_PATH: TEST_DISABLE_FLAG_PATH,

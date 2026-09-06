@@ -1,20 +1,17 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  mock,
-  spyOn,
-} from "bun:test";
+import { afterEach, beforeEach, expect, it, mock, spyOn } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { existsSync, unlinkSync, writeFileSync } from "fs";
 import * as actualPaths from "../paths";
 import * as socketClient from "../socket-client";
 import * as qwen3 from "../tts/qwen3";
 
-const TEST_DISABLED_FILE = `/tmp/voicelayer-display-text-${process.pid}-disabled`;
-const TEST_RECORDING_STATE_FILE = `/tmp/voicelayer-display-text-${process.pid}-recording.json`;
-const TEST_PRONUNCIATION_FILE = `/tmp/voicelayer-display-text-${process.pid}-pronunciation.yaml`;
+const TEST_DISABLED_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-disabled`;
+const TEST_RECORDING_STATE_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-recording.json`;
+const TEST_PRONUNCIATION_FILE = `${TEST_TMP}/voicelayer-display-text-${process.pid}-pronunciation.yaml`;
 
 const pronunciations: Record<string, string> = {
   Etan: "Eh tahn",
@@ -153,7 +150,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
       TEST_DISABLED_FILE,
       TEST_RECORDING_STATE_FILE,
       TEST_PRONUNCIATION_FILE,
-      "/tmp/voicelayer-history.json",
+      actualPaths.TTS_HISTORY_FILE,
     ]) {
       try {
         if (existsSync(path)) unlinkSync(path);
@@ -295,7 +292,7 @@ describe("TTS display text stays separate from pronunciation text", () => {
       profile_id: "long-display-clone",
       name: "long-display-clone",
       engine: "qwen3-tts",
-      model_path: "/tmp/long-display-clone-model",
+      model_path: `${TEST_TMP}/long-display-clone-model`,
       reference_clips: [],
       reference_clip: "",
       fallback: "jenny",

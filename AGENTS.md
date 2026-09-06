@@ -93,6 +93,21 @@ bun test                    # full suite (takes a few minutes; touches audio + s
 bash flow-bar/build-app.sh  # Build VoiceBar
 ```
 
+The suite is safe on a live host **only with the preload**. `bunfig.toml` loads
+`src/__tests__/setup/preload.ts` before any test module, which redirects every
+VoiceLayer path — sockets, stop/cancel signals, session locks, the replay ring
+buffer, the recordings archive — to `.test-tmp/<pid>/` inside the worktree, and
+serves recorder spawns from a silence stub instead of the microphone. Without it
+a run writes into the paths the resident VoiceBar is reading: on 2026-09-06
+three of Etan's live dictations were cancelled seconds after `bun test`, and
+every run deleted his replay ring buffer. Do not run with `--preload=` disabled,
+and **never run real-mic tests (`VOICELAYER_TEST_REAL_MIC=1`) while someone is
+dictating** — that flag is the only way a test opens the device. If the preload
+is ever bypassed, mic-touching suites skip loudly rather than race the live app
+(`src/__tests__/setup/live-host-guard.ts`). Unix sockets are the one thing still
+under `/tmp`: macOS caps `sun_path` at 104 bytes, and test socket fixtures are
+named `*-test-*.sock` so they never collide with `/tmp/voicelayer.sock`.
+
 ## PR Workflow
 
 - `@codex review` + `@cursor @bugbot review` on every PR

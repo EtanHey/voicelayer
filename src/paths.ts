@@ -21,8 +21,16 @@ import { randomBytes } from "crypto";
 import { homedir } from "os";
 import { join } from "path";
 
-const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
+// AIDEV-NOTE: R-014 (test isolation on a live host). `bun test` used to write
+// its stop/cancel signals, ring-buffer MP3s and session locks straight into the
+// paths a resident VoiceBar is reading — three of Etan's live dictations were
+// cancelled on 2026-09-06 seconds after a suite run. These two roots redirect
+// EVERY path this module produces, so the test preload can point the whole
+// process tree at a per-run tree under the worktree. Read once at module load
+// because most exports below are module-level consts.
+const TMP_ROOT_OVERRIDE_ENV = "VOICELAYER_TMP_ROOT";
+const STATE_DIR_OVERRIDE_ENV = "VOICELAYER_STATE_DIR";
 // AIDEV-NOTE: R-013 requires dev/agent instances to isolate their sockets from
 // live dictation; canonical VOICELAYER_* names win over legacy QA_VOICE_* aliases.
 const SOCKET_OVERRIDE_ENVS = [
@@ -38,19 +46,56 @@ const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 const RECORDING_HOLD_OVERRIDE_ENV = "QA_VOICE_RECORDING_HOLD_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
 
+/** Default ephemeral root. `VOICELAYER_TMP_ROOT` replaces it wholesale. */
+export const DEFAULT_TMP_ROOT = "/tmp";
+
+/** Default state root. `VOICELAYER_STATE_DIR` replaces it wholesale. */
+export function defaultStateDir(): string {
+  return join(homedir(), ".local", "state", "voicelayer");
+}
+
+export function getTmpRoot(env: NodeJS.ProcessEnv = process.env): string {
+  const value = env[TMP_ROOT_OVERRIDE_ENV]?.trim();
+  return value ? value : DEFAULT_TMP_ROOT;
+}
+
+export function getStateDir(env: NodeJS.ProcessEnv = process.env): string {
+  const value = env[STATE_DIR_OVERRIDE_ENV]?.trim();
+  return value ? value : defaultStateDir();
+}
+
+/** True when nothing has redirected the ephemeral root away from /tmp. */
+export function isDefaultTmpRoot(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !env[TMP_ROOT_OVERRIDE_ENV]?.trim();
+}
+
+/** True when nothing has redirected the state root away from ~/.local/state. */
+export function isDefaultStateDir(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return !env[STATE_DIR_OVERRIDE_ENV]?.trim();
+}
+
+/** Ephemeral root for sockets, TTS audio, ring buffer and flag files. */
+export const TMP_ROOT: string = getTmpRoot();
+
 /**
  * User-owned state directory for security-sensitive files.
  * ~/.local/state/voicelayer/ — only writable by the current user,
  * unlike /tmp which is world-writable.
  */
-export const STATE_DIR = join(homedir(), ".local", "state", "voicelayer");
+export const STATE_DIR: string = getStateDir();
 
-// Ensure state directory exists on module load
+// Ensure both roots exist on module load. /tmp already does; an overridden root
+// generally does not, and every export below assumes its parent is present.
+if (!isDefaultTmpRoot()) {
+  mkdirSync(TMP_ROOT, { recursive: true, mode: 0o700 });
+}
 mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
 
 // Simple path join — avoids importing node:path just for concatenation
 function tmpPath(name: string): string {
-  return `${TMP}/${name}`;
+  return `${TMP_ROOT}/${name}`;
 }
 
 function readOverride(
@@ -106,7 +151,7 @@ export function recordingStateFilePath(
 ): string {
   return readOverride(
     RECORDING_STATE_OVERRIDE_ENV,
-    join(STATE_DIR, "recording-state.json"),
+    join(getStateDir(env), "recording-state.json"),
     env,
   );
 }
@@ -117,7 +162,7 @@ export function recordingHoldFilePath(
 ): string {
   return readOverride(
     RECORDING_HOLD_OVERRIDE_ENV,
-    join(STATE_DIR, "recording-hold"),
+    join(getStateDir(env), "recording-hold"),
     env,
   );
 }
@@ -138,7 +183,7 @@ export function retainedRecordingFilePath(
 ): string {
   return readOverride(
     RETAINED_RECORDING_OVERRIDE_ENV,
-    tmpPath("voicelayer-last-recording.wav"),
+    `${getTmpRoot(env)}/voicelayer-last-recording.wav`,
     env,
   );
 }
@@ -173,7 +218,7 @@ export function getVoiceDisabledFilePath(
 ): string {
   return readOverride(
     VOICE_DISABLED_OVERRIDE_ENV,
-    tmpPath(".voicelayer-daemon-disabled"),
+    `${getTmpRoot(env)}/.voicelayer-daemon-disabled`,
     env,
   );
 }
@@ -199,7 +244,7 @@ export function isVoicelayerDisabled(options?: {
 export function getVoiceBarSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   return readOverrideAliased(
     SOCKET_OVERRIDE_ENVS,
-    tmpPath("voicelayer.sock"),
+    `${getTmpRoot(env)}/voicelayer.sock`,
     env,
   );
 }
@@ -220,7 +265,7 @@ export const SOCKET_PATH = getVoiceBarSocketPath();
 export function getMcpSocketPath(env: NodeJS.ProcessEnv = process.env): string {
   return readOverrideAliased(
     MCP_SOCKET_OVERRIDE_ENVS,
-    tmpPath("voicelayer-mcp.sock"),
+    `${getTmpRoot(env)}/voicelayer-mcp.sock`,
     env,
   );
 }

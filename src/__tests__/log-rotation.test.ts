@@ -2,6 +2,7 @@
  * Tests for log rotation — rotates at 10MB, keeps one backup.
  */
 import { describe, it, expect, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 import { writeFileSync, existsSync, readFileSync, unlinkSync } from "fs";
 import {
   rotateIfNeeded,
@@ -9,8 +10,8 @@ import {
   stopLogRotation,
 } from "../log-rotation";
 
-const TEST_LOG = "/tmp/voicelayer-test-logrotate.log";
-const TEST_LOG_ROTATED = "/tmp/voicelayer-test-logrotate.log.1";
+const TEST_LOG = `${TEST_TMP}/voicelayer-test-logrotate.log`;
+const TEST_LOG_ROTATED = `${TEST_TMP}/voicelayer-test-logrotate.log.1`;
 
 function cleanup() {
   for (const f of [TEST_LOG, TEST_LOG_ROTATED]) {
@@ -48,7 +49,7 @@ describe("log-rotation", () => {
   });
 
   it("does not rotate non-existent files", () => {
-    const rotated = rotateIfNeeded("/tmp/voicelayer-nonexistent-log.log");
+    const rotated = rotateIfNeeded(`${TEST_TMP}/voicelayer-nonexistent-log.log`);
     expect(rotated).toBe(false);
   });
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { TEST_TMP } from "./setup/test-tmp";
 
 /**
  * Tests for edge-tts health check and retry logic.
@@ -146,7 +147,7 @@ describe("edge-tts health and retry", () => {
       "test text",
       "en-US-JennyNeural",
       "+0%",
-      `/tmp/voicelayer-retry-test-${process.pid}.mp3`,
+      `${TEST_TMP}/voicelayer-retry-test-${process.pid}.mp3`,
       "src/scripts/edge-tts-words.py",
     );
 
@@ -155,7 +156,7 @@ describe("edge-tts health and retry", () => {
 
     // Cleanup
     try {
-      require("fs").unlinkSync(`/tmp/voicelayer-retry-test-${process.pid}.mp3`);
+      require("fs").unlinkSync(`${TEST_TMP}/voicelayer-retry-test-${process.pid}.mp3`);
     } catch {}
   });
 
@@ -172,7 +173,7 @@ describe("edge-tts health and retry", () => {
       "test text",
       "en-US-JennyNeural",
       "+0%",
-      `/tmp/voicelayer-retry-test-${process.pid}.mp3`,
+      `${TEST_TMP}/voicelayer-retry-test-${process.pid}.mp3`,
       "src/scripts/edge-tts-words.py",
     );
 
@@ -193,7 +194,7 @@ describe("edge-tts health and retry", () => {
       "test text",
       "en-US-JennyNeural",
       "+0%",
-      `/tmp/voicelayer-retry-test-${process.pid}.mp3`,
+      `${TEST_TMP}/voicelayer-retry-test-${process.pid}.mp3`,
       "src/scripts/edge-tts-words.py",
     );
 

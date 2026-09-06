@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, expect, it, spyOn } from "bun:test";
+// AIDEV-NOTE: R-014 — this file can reach the microphone, the recorder
+// device probe, or files the resident VoiceBar reads. `describe` is the
+// live-host guard, so the suite skips loudly rather than racing the live app.
+import { describeMicTouching as describe } from "./setup/live-host-guard";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -2667,7 +2671,9 @@ describe("input recording durability", () => {
         ((path: any, ...args: any[]) => {
           if (
             typeof path === "string" &&
-            path.startsWith("/tmp/voicelayer-recording-")
+            // AIDEV-NOTE: R-014 — the working copy follows the (now overridable)
+            // ephemeral root, so match on paths.TMP_ROOT, not a literal /tmp.
+            path.startsWith(`${paths.TMP_ROOT}/voicelayer-recording-`)
           ) {
             throw new Error("injected working-copy write failure");
           }
