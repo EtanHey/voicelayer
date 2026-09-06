@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -68,6 +69,8 @@ type Workspace = {
   appBundle: string;
   stubDir: string;
   log: string;
+  /** Stands in for /tmp, so the cleanup is exercised without touching the real one. */
+  legacyLogDir: string;
 };
 
 function writeStub(path: string, body: string) {
@@ -131,7 +134,10 @@ exit ${options.xattrDeleteStatus ?? 0}
     );
   }
 
-  return { home, appBundle, stubDir, log };
+  const legacyLogDir = join(root, "legacy-tmp");
+  mkdirSync(legacyLogDir, { recursive: true });
+
+  return { home, appBundle, stubDir, log, legacyLogDir };
 }
 
 function runInstaller(workspace: Workspace, args: string[] = []) {
@@ -144,6 +150,7 @@ function runInstaller(workspace: Workspace, args: string[] = []) {
       STUB_LOG: workspace.log,
       STUB_STATE: join(root, "print-count"),
       VOICEBAR_APP_PATH: workspace.appBundle,
+      VOICEBAR_LEGACY_LOG_DIR: workspace.legacyLogDir,
     },
   });
 }
@@ -410,5 +417,61 @@ describe("install-voicebar-autostart.sh log paths", () => {
     const repeat = runInstaller(workspace);
     expect(repeat.status).toBe(0);
     expect(repeat.stdout).toContain("already current");
+  });
+});
+
+// Moving the log path forward does not remediate the machines that already have
+// the leak: /tmp/voicebar-err.log survives an upgrade, world-readable, holding a
+// keystroke log. The installer empties and tightens it in place.
+describe("install-voicebar-autostart.sh legacy /tmp log cleanup", () => {
+  test("truncates and tightens a leaked legacy log without deleting it", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    const leaked = join(workspace.legacyLogDir, "voicebar-err.log");
+    writeFileSync(leaked, "[HotkeyManager] Callback entry keycode=8\n");
+    chmodSync(leaked, 0o644);
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    // Still there -- an operator may hold the file open; deleting is not ours to do.
+    expect(existsSync(leaked)).toBe(true);
+    expect(readFileSync(leaked, "utf8")).toBe("");
+    expect(statSync(leaked).mode & 0o777).toBe(0o600);
+  });
+
+  test("truncates the legacy stdout log too", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    const leaked = join(workspace.legacyLogDir, "voicebar.log");
+    writeFileSync(leaked, "noise\n");
+    chmodSync(leaked, 0o644);
+
+    expect(runInstaller(workspace).status).toBe(0);
+
+    expect(readFileSync(leaked, "utf8")).toBe("");
+    expect(statSync(leaked).mode & 0o777).toBe(0o600);
+  });
+
+  // /tmp is world-writable and sticky, so anyone can plant a name there. The
+  // cleanup must not follow one into a file it was never meant to touch.
+  test("refuses to follow a symlink planted at the legacy path", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    const decoy = join(workspace.legacyLogDir, "not-a-log.txt");
+    writeFileSync(decoy, "important unrelated content\n");
+    symlinkSync(decoy, join(workspace.legacyLogDir, "voicebar-err.log"));
+
+    expect(runInstaller(workspace).status).toBe(0);
+
+    expect(readFileSync(decoy, "utf8")).toBe("important unrelated content\n");
+  });
+
+  test("succeeds when there is no legacy log to clean up", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+
+    const result = runInstaller(workspace);
+
+    expect(result.status).toBe(0);
+    expect(existsSync(join(workspace.legacyLogDir, "voicebar-err.log"))).toBe(
+      false,
+    );
   });
 });

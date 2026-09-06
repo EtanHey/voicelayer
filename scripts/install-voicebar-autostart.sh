@@ -16,6 +16,9 @@ PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG_DIR_PLACEHOLDER="__VOICEBAR_LOG_DIR__"
 LOG_DIR="$HOME/Library/Logs/voicelayer"
+# Where this LaunchAgent's logs used to live. Overridable so the test suite can
+# exercise the cleanup below without touching the real machine's /tmp.
+LEGACY_LOG_DIR="${VOICEBAR_LEGACY_LOG_DIR:-/tmp}"
 DOMAIN="gui/$(id -u)"
 VOICEBAR_APP="${VOICEBAR_APP_PATH:-/Applications/VoiceBar.app}"
 RELOAD=0
@@ -46,6 +49,21 @@ prepare_log_dir() {
     # Never truncate: an operator debugging a live VoiceBar is reading this file.
     [[ -e "$file" ]] || : >"$file"
     chmod 600 "$file"
+  done
+
+  # The old /tmp logs survive on every machine that upgrades, and the stderr one
+  # is a keystroke log at mode 644. Moving the path forward does not remediate
+  # them, so tighten and empty them here. Truncate, never delete: an operator may
+  # have the file open, and removing a user's file is not this script's call.
+  # (Authorised by orc 2026-09-06; the audited evidence copy lives outside /tmp.)
+  #
+  # /tmp is world-writable, so refuse anything that is not a plain file we own --
+  # a planted symlink would otherwise redirect the truncate at whatever it points
+  # to.
+  for file in "$LEGACY_LOG_DIR/voicebar.log" "$LEGACY_LOG_DIR/voicebar-err.log"; do
+    [[ -f "$file" && ! -L "$file" && -O "$file" ]] || continue
+    chmod 600 "$file" 2>/dev/null || true
+    : >"$file" 2>/dev/null || true
   done
 }
 
