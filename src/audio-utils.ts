@@ -10,10 +10,51 @@ import { resolveBinary } from "./resolve-binary";
 const BYTES_PER_SAMPLE = 2;
 const DEFAULT_NATIVE_INPUT_FORMAT = { sampleRate: 16000, channels: 1 };
 
+/** Homebrew/Intel fallbacks for `rec`. */
+const REC_CANDIDATES = ["/opt/homebrew/bin/rec", "/usr/local/bin/rec"];
+
+/**
+ * Proof that the probe actually reached the device. `parseNativeInputFormat`
+ * answers 16 kHz mono for junk as readily as for a real 16 kHz mono device, so
+ * without this marker a permission denial or a missing binary would be cached
+ * as if it were a measurement.
+ */
+const NATIVE_FORMAT_MARKER = /Sample Rate\s*:\s*\d+/;
+
+/**
+ * sox's own report that the format we asked for is not the device's.
+ *
+ * Verified against sox 14.4.2 on macOS (`rec -V2 … -q -`, which keeps these
+ * warnings while still suppressing the progress meter):
+ *   rec WARN formats: can't set sample rate 8000; using 48000
+ *   rec WARN formats: can't set 4 channels; using 1
+ * A matching request prints nothing. The "using N" half is the device's real
+ * value, so a mismatch does not merely invalidate the cache — it corrects it.
+ */
+const SOX_RATE_MISMATCH = /can'?t set sample rate\s+\d+;\s*using\s+(\d+)/i;
+const SOX_CHANNEL_MISMATCH = /can'?t set\s+\d+\s+channels?;\s*using\s+(\d+)/i;
+
+/**
+ * `rec` stderr that means the cached format can no longer be trusted but
+ * carries no replacement value — drop the cache and re-probe on the next press.
+ * Over-matching is cheap here (one extra probe); under-matching leaves the
+ * recorder pinned to a format the device no longer has.
+ */
+const RECORDER_DEVICE_FAILURE =
+  /(\bFAIL\b|\berror\b|can ?'?t open|cannot open|no such device|no default)/i;
+
 export interface NativeInputFormat {
   sampleRate: number;
   channels: number;
 }
+
+/** Raw output of one `rec` probe, or null if it could not be run at all. */
+export interface NativeInputProbeOutput {
+  stderr: string;
+  stdout: string;
+}
+
+export type NativeInputFormatProbe = () => NativeInputProbeOutput | null;
 
 /**
  * Calculate RMS energy of a 16-bit signed PCM audio buffer.
@@ -64,34 +105,144 @@ export function parseNativeInputFormat(output: string): NativeInputFormat {
 }
 
 /**
+ * AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
+ * the full audio stream and blocks forever. trim 0 0 opens the device, prints
+ * the preamble (with Sample Rate), then exits immediately.
+ */
+function probeArgs(): string[] {
+  const recBin = resolveBinary("rec", REC_CANDIDATES) || "rec";
+  return [recBin, "-n", "trim", "0", "0"];
+}
+
+/** Blocking probe. Only ever runs on a cold cache — see `detectNativeInputFormat`. */
+const defaultProbe: NativeInputFormatProbe = () => {
+  try {
+    const probe = Bun.spawnSync(probeArgs(), {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      // Device preamble (Input File, Channels, Sample Rate) goes to stderr
+      stderr: probe.stderr.toString("utf-8"),
+      stdout: probe.stdout.toString("utf-8"),
+    };
+  } catch {
+    return null;
+  }
+};
+
+let probeSync: NativeInputFormatProbe = defaultProbe;
+
+/** The device format, or null when it has never been measured / was invalidated. */
+let cachedNativeInputFormat: NativeInputFormat | null = null;
+
+export function __setNativeInputFormatProbesForTests(overrides: {
+  sync?: NativeInputFormatProbe;
+}): void {
+  if (overrides.sync) probeSync = overrides.sync;
+}
+
+export function __resetNativeInputFormatProbesForTests(): void {
+  probeSync = defaultProbe;
+}
+
+/**
+ * Turn raw probe output into a format, or null when the probe never reached
+ * the device. Null is the "do not cache this" signal.
+ */
+function readProbeOutput(
+  output: NativeInputProbeOutput | null,
+): NativeInputFormat | null {
+  if (!output) return null;
+  const combined = `${output.stderr}\n${output.stdout}`;
+  if (!NATIVE_FORMAT_MARKER.test(combined)) return null;
+  return parseNativeInputFormat(combined);
+}
+
+/**
  * Detect the native sample rate and channel count of the default input device.
  *
  * AIDEV-NOTE: Some devices only support specific rates or channel counts.
  * Recording at the native format avoids sox-side format coercion when piping
  * to stdout; the recorder downmixes/resamples the resulting PCM explicitly.
+ *
+ * AIDEV-NOTE: the result is cached for the life of the daemon because this used
+ * to run `rec -n trim 0 0` on EVERY F5 press — 160-220 ms of opening the mic
+ * just to read its sample rate, in front of a capture that was already losing
+ * the speaker's opening words (docs.local/recon-2026-09-06/capture-start-latency.md).
+ * A stale cache is corrected from the recorder's own stderr — see
+ * `noteRecorderStderrForNativeInputFormat`. A probe that fails is NOT cached,
+ * so a device that is briefly unavailable does not pin the default format for
+ * the life of the daemon.
  */
 export function detectNativeInputFormat(): NativeInputFormat {
-  try {
-    // AIDEV-NOTE: Use "trim 0 0" (record zero seconds) NOT "stat" — stat processes
-    // the full audio stream and blocks forever. trim 0 0 opens the device, prints
-    // the preamble (with Sample Rate), then exits immediately.
-    const recBin =
-      resolveBinary("rec", ["/opt/homebrew/bin/rec", "/usr/local/bin/rec"]) ||
-      "rec";
-    const probe = Bun.spawnSync([recBin, "-n", "trim", "0", "0"], {
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    // Device preamble (Input File, Channels, Sample Rate) goes to stderr
-    const stderr = probe.stderr.toString("utf-8");
-    const stdout = probe.stdout.toString("utf-8");
-    return parseNativeInputFormat(stderr + "\n" + stdout);
-  } catch {}
-  return DEFAULT_NATIVE_INPUT_FORMAT;
+  if (cachedNativeInputFormat) return cachedNativeInputFormat;
+  const format = readProbeOutput(probeSync());
+  if (!format) return DEFAULT_NATIVE_INPUT_FORMAT;
+  cachedNativeInputFormat = format;
+  return format;
 }
 
 export function detectNativeSampleRate(): number {
   return detectNativeInputFormat().sampleRate;
+}
+
+/** Force the next `detectNativeInputFormat()` to re-probe the device. */
+export function resetNativeInputFormatCache(): void {
+  cachedNativeInputFormat = null;
+}
+
+/** The cached format without probing — diagnostics only. */
+export function peekNativeInputFormatCache(): NativeInputFormat | null {
+  return cachedNativeInputFormat;
+}
+
+/**
+ * Feed `rec`'s stderr back in after a recording.
+ *
+ * Two things can be in there. sox may report that the format we asked for was
+ * not the device's, naming the value it used instead — that corrects the cache
+ * outright, no probe needed. Anything else that reads as a device failure just
+ * drops the cache so the next press re-measures.
+ *
+ * AIDEV-NOTE: this is what keeps the cached format honest when the microphone
+ * is swapped, which is the one case nothing else on this side can see. The
+ * Settings > Audio picker writes the macOS default input device via CoreAudio
+ * from Swift (flow-bar/Sources/VoiceBarUI/PillContextMenuController.swift
+ * `selectInputDevice`) and never tells the daemon, and macOS switches the
+ * default on its own when e.g. AirPods connect. sox does not fail on a
+ * mismatch — it silently coerces — so without the `-V2` warnings the recorder
+ * would keep resampling against a format the device no longer has, which is
+ * exactly the streaming buffer-overrun the recorder spawn's note warns about.
+ *
+ * @returns the device's real format when sox named it, `"invalidated"` when the
+ *   cache was merely dropped, or null when the stderr said nothing relevant.
+ */
+export function noteRecorderStderrForNativeInputFormat(
+  stderr: string,
+): NativeInputFormat | "invalidated" | null {
+  if (!stderr) return null;
+
+  const rate = stderr.match(SOX_RATE_MISMATCH);
+  const channels = stderr.match(SOX_CHANNEL_MISMATCH);
+  if (rate || channels) {
+    const base = cachedNativeInputFormat ?? DEFAULT_NATIVE_INPUT_FORMAT;
+    // Reuse the bounds-checking in parseNativeInputFormat rather than trusting
+    // the warning's digits.
+    const corrected = parseNativeInputFormat(
+      `Sample Rate : ${rate ? rate[1] : base.sampleRate}\n` +
+        `Channels : ${channels ? channels[1] : base.channels}`,
+    );
+    cachedNativeInputFormat = corrected;
+    return corrected;
+  }
+
+  if (RECORDER_DEVICE_FAILURE.test(stderr)) {
+    resetNativeInputFormatCache();
+    return "invalidated";
+  }
+
+  return null;
 }
 
 /**

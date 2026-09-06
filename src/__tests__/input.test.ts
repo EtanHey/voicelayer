@@ -38,9 +38,16 @@ import {
   finalizeTranscriptionText,
   finalizeVoiceAskArchive,
   trimTrailingSilenceForSTT,
+  createRecorderStderrWatcher,
   terminateRecorderProcess,
   updateArchivedTranscript,
 } from "../input";
+import {
+  __resetNativeInputFormatProbesForTests,
+  __setNativeInputFormatProbesForTests,
+  detectNativeInputFormat,
+  resetNativeInputFormatCache,
+} from "../audio-utils";
 import * as inputModule from "../input";
 import { VAD_CHUNK_BYTES } from "../vad";
 import {
@@ -1623,5 +1630,125 @@ describe("archived transcript metadata after retranscription", () => {
     });
 
     expect(readMetadata().transcribed_duration_ms).toBe(64853);
+  });
+});
+
+describe("recorder stderr watcher", () => {
+  const PROBE_OUTPUT = "Channels : 2\nSample Rate : 48000\n";
+  const encode = (s: string) => new TextEncoder().encode(s);
+
+  beforeEach(() => {
+    resetNativeInputFormatCache();
+    __setNativeInputFormatProbesForTests({
+      sync: () => ({ stderr: PROBE_OUTPUT, stdout: "" }),
+    });
+  });
+
+  afterEach(() => {
+    __resetNativeInputFormatProbesForTests();
+    resetNativeInputFormatCache();
+  });
+
+  // The round-1 HIGH: the old reader only fed the cache at EOF, while finish()
+  // resolves the recording without awaiting either the recorder's exit or this
+  // reader. The next press could therefore spawn rec with the stale format.
+  it("corrects the format cache mid-stream, before the recorder exits", () => {
+    expect(detectNativeInputFormat()).toEqual({
+      sampleRate: 48000,
+      channels: 2,
+    });
+
+    const watcher = createRecorderStderrWatcher("rec");
+    watcher.push(
+      encode(
+        "/opt/homebrew/bin/rec WARN formats: can't set sample rate 48000; using 16000\n",
+      ),
+    );
+
+    // No finish() — the recorder is still running and the stream is still open.
+    expect(detectNativeInputFormat()).toEqual({
+      sampleRate: 16000,
+      channels: 2,
+    });
+  });
+
+  it("corrects from a warning that never gets a trailing newline", () => {
+    detectNativeInputFormat();
+
+    const watcher = createRecorderStderrWatcher("rec");
+    watcher.push(encode("rec WARN formats: can't set 2 channels; using 1"));
+
+    expect(detectNativeInputFormat()).toEqual({
+      sampleRate: 48000,
+      channels: 1,
+    });
+  });
+
+  it("applies a correction split across two chunks", () => {
+    detectNativeInputFormat();
+
+    const watcher = createRecorderStderrWatcher("rec");
+    watcher.push(encode("rec WARN formats: can't set sample "));
+    watcher.push(encode("rate 48000; using 44100\n"));
+
+    expect(detectNativeInputFormat()).toEqual({
+      sampleRate: 44100,
+      channels: 2,
+    });
+  });
+
+  it("drops the cache mid-stream when rec reports a device failure", () => {
+    detectNativeInputFormat();
+    let probes = 0;
+    __setNativeInputFormatProbesForTests({
+      sync: () => {
+        probes++;
+        return { stderr: PROBE_OUTPUT, stdout: "" };
+      },
+    });
+
+    const watcher = createRecorderStderrWatcher("rec");
+    watcher.push(encode("rec FAIL formats: can't open input device\n"));
+
+    detectNativeInputFormat();
+    expect(probes).toBe(1);
+  });
+
+  it("announces a correction once, not per chunk", () => {
+    detectNativeInputFormat();
+    const logged: string[] = [];
+    const errSpy = spyOn(console, "error").mockImplementation((...args) => {
+      logged.push(args.join(" "));
+    });
+
+    try {
+      const watcher = createRecorderStderrWatcher("rec");
+      watcher.push(encode("rec WARN formats: can't set 2 channels; using 1\n"));
+      watcher.push(encode("rec WARN formats: can't set 2 channels; using 1\n"));
+      watcher.finish();
+    } finally {
+      errSpy.mockRestore();
+    }
+
+    expect(
+      logged.filter((line) => line.includes("Device input format changed")),
+    ).toHaveLength(1);
+  });
+
+  it("returns the accumulated text for the diagnostic log and stays quiet when clean", () => {
+    detectNativeInputFormat();
+    const watcher = createRecorderStderrWatcher("rec");
+    watcher.push(encode("rec WARN alsa: over-run\n"));
+
+    expect(watcher.finish()).toBe("rec WARN alsa: over-run");
+    expect(detectNativeInputFormat()).toEqual({
+      sampleRate: 48000,
+      channels: 2,
+    });
+  });
+
+  it("has nothing to report for a recorder that wrote no stderr", () => {
+    const watcher = createRecorderStderrWatcher("rec");
+    expect(watcher.finish()).toBe("");
   });
 });
