@@ -192,6 +192,39 @@ final class CaptureBootingStateTests: XCTestCase {
         )
     }
 
+    func testReenteredRecordingDoesNotTimeItsFirstAudioAgainstTheOriginalPress() {
+        // `msSinceRecordCommand` is the number the head-cut work is measured in
+        // (543-1281 ms, median 603). A recording re-entered through transcribing
+        // has no press of its own, so the honest answer is no delta at all -
+        // never one inflated by the whole transcribing gap.
+        let state = VoiceState()
+        state.setConnectionStatus(true)
+        state.sendCommand = { _ in }
+        var clockValues = [10.0, 10.1, 10.7, 20.0, 20.6]
+        state.recordingTimingClock = { clockValues.removeFirst() }
+        var firstAudioEvents: [[String: String]] = []
+        state.diagnosticLogger = { event, details in
+            if event == "recording_first_audio_level" {
+                firstAudioEvents.append(details)
+            }
+        }
+
+        state.record(pressToTalk: true)
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.4])
+        XCTAssertEqual(firstAudioEvents.first?["msSinceRecordCommand"], "700")
+
+        state.handleEvent(["type": "state", "state": "transcribing"])
+        state.handleEvent(["type": "state", "state": "recording"])
+        state.handleEvent(["type": "audio_level", "rms": 0.5])
+
+        XCTAssertEqual(firstAudioEvents.count, 2)
+        XCTAssertNil(
+            firstAudioEvents.last?["msSinceRecordCommand"],
+            "no press of its own means no press delta, not a delta across the transcribing gap"
+        )
+    }
+
     // MARK: - Rendering
 
     func testBootingWaveformIsGrayAndLiveWaveformIsRed() {

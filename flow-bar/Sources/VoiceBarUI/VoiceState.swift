@@ -1811,6 +1811,11 @@ public final class VoiceState {
             captureLive = false
             didLogFirstRecordingAudioLevel = false
             recordingStateUptimeMs = nil
+            // A recording re-entered from here has no press of its own, so the
+            // press delta must be absent rather than measured across the whole
+            // transcribing gap — `msSinceRecordCommand` is the number the
+            // head-cut work is read in.
+            recordCommandUptimeMs = nil
         }
         refreshAudioLevel()
         startTranscriptionTimeout()
