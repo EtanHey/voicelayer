@@ -3,6 +3,16 @@ name: Publish to npm
 on:
   push:
     tags: ['v*']
+  # Lets us re-publish an existing tag with the CURRENT workflow file. A plain
+  # `gh run rerun` replays the workflow as it existed AT THE TAG, so a fix to
+  # this file never reaches the rerun — which is what hid the v2.2.11 OIDC
+  # failure. Dispatching from main and checking out `ref` separates the two.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'tag to publish, e.g. v2.2.11'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -11,8 +21,16 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Repeated from the top level deliberately: a job-level `permissions` block
+    # replaces (not merges with) the workflow default, so anything added here
+    # later would silently drop `id-token: write` and break OIDC.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -40,7 +58,16 @@ jobs:
       # workflow: .github/workflows/publish.yml). `id-token: write` (above)
       # supplies the OIDC token; provenance is attested automatically.
       - name: Upgrade npm (OIDC trusted publishing support)
-        run: npm install -g npm@latest
+        run: |
+          npm install -g npm@latest
+          # Trusted publishing needs >= 11.5.1; print it so an old npm is
+          # visible in the log instead of surfacing as a bare ENEEDAUTH.
+          npm --version
 
       - name: Publish (OIDC trusted publishing)
+        # Verbose so the OIDC token exchange is visible. A default-loglevel run
+        # reports only `ENEEDAUTH`, which does not say whether npm skipped the
+        # exchange, was refused by the registry, or matched no trusted publisher.
+        env:
+          NPM_CONFIG_LOGLEVEL: verbose
         run: npm publish --provenance --access public
