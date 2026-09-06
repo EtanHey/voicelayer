@@ -125,6 +125,49 @@ describe("spoken-command prose guard", () => {
         /\bspace\b/,
       );
     });
+
+    // Macroscope on PR #17 (src/rules-engine.ts:355): applyPunctuation gated
+    // the space command on `commandFired || isCodeShaped(text)`, so an ordinary
+    // sentence that merely ended with a dictated "period" armed the one command
+    // that deletes a word. "I saw outer space period" shipped as "I saw outer."
+    // The trigger is the shape of the utterance, never the fact that some other
+    // command fired.
+    it("is not armed by an unrelated command firing elsewhere", () => {
+      expect(applyRules("I saw outer space period")).toBe("I saw outer space.");
+      expect(applyRules("the space between words period")).toBe(
+        "The space between words.",
+      );
+      expect(applyRules("give the team space period")).toBe(
+        "Give the team space.",
+      );
+      // The ",." cluster collapses to "." in normalizePunctuationClusters —
+      // pre-existing, and not what this case is about: the word survives.
+      expect(applyRules("I need more space comma period")).toBe(
+        "I need more space.",
+      );
+    });
+  });
+
+  // Macroscope on PR #17 (src/rules-engine.ts:258): the determiner check ran
+  // before the operand check, so the article in "a plus b" read as a noun
+  // determiner and the operator stayed a word. Between two operands there is no
+  // noun reading to protect.
+  describe("binary operators fire between single-letter operands", () => {
+    it("fires even when the left operand looks like a determiner", () => {
+      expect(applyRules("a plus b")).toBe("A + b");
+      expect(applyRules("a equals b")).toBe("A = b");
+      expect(applyRules("a minus b")).toBe("A - b");
+    });
+
+    it("keeps operands that are not single letters or camelCase verbatim", () => {
+      // Lowercase identifiers are indistinguishable from prose, and Etan's rule
+      // favours verbatim (AGENTS.md: a fix that loses my words is worse than
+      // the bug).
+      expect(applyRules("foo plus bar")).toBe("Foo plus bar");
+      expect(applyRules("a big plus for the team")).toBe(
+        "A big plus for the team",
+      );
+    });
   });
 
   // Regression cover for the commands that must keep firing unconditionally.
