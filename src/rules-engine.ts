@@ -74,8 +74,12 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = autoCapitalize(result);
   }
 
-  // Final cleanup: collapse multiple spaces, trim
-  result = result.replace(/  +/g, " ").trim();
+  // Final cleanup: collapse multiple spaces, drop the horizontal whitespace
+  // hugging a line break (whisper's raw segments arrive as "...thing.\n And
+  // then..."), trim.
+  result = result.replace(/  +/g, " ");
+  result = result.replace(/[^\S\n]*\n[^\S\n]*/g, "\n");
+  result = result.trim();
 
   return result;
 }
@@ -576,13 +580,28 @@ function parseNumberWords(words: string[]): number | null {
   return total + current;
 }
 
+// AIDEV-NOTE: Number formatting is per-LINE on purpose. Whisper puts newlines
+// in its own raw text (segment breaks) and the spoken "new line" command adds
+// more; tokenising the whole transcript on /\s+/ and re-joining on " " folded
+// every one of them away, which also let two unrelated lines merge into one
+// number ("one thousand\ntwo hundred" -> "1200"). Splitting on the newlines
+// first keeps them, and the horizontal-whitespace tokeniser below still merges
+// number words across spaces and tabs within a line.
 function applyNumberFormatting(text: string): string {
-  const numberWords = new Set([
-    ...Object.keys(WORD_TO_NUMBER),
-    ...Object.keys(MULTIPLIERS),
-  ]);
+  return text
+    .split(/(\n)/)
+    .map((part) => (part === "\n" ? part : formatNumbersInLine(part)))
+    .join("");
+}
 
-  const words = text.split(/\s+/);
+const NUMBER_WORDS = new Set([
+  ...Object.keys(WORD_TO_NUMBER),
+  ...Object.keys(MULTIPLIERS),
+]);
+
+function formatNumbersInLine(text: string): string {
+  // Horizontal whitespace only — a \n never reaches here.
+  const words = text.split(/[^\S\n]+/);
   const result: string[] = [];
   let numBuffer: string[] = [];
 
@@ -599,7 +618,7 @@ function applyNumberFormatting(text: string): string {
   };
 
   for (const word of words) {
-    if (numberWords.has(word.toLowerCase())) {
+    if (NUMBER_WORDS.has(word.toLowerCase())) {
       numBuffer.push(word);
     } else {
       flushBuffer();

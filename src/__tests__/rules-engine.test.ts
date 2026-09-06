@@ -295,6 +295,41 @@ describe("rules-engine", () => {
       expect(applyRules("zero")).toBe("0");
       expect(applyRules("ten")).toBe("10");
     });
+
+    // Whisper emits its own newlines in raw text (segment breaks), and the
+    // spoken "new line" command adds more. Number formatting used to tokenise
+    // the whole transcript on /\s+/ and re-join on " ", which folded every one
+    // of them away.
+    it("keeps newlines that are already in the text", () => {
+      expect(applyRules("line one\nline two")).toBe("Line 1\nLine 2");
+    });
+
+    it("never merges number words across a newline", () => {
+      // Same words on one line still combine into a single number.
+      expect(applyRules("one thousand two hundred")).toBe("1200");
+      // Split across a line break they are two separate numbers.
+      expect(applyRules("one thousand\ntwo hundred")).toBe("1000\n200");
+    });
+
+    it("keeps every newline in a multi-line transcript", () => {
+      expect(applyRules("first line here\nsecond line here\nthird line")).toBe(
+        "First line here\nSecond line here\nThird line",
+      );
+    });
+
+    it("keeps blank lines between paragraphs", () => {
+      expect(applyRules("hello\n\nworld")).toBe("Hello\n\nWorld");
+    });
+
+    it("still combines number words separated by a tab", () => {
+      expect(applyRules("forty\ttwo")).toBe("42");
+    });
+
+    it("drops the space whisper leaves after its own segment break", () => {
+      expect(applyRules("first thing.\n and then the next thing.")).toBe(
+        "First thing.\nAnd then the next thing.",
+      );
+    });
   });
 
   // --- Stage 5: Tech vocabulary ---
