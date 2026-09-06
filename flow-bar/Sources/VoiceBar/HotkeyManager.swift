@@ -382,17 +382,17 @@ func hotkeyAction(
 ) -> HotkeyAction {
     let escapeCancellationIsActive = cancellationIsActive ?? gestureIsActive
     if type == .keyDown, keycode == 53, autorepeat == 0, escapeCancellationIsActive {
-        NSLog("[HotkeyManager] Matched Escape while cancellation active -> cancel")
+        HotkeyDiagnostics.log("[HotkeyManager] Matched Escape while cancellation active -> cancel")
         return .cancel
     }
 
     let isTargetHotkey = targetKeycodes.contains(keycode)
     guard isTargetHotkey else {
-        NSLog(
-            "[HotkeyManager] Keycode %lld does not match hotkey set %@ for event %@",
-            keycode,
-            String(describing: targetKeycodes),
-            describeEventType(type)
+        // Per-event: this branch is reached for EVERY key the tap sees, so it
+        // must stay behind the verbose gate. See HotkeyDiagnostics.
+        HotkeyDiagnostics.verbose(
+            "[HotkeyManager] Keycode \(keycode) does not match hotkey set "
+                + "\(String(describing: targetKeycodes)) for event \(describeEventType(type))"
         )
         return .ignore
     }
@@ -413,18 +413,16 @@ func hotkeyAction(
         if !flags.isDisjoint(with: blockingModifiers) {
             let shouldUnwindActiveHold = type == .keyUp && gestureIsActive
             if !shouldUnwindActiveHold {
-                NSLog(
-                    "[HotkeyManager] Ignoring modified plain-mode chord for keycode %lld so system shortcut reaches the OS (event=%@, flags=%@)",
-                    keycode,
-                    describeEventType(type),
-                    describeFlags(flags)
+                HotkeyDiagnostics.log(
+                    "[HotkeyManager] Ignoring modified plain-mode chord for keycode \(keycode) "
+                        + "so system shortcut reaches the OS "
+                        + "(event=\(describeEventType(type)), flags=\(describeFlags(flags)))"
                 )
                 return .ignore
             }
-            NSLog(
-                "[HotkeyManager] Letting modified keyUp through for keycode %lld because a gesture is active — unwinding hold (flags=%@)",
-                keycode,
-                describeFlags(flags)
+            HotkeyDiagnostics.log(
+                "[HotkeyManager] Letting modified keyUp through for keycode \(keycode) "
+                    + "because a gesture is active — unwinding hold (flags=\(describeFlags(flags)))"
             )
         }
     }
@@ -434,29 +432,27 @@ func hotkeyAction(
         && !flags.contains(.maskAlternate)
         && !flags.contains(.maskControl)
     if type == .keyUp {
-        NSLog(
-            "[HotkeyManager] Matched keycode %lld release -> keyUp (flags=%@)",
-            keycode,
-            describeFlags(flags)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Matched keycode \(keycode) release -> keyUp (flags=\(describeFlags(flags)))"
         )
         return .keyUp
     }
 
     if exactShiftOnly {
         guard type == .keyDown else {
-            NSLog(
-                "[HotkeyManager] Ignoring re-paste hotkey event %@ for keycode %lld",
-                describeEventType(type),
-                keycode
+            HotkeyDiagnostics.log(
+                "[HotkeyManager] Ignoring re-paste hotkey event \(describeEventType(type)) for keycode \(keycode)"
             )
             return .ignore
         }
         guard autorepeat == 0 else {
             if gestureIsActive {
-                NSLog("[HotkeyManager] Consuming autorepeat for re-paste keycode %lld while gesture is active", keycode)
+                HotkeyDiagnostics.log(
+                    "[HotkeyManager] Consuming autorepeat for re-paste keycode \(keycode) while gesture is active"
+                )
                 return .consume
             }
-            NSLog("[HotkeyManager] Ignoring autorepeat for re-paste keycode %lld", keycode)
+            HotkeyDiagnostics.log("[HotkeyManager] Ignoring autorepeat for re-paste keycode \(keycode)")
             return .ignore
         }
         // Re-paste stays available WHILE RECORDING. It pastes the last COMPLETED
@@ -471,86 +467,76 @@ func hotkeyAction(
         // Etan uses daily and shipped broken from v2.1.15 through v2.2.0. Do not
         // reintroduce it — if a paste race ever appears, fix it in the paste path,
         // not by swallowing the user's hotkey.
-        NSLog(
-            "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode %lld -> pasteLastTranscript (flags=%@, gestureActive=%@)",
-            keycode,
-            describeFlags(flags),
-            gestureIsActive ? "true" : "false"
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Matched Shift+F5 re-paste chord for keycode \(keycode) -> pasteLastTranscript "
+                + "(flags=\(describeFlags(flags)), gestureActive=\(gestureIsActive ? "true" : "false"))"
         )
         return .pasteLastTranscript
     }
 
     if flags.contains(.maskShift) {
-        NSLog(
-            "[HotkeyManager] Ignoring modified F5 for keycode %lld because Shift+F5 is the exact re-paste shortcut (flags=%@)",
-            keycode,
-            describeFlags(flags)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Ignoring modified F5 for keycode \(keycode) because Shift+F5 is the exact "
+                + "re-paste shortcut (flags=\(describeFlags(flags)))"
         )
         return .ignore
     }
 
     if useModifierMode {
         guard type == .keyDown || type == .keyUp else {
-            NSLog(
-                "[HotkeyManager] Matched keycode %lld but ignored event type %@ in modifier mode",
-                keycode,
-                describeEventType(type)
+            HotkeyDiagnostics.log(
+                "[HotkeyManager] Matched keycode \(keycode) but ignored event type "
+                    + "\(describeEventType(type)) in modifier mode"
             )
             return .ignore
         }
         guard autorepeat == 0 else {
             if gestureIsActive {
-                NSLog(
-                    "[HotkeyManager] Consuming autorepeat for keycode %lld in modifier mode while gesture is active",
-                    keycode
+                HotkeyDiagnostics.log(
+                    "[HotkeyManager] Consuming autorepeat for keycode \(keycode) in modifier mode "
+                        + "while gesture is active"
                 )
                 return .consume
             }
-            NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld in modifier mode", keycode)
+            HotkeyDiagnostics.log("[HotkeyManager] Ignoring autorepeat for keycode \(keycode) in modifier mode")
             return .ignore
         }
         let commandHeld = flags.contains(.maskCommand) || currentModifierFlags.contains(.maskCommand)
         if type == .keyDown, !commandHeld {
-            NSLog(
-                "[HotkeyManager] Ignoring keyDown for keycode %lld because Command is not held (flags=%@)",
-                keycode,
-                describeFlags(flags)
+            HotkeyDiagnostics.log(
+                "[HotkeyManager] Ignoring keyDown for keycode \(keycode) because Command is not held "
+                    + "(flags=\(describeFlags(flags)))"
             )
             return .ignore
         }
         // keyUp is accepted even if Command was released first so the gesture
         // state machine can always exit a hold cleanly.
         let action: HotkeyAction = type == .keyDown ? .keyDown : .keyUp
-        NSLog(
-            "[HotkeyManager] Matched keycode %lld in modifier mode -> %@ (flags=%@)",
-            keycode,
-            action == .keyDown ? "keyDown" : "keyUp",
-            describeFlags(flags)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Matched keycode \(keycode) in modifier mode -> "
+                + "\(action == .keyDown ? "keyDown" : "keyUp") (flags=\(describeFlags(flags)))"
         )
         return action
     }
 
     guard type == .keyDown || type == .keyUp else {
-        NSLog(
-            "[HotkeyManager] Matched keycode %lld but ignored non-key event %@",
-            keycode,
-            describeEventType(type)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Matched keycode \(keycode) but ignored non-key event \(describeEventType(type))"
         )
         return .ignore
     }
     guard autorepeat == 0 else {
         if gestureIsActive {
-            NSLog("[HotkeyManager] Consuming autorepeat for keycode %lld while gesture is active", keycode)
+            HotkeyDiagnostics.log("[HotkeyManager] Consuming autorepeat for keycode \(keycode) while gesture is active")
             return .consume
         }
-        NSLog("[HotkeyManager] Ignoring autorepeat for keycode %lld", keycode)
+        HotkeyDiagnostics.log("[HotkeyManager] Ignoring autorepeat for keycode \(keycode)")
         return .ignore
     }
     let action: HotkeyAction = type == .keyDown ? .keyDown : .keyUp
-    NSLog(
-        "[HotkeyManager] Matched keycode %lld in plain mode -> %@",
-        keycode,
-        action == .keyDown ? "keyDown" : "keyUp"
+    HotkeyDiagnostics.log(
+        "[HotkeyManager] Matched keycode \(keycode) in plain mode -> "
+            + "\(action == .keyDown ? "keyDown" : "keyUp")"
     )
     return action
 }
@@ -568,7 +554,9 @@ func sequenceAwareHotkeyAction(
     sequenceState: inout HotkeySequenceState
 ) -> HotkeyAction {
     if type == .keyUp, sequenceState.pendingRepasteKeycodes.remove(keycode) != nil {
-        NSLog("[HotkeyManager] Consuming keyUp paired with re-paste keyDown for keycode %lld", keycode)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Consuming keyUp paired with re-paste keyDown for keycode \(keycode)"
+        )
         return .consume
     }
 
@@ -602,43 +590,40 @@ func mouseHotkeyAction(
     if enterMouseButtons.contains(buttonNumber) {
         switch type {
         case .otherMouseDown:
-            NSLog("[HotkeyManager] Matched mouse button %lld press -> sendEnter", buttonNumber)
+            HotkeyDiagnostics.log("[HotkeyManager] Matched mouse button \(buttonNumber) press -> sendEnter")
             return .sendEnter
         case .otherMouseUp:
-            NSLog("[HotkeyManager] Matched mouse button %lld release -> consume", buttonNumber)
+            HotkeyDiagnostics.log("[HotkeyManager] Matched mouse button \(buttonNumber) release -> consume")
             return .consume
         default:
-            NSLog(
-                "[HotkeyManager] Matched enter mouse button %lld but ignored event type %@",
-                buttonNumber,
-                describeEventType(type)
+            HotkeyDiagnostics.log(
+                "[HotkeyManager] Matched enter mouse button \(buttonNumber) but ignored event type "
+                    + "\(describeEventType(type))"
             )
             return .ignore
         }
     }
 
     guard targetMouseButtons.contains(buttonNumber) else {
-        NSLog(
-            "[HotkeyManager] Mouse button %lld does not match hotkey mouse set %@ for event %@",
-            buttonNumber,
-            String(describing: targetMouseButtons),
-            describeEventType(type)
+        // Per-event: reached for every non-hotkey mouse button. Gated.
+        HotkeyDiagnostics.verbose(
+            "[HotkeyManager] Mouse button \(buttonNumber) does not match hotkey mouse set "
+                + "\(String(describing: targetMouseButtons)) for event \(describeEventType(type))"
         )
         return .ignore
     }
 
     switch type {
     case .otherMouseDown:
-        NSLog("[HotkeyManager] Matched mouse button %lld press -> keyDown", buttonNumber)
+        HotkeyDiagnostics.log("[HotkeyManager] Matched mouse button \(buttonNumber) press -> keyDown")
         return .keyDown
     case .otherMouseUp:
-        NSLog("[HotkeyManager] Matched mouse button %lld release -> keyUp", buttonNumber)
+        HotkeyDiagnostics.log("[HotkeyManager] Matched mouse button \(buttonNumber) release -> keyUp")
         return .keyUp
     default:
-        NSLog(
-            "[HotkeyManager] Matched mouse button %lld but ignored event type %@",
-            buttonNumber,
-            describeEventType(type)
+        HotkeyDiagnostics.log(
+            "[HotkeyManager] Matched mouse button \(buttonNumber) but ignored event type "
+                + "\(describeEventType(type))"
         )
         return .ignore
     }
@@ -658,7 +643,7 @@ private func postReturnKeyPress() {
 
 /// Holds configuration and gesture reference for the C callback.
 /// Must be kept alive for the duration of the event tap.
-private final class TapContext {
+final class TapContext {
     let gesture: GestureStateMachine
     let targetKeycodes: Set<Int64>
     let targetMouseButtons: Set<Int64>
@@ -709,7 +694,7 @@ private final class TapContext {
 
 /// CGEventTap callback — must be a C function with no captured context.
 /// All state is accessed through the userInfo pointer (TapContext).
-private func hotkeyCallback(
+func hotkeyCallback(
     _: CGEventTapProxy,
     type: CGEventType,
     event: CGEvent,
@@ -723,20 +708,20 @@ private func hotkeyCallback(
     let mouseButtonNumber = event.getIntegerValueField(.mouseEventButtonNumber)
     let autorepeat = event.getIntegerValueField(.keyboardEventAutorepeat)
 
-    NSLog(
-        "[HotkeyManager] Callback entry type=%@ keycode=%lld mouseButton=%lld flags=%@ autorepeat=%lld",
-        describeEventType(type),
-        keycode,
-        mouseButtonNumber,
-        describeFlags(event.flags),
-        autorepeat
+    // Per-event: the tap sees EVERY keystroke on the machine, so this line is a
+    // keystroke log of whatever the user is typing. It stays behind the verbose
+    // gate and must never be re-enabled by default. See HotkeyDiagnostics.
+    HotkeyDiagnostics.verbose(
+        "[HotkeyManager] Callback entry type=\(describeEventType(type)) keycode=\(keycode) "
+            + "mouseButton=\(mouseButtonNumber) flags=\(describeFlags(event.flags)) "
+            + "autorepeat=\(autorepeat)"
     )
 
     // Re-enable tap if system disabled it (e.g., after timeout or secure input)
     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
         if let tap = ctx.tap {
             CGEvent.tapEnable(tap: tap, enable: true)
-            NSLog("[HotkeyManager] Re-enabled event tap after system disable")
+            HotkeyDiagnostics.log("[HotkeyManager] Re-enabled event tap after system disable")
         }
         return Unmanaged.passUnretained(event)
     }
@@ -763,7 +748,7 @@ private func hotkeyCallback(
         )
     }
     if shouldDebounceHotkeyAction(action: action, debounceState: &ctx.debounceState) {
-        NSLog("[HotkeyManager] Debounced repeated keyDown for keycode %lld", keycode)
+        HotkeyDiagnostics.log("[HotkeyManager] Debounced repeated keyDown for keycode \(keycode)")
         return nil
     }
     dispatchHotkeyAction(
@@ -859,6 +844,7 @@ final class HotkeyManager {
 
     /// Start the event tap. Returns false if permission is missing or tap creation fails.
     func start() -> Bool {
+        HotkeyDiagnostics.loadVerboseSetting()
         permissionStatus = HotkeyManager.currentPermissionStatus()
         guard permissionStatus.isGranted else {
             if permissionStatus.missingPermissions.contains(.inputMonitoring) {

@@ -21,10 +21,15 @@
         <false/>
     </dict>
 
+    <!-- Rendered by scripts/install-voicebar-autostart.sh: launchd does not
+         expand $HOME inside a plist string, so the absolute path is baked in at
+         install time. These are VoiceBar's own logs and live under the user's
+         home at mode 600 -- /tmp is world-readable and predictable, and this
+         file once held a keystroke log (fixed 2026-09-06). -->
     <key>StandardOutPath</key>
-    <string>/tmp/voicebar.log</string>
+    <string>__VOICEBAR_LOG_DIR__/voicebar.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/tmp/voicebar-err.log</string>
+    <string>__VOICEBAR_LOG_DIR__/voicebar-err.log</string>
 </dict>
 </plist>
