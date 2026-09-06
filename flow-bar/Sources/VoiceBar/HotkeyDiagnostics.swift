@@ -30,7 +30,7 @@ enum HotkeyDiagnostics {
     static var sink: (String) -> Void = { NSLog("%@", $0) }
 
     /// Per-event tracing switch. MUST default to `false` — see the type doc.
-    static var isVerboseEnabled = true
+    static var isVerboseEnabled = false
 
     /// Read the opt-in switch. Called once when the event tap starts.
     static func loadVerboseSetting(defaults: UserDefaults = VoiceBarDefaults.make()) {

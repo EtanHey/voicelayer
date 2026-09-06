@@ -14,11 +14,49 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LABEL="com.voicelayer.voicebar"
 PLIST_SRC="$ROOT_DIR/launchd/$LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
+LOG_DIR_PLACEHOLDER="__VOICEBAR_LOG_DIR__"
+LOG_DIR="$HOME/Library/Logs/voicelayer"
 DOMAIN="gui/$(id -u)"
 VOICEBAR_APP="${VOICEBAR_APP_PATH:-/Applications/VoiceBar.app}"
 RELOAD=0
 NO_START=0
 PRESERVE_LOAD_STATE=0
+
+# launchd does not expand $HOME (or ~) inside a plist string -- it would take the
+# literal characters and create a directory called "$HOME" next to whatever it
+# was launched from. So the template ships a placeholder and the absolute path is
+# baked in here, at install time, where $HOME is real.
+rendered_plist() {
+  local template
+  template="$(cat "$PLIST_SRC")"
+  printf '%s\n' "${template//$LOG_DIR_PLACEHOLDER/$LOG_DIR}"
+}
+
+# These files are VoiceBar's own stdout/stderr. They used to sit in /tmp at a
+# predictable path with mode 644 -- world-readable on a shared Mac -- and between
+# 7e3f0a5 (2026-03-30) and 2026-09-06 the stderr file was a keystroke log of
+# everything typed while VoiceBar ran. Pre-creating them at 600 matters because
+# launchd creates a missing log file with its own umask (644); it appends to one
+# that already exists without touching the mode.
+prepare_log_dir() {
+  local file
+  mkdir -p "$LOG_DIR"
+  chmod 700 "$LOG_DIR"
+  for file in "$LOG_DIR/voicebar.log" "$LOG_DIR/voicebar-err.log"; do
+    # Never truncate: an operator debugging a live VoiceBar is reading this file.
+    [[ -e "$file" ]] || : >"$file"
+    chmod 600 "$file"
+  done
+}
+
+write_plist() {
+  rendered_plist >"$PLIST_DST"
+  plutil -lint "$PLIST_DST" >/dev/null
+}
+
+plist_is_current() {
+  [[ -f "$PLIST_DST" ]] && [[ "$(rendered_plist)" == "$(cat "$PLIST_DST")" ]]
+}
 
 unload_launch_agent() {
   local bootout_output=""
@@ -135,14 +173,14 @@ if [[ ! -f "$PLIST_SRC" ]]; then
 fi
 
 release_quarantine
+prepare_log_dir
 
 mkdir -p "$HOME/Library/LaunchAgents"
 
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
   plist_changed=0
-  if ! cmp -s "$PLIST_SRC" "$PLIST_DST"; then
-    cp "$PLIST_SRC" "$PLIST_DST"
-    plutil -lint "$PLIST_DST" >/dev/null
+  if ! plist_is_current; then
+    write_plist
     plist_changed=1
   fi
 
@@ -167,8 +205,7 @@ if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
 fi
 
 # Fresh install: write the plist, then bootstrap and start the bar now.
-cp "$PLIST_SRC" "$PLIST_DST"
-plutil -lint "$PLIST_DST" >/dev/null
+write_plist
 
 if [[ "$NO_START" -eq 1 || "$PRESERVE_LOAD_STATE" -eq 1 ]]; then
   echo "Installed $LABEL (not started)"

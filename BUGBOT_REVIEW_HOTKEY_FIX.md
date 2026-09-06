@@ -369,10 +369,13 @@ bash build-app.sh  # Should build without errors
 
 **Runtime Verification:**
 1. Launch `/Applications/VoiceBar.app`
-2. Check `/tmp/voicebar-err.log` for:
+2. Check `~/Library/Logs/voicelayer/voicebar-err.log` for:
    - `Creating CGEventTap mode=modifier keycodes=[97, 177] mask=0x1006`
-   - `Callback entry type=keyDown keycode=97 flags=cmd` when pressing Cmd+F6
    - `Matched keycode 97 in modifier mode -> keyDown (flags=cmd)`
+   - The per-event `Callback entry` line is off by default — it logs every
+     keystroke on the machine. Enable it only while debugging, with
+     `defaults write com.voicelayer.voicebar VoiceBarVerboseHotkeyLogging -bool true`,
+     and turn it back off afterwards.
 3. Press Cmd+F6 → should start recording
 4. Release Cmd+F6 → should stop recording
 5. Press F6 alone → should be ignored

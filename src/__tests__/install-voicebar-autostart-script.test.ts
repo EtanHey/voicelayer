@@ -324,13 +324,31 @@ describe("install-voicebar-autostart.sh log paths", () => {
     return join(workspace.home, "Library", "Logs", "voicelayer");
   }
 
+  // Read the values, not the file text: the plist carries a comment that
+  // mentions /tmp and $HOME on purpose, and asserting against raw text would
+  // trip over the explanation of the very bug this guards.
+  function logPathValues(workspace: Workspace): string[] {
+    const plist = installedPlist(workspace);
+    return ["StandardOutPath", "StandardErrorPath"].map((key) => {
+      const match = plist.match(
+        new RegExp(`<key>${key}</key>\\s*<string>([^<]*)</string>`),
+      );
+      if (!match) {
+        throw new Error(`${key} missing from the installed plist`);
+      }
+      return match[1];
+    });
+  }
+
   test("installs a plist with no /tmp log paths", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
 
     const result = runInstaller(workspace);
 
     expect(result.status).toBe(0);
-    expect(installedPlist(workspace)).not.toContain("/tmp");
+    for (const path of logPathValues(workspace)) {
+      expect(path.startsWith("/tmp/")).toBe(false);
+    }
   });
 
   test("bakes the absolute per-user log paths into the installed plist", async () => {
@@ -339,15 +357,16 @@ describe("install-voicebar-autostart.sh log paths", () => {
     const result = runInstaller(workspace);
 
     expect(result.status).toBe(0);
-    const plist = installedPlist(workspace);
-    expect(plist).toContain(`<string>${logDir(workspace)}/voicebar.log</string>`);
-    expect(plist).toContain(
-      `<string>${logDir(workspace)}/voicebar-err.log</string>`,
-    );
-    // launchd would take these literally rather than expanding them.
-    expect(plist).not.toContain("$HOME");
-    expect(plist).not.toContain("~/");
-    expect(plist).not.toContain("__VOICEBAR_LOG_DIR__");
+    expect(logPathValues(workspace)).toEqual([
+      join(logDir(workspace), "voicebar.log"),
+      join(logDir(workspace), "voicebar-err.log"),
+    ]);
+    for (const path of logPathValues(workspace)) {
+      // launchd takes these literally rather than expanding them.
+      expect(path).not.toContain("$HOME");
+      expect(path).not.toContain("~");
+      expect(path).not.toContain("__VOICEBAR_LOG_DIR__");
+    }
   });
 
   test("creates the log directory and files private to the user", async () => {
