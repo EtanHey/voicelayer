@@ -137,7 +137,19 @@ function removeFillers(text: string, aggressive: boolean): string {
 
 // --- Stage 2: Spoken punctuation ---
 
-const PUNCTUATION_MAP: [RegExp, string][] = [
+// AIDEV-NOTE: This used to be one always-on PUNCTUATION_MAP. Every entry fired
+// unconditionally, and roughly a third of them are ordinary English words, so
+// they ate real speech: "there's still sometimes a new line on codex agents"
+// shipped as "...sometimes a. On codex agents" (polish-shadow line 7004,
+// clip 2026-09-05T11-46-00-495Z-81090f01), and "some space to think" lost the
+// word outright because "space" is the one command that deletes a word.
+// AGENTS.md law: a fix that loses Etan's words is worse than the bug. So the
+// map is split — ALWAYS entries are multi-word phrases or words nobody uses as
+// a noun mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours
+// prove the speaker dictated a symbol. See isSpokenAsNoun below.
+
+/** Never ordinary prose: multi-word phrases, or single words only ever dictated as symbols. */
+const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bperiod\b/gi, "."],
   [/\bfull stop\b/gi, "."],
   [/\bcomma\b/gi, ","],
@@ -151,40 +163,115 @@ const PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bclose bracket\b/gi, "]"],
   [/\bopen brace\b/gi, "{"],
   [/\bclose brace\b/gi, "}"],
-  [/\bcolon\b/gi, ":"],
   [/\bsemicolon\b/gi, ";"],
-  [/\bdash\b/gi, "-"],
   [/\bhyphen\b/gi, "-"],
   [/\bunderscore\b/gi, "_"],
-  [/\barrow\b/gi, "=>"],
   [/\btriple equals\b/gi, "==="],
   [/\bdouble equals\b/gi, "=="],
   [/\bnot equals\b/gi, "!="],
-  [/\bequals\b/gi, "="],
-  [/\bplus\b/gi, "+"],
-  [/\bminus\b/gi, "-"],
   [/\basterisk\b/gi, "*"],
-  [/\bslash\b/gi, "/"],
   [/\bbackslash\b/gi, "\\"],
   [/\bdouble pipe\b/gi, "||"],
   [/\bdouble ampersand\b/gi, "&&"],
-  [/\bpipe\b/gi, "|"],
   [/\bampersand\b/gi, "&"],
   [/\bat sign\b/gi, "@"],
-  [/\bhash\b/gi, "#"],
   [/\bdollar sign\b/gi, "$"],
-  [/\bpercent\b/gi, "%"],
   [/\bcaret\b/gi, "^"],
   [/\btilde\b/gi, "~"],
   [/\bbacktick\b/gi, "`"],
   [/\bsingle quote\b/gi, "'"],
   [/\bdouble quote\b/gi, '"'],
-  [/\bnew line\b/gi, "\n"],
-  [/\bnew paragraph\b/gi, "\n\n"],
-  [/\btab\b/gi, "\t"],
-  [/\bspace\b/gi, " "],
   [/\bellipsis\b/gi, "..."],
 ];
+
+/**
+ * Ordinary English words that double as symbol commands. Each fires only when
+ * the surrounding words show the speaker did not mean the noun.
+ *
+ * "tab" is deliberately absent and must stay absent: of the 41 corpus
+ * dictations containing the word, 33 shipped a literal tab character
+ * ("The tab is named run 9" -> "The \t is named run 9", polish-shadow 6490).
+ * Etan effectively never dictates it as a command, so the word stays verbatim.
+ */
+const AMBIGUOUS_PUNCTUATION_MAP: [RegExp, string][] = [
+  [/\bcolon\b/gi, ":"],
+  [/\bdash\b/gi, "-"],
+  [/\barrow\b/gi, "=>"],
+  [/\bequals\b/gi, "="],
+  [/\bplus\b/gi, "+"],
+  [/\bminus\b/gi, "-"],
+  [/\bslash\b/gi, "/"],
+  [/\bpipe\b/gi, "|"],
+  [/\bhash\b/gi, "#"],
+  [/\bpercent\b/gi, "%"],
+  [/\bnew line\b/gi, "\n"],
+  [/\bnew paragraph\b/gi, "\n\n"],
+];
+
+/** Deletes a word rather than replacing one, so it needs its own evidence bar. */
+const SPACE_COMMAND: [RegExp, string] = [/\bspace\b/gi, " "];
+
+// A determiner or adjective immediately before an ambiguous word means the
+// speaker said a noun: "a new line", "the dash", "some space", "that hash".
+const NOUN_DETERMINERS_BEFORE = new Set([
+  "a", "an", "the", "some", "this", "that", "my", "your", "our", "their",
+  "no", "any", "every", "big", "little", "new", "next", "last",
+]);
+
+// A preposition or auxiliary verb immediately after means the same thing the
+// other way round: "space to think", "the pipe was leaking", "hash is not".
+const NOUN_FOLLOWERS_AFTER = new Set([
+  "to", "for", "in", "on", "of", "between", "with", "was", "is", "are",
+  "were", "at", "from", "into", "over", "under", "about",
+]);
+
+// "plus"/"minus" are arithmetic operators, but in speech they are far more
+// often the conjunction ("the readme plus updating the about", shadow 6461;
+// "the smoke plus listen to section 3", shadow 6685). They fire only between
+// operands — a number or a code identifier on both sides.
+const ARITHMETIC_ONLY = new Set(["plus", "minus"]);
+
+function wordBefore(text: string, index: number): string {
+  const match = /([\p{L}\p{N}][\p{L}\p{N}'’]*)\s*$/u.exec(text.slice(0, index));
+  return match ? match[1].toLowerCase() : "";
+}
+
+function wordAfter(text: string, index: number): string {
+  const match = /^\s*([\p{L}\p{N}][\p{L}\p{N}'’]*)/u.exec(text.slice(index));
+  return match ? match[1].toLowerCase() : "";
+}
+
+function isOperandToken(token: string): boolean {
+  if (!token) return false;
+  if (/^\d+$/.test(token)) return true;
+  // camelCase / single-letter identifiers ("i", "makeCounter") read as code.
+  return /^[a-z]$/.test(token) || /^[a-z][\w$]*[A-Z][\w$]*$/.test(token);
+}
+
+/**
+ * True when an ambiguous spoken command is being used as an ordinary noun and
+ * must be left verbatim.
+ */
+function isSpokenAsNoun(text: string, start: number, end: number): boolean {
+  const before = wordBefore(text, start);
+  const after = wordAfter(text, end);
+  if (NOUN_DETERMINERS_BEFORE.has(before)) return true;
+  if (NOUN_FOLLOWERS_AFTER.has(after)) return true;
+  const command = text.slice(start, end).trim().toLowerCase();
+  if (ARITHMETIC_ONLY.has(command)) {
+    return !isOperandToken(before) || !isOperandToken(after);
+  }
+  return false;
+}
+
+/**
+ * The utterance already looks like code, which is the only context where a
+ * dictated "space" is plausible enough to justify deleting a word.
+ */
+function isCodeShaped(text: string): boolean {
+  if (/[{}()[\]<>=+*\/\\|@#$%^~_`]/.test(text)) return true;
+  return /\b[a-z][\w$]*[A-Z][\w$]*\b/.test(text);
+}
 
 const TERMINAL_PERIOD_ABBREVIATIONS = new Set([
   "dr",
@@ -243,10 +330,53 @@ function normalizeTerminalPunctuationToken(token: string): string {
     .toLowerCase();
 }
 
+/**
+ * Substitute a spoken command only where it is not being used as a noun.
+ * The patterns passed here must be capture-group free so the replacer's second
+ * argument is the match offset.
+ */
+function replaceUnlessSpokenAsNoun(
+  text: string,
+  pattern: RegExp,
+  replacement: string,
+  onFire: () => void,
+): string {
+  return text.replace(pattern, (match: string, offset: number) => {
+    if (isSpokenAsNoun(text, offset, offset + match.length)) {
+      return match;
+    }
+    onFire();
+    return ` ${replacement}`;
+  });
+}
+
 function applyPunctuation(text: string): string {
   let result = text;
-  for (const [pattern, replacement] of PUNCTUATION_MAP) {
-    result = result.replace(pattern, ` ${replacement}`);
+  let commandFired = false;
+
+  for (const [pattern, replacement] of ALWAYS_PUNCTUATION_MAP) {
+    result = result.replace(pattern, () => {
+      commandFired = true;
+      return ` ${replacement}`;
+    });
+  }
+
+  for (const [pattern, replacement] of AMBIGUOUS_PUNCTUATION_MAP) {
+    result = replaceUnlessSpokenAsNoun(result, pattern, replacement, () => {
+      commandFired = true;
+    });
+  }
+
+  // Last, and only in code-shaped speech: "space" is the sole command that
+  // removes a word instead of swapping one for a symbol.
+  if (commandFired || isCodeShaped(text)) {
+    const [spacePattern, spaceReplacement] = SPACE_COMMAND;
+    result = replaceUnlessSpokenAsNoun(
+      result,
+      spacePattern,
+      spaceReplacement,
+      () => {},
+    );
   }
   // Clean up space before punctuation that should attach left
   result = result.replace(
