@@ -161,11 +161,18 @@ export function pauseSpansFromProbabilities(
  *
  * Runs on its OWN VAD session (`createVADSession`), never the module-global one
  * that belongs to whatever recording is live.
+ *
+ * Abortable: `options.signal` is checked before the model loads and between VAD
+ * chunks, and an abort returns `[]` like any other "cannot analyse" case rather
+ * than throwing. A whole-file pass over a long recording is seconds of work, and
+ * a `voice_ask` that Etan cancels must settle immediately — it must never wait
+ * for this to finish (Macroscope round 1, HIGH).
  */
 export async function computePauseMap(
   wavData: Uint8Array,
-  options?: { minPauseSeconds?: number },
+  options?: { minPauseSeconds?: number; signal?: AbortSignal },
 ): Promise<PauseSpan[]> {
+  if (options?.signal?.aborted) return [];
   const info = parseWavAudioInfo(wavData);
   if (!info) {
     console.error(
@@ -193,6 +200,7 @@ export async function computePauseMap(
 
   const vad = await createVADSession();
   for (let chunk = 0; chunk < usableChunks; chunk++) {
+    if (options?.signal?.aborted) return [];
     const start = info.dataOffset + chunk * chunkBytes;
     probabilities.push(
       await vad.process(wavData.subarray(start, start + chunkBytes)),

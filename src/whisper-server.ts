@@ -13,6 +13,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { existsSync } from "fs";
 import { resolveBinary, resolveBinaryAsync } from "./resolve-binary";
+import type { TranscriptSegment } from "./stt-sentence-boundaries";
 import {
   configureWhisperPerformanceRestart,
   getWhisperPerformanceEffort,
@@ -1035,6 +1036,45 @@ const INFERENCE_TIMEOUT = 8000;
 export interface WhisperServerTranscribeOptions {
   language?: string;
   prompt?: string;
+  /**
+   * Opt in to segment timestamps. Set ONLY under
+   * `VOICELAYER_STT_SMART_BOUNDARIES=1` (`src/stt-sentence-boundaries.ts`):
+   * it switches the request to `response_format=verbose_json`, so with the flag
+   * off the request stays byte-for-byte the shipped `json` one.
+   *
+   * AIDEV-NOTE: verbose_json also carries per-word times. Do NOT use them —
+   * measured on `2026-09-06T12-56-44-855Z-28f3916c` they interpolate straight
+   * across silence (whisper claims speech through a window whose RMS is -60 dB).
+   * Segment ends are the trustworthy field, to ~0.15 s.
+   */
+  onSegments?: (segments: TranscriptSegment[]) => void;
+}
+
+/** Parsed `segments[]` from a `verbose_json` inference response. */
+function parseVerboseSegments(payload: unknown): TranscriptSegment[] {
+  if (!payload || typeof payload !== "object") return [];
+  const raw = (payload as { segments?: unknown }).segments;
+  if (!Array.isArray(raw)) return [];
+  const segments: TranscriptSegment[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const { text, start, end } = entry as {
+      text?: unknown;
+      start?: unknown;
+      end?: unknown;
+    };
+    if (
+      typeof text !== "string" ||
+      typeof start !== "number" ||
+      typeof end !== "number" ||
+      !Number.isFinite(start) ||
+      !Number.isFinite(end)
+    ) {
+      continue;
+    }
+    segments.push({ text, startS: start, endS: end });
+  }
+  return segments;
 }
 
 export async function transcribeViaServer(
@@ -1068,7 +1108,10 @@ async function transcribeViaServerAttempt(
     new Blob([wavData as BlobPart], { type: "audio/wav" }),
     "audio.wav",
   );
-  formData.append("response_format", "json");
+  formData.append(
+    "response_format",
+    options?.onSegments ? "verbose_json" : "json",
+  );
   formData.append("temperature", "0.0");
   if (options?.language) {
     formData.append("language", options.language);
@@ -1111,6 +1154,9 @@ async function transcribeViaServerAttempt(
     if (result.error) {
       throw new Error(`whisper-server inference error: ${result.error}`);
     }
+    // Segments are advisory: a response without them still transcribes, the
+    // boundary stage just gets nothing to judge and leaves the text alone.
+    options?.onSegments?.(parseVerboseSegments(result));
     return normalizeTranscriptionText(result.text || "");
   } finally {
     clearTimeout(timer);

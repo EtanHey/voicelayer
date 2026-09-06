@@ -45,6 +45,7 @@ import {
   createRecorderStderrWatcher,
   terminateRecorderProcess,
   updateArchivedTranscript,
+  buildBoundaryContext,
 } from "../input";
 import {
   __resetNativeInputFormatProbesForTests,
@@ -1755,4 +1756,120 @@ describe("recorder stderr watcher", () => {
     const watcher = createRecorderStderrWatcher("rec");
     expect(watcher.finish()).toBe("");
   });
+});
+
+
+describe("buildBoundaryContext", () => {
+  const SAMPLE_RATE = 16000;
+
+  /** A silent PCM16 mono WAV of `seconds` length. */
+  function silentWav(seconds: number): Uint8Array {
+    const pcmBytes = SAMPLE_RATE * 2 * seconds;
+    const out = new Uint8Array(44 + pcmBytes);
+    const view = new DataView(out.buffer);
+    const ascii = (offset: number, text: string): void => {
+      for (let i = 0; i < text.length; i++)
+        view.setUint8(offset + i, text.charCodeAt(i));
+    };
+    ascii(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes, true);
+    ascii(8, "WAVE");
+    ascii(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, SAMPLE_RATE, true);
+    view.setUint32(28, SAMPLE_RATE * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    ascii(36, "data");
+    view.setUint32(40, pcmBytes, true);
+    return out;
+  }
+
+  const SEGMENTS = [{ text: "alpha bravo", startS: 0, endS: 2 }];
+  const ON = { VOICELAYER_STT_SMART_BOUNDARIES: "1" } as NodeJS.ProcessEnv;
+
+  function writeWav(dir: string, seconds: number): { path: string; sha: string } {
+    const wav = silentWav(seconds);
+    const path = join(dir, "audio.wav");
+    writeFileSync(path, wav);
+    return { path, sha: createHash("sha256").update(wav).digest("hex") };
+  }
+
+  it("is a no-op when the flag is off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path, sha } = writeWav(dir, 1);
+      expect(
+        await buildBoundaryContext(path, SEGMENTS, sha, {} as NodeJS.ProcessEnv),
+      ).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("settles immediately when the signal aborts mid-pause-map", async () => {
+    // Macroscope round 1 HIGH: a cancelled voice_ask must not wait for a
+    // whole-file VAD pass to finish.
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path, sha } = writeWav(dir, 60);
+      // Warm the model so this measures the abort, not the ONNX load.
+      await buildBoundaryContext(path, SEGMENTS, sha, ON);
+
+      const controller = new AbortController();
+      const started = performance.now();
+      const pending = buildBoundaryContext(
+        path,
+        SEGMENTS,
+        sha,
+        ON,
+        controller.signal,
+      );
+      setTimeout(() => controller.abort(), 0);
+      expect(await pending).toBeUndefined();
+      const elapsed = performance.now() - started;
+      console.error(`[buildBoundaryContext] abort settled in ${elapsed.toFixed(1)} ms`);
+      expect(elapsed).toBeLessThan(200);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 300_000);
+
+  it("refuses segments that were decoded from different audio", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path } = writeWav(dir, 1);
+      expect(
+        await buildBoundaryContext(path, SEGMENTS, "not-the-right-digest", ON),
+      ).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("still returns a context when the audio matches", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path, sha } = writeWav(dir, 1);
+      const context = await buildBoundaryContext(path, SEGMENTS, sha, ON);
+      expect(context?.segments).toEqual(SEGMENTS);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("skips when the decode returned no segments", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "vl-bctx-"));
+    try {
+      const { path, sha } = writeWav(dir, 1);
+      expect(await buildBoundaryContext(path, [], sha, ON)).toBeUndefined();
+      expect(
+        await buildBoundaryContext(path, undefined, sha, ON),
+      ).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });

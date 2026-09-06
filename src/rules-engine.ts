@@ -287,7 +287,7 @@ function isCodeShaped(text: string): boolean {
   return /\b[a-z][\w$]*[A-Z][\w$]*\b/.test(text);
 }
 
-const TERMINAL_PERIOD_ABBREVIATIONS = new Set([
+export const TERMINAL_PERIOD_ABBREVIATIONS = new Set([
   "dr",
   "e.g",
   "co",

@@ -488,6 +488,43 @@ function buildSynthFixture(): void {
 
 const synthTest = synthReady ? test : test.skip;
 
+describe("computePauseMap is abortable", () => {
+  /** 60 s of silence: long enough that a full VAD pass is clearly not instant. */
+  const longWav = (): Uint8Array => wavHeader(SAMPLE_RATE * 2 * 60);
+
+  test("an already-aborted signal returns [] without loading the model", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started = performance.now();
+    expect(await computePauseMap(longWav(), { signal: controller.signal })).toEqual(
+      [],
+    );
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  test("aborting mid-pass settles in well under 200 ms", async () => {
+    // Warm the ONNX model first, so this measures the abort and not the load.
+    await computePauseMap(wavHeader(SAMPLE_RATE * 2));
+
+    const controller = new AbortController();
+    const started = performance.now();
+    const pending = computePauseMap(longWav(), { signal: controller.signal });
+    // Land the abort between VAD chunks, which is where the check lives.
+    setTimeout(() => controller.abort(), 0);
+    expect(await pending).toEqual([]);
+    const elapsed = performance.now() - started;
+    console.error(`[pause-map] mid-pass abort settled in ${elapsed.toFixed(1)} ms`);
+    expect(elapsed).toBeLessThan(200);
+  }, 120_000);
+
+  test("without a signal the same audio is fully analysed", async () => {
+    // Guards the abort check against short-circuiting the normal path.
+    expect(await computePauseMap(longWav())).toEqual([
+      { startS: 0, endS: 60 },
+    ]);
+  }, 120_000);
+});
+
 describe("computePauseMap over synthesized speech", () => {
   synthTest(
     "finds the inserted gap and nothing else",

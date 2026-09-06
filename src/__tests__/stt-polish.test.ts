@@ -160,6 +160,110 @@ describe("stt-polish", () => {
     });
   });
 
+  it("shadow mode never changes the text, even when boundaries demote", async () => {
+    // Macroscope round 1: shadow observes and must not touch what Etan gets.
+    // The demotion still has to reach the row.
+    server = createMockPolishServer(() => ({
+      text: "Alpha bravo charlie. I guess foxtrot golf hotel.",
+    }));
+
+    const cleanedText = "Alpha bravo charlie. I guess foxtrot golf hotel.";
+    const result = await polishTranscriptionText({
+      rawText: "alpha bravo charlie i guess foxtrot golf hotel",
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "shadow",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_SMART_BOUNDARIES: "1",
+      },
+      boundaryContext: {
+        segments: [
+          {
+            text: "alpha bravo charlie i guess foxtrot golf hotel",
+            startS: 0,
+            endS: 8,
+          },
+        ],
+        pauses: [{ startS: 8, endS: 9 }],
+      },
+    });
+
+    expect(result.text).toBe(cleanedText);
+    expect(result.changed).toBe(false);
+    expect(result.boundaryDemotions?.[0]).toMatchObject({
+      word: "charlie",
+      reason: "continues-clause",
+    });
+    await waitForFile(TEST_LOG);
+    const logRow = JSON.parse(readFileSync(TEST_LOG, "utf8").trim());
+    expect(logRow.final_text).toBe(cleanedText);
+    expect(logRow.boundary_demotions?.[0]?.word).toBe("charlie");
+  });
+
+  it("applies the demotion when polish is ON, not shadow", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Alpha bravo charlie. I guess foxtrot golf hotel.",
+    }));
+
+    const result = await polishTranscriptionText({
+      rawText: "alpha bravo charlie i guess foxtrot golf hotel",
+      cleanedText: "Alpha bravo charlie I guess foxtrot golf hotel.",
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_SMART_BOUNDARIES: "1",
+      },
+      boundaryContext: {
+        segments: [
+          {
+            text: "alpha bravo charlie i guess foxtrot golf hotel",
+            startS: 0,
+            endS: 8,
+          },
+        ],
+        pauses: [{ startS: 8, endS: 9 }],
+      },
+    });
+
+    expect(result.text).toContain("charlie, I guess");
+  });
+
+  it("a boundary demotion does not count as the model having changed anything", async () => {
+    // Macroscope round 1: `changed` fed the no-op retry, so a demotion made an
+    // unchanged polish response look like a real edit and the punctuation-repair
+    // retry was skipped. The retry must judge the model, not this stage.
+    const cleanedText =
+      "Alpha bravo charlie. I guess foxtrot golf hotel india juliett kilo lima mike november.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText.toLowerCase(),
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        VOICELAYER_STT_SMART_BOUNDARIES: "1",
+      },
+      boundaryContext: {
+        segments: [
+          {
+            text: "alpha bravo charlie i guess foxtrot golf hotel india juliett kilo lima mike november",
+            startS: 0,
+            endS: 14,
+          },
+        ],
+        pauses: [{ startS: 14, endS: 15 }],
+      },
+    });
+
+    // The demotion landed...
+    expect(result.text).toContain("charlie, I guess");
+    // ...but it is not evidence the model changed its response.
+    expect(result.candidateChanged).toBe(false);
+    expect(result.changed).toBe(true);
+  });
+
   it("keeps cleaned text in shadow mode and logs the candidate", async () => {
     server = createMockPolishServer(() => ({
       text: "Also, do /whats-new and output that as your summary.",
