@@ -308,6 +308,109 @@ describe("chooseChunkEnd", () => {
       expect(end).toBeLessThanOrEqual(start + window.max);
     }
   });
+
+  /**
+   * A recording ends in silence — a VAD capture stops BECAUSE it went quiet —
+   * so `pauseSpansFromProbabilities` reports that trailing run as a pause, and
+   * "the END of the last pause in the window" happily lands a fraction of a
+   * second before the end of the file. The remainder is then a scrap chunk that
+   * `src/stt.ts` cannot verify: at a silence seam the chunks share no words by
+   * construction, so the very-short-final-chunk guard's missing-overlap trigger
+   * is always true, and a scrap that fails the prompted/unprompted agreement is
+   * dropped whole — taking the last words Etan said with it.
+   *
+   * Measured on the 2026-09-06 recon corpus: 6 of 18 recordings ≥90 s ended
+   * with a final chunk under `WAV_TAIL_VERIFY_MIN_SECONDS`, four of them under
+   * 2 s, and `2026-09-06T08-25-24` lost 29 words that way.
+   *
+   * The boundary must therefore leave a final chunk that can stand on its own.
+   */
+  describe("never strands a final chunk too short to verify", () => {
+    const MIN_FINAL = 12.5;
+
+    test("moves the cut off a trailing pause that would leave a scrap", () => {
+      // 30.6 s of audio left. The trailing silence ends at 30.4, so the shipped
+      // rule cuts there and leaves 0.2 s.
+      const pauses: PauseSpan[] = [
+        { startS: 21, endS: 21.6 },
+        { startS: 29.8, endS: 30.4 },
+      ];
+      const end = chooseChunkEnd(0, pauses, window, {
+        durationS: 30.6,
+        minFinalSeconds: MIN_FINAL,
+      });
+      expect(30.6 - end).toBeGreaterThanOrEqual(MIN_FINAL);
+      expect(end).toBeGreaterThanOrEqual(MIN_FINAL);
+    });
+
+    test("splits the remainder rather than leaving either side a scrap", () => {
+      // 39.1 s left, the shape of `2026-09-06T08-25-24`: cutting at 29.15 left
+      // a 10.46 s tail, and that tail was dropped.
+      const pauses: PauseSpan[] = [];
+      for (let s = 2; s < 39; s += 2.5) pauses.push({ startS: s, endS: s + 0.5 });
+      const end = chooseChunkEnd(0, pauses, window, {
+        durationS: 39.1,
+        minFinalSeconds: MIN_FINAL,
+      });
+      expect(end).toBeGreaterThanOrEqual(MIN_FINAL);
+      expect(39.1 - end).toBeGreaterThanOrEqual(MIN_FINAL);
+    });
+
+    test("leaves the boundary alone when the remainder is already long enough", () => {
+      // >= max + minFinal of audio left: the ordinary rule cannot strand a
+      // scrap, so it must return exactly what it returns today.
+      const pauses: PauseSpan[] = [{ startS: 26, endS: 27.5 }];
+      const guarded = chooseChunkEnd(0, pauses, window, {
+        durationS: 90,
+        minFinalSeconds: MIN_FINAL,
+      });
+      expect(guarded).toBe(chooseChunkEnd(0, pauses, window));
+    });
+
+    test("decodes the rest in one chunk once the remainder fits in one", () => {
+      // 25 s left fits in a single chunk, so cutting anywhere inside it can only
+      // produce a fragment: cutting at the pause end (22) would leave 3 s.
+      const pauses: PauseSpan[] = [{ startS: 21, endS: 22 }];
+      expect(
+        chooseChunkEnd(0, pauses, window, {
+          durationS: 25,
+          minFinalSeconds: MIN_FINAL,
+        }),
+      ).toBe(25);
+    });
+
+    /**
+     * The scrap that actually shipped, and it is not `chooseChunkEnd` choosing
+     * a bad cut — it is the seam OVERLAP outliving the recording.
+     *
+     * `2026-08-31T12-28-27` (102.31 s): the fourth chunk was planned to end at
+     * 102.30, a hundredth of a second short of the file, so `src/stt.ts` did not
+     * break; the next chunk started `SILENCE_SEAM_OVERLAP` before that cut and
+     * decoded 0.51 s that was almost entirely audio already transcribed. Four
+     * more of the 18 corpus recordings ended the same way (0.51, 0.52, 0.87,
+     * 1.76 s). A scrap after a silence seam is the one chunk the decoder cannot
+     * check, because a silence seam never has the word overlap the very-short-
+     * final-chunk guard reads as health.
+     */
+    test("never cuts a hair short of the end and leaves the overlap as a chunk", () => {
+      const trailingSilence: PauseSpan = { startS: 101.47, endS: 102.3 };
+      const end = chooseChunkEnd(81.93, [trailingSilence], window, {
+        durationS: 102.31,
+        minFinalSeconds: MIN_FINAL,
+      });
+      expect(end).toBeGreaterThanOrEqual(102.31);
+    });
+
+    test("without a duration it is byte-for-byte the shipped rule", () => {
+      const pauses: PauseSpan[] = [
+        { startS: 21, endS: 21.6 },
+        { startS: 29.8, endS: 30.4 },
+      ];
+      expect(chooseChunkEnd(0, pauses, window, {})).toBe(
+        chooseChunkEnd(0, pauses, window),
+      );
+    });
+  });
 });
 
 describe("isSmartWavChunkingEnabled", () => {
