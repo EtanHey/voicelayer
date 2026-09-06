@@ -140,29 +140,80 @@ interface VADSession {
   context: Float32Array;
 }
 
-let cachedSession: VADSession | null = null;
+/**
+ * The ONNX graph itself is stateless — the whole recurrence is passed in and
+ * out through the `state` tensor and the 64-sample context window. So the
+ * loaded model is shared (loading it per caller would cost a model load each
+ * time) while `state`/`context` belong to one conversation of chunks.
+ */
+let cachedModel: {
+  session: InstanceType<typeof ort.InferenceSession>;
+  sr: InstanceType<typeof ort.Tensor>;
+} | null = null;
 
-/** Initialize or return cached VAD session. */
-async function getVADSession(): Promise<VADSession> {
-  if (cachedSession) return cachedSession;
-
+async function getModel(): Promise<NonNullable<typeof cachedModel>> {
+  if (cachedModel) return cachedModel;
   const modelPath = findModelPath();
   const session = await ort.InferenceSession.create(modelPath);
-
-  // Initial hidden state: zeros [2, 1, 128]
-  const state = new ort.Tensor(
-    "float32",
-    new Float32Array(2 * 1 * 128),
-    [2, 1, 128],
-  );
   // Sample rate: 16kHz
   const sr = new ort.Tensor("int64", BigInt64Array.from([BigInt(16000)]), []);
-  // Initial context: zeros (64 samples)
-  const context = new Float32Array(VAD_CONTEXT_SAMPLES);
-
-  cachedSession = { session, state, sr, context };
+  cachedModel = { session, sr };
   console.error("[voicelayer] Silero VAD model loaded");
+  return cachedModel;
+}
+
+function freshVADState(): InstanceType<typeof ort.Tensor> {
+  // Initial hidden state: zeros [2, 1, 128]
+  return new ort.Tensor("float32", new Float32Array(2 * 1 * 128), [2, 1, 128]);
+}
+
+let cachedSession: VADSession | null = null;
+
+/** Initialize or return the shared live-recording VAD session. */
+async function getVADSession(): Promise<VADSession> {
+  if (cachedSession) return cachedSession;
+  const model = await getModel();
+  cachedSession = {
+    session: model.session,
+    state: freshVADState(),
+    sr: model.sr,
+    // Initial context: zeros (64 samples)
+    context: new Float32Array(VAD_CONTEXT_SAMPLES),
+  };
   return cachedSession;
+}
+
+/**
+ * An independent VAD conversation: its own RNN state and context window.
+ *
+ * AIDEV-NOTE: `processVADChunk` walks the module-global session, which belongs
+ * to whatever recording is live. Anything that analyses OTHER audio — a saved
+ * WAV pause map, a retranscribe — must take one of these instead. Sharing the
+ * global would interleave two audio streams into one RNN state and could push
+ * the live silence-stop the wrong way mid-sentence, and `resetVAD()` from the
+ * offline side would wipe the live recording's state outright.
+ */
+export interface IsolatedVADSession {
+  /** @param pcmChunk exactly VAD_CHUNK_BYTES of 16-bit signed PCM */
+  process(pcmChunk: Uint8Array): Promise<number>;
+  reset(): void;
+}
+
+export async function createVADSession(): Promise<IsolatedVADSession> {
+  const model = await getModel();
+  const own: VADSession = {
+    session: model.session,
+    state: freshVADState(),
+    sr: model.sr,
+    context: new Float32Array(VAD_CONTEXT_SAMPLES),
+  };
+  return {
+    process: (pcmChunk: Uint8Array) => runVADChunk(own, pcmChunk),
+    reset: () => {
+      own.state = freshVADState();
+      own.context = new Float32Array(VAD_CONTEXT_SAMPLES);
+    },
+  };
 }
 
 /**
@@ -176,8 +227,13 @@ async function getVADSession(): Promise<VADSession> {
  * @returns Speech probability (0.0 - 1.0). > SPEECH_THRESHOLD = speech detected.
  */
 export async function processVADChunk(pcmChunk: Uint8Array): Promise<number> {
-  const vad = await getVADSession();
+  return runVADChunk(await getVADSession(), pcmChunk);
+}
 
+async function runVADChunk(
+  vad: VADSession,
+  pcmChunk: Uint8Array,
+): Promise<number> {
   // Convert 16-bit signed PCM to float32 [-1, 1]
   const view = new DataView(
     pcmChunk.buffer,
@@ -225,11 +281,7 @@ export function isSpeech(probability: number): boolean {
  */
 export async function resetVAD(): Promise<void> {
   if (cachedSession) {
-    cachedSession.state = new ort.Tensor(
-      "float32",
-      new Float32Array(2 * 1 * 128),
-      [2, 1, 128],
-    );
+    cachedSession.state = freshVADState();
     cachedSession.context = new Float32Array(VAD_CONTEXT_SAMPLES);
   }
 }

@@ -1791,6 +1791,7 @@ export class WhisperServerBackend implements STTBackend {
           ? chooseChunkEnd(startSeconds, pauseMap, {
               min: SMART_CHUNK_MIN_SECONDS,
               max: WAV_CHUNK_SECONDS,
+              overlapSeconds: WAV_CHUNK_OVERLAP_SECONDS,
             }) - startSeconds
           : WAV_CHUNK_SECONDS;
       let nextStartSeconds =

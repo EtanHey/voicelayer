@@ -7,14 +7,17 @@ import {
   type SmartChunkGolden,
 } from "./smart-chunk-golden-fixture";
 import { isSmartWavChunkingEnabled } from "../stt";
+import { createVADSession, processVADChunk, resetVAD } from "../vad";
 import {
   chooseChunkEnd,
   computePauseMap,
+  maxSecondsIntoPause,
   MIN_PAUSE_SECONDS,
   parseWavAudioInfo,
   pauseSpansFromProbabilities,
   SMART_CHUNK_MAX_SECONDS,
   SMART_CHUNK_MIN_SECONDS,
+  SMART_CHUNK_OVERLAP_SECONDS,
   type PauseSpan,
 } from "../stt-pause-map";
 
@@ -48,7 +51,13 @@ function wavHeader(
     sampleRate = SAMPLE_RATE,
     channels = 1,
     bitsPerSample = 16,
-  }: { sampleRate?: number; channels?: number; bitsPerSample?: number } = {},
+    audioFormat = 1,
+  }: {
+    sampleRate?: number;
+    channels?: number;
+    bitsPerSample?: number;
+    audioFormat?: number;
+  } = {},
 ): Uint8Array {
   const out = new Uint8Array(44 + pcmBytes);
   const view = new DataView(out.buffer);
@@ -63,7 +72,7 @@ function wavHeader(
   ascii(8, "WAVE");
   ascii(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
+  view.setUint16(20, audioFormat, true);
   view.setUint16(22, channels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true);
@@ -173,7 +182,7 @@ describe("chooseChunkEnd", () => {
       expected: 30,
     },
     {
-      name: "cuts at the END of the pause, not its start",
+      name: "cuts at the END of a short pause, not its start",
       startS: 0,
       pauses: [{ startS: 22.5, endS: 24.25 }],
       expected: 24.25,
@@ -210,6 +219,40 @@ describe("chooseChunkEnd", () => {
       expected: 53.344,
     },
     {
+      // A 6.9 s pause: cutting at 29.088 would put the next chunk's whole 5 s
+      // overlap inside the silence, leaving the merge no anchor.
+      name: "cuts 2.5 s into a long pause, not at its far end",
+      startS: 0,
+      pauses: [{ startS: 22.176, endS: 29.088 }],
+      expected: 24.676,
+    },
+    {
+      name: "a 7 s pause is entered by exactly half an overlap",
+      startS: 0,
+      pauses: [{ startS: 21, endS: 28 }],
+      expected: 23.5,
+    },
+    {
+      name: "a 0.4 s pause is still cut at its end",
+      startS: 0,
+      pauses: [{ startS: 24, endS: 24.4 }],
+      expected: 24.4,
+    },
+    {
+      // endS is inside the window but the only legal cut (12.256 + 2.5) is far
+      // below the floor, so this pause offers nothing and the clock wins.
+      name: "rejects a pause the window can only reach by cutting too deep",
+      startS: 0,
+      pauses: [{ startS: 12.256, endS: 20.352 }],
+      expected: 30,
+    },
+    {
+      name: "clamps to the ceiling when a pause runs past it",
+      startS: 0,
+      pauses: [{ startS: 29.5, endS: 40 }],
+      expected: 30,
+    },
+    {
       name: "is unordered-input safe — takes the latest, not the last listed",
       startS: 0,
       pauses: [
@@ -238,6 +281,46 @@ describe("chooseChunkEnd", () => {
   test("defaults to the 20-30 s window", () => {
     expect(chooseChunkEnd(0, [])).toBe(SMART_CHUNK_MAX_SECONDS);
     expect(chooseChunkEnd(0, [{ startS: 24, endS: 25 }])).toBe(25);
+  });
+
+  test("never cuts deeper into a pause than half an overlap", () => {
+    const cap = maxSecondsIntoPause();
+    expect(cap).toBe(SMART_CHUNK_OVERLAP_SECONDS / 2);
+    for (let length = 0.4; length <= 12; length += 0.37) {
+      const span = { startS: 21, endS: 21 + length };
+      const end = chooseChunkEnd(0, [span], window);
+      if (end === SMART_CHUNK_MAX_SECONDS && length > 9) continue; // clock fallback
+      expect(end - span.startS).toBeLessThanOrEqual(cap + 1e-9);
+      expect(end).toBeLessThanOrEqual(span.endS + 1e-9);
+    }
+  });
+
+  test("a tiny overlap still allows a 300 ms cut into a pause", () => {
+    // max(MIN_PAUSE_SECONDS, overlap/2) — the floor stops the cap collapsing to
+    // the pause start, which would make every long pause unusable.
+    expect(maxSecondsIntoPause(0.2)).toBe(MIN_PAUSE_SECONDS);
+    expect(
+      chooseChunkEnd(0, [{ startS: 21, endS: 28 }], {
+        min: 20,
+        max: 30,
+        overlapSeconds: 0.2,
+      }),
+    ).toBeCloseTo(21.3, 6);
+  });
+
+  test("the overlap that follows a chosen cut still contains speech", () => {
+    // The real invariant behind the depth cap: nextStart = end - overlap must
+    // land before the pause began, so the merge has shared words to anchor on.
+    const pauses: PauseSpan[] = [
+      { startS: 6.752, endS: 11.808 },
+      { startS: 12.256, endS: 20.352 },
+      { startS: 22.176, endS: 29.088 },
+    ];
+    const end = chooseChunkEnd(0, pauses, window);
+    const nextStart = end - SMART_CHUNK_OVERLAP_SECONDS;
+    const containing = pauses.find((p) => end >= p.startS && end <= p.endS);
+    expect(containing).toBeDefined();
+    expect(nextStart).toBeLessThan((containing as PauseSpan).startS);
   });
 
   test("never returns a boundary outside the window", () => {
@@ -275,6 +358,7 @@ describe("isSmartWavChunkingEnabled", () => {
 describe("parseWavAudioInfo", () => {
   test("reads a 16 kHz mono 16-bit header", () => {
     expect(parseWavAudioInfo(wavHeader(320))).toEqual({
+      audioFormat: 1,
       sampleRate: 16000,
       channels: 1,
       bitsPerSample: 16,
@@ -293,22 +377,43 @@ describe("parseWavAudioInfo", () => {
 });
 
 describe("computePauseMap format guard", () => {
-  // Fails loudly rather than returning [] — an empty map would read as
-  // "no pauses anywhere", and the caller would then cut blind on the clock.
+  // Returns [] rather than throwing: [] is the documented "no smart boundaries
+  // available" answer and src/stt.ts reads it as "keep the fixed 30 s cut".
+  // Every rejection is logged, so an unanalysable recording stays visible.
   test("rejects a sample rate the VAD was not trained for", async () => {
-    const wav = wavHeader(320, { sampleRate: 8000 });
-    await expect(computePauseMap(wav)).rejects.toThrow(/16 kHz mono/);
+    expect(await computePauseMap(wavHeader(320, { sampleRate: 8000 }))).toEqual(
+      [],
+    );
   });
 
   test("rejects stereo", async () => {
-    const wav = wavHeader(640, { channels: 2 });
-    await expect(computePauseMap(wav)).rejects.toThrow(/16 kHz mono/);
+    expect(await computePauseMap(wavHeader(640, { channels: 2 }))).toEqual([]);
   });
 
   test("rejects a non-WAV buffer", async () => {
-    await expect(computePauseMap(new Uint8Array(64))).rejects.toThrow(
-      /readable PCM WAV/,
+    expect(await computePauseMap(new Uint8Array(64))).toEqual([]);
+  });
+
+  // A float WAV can carry the very same 16000/1/16 triple in its header while
+  // its samples are not the signed integers this module reads by hand. Before
+  // the audioFormat check it decoded as garbage rather than being refused.
+  test("rejects IEEE float PCM (fmt tag 3) even when rate/channels/bits match", async () => {
+    const floatWav = wavHeader(320, { audioFormat: 3 });
+    expect(parseWavAudioInfo(floatWav)?.audioFormat).toBe(3);
+    expect(await computePauseMap(floatWav)).toEqual([]);
+  });
+
+  test("rejects WAVE_FORMAT_EXTENSIBLE (0xFFFE) and A-law", async () => {
+    expect(await computePauseMap(wavHeader(320, { audioFormat: 0xfffe }))).toEqual(
+      [],
     );
+    expect(await computePauseMap(wavHeader(320, { audioFormat: 6 }))).toEqual([]);
+  });
+
+  test("rejects a bit depth other than 16", async () => {
+    expect(
+      await computePauseMap(wavHeader(320, { bitsPerSample: 24 })),
+    ).toEqual([]);
   });
 });
 
@@ -316,6 +421,8 @@ describe("computePauseMap format guard", () => {
 
 const FIXTURE_DIR = join(import.meta.dir, "../../docs.local/test-fixtures/pause-map");
 const SYNTH_WAV = join(FIXTURE_DIR, "speech-silence-speech.wav");
+/** Different audio for the offline side, so an interleave cannot coincide. */
+const SYNTH_WAV_REVERSED = join(FIXTURE_DIR, "speech-silence-speech-reversed.wav");
 const SYNTH_GAP_SECONDS = 1.2;
 const hasSay = whichOk("say");
 const hasSox = whichOk("sox");
@@ -333,7 +440,7 @@ if (!synthReady) {
 }
 
 function buildSynthFixture(): void {
-  if (existsSync(SYNTH_WAV)) return;
+  if (existsSync(SYNTH_WAV) && existsSync(SYNTH_WAV_REVERSED)) return;
   mkdirSync(FIXTURE_DIR, { recursive: true });
   const run = (cmd: string[]): void => {
     const proc = Bun.spawnSync(cmd, { cwd: FIXTURE_DIR });
@@ -355,6 +462,7 @@ function buildSynthFixture(): void {
     "sox", "a.wav", "gap.wav", "b.wav",
     "-r", "16000", "-c", "1", "-b", "16", SYNTH_WAV,
   ]);
+  run(["sox", SYNTH_WAV, SYNTH_WAV_REVERSED, "reverse"]);
 }
 
 const synthTest = synthReady ? test : test.skip;
@@ -418,6 +526,127 @@ describe("computePauseMap over synthesized speech", () => {
     expect(MIN_PAUSE_SECONDS).toBe(0.3);
   });
 });
+
+// --- The pause map must not disturb a live recording's VAD ---
+//
+// `processVADChunk` walks a MODULE-GLOBAL Silero session belonging to whatever
+// recording is live. The saved-WAV pause map used to run on that same session
+// and `resetVAD()` it in a finally, so a smart decode overlapping a live
+// recording — a retranscribe while dictating, a voice_ask — wiped the live RNN
+// state mid-sentence. Measured on the fixture below, that moves a live chunk's
+// speech probability from 0.99998 to 0.71349: straight across the 0.5
+// silence-stop threshold's neighbourhood, on audio that is plainly speech.
+
+function pcmChunkAt(wav: Uint8Array, index: number): Uint8Array {
+  const info = parseWavAudioInfo(wav) as NonNullable<
+    ReturnType<typeof parseWavAudioInfo>
+  >;
+  const chunkBytes = 512 * 2;
+  const start = info.dataOffset + index * chunkBytes;
+  return wav.subarray(start, start + chunkBytes);
+}
+
+const LIVE_CHUNKS = 120; // ~3.8 s, spanning speech and the silent gap
+
+async function liveProbabilities(wav: Uint8Array): Promise<number[]> {
+  await resetVAD();
+  const probabilities: number[] = [];
+  for (let index = 0; index < LIVE_CHUNKS; index++) {
+    probabilities.push(await processVADChunk(pcmChunkAt(wav, index)));
+  }
+  return probabilities;
+}
+
+describe("VAD isolation", () => {
+  synthTest(
+    "a pause map computed mid-recording leaves the live decisions bit-identical",
+    async () => {
+      buildSynthFixture();
+      const live = new Uint8Array(readFileSync(SYNTH_WAV));
+      const offlineAudio = new Uint8Array(readFileSync(SYNTH_WAV_REVERSED));
+
+      const baseline = await liveProbabilities(live);
+      expect(new Set(baseline.map(isSpeechLabel)).size).toBe(2); // both states seen
+
+      await resetVAD();
+      const observed: number[] = [];
+      for (let index = 0; index < LIVE_CHUNKS; index++) {
+        // Halfway through the live recording, decode a saved WAV.
+        if (index === LIVE_CHUNKS / 2) {
+          expect((await computePauseMap(offlineAudio)).length).toBe(1);
+        }
+        observed.push(await processVADChunk(pcmChunkAt(live, index)));
+      }
+
+      expect(observed).toEqual(baseline);
+    },
+    120_000,
+  );
+
+  synthTest(
+    "a pause map running concurrently with a live stream changes nothing",
+    async () => {
+      buildSynthFixture();
+      const live = new Uint8Array(readFileSync(SYNTH_WAV));
+      const offlineAudio = new Uint8Array(readFileSync(SYNTH_WAV_REVERSED));
+
+      const baseline = await liveProbabilities(live);
+
+      await resetVAD();
+      const offline = computePauseMap(offlineAudio); // deliberately not awaited
+      const observed: number[] = [];
+      for (let index = 0; index < LIVE_CHUNKS; index++) {
+        observed.push(await processVADChunk(pcmChunkAt(live, index)));
+      }
+      expect((await offline).length).toBe(1);
+
+      expect(observed).toEqual(baseline);
+    },
+    120_000,
+  );
+
+  synthTest(
+    "two isolated sessions do not see each other's state",
+    async () => {
+      buildSynthFixture();
+      const wav = new Uint8Array(readFileSync(SYNTH_WAV));
+
+      const solo = await createVADSession();
+      const soloProbabilities: number[] = [];
+      for (let index = 0; index < 60; index++) {
+        soloProbabilities.push(await solo.process(pcmChunkAt(wav, index)));
+      }
+
+      const a = await createVADSession();
+      const b = await createVADSession();
+      const interleaved: number[] = [];
+      for (let index = 0; index < 60; index++) {
+        interleaved.push(await a.process(pcmChunkAt(wav, index)));
+        // b walks the same audio backwards — a shared RNN state would show up
+        // in a's numbers immediately.
+        await b.process(pcmChunkAt(wav, 59 - index));
+      }
+
+      expect(interleaved).toEqual(soloProbabilities);
+    },
+    120_000,
+  );
+
+  synthTest("reset() clears only the session it is called on", async () => {
+    buildSynthFixture();
+    const wav = new Uint8Array(readFileSync(SYNTH_WAV));
+
+    const own = await createVADSession();
+    const first = await own.process(pcmChunkAt(wav, 40));
+    await own.process(pcmChunkAt(wav, 41));
+    own.reset();
+    expect(await own.process(pcmChunkAt(wav, 40))).toBe(first);
+  });
+});
+
+function isSpeechLabel(probability: number): string {
+  return probability >= 0.5 ? "speech" : "silence";
+}
 
 // --- The golden clip: a real 109 s recording that the fixed 30 s cut damages ---
 //
