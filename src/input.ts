@@ -1871,26 +1871,83 @@ interface RecorderProcess {
   exited: Promise<unknown>;
 }
 
+export interface RecorderStderrWatcher {
+  /** Feed one stderr chunk. Corrections apply immediately. */
+  push(chunk: Uint8Array): void;
+  /** Close the stream; returns the accumulated text for the diagnostic log. */
+  finish(): string;
+}
+
 /**
- * Hand `rec`'s stderr to the input-format cache and say what it did.
+ * Watch a recorder's stderr and apply sox's format corrections as they arrive.
  *
  * AIDEV-NOTE: both recorder spawns pass `-V2` so sox reports a format it could
  * not honour ("can't set sample rate 8000; using 48000"). That warning is the
  * only signal this side gets that the microphone changed under the cached
  * format — see `noteRecorderStderrForNativeInputFormat`. `-q` still suppresses
  * the progress meter, so this costs nothing but the warning lines.
+ *
+ * AIDEV-NOTE: this MUST apply the correction per chunk, not at EOF. The first
+ * cut of the format cache only fed the cache once the stderr stream ended,
+ * which was wrong: `finish()` in `recordToBuffer` resolves the recording
+ * without awaiting either the recorder's exit or this reader, so the NEXT press
+ * could spawn `rec` with the stale format before the correction landed — two
+ * degraded captures after a device swap instead of one. sox prints these
+ * warnings while opening the device, long before EOF, so scanning every chunk
+ * closes that window.
+ *
+ * It rescans the whole accumulated text each time rather than only
+ * newline-complete lines, so it does not depend on sox terminating its last
+ * warning with a newline (the channels warning is the last thing it writes).
+ * A chunk boundary inside one of the numbers would read low for an instant;
+ * sox emits each warning as a single short write and macOS pipe writes under
+ * PIPE_BUF are atomic, so that is not a practical concern, and the next chunk
+ * plus the EOF pass rescan the complete text regardless.
  */
-function reportRecorderStderrToFormatCache(text: string): void {
-  const outcome = noteRecorderStderrForNativeInputFormat(text);
-  if (outcome === "invalidated") {
-    console.error(
-      "[voicelayer] rec reported a device failure — dropping cached input format",
-    );
-  } else if (outcome) {
-    console.error(
-      `[voicelayer] Device input format changed under us — recorded at the wrong format; corrected cache to ${outcome.channels}ch @ ${outcome.sampleRate}Hz`,
-    );
-  }
+export function createRecorderStderrWatcher(
+  label: string,
+): RecorderStderrWatcher {
+  const chunks: Uint8Array[] = [];
+  /** Last outcome announced, so a rescan does not re-log the same correction. */
+  let announced = "";
+
+  const scan = () => {
+    const text = Buffer.concat(chunks).toString("utf-8");
+    if (!text.trim()) return;
+
+    const outcome = noteRecorderStderrForNativeInputFormat(text);
+    if (!outcome) return;
+
+    const signature =
+      outcome === "invalidated"
+        ? "invalidated"
+        : `${outcome.channels}x${outcome.sampleRate}`;
+    if (signature === announced) return;
+    announced = signature;
+
+    if (outcome === "invalidated") {
+      console.error(
+        `[voicelayer] ${label} reported a device failure — dropping cached input format`,
+      );
+    } else {
+      console.error(
+        `[voicelayer] Device input format changed under us — recording at the wrong format; corrected cache to ${outcome.channels}ch @ ${outcome.sampleRate}Hz`,
+      );
+    }
+  };
+
+  return {
+    push(chunk: Uint8Array) {
+      if (!chunk || chunk.length === 0) return;
+      // Defensive copy: Bun may recycle the underlying ArrayBuffer (R65).
+      chunks.push(new Uint8Array(chunk));
+      scan();
+    },
+    finish(): string {
+      scan();
+      return Buffer.concat(chunks).toString("utf-8").trim();
+    },
+  };
 }
 
 export async function terminateRecorderProcess(
@@ -1983,18 +2040,16 @@ export function startMicChunkStream(options: {
   const drainStderr = async () => {
     if (!recorder.stderr) return;
     const reader = (recorder.stderr as ReadableStream<Uint8Array>).getReader();
-    const chunks: Uint8Array[] = [];
+    const watcher = createRecorderStderrWatcher("barge-in rec");
     try {
       while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        if (value) chunks.push(new Uint8Array(value));
+        if (value) watcher.push(value);
       }
     } catch {}
-    if (chunks.length === 0) return;
-    const text = Buffer.concat(chunks).toString("utf-8").trim();
+    const text = watcher.finish();
     if (text) console.error(`[voicelayer] barge-in rec stderr: ${text}`);
-    reportRecorderStderrToFormatCache(text);
   };
 
   const pipeReader = async () => {
@@ -2384,20 +2439,17 @@ export async function recordToBuffer(
           spawnedRecorder.stderr as ReadableStream<Uint8Array>
         ).getReader();
         (async () => {
-          const chunks: Uint8Array[] = [];
+          const watcher = createRecorderStderrWatcher("rec");
           try {
             while (true) {
               const { value, done } = await stderrReader.read();
               if (done) break;
-              if (value) chunks.push(value);
+              if (value) watcher.push(value);
             }
           } catch {}
-          if (chunks.length > 0) {
-            const text = Buffer.concat(chunks).toString("utf-8").trim();
-            if (text) {
-              console.error(`[voicelayer] rec stderr: ${text}`);
-              reportRecorderStderrToFormatCache(text);
-            }
+          const text = watcher.finish();
+          if (text) {
+            console.error(`[voicelayer] rec stderr: ${text}`);
           }
         })();
       }
