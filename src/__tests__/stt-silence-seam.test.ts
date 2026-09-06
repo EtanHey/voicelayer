@@ -72,6 +72,8 @@ const seamTest = ready ? test : test.skip;
 const SMART_CHUNK_ENV = "VOICELAYER_STT_SMART_CHUNKS";
 const SILENCE_SEAM_OVERLAP = 0.5;
 const ANCHOR_OVERLAP = 5;
+/** `WAV_TAIL_VERIFY_MIN_SECONDS` in `src/stt.ts` — the shortest verifiable chunk. */
+const MIN_FINAL_CHUNK = 12.5;
 
 /** Run `body` with the flag pinned, restoring whatever the caller had. */
 async function withSmartChunks<T>(
@@ -97,7 +99,15 @@ function expectedSchedule(
   const chunks: Array<{ startS: number; endS: number; silence: boolean }> = [];
   let start = 0;
   while (start < duration) {
-    const end = Math.min(chooseChunkEnd(start, pauseMap, { min: 20, max: 30 }), duration);
+    const end = Math.min(
+      chooseChunkEnd(
+        start,
+        pauseMap,
+        { min: 20, max: 30 },
+        { durationS: duration, minFinalSeconds: MIN_FINAL_CHUNK },
+      ),
+      duration,
+    );
     const silence = isSilenceSeam(end, pauseMap, SILENCE_SEAM_OVERLAP);
     chunks.push({ startS: start, endS: end, silence });
     if (end >= duration) break;
@@ -195,6 +205,22 @@ describe("silence seams end to end", () => {
         );
       }
       expect(expected[1].startS).toBeCloseTo(expected[0].endS - SILENCE_SEAM_OVERLAP, 6);
+
+      // No chunk may be a scrap the decoder cannot verify. A recording ends in
+      // silence, so the last pause the boundary rule sees often ends just
+      // before the file does; cutting there leaves a fragment that the
+      // very-short-final-chunk check discards whole, because a silence seam
+      // never has the word overlap that check reads as health. Measured on the
+      // recon corpus: 6 of 18 recordings ≥90 s ended on a chunk under 12.5 s,
+      // four under 2 s, one losing 29 words.
+      if (expected.length > 1) {
+        const short = expected.filter(
+          (chunk) => chunk.endS - chunk.startS < MIN_FINAL_CHUNK,
+        );
+        expect(
+          short.map((chunk) => +(chunk.endS - chunk.startS).toFixed(2)),
+        ).toEqual([]);
+      }
 
       // A silence seam must never trigger the anchor witness machinery.
       expect(result.backend).not.toContain("witness");

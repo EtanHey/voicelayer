@@ -1951,10 +1951,22 @@ export class WhisperServerBackend implements STTBackend {
       // below reduces to the constant it used before.
       const plannedChunkSeconds =
         pauseMap.length > 0
-          ? chooseChunkEnd(startSeconds, pauseMap, {
-              min: SMART_CHUNK_MIN_SECONDS,
-              max: WAV_CHUNK_SECONDS,
-            }) - startSeconds
+          ? chooseChunkEnd(
+              startSeconds,
+              pauseMap,
+              { min: SMART_CHUNK_MIN_SECONDS, max: WAV_CHUNK_SECONDS },
+              // A recording ends in silence, so the last pause the boundary
+              // rule can see often ends a fraction of a second before the file
+              // does — and the scrap left behind is exactly what the very-short
+              // -final-chunk check below throws away, because a silence seam
+              // never has the overlap that check treats as evidence of health.
+              // Tell the boundary rule how much audio is left so it splits the
+              // remainder instead of stranding it.
+              {
+                durationS: info.durationSeconds,
+                minFinalSeconds: WAV_TAIL_VERIFY_MIN_SECONDS,
+              },
+            ) - startSeconds
           : WAV_CHUNK_SECONDS;
       // A cut inside a pause needs no anchor, so it keeps only enough overlap
       // to guarantee no gap. Everything else keeps the full re-decoded overlap.

@@ -35,6 +35,20 @@ export interface ChunkEndWindow {
   max: number;
 }
 
+/**
+ * What `chooseChunkEnd` needs in order not to strand an unusable final chunk.
+ *
+ * Both fields optional and both required together: with either missing the
+ * boundary rule is byte-for-byte the one that shipped, so a caller that does not
+ * know the recording's length loses nothing.
+ */
+export interface ChunkEndGuard {
+  /** Length of the whole recording, in seconds. */
+  durationS?: number;
+  /** Shortest final chunk that can stand on its own (`WAV_TAIL_VERIFY_MIN_SECONDS`). */
+  minFinalSeconds?: number;
+}
+
 interface WavAudioInfo {
   audioFormat: number;
   sampleRate: number;
@@ -269,9 +283,13 @@ export function chooseChunkEnd(
     min: SMART_CHUNK_MIN_SECONDS,
     max: SMART_CHUNK_MAX_SECONDS,
   },
+  guard: ChunkEndGuard = {},
 ): number {
   const fallback = startS + window.max;
   if (window.min >= window.max) return fallback;
+
+  const guarded = boundaryAvoidingFinalScrap(startS, pauseMap, window, guard);
+  if (guarded !== null) return guarded;
 
   const earliest = startS + window.min;
   let best: number | null = null;
@@ -280,4 +298,80 @@ export function chooseChunkEnd(
     if (best === null || span.endS > best) best = span.endS;
   }
   return best ?? fallback;
+}
+
+/**
+ * A boundary that cannot strand an unusable final chunk, or null when the
+ * ordinary rule already cannot.
+ *
+ * A recording ends in silence — a VAD capture stops BECAUSE it went quiet — and
+ * `pauseSpansFromProbabilities` reports that trailing run as a pause like any
+ * other. "The end of the last pause in the window" then happily lands a
+ * fraction of a second before the end of the file, and the remainder is a scrap
+ * chunk. `src/stt.ts` cannot verify a scrap that follows a silence seam: those
+ * chunks share no words by construction, so the very-short-final-chunk guard's
+ * missing-overlap trigger is ALWAYS true there, and a scrap whose prompted and
+ * unprompted decodes do not agree closely enough is dropped whole — taking the
+ * last words of the recording with it. Measured over the 18 recordings >=90 s
+ * in the 2026-09-06 recon corpus: 6 ended on a chunk under 12.5 s, four of them
+ * under 2 s, and `2026-09-06T08-25-24` lost 29 words that way.
+ *
+ * Three bands of remaining audio, and two of them can strand a scrap:
+ *  - `remaining <= window.max` — the rest fits in one chunk, so any cut inside
+ *    it yields one chunk plus a fragment. Return the end of the recording and
+ *    let the caller decode the remainder and stop. This is the band that
+ *    produced the scraps actually seen on the corpus, and the fragment was
+ *    usually just the seam overlap: a cut planned at 102.30 in a 102.31 s
+ *    recording is not the end, so the loop ran once more over 0.51 s of audio
+ *    it had already transcribed.
+ *  - `window.max < remaining < window.max + minFinal` — the split is forced to
+ *    be uneven and the only question is how uneven. Aim at the midpoint of what
+ *    is left, snapped to the nearest pause that keeps BOTH sides >= `minFinal`.
+ *    Two ~19 s chunks beat a 29 s chunk and a 10 s one that gets thrown away.
+ *  - `remaining >= window.max + minFinal` — every legal cut leaves at least
+ *    `minFinal` behind it, so nothing can be stranded and the rule is untouched.
+ *
+ * AIDEV-NOTE: in the middle band the cut is deliberately allowed to fall before
+ * `window.min`. That floor exists to keep chunks from getting small; here the
+ * alternative is not a larger chunk, it is a discarded one.
+ */
+function boundaryAvoidingFinalScrap(
+  startS: number,
+  pauseMap: PauseSpan[],
+  window: ChunkEndWindow,
+  guard: ChunkEndGuard,
+): number | null {
+  const { durationS, minFinalSeconds } = guard;
+  if (durationS === undefined || minFinalSeconds === undefined) return null;
+  if (!(minFinalSeconds > 0)) return null;
+
+  const remaining = durationS - startS;
+  // The rest already fits in one chunk. Cutting anywhere inside it cannot make
+  // two usable chunks, only one chunk and a fragment — and the fragment is
+  // often nothing but the seam overlap: `2026-08-31T12-28-27` planned a cut at
+  // 102.30 in a 102.31 s recording, which is not the end, so the loop ran once
+  // more and decoded the 0.51 s of overlap as its own chunk. Hand the caller
+  // the end of the recording so it decodes the remainder and stops.
+  if (remaining <= window.max) return durationS;
+  if (remaining >= window.max + minFinalSeconds) return null;
+
+  const earliest = startS + minFinalSeconds;
+  const latest = durationS - minFinalSeconds;
+  // `remaining > window.max >= 2 * minFinalSeconds` for every window this code
+  // ships with, but a caller is free to pass others — refuse rather than return
+  // a boundary that strands the side it was meant to protect.
+  if (latest < earliest) return null;
+
+  const midpoint = startS + remaining / 2;
+  let best: number | null = null;
+  for (const span of pauseMap) {
+    if (span.endS < earliest || span.endS > latest) continue;
+    if (
+      best === null ||
+      Math.abs(span.endS - midpoint) < Math.abs(best - midpoint)
+    ) {
+      best = span.endS;
+    }
+  }
+  return best ?? Math.min(Math.max(midpoint, earliest), latest);
 }
