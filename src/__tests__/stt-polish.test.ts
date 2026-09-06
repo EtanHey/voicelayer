@@ -2111,3 +2111,77 @@ describe("stt-polish", () => {
     }
   });
 });
+
+describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
+  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
+  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
+  // hand over the full truth — retraction and all."
+  const prompt = () => sttPolish.buildPolishSystemPrompt();
+
+  it("states an explicit KEEP rule for false starts and self-corrections", () => {
+    const text = prompt();
+    expect(text).toContain("false start");
+    expect(text).toContain("self-correction");
+    expect(text.toLowerCase()).toContain("keep");
+    expect(text).toContain(
+      "Keep every clause the speaker said, including false starts, retractions, and self-corrections",
+    );
+  });
+
+  it("no longer permits deleting clauses superseded by a self-correction", () => {
+    const text = prompt();
+    expect(text).not.toContain("superseded by a self-correction");
+    expect(text).not.toContain("drop only the immediately superseded phrase");
+    expect(text).not.toContain("Collapse ANY mid-sentence self-correction");
+    expect(text).not.toContain("discarded correction scaffolding");
+  });
+
+  it("no longer carries collapse examples that delete the retracted phrase", () => {
+    const text = prompt();
+    expect(text).not.toContain("Output: Okay, let's do Claude deep research.");
+    expect(text).not.toContain(
+      "Output: Okay, so I just went to the supermarket and I now came back.",
+    );
+    expect(text).not.toContain("Output: I started the test suite and then came back.");
+  });
+
+  it("carries a worked example that preserves the retraction verbatim", () => {
+    const text = prompt();
+    expect(text).toContain(
+      "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
+    );
+    expect(text).toContain(
+      "Output: Okay, let's do Gemini deep, well no, Claude deep research.",
+    );
+  });
+
+  it("still allows filler removal and still restricts polish to formatting", () => {
+    const text = prompt();
+    // Etan: "keep filtering" um/uh — fillers are the ONLY removable words.
+    expect(text).toContain(
+      "The only words you may remove are standalone filler sounds: um, uh, er, ah, mm.",
+    );
+    expect(text).toContain(
+      "Your remaining job is punctuation, capitalization, spacing, and formatting only.",
+    );
+    expect(text).toContain(
+      "Never summarize, translate, add content, change tone, or invent code identifiers.",
+    );
+  });
+
+  it("keeps the ordinal → numbered list rule untouched", () => {
+    const text = prompt();
+    expect(text).toContain("Format ANY ordinal sequence into numbered markdown lists.");
+    expect(text).toContain("ANY ordinal sequence");
+  });
+
+  it("keeps the KEEP rule in both retry variants", () => {
+    for (const reason of ["noop", "rejected"] as const) {
+      const text = sttPolish.buildPolishSystemPrompt(reason);
+      expect(text).toContain(
+        "Keep every clause the speaker said, including false starts, retractions, and self-corrections",
+      );
+      expect(text).not.toContain("superseded by a self-correction");
+    }
+  });
+});

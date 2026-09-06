@@ -265,7 +265,12 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
 
 type STTPolishRetryReason = "noop" | "rejected";
 
-function buildPolishSystemPrompt(retryReason?: STTPolishRetryReason): string {
+// AIDEV-NOTE: exported for the lane-P2 RED tests in
+// src/__tests__/stt-polish.test.ts ("false starts and retractions are KEPT").
+// Those tests are RED on purpose — see docs.local/recon-2026-09-06/briefs/lane-p2-codex-2026-09-07.md
+export function buildPolishSystemPrompt(
+  retryReason?: STTPolishRetryReason,
+): string {
   const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
