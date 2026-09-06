@@ -127,6 +127,27 @@ describe("spoken-command prose guard", () => {
     });
   });
 
+  // Etan's amendment: plus/minus fire only between operands. "a" is also an
+  // article, so the operand check must win — otherwise "a plus b" can never
+  // become "a + b" even though isOperandToken("a") is true.
+  describe("'plus' / 'minus' need operands", () => {
+    it("fires between numbers and single-letter identifiers", () => {
+      expect(applyRules("five plus three")).toBe("5 + 3");
+      expect(applyRules("a plus b")).toBe("A + b");
+      expect(applyRules("x minus 1")).toBe("X - 1");
+    });
+
+    it("stays the conjunction in prose", () => {
+      expect(applyRules("the readme plus updating the about")).toBe(
+        "The readme plus updating the about",
+      );
+      expect(applyRules("the smoke plus listen to section 3")).toBe(
+        "The smoke plus listen to section 3",
+      );
+      expect(applyRules("a plus for the team")).toBe("A plus for the team");
+    });
+  });
+
   // Regression cover for the commands that must keep firing unconditionally.
   describe("unambiguous commands are untouched by the guard", () => {
     it("keeps firing regardless of surrounding determiners", () => {

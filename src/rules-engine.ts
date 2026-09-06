@@ -255,12 +255,14 @@ function isOperandToken(token: string): boolean {
 function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
-  if (NOUN_DETERMINERS_BEFORE.has(before)) return true;
-  if (NOUN_FOLLOWERS_AFTER.has(after)) return true;
   const command = text.slice(start, end).trim().toLowerCase();
+  // Arithmetic first: "a" is both the article in NOUN_DETERMINERS_BEFORE and a
+  // single-letter operand. "a plus b" is dictation; "a plus for the team" is not.
   if (ARITHMETIC_ONLY.has(command)) {
     return !isOperandToken(before) || !isOperandToken(after);
   }
+  if (NOUN_DETERMINERS_BEFORE.has(before)) return true;
+  if (NOUN_FOLLOWERS_AFTER.has(after)) return true;
   return false;
 }
 
