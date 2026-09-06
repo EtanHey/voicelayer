@@ -71,6 +71,7 @@ import {
   calculateRMS,
   detectNativeInputFormat,
   downmixPCM16ToMono,
+  noteRecorderStderrForNativeInputFormat,
   resamplePCM16,
 } from "./audio-utils";
 import { cleanupTranscriptionText } from "./stt-cleanup";
@@ -1870,6 +1871,28 @@ interface RecorderProcess {
   exited: Promise<unknown>;
 }
 
+/**
+ * Hand `rec`'s stderr to the input-format cache and say what it did.
+ *
+ * AIDEV-NOTE: both recorder spawns pass `-V2` so sox reports a format it could
+ * not honour ("can't set sample rate 8000; using 48000"). That warning is the
+ * only signal this side gets that the microphone changed under the cached
+ * format — see `noteRecorderStderrForNativeInputFormat`. `-q` still suppresses
+ * the progress meter, so this costs nothing but the warning lines.
+ */
+function reportRecorderStderrToFormatCache(text: string): void {
+  const outcome = noteRecorderStderrForNativeInputFormat(text);
+  if (outcome === "invalidated") {
+    console.error(
+      "[voicelayer] rec reported a device failure — dropping cached input format",
+    );
+  } else if (outcome) {
+    console.error(
+      `[voicelayer] Device input format changed under us — recorded at the wrong format; corrected cache to ${outcome.channels}ch @ ${outcome.sampleRate}Hz`,
+    );
+  }
+}
+
 export async function terminateRecorderProcess(
   recorder: RecorderProcess,
   graceMs = 300,
@@ -1926,6 +1949,9 @@ export function startMicChunkStream(options: {
   const recorder = Bun.spawn(
     [
       recPath,
+      // Keeps sox's format-mismatch warnings on stderr; `-q` below still drops
+      // the progress meter. See reportRecorderStderrToFormatCache.
+      "-V2",
       "-r",
       String(nativeRate),
       "-c",
@@ -1968,6 +1994,7 @@ export function startMicChunkStream(options: {
     if (chunks.length === 0) return;
     const text = Buffer.concat(chunks).toString("utf-8").trim();
     if (text) console.error(`[voicelayer] barge-in rec stderr: ${text}`);
+    reportRecorderStderrToFormatCache(text);
   };
 
   const pipeReader = async () => {
@@ -2323,6 +2350,9 @@ export async function recordToBuffer(
       const spawnedRecorder = Bun.spawn(
         [
           recPath,
+          // Keeps sox's format-mismatch warnings on stderr; `-q` below still
+          // drops the progress meter. See reportRecorderStderrToFormatCache.
+          "-V2",
           "-r",
           String(nativeRate),
           "-c",
@@ -2366,6 +2396,7 @@ export async function recordToBuffer(
             const text = Buffer.concat(chunks).toString("utf-8").trim();
             if (text) {
               console.error(`[voicelayer] rec stderr: ${text}`);
+              reportRecorderStderrToFormatCache(text);
             }
           }
         })();
