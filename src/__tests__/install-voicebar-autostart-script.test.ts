@@ -343,18 +343,25 @@ describe("install-voicebar-autostart.sh log paths", () => {
       if (!match) {
         throw new Error(`${key} missing from the installed plist`);
       }
-      return match[1];
+      // The plist stores XML-escaped text; compare against the real path.
+      return match[1]
+        .replaceAll("&lt;", "<")
+        .replaceAll("&gt;", ">")
+        .replaceAll("&amp;", "&");
     });
   }
 
-  test("installs a plist with no /tmp log paths", async () => {
+  // The property is "inside the user's own home", not "not literally /tmp":
+  // on the Linux CI box tmpdir() IS /tmp, so this workspace's own $HOME sits
+  // under /tmp and a literal /tmp check would fail on correct installer output.
+  test("keeps the log paths inside the user's home, not a shared directory", async () => {
     const workspace = makeWorkspace({ printLoaded: 0 });
 
     const result = runInstaller(workspace);
 
     expect(result.status).toBe(0);
     for (const path of logPathValues(workspace)) {
-      expect(path.startsWith("/tmp/")).toBe(false);
+      expect(path.startsWith(`${workspace.home}/`)).toBe(true);
     }
   });
 
@@ -374,6 +381,49 @@ describe("install-voicebar-autostart.sh log paths", () => {
       expect(path).not.toContain("~");
       expect(path).not.toContain("__VOICEBAR_LOG_DIR__");
     }
+  });
+
+  // Splicing a path into XML is new here -- `cp` never interpolated anything --
+  // so an unescaped & in $HOME would emit a malformed plist and `plutil -lint`
+  // would abort the install.
+  test("escapes a home directory that is not XML-safe", async () => {
+    const workspace = makeWorkspace({ printLoaded: 0 });
+    const hostileHome = join(workspace.home, "R&D <team>");
+    mkdirSync(hostileHome, { recursive: true });
+
+    const result = spawnSync(
+      join(workspace.stubDir, "bash"),
+      [installScript],
+      {
+        encoding: "utf8",
+        env: {
+          HOME: hostileHome,
+          PATH: workspace.stubDir,
+          STUB_LOG: workspace.log,
+          STUB_STATE: join(workspace.stubDir, "..", "print-count-hostile"),
+          VOICEBAR_APP_PATH: workspace.appBundle,
+          VOICEBAR_LEGACY_LOG_DIR: workspace.legacyLogDir,
+        },
+      },
+    );
+
+    expect(result.status).toBe(0);
+    const plist = readFileSync(
+      join(
+        hostileHome,
+        "Library",
+        "LaunchAgents",
+        "com.voicelayer.voicebar.plist",
+      ),
+      "utf8",
+    );
+    expect(plist).toContain(
+      `<string>${hostileHome.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")}/Library/Logs/voicelayer/voicebar-err.log</string>`,
+    );
+    // The log directory is still created at the real, unescaped path.
+    expect(
+      statSync(join(hostileHome, "Library", "Logs", "voicelayer")).mode & 0o777,
+    ).toBe(0o700);
   });
 
   test("creates the log directory and files private to the user", async () => {

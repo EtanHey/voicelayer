@@ -29,10 +29,23 @@ PRESERVE_LOAD_STATE=0
 # literal characters and create a directory called "$HOME" next to whatever it
 # was launched from. So the template ships a placeholder and the absolute path is
 # baked in here, at install time, where $HOME is real.
+# The path is being spliced into an XML document, so it has to survive as XML.
+# `cp` never interpolated anything, so this failure mode is new: a $HOME holding
+# & < or > would emit a malformed plist and `plutil -lint` would abort the
+# install outright.
+xml_escape() {
+  local value="$1"
+  value="${value//&/&amp;}" # must come first, or it re-escapes the ones below
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  printf '%s' "$value"
+}
+
 rendered_plist() {
-  local template
+  local template escaped_log_dir
   template="$(cat "$PLIST_SRC")"
-  printf '%s\n' "${template//$LOG_DIR_PLACEHOLDER/$LOG_DIR}"
+  escaped_log_dir="$(xml_escape "$LOG_DIR")"
+  printf '%s\n' "${template//$LOG_DIR_PLACEHOLDER/$escaped_log_dir}"
 }
 
 # These files are VoiceBar's own stdout/stderr. They used to sit in /tmp at a

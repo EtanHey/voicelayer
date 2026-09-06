@@ -24,6 +24,10 @@ enum HotkeyDiagnostics {
     ///
     /// Turning this on produces a keystroke log by design. It exists for
     /// debugging a dead hotkey on a machine you own; leave it off otherwise.
+    ///
+    /// Read once, when the tap starts — so writing it while VoiceBar is running
+    /// changes nothing until the next launch, and neither does writing it back
+    /// to false. Restart VoiceBar after either change.
     static let verboseLoggingDefaultsKey = "VoiceBarVerboseHotkeyLogging"
 
     /// Where both levels write. Replaced in tests; `NSLog` in production.

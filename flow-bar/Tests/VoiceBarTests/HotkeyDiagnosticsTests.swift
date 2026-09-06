@@ -155,6 +155,29 @@ final class HotkeyDiagnosticsTests: XCTestCase {
         )
     }
 
+    /// The switch is only useful if the defaults key actually reaches it — the
+    /// test above sets the flag directly, which would still pass if
+    /// `loadVerboseSetting` read the wrong key or ignored `true`.
+    func testUserDefaultsKeySetTrueTurnsPerEventTracingBackOn() throws {
+        let suiteName = "com.voicelayer.tests.hotkey-diagnostics.on.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: HotkeyDiagnostics.verboseLoggingDefaultsKey)
+
+        HotkeyDiagnostics.isVerboseEnabled = false
+        HotkeyDiagnostics.loadVerboseSetting(defaults: defaults)
+
+        XCTAssertTrue(HotkeyDiagnostics.isVerboseEnabled)
+
+        let lines = capturingDiagnostics {
+            driveCallback(keycode: 8, keyDown: true)
+        }
+        XCTAssertTrue(
+            lines.contains { $0.contains("Callback entry") },
+            "loading the key as true must restore per-event tracing; got \(lines)"
+        )
+    }
+
     // MARK: - Source-level guard
 
     /// The gate only holds while the tap path routes through `HotkeyDiagnostics`.
