@@ -27,6 +27,12 @@ import {
   getLanguageModeFromEnv,
 } from "./language-config";
 import { getSTTVocabularyPrompt } from "./stt-cleanup";
+import {
+  chooseChunkEnd,
+  computePauseMap,
+  SMART_CHUNK_MIN_SECONDS,
+  type PauseSpan,
+} from "./stt-pause-map";
 import type {
   SpeechToTextBackend,
   SpeechToTextBackendSelector,
@@ -576,8 +582,21 @@ const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
-const WAV_CHUNK_WITNESS_SECONDS =
-  WAV_CHUNK_SECONDS + WAV_CHUNK_OVERLAP_SECONDS;
+
+/**
+ * Opt-in silence-aware boundaries for the saved-WAV chunk path.
+ *
+ * Default OFF: with the flag unset every boundary below is exactly
+ * `WAV_CHUNK_SECONDS`, so the decode is byte-for-byte the shipped one. This PR
+ * only plumbs the choice through — the merge logic is untouched.
+ */
+export function isSmartWavChunkingEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const raw = env.VOICELAYER_STT_SMART_CHUNKS?.trim().toLowerCase();
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
+}
+
 const MIN_SUSPECT_LOOP_WORDS = 6;
 const MAX_SUSPECT_LOOP_WORDS = 16;
 const MIN_SUSPECT_LOOP_OCCURRENCES = 3;
@@ -1739,20 +1758,49 @@ export class WhisperServerBackend implements STTBackend {
       );
       return fullUnpromptedWitness;
     };
-    const stepSeconds = WAV_CHUNK_SECONDS - WAV_CHUNK_OVERLAP_SECONDS;
+    // AIDEV-NOTE: the pause map is computed once per recording (Silero over the
+    // whole file is ~0.3 s for 109 s of audio) and only when the flag is on. A
+    // failure here is never fatal: an empty map makes chooseChunkEnd return the
+    // fixed cut, i.e. today's behaviour.
+    let pauseMap: PauseSpan[] = [];
+    if (isSmartWavChunkingEnabled()) {
+      try {
+        pauseMap = await computePauseMap(wavData);
+        console.error(
+          `[voicelayer] smart chunk pause map: ${pauseMap.length} pause(s) >= 300ms`,
+        );
+      } catch (err) {
+        console.error(
+          `[voicelayer] smart chunking unavailable; keeping fixed ${WAV_CHUNK_SECONDS}s cuts: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
     for (
       let startSeconds = 0;
       startSeconds < info.durationSeconds;
       // startSeconds advances explicitly below because an accepted 35-second
       // witness changes the next boundary while preserving the 5-second overlap.
     ) {
-      let nextStartSeconds = startSeconds + stepSeconds;
+      // With the flag off this is always WAV_CHUNK_SECONDS, so every expression
+      // below reduces to the constant it used before.
+      const plannedChunkSeconds =
+        pauseMap.length > 0
+          ? chooseChunkEnd(startSeconds, pauseMap, {
+              min: SMART_CHUNK_MIN_SECONDS,
+              max: WAV_CHUNK_SECONDS,
+            }) - startSeconds
+          : WAV_CHUNK_SECONDS;
+      let nextStartSeconds =
+        startSeconds + plannedChunkSeconds - WAV_CHUNK_OVERLAP_SECONDS;
       const remainingSeconds = info.durationSeconds - startSeconds;
       const chunkSeconds =
         scheduleShiftedByWitness &&
-        remainingSeconds < WAV_CHUNK_SECONDS + WAV_TAIL_VERIFY_MIN_SECONDS
+        remainingSeconds < plannedChunkSeconds + WAV_TAIL_VERIFY_MIN_SECONDS
           ? remainingSeconds
-          : WAV_CHUNK_SECONDS;
+          : plannedChunkSeconds;
       const isVeryShortFinalChunk =
         chunkSeconds >= remainingSeconds &&
         remainingSeconds < WAV_TAIL_VERIFY_MIN_SECONDS;
@@ -1784,10 +1832,11 @@ export class WhisperServerBackend implements STTBackend {
         (suspectLoop || droppedBoundaryOverlap) &&
         startSeconds + chunkSeconds < info.durationSeconds
       ) {
+        const witnessSeconds = plannedChunkSeconds + WAV_CHUNK_OVERLAP_SECONDS;
         const witnessSegment = sliceWavSegment(
           wavData,
           startSeconds,
-          WAV_CHUNK_WITNESS_SECONDS,
+          witnessSeconds,
         );
         const witnessInfo = witnessSegment
           ? parseWavPcmInfo(witnessSegment)
@@ -1795,7 +1844,7 @@ export class WhisperServerBackend implements STTBackend {
         if (
           witnessSegment &&
           witnessInfo &&
-          witnessInfo.durationSeconds > WAV_CHUNK_SECONDS
+          witnessInfo.durationSeconds > plannedChunkSeconds
         ) {
           const promptedWitness = await this.transcribeResident(
             witnessSegment,
@@ -2039,9 +2088,7 @@ export class WhisperServerBackend implements STTBackend {
             witnessed = true;
             scheduleShiftedByWitness = true;
             nextStartSeconds =
-              startSeconds +
-              WAV_CHUNK_WITNESS_SECONDS -
-              WAV_CHUNK_OVERLAP_SECONDS;
+              startSeconds + witnessSeconds - WAV_CHUNK_OVERLAP_SECONDS;
           }
         }
       }
