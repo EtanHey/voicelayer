@@ -1,3 +1,6 @@
+import { questionBoundaryIndices } from "./stt-polish";
+import { endsWithAbbreviation } from "./stt-sentence-boundaries";
+
 /**
  * Deterministic sentence-terminal punctuation restoration.
  *
@@ -111,6 +114,22 @@ const QUESTION_SUBJECTS = new Set([
   "those",
 ]);
 
+const LATER_STATEMENT_PREDICATES = new Map<string, Set<string>>([
+  ["i", new Set(["am", "don't", "dont", "guess", "had", "have", "need", "think", "want", "was", "will"])],
+  ["i'm", new Set(["just", "not", "really", "so", "very"])],
+  ["it", new Set(["can", "does", "doesn't", "doesnt", "has", "is", "isn't", "isnt", "was", "will"])],
+  ["it's", new Set(["been", "not"])],
+  ["its", new Set(["been", "not"])],
+  ["this", new Set(["does", "has", "is", "isn't", "isnt", "was", "will"])],
+  ["today", new Set(["is", "was"])],
+  ["we", new Set(["are", "aren't", "arent", "can", "don't", "dont", "had", "have", "need", "should", "will"])],
+]);
+
+const EMBEDDED_STATEMENT_PREDECESSORS = new Set([
+  "after", "although", "as", "because", "before", "how", "if", "since", "so", "that",
+  "unless", "until", "what", "when", "where", "whether", "while", "why",
+]);
+
 // Trailing terminal punctuation, optionally wrapped by a closing quote/paren/
 // bracket (e.g. `go."` or `(see the notes.)`). If present, the text is already
 // terminated and must be left untouched.
@@ -150,6 +169,65 @@ function isInterrogative(text: string): boolean {
   );
 }
 
+function hasLaterStatementOpener(text: string): boolean {
+  const words = lowerWords(text, Infinity);
+  return words.some((word, index) => {
+    if (index < 2 || index >= words.length - 1) return false;
+    const predicates = LATER_STATEMENT_PREDICATES.get(word);
+    if (!predicates?.has(words[index + 1]!)) return false;
+    const previous = words[index - 1];
+    if (!previous || QUESTION_AUX_OPENERS.has(previous)) return false;
+    if (previous === "that" && words[index - 2] === "do") return true;
+    return !EMBEDDED_STATEMENT_PREDECESSORS.has(previous);
+  });
+}
+
+function isBoundedTailQuestion(
+  text: string,
+  boundary: number,
+): boolean {
+  const suffix = text.slice(boundary).trim();
+  const words = lowerWords(suffix, Infinity);
+  const [first] = words;
+  return (
+    words.length <= 12 &&
+    first !== undefined &&
+    QUESTION_AUX_OPENERS.has(first) &&
+    isInterrogative(suffix) &&
+    !hasLaterStatementOpener(suffix)
+  );
+}
+
+function finalClauseForTerminal(text: string): string | null {
+  let finalPunctuationBoundary = -1;
+  for (const match of text.matchAll(/[.!?…:;]["'”’)\]]?(?=\s|$)/gu)) {
+    if (match.index !== undefined) {
+      if (match[0].startsWith(".") && endsWithAbbreviation(text, match.index + 1)) {
+        continue;
+      }
+      finalPunctuationBoundary = match.index + match[0].length;
+    }
+  }
+
+  const questionBoundaries = questionBoundaryIndices(text);
+  const finalQuestionBoundary =
+    questionBoundaries.findLast((boundary) =>
+      isBoundedTailQuestion(text, boundary),
+    ) ?? -1;
+  if (finalQuestionBoundary > finalPunctuationBoundary) {
+    return text.slice(finalQuestionBoundary).trim();
+  }
+  if (finalPunctuationBoundary >= 0) {
+    return text.slice(finalPunctuationBoundary).trim();
+  }
+
+  if (isInterrogative(text) && hasLaterStatementOpener(text)) {
+    return null;
+  }
+
+  return text;
+}
+
 export function restoreSentencePunctuation(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -164,6 +242,9 @@ export function restoreSentencePunctuation(text: string): string {
   const withoutDanglingComma = trimmed.replace(/[,，]+$/u, "");
   const base = withoutDanglingComma.length ? withoutDanglingComma : trimmed;
 
-  const terminal = isInterrogative(base) ? "?" : ".";
+  // Etan's rule: never upgrade `.` to `?` without an interrogative signal from
+  // the sentence that ends the text. Existing question marks remain untouched.
+  const finalClause = finalClauseForTerminal(base);
+  const terminal = finalClause && isInterrogative(finalClause) ? "?" : ".";
   return `${base}${terminal}`;
 }
