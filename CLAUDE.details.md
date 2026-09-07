@@ -22,6 +22,7 @@
 
 ## STT Backends
 - Backend selection: `QA_VOICE_STT_BACKEND=whisper|wispr|auto` (default auto).
+- The rules engine deterministically turns an ordered run with at least two valued spoken enumerator heads (`One,` / `First,`) into numbered lines before capitalization and polish; sequence/content heads such as `Next,` or `First of all,` may continue a qualified run, content heads stay verbatim, and polish may not renumber or merge an existing list.
 - whisper.cpp binary detection checks `whisper-cli` then `whisper-cpp`.
 - Model search order: `QA_VOICE_WHISPER_MODEL` -> `~/.cache/whisper/ggml-large-v3-turbo.bin` -> any `ggml-*.bin` in `~/.cache/whisper/`.
 - Performance effort tiers (Settings -> Audio -> Performance, code in `src/whisper-performance.ts`): `fast` (`-bo 1 -bs 1`), `balanced` (`-bo 3 -bs 3`), `accurate` (`-bo 5 -bs 5`, default). Same `large-v3-turbo` model for all three — only whisper.cpp beam-search/best-of changes. Persisted to `~/.local/state/voicelayer/whisper-performance.json`; override per-process with `QA_VOICE_WHISPER_PERFORMANCE_EFFORT`.

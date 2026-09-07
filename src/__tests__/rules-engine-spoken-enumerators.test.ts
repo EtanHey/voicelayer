@@ -1,0 +1,395 @@
+/**
+ * Lane L — spoken enumerators become a deterministic numbered list.
+ *
+ * Etan on 2.2.13 (2026-09-06 21:01): the hardware-store script stayed PROSE
+ * ("damn, that didnt work"), and so did the First/Second/Next/Finally script.
+ * Earlier the same day the hardware-store script DID become a list — but only
+ * because polish felt like it (17:58 finding: polish-made lists are luck).
+ * Ruling: enumerators are decided deterministically in the rules stage; polish
+ * only formats.
+ *
+ * The two RED fixtures are the real 2.2.13 recordings, read straight out of
+ * ~/.voicelayer/eval/polish-shadow.jsonl:
+ *   - 2026-09-06T17:59:19.924Z (status "rejected") — cardinal heads
+ *   - 2026-09-06T18:00:02.572Z (status "rejected") — ordinal + sequence heads
+ *
+ * AGENTS.md law applies to every case here: never lose a word, never invent
+ * one. The only words this stage may consume are pure enumerator heads, and
+ * they are enumerated in PURE_ENUMERATOR_WORDS below.
+ */
+import { describe, it, expect } from "bun:test";
+import { applyRules, applySpokenEnumeratorsWithDetail } from "../rules-engine";
+
+const withoutStage = (raw: string): string =>
+  applyRules(raw, { disabledStages: new Set(["enumerators"]) });
+
+const tokenize = (s: string): string[] =>
+  s.toLowerCase().match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu) ?? [];
+
+// --- RED fixture 1: cardinal heads (recording 2026-09-06T17:59:19.924Z) ---
+
+const HARDWARE_RAW =
+  "We need to pick up a few things from the hardware store. One, two boxes of drywall screws. Two, a roll of painter's tape. Three, a gallon of semi-gloss white paint. And four, a new set of brushes.";
+
+// The "2 boxes" is pre-existing number-formatting behaviour on the cleaned
+// path (shadow row cleaned_text is "One, 2 boxes of drywall screws"), not this
+// lane. This lane only decides the list.
+const HARDWARE_EXPECTED = [
+  "We need to pick up a few things from the hardware store.",
+  "1. 2 boxes of drywall screws.",
+  "2. A roll of painter's tape.",
+  "3. A gallon of semi-gloss white paint.",
+  "4. A new set of brushes.",
+].join("\n");
+
+// --- RED fixture 2: ordinal + sequence heads (2026-09-06T18:00:02.572Z) ---
+
+const DEPLOY_RAW =
+  "To deploy the new database, follow these steps. First, back up the current SQLite file to the cloud storage bucket. Second, run the migration script in the terminal. Next, verify that the vector embeddings are returning accurate results. Finally, merge the pull request and notify the engineering team on Slack. like.";
+
+const DEPLOY_EXPECTED = [
+  "To deploy the new database, follow these steps.",
+  "1. Back up the current SQLite file to the cloud storage bucket.",
+  "2. Run the migration script in the terminal.",
+  "3. Verify that the vector embeddings are returning accurate results.",
+  // applyRules has no pull-request vocabulary rewrite; list conversion must
+  // preserve that pre-existing lowercase output rather than invent casing.
+  "4. Merge the pull request and notify the engineering team on Slack.",
+  "Like.",
+].join("\n");
+
+const THREE_BEAT_RAW =
+  "So here are a few things. First of all, I went there. And then I returned back home later. And then lastly, I went to the store.";
+
+const LAYOUT_WORDS_RAW =
+  "Here are a few things. New line, new line, new paragraph. First of all, I went there. And then next, I returned back home. And lastly, I went to the store.";
+
+describe("spoken enumerators -> deterministic numbered list", () => {
+  it("turns the hardware-store cardinal script into a list (RED fixture)", () => {
+    expect(applyRules(HARDWARE_RAW)).toBe(HARDWARE_EXPECTED);
+  });
+
+  it("turns the deploy-steps ordinal/sequence script into a list (RED fixture)", () => {
+    expect(applyRules(DEPLOY_RAW)).toBe(DEPLOY_EXPECTED);
+  });
+
+  it("decides the list in the rules stage, not by luck downstream", () => {
+    // Both fixtures must actually be CHANGED by this stage — a test that
+    // passes with the stage disabled would be measuring nothing.
+    expect(applyRules(HARDWARE_RAW)).not.toBe(withoutStage(HARDWARE_RAW));
+    expect(applyRules(DEPLOY_RAW)).not.toBe(withoutStage(DEPLOY_RAW));
+  });
+
+  it("is deterministic — the same input gives the same list every time", () => {
+    const runs = new Set(
+      Array.from({ length: 5 }, () => applyRules(HARDWARE_RAW)),
+    );
+    expect(runs.size).toBe(1);
+  });
+
+  it("numbers 'number one' / 'step one' heads and drops the head words", () => {
+    expect(
+      applyRules(
+        "Here is the plan. Number one, wipe the disk. Number two, reinstall the tap.",
+      ),
+    ).toBe(
+      ["Here is the plan.", "1. Wipe the disk.", "2. Reinstall the tap."].join(
+        "\n",
+      ),
+    );
+  });
+
+  it("keeps 'or' when the numbered item is an alternative", () => {
+    expect(
+      applyRules(
+        "Choose one path. First, repair the existing installation. Or second, replace it completely.",
+      ),
+    ).toBe(
+      [
+        "Choose 1 path.",
+        "1. Repair the existing installation.",
+        "2. Or replace it completely.",
+      ].join("\n"),
+    );
+  });
+
+  // Pending Etan digest: should content heads alone ever start a list?
+  it.skip("keeps content-only heads as prose pending Etan's ruling", () => {
+    expect(
+      applyRules(
+        "Two things. First of all, the build is broken. Second of all, the tap is stale.",
+      ),
+    ).toBe(
+      "2 things. First of all, the build is broken. Second of all, the tap is stale.",
+    );
+  });
+
+  it("lets a content head ride inside a list started by valued heads", () => {
+    expect(
+      applyRules(
+        "Three checks. First, inspect the tap. Second of all, inspect the cask. Third, inspect the app.",
+      ),
+    ).toBe(
+      [
+        "3 checks.",
+        "1. Inspect the tap.",
+        "2. Second of all, inspect the cask.",
+        "3. Inspect the app.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps an intro that ends in a spoken colon", () => {
+    expect(
+      applyRules(
+        "Do these colon first, back up the file. Second, run the script.",
+      ),
+    ).toBe(
+      ["Do these:", "1. Back up the file.", "2. Run the script."].join("\n"),
+    );
+  });
+
+  it("starts at the first line when there is no intro clause", () => {
+    expect(applyRules("One, buy the milk. Two, buy the bread.")).toBe(
+      ["1. Buy the milk.", "2. Buy the bread."].join("\n"),
+    );
+  });
+
+  it("does not consume c11 spoken layout words in an unqualified sequence run", () => {
+    const { text, removedWords } =
+      applySpokenEnumeratorsWithDetail(LAYOUT_WORDS_RAW);
+    expect(text).toBe(LAYOUT_WORDS_RAW);
+    expect(removedWords).toEqual([]);
+  });
+
+  it("does not split the last item at an abbreviation period", () => {
+    expect(
+      applyRules(
+        "Two errands. First, call Dr. Smith today. Second, email the team now. Then relax.",
+      ),
+    ).toBe(
+      [
+        "2 errands.",
+        "1. Call Dr. Smith today.",
+        "2. Email the team now.",
+        "Then relax.",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps a dictated paragraph break immediately before item one", () => {
+    expect(
+      applySpokenEnumeratorsWithDetail(
+        "Intro line.\n\nSecond intro para.\n\nFirst, alpha beta.\nAnd second, gamma delta.\nAnd lastly, epsilon zeta.",
+      ).text,
+    ).toStartWith("Intro line.\n\nSecond intro para.\n\n1. alpha beta");
+  });
+
+  it("does not mistake time or grouped-number separators for an item head", () => {
+    expect(
+      applyRules(
+        "First, prepare the notes. Second, book the room. 3:30 is the start time.",
+      ),
+    ).toBe(
+      [
+        "1. Prepare the notes.",
+        "2. Book the room.",
+        "3:30 is the start time.",
+      ].join("\n"),
+    );
+    expect(
+      applyRules(
+        "First, prepare the notes. Second, book the room. 3,400 people will attend.",
+      ),
+    ).toBe(
+      [
+        "1. Prepare the notes.",
+        "2. Book the room.",
+        "3,400 people will attend.",
+      ].join("\n"),
+    );
+  });
+
+  it("still starts a list after a sentence ending in a digit", () => {
+    expect(
+      applyRules(
+        "We are shipping in 2026. First, ship the cask. Second, bump the formula.",
+      ),
+    ).toBe(
+      [
+        "We are shipping in 2026.",
+        "1. Ship the cask.",
+        "2. Bump the formula.",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("spoken enumerators — prose stays prose", () => {
+  // Each of these must come out byte-identical to a run with the stage off:
+  // the enumerator stage is not allowed to have touched them at all.
+  const proseCases: [string, string][] = [
+    [
+      "a lone cardinal mid-sentence",
+      "one of the workers said it was fine and the other one disagreed",
+    ],
+    [
+      "a lone ordinal mid-sentence",
+      "the first time I ran it the tap was stale",
+    ],
+    [
+      "a quantity that follows a comma",
+      "I picked up two boxes of screws, two rolls of tape, on the way home",
+    ],
+    [
+      "sequence words in ordinary narration",
+      "I rebuilt the app, and then, I restarted the daemon, and finally, it worked",
+    ],
+    [
+      "a single enumerator head with no second head",
+      "First, let me check the logs before I say anything else about this",
+    ],
+    [
+      "heads that are not in position order",
+      "Two, the tap is stale. Three, the cask is wrong. Four, the disk is full.",
+    ],
+    ["an enumerator head with a one-word clause", "One, milk. Two, bread."],
+    [
+      "code-shaped dictation",
+      "const steps = [one, two, three] first, call open paren foo close paren. second, return steps.",
+    ],
+    [
+      "a head with no comma or colon after it",
+      "First I ran the build. Second I ran the tests. It was fine.",
+    ],
+    [
+      "dotted version numbers beside list-like prose",
+      "First of all, we are on 1.5.2, and the tap is stale.",
+    ],
+    [
+      "unsupported two-digit numeric heads",
+      "First of all, we met. 99, that was odd. 87, we left.",
+    ],
+  ];
+
+  for (const [name, raw] of proseCases) {
+    it(`never fires on ${name}`, () => {
+      expect(applyRules(raw)).toBe(withoutStage(raw));
+    });
+  }
+
+  it("never fires on Hebrew prose that has no enumerator heads", () => {
+    const raw = "אני חושב שזה עובד עכשיו, אבל צריך לבדוק שוב מחר בבוקר";
+    expect(applyRules(raw)).toBe(withoutStage(raw));
+  });
+
+  // c9's exact raw recording remains pending Etan's ruling on whether a pure
+  // sequence-word run is a list. The strict valued-head grammar leaves it as
+  // prose; this constant documents the case without making that open design
+  // question a passing acceptance requirement.
+  void THREE_BEAT_RAW;
+});
+
+describe("spoken enumerators — word-count invariant", () => {
+  // The complete set of words this stage is allowed to consume. Rule 4 of the
+  // lane brief: "words in output >= words in input minus removed pure
+  // enumerators, which must be listed".
+  const PURE_ENUMERATOR_WORDS = new Set([
+    // list-item conjunctions carried by a head ("And four, ...")
+    "and",
+    "or",
+    // head qualifiers
+    "number",
+    "step",
+    // cardinals
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    // ordinals
+    "first",
+    "firstly",
+    "second",
+    "secondly",
+    "third",
+    "thirdly",
+    "fourth",
+    "fourthly",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "ninth",
+    "tenth",
+    // sequence words
+    "next",
+    "then",
+    "finally",
+    "lastly",
+  ]);
+
+  const fixtures = [HARDWARE_RAW, DEPLOY_RAW];
+
+  it("only ever removes words from the pure-enumerator list", () => {
+    for (const raw of fixtures) {
+      const { removedWords } = applySpokenEnumeratorsWithDetail(raw);
+      for (const word of removedWords) {
+        expect(PURE_ENUMERATOR_WORDS.has(word.toLowerCase())).toBe(true);
+      }
+    }
+  });
+
+  it("keeps every other word: out >= in - removed enumerators", () => {
+    for (const raw of fixtures) {
+      const { text: out, removedWords } = applySpokenEnumeratorsWithDetail(raw);
+      expect(tokenize(out).length).toBeGreaterThanOrEqual(
+        tokenize(raw).length - removedWords.length,
+      );
+    }
+  });
+
+  it("removes exactly the heads it reports (hardware-store fixture)", () => {
+    const { removedWords } = applySpokenEnumeratorsWithDetail(HARDWARE_RAW);
+    expect(removedWords.map((w) => w.toLowerCase())).toEqual([
+      "one",
+      "two",
+      "three",
+      "and",
+      "four",
+    ]);
+  });
+
+  it("removes exactly the heads it reports (deploy-steps fixture)", () => {
+    const { removedWords } = applySpokenEnumeratorsWithDetail(DEPLOY_RAW);
+    expect(removedWords.map((w) => w.toLowerCase())).toEqual([
+      "first",
+      "second",
+      "next",
+      "finally",
+    ]);
+  });
+
+  it("reports no removals when the stage does not fire", () => {
+    const { text, removedWords } = applySpokenEnumeratorsWithDetail(
+      "one of the workers said it was fine",
+    );
+    expect(text).toBe("one of the workers said it was fine");
+    expect(removedWords).toEqual([]);
+  });
+
+  it("keeps every non-enumerator word of both fixtures verbatim", () => {
+    for (const raw of fixtures) {
+      const out = applyRules(raw).toLowerCase();
+      for (const word of tokenize(raw)) {
+        if (PURE_ENUMERATOR_WORDS.has(word)) continue;
+        expect(out).toContain(word);
+      }
+    }
+  });
+});

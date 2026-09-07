@@ -1053,7 +1053,14 @@ function isAllowedSpokenListRewrite(
   cleanedText: string,
   candidate: string,
 ): boolean {
-  if (!hasSpokenListCue(cleanedText) || !hasNumberedMarkdownList(candidate)) {
+  // The exception exists only for converting spoken prose into a list. Once
+  // the deterministic rules stage has already numbered the items, bypassing
+  // protected-token checks would let polish merge or drop whole spoken beats.
+  if (
+    hasNumberedMarkdownList(cleanedText) ||
+    !hasSpokenListCue(cleanedText) ||
+    !hasNumberedMarkdownList(candidate)
+  ) {
     return false;
   }
   return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
