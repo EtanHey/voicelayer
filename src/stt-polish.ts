@@ -784,7 +784,9 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
     /(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu,
   );
   const optionPrefixHyphenCount = Array.from(
-    normalized.matchAll(/(?<![\p{L}\p{N}-])(-+)(?=[\p{L}\p{N}])/gu),
+    normalized.matchAll(
+      /(?<![\p{L}\p{N}-])(-+)(?=[\p{L}\p{N}]|\.\d)/gu,
+    ),
   ).reduce((count, match) => count + match[1].length, 0);
   const tokenHyphenCount =
     internalTokenHyphenCount + optionPrefixHyphenCount;

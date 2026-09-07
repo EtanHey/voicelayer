@@ -785,6 +785,10 @@ describe("stt-polish", () => {
         polishedText: "The floor sat at 53.2 dBFS.",
       },
       {
+        cleanedText: "The offset was -.5 seconds in that clip.",
+        polishedText: "The offset was .5 seconds in that clip.",
+      },
+      {
         cleanedText:
           "FYI, I was toggling it on and off, yeah, it wasn't flick ering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure, it's just how I was F5-ing on and off-ing.",
         polishedText:
