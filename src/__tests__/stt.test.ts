@@ -1924,6 +1924,58 @@ describe("STT backends", () => {
       expect(fallbackCalls).toBe(0);
     });
 
+    it("keeps decoded chunks when an adopted-style later request times out", async () => {
+      const wavPath = join(
+        process.cwd(),
+        ".test-tmp",
+        String(process.pid),
+        "hebrew-adopted-busy-timeout.wav",
+      );
+      const wav = makePcm16Wav(164.78);
+      await Bun.write(wavPath, wav);
+      const firstClause = "פתיח ארוך ואז המשכתי להסביר את המערכת";
+      let fallbackCalls = 0;
+      let calls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (wavData) => {
+          calls++;
+          if (wavData.byteLength === wav.byteLength) {
+            const error = new Error(
+              "whisper-server inference timeout after 30000ms",
+            );
+            error.name = "TimeoutError";
+            throw error;
+          }
+          if (calls === 1) return firstClause;
+          if (calls === 2) return "קטע מאוחר בלי חפיפה";
+          const error = new Error(
+            "whisper-server inference timeout after 8000ms",
+          );
+          error.name = "TimeoutError";
+          throw error;
+        },
+        fallbackBackend: {
+          name: "whisper.cpp",
+          isAvailable: async () => true,
+          transcribe: async () => {
+            fallbackCalls++;
+            return {
+              text: "cli lost the clause",
+              backend: "whisper.cpp",
+              durationMs: 1,
+            };
+          },
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(firstClause);
+      expect(result.backend).toStartWith("whisper-server+chunks");
+      expect(fallbackCalls).toBe(0);
+    });
+
     it("falls back to whisper-cli when resident inference returns empty text", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-empty-fallback-test.wav";
       await Bun.write(wavPath, new Uint8Array([7, 8]));

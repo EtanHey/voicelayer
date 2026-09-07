@@ -1245,7 +1245,10 @@ async function transcribeViaServerAttempt(
         if (options?.preserveServerOnTimeout) {
           throw controller.signal.reason ?? err;
         }
-        if (allowRetry) {
+        // An adopted occupant is still running the aborted decode. Retrying
+        // re-adopts the same process and burns the second attempt on leftover
+        // work with allowRetry already false — that is the CLI path.
+        if (allowRetry && serverState?.adopted !== true) {
           await markServerUnhealthy();
           const retryPort = await ensureServer(port);
           return transcribeViaServerAttempt(wavData, retryPort, false, options);

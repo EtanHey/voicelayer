@@ -1330,6 +1330,60 @@ usage: whisper-server [options]
       }
     });
 
+    it("does not retry a timed-out adopted server that is still healthy", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let kills = 0;
+      let launches = 0;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attempts++;
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => {
+            launches++;
+            return { pid: 124, stderr: null, kill: () => {} };
+          },
+          isServerHealthy: async () => true,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
+        __resetWhisperServerStateForTests({
+          proc: null,
+          port: 5555,
+          pid: 123,
+          adopted: true,
+        });
+
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+        ).rejects.toThrow("inference timeout");
+        expect(attempts).toBe(1);
+        expect(kills).toBe(0);
+        expect(launches).toBe(0);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
     it("caps an advisory witness below the overall voice_ask return budget", async () => {
       const originalFetch = globalThis.fetch;
 
