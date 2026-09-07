@@ -52,9 +52,17 @@ const DEPLOY_EXPECTED = [
   "1. Back up the current SQLite file to the cloud storage bucket.",
   "2. Run the migration script in the terminal.",
   "3. Verify that the vector embeddings are returning accurate results.",
-  "4. Merge the Pull Request and notify the engineering team on Slack.",
+  // applyRules has no pull-request vocabulary rewrite; list conversion must
+  // preserve that pre-existing lowercase output rather than invent casing.
+  "4. Merge the pull request and notify the engineering team on Slack.",
   "Like.",
 ].join("\n");
+
+const THREE_BEAT_RAW =
+  "So here are a few things. First of all, I went there. And then, I returned back home later. And then lastly, I went to the store.";
+
+const LAYOUT_WORDS_RAW =
+  "Here are a few things. New line, new line, new paragraph. First of all, I went there. And then next, I returned back home. And lastly, I went to the store.";
 
 describe("spoken enumerators -> deterministic numbered list", () => {
   it("turns the hardware-store cardinal script into a list (RED fixture)", () => {
@@ -98,7 +106,8 @@ describe("spoken enumerators -> deterministic numbered list", () => {
       ),
     ).toBe(
       [
-        "Two things.",
+        // Stage 4 already digitizes this intro before the enumerator stage.
+        "2 things.",
         "1. First of all, the build is broken.",
         "2. Second of all, the tap is stale.",
       ].join("\n"),
@@ -118,6 +127,48 @@ describe("spoken enumerators -> deterministic numbered list", () => {
   it("starts at the first line when there is no intro clause", () => {
     expect(applyRules("One, buy the milk. Two, buy the bread.")).toBe(
       ["1. Buy the milk.", "2. Buy the bread."].join("\n"),
+    );
+  });
+
+  it("keeps all three c9 spoken beats as separate items", () => {
+    expect(applyRules(THREE_BEAT_RAW)).toBe(
+      [
+        "So here are a few things.",
+        "1. First of all, I went there.",
+        "2. I returned back home later.",
+        "3. I went to the store.",
+      ].join("\n"),
+    );
+  });
+
+  it("does not consume c11 spoken layout words", () => {
+    const { text, removedWords } =
+      applySpokenEnumeratorsWithDetail(LAYOUT_WORDS_RAW);
+    expect(text).toContain("New line, new line, new paragraph.");
+    expect(text).toContain("1. First of all, I went there.");
+    expect(text).toContain("2. I returned back home.");
+    expect(text).toContain("3. I went to the store.");
+    expect(removedWords.map((word) => word.toLowerCase())).toEqual([
+      "and",
+      "then",
+      "next",
+      "and",
+      "lastly",
+    ]);
+  });
+
+  it("does not split the last item at an abbreviation period", () => {
+    expect(
+      applyRules(
+        "Two errands. First, call Dr. Smith today. Second, email the team now. Then relax.",
+      ),
+    ).toBe(
+      [
+        "2 errands.",
+        "1. Call Dr. Smith today.",
+        "2. Email the team now.",
+        "Then relax.",
+      ].join("\n"),
     );
   });
 });

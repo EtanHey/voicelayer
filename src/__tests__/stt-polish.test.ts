@@ -921,6 +921,56 @@ describe("stt-polish", () => {
     });
   });
 
+  it("does not count deterministic upstream list markers as invented numbers", async () => {
+    const cleanedText =
+      "Follow these steps.\n1. Back up the database.\n2. Run the migration.\n3. Verify the result.\n4. Notify the team.";
+    const candidate =
+      "Follow these steps:\n1. Back up the database.\n2. Run the migration.\n3. Verify the result.\n4. Notify the team.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: candidate,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects polish that drops a deterministic upstream list item", async () => {
+    const cleanedText =
+      "Here are a few things.\n1. First of all, I went there.\n2. I returned home later.\n3. I went to the store.";
+    const candidate =
+      "Here are a few things:\n1. I went there and returned home later.\n2. I went to the store.";
+    server = createMockPolishServer(() => ({ text: candidate }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText: candidate,
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("changed protected tokens");
+  });
+
   it("rejects polish candidates that swap protected slash tokens", async () => {
     server = createMockPolishServer(() => ({
       text: "Run /deploy after the tests pass.",

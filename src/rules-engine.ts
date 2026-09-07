@@ -79,6 +79,12 @@ export function applyRules(text: string, config?: RulesConfig): string {
     result = normalizePercentPhrases(result);
   }
 
+  // Stage 4b: turn spoken enumerator heads into a deterministic list before
+  // capitalization sees the inserted `N. ` sentence boundaries.
+  if (!disabled?.has("enumerators")) {
+    result = applySpokenEnumeratorsWithDetail(result).text;
+  }
+
   // Stage 6: Auto-capitalization (last — after all text transformations)
   if (!disabled?.has("capitalization")) {
     result = autoCapitalize(result);
@@ -1117,18 +1123,187 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// --- Stage 4b: spoken enumerators (LANE L — NOT IMPLEMENTED, PARKED) ---
-//
-// AIDEV-TODO: Lane L is parked for Codex (2026-09-07). This is a signature
-// placeholder ONLY so the RED suite
-// `src/__tests__/rules-engine-spoken-enumerators.test.ts` loads and fails on
-// its own assertions instead of on a missing export. It deliberately returns
-// the input unchanged and removes nothing. The real stage, its wiring into
-// applyRules() and the "enumerators" disabledStages key are all still to be
-// written — see docs.local/recon-2026-09-06/briefs/lane-l-codex-2026-09-07.md.
+// --- Stage 4b: spoken enumerators ---
+
+const SPOKEN_ENUMERATOR_VALUES: Record<string, number> = {
+  one: 1,
+  first: 1,
+  firstly: 1,
+  "first of all": 1,
+  "first off": 1,
+  two: 2,
+  second: 2,
+  secondly: 2,
+  "second of all": 2,
+  three: 3,
+  third: 3,
+  thirdly: 3,
+  "third of all": 3,
+  four: 4,
+  fourth: 4,
+  fourthly: 4,
+  five: 5,
+  fifth: 5,
+  six: 6,
+  sixth: 6,
+  seven: 7,
+  seventh: 7,
+  eight: 8,
+  eighth: 8,
+  nine: 9,
+  ninth: 9,
+  ten: 10,
+  tenth: 10,
+};
+
+const CONTENT_ENUMERATOR_HEADS = new Set([
+  "first of all",
+  "second of all",
+  "third of all",
+  "first off",
+]);
+
+const SPOKEN_ENUMERATOR_HEAD_PATTERN = new RegExp(
+  [
+    "(^|([.?!,;:\\n])([ \\t]*))",
+    "(?:(and|or)[ \\t]+)?",
+    "(?:(number|step)[ \\t]+)?",
+    "(first of all|second of all|third of all|first off|then lastly|then next|firstly|secondly|thirdly|fourthly|finally|lastly|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|next|then|one|two|three|four|five|six|seven|eight|nine|ten|\\d{1,2})",
+    "[ \\t]*(,|:)",
+  ].join(""),
+  "gi",
+);
+
+interface SpokenEnumeratorHead {
+  start: number;
+  end: number;
+  boundary: string;
+  conjunction?: string;
+  qualifier?: string;
+  head: string;
+  originalHead: string;
+  delimiter: string;
+  value?: number;
+  keepHead: boolean;
+}
+
+function spokenEnumeratorValue(head: string): number | undefined {
+  if (/^\d{1,2}$/.test(head)) {
+    const value = Number(head);
+    return value >= 1 && value <= 10 ? value : undefined;
+  }
+  return SPOKEN_ENUMERATOR_VALUES[head];
+}
+
+function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
+  SPOKEN_ENUMERATOR_HEAD_PATTERN.lastIndex = 0;
+  return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)].map((match) => {
+    const originalHead = match[6];
+    const head = originalHead.toLowerCase();
+    return {
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+      boundary: match[2] ?? "",
+      conjunction: match[4],
+      qualifier: match[5],
+      head,
+      originalHead,
+      delimiter: match[7],
+      value: spokenEnumeratorValue(head),
+      keepHead: CONTENT_ENUMERATOR_HEADS.has(head),
+    };
+  });
+}
+
+function boundaryBelongsToPreviousClause(boundary: string): boolean {
+  return boundary === "." || boundary === "?" || boundary === "!" || boundary === ":";
+}
+
+function spokenClauseWordCount(text: string): number {
+  return text.match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu)?.length ?? 0;
+}
+
+function splitSpokenEnumeratorTail(text: string): {
+  clause: string;
+  tail?: string;
+} {
+  for (const match of text.matchAll(/[.!?]/g)) {
+    const end = (match.index ?? 0) + 1;
+    if (!/^\s+\S/u.test(text.slice(end))) continue;
+
+    const token = /([\p{L}\p{N}.]+)$/u.exec(text.slice(0, match.index))?.[1]
+      ?.toLowerCase()
+      .replace(/^\.+|\.+$/g, "");
+    if (token && TERMINAL_PERIOD_ABBREVIATIONS.has(token)) continue;
+
+    return {
+      clause: text.slice(0, end).trim(),
+      tail: text.slice(end).trim(),
+    };
+  }
+  return { clause: text.trim() };
+}
+
 export function applySpokenEnumeratorsWithDetail(text: string): {
   text: string;
   removedWords: string[];
 } {
-  return { text, removedWords: [] };
+  if (!text || isCodeShaped(text)) return { text, removedWords: [] };
+
+  const heads = findSpokenEnumeratorHeads(text);
+  if (heads.length < 2 || heads[0].value !== 1) {
+    return { text, removedWords: [] };
+  }
+
+  const valuedHeads = heads.filter((head) => head.value !== undefined);
+  const contentLedThreeBeatList = heads.length >= 3 && heads[0].keepHead;
+  if (valuedHeads.length < 2 && !contentLedThreeBeatList) {
+    return { text, removedWords: [] };
+  }
+  if (
+    heads.some(
+      (head, index) => head.value !== undefined && head.value !== index + 1,
+    )
+  ) {
+    return { text, removedWords: [] };
+  }
+
+  const clauses = heads.map((head, index) => {
+    const next = heads[index + 1];
+    let clause = text.slice(head.end, next?.start ?? text.length).trim();
+    if (next && boundaryBelongsToPreviousClause(next.boundary)) {
+      clause += next.boundary;
+    }
+    clause = clause.replace(/[,;]\s*$/u, "").trim();
+    return clause;
+  });
+  const tailSplit = splitSpokenEnumeratorTail(clauses.at(-1) ?? "");
+  clauses[clauses.length - 1] = tailSplit.clause;
+  if (clauses.some((clause) => spokenClauseWordCount(clause) < 2)) {
+    return { text, removedWords: [] };
+  }
+
+  let intro = text.slice(0, heads[0].start).trim();
+  if (boundaryBelongsToPreviousClause(heads[0].boundary)) {
+    intro += heads[0].boundary;
+  }
+
+  const removedWords: string[] = [];
+  const items = heads.map((head, index) => {
+    if (head.conjunction) removedWords.push(head.conjunction);
+    if (head.qualifier) removedWords.push(head.qualifier);
+    if (!head.keepHead) removedWords.push(...head.head.split(" "));
+
+    const keptHead = head.keepHead
+      ? `${head.originalHead}${head.delimiter} `
+      : "";
+    return `${index + 1}. ${keptHead}${clauses[index]}`;
+  });
+
+  return {
+    text: [intro, ...items, tailSplit.tail]
+      .filter((part): part is string => Boolean(part))
+      .join("\n"),
+    removedWords,
+  };
 }
