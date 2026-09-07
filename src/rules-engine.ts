@@ -1196,7 +1196,13 @@ function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
   return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)]
     .filter((match) => {
       const start = match.index ?? 0;
-      return match[2] !== "." || !/\d/u.test(text[start - 1] ?? "");
+      const headIsNumeric = /^\d{1,2}$/u.test(match[6]);
+      const followsDigitPeriod =
+        match[2] === "." && /\d/u.test(text[start - 1] ?? "");
+      const precedesDigit = /\d/u.test(
+        text[start + match[0].length] ?? "",
+      );
+      return !headIsNumeric || (!followsDigitPeriod && !precedesDigit);
     })
     .map((match) => {
       const originalHead = match[6];

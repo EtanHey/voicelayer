@@ -184,6 +184,45 @@ describe("spoken enumerators -> deterministic numbered list", () => {
       ).text,
     ).toStartWith("Intro line.\n\nSecond intro para.\n\n1. alpha beta");
   });
+
+  it("does not mistake time or grouped-number separators for an item head", () => {
+    expect(
+      applyRules(
+        "First, prepare the notes. Second, book the room. 3:30 is the start time.",
+      ),
+    ).toBe(
+      [
+        "1. Prepare the notes.",
+        "2. Book the room.",
+        "3:30 is the start time.",
+      ].join("\n"),
+    );
+    expect(
+      applyRules(
+        "First, prepare the notes. Second, book the room. 3,400 people will attend.",
+      ),
+    ).toBe(
+      [
+        "1. Prepare the notes.",
+        "2. Book the room.",
+        "3,400 people will attend.",
+      ].join("\n"),
+    );
+  });
+
+  it("still starts a list after a sentence ending in a digit", () => {
+    expect(
+      applyRules(
+        "We are shipping in 2026. First, ship the cask. Second, bump the formula.",
+      ),
+    ).toBe(
+      [
+        "We are shipping in 2026.",
+        "1. Ship the cask.",
+        "2. Bump the formula.",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("spoken enumerators — prose stays prose", () => {
