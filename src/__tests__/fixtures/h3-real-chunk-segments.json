@@ -1,0 +1,1226 @@
+{
+  "provenance": "Real whisper-server verbose_json timings captured on the authorized M1 run; transcript tokens are replaced by an unrecorded random mapping for repository privacy.",
+  "recordings": [
+    {
+      "recordingId": "2026-09-07T11-56-34-618Z-e1f67576",
+      "audioSha256": "3381afbab78713e4af75b1bca4bf182a1f20e4485a34a1fa4dbef7afd3b0ad09",
+      "captureHead": "9b2ae39db4efa9f59e76b13c4e793ef8145bc7d3",
+      "repetitions": [
+        {
+          "repetition": 1,
+          "expected": {
+            "seamPasses": 5,
+            "endToEndSegments": 22
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05 tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+              "segments": [
+                {
+                  "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f",
+                  "startS": 0,
+                  "endS": 6.6000000000000005
+                },
+                {
+                  "text": "tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a",
+                  "startS": 6.6000000000000005,
+                  "endS": 10.200000000000001
+                },
+                {
+                  "text": "tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c",
+                  "startS": 10.200000000000001,
+                  "endS": 15.13
+                },
+                {
+                  "text": "tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5",
+                  "startS": 15.13,
+                  "endS": 17.2
+                },
+                {
+                  "text": "tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf",
+                  "startS": 17.2,
+                  "endS": 21.38
+                },
+                {
+                  "text": "tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05",
+                  "startS": 25.64,
+                  "endS": 28.22
+                },
+                {
+                  "text": "tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+                  "startS": 28.22,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0 tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878 tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69 tok_32e97a6d2d12a749 tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_312a4d0eb61749fc tok_2199465c093f715d tok_496fc050f64babb6 tok_2cf5415ee200270f tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0",
+              "segments": [
+                {
+                  "text": "tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0",
+                  "startS": 0,
+                  "endS": 9.14
+                },
+                {
+                  "text": "tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878 tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69",
+                  "startS": 9.14,
+                  "endS": 17.7
+                },
+                {
+                  "text": "tok_32e97a6d2d12a749 tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_312a4d0eb61749fc",
+                  "startS": 17.7,
+                  "endS": 22.43
+                },
+                {
+                  "text": "tok_2199465c093f715d tok_496fc050f64babb6 tok_2cf5415ee200270f tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0",
+                  "startS": 22.43,
+                  "endS": 28
+                }
+              ]
+            },
+            {
+              "startSeconds": 50,
+              "text": "tok_db931d339ac11628 tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d tok_1d6a371a213f7fab tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6 tok_afda7e8f6a1a3e86 tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a tok_e49f963c48db0f54 tok_4ef3655cce1cd232 tok_9bc0c1880fd5f8e4 tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_073d8a63e36e008c tok_aa1407a985729e64 tok_2abcbf35d5b9ccac",
+              "segments": [
+                {
+                  "text": "tok_db931d339ac11628 tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d",
+                  "startS": 0,
+                  "endS": 11.68
+                },
+                {
+                  "text": "tok_1d6a371a213f7fab tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6",
+                  "startS": 11.68,
+                  "endS": 19.2
+                },
+                {
+                  "text": "tok_afda7e8f6a1a3e86 tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a tok_e49f963c48db0f54 tok_4ef3655cce1cd232",
+                  "startS": 19.2,
+                  "endS": 23.54
+                },
+                {
+                  "text": "tok_9bc0c1880fd5f8e4 tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac",
+                  "startS": 23.54,
+                  "endS": 28.560000000000002
+                },
+                {
+                  "text": "tok_073d8a63e36e008c tok_aa1407a985729e64 tok_2abcbf35d5b9ccac",
+                  "startS": 28.560000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 75,
+              "text": "tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678 tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78 tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55 tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f",
+              "segments": [
+                {
+                  "text": "tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c",
+                  "startS": 0,
+                  "endS": 7.09
+                },
+                {
+                  "text": "tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678 tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78",
+                  "startS": 7.09,
+                  "endS": 13.24
+                },
+                {
+                  "text": "tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c",
+                  "startS": 13.24,
+                  "endS": 19.77
+                },
+                {
+                  "text": "tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55",
+                  "startS": 19.77,
+                  "endS": 26.17
+                },
+                {
+                  "text": "tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f",
+                  "startS": 26.17,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 100,
+              "text": "tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_80923de67ff7e961 tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b tok_f28f6c2e322b562a tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086",
+              "segments": [
+                {
+                  "text": "tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_80923de67ff7e961 tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b",
+                  "startS": 0,
+                  "endS": 9.99
+                },
+                {
+                  "text": "tok_f28f6c2e322b562a tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c",
+                  "startS": 9.99,
+                  "endS": 21.56
+                },
+                {
+                  "text": "tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9",
+                  "startS": 21.56,
+                  "endS": 27.45
+                },
+                {
+                  "text": "tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086",
+                  "startS": 27.45,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 125,
+              "text": "tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0 tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_8be4274dbd8da0ef tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1",
+              "segments": [
+                {
+                  "text": "tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066",
+                  "startS": 0,
+                  "endS": 4.5600000000000005
+                },
+                {
+                  "text": "tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0 tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b",
+                  "startS": 4.5600000000000005,
+                  "endS": 10.76
+                },
+                {
+                  "text": "tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_8be4274dbd8da0ef tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1",
+                  "startS": 10.76,
+                  "endS": 15.16
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repetition": 2,
+          "expected": {
+            "seamPasses": 4,
+            "endToEndSegments": 29
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05 tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+              "segments": [
+                {
+                  "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f",
+                  "startS": 0,
+                  "endS": 6.6000000000000005
+                },
+                {
+                  "text": "tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a",
+                  "startS": 6.6000000000000005,
+                  "endS": 10.200000000000001
+                },
+                {
+                  "text": "tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c",
+                  "startS": 10.200000000000001,
+                  "endS": 15.13
+                },
+                {
+                  "text": "tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5",
+                  "startS": 15.13,
+                  "endS": 17.22
+                },
+                {
+                  "text": "tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf",
+                  "startS": 17.22,
+                  "endS": 21.400000000000002
+                },
+                {
+                  "text": "tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05",
+                  "startS": 25.64,
+                  "endS": 28.22
+                },
+                {
+                  "text": "tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+                  "startS": 28.22,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05 tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503 tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0 tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878 tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69 tok_32e97a6d2d12a749 tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_a7e18e9e9a1fb718 tok_496fc050f64babb6 tok_2cf5415ee200270f tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19",
+              "segments": [
+                {
+                  "text": "tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05 tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86",
+                  "startS": 0,
+                  "endS": 4.3
+                },
+                {
+                  "text": "tok_8019fe215d9fa503 tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d",
+                  "startS": 4.3,
+                  "endS": 7.26
+                },
+                {
+                  "text": "tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0 tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878",
+                  "startS": 7.26,
+                  "endS": 13.38
+                },
+                {
+                  "text": "tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69 tok_32e97a6d2d12a749",
+                  "startS": 13.38,
+                  "endS": 18.26
+                },
+                {
+                  "text": "tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_a7e18e9e9a1fb718 tok_496fc050f64babb6 tok_2cf5415ee200270f",
+                  "startS": 18.26,
+                  "endS": 23.5
+                },
+                {
+                  "text": "tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0",
+                  "startS": 23.5,
+                  "endS": 28
+                },
+                {
+                  "text": "tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19",
+                  "startS": 28,
+                  "endS": 35
+                }
+              ]
+            },
+            {
+              "startSeconds": 55,
+              "text": "tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d tok_1d6a371a213f7fab tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6 tok_afda7e8f6a1a3e86 tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a tok_e49f963c48db0f54 tok_4ef3655cce1cd232 tok_9bc0c1880fd5f8e4 tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05",
+              "segments": [
+                {
+                  "text": "tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d tok_1d6a371a213f7fab",
+                  "startS": 0,
+                  "endS": 7.54
+                },
+                {
+                  "text": "tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d",
+                  "startS": 7.54,
+                  "endS": 11.48
+                },
+                {
+                  "text": "tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6 tok_afda7e8f6a1a3e86 tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a",
+                  "startS": 11.48,
+                  "endS": 16.78
+                },
+                {
+                  "text": "tok_e49f963c48db0f54 tok_4ef3655cce1cd232 tok_9bc0c1880fd5f8e4 tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0",
+                  "startS": 16.78,
+                  "endS": 22.72
+                },
+                {
+                  "text": "tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c",
+                  "startS": 22.72,
+                  "endS": 28.85
+                },
+                {
+                  "text": "tok_851c014418354c7f tok_55fef27f23318e05",
+                  "startS": 28.85,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 80,
+              "text": "tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678 tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78 tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55 tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f tok_abb96ab45f0792f4 tok_80923de67ff7e961 tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b tok_f28f6c2e322b562a",
+              "segments": [
+                {
+                  "text": "tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678",
+                  "startS": 0,
+                  "endS": 5.69
+                },
+                {
+                  "text": "tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78 tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a",
+                  "startS": 5.69,
+                  "endS": 8.88
+                },
+                {
+                  "text": "tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d",
+                  "startS": 8.88,
+                  "endS": 16.42
+                },
+                {
+                  "text": "tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a",
+                  "startS": 16.42,
+                  "endS": 20.04
+                },
+                {
+                  "text": "tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55 tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f tok_abb96ab45f0792f4 tok_80923de67ff7e961",
+                  "startS": 20.04,
+                  "endS": 26.240000000000002
+                },
+                {
+                  "text": "tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b",
+                  "startS": 26.240000000000002,
+                  "endS": 30.28
+                },
+                {
+                  "text": "tok_f28f6c2e322b562a",
+                  "startS": 33.32,
+                  "endS": 35
+                }
+              ]
+            },
+            {
+              "startSeconds": 110,
+              "text": "tok_abb96ab45f0792f4 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_70be34e01de6651f tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0 tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_ac9c8727ce4e2e47 tok_50d7f4247aff7c51 tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1 tok_a7e18e9e9a1fb718 tok_1d048baddacd6ca3 tok_726a0873a306f67d tok_29620ecfcb5a0ad8",
+              "segments": [
+                {
+                  "text": "tok_abb96ab45f0792f4 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a",
+                  "startS": 0,
+                  "endS": 10.8
+                },
+                {
+                  "text": "tok_396dfb6e3c18927d",
+                  "startS": 10.8,
+                  "endS": 11.52
+                },
+                {
+                  "text": "tok_70be34e01de6651f tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f",
+                  "startS": 13.36,
+                  "endS": 17.240000000000002
+                },
+                {
+                  "text": "tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0",
+                  "startS": 17.240000000000002,
+                  "endS": 21.2
+                },
+                {
+                  "text": "tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_ac9c8727ce4e2e47",
+                  "startS": 22,
+                  "endS": 26.53
+                },
+                {
+                  "text": "tok_50d7f4247aff7c51 tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1",
+                  "startS": 26.53,
+                  "endS": 29.36
+                },
+                {
+                  "text": "tok_a7e18e9e9a1fb718 tok_1d048baddacd6ca3 tok_726a0873a306f67d tok_29620ecfcb5a0ad8",
+                  "startS": 30,
+                  "endS": 30.16
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repetition": 3,
+          "expected": {
+            "seamPasses": 5,
+            "endToEndSegments": 22
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05 tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+              "segments": [
+                {
+                  "text": "tok_098fb987d3e094c4 tok_6f10f355b565e412 tok_829b4302d444fc84 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_c7398ce2b76ede8d tok_ae0032bc48c85d16 tok_29a5b50f1eea8e0b tok_9d3345a65a37b0ea tok_2cf5415ee200270f tok_6d1672199e08c59f",
+                  "startS": 0,
+                  "endS": 6.6000000000000005
+                },
+                {
+                  "text": "tok_f1c5780d1e48c5fb tok_833b716f1e2c8058 tok_f5e9a89c59857f79 tok_35a5b157cf4b824a",
+                  "startS": 6.6000000000000005,
+                  "endS": 10.200000000000001
+                },
+                {
+                  "text": "tok_c8e608435221dee4 tok_d1d6b3ba99985ff0 tok_f1c5780d1e48c5fb tok_37efabf3894fb32e tok_76ce464269eaa76b tok_1b63f28d138d0db0 tok_f1c5780d1e48c5fb tok_b799a07495eecaa0 tok_f8ada8724abe5c04 tok_d1d6b3ba99985ff0 tok_69a9742c803c3c78 tok_7104f9c01c22521c",
+                  "startS": 10.200000000000001,
+                  "endS": 15.13
+                },
+                {
+                  "text": "tok_6cec7ce60a68e1b3 tok_ce62836297aaa711 tok_7104f9c01c22521c tok_53fbe92d7e6c87a5",
+                  "startS": 15.13,
+                  "endS": 17.2
+                },
+                {
+                  "text": "tok_48b9d7b86bdebe1a tok_7104f9c01c22521c tok_1137ca9c944d75da tok_e56453798b9d2689 tok_d1d6b3ba99985ff0 tok_c6fd7002ccfd1d59 tok_726a0873a306f67d tok_b7348d2f54a967bf",
+                  "startS": 17.2,
+                  "endS": 21.38
+                },
+                {
+                  "text": "tok_262df38aebd4bace tok_7104f9c01c22521c tok_53fbe92d7e6c87a5 tok_498538ec8e0c243d tok_69a9742c803c3c78 tok_436b4b1854e7e290 tok_7104f9c01c22521c tok_55fef27f23318e05",
+                  "startS": 25.64,
+                  "endS": 28.22
+                },
+                {
+                  "text": "tok_fa4734ecb6b2d058 tok_307492455e6201fa tok_afda7e8f6a1a3e86 tok_8019fe215d9fa503",
+                  "startS": 28.22,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0 tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878 tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69 tok_32e97a6d2d12a749 tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_312a4d0eb61749fc tok_2199465c093f715d tok_496fc050f64babb6 tok_2cf5415ee200270f tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0",
+              "segments": [
+                {
+                  "text": "tok_6816f79b323ce7ee tok_8fa8e2394adb716c tok_851c014418354c7f tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_90058475251669eb tok_498538ec8e0c243d tok_3ddff66afa9798b9 tok_e490c986c525bd79 tok_f1c5780d1e48c5fb tok_5c4f327eccd497f7 tok_1c137a5a3c1c9df0",
+                  "startS": 0,
+                  "endS": 9.14
+                },
+                {
+                  "text": "tok_69a9742c803c3c78 tok_5e81fc8a8a36821c tok_19cb16ce4f381db8 tok_312a4d0eb61749fc tok_ac9c8727ce4e2e47 tok_e65088fa447ec878 tok_22709cab46163086 tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_2efde40c042e4b69",
+                  "startS": 9.14,
+                  "endS": 17.76
+                },
+                {
+                  "text": "tok_32e97a6d2d12a749 tok_3b900c87da48f085 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_490ac48909a8ba7b tok_3dbb1a95ffd64eeb tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_6ad5aad657b1cd87 tok_6f60683276a0c608 tok_312a4d0eb61749fc",
+                  "startS": 17.76,
+                  "endS": 22.43
+                },
+                {
+                  "text": "tok_2199465c093f715d tok_496fc050f64babb6 tok_2cf5415ee200270f tok_fdd8a3b0938c3d7b tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_c6706efc790a003e tok_35a5b157cf4b824a tok_1c137a5a3c1c9df0 tok_700379140ea922b0 tok_7104f9c01c22521c tok_4617234c12cfddbd tok_1b63f28d138d0db0",
+                  "startS": 22.43,
+                  "endS": 28
+                }
+              ]
+            },
+            {
+              "startSeconds": 50,
+              "text": "tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d tok_1d6a371a213f7fab tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6 tok_afda7e8f6a1a3e86 tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a tok_e49f963c48db0f54 tok_4ef3655cce1cd232 tok_9bc0c1880fd5f8e4 tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_073d8a63e36e008c tok_aa1407a985729e64 tok_2abcbf35d5b9ccac",
+              "segments": [
+                {
+                  "text": "tok_3160ec4576003b19 tok_2ff62e85cfe17922 tok_5aee9220961cbd05 tok_3dbb1a95ffd64eeb tok_2111e9b573612858 tok_0edfd4c51e580752 tok_fdd8a3b0938c3d7b tok_3160ec4576003b19 tok_8fa8e2394adb716c tok_851c014418354c7f tok_76ce464269eaa76b tok_f1c5780d1e48c5fb tok_396dfb6e3c18927d tok_1d6a371a213f7fab",
+                  "startS": 0,
+                  "endS": 13.52
+                },
+                {
+                  "text": "tok_202664ce7792574a tok_9db40e3ea3cf4f4a tok_c6fd7002ccfd1d59 tok_8685bdbbab444678 tok_2efde40c042e4b69 tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_8da2096f59fddfc3 tok_76ce464269eaa76b tok_dfee692a02917df6 tok_afda7e8f6a1a3e86",
+                  "startS": 13.52,
+                  "endS": 18.98
+                },
+                {
+                  "text": "tok_de22e848bcd704ca tok_3160ec4576003b19 tok_1f977440708da796 tok_866b91146f084ad7 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_498538ec8e0c243d tok_202664ce7792574a tok_e49f963c48db0f54 tok_4ef3655cce1cd232 tok_9bc0c1880fd5f8e4",
+                  "startS": 18.98,
+                  "endS": 24.43
+                },
+                {
+                  "text": "tok_c6fd7002ccfd1d59 tok_80923de67ff7e961 tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac",
+                  "startS": 24.43,
+                  "endS": 28.560000000000002
+                },
+                {
+                  "text": "tok_073d8a63e36e008c tok_aa1407a985729e64 tok_2abcbf35d5b9ccac",
+                  "startS": 28.560000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 75,
+              "text": "tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678 tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78 tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55 tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f",
+              "segments": [
+                {
+                  "text": "tok_989e92890c8cb3d7 tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_35a5b157cf4b824a tok_ab35ca54a0e84916 tok_dfee692a02917df6 tok_2abcbf35d5b9ccac tok_ac9c8727ce4e2e47 tok_0bdf085b3f737724 tok_7104f9c01c22521c",
+                  "startS": 0,
+                  "endS": 7.09
+                },
+                {
+                  "text": "tok_b7c326a5ed9502ed tok_7104f9c01c22521c tok_f7412a1ead969773 tok_35a5b157cf4b824a tok_8fa8e2394adb716c tok_851c014418354c7f tok_55fef27f23318e05 tok_8685bdbbab444678 tok_78b1f44a25efa74e tok_e490c986c525bd79 tok_69a9742c803c3c78",
+                  "startS": 7.09,
+                  "endS": 13.24
+                },
+                {
+                  "text": "tok_f03ecacb9889fe25 tok_35a5b157cf4b824a tok_c0365587db04333a tok_ac07c4580f73dd7c tok_dfee692a02917df6 tok_35a5b157cf4b824a tok_c0365587db04333a tok_8019fe215d9fa503 tok_d1d6b3ba99985ff0 tok_78f342cebc93b81c",
+                  "startS": 13.24,
+                  "endS": 19.77
+                },
+                {
+                  "text": "tok_14b3895a8a6c8813 tok_3dbb1a95ffd64eeb tok_03603c6410def2e8 tok_498538ec8e0c243d tok_35a5b157cf4b824a tok_b448abfb48df4ef4 tok_3dbb1a95ffd64eeb tok_e65088fa447ec878 tok_d1d6b3ba99985ff0 tok_202664ce7792574a tok_3dbb1a95ffd64eeb tok_929e9d737abe6b55",
+                  "startS": 19.77,
+                  "endS": 26.17
+                },
+                {
+                  "text": "tok_f283ddc5d0a14acc tok_929e9d737abe6b55 tok_0bdf085b3f737724 tok_e65088fa447ec878 tok_2cf5415ee200270f",
+                  "startS": 26.17,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 100,
+              "text": "tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_80923de67ff7e961 tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b tok_f28f6c2e322b562a tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086",
+              "segments": [
+                {
+                  "text": "tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_80923de67ff7e961 tok_78b1f44a25efa74e tok_8685bdbbab444678 tok_5ae45f59238378cf tok_700379140ea922b0 tok_e9defdaa019a477b",
+                  "startS": 0,
+                  "endS": 9.99
+                },
+                {
+                  "text": "tok_f28f6c2e322b562a tok_b7fea210d9b8ac76 tok_e11c5d426fde4689 tok_afda7e8f6a1a3e86 tok_8685bdbbab444678 tok_aa795c5be966d6aa tok_76ce464269eaa76b tok_e49f963c48db0f54 tok_7104f9c01c22521c",
+                  "startS": 9.99,
+                  "endS": 21.56
+                },
+                {
+                  "text": "tok_907a14d9538c78ce tok_76ce464269eaa76b tok_35a5b157cf4b824a tok_396dfb6e3c18927d tok_e490c986c525bd79 tok_262df38aebd4bace tok_1c137a5a3c1c9df0 tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9",
+                  "startS": 21.56,
+                  "endS": 27.45
+                },
+                {
+                  "text": "tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086",
+                  "startS": 27.45,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 125,
+              "text": "tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066 tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0 tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_8be4274dbd8da0ef tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1",
+              "segments": [
+                {
+                  "text": "tok_55fef27f23318e05 tok_312a4d0eb61749fc tok_91105eab233f167e tok_c6fd7002ccfd1d59 tok_289706b92f897977 tok_d450f4c156ba12d9 tok_c49559907ade6eb2 tok_f25e9782c2905b96 tok_2cf5415ee200270f tok_8685bdbbab444678 tok_da87e3f5101b5066",
+                  "startS": 0,
+                  "endS": 4.5600000000000005
+                },
+                {
+                  "text": "tok_22709cab46163086 tok_bf412d9e7660666b tok_d1d6b3ba99985ff0 tok_8fa8e2394adb716c tok_3dbb1a95ffd64eeb tok_8be4274dbd8da0ef tok_2abcbf35d5b9ccac tok_afda7e8f6a1a3e86 tok_3160ec4576003b19 tok_bf412d9e7660666b",
+                  "startS": 4.5600000000000005,
+                  "endS": 10.76
+                },
+                {
+                  "text": "tok_3160ec4576003b19 tok_7152eca1b24d4fce tok_8be4274dbd8da0ef tok_3dbb1a95ffd64eeb tok_8fa8e2394adb716c tok_324f1f7531002be7 tok_043186c80aa256f1",
+                  "startS": 10.76,
+                  "endS": 15.16
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "recordingId": "2026-09-07T07-52-38-511Z-08ce4329",
+      "audioSha256": "33589354a94658944ec696b46d9654dd1107219e32bbe4e313f3f1c30d3d4a5e",
+      "captureHead": "9b2ae39db4efa9f59e76b13c4e793ef8145bc7d3",
+      "repetitions": [
+        {
+          "repetition": 1,
+          "expected": {
+            "seamPasses": 6,
+            "endToEndSegments": 25
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_46e36e0c626e4b3b tok_96997b9c31accad6 tok_919a3279516343d2 tok_1b1f77e8c66c332f tok_1331da7b0ca51022 tok_3b3fdeb22509c4b1 tok_a0574e1e923fa811 tok_461d354c9f12cce3 tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda tok_f374c9742344a7e5 tok_d6209f559ce2e454 tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+              "segments": [
+                {
+                  "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_46e36e0c626e4b3b tok_96997b9c31accad6 tok_919a3279516343d2 tok_1b1f77e8c66c332f tok_1331da7b0ca51022 tok_3b3fdeb22509c4b1 tok_a0574e1e923fa811 tok_461d354c9f12cce3",
+                  "startS": 0,
+                  "endS": 5.64
+                },
+                {
+                  "text": "tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d",
+                  "startS": 5.64,
+                  "endS": 17.8
+                },
+                {
+                  "text": "tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda",
+                  "startS": 17.8,
+                  "endS": 24.78
+                },
+                {
+                  "text": "tok_f374c9742344a7e5 tok_d6209f559ce2e454",
+                  "startS": 24.78,
+                  "endS": 25.400000000000002
+                },
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04",
+                  "startS": 25.400000000000002,
+                  "endS": 26.740000000000002
+                },
+                {
+                  "text": "tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+                  "startS": 26.740000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_d0db70d3215cf8e8 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_94e34368a259075e tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d000f1e698e880fa tok_b954fb48d8da75f6 tok_960b121ac0c68cba tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+              "segments": [
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_d0db70d3215cf8e8 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04",
+                  "startS": 0,
+                  "endS": 8.370000000000001
+                },
+                {
+                  "text": "tok_1331da7b0ca51022 tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_94e34368a259075e tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d000f1e698e880fa",
+                  "startS": 8.370000000000001,
+                  "endS": 15.540000000000001
+                },
+                {
+                  "text": "tok_b954fb48d8da75f6 tok_960b121ac0c68cba",
+                  "startS": 15.540000000000001,
+                  "endS": 17.6
+                },
+                {
+                  "text": "tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff",
+                  "startS": 17.6,
+                  "endS": 28.87
+                },
+                {
+                  "text": "tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 28.87,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 50,
+              "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438 tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3 tok_396779c5c1b73f59 tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4 tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+              "segments": [
+                {
+                  "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 0,
+                  "endS": 5.12
+                },
+                {
+                  "text": "tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f",
+                  "startS": 5.12,
+                  "endS": 12.950000000000001
+                },
+                {
+                  "text": "tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3",
+                  "startS": 12.950000000000001,
+                  "endS": 18
+                },
+                {
+                  "text": "tok_396779c5c1b73f59 tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4",
+                  "startS": 23,
+                  "endS": 27.02
+                },
+                {
+                  "text": "tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+                  "startS": 27.02,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 75,
+              "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_78a99ed5d1b7f71f tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_6bb8511d16c6b5cf tok_7cc70b94d3a5d98f tok_3db88ab1d1b66f7e tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_6bb8511d16c6b5cf tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_1f314e746f5b3379 tok_989f678e2866817e tok_ca65584ba8ca03ab tok_f25e9782c2905b96 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4 tok_d6209f559ce2e454 tok_633a4c3b9b9c314f tok_8a0f44b54cd75b4f tok_b84ea86ae30df2c4 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf tok_ae08758fa6c376aa tok_f77bb48f0e44356a tok_58933f3f3c3ec0da tok_2f825ed568383dea",
+              "segments": [
+                {
+                  "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_78a99ed5d1b7f71f tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_6bb8511d16c6b5cf tok_7cc70b94d3a5d98f",
+                  "startS": 0,
+                  "endS": 10.34
+                },
+                {
+                  "text": "tok_3db88ab1d1b66f7e tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_6bb8511d16c6b5cf tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_1f314e746f5b3379",
+                  "startS": 10.34,
+                  "endS": 15.68
+                },
+                {
+                  "text": "tok_989f678e2866817e tok_ca65584ba8ca03ab tok_f25e9782c2905b96 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4 tok_d6209f559ce2e454",
+                  "startS": 15.68,
+                  "endS": 23.6
+                },
+                {
+                  "text": "tok_633a4c3b9b9c314f tok_8a0f44b54cd75b4f tok_b84ea86ae30df2c4 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf tok_ae08758fa6c376aa",
+                  "startS": 23.6,
+                  "endS": 29.05
+                },
+                {
+                  "text": "tok_f77bb48f0e44356a tok_58933f3f3c3ec0da",
+                  "startS": 29.05,
+                  "endS": 29.76
+                },
+                {
+                  "text": "tok_2f825ed568383dea",
+                  "startS": 29.76,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 100,
+              "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_1cd2f7aeacbb9cbc tok_17cc23276b6e0696 tok_baf6e9c8de13947d tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_aff7382881b7ff68 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_de64e392a47af462",
+              "segments": [
+                {
+                  "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200",
+                  "startS": 0,
+                  "endS": 13.530000000000001
+                },
+                {
+                  "text": "tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_1cd2f7aeacbb9cbc",
+                  "startS": 13.530000000000001,
+                  "endS": 22.09
+                },
+                {
+                  "text": "tok_17cc23276b6e0696 tok_baf6e9c8de13947d tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351",
+                  "startS": 22.09,
+                  "endS": 27.37
+                },
+                {
+                  "text": "tok_aff7382881b7ff68 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_de64e392a47af462",
+                  "startS": 27.37,
+                  "endS": 29.98
+                }
+              ]
+            },
+            {
+              "startSeconds": 125,
+              "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_77a933a59505fee7 tok_e6cf4bf282016b77 tok_b48b81419275bfbc tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_7cc70b94d3a5d98f tok_4b001b24cbcb9004 tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_27823cb491b7f589 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+              "segments": [
+                {
+                  "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_77a933a59505fee7 tok_e6cf4bf282016b77 tok_b48b81419275bfbc tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_7cc70b94d3a5d98f",
+                  "startS": 0,
+                  "endS": 19.35
+                },
+                {
+                  "text": "tok_4b001b24cbcb9004 tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_27823cb491b7f589 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df",
+                  "startS": 19.35,
+                  "endS": 26.150000000000002
+                },
+                {
+                  "text": "tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+                  "startS": 26.150000000000002,
+                  "endS": 29
+                }
+              ]
+            },
+            {
+              "startSeconds": 150,
+              "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34 tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_076cf65eec9ddbe3 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+              "segments": [
+                {
+                  "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34",
+                  "startS": 0,
+                  "endS": 5.62
+                },
+                {
+                  "text": "tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_076cf65eec9ddbe3 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+                  "startS": 5.62,
+                  "endS": 14.780000000000001
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repetition": 2,
+          "expected": {
+            "seamPasses": 6,
+            "endToEndSegments": 25
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_f31a58bb76442905 tok_96997b9c31accad6 tok_919a3279516343d2 tok_1b1f77e8c66c332f tok_1331da7b0ca51022 tok_3b3fdeb22509c4b1 tok_a0574e1e923fa811 tok_461d354c9f12cce3 tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda tok_f374c9742344a7e5 tok_d6209f559ce2e454 tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+              "segments": [
+                {
+                  "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_f31a58bb76442905 tok_96997b9c31accad6 tok_919a3279516343d2 tok_1b1f77e8c66c332f tok_1331da7b0ca51022 tok_3b3fdeb22509c4b1 tok_a0574e1e923fa811 tok_461d354c9f12cce3",
+                  "startS": 0,
+                  "endS": 5.66
+                },
+                {
+                  "text": "tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d",
+                  "startS": 5.66,
+                  "endS": 17.82
+                },
+                {
+                  "text": "tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda",
+                  "startS": 17.82,
+                  "endS": 24.7
+                },
+                {
+                  "text": "tok_f374c9742344a7e5 tok_d6209f559ce2e454",
+                  "startS": 24.7,
+                  "endS": 25.400000000000002
+                },
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04",
+                  "startS": 25.400000000000002,
+                  "endS": 26.740000000000002
+                },
+                {
+                  "text": "tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+                  "startS": 28.740000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_d0db70d3215cf8e8 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_94e34368a259075e tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d000f1e698e880fa tok_b954fb48d8da75f6 tok_960b121ac0c68cba tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_3f0d9ae162b04cf0 tok_e1100a8bd3ff6a2b tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+              "segments": [
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_d0db70d3215cf8e8 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04",
+                  "startS": 0,
+                  "endS": 8.370000000000001
+                },
+                {
+                  "text": "tok_1331da7b0ca51022 tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_94e34368a259075e tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d000f1e698e880fa",
+                  "startS": 8.370000000000001,
+                  "endS": 15.76
+                },
+                {
+                  "text": "tok_b954fb48d8da75f6 tok_960b121ac0c68cba",
+                  "startS": 15.76,
+                  "endS": 17.6
+                },
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_3f0d9ae162b04cf0 tok_e1100a8bd3ff6a2b tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62",
+                  "startS": 17.6,
+                  "endS": 26.85
+                },
+                {
+                  "text": "tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 26.85,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 50,
+              "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_d6d64efef86b4e97 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438 tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3 tok_efa91b1725edc71c tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4 tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+              "segments": [
+                {
+                  "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_d6d64efef86b4e97 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 0,
+                  "endS": 5.08
+                },
+                {
+                  "text": "tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f",
+                  "startS": 5.08,
+                  "endS": 13.21
+                },
+                {
+                  "text": "tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3",
+                  "startS": 13.21,
+                  "endS": 18.1
+                },
+                {
+                  "text": "tok_efa91b1725edc71c tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4",
+                  "startS": 22.1,
+                  "endS": 27.54
+                },
+                {
+                  "text": "tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+                  "startS": 27.54,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 75,
+              "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_dd1f1963c32bbc17 tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_6bb8511d16c6b5cf tok_7414bb34b3d8b332 tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_6bb8511d16c6b5cf tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_732701821b7683f2 tok_90dc3f677b9c768f tok_989f678e2866817e tok_ca65584ba8ca03ab tok_f25e9782c2905b96 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4 tok_c9d3f49530b23eb7 tok_8a0f44b54cd75b4f tok_b84ea86ae30df2c4 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf tok_ae08758fa6c376aa tok_f77bb48f0e44356a tok_58933f3f3c3ec0da tok_2f825ed568383dea",
+              "segments": [
+                {
+                  "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_dd1f1963c32bbc17 tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_6bb8511d16c6b5cf",
+                  "startS": 0,
+                  "endS": 10.11
+                },
+                {
+                  "text": "tok_7414bb34b3d8b332 tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_6bb8511d16c6b5cf tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_732701821b7683f2",
+                  "startS": 10.11,
+                  "endS": 15.17
+                },
+                {
+                  "text": "tok_90dc3f677b9c768f tok_989f678e2866817e tok_ca65584ba8ca03ab tok_f25e9782c2905b96 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4",
+                  "startS": 15.17,
+                  "endS": 23.400000000000002
+                },
+                {
+                  "text": "tok_c9d3f49530b23eb7 tok_8a0f44b54cd75b4f tok_b84ea86ae30df2c4 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf tok_ae08758fa6c376aa",
+                  "startS": 23.400000000000002,
+                  "endS": 29.05
+                },
+                {
+                  "text": "tok_f77bb48f0e44356a tok_58933f3f3c3ec0da",
+                  "startS": 29.05,
+                  "endS": 29.8
+                },
+                {
+                  "text": "tok_2f825ed568383dea",
+                  "startS": 29.8,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 100,
+              "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_1cd2f7aeacbb9cbc tok_17cc23276b6e0696 tok_baf6e9c8de13947d tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_aff7382881b7ff68 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_eb3ff782e44ea846",
+              "segments": [
+                {
+                  "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200",
+                  "startS": 0,
+                  "endS": 13.530000000000001
+                },
+                {
+                  "text": "tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_1cd2f7aeacbb9cbc",
+                  "startS": 13.530000000000001,
+                  "endS": 22.09
+                },
+                {
+                  "text": "tok_17cc23276b6e0696 tok_baf6e9c8de13947d tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351",
+                  "startS": 22.09,
+                  "endS": 27.37
+                },
+                {
+                  "text": "tok_aff7382881b7ff68 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_eb3ff782e44ea846",
+                  "startS": 27.37,
+                  "endS": 29.98
+                }
+              ]
+            },
+            {
+              "startSeconds": 125,
+              "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_77a933a59505fee7 tok_04680d382be27d14 tok_2b894c1862cfcd47 tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_74b6d55baedfcca8 tok_488c1d3f063638fd tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_27823cb491b7f589 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+              "segments": [
+                {
+                  "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_77a933a59505fee7 tok_04680d382be27d14 tok_2b894c1862cfcd47 tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_74b6d55baedfcca8",
+                  "startS": 0,
+                  "endS": 16.84
+                },
+                {
+                  "text": "tok_488c1d3f063638fd tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_27823cb491b7f589 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6",
+                  "startS": 16.84,
+                  "endS": 26.3
+                },
+                {
+                  "text": "tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+                  "startS": 26.3,
+                  "endS": 29
+                }
+              ]
+            },
+            {
+              "startSeconds": 150,
+              "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34 tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_737aa08d7ed0f071 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+              "segments": [
+                {
+                  "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34",
+                  "startS": 0,
+                  "endS": 5.62
+                },
+                {
+                  "text": "tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_737aa08d7ed0f071 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+                  "startS": 5.62,
+                  "endS": 14.780000000000001
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "repetition": 3,
+          "expected": {
+            "seamPasses": 6,
+            "endToEndSegments": 27
+          },
+          "chunks": [
+            {
+              "startSeconds": 0,
+              "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_46e36e0c626e4b3b tok_96997b9c31accad6 tok_919a3279516343d2 tok_9ad016c78b1cb126 tok_1331da7b0ca51022 tok_45f8d5cda6d672ff tok_a0574e1e923fa811 tok_461d354c9f12cce3 tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda tok_f374c9742344a7e5 tok_d6209f559ce2e454 tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+              "segments": [
+                {
+                  "text": "tok_fa25b347862e2933 tok_96997b9c31accad6 tok_0bc8345f531767a2 tok_46e36e0c626e4b3b tok_96997b9c31accad6 tok_919a3279516343d2 tok_9ad016c78b1cb126 tok_1331da7b0ca51022 tok_45f8d5cda6d672ff tok_a0574e1e923fa811 tok_461d354c9f12cce3",
+                  "startS": 0,
+                  "endS": 5.68
+                },
+                {
+                  "text": "tok_54cfca513821b483 tok_08f7ae0a6d3990ac tok_1f314e746f5b3379 tok_919a3279516343d2 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d",
+                  "startS": 5.68,
+                  "endS": 17.78
+                },
+                {
+                  "text": "tok_be7806371362bdc5 tok_2fe3dca62559c45a tok_8d84dea022c01e25 tok_8e3573c34e0b4d9d tok_91aa873bb9d09afe tok_214f482752aace81 tok_1f314e746f5b3379 tok_d4b77b42182c4e71 tok_f374c9742344a7e5 tok_20d73d851b274ede tok_59906d01b2a08fda",
+                  "startS": 17.78,
+                  "endS": 24.7
+                },
+                {
+                  "text": "tok_f374c9742344a7e5 tok_d6209f559ce2e454",
+                  "startS": 24.7,
+                  "endS": 25.400000000000002
+                },
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04",
+                  "startS": 25.400000000000002,
+                  "endS": 26.76
+                },
+                {
+                  "text": "tok_7bd68b9f1a8d0837 tok_1fd88efa30164639",
+                  "startS": 26.76,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 25,
+              "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022 tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_10a881e24628127d tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d848ebed8195899d tok_97a3da4246653899 tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_3f0d9ae162b04cf0 tok_e1100a8bd3ff6a2b tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+              "segments": [
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_23bc00f9d6cf43ff tok_36cd4bedfd42fcc1 tok_f374c9742344a7e5 tok_ecfe6afd00eff03c tok_0402ed00267f5440 tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_1331da7b0ca51022",
+                  "startS": 0,
+                  "endS": 8.61
+                },
+                {
+                  "text": "tok_8d84dea022c01e25 tok_805942ff56d06540 tok_4a83bc11633eb0af tok_67d44eedb5b43767 tok_247f933d041c2759 tok_d842968396ac72b2 tok_08095c300b916001 tok_d3b4a17860372f96 tok_90daa1ff4ddab4a7 tok_10a881e24628127d tok_d3b4a17860372f96 tok_381042d9006bf2b4 tok_d848ebed8195899d",
+                  "startS": 8.61,
+                  "endS": 16
+                },
+                {
+                  "text": "tok_97a3da4246653899",
+                  "startS": 16,
+                  "endS": 17.92
+                },
+                {
+                  "text": "tok_930d27c34fd3012c tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_3f0d9ae162b04cf0 tok_e1100a8bd3ff6a2b tok_4a32b2c8df63767e tok_96997b9c31accad6 tok_fce2aafd5a789463 tok_07bacd79fac06791 tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_4817a3dcd5310374 tok_b20314efbd3efd62",
+                  "startS": 17.92,
+                  "endS": 26.740000000000002
+                },
+                {
+                  "text": "tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 26.740000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 50,
+              "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_d6d64efef86b4e97 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438 tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3 tok_efa91b1725edc71c tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4 tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+              "segments": [
+                {
+                  "text": "tok_1a74c5bcc19645b9 tok_04a7aa3775c580f2 tok_d6d64efef86b4e97 tok_b20314efbd3efd62 tok_62159b1d2bfa4142 tok_9e7323d2c1fb2a61 tok_a775daa579cb2ae8 tok_96997b9c31accad6 tok_e2d19754c631b5ff tok_a478a5f86223d83b tok_ff58101c6c14e160 tok_2fcb22118eeaf438",
+                  "startS": 0,
+                  "endS": 5.08
+                },
+                {
+                  "text": "tok_24930efdc6e629aa tok_214f482752aace81 tok_3ebdc93e666b9e24 tok_776f523a8b4e3e8c tok_96997b9c31accad6 tok_f9b3bfc83215cf96 tok_53bbf70b276cec47 tok_d3b4a17860372f96 tok_e7ec7d3c60233130 tok_e0e5e54db033df5e tok_88e64a0865f18f5f",
+                  "startS": 5.08,
+                  "endS": 13.21
+                },
+                {
+                  "text": "tok_d42402e89083ad20 tok_e19bce7b32718ad4 tok_af3f502f7103c116 tok_e180f0cfeb826b09 tok_24e5675a9dde42ff tok_f6eef3e1d4bfb0a3",
+                  "startS": 13.21,
+                  "endS": 18.14
+                },
+                {
+                  "text": "tok_efa91b1725edc71c tok_2d08aca643a31df6 tok_6812b7830bfca868 tok_07bacd79fac06791 tok_0bb6c2cdea3b45f0 tok_d43efe0b69ecc1fe tok_8abba3ea27005493 tok_0275ffb81cbaa3b8 tok_ad2d61fded622886 tok_d7e09847ac0098e4",
+                  "startS": 22.14,
+                  "endS": 27.580000000000002
+                },
+                {
+                  "text": "tok_05082040385593b0 tok_ad2265e0ee2e29df tok_983cc1faab3ddc52 tok_37801ddd652f8a6a",
+                  "startS": 27.580000000000002,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 75,
+              "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_fa642768fe3c185b tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_de9f8039399f56a8 tok_7414bb34b3d8b332 tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_de9f8039399f56a8 tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_1f314e746f5b3379 tok_989f678e2866817e tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4 tok_c9d3f49530b23eb7 tok_8a0f44b54cd75b4f tok_488c1d3f063638fd tok_c1ca3584fc247065 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf tok_439ea303bb5e484c tok_58933f3f3c3ec0da tok_90daa1ff4ddab4a7",
+              "segments": [
+                {
+                  "text": "tok_ad2265e0ee2e29df tok_edf659d365886f1a tok_fa642768fe3c185b tok_f381a0c3a63876d9 tok_91aa873bb9d09afe tok_26af0a286a3d90a2 tok_1a070d8a46b1e963 tok_c9d4a83e8fa84aeb tok_8a0f44b54cd75b4f tok_de9f8039399f56a8 tok_7414bb34b3d8b332",
+                  "startS": 0,
+                  "endS": 11.01
+                },
+                {
+                  "text": "tok_1a91828cbd89cdaf tok_98492fcc097fb796 tok_38a49742239f1c3b tok_f374c9742344a7e5 tok_d3b4a17860372f96 tok_de9f8039399f56a8 tok_87be755ebef2ab09 tok_f497e5e45084ad95 tok_a55dcbda3d24baa3 tok_9491bf4e28984d1a tok_1f314e746f5b3379 tok_989f678e2866817e",
+                  "startS": 11.01,
+                  "endS": 16.64
+                },
+                {
+                  "text": "tok_f5a82523153f9929 tok_c215ebe6b3eb4e04 tok_930d27c34fd3012c tok_8e6743e0ce5260f4 tok_4cb557206b5f9eea tok_dde4cb97888a21bc tok_381042d9006bf2b4 tok_fb5aa9a8f92ce607 tok_381042d9006bf2b4 tok_c9d3f49530b23eb7 tok_8a0f44b54cd75b4f tok_488c1d3f063638fd",
+                  "startS": 16.64,
+                  "endS": 24.1
+                },
+                {
+                  "text": "tok_c1ca3584fc247065 tok_7d135e2095dfce55 tok_f903be6c7a178500 tok_c93d04a33875c6bd tok_d7d3ef46f9dfde9c tok_439ea303bb5e484c tok_5939cd6012520c1d tok_bb9c0759a88013cf",
+                  "startS": 24.1,
+                  "endS": 28.96
+                },
+                {
+                  "text": "tok_439ea303bb5e484c tok_58933f3f3c3ec0da tok_90daa1ff4ddab4a7",
+                  "startS": 28.96,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 100,
+              "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_7b962cf7f416e9c2 tok_17cc23276b6e0696 tok_baf6e9c8de13947d tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_261ea1c80aff41a6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_eb86762a30829d20 tok_e3661bc646339b90 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_f39a3fcdfa46dc51",
+              "segments": [
+                {
+                  "text": "tok_90daa1ff4ddab4a7 tok_4a83bc11633eb0af tok_8793dbf2d67fd250 tok_2e8ae1488dcf37a5 tok_7fed97ddd44c358f tok_308fff7963bb985e tok_8112bd5001522cbd tok_0ba160ca8cdc9ddb tok_4817a3dcd5310374 tok_e6c4cd67e161b6e8 tok_96997b9c31accad6 tok_1a5f39fd53941200",
+                  "startS": 0,
+                  "endS": 13.530000000000001
+                },
+                {
+                  "text": "tok_2fe3dca62559c45a tok_73a74b241346466c tok_5325c482a5bff90e tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_3c4dba8be8124281 tok_d28f01e0234edf12 tok_b4d673d22532ee6e tok_9ef08d2b12d5706a tok_1331da7b0ca51022 tok_7b962cf7f416e9c2",
+                  "startS": 13.530000000000001,
+                  "endS": 22.150000000000002
+                },
+                {
+                  "text": "tok_17cc23276b6e0696 tok_baf6e9c8de13947d",
+                  "startS": 22.150000000000002,
+                  "endS": 24
+                },
+                {
+                  "text": "tok_cf1892b5b22fe72f tok_8ffc06417135d76c tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_5325c482a5bff90e tok_261ea1c80aff41a6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_eb86762a30829d20",
+                  "startS": 24,
+                  "endS": 27.6
+                },
+                {
+                  "text": "tok_e3661bc646339b90 tok_fe5780ef2379ab38 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_f39a3fcdfa46dc51",
+                  "startS": 27.6,
+                  "endS": 30
+                }
+              ]
+            },
+            {
+              "startSeconds": 125,
+              "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_261ea1c80aff41a6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_aff7382881b7ff68 tok_18b2cf39ecad4943 tok_c79262e7599d38b6 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_73a6c96097b83fee tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_77a933a59505fee7 tok_e6cf4bf282016b77 tok_2b894c1862cfcd47 tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_d4b77b42182c4e71 tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_7cc70b94d3a5d98f tok_7c6f40494adb8ff5 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_fafa7ef0d6a53557 tok_f0f90e163bc6a34b tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+              "segments": [
+                {
+                  "text": "tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df tok_261ea1c80aff41a6 tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_b758ee956578b351 tok_aff7382881b7ff68 tok_18b2cf39ecad4943",
+                  "startS": 0,
+                  "endS": 9.66
+                },
+                {
+                  "text": "tok_c79262e7599d38b6 tok_4ea9553e4287768a tok_1a5f39fd53941200 tok_2fe3dca62559c45a tok_50a69580b8784ded tok_73a6c96097b83fee tok_96997b9c31accad6 tok_05cf8b5c45893684 tok_c9ea6319e65cf436 tok_06c6faf02d7fe4df",
+                  "startS": 9.66,
+                  "endS": 11
+                },
+                {
+                  "text": "tok_77a933a59505fee7 tok_e6cf4bf282016b77 tok_2b894c1862cfcd47 tok_05cf8b5c45893684 tok_96997b9c31accad6 tok_d4b77b42182c4e71 tok_d3b4a17860372f96 tok_da691be175d57cb2 tok_d0b37c7f0b2d9484 tok_91aa873bb9d09afe tok_96997b9c31accad6 tok_7cc70b94d3a5d98f",
+                  "startS": 11,
+                  "endS": 20.78
+                },
+                {
+                  "text": "tok_7c6f40494adb8ff5 tok_bed708368097262c tok_d81140219ebc0ffc tok_2652e4ebf0c2e785 tok_0429291017de7075 tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_fafa7ef0d6a53557",
+                  "startS": 20.78,
+                  "endS": 27.48
+                },
+                {
+                  "text": "tok_f0f90e163bc6a34b tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_488c1d3f063638fd",
+                  "startS": 27.48,
+                  "endS": 29
+                }
+              ]
+            },
+            {
+              "startSeconds": 150,
+              "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34 tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_737aa08d7ed0f071 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+              "segments": [
+                {
+                  "text": "tok_05cf8b5c45893684 tok_ad2265e0ee2e29df tok_96997b9c31accad6 tok_ca9274a150b7d002 tok_ff58101c6c14e160 tok_005e0cd1644840cc tok_b58cfc54973414e9 tok_549a0c7a517b548a tok_3fb382541f3db82f tok_36babfa9965f5c14 tok_d3b4a17860372f96 tok_12327e378a166f34",
+                  "startS": 0,
+                  "endS": 5.79
+                },
+                {
+                  "text": "tok_8a0f44b54cd75b4f tok_897ec5b3a5821e6b tok_ff58101c6c14e160 tok_1331da7b0ca51022 tok_f002b3c3b2de5f28 tok_737aa08d7ed0f071 tok_c708b7a520aa79ce tok_91aa873bb9d09afe tok_2d3f8c834663fa2c tok_9aab0dadd787077a tok_bed708368097262c tok_97b3584a7db595bf",
+                  "startS": 5.79,
+                  "endS": 14.780000000000001
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
