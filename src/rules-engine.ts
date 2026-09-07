@@ -1283,7 +1283,10 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
     return { text, removedWords: [] };
   }
 
-  let intro = text.slice(0, heads[0].start).trim();
+  let intro =
+    heads[0].boundary === "\n"
+      ? text.slice(0, heads[0].start)
+      : text.slice(0, heads[0].start).trim();
   if (boundaryBelongsToPreviousClause(heads[0].boundary)) {
     intro += heads[0].boundary;
   }

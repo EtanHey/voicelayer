@@ -171,6 +171,14 @@ describe("spoken enumerators -> deterministic numbered list", () => {
       ].join("\n"),
     );
   });
+
+  it("keeps a dictated paragraph break immediately before item one", () => {
+    expect(
+      applySpokenEnumeratorsWithDetail(
+        "Intro line.\n\nSecond intro para.\n\nFirst of all, alpha beta.\nAnd then, gamma delta.\nAnd lastly, epsilon zeta.",
+      ).text,
+    ).toStartWith("Intro line.\n\nSecond intro para.\n\n1. First of all");
+  });
 });
 
 describe("spoken enumerators — prose stays prose", () => {
