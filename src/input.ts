@@ -100,7 +100,6 @@ import {
 import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
 import {
   buildRecordingProvenance,
-  fallbackReasonFromBackend,
   type RecordingProvenance,
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
@@ -3241,6 +3240,28 @@ export function hasRetainedRecording(): boolean {
 // trailing-silence trim fires. Retranscribing recomputes that slice, so the field
 // must be rewritten here or the archive keeps reporting the original capture's
 // value forever — which is what happened before this was threaded through.
+function restampTranscriptionProvenance(
+  previous: unknown,
+  input: {
+    backend: string;
+    languageMode: string;
+    polishStatus?: STTPolishStatus | null;
+    probe?: RecordingProvenanceProbe;
+  },
+): RecordingProvenance {
+  const rebuilt = buildRecordingProvenance(input);
+  if (!previous || typeof previous !== "object") return rebuilt;
+  const prior = previous as Record<string, unknown>;
+  return {
+    ...rebuilt,
+    host: typeof prior.host === "string" ? prior.host : rebuilt.host,
+    chip:
+      prior.chip === null || typeof prior.chip === "string"
+        ? prior.chip
+        : rebuilt.chip,
+  };
+}
+
 export function updateArchivedTranscript(
   audioPath: string,
   text: string,
@@ -3271,7 +3292,7 @@ export function updateArchivedTranscript(
     // backfilling this machine's facts onto an old recording would be a lie.
     const provenance = metadata.provenance;
     if (provenance && typeof provenance === "object") {
-      metadata.provenance = buildRecordingProvenance({
+      metadata.provenance = restampTranscriptionProvenance(provenance, {
         backend: transcription.backend,
         languageMode: transcription.languageMode,
         polishStatus: transcription.polishStatus,
@@ -3700,10 +3721,13 @@ export async function retranscribeVoiceAskArchive(
       user_audio_sha256: snapshot.audioHash,
     };
     if (metadata.provenance && typeof metadata.provenance === "object") {
-      metadata.provenance = buildRecordingProvenance({
-        backend: result.backend,
-        languageMode,
-      });
+      metadata.provenance = restampTranscriptionProvenance(
+        metadata.provenance,
+        {
+          backend: result.backend,
+          languageMode,
+        },
+      );
     }
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
     if (options.delivery === "history") {
