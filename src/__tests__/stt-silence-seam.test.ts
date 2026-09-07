@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { join } from "path";
-import { WhisperServerBackend } from "../stt";
+import { nextStartAfterSkippedChunk, WhisperServerBackend } from "../stt";
 import {
   chooseChunkEnd,
   computePauseMap,
@@ -119,6 +119,29 @@ function expectedSchedule(
 function wavSeconds(bytes: number): number {
   return (bytes - 44) / (16000 * 2);
 }
+
+test("a skipped guarded final chunk terminates instead of re-entering its overlap", () => {
+  const duration = 120;
+  const pauseMap: PauseSpan[] = [{ startS: 85, endS: duration }];
+  const startSeconds = 90;
+  const endSeconds = chooseChunkEnd(
+    startSeconds,
+    pauseMap,
+    { min: 20, max: 30 },
+    { durationS: duration, minFinalSeconds: MIN_FINAL_CHUNK },
+  );
+  const nextStartSeconds = endSeconds - SILENCE_SEAM_OVERLAP;
+
+  expect(nextStartSeconds).toBe(119.5);
+  expect(
+    nextStartAfterSkippedChunk({
+      startSeconds,
+      chunkSeconds: endSeconds - startSeconds,
+      nextStartSeconds,
+      durationSeconds: duration,
+    }),
+  ).toBeNull();
+});
 
 function run(cmd: string[]): void {
   const proc = Bun.spawnSync(cmd, { cwd: FIXTURE_DIR });

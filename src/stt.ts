@@ -1593,6 +1593,26 @@ interface WhisperServerBackendDeps {
   fallbackBackend?: STTBackend;
 }
 
+/**
+ * Next loop position after a chunk was skipped, or null when the skipped chunk
+ * already covered the end of the recording.
+ *
+ * The guarded smart schedule can deliberately plan the last chunk through EOF.
+ * Reusing its overlap-based next start after a skip would then revisit the same
+ * overlap forever. A skipped final chunk has no later audio to recover, so the
+ * loop must stop just as it does after a successfully decoded final chunk.
+ */
+export function nextStartAfterSkippedChunk(input: {
+  startSeconds: number;
+  chunkSeconds: number;
+  nextStartSeconds: number;
+  durationSeconds: number;
+}): number | null {
+  return input.startSeconds + input.chunkSeconds >= input.durationSeconds
+    ? null
+    : input.nextStartSeconds;
+}
+
 export class WhisperServerBackend implements STTBackend {
   name = "whisper-server";
   private readonly isResidentAvailable: () => boolean;
@@ -2004,12 +2024,26 @@ export class WhisperServerBackend implements STTBackend {
       const segment = sliceWavSegment(wavData, startSeconds, chunkSeconds);
       if (!segment) {
         nextSeamKind = seamAfterSkip;
-        startSeconds = nextStartSeconds;
+        const advanced = nextStartAfterSkippedChunk({
+          startSeconds,
+          chunkSeconds,
+          nextStartSeconds,
+          durationSeconds: info.durationSeconds,
+        });
+        if (advanced === null) break;
+        startSeconds = advanced;
         continue;
       }
       if (isLowEnergyWavSegment(segment)) {
         nextSeamKind = seamAfterSkip;
-        startSeconds = nextStartSeconds;
+        const advanced = nextStartAfterSkippedChunk({
+          startSeconds,
+          chunkSeconds,
+          nextStartSeconds,
+          durationSeconds: info.durationSeconds,
+        });
+        if (advanced === null) break;
+        startSeconds = advanced;
         continue;
       }
 
