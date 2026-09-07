@@ -401,6 +401,51 @@ describe("chooseChunkEnd", () => {
       expect(end).toBeGreaterThanOrEqual(102.31);
     });
 
+    test("a walked schedule for that trailing pause has no unverifiable scrap", () => {
+      const duration = 102.31;
+      const pauses: PauseSpan[] = [
+        { startS: 24, endS: 25 },
+        { startS: 49, endS: 50.5 },
+        { startS: 74, endS: 75.2 },
+        { startS: 101.47, endS: 102.3 },
+      ];
+      const chunks: Array<{ startS: number; endS: number }> = [];
+      let start = 0;
+      while (start < duration) {
+        const end = Math.min(
+          chooseChunkEnd(start, pauses, window, {
+            durationS: duration,
+            minFinalSeconds: MIN_FINAL,
+          }),
+          duration,
+        );
+        chunks.push({ startS: start, endS: end });
+        if (end >= duration) break;
+        const silence = isSilenceSeam(end, pauses, 0.5);
+        start = end - (silence ? 0.5 : 5);
+      }
+      const last = chunks[chunks.length - 1];
+      expect(last.endS).toBe(duration);
+      expect(last.endS - last.startS).toBeGreaterThanOrEqual(MIN_FINAL);
+      expect(
+        chunks
+          .filter((chunk) => chunk.endS - chunk.startS < MIN_FINAL)
+          .map((chunk) => +(chunk.endS - chunk.startS).toFixed(2)),
+      ).toEqual([]);
+      const unguardedLast = (() => {
+        let cursor = 0;
+        let end = 0;
+        while (cursor < duration) {
+          end = Math.min(chooseChunkEnd(cursor, pauses, window), duration);
+          if (end >= duration) break;
+          const silence = isSilenceSeam(end, pauses, 0.5);
+          cursor = end - (silence ? 0.5 : 5);
+        }
+        return { startS: cursor, endS: Math.min(end, duration) };
+      })();
+      expect(unguardedLast.endS - unguardedLast.startS).toBeLessThan(MIN_FINAL);
+    });
+
     test("without a duration it is byte-for-byte the shipped rule", () => {
       const pauses: PauseSpan[] = [
         { startS: 21, endS: 21.6 },

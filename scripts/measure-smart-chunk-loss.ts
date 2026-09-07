@@ -40,7 +40,12 @@
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { dirname, basename } from "path";
-import { WhisperServerBackend } from "../src/stt";
+import {
+  WAV_CHUNKED_DECODE_MIN_SECONDS,
+  WAV_CHUNK_SECONDS,
+  WAV_TAIL_VERIFY_MIN_SECONDS,
+  WhisperServerBackend,
+} from "../src/stt";
 import {
   chooseChunkEnd,
   computePauseMap,
@@ -48,7 +53,6 @@ import {
   parseWavAudioInfo,
   pauseSpanContaining,
   SMART_CHUNK_MIN_SECONDS,
-  SMART_CHUNK_MAX_SECONDS,
   type PauseSpan,
 } from "../src/stt-pause-map";
 import { stopServer, transcribeViaServer } from "../src/whisper-server";
@@ -240,11 +244,19 @@ function plannedSchedule(
   while (start < duration) {
     const end = Math.min(
       pauseMap.length > 0
-        ? chooseChunkEnd(start, pauseMap, {
-            min: SMART_CHUNK_MIN_SECONDS,
-            max: SMART_CHUNK_MAX_SECONDS,
-          })
-        : start + SMART_CHUNK_MAX_SECONDS,
+        ? chooseChunkEnd(
+            start,
+            pauseMap,
+            {
+              min: SMART_CHUNK_MIN_SECONDS,
+              max: WAV_CHUNK_SECONDS,
+            },
+            {
+              durationS: duration,
+              minFinalSeconds: WAV_TAIL_VERIFY_MIN_SECONDS,
+            },
+          )
+        : start + WAV_CHUNK_SECONDS,
       duration,
     );
     const silence =
@@ -318,8 +330,10 @@ function withEnv<T>(
   });
 }
 
-function wavSeconds(bytes: number): number {
-  return (bytes - 44) / (16000 * 2);
+function wavSeconds(wav: Uint8Array): number {
+  const info = parseWavAudioInfo(wav);
+  if (!info) throw new Error("intercepted request is not a readable PCM WAV");
+  return info.dataSize / (info.sampleRate * info.channels * (info.bitsPerSample / 8));
 }
 
 async function measureClip(path: string): Promise<ClipResult> {
@@ -328,6 +342,11 @@ async function measureClip(path: string): Promise<ClipResult> {
   if (!info) throw new Error(`${path}: not a readable PCM WAV`);
   const durationS =
     info.dataSize / (info.sampleRate * info.channels * (info.bitsPerSample / 8));
+  if (durationS < WAV_CHUNKED_DECODE_MIN_SECONDS) {
+    throw new Error(
+      `${path}: clip must be at least ${WAV_CHUNKED_DECODE_MIN_SECONDS} seconds`,
+    );
+  }
 
   const pauseMap = await computePauseMap(wav);
   const pauseSeconds = pauseMap.reduce((t, s) => t + (s.endS - s.startS), 0);
@@ -362,7 +381,7 @@ async function measureClip(path: string): Promise<ClipResult> {
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
         transcribeViaServer: async (wavData, options) => {
-          requestSeconds.push(wavSeconds(wavData.byteLength));
+          requestSeconds.push(wavSeconds(wavData));
           return transcribeViaServer(wavData, undefined, options);
         },
       });
@@ -458,6 +477,11 @@ for (const clip of CLIPS) {
 }
 
 stopServer();
+if (results.length !== CLIPS.length) {
+  throw new Error(
+    `corpus gate incomplete: measured ${results.length}/${CLIPS.length} requested clips`,
+  );
+}
 mkdirSync(dirname(OUT), { recursive: true });
 writeFileSync(OUT, JSON.stringify({ configs: CONFIG_NAMES, runs: RUNS, results }, null, 2));
 
