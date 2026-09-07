@@ -531,20 +531,24 @@ const RETRACTION_DROP_WINDOW = 24;
 const RETRACTION_MIN_DROPPED_RUN = 4;
 const MAX_RETRACTION_ALIGNMENT_CELLS = 10_000_000;
 
-function letterDigitStream(text: string): string {
-  return text
+function letterDigitStream(text: string): string[] {
+  return (
+    text
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, "");
+      .match(/[\p{L}\p{N}]/gu) ?? []
+  );
 }
 
 function falseStartMarkerStreamPositions(text: string): number[] {
   const normalized = text.normalize("NFKC");
   const streamPositionAtSourceIndex = new Array<number>(normalized.length);
   let streamPosition = 0;
-  for (let index = 0; index < normalized.length; index++) {
-    streamPositionAtSourceIndex[index] = streamPosition;
-    if (/[\p{L}\p{N}]/u.test(normalized[index])) streamPosition++;
+  let sourceIndex = 0;
+  for (const character of normalized) {
+    streamPositionAtSourceIndex[sourceIndex] = streamPosition;
+    if (/[\p{L}\p{N}]/u.test(character)) streamPosition++;
+    sourceIndex += character.length;
   }
   return Array.from(normalized.matchAll(FALSE_START_MARKER_PATTERN), (match) =>
     streamPositionAtSourceIndex[match.index ?? 0] ?? 0,
@@ -552,8 +556,8 @@ function falseStartMarkerStreamPositions(text: string): number[] {
 }
 
 function unmatchedCleanedLetterIndices(
-  cleanedStream: string,
-  candidateStream: string,
+  cleanedStream: string[],
+  candidateStream: string[],
 ): number[] | null {
   const cleanedLength = cleanedStream.length;
   const candidateLength = candidateStream.length;
@@ -572,7 +576,7 @@ function unmatchedCleanedLetterIndices(
   }
   const lengths = new Uint16Array((cleanedLength + 1) * width);
   for (let cleanedIndex = 1; cleanedIndex <= cleanedLength; cleanedIndex++) {
-    const cleanedChar = cleanedStream.charCodeAt(cleanedIndex - 1);
+    const cleanedChar = cleanedStream[cleanedIndex - 1];
     const row = cleanedIndex * width;
     const previousRow = row - width;
     for (
@@ -581,7 +585,7 @@ function unmatchedCleanedLetterIndices(
       candidateIndex++
     ) {
       lengths[row + candidateIndex] =
-        cleanedChar === candidateStream.charCodeAt(candidateIndex - 1)
+        cleanedChar === candidateStream[candidateIndex - 1]
           ? lengths[previousRow + candidateIndex - 1] + 1
           : Math.max(
               lengths[previousRow + candidateIndex],
@@ -596,8 +600,7 @@ function unmatchedCleanedLetterIndices(
   while (cleanedIndex > 0) {
     if (
       candidateIndex > 0 &&
-      cleanedStream.charCodeAt(cleanedIndex - 1) ===
-        candidateStream.charCodeAt(candidateIndex - 1)
+      cleanedStream[cleanedIndex - 1] === candidateStream[candidateIndex - 1]
     ) {
       cleanedIndex--;
       candidateIndex--;
@@ -624,7 +627,14 @@ function retractionContentLoss(
 
   const cleanedStream = letterDigitStream(cleanedText);
   const candidateStream = letterDigitStream(candidate);
-  if (cleanedStream === candidateStream) return null;
+  if (
+    cleanedStream.length === candidateStream.length &&
+    cleanedStream.every(
+      (character, index) => character === candidateStream[index],
+    )
+  ) {
+    return null;
+  }
   const unmatched = unmatchedCleanedLetterIndices(
     cleanedStream,
     candidateStream,

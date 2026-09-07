@@ -768,6 +768,55 @@ describe("stt-polish", () => {
     expect(result.error).toContain("deleted retraction");
   });
 
+  it("counts astral letters once when applying the retraction minimum", async () => {
+    const prefix = "Context remains stable. ".repeat(12);
+    const cleanedText = `${prefix}𞤀𞤁- Continue with the plan.`;
+    const polishedText = `${prefix}Continue with the plan.`;
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("keeps astral letters aligned with the retraction window boundary", async () => {
+    const prefix = "Context remains stable. ".repeat(12);
+    const cleanedText = `${prefix}𞤀token- ${"x".repeat(23)}drop tail remains.`;
+    const polishedText = `${prefix}𞤀token- ${"x".repeat(23)} tail remains.`;
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText,
+      status: "rejected",
+      changed: false,
+      error: "polish response deleted retraction content",
+    });
+  });
+
   it("fails closed only when the retraction alignment exceeds its bound", async () => {
     const fixture = (repetitions: number) => {
       const context = "context ".repeat(repetitions).trimEnd();
