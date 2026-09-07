@@ -1220,8 +1220,8 @@ async function withOutroGate<T>(
   const savedBoundaries = process.env[SMART_BOUNDARIES_FLAG];
   if (value === undefined) delete process.env[OUTRO_FLAG];
   else process.env[OUTRO_FLAG] = value;
-  // Either flag requests verbose_json. Pin this off so "outro flag unset"
-  // actually means the request stays `json`.
+  // Both flags request verbose_json. Pin smart boundaries off so the outro flag
+  // alone decides the request shape — `"0"` yields `json`, unset `verbose_json`.
   delete process.env[SMART_BOUNDARIES_FLAG];
   try {
     return await body();
