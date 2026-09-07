@@ -988,6 +988,9 @@ usage: whisper-server [options]
       expect(inferenceTimeoutMsForWav(fullRecording, [0.1])).toBe(
         41_195,
       );
+      expect(inferenceTimeoutMsForWav(fullRecording, [0.01])).toBe(
+        41_195,
+      );
       expect(inferenceTimeoutMsForWav(fullRecording, [0.4])).toBe(120_000);
     });
 

@@ -45,6 +45,11 @@ def backend_matches_filter(backend, backend_filter: str) -> bool:
     return normalized == name or normalized in aliases or normalized in name
 
 
+def resident_backend_fell_back(backend_name: str, observed_backend: str) -> bool:
+    """Reject any resident result whose producer label records a fallback."""
+    return backend_name == "voicelayer-resident" and "->" in observed_backend
+
+
 def run_evaluation(
     backend_filter: str | None = None,
     regenerate: bool = False,
@@ -115,10 +120,7 @@ def run_evaluation(
             try:
                 text, latency_ms = backend.transcribe(sample.audio_path, sample.language)
                 observed_backend = getattr(backend, "last_backend", None) or backend.name
-                if (
-                    backend.name == "voicelayer-resident"
-                    and observed_backend.startswith("whisper-server->")
-                ):
+                if resident_backend_fell_back(backend.name, observed_backend):
                     raise RuntimeError(
                         f"resident backend fell back to {observed_backend}; "
                         "not counting sample as resident"

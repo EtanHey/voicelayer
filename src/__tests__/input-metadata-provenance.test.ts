@@ -55,6 +55,11 @@ const FAKE_PROBE: RecordingProvenanceProbe = {
 
 const CLI_PROBE: RecordingProvenanceProbe = {
   ...FAKE_PROBE,
+  machine: () => ({
+    host: "retranscription-mac",
+    chip: "Apple M4 Max",
+    status: "ready",
+  }),
   whisperCppVersion: () => ({ version: "1.8.0", source: "binary-help" }),
   whisperServerArgs: () => null,
   whisperServerProcess: () => ({ pid: null, startedAt: null }),
@@ -402,7 +407,8 @@ describe("older schema recordings stay loadable", () => {
     expect(provenance.whisper_cpp_version).toBe("1.8.0");
     expect(provenance.whisper_server_args).toBeNull();
     expect(provenance.whisper_server_pid).toBeNull();
-    // The injected current-machine probe is retained for deterministic tests.
+    expect(provenance.host).toBe("test-mac");
+    // Capture-machine facts survive retranscription on another machine.
     expect(provenance.chip).toBe("Apple M1 Pro");
   });
 

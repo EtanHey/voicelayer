@@ -3236,6 +3236,20 @@ export function hasRetainedRecording(): boolean {
   return existsSync(retainedRecordingFilePath());
 }
 
+function rebuildTranscriptionProvenance(
+  previous: Record<string, unknown>,
+  input: Parameters<typeof buildRecordingProvenance>[0],
+): RecordingProvenance {
+  const rebuilt = buildRecordingProvenance(input);
+  if (typeof previous.host === "string") {
+    rebuilt.host = previous.host;
+  }
+  if (typeof previous.chip === "string" || previous.chip === null) {
+    rebuilt.chip = previous.chip;
+  }
+  return rebuilt;
+}
+
 // AIDEV-NOTE: `transcribed_duration_ms` is the slice of audio STT actually saw,
 // which is shorter than `duration_ms`/`raw_duration_ms` (mic-on time) whenever the
 // trailing-silence trim fires. Retranscribing recomputes that slice, so the field
@@ -3271,12 +3285,15 @@ export function updateArchivedTranscript(
     // backfilling this machine's facts onto an old recording would be a lie.
     const provenance = metadata.provenance;
     if (provenance && typeof provenance === "object") {
-      metadata.provenance = buildRecordingProvenance({
-        backend: transcription.backend,
-        languageMode: transcription.languageMode,
-        polishStatus: transcription.polishStatus,
-        probe: transcription.provenanceProbe,
-      });
+      metadata.provenance = rebuildTranscriptionProvenance(
+        provenance as Record<string, unknown>,
+        {
+          backend: transcription.backend,
+          languageMode: transcription.languageMode,
+          polishStatus: transcription.polishStatus,
+          probe: transcription.provenanceProbe,
+        },
+      );
     }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
   });
@@ -3700,10 +3717,13 @@ export async function retranscribeVoiceAskArchive(
       user_audio_sha256: snapshot.audioHash,
     };
     if (metadata.provenance && typeof metadata.provenance === "object") {
-      metadata.provenance = buildRecordingProvenance({
-        backend: result.backend,
-        languageMode,
-      });
+      metadata.provenance = rebuildTranscriptionProvenance(
+        metadata.provenance as Record<string, unknown>,
+        {
+          backend: result.backend,
+          languageMode,
+        },
+      );
     }
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
     if (options.delivery === "history") {

@@ -1040,7 +1040,6 @@ const MIN_INFERENCE_TIMEOUT_MS = 8_000;
  */
 const COLD_INFERENCE_RTF_MARGIN = 0.25;
 const OBSERVED_RTF_MULTIPLIER = 2.5;
-const MIN_OBSERVED_INFERENCE_RTF_MARGIN = 0.15;
 const MAX_INFERENCE_RTF_MARGIN = 1;
 const MAX_INFERENCE_TIMEOUT_MS = 120_000;
 const MAX_RECENT_INFERENCE_SAMPLES = 8;
@@ -1094,7 +1093,7 @@ export function inferenceTimeoutMsForWav(
       ? Math.max(...validRtfs) * OBSERVED_RTF_MULTIPLIER
       : COLD_INFERENCE_RTF_MARGIN;
   const rtfMargin = Math.max(
-    MIN_OBSERVED_INFERENCE_RTF_MARGIN,
+    COLD_INFERENCE_RTF_MARGIN,
     Math.min(MAX_INFERENCE_RTF_MARGIN, measuredMargin),
   );
   return Math.min(

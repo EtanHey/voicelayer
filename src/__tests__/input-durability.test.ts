@@ -1855,6 +1855,7 @@ describe("input recording durability", () => {
       metadataId?: string;
       audio?: Uint8Array;
       transcript?: string | null;
+      provenance?: Record<string, unknown>;
     } = {}) {
       const id =
         options.id ?? "2026-08-20T10-11-12-000Z-abcd1234";
@@ -1905,6 +1906,7 @@ describe("input recording durability", () => {
         },
         app_version: null,
         schema_version: schemaVersion,
+        ...(options.provenance ? { provenance: options.provenance } : {}),
       };
       writeFileSync(join(archiveDir, "audio.wav"), audio);
       writeFileSync(join(archiveDir, "agent-audio.mp3"), agentAudio);
@@ -1988,6 +1990,27 @@ describe("input recording durability", () => {
       expect(
         readFileSync(join(archive.archiveDir, "agent-transcript.txt"), "utf8"),
       ).toBe("Archived question?");
+    });
+
+    it("preserves capture-machine provenance when an Ask is retranscribed", async () => {
+      const archive = writeAskArchive({
+        provenance: {
+          host: "capture-mac",
+          chip: "Apple M1 Pro",
+        },
+      });
+      const { retranscribeVoiceAskArchive } = await import("../input");
+
+      await retranscribeVoiceAskArchive(archive.id);
+
+      const metadata = JSON.parse(
+        readFileSync(join(archive.archiveDir, "metadata.json"), "utf8"),
+      ) as Record<string, unknown>;
+      expect(metadata.provenance).toMatchObject({
+        host: "capture-mac",
+        chip: "Apple M1 Pro",
+        whisper_backend: "fake-stt",
+      });
     });
 
     it("routes the existing exact-path History wrapper through the Ask-raw policy", async () => {

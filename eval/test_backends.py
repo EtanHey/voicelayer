@@ -9,7 +9,7 @@ from backends import (
     WisprFlowBackend,
     get_available_backends,
 )
-from eval_stt import backend_matches_filter
+from eval_stt import backend_matches_filter, resident_backend_fell_back
 
 
 class TestWhisperCppBackend:
@@ -56,6 +56,23 @@ class TestVoiceLayerBackend:
         assert backend_matches_filter(cli, "cli") is True
         assert backend_matches_filter(resident, "whisper-server") is True
         assert backend_matches_filter(cli, "whisper") is True
+
+    @pytest.mark.parametrize(
+        "observed_backend",
+        (
+            "whisper-server->whisper.cpp",
+            "whisper-server+fallback-timeout->whisper.cpp",
+        ),
+    )
+    def test_resident_eval_rejects_fallback_chains(self, observed_backend):
+        assert resident_backend_fell_back(
+            "voicelayer-resident", observed_backend
+        ) is True
+
+    def test_resident_eval_keeps_direct_server_results(self):
+        assert resident_backend_fell_back(
+            "voicelayer-resident", "whisper-server+chunks"
+        ) is False
 
     def test_resident_backend_sets_backend_env(self, monkeypatch):
         captured = {}
