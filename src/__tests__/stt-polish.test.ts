@@ -720,6 +720,29 @@ describe("stt-polish", () => {
     expect(result.error).toBe("polish response changed negation tokens");
   });
 
+  it("allows apostrophe-only negation spelling normalization", async () => {
+    const cleanedText = "I dont have a session ID before today.";
+    const polishedText = "I don't have a session ID before today.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
   it("allows standalone filler removal despite the content-loss threshold", async () => {
     const cleanedText = "Alpha um bravo charlie delta echo foxtrot golf.";
     const polishedText = "Alpha, bravo charlie delta echo foxtrot golf.";

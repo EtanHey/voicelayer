@@ -498,7 +498,8 @@ function negationTokenCounts(text: string): Map<string, number> {
   for (const token of tokens) {
     const normalized = token.replace(/’/g, "'");
     if (!NEGATION_TOKENS.has(normalized)) continue;
-    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+    const orthographicKey = normalized.replace(/'/g, "");
+    counts.set(orthographicKey, (counts.get(orthographicKey) ?? 0) + 1);
   }
   return counts;
 }
