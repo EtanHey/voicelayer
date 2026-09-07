@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { restoreSentencePunctuation } from "../stt-punctuation";
 import { finalizeTranscriptionText } from "../input";
+import { cleanupTranscriptionText } from "../stt-cleanup";
+
+const contentWords = (text: string) =>
+  text.match(/[\p{L}\p{N}'’-]+/gu)?.map((word) => word.toLowerCase());
 
 // Regression: VoiceLayer transcriptions came back with ZERO terminal punctuation
 // when the LLM polish server is unavailable (Etan, 2026-06-21: "back to ZERO
@@ -135,6 +139,46 @@ describe("restoreSentencePunctuation", () => {
 });
 
 describe("finalizeTranscriptionText restores punctuation in the default path", () => {
+  test("judges a missing terminal from the clause that ends the transcript", () => {
+    const env = { QA_VOICE_CORRECTOR: "off" } as Record<string, string>;
+    const cases: Array<[string, string]> = [
+      [
+        "have you not put a loop for 6am anyway it doesn't matter today is for me to practice for tomorrow's interview i guess we can just make sure that everything closes i don't want to be your babysitter",
+        ".",
+      ],
+      ["why did it do that i am lost", "."],
+      ["why did it do that i have no idea", "."],
+      ["why was nothing deployed this is unacceptable", "."],
+      ["what's been going on this is taking forever", "."],
+      ["why is the topography broken again this is so annoying", "."],
+      ["wait tags are you talking about the enrichment stuff that wait what oh wow that's crazy", "."],
+      ["gotcha maybe that's why some things in brainlayer felt like shit", "."],
+      ["can you look at e.g. the collab", "?"],
+      [
+        "have you not put a loop for 6am anyway it doesn't matter today is for me to practice for tomorrow's interview i guess we can just make sure that everything closes do you want me to be your babysitter",
+        "?",
+      ],
+      ["everything closes do you want me to be your babysitter", "?"],
+      ["the tests are green should i merge it", "?"],
+      ["i finished the recon can you review it", "?"],
+      ["do you think i am correct", "?"],
+      ["what do you prefer: red or blue", "?"],
+      ["two options; should we take the second", "?"],
+      ["what is the best solution i guess", "?"],
+      ["should i merge it i think", "?"],
+      ["i understand. what i need is a reproduction", "."],
+      ["that's done. what matters is the corpus", "."],
+      ["why did it fail i cannot reproduce it", "."],
+    ];
+
+    for (const [input, terminal] of cases) {
+      const output = finalizeTranscriptionText(input, env);
+      const cleaned = cleanupTranscriptionText(input, env);
+      expect(output.endsWith(terminal), input).toBe(true);
+      expect(contentWords(output), input).toEqual(contentWords(cleaned));
+    }
+  });
+
   test("bare whisper output gets terminal punctuation (corrector off = default)", () => {
     const env = { QA_VOICE_CORRECTOR: "off" } as Record<string, string>;
     const out = finalizeTranscriptionText(

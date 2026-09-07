@@ -655,7 +655,7 @@ function capitalizeRunOnSegmentStart(segment: string): string {
   return segment.replace(/^\p{Ll}/u, (char) => char.toUpperCase());
 }
 
-function questionBoundaryIndices(text: string): number[] {
+export function questionBoundaryIndices(text: string): number[] {
   const indices: number[] = [];
   for (const match of text.matchAll(QUESTION_BOUNDARY_PATTERN)) {
     if (match.index === undefined) continue;
