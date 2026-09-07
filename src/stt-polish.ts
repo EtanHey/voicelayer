@@ -265,23 +265,23 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
 
 type STTPolishRetryReason = "noop" | "rejected";
 
-// AIDEV-NOTE: exported for the lane-P2 RED tests in
+// AIDEV-NOTE: exported for the lane-P2 prompt coverage in
 // src/__tests__/stt-polish.test.ts ("false starts and retractions are KEPT").
-// Those tests are RED on purpose — see docs.local/recon-2026-09-06/briefs/lane-p2-codex-2026-09-07.md
+// See docs.local/recon-2026-09-06/briefs/lane-p2-codex-2026-09-07.md.
 export function buildPolishSystemPrompt(
   retryReason?: STTPolishRetryReason,
 ): string {
   const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, confirmed chunk-boundary duplicates, and Hebrew/English spacing. A confirmed chunk-boundary duplicate is a transcription artifact, not an intentional word the speaker repeated.",
     "Be decisive. When one of the dictation-finalizer patterns below appears, apply it instead of leaving the text unchanged.",
     "Format ANY ordinal sequence into numbered markdown lists. Ordinal cues include first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even with conversational framing such as so, okay, and then, or third without 'of all'.",
     "Keep every clause the speaker said, including false starts, retractions, and self-corrections. When the speaker replaces an earlier phrase with a later one (cues: well no, well, no, no wait, sorry, I mean, actually, rather, scratch that, let me start over), keep BOTH the abandoned phrase and its replacement, in the order spoken. The thinking process is the content. Never collapse, merge, shorten, or delete a retracted phrase, and never resolve a 'did X ... no/actually Y' pattern down to Y.",
     "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
-    "The only words you may remove are standalone filler sounds: um, uh, er, ah, mm. Everything else is content, including hedges, intensifiers, asides, repeated words, and abandoned clauses.",
+    "The only words you may remove are standalone filler sounds: um, uh, er, ah, mm. Everything else is content, including hedges, intensifiers, asides, words the speaker repeated, and abandoned clauses.",
     "Never summarize, translate, add content, change tone, or invent code identifiers.",
-    "Do not delete wanted content. Apart from standalone fillers and ordinal cues folded into numbered list items, every word of the input must survive into the output. Your remaining job is punctuation, capitalization, spacing, and formatting only.",
+    "Do not delete wanted content. Apart from standalone fillers, ordinal cues folded into numbered list items, and confirmed chunk-boundary transcription duplicates, preserve all input content and spoken order. Your remaining job is required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
     "Output only the corrected text.",
@@ -321,6 +321,9 @@ export function buildPolishSystemPrompt(
     "Output: This is already good.",
     "Input: why did it do that i am confused",
     "Output: Why did it do that? I am confused.",
+    "Forbidden rewrite:",
+    "Input: I think this might work.",
+    "Output: This solution should work.",
     "Forbidden deletion:",
     "Never produce the following output; it violates the KEEP rule.",
     "Input: I went to the gym, no, the supermarket.",

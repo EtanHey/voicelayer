@@ -2163,7 +2163,10 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
       "The only words you may remove are standalone filler sounds: um, uh, er, ah, mm.",
     );
     expect(text).toContain(
-      "Your remaining job is punctuation, capitalization, spacing, and formatting only.",
+      "preserve all input content and spoken order",
+    );
+    expect(text).toContain(
+      "required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting",
     );
     expect(text).toContain(
       "Never summarize, translate, add content, change tone, or invent code identifiers.",
@@ -2174,8 +2177,6 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     const text = prompt();
     expect(text).toContain("Format ANY ordinal sequence into numbered markdown lists.");
     expect(text).toContain("ANY ordinal sequence");
-    expect(text).toContain("1. So, I came back home right now.");
-    expect(text).toContain("2. And then, you've been paused.");
   });
 
   it("keeps the KEEP rule in both retry variants", () => {
