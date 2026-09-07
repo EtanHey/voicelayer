@@ -757,6 +757,22 @@ describe("stt-polish", () => {
         polishedText: "Run it with verbose to test the parser.",
       },
       {
+        cleanedText: "Run it with `--verbose` to see more output.",
+        polishedText: "Run it with `verbose` to see more output.",
+      },
+      {
+        cleanedText: 'Run it with "--verbose" to see more output.',
+        polishedText: 'Run it with "verbose" to see more output.',
+      },
+      {
+        cleanedText: "Run it with (--verbose) to see more output.",
+        polishedText: "Run it with (verbose) to see more output.",
+      },
+      {
+        cleanedText: "Run it with [-s] to skip permissions.",
+        polishedText: "Run it with [s] to skip permissions.",
+      },
+      {
         cleanedText: "Pass -s to skip perms.",
         polishedText: "Pass s to skip perms.",
       },
