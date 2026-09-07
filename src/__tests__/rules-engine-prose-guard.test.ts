@@ -170,14 +170,20 @@ describe("spoken-command prose guard", () => {
     });
   });
 
-  // Regression cover for the commands that must keep firing unconditionally.
-  describe("unambiguous commands are untouched by the guard", () => {
-    it("keeps firing regardless of surrounding determiners", () => {
-      expect(applyRules("the question mark")).toBe("The?");
+  // Regression cover for commands that still fire without noun evidence.
+  describe("explicit commands are preserved by the guard", () => {
+    it("single-word commands fire regardless of determiners", () => {
       expect(applyRules("a comma here")).toBe("A, here");
       expect(applyRules("open paren value close paren")).toBe("(value)");
       expect(applyRules("if value not equals zero")).toBe("If value != 0");
       expect(applyRules("left double pipe right")).toBe("Left || right");
+    });
+
+    it("keeps multi-word mark names when a determiner makes them nouns", () => {
+      expect(applyRules("the question mark")).toBe("The question mark");
+      expect(applyRules("a full stop at the end")).toBe(
+        "A full stop at the end",
+      );
     });
   });
 

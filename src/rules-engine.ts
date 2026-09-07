@@ -164,19 +164,17 @@ function removeFillers(text: string, aggressive: boolean): string {
 // clip 2026-09-05T11-46-00-495Z-81090f01), and "some space to think" lost the
 // word outright because "space" is the one command that deletes a word.
 // AGENTS.md law: a fix that loses Etan's words is worse than the bug. So the
-// map is split — ALWAYS entries are multi-word phrases or words nobody uses as
-// a noun mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours
-// prove the speaker dictated a symbol. See isSpokenAsNoun below.
+// map is split — ALWAYS entries are phrases or words nobody uses as a noun
+// mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours prove
+// the speaker dictated a symbol. That includes multi-word mark names such as
+// "question mark": they are commands in "is it done question mark", but nouns
+// in "that was a question mark". See the stricter mark-name evidence in
+// isSpokenAsNoun below.
 
 /** Never ordinary prose: multi-word phrases, or single words only ever dictated as symbols. */
 const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bperiod\b/gi, "."],
-  [/\bfull stop\b/gi, "."],
   [/\bcomma\b/gi, ","],
-  [/\bquestionmark\b/gi, "?"],
-  [/\bquestion mark\b/gi, "?"],
-  [/\bexclamation mark\b/gi, "!"],
-  [/\bexclamation point\b/gi, "!"],
   [/\bopen paren\b/gi, "("],
   [/\bclose paren\b/gi, ")"],
   [/\bopen bracket\b/gi, "["],
@@ -214,6 +212,11 @@ const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
  * Etan effectively never dictates it as a command, so the word stays verbatim.
  */
 const AMBIGUOUS_PUNCTUATION_MAP: [RegExp, string][] = [
+  [/\bfull stop\b/gi, "."],
+  [/\bquestionmark\b/gi, "?"],
+  [/\bquestion mark\b/gi, "?"],
+  [/\bexclamation mark\b/gi, "!"],
+  [/\bexclamation point\b/gi, "!"],
   [/\bcolon\b/gi, ":"],
   [/\bdash\b/gi, "-"],
   [/\barrow\b/gi, "=>"],
@@ -397,17 +400,27 @@ function wordAfterDelimiters(text: string, index: number): string {
  * unconditionally everywhere else, and gating them here would contradict the
  * #17/#20 policy rather than preserve it.
  *
- * AIDEV-NOTE: deliberately only the follower test, never NOUN_DETERMINERS_BEFORE.
- * At a run boundary whisper's comma sits between the determiner and the command,
- * so "a" in "a, colon, dash, b" is the left OPERAND, not an article shielding a
- * noun — reading it as a determiner is the exact bug #17's operand check exists
- * to prevent, and it re-broke that case here once.
+ * AIDEV-NOTE: ordinary ambiguous commands deliberately use only the follower
+ * test, never NOUN_DETERMINERS_BEFORE. At a run boundary whisper's comma sits
+ * between the determiner and the command, so "a" in "a, colon, dash, b" is the
+ * left OPERAND, not an article shielding a noun — reading it as a determiner is
+ * the exact bug #17's operand check exists to prevent, and it re-broke that
+ * case here once. Mark-name runs are the narrow exception: their case-aware
+ * preceding-article evidence is checked by markNounArticleBefore; no other
+ * determiner qualifies.
  */
 function runIsSpokenAsNoun(
   text: string,
   phrases: string[],
+  start: number,
   end: number,
 ): boolean {
+  const markPhraseCount = phrases.filter((phrase) =>
+    MARK_PHRASE_COMMANDS.has(phrase)
+  ).length;
+  if (markPhraseCount > 0) {
+    return markNounArticleBefore(text, start);
+  }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
     return false;
   }
@@ -487,7 +500,26 @@ function unwrapCommaWrappedCommands(text: string): string {
           offset + (phrase.index ?? 0) + phrase[0].length,
         ),
       );
-      if (runIsSpokenAsNoun(text, phrases, end) || anyMetaMention) {
+      if (anyMetaMention) {
+        return match;
+      }
+      if (runIsSpokenAsNoun(text, phrases, offset, end)) {
+        if (phrases.every((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+          // This is ordinary prose that Whisper isolated with delimiters, not
+          // a command run. Keep it byte-for-byte for the later noun guard.
+          return match;
+        }
+        if (phrases.some((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+          // Preserve noun mark words while still executing neighbouring
+          // commands in a mixed run. Removing Whisper's wrapper delimiters
+          // lets the later ambiguous pass see the mark's noun evidence.
+          const guardedReplacements = phrases.map((phrase) =>
+            MARK_PHRASE_COMMANDS.has(phrase)
+              ? phrase
+              : placeholderFor(COMMAND_REPLACEMENTS.get(phrase) ?? phrase)
+          );
+          return ` ${guardedReplacements.join(" ")} `;
+        }
         return match;
       }
       const replacements = phrases
@@ -597,6 +629,55 @@ function isMetaMention(text: string, start: number, end: number): boolean {
   return inList && hasAdjacentCommandInList(text, start, end);
 }
 
+/** Mark-name commands that can also be the object of ordinary prose. */
+const MARK_PHRASE_COMMANDS = new Set([
+  "full stop", "questionmark", "question mark", "exclamation mark",
+  "exclamation point",
+]);
+
+// Mark-name commands often sit at a sentence boundary, where the word before
+// or after belongs to the sentence itself: "digest this question mark" and
+// "good faith question mark is ..." are real corpus commands. The broader
+// determiner/follower sets therefore overfit this subset when either cue acts
+// alone. Only an immediately preceding article is sufficient noun evidence.
+// In the full shadow snapshot this rescues only the five noun uses and changes
+// zero command uses.
+const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
+
+/**
+ * A mark name is a noun only when an ARTICLE introduces it.
+ *
+ * AIDEV-NOTE: this used to fall back to
+ * `NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after)`.
+ * That cannot work: "that question mark was wrong" (noun) and "should we use
+ * this question mark is that right" (command) are the same shape, so the
+ * fallback only chose which one to break, and it broke the command — the one
+ * present in the real corpus (shadow 5025 "good faith question mark is ...",
+ * 6543-6547 "digest this question mark"). The noun reading it protected has
+ * not appeared in the full shadow corpus. Article-only follows the lead's
+ * ruling on PR #42.
+ *
+ * `raw` is the word as spoken, not lowercased: `wordBefore` lowercases, which
+ * made the identifier "A" in "option A question mark" indistinguishable from
+ * the article and killed that command (Codex, PR #42). A capitalised article
+ * is only an article at a sentence start; mid-sentence it is an option label.
+ */
+function markNounArticleBefore(text: string, start: number): boolean {
+  const match = /([\p{L}\p{N}][\p{L}\p{N}'\u2019]*)\s*[,.]?\s*$/u.exec(
+    text.slice(0, start),
+  );
+  if (!match) return false;
+  const raw = match[1];
+  if (!MARK_NOUN_ARTICLES.has(raw.toLowerCase())) return false;
+  if (raw === raw.toLowerCase()) return true;
+  const head = text.slice(0, start - match[0].length);
+  return (
+    head.trim() === "" ||
+    /\n\s*$/.test(head) ||
+    /[.!?]["'\u2019)\]]?\s*$/.test(head)
+  );
+}
+
 /**
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
@@ -605,6 +686,10 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
   const command = text.slice(start, end).trim().toLowerCase();
+
+  if (MARK_PHRASE_COMMANDS.has(command)) {
+    return markNounArticleBefore(text, start);
+  }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"
   // is the left operand, not a determiner shielding a noun.

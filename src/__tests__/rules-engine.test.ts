@@ -20,6 +20,9 @@ import {
   type RulesConfig,
 } from "../rules-engine";
 
+const wordCount = (text: string): number =>
+  text.match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu)?.length ?? 0;
+
 describe("rules-engine", () => {
   // --- Stage 1: Filler removal ---
   describe("filler removal", () => {
@@ -92,6 +95,121 @@ describe("rules-engine", () => {
 
   // --- Stage 2: Spoken punctuation ---
   describe("spoken punctuation", () => {
+    it("keeps multi-word mark phrases when spoken as nouns", () => {
+      const cases: Array<[string, string]> = [
+        ["a full stop at the end", "A full stop at the end"],
+        ["the questionmark was wrong", "The questionmark was wrong"],
+        [
+          "That was supposed to be a question mark.",
+          "That was supposed to be a question mark.",
+        ],
+        [
+          "got a question mark at the end",
+          "Got a question mark at the end",
+        ],
+        [
+          "the exclamation mark was wrong",
+          "The exclamation mark was wrong",
+        ],
+        [
+          "the exclamation point was wrong",
+          "The exclamation point was wrong",
+        ],
+        ["heading\nA question mark", "Heading\nA question mark"],
+      ];
+
+      for (const [raw, expected] of cases) {
+        const cleaned = applyRules(raw);
+        expect(cleaned, raw).toBe(expected);
+        expect(wordCount(cleaned), raw).toBe(wordCount(raw));
+      }
+    });
+
+    it("still converts multi-word mark phrases when spoken as commands", () => {
+      const cases: Array<[string, string, number]> = [
+        ["end full stop", "End.", 2],
+        ["okay questionmark", "Okay?", 1],
+        ["is it done question mark", "Is it done?", 2],
+        ["okay question mark", "Okay?", 2],
+        ["wow exclamation mark", "Wow!", 2],
+        ["wow exclamation point", "Wow!", 2],
+        ["option A question mark", "Option A?", 2],
+        [
+          "should we use this question mark is that right",
+          "Should we use this? Is that right",
+          2,
+        ],
+        [
+          "do we ship that question mark is it ready",
+          "Do we ship that? Is it ready",
+          2,
+        ],
+        [
+          "should we use this question mark, is that right",
+          "Should we use this?, is that right",
+          2,
+        ],
+        [
+          "do we ship that question mark, at the end",
+          "Do we ship that?, at the end",
+          2,
+        ],
+        [
+          "can we proceed in good faith question mark is that clear",
+          "Can we proceed in good faith? Is that clear",
+          2,
+        ],
+        [
+          "quote digest this question mark unquote",
+          "Quote digest this? Unquote",
+          2,
+        ],
+      ];
+
+      for (const [raw, expected, commandWordCount] of cases) {
+        const cleaned = applyRules(raw);
+        expect(cleaned, raw).toBe(expected);
+        expect(wordCount(cleaned), raw).toBe(
+          wordCount(raw) - commandWordCount,
+        );
+      }
+    });
+
+    it("keeps the v2.2.12 comma-wrapped command shape", () => {
+      const raw = "Update, colon, Q3, new line, hey, Sarah, comma";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Update: Q3\nHey, Sarah,");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 4);
+    });
+
+    it("unwraps a comma-wrapped mark-name command before noun guards", () => {
+      const raw = "good faith, question mark, is that clear";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Good faith? Is that clear");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 2);
+    });
+
+    it("keeps a comma-wrapped mark name when the delimiters surround a noun", () => {
+      const raw = "got a, question mark, at the end";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Got a, question mark, at the end");
+      expect(wordCount(cleaned)).toBe(wordCount(raw));
+    });
+
+    it("keeps a mark noun while executing its neighboring wrapped command", () => {
+      const raw = "I got a, question mark, colon, at the end";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("I got a question mark: at the end");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 1);
+    });
+
+    it("keeps determiner-shaped mark commands aligned with main", () => {
+      const raw = "That question mark, at the end, needs removing";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("That?, at the end, needs removing");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 2);
+    });
+
     it("converts period/full stop", () => {
       expect(applyRules("hello world period")).toBe("Hello world.");
     });
