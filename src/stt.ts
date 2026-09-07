@@ -54,12 +54,10 @@ export interface STTResult extends TranscriptionResult {
   backend: string;
   durationMs: number;
   /**
-   * Whisper segment timestamps, present only under
-   * `VOICELAYER_STT_SMART_BOUNDARIES=1` on the single-shot whisper-server path.
-   * The chunked path (>= 90 s) does NOT set them, so those recordings get no
-   * boundary validation: each chunk's times are chunk-relative, and stitching
-   * them across C1's overlap seam is a separate change. Deliberate and
-   * documented in CLAUDE.details.md (Macroscope round 1, finding 5).
+   * Whisper segment timestamps on the source recording's absolute timeline.
+   * Present when the outro gate or smart-boundary feature requests verbose
+   * responses. On the chunked path, overlap words keep the earlier chunk's
+   * timing; unsafe segment streams fail closed instead of guessing timestamps.
    */
   segments?: TranscriptSegment[];
   /**
@@ -1041,8 +1039,14 @@ function witnessesAgree(leftText: string, rightText: string): boolean {
   return false;
 }
 
+/**
+ * AIDEV-NOTE: returns one input verbatim. Segment provenance uses identity to
+ * select the matching decode; a future synthesized return needs an explicit
+ * text-plus-segments result instead.
+ */
 function chooseWordPreservingWitness(leftText: string, rightText: string): string {
-  return collapsedWitnessKey(rightText).length > collapsedWitnessKey(leftText).length
+  return collapsedWitnessKey(rightText).length >
+    collapsedWitnessKey(leftText).length
     ? rightText
     : leftText;
 }
@@ -1225,6 +1229,193 @@ export function mergeChunkTranscripts(
   }
 
   return normalizeProseQuoteSpacing(merged.join(" ").trim());
+}
+
+export interface TimedChunkTranscript {
+  text: string;
+  /** Absolute start of this chunk in the source recording. */
+  startSeconds: number;
+  /** Whisper timestamps relative to this chunk's sliced WAV. */
+  segments: TranscriptSegment[];
+}
+
+interface TimedChunkWord {
+  text: string;
+  source: string;
+  chunkIndex: number;
+  seamStartS: number;
+  seamEndS: number;
+  startS: number;
+  endS: number;
+}
+
+function timedWordsForChunk(
+  chunk: TimedChunkTranscript,
+  chunkIndex: number,
+  seamKind: ChunkSeamKind,
+): TimedChunkWord[] | null {
+  const textWords = normalizeChunkWords(chunk.text);
+  const timedWords: TimedChunkWord[] = [];
+  const seamStartS = chunk.startSeconds;
+  const seamEndS =
+    seamStartS +
+    (seamKind === "silence"
+      ? SILENCE_SEAM_OVERLAP_SECONDS
+      : WAV_CHUNK_OVERLAP_SECONDS);
+
+  for (const [segmentIndex, segment] of chunk.segments.entries()) {
+    if (
+      !Number.isFinite(segment.startS) ||
+      !Number.isFinite(segment.endS) ||
+      segment.startS < 0 ||
+      segment.endS <= segment.startS
+    ) {
+      return null;
+    }
+    for (const word of normalizeChunkWords(segment.text)) {
+      timedWords.push({
+        text: word,
+        source: `${chunkIndex}:${segmentIndex}`,
+        chunkIndex,
+        seamStartS,
+        seamEndS,
+        startS: chunk.startSeconds + segment.startS,
+        endS: chunk.startSeconds + segment.endS,
+      });
+    }
+  }
+
+  if (
+    timedWords.length !== textWords.length ||
+    timedWords.some(
+      (word, index) =>
+        normalizeChunkWordForOverlap(word.text) !==
+        normalizeChunkWordForOverlap(textWords[index] ?? ""),
+    )
+  ) {
+    return null;
+  }
+
+  return timedWords.map((word, index) => ({
+    ...word,
+    text: textWords[index]!,
+  }));
+}
+
+/**
+ * Merge chunk text without changing the shipped merge rules, while carrying
+ * the segment that actually supplied every kept word onto the full recording
+ * timeline.
+ *
+ * Overlap words always retain the earlier chunk's timing, even when the later
+ * chunk contributes preferred punctuation. If a response's segment stream no
+ * longer describes its text, or its absolute times cannot be made monotonic,
+ * the function fails closed with no segments rather than handing a gate a
+ * guessed span.
+ */
+export function mergeChunkTranscriptsWithSegments(
+  chunks: TimedChunkTranscript[],
+  /** `seams[i]` describes the seam BEFORE `chunks[i]`; `seams[0]` is unused. */
+  seams: ChunkSeamKind[] = [],
+): { text: string; segments: TranscriptSegment[] } {
+  const text = mergeChunkTranscripts(
+    chunks.map((chunk) => chunk.text),
+    seams,
+  );
+  if (!text || chunks.some((chunk) => chunk.segments.length === 0)) {
+    return { text, segments: [] };
+  }
+
+  const merged: TimedChunkWord[] = [];
+  for (const [chunkIndex, chunk] of chunks.entries()) {
+    const nextWords = timedWordsForChunk(
+      chunk,
+      chunkIndex,
+      seams[chunkIndex] ?? "anchor",
+    );
+    if (!nextWords) return { text, segments: [] };
+    if (nextWords.length === 0) continue;
+
+    if (merged.length === 0 || seams[chunkIndex] === "silence") {
+      merged.push(...nextWords);
+      continue;
+    }
+
+    const { overlap, skipPrefix } = findChunkOverlap(
+      merged.map((word) => word.text),
+      nextWords.map((word) => word.text),
+    );
+    if (overlap > 0) {
+      for (let index = 0; index < overlap; index++) {
+        const mergedIndex = merged.length - overlap + index;
+        const nextIndex = skipPrefix + index;
+        merged[mergedIndex]!.text = preferOverlapWord(
+          merged[mergedIndex]!.text,
+          nextWords[nextIndex]!.text,
+          nextIndex < nextWords.length - 1,
+        );
+      }
+    }
+    merged.push(...nextWords.slice(skipPrefix + overlap));
+  }
+
+  const reconstructed = normalizeProseQuoteSpacing(
+    merged.map((word) => word.text).join(" ").trim(),
+  );
+  if (reconstructed !== text) return { text, segments: [] };
+
+  const segments: Array<
+    TranscriptSegment & { source: string; chunkIndex: number }
+  > = [];
+  for (const word of merged) {
+    const previous = segments.at(-1);
+    if (previous?.source === word.source) {
+      previous.text += ` ${word.text}`;
+      continue;
+    }
+
+    if (
+      !Number.isFinite(word.startS) || word.endS <= word.startS
+    ) {
+      return { text, segments: [] };
+    }
+    if (previous && word.startS < previous.endS) {
+      // Whisper segments tile each sliced chunk, while the text merge cuts the
+      // overlap on a word boundary. When that boundary falls inside a segment,
+      // keep the segment's true start by joining it to the preceding segment.
+      // This widens the acoustic span (safe: more speech can only veto a cut)
+      // and keeps the returned list monotonic. Only the known seam window may
+      // overlap; an inversion inside one chunk still fails closed.
+      const isBoundedSeamOverlap =
+        word.chunkIndex === previous.chunkIndex + 1 &&
+        word.startS >= word.seamStartS &&
+        previous.endS <= word.seamEndS;
+      if (!isBoundedSeamOverlap) return { text, segments: [] };
+      previous.text += ` ${word.text}`;
+      previous.endS = Math.max(previous.endS, word.endS);
+      previous.source = word.source;
+      previous.chunkIndex = word.chunkIndex;
+      continue;
+    }
+    segments.push({
+      text: word.text,
+      startS: word.startS,
+      endS: word.endS,
+      source: word.source,
+      chunkIndex: word.chunkIndex,
+    });
+  }
+
+  return {
+    text,
+    segments: segments.map(
+      ({ text: segmentText, startS, endS }) => ({
+        text: segmentText,
+        startS,
+        endS,
+      }),
+    ),
+  };
 }
 
 function hasChunkBoundaryOverlap(
@@ -1666,19 +1857,57 @@ export class WhisperServerBackend implements STTBackend {
         options,
       );
       if (chunkedResult) {
-        // The outro gate does not run here. Each chunk's segment timestamps are
-        // chunk-relative, so stitching them across C1's overlap seam into one
-        // timeline is a separate change — and a span measured against the wrong
-        // offset is exactly how this gate would delete a real word. Same
-        // exclusion the pause-aware boundaries carry (PR #30).
+        const outroGate = outroGateEnabled(process.env);
+        const gated = outroGate
+          ? stripHallucinatedOutro(chunkedResult.text, wavData, {
+              segments: chunkedResult.segments,
+              segmentsText: chunkedResult.segmentsText,
+            })
+          : {
+              text: chunkedResult.text,
+              removed: [],
+              reason: "no-candidate" as const,
+            };
+        for (const evaluation of gated.evaluations ?? []) {
+          const action =
+            evaluation.reason === "removed"
+              ? `dropped ${JSON.stringify(evaluation.phrase)}`
+              : `decision ${evaluation.reason} for ${JSON.stringify(evaluation.phrase)}`;
+          console.error(
+            `[voicelayer] outro gate: ${action} at ` +
+              `${evaluation.startS.toFixed(2)}-${evaluation.endS.toFixed(2)}s ` +
+              `(floor ${evaluation.floorDbfs.toFixed(1)} dBFS, ` +
+              `span ${evaluation.spanDbfs.toFixed(1)}, ` +
+              `peak ${evaluation.peakDbfs.toFixed(1)}, ` +
+              `speech ${evaluation.speechLevelDbfs.toFixed(1)})`,
+          );
+        }
+        if (
+          outroGate &&
+          gated.reason !== "no-candidate" &&
+          (gated.evaluations?.length ?? 0) === 0
+        ) {
+          console.error(
+            `[voicelayer] outro gate: decision ${gated.reason} on chunked transcript`,
+          );
+        }
         const backendParts = [this.name, "chunks"];
         if (chunkedResult.witnessed) backendParts.push("witness");
         if (chunkedResult.headChanged) backendParts.push("head");
         if (chunkedResult.cleaned) backendParts.push("clean");
+        if (gated.removed.length > 0) backendParts.push("outro");
         return {
-          text: chunkedResult.text,
+          text: gated.text,
           backend: backendParts.join("+"),
           durationMs: Date.now() - start,
+          ...(chunkedResult.segments.length > 0
+            ? {
+                segments: chunkedResult.segments,
+                segmentsAudioSha256: createHash("sha256")
+                  .update(wavData)
+                  .digest("hex"),
+              }
+            : {}),
         };
       }
 
@@ -1927,6 +2156,8 @@ export class WhisperServerBackend implements STTBackend {
     witnessed: boolean;
     headChanged: boolean;
     cleaned: boolean;
+    segments: TranscriptSegment[];
+    segmentsText: string;
   } | null> {
     const info = parseWavPcmInfo(wavData);
     if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
@@ -1934,6 +2165,26 @@ export class WhisperServerBackend implements STTBackend {
     }
 
     const transcripts: string[] = [];
+    const timedTranscripts: TimedChunkTranscript[] = [];
+    const requestSegments =
+      smartBoundariesEnabled(process.env) || outroGateEnabled(process.env);
+    const transcribeTimed = async (
+      audio: Uint8Array,
+      requestOptions: WhisperServerTranscribeOptions | undefined,
+    ): Promise<{ text: string; segments: TranscriptSegment[] }> => {
+      let segments: TranscriptSegment[] = [];
+      const text = await this.transcribeResident(audio, {
+        ...requestOptions,
+        ...(requestSegments
+          ? {
+              onSegments: (found: TranscriptSegment[]) => {
+                segments = found;
+              },
+            }
+          : {}),
+      });
+      return { text, segments };
+    };
     // seamKinds[i] describes the seam BEFORE transcripts[i]. A boundary chosen
     // deep inside a pause makes the NEXT chunk's seam a silence seam.
     const seamKinds: ChunkSeamKind[] = [];
@@ -2084,7 +2335,7 @@ export class WhisperServerBackend implements STTBackend {
       }
 
       const mergedSoFar = mergeChunkTranscripts(transcripts, seamKinds);
-      let text = await this.transcribeResident(
+      const decoded = await transcribeTimed(
         segment,
         buildWhisperServerOptions({
           promptOverride: mergedSoFar
@@ -2092,6 +2343,7 @@ export class WhisperServerBackend implements STTBackend {
             : options?.promptOverride,
         }),
       );
+      let { text, segments: textSegments } = decoded;
       if (!text.trim()) return null;
       const suspectLoops = mergedSoFar ? findSuspectChunkLoops(text) : [];
       const suspectLoop = suspectLoops[0] ?? null;
@@ -2120,7 +2372,7 @@ export class WhisperServerBackend implements STTBackend {
           witnessInfo &&
           witnessInfo.durationSeconds > plannedChunkSeconds
         ) {
-          const promptedWitness = await this.transcribeResident(
+          const prompted = await transcribeTimed(
             witnessSegment,
             buildWhisperServerOptions({
               ...options,
@@ -2130,13 +2382,15 @@ export class WhisperServerBackend implements STTBackend {
               ),
             }),
           );
-          const unpromptedWitness = await this.transcribeResident(
+          const unprompted = await transcribeTimed(
             witnessSegment,
             buildWhisperServerOptions({
               ...options,
               promptOverride: undefined,
             }),
           );
+          const promptedWitness = prompted.text;
+          const unpromptedWitness = unprompted.text;
           const promptedCovers = suspectLoop
             ? suspectLoops.some((candidate) =>
                 witnessCoversSuspectContext(text, candidate, promptedWitness),
@@ -2148,6 +2402,7 @@ export class WhisperServerBackend implements STTBackend {
               )
             : hasChunkBoundaryOverlap(mergedSoFar, unpromptedWitness);
           let chosenWitness: string | null = null;
+          let chosenWitnessSegments: TranscriptSegment[] = [];
           let supportingWitnesses: string[] = [];
           let agreement = "none";
           let rejectedByWordLossGuard = false;
@@ -2164,6 +2419,10 @@ export class WhisperServerBackend implements STTBackend {
               promptedWitness,
               unpromptedWitness,
             );
+            chosenWitnessSegments =
+              chosenWitness === promptedWitness
+                ? prompted.segments
+                : unprompted.segments;
             supportingWitnesses = [promptedWitness, unpromptedWitness];
             agreement = "extended-pair";
           } else {
@@ -2182,6 +2441,9 @@ export class WhisperServerBackend implements STTBackend {
               chosenWitness = fullSupportsPrompted
                 ? promptedWitness
                 : unpromptedWitness;
+              chosenWitnessSegments = fullSupportsPrompted
+                ? prompted.segments
+                : unprompted.segments;
               supportingWitnesses = fullSupportsPrompted
                 ? [fullWitness ?? "", promptedWitness]
                 : [fullWitness ?? "", unpromptedWitness];
@@ -2191,6 +2453,10 @@ export class WhisperServerBackend implements STTBackend {
                 promptedWitness,
                 unpromptedWitness,
               );
+              chosenWitnessSegments =
+                chosenWitness === promptedWitness
+                  ? prompted.segments
+                  : unprompted.segments;
               supportingWitnesses = [
                 fullWitness!,
                 promptedWitness,
@@ -2329,6 +2595,9 @@ export class WhisperServerBackend implements STTBackend {
                 supported.candidate,
                 supportedOccurrences,
               );
+              // The edit changes the segment word stream. Keep the transcript,
+              // but fail closed on timings until a decode describes that text.
+              textSegments = [];
               acousticallyRejectedLoop = true;
             }
             chosenWitness = null;
@@ -2365,6 +2634,7 @@ export class WhisperServerBackend implements STTBackend {
             witnessed = true;
           } else if (chosenWitness) {
             text = chosenWitness;
+            textSegments = chosenWitnessSegments;
             witnessed = true;
             scheduleShiftedByWitness = true;
             // The witness moved the boundary off the pause it was chosen in,
@@ -2395,6 +2665,7 @@ export class WhisperServerBackend implements STTBackend {
       }
       seamKinds[transcripts.length] = seamKindBeforeThisChunk;
       transcripts.push(text);
+      timedTranscripts.push({ text, startSeconds, segments: textSegments });
       nextSeamKind = seamKindAfterThisChunk;
 
       if (startSeconds + chunkSeconds >= info.durationSeconds) {
@@ -2403,7 +2674,11 @@ export class WhisperServerBackend implements STTBackend {
       startSeconds = nextStartSeconds;
     }
 
-    const mergedText = mergeChunkTranscripts(transcripts, seamKinds);
+    const merged = mergeChunkTranscriptsWithSegments(
+      timedTranscripts,
+      seamKinds,
+    );
+    const mergedText = merged.text;
     if (!mergedText) return null;
 
     const headResult = await this.verifyChunkedLeadingPunctuation(
@@ -2419,6 +2694,8 @@ export class WhisperServerBackend implements STTBackend {
       witnessed,
       headChanged: headResult.changed,
       cleaned: cleanedText !== headResult.text,
+      segments: merged.segments,
+      segmentsText: mergedText,
     };
   }
 

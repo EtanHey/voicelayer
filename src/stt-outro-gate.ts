@@ -240,11 +240,27 @@ export interface OutroRemoval {
   peakDbfs: number;
 }
 
+/** Acoustic evidence recorded for each candidate the gate could locate. */
+export interface OutroGateEvaluation extends OutroRemoval {
+  reason: Exclude<
+    OutroGateReason,
+    | "no-candidate"
+    | "no-audio"
+    | "no-segments"
+    | "segment-not-found"
+    | "segments-stale"
+  >;
+  floorDbfs: number;
+  speechLevelDbfs: number;
+}
+
 export interface OutroGateDecision {
   text: string;
   removed: OutroRemoval[];
   /** Why the last examined candidate was left alone, when nothing was removed. */
   reason: OutroGateReason;
+  /** Candidate-level telemetry; never participates in the decision. */
+  evaluations?: OutroGateEvaluation[];
 }
 
 export interface OutroGateOptions {
@@ -824,6 +840,7 @@ export function stripHallucinatedOutro(
   // each one's offsets are still valid when it is applied.
   const approved: Array<{ candidate: OutroCandidate; removal: OutroRemoval }> =
     [];
+  const evaluations: OutroGateEvaluation[] = [];
   let reason: OutroGateReason = "no-candidate";
 
   for (const candidate of candidates) {
@@ -840,11 +857,27 @@ export function stripHallucinatedOutro(
       reason = "segment-not-found";
       continue;
     }
+    const recordEvaluation = (
+      evaluationReason: OutroGateEvaluation["reason"],
+    ): void => {
+      evaluations.push({
+        phrase: candidate.phrase,
+        isTail: candidate.isTail,
+        startS: span.startS,
+        endS: span.endS,
+        spanDbfs: measured.meanDbfs,
+        peakDbfs: measured.peakDbfs,
+        floorDbfs: windows.floorDbfs,
+        speechLevelDbfs: windows.speechLevelDbfs,
+        reason: evaluationReason,
+      });
+    };
     // (b) No word anywhere under the phrase. Checked as sustained speech, not
     // as a mean: a mean can be dragged below the floor by a long silent pad
     // around a real word, and a peak can be tripped by a lone click.
     if (measured.hasSpeech) {
       reason = "energy-present";
+      recordEvaluation(reason);
       continue;
     }
     // The backstop that replaces the old fixed upper clamp: however the
@@ -856,6 +889,7 @@ export function stripHallucinatedOutro(
       measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB
     ) {
       reason = "near-speech-level";
+      recordEvaluation(reason);
       continue;
     }
     // (c) The silence must extend clear of the span on both sides.
@@ -864,8 +898,10 @@ export function stripHallucinatedOutro(
       : INTERNAL_SILENCE_MARGIN_SECONDS;
     if (!isClearOfSpeech(windows, span.startS, span.endS, marginSeconds)) {
       reason = "not-clear-of-speech";
+      recordEvaluation(reason);
       continue;
     }
+    recordEvaluation("removed");
     approved.push({
       candidate,
       removal: {
@@ -893,5 +929,6 @@ export function stripHallucinatedOutro(
     text: current,
     removed: approved.map((entry) => entry.removal),
     reason,
+    evaluations,
   };
 }
