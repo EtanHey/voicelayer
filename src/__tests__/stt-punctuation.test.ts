@@ -161,6 +161,14 @@ describe("finalizeTranscriptionText restores punctuation in the default path", (
       ["everything closes do you want me to be your babysitter", "?"],
       ["the tests are green should i merge it", "?"],
       ["i finished the recon can you review it", "?"],
+      ["do you think i am correct", "?"],
+      ["what do you prefer: red or blue", "?"],
+      ["two options; should we take the second", "?"],
+      ["what is the best solution i guess", "?"],
+      ["should i merge it i think", "?"],
+      ["i understand. what i need is a reproduction", "."],
+      ["that's done. what matters is the corpus", "."],
+      ["why did it fail i cannot reproduce it", "."],
     ];
 
     for (const [input, terminal] of cases) {

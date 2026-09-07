@@ -1,5 +1,8 @@
 import { questionBoundaryIndices } from "./stt-polish";
-import { endsWithAbbreviation } from "./stt-sentence-boundaries";
+import {
+  continuesSameClause,
+  endsWithAbbreviation,
+} from "./stt-sentence-boundaries";
 
 /**
  * Deterministic sentence-terminal punctuation restoration.
@@ -115,7 +118,7 @@ const QUESTION_SUBJECTS = new Set([
 ]);
 
 const LATER_STATEMENT_PREDICATES = new Map<string, Set<string>>([
-  ["i", new Set(["am", "don't", "dont", "guess", "had", "have", "need", "think", "want", "was", "will"])],
+  ["i", new Set(["am", "cannot", "don't", "dont", "guess", "had", "have", "need", "think", "want", "was", "will"])],
   ["i'm", new Set(["just", "not", "really", "so", "very"])],
   ["it", new Set(["can", "does", "doesn't", "doesnt", "has", "is", "isn't", "isnt", "was", "will"])],
   ["it's", new Set(["been", "not"])],
@@ -128,6 +131,7 @@ const LATER_STATEMENT_PREDICATES = new Map<string, Set<string>>([
 const EMBEDDED_STATEMENT_PREDECESSORS = new Set([
   "after", "although", "as", "because", "before", "how", "if", "since", "so", "that",
   "unless", "until", "what", "when", "where", "whether", "while", "why",
+  "think", "know", "believe", "feel", "reckon", "suppose", "say",
 ]);
 
 // Trailing terminal punctuation, optionally wrapped by a closing quote/paren/
@@ -173,6 +177,9 @@ function hasLaterStatementOpener(text: string): boolean {
   const words = lowerWords(text, Infinity);
   return words.some((word, index) => {
     if (index < 2 || index >= words.length - 1) return false;
+    if (index === words.length - 2 && continuesSameClause(words, index)) {
+      return false;
+    }
     const predicates = LATER_STATEMENT_PREDICATES.get(word);
     if (!predicates?.has(words[index + 1]!)) return false;
     const previous = words[index - 1];
@@ -180,6 +187,17 @@ function hasLaterStatementOpener(text: string): boolean {
     if (previous === "that" && words[index - 2] === "do") return true;
     return !EMBEDDED_STATEMENT_PREDECESSORS.has(previous);
   });
+}
+
+function isFreeRelativeWhClause(text: string): boolean {
+  const [first, second, ...rest] = lowerWords(text, Infinity);
+  return (
+    first !== undefined &&
+    INTERROGATIVE_OPENERS.has(first) &&
+    second !== undefined &&
+    !QUESTION_AUX_OPENERS.has(second) &&
+    rest.some((word) => ["is", "are", "was", "were"].includes(word))
+  );
 }
 
 function isBoundedTailQuestion(
@@ -200,7 +218,7 @@ function isBoundedTailQuestion(
 
 function finalClauseForTerminal(text: string): string | null {
   let finalPunctuationBoundary = -1;
-  for (const match of text.matchAll(/[.!?…:;]["'”’)\]]?(?=\s|$)/gu)) {
+  for (const match of text.matchAll(/[.!?…]["'”’)\]]?(?=\s|$)/gu)) {
     if (match.index !== undefined) {
       if (match[0].startsWith(".") && endsWithAbbreviation(text, match.index + 1)) {
         continue;
@@ -218,7 +236,8 @@ function finalClauseForTerminal(text: string): string | null {
     return text.slice(finalQuestionBoundary).trim();
   }
   if (finalPunctuationBoundary >= 0) {
-    return text.slice(finalPunctuationBoundary).trim();
+    const finalClause = text.slice(finalPunctuationBoundary).trim();
+    return isFreeRelativeWhClause(finalClause) ? null : finalClause;
   }
 
   if (isInterrogative(text) && hasLaterStatementOpener(text)) {
