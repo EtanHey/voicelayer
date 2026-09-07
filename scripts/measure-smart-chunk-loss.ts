@@ -61,6 +61,8 @@ import {
 
 const SILENCE_SEAM_OVERLAP_SECONDS = 0.5;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
+/** `WAV_TAIL_VERIFY_MIN_SECONDS` in `src/stt.ts` — keep in lockstep. */
+const WAV_TAIL_VERIFY_MIN_SECONDS = 12.5;
 /** How near a cut a loss run must start/end to be called seam-attributable. */
 const SEAM_WINDOW_S = 3.0;
 const MIN_SMART_CHUNK_SPEECH_RATIO = 0.05;
@@ -240,10 +242,22 @@ function plannedSchedule(
   while (start < duration) {
     const end = Math.min(
       pauseMap.length > 0
-        ? chooseChunkEnd(start, pauseMap, {
-            min: SMART_CHUNK_MIN_SECONDS,
-            max: SMART_CHUNK_MAX_SECONDS,
-          })
+        ? chooseChunkEnd(
+            start,
+            pauseMap,
+            {
+              min: SMART_CHUNK_MIN_SECONDS,
+              max: SMART_CHUNK_MAX_SECONDS,
+            },
+            // Same guard WhisperServerBackend passes. Without it this schedule
+            // keeps a trailing pause seam that production replaces with EOF or
+            // a two-verifiable-chunk split, and HEAD/TAIL attribution lands on
+            // cuts the decoder never made.
+            {
+              durationS: duration,
+              minFinalSeconds: WAV_TAIL_VERIFY_MIN_SECONDS,
+            },
+          )
         : start + SMART_CHUNK_MAX_SECONDS,
       duration,
     );
