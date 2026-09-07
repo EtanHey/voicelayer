@@ -609,10 +609,11 @@ const MARK_PHRASE_COMMANDS = new Set([
 // Mark-name commands often sit at a sentence boundary, where the word before
 // or after belongs to the sentence itself: "digest this question mark" and
 // "good faith question mark is ..." are real corpus commands. The broader
-// determiner/follower sets therefore overfit this subset. An immediately
-// preceding article is the corpus-backed noun evidence: "a question mark",
-// "the exclamation mark". In the full shadow snapshot this rescues only the
-// five noun uses and changes zero command uses.
+// determiner/follower sets therefore overfit this subset when either cue acts
+// alone. An immediately preceding article is sufficient noun evidence; other
+// determiners require a noun follower too ("that question mark was wrong").
+// In the full shadow snapshot this rescues only the five noun uses and changes
+// zero command uses.
 const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
 
 /**
@@ -625,7 +626,8 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const command = text.slice(start, end).trim().toLowerCase();
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
-    return MARK_NOUN_ARTICLES.has(before);
+    if (MARK_NOUN_ARTICLES.has(before)) return true;
+    return NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after);
   }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"

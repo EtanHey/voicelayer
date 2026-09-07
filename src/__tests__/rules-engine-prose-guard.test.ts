@@ -172,7 +172,7 @@ describe("spoken-command prose guard", () => {
 
   // Regression cover for commands that still fire without noun evidence.
   describe("explicit commands are preserved by the guard", () => {
-    it("keeps firing regardless of surrounding determiners", () => {
+    it("single-word commands fire regardless of determiners", () => {
       expect(applyRules("a comma here")).toBe("A, here");
       expect(applyRules("open paren value close paren")).toBe("(value)");
       expect(applyRules("if value not equals zero")).toBe("If value != 0");

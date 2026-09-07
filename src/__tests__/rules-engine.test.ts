@@ -109,6 +109,10 @@ describe("rules-engine", () => {
           "the exclamation mark was wrong",
           "The exclamation mark was wrong",
         ],
+        [
+          "that question mark was wrong",
+          "That question mark was wrong",
+        ],
       ];
 
       for (const [raw, expected] of cases) {
