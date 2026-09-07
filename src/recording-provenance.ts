@@ -82,6 +82,7 @@ export interface RecordingProvenance {
   host: string;
   chip: string | null;
   whisper_backend: string | null;
+  fallback_reason: string | null;
   whisper_model_path: string | null;
   whisper_model_sha256: string | null;
   whisper_cpp_version: string | null;
@@ -170,6 +171,17 @@ export function normalizeWhisperBackend(
   const produced = backend.split("->").pop()?.trim() ?? "";
   const base = produced.split("+")[0]?.trim() ?? "";
   return WHISPER_BACKEND_KINDS[base] ?? null;
+}
+
+/** Stable fallback reason encoded on the source side of a backend chain. */
+export function fallbackReasonFromBackend(
+  backend: string | null,
+): string | null {
+  return (
+    backend?.match(
+      /\+fallback-(timeout|empty-response|server-error)(?=->|$)/,
+    )?.[1] ?? null
+  );
 }
 
 /**
@@ -604,6 +616,7 @@ export function buildRecordingProvenance(
   const version = (probe.appVersion ?? appVersion)();
   const polishStatus = input.polishStatus ?? null;
   const kind = normalizeWhisperBackend(input.backend);
+  const fallbackReason = fallbackReasonFromBackend(input.backend);
 
   if (kind === null) {
     // Not a whisper transcript: every whisper-specific field stays null rather
@@ -612,6 +625,7 @@ export function buildRecordingProvenance(
       host: machine.host,
       chip: machine.chip,
       whisper_backend: input.backend,
+      fallback_reason: fallbackReason,
       whisper_model_path: null,
       whisper_model_sha256: null,
       whisper_cpp_version: null,
@@ -651,6 +665,7 @@ export function buildRecordingProvenance(
     host: machine.host,
     chip: machine.chip,
     whisper_backend: input.backend,
+    fallback_reason: fallbackReason,
     whisper_model_path: modelPath,
     whisper_model_sha256: (probe.whisperModelSha256 ?? whisperModelSha256)(
       modelPath,

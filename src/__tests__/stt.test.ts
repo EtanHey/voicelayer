@@ -1856,7 +1856,60 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe("fallback text");
-      expect(result.backend).toBe("whisper-server->whisper.cpp");
+      expect(result.backend).toBe(
+        "whisper-server+fallback-server-error->whisper.cpp",
+      );
+    });
+
+    it("finishes the Hebrew chunk path when the full-WAV witness times out", async () => {
+      const wavPath =
+        "/tmp/voicelayer-whisper-server-hebrew-witness-timeout-test.wav";
+      const wav = makePcm16Wav(164.78);
+      await Bun.write(wavPath, wav);
+      const preservedClause = "בניתי לעצמי מערכת לשיחה";
+      let calls = 0;
+      let fallbackCalls = 0;
+      let fullWitnessRequests = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async (wavData) => {
+          calls++;
+          if (wavData.byteLength === wav.byteLength) {
+            fullWitnessRequests++;
+            const error = new Error("The operation was aborted.");
+            error.name = "AbortError";
+            throw error;
+          }
+          if (calls === 1) return "פתיח ארוך ואז המשכתי להסביר את המערכת";
+          if (calls === 2) return "קטע מאוחר בלי חפיפה";
+          if (calls === 3) return "עד אחד מחזיר נוסח אחד עם הקשר מספיק";
+          if (calls === 4) return "עד שני מחזיר נוסח אחר עם הקשר מספיק";
+          if (calls === 6) {
+            return `קטע המשך שבו ${preservedClause} עם האייג'נטים ב CLI`;
+          }
+          return "קטע המשך ששומר את סוף ההקלטה";
+        },
+        fallbackBackend: {
+          name: "whisper.cpp",
+          isAvailable: async () => true,
+          transcribe: async () => {
+            fallbackCalls++;
+            return {
+              text: "פתיח ארוך ואז המשכתי להסביר את המערכת",
+              backend: "whisper.cpp",
+              durationMs: 40_000,
+            };
+          },
+        },
+      });
+
+      const result = await backend.transcribe(wavPath);
+
+      expect(result.text).toContain(preservedClause);
+      expect(result.backend).toStartWith("whisper-server+chunks");
+      expect(calls).toBeGreaterThan(6);
+      expect(fullWitnessRequests).toBe(1);
+      expect(fallbackCalls).toBe(0);
     });
 
     it("falls back to whisper-cli when resident inference returns empty text", async () => {
@@ -1880,7 +1933,9 @@ describe("STT backends", () => {
       const result = await backend.transcribe(wavPath);
 
       expect(result.text).toBe("fallback from empty");
-      expect(result.backend).toBe("whisper-server->whisper.cpp");
+      expect(result.backend).toBe(
+        "whisper-server+fallback-empty-response->whisper.cpp",
+      );
     });
   });
 

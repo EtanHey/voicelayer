@@ -66,6 +66,7 @@ describe("recording provenance builder", () => {
       host: "test-mac",
       chip: "Apple M1 Pro",
       whisper_backend: "whisper-server",
+      fallback_reason: null,
       whisper_model_path: "/fake/.cache/whisper/ggml-large-v3-turbo.bin",
       whisper_model_sha256: "a".repeat(64),
       whisper_cpp_version: "1.7.4",
@@ -194,6 +195,29 @@ describe("archived recording metadata carries provenance", () => {
       app_version: "9.9.9",
       app_version_source: "package.json",
     });
+  });
+
+  it("records why a whisper-server transcription fell back to the CLI", () => {
+    const archivedPath = archiveVoiceBarRecording({
+      audioBytes: createWavBuffer(new Uint8Array([1, 2, 3, 4])),
+      transcript: "fallback kept this transcript",
+      createdAt: new Date("2026-09-05T07:18:09.123Z"),
+      source: "voicebar",
+      silenceMode: "standard",
+      pushToEnd: false,
+      durationMs: 900,
+      backend: "whisper-server+fallback-timeout->whisper.cpp",
+      provenanceProbe: FAKE_PROBE,
+    });
+
+    const provenance = readMetadata(archivedPath!).provenance as Record<
+      string,
+      unknown
+    >;
+    expect(provenance.whisper_backend).toBe(
+      "whisper-server+fallback-timeout->whisper.cpp",
+    );
+    expect(provenance.fallback_reason).toBe("timeout");
   });
 
   it("writes provenance for a cancelled (untranscribed) recording too", () => {
@@ -353,7 +377,7 @@ describe("older schema recordings stay loadable", () => {
     });
 
     updateArchivedTranscript(join(archivedPath!, "audio.wav"), "second pass", {
-      backend: "whisper.cpp",
+      backend: "whisper-server+fallback-timeout->whisper.cpp",
       languageMode: "hebrew",
     });
 
@@ -362,7 +386,10 @@ describe("older schema recordings stay loadable", () => {
         readFileSync(join(archivedPath!, "metadata.json"), "utf8"),
       ) as Record<string, unknown>
     ).provenance as Record<string, unknown>;
-    expect(provenance.whisper_backend).toBe("whisper.cpp");
+    expect(provenance.whisper_backend).toBe(
+      "whisper-server+fallback-timeout->whisper.cpp",
+    );
+    expect(provenance.fallback_reason).toBe("timeout");
     expect(provenance.language_mode).toBe("hebrew");
     // Machine facts are not re-probed on retranscription; they still describe
     // the machine that captured the audio.

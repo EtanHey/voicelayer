@@ -9,6 +9,7 @@ import {
   __setWhisperServerTestHooksForTests,
   buildWhisperServerLaunchPlan,
   ensureServer,
+  inferenceTimeoutMsForWav,
   isServerAvailable,
   isServerHealthy,
   readWhisperServerHelpText,
@@ -29,6 +30,26 @@ import {
 } from "../whisper-performance";
 
 describe("whisper-server", () => {
+  function makePcm16Wav(durationSeconds: number): Uint8Array {
+    const sampleRate = 16_000;
+    const dataBytes = durationSeconds * sampleRate * 2;
+    const wav = new Uint8Array(44 + dataBytes);
+    const view = new DataView(wav.buffer);
+    wav.set(new TextEncoder().encode("RIFF"), 0);
+    view.setUint32(4, 36 + dataBytes, true);
+    wav.set(new TextEncoder().encode("WAVEfmt "), 8);
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    wav.set(new TextEncoder().encode("data"), 36);
+    view.setUint32(40, dataBytes, true);
+    return wav;
+  }
+
   // Ownership records are real files. Point the whole suite at a scratch dir so
   // a test launch never stamps a bogus owner into ~/.local/state/voicelayer/.
   let ownershipDir = "";
@@ -959,6 +980,17 @@ usage: whisper-server [options]
   });
 
   describe("transcribeViaServer", () => {
+    it("scales a full-WAV timeout from audio duration and recent host RTF", () => {
+      const chunk = makePcm16Wav(30);
+      const fullRecording = makePcm16Wav(164.78);
+
+      expect(inferenceTimeoutMsForWav(chunk, [0.1])).toBe(8_000);
+      expect(inferenceTimeoutMsForWav(fullRecording, [0.1])).toBe(
+        41_195,
+      );
+      expect(inferenceTimeoutMsForWav(fullRecording, [0.4])).toBe(120_000);
+    });
+
     it("asks for plain json, and no segments, when nothing opts in", async () => {
       // The default-OFF guarantee for VOICELAYER_STT_SMART_BOUNDARIES: without
       // an onSegments callback the request is byte-for-byte the shipped one.
@@ -1167,6 +1199,59 @@ usage: whisper-server [options]
 
         expect(text).toBe("after restart");
         expect(attempts).toBe(2);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("does not retire a healthy server when one inference times out", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let kills = 0;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attempts++;
+        return await new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) {
+            reject(new Error("missing abort signal"));
+            return;
+          }
+          signal.addEventListener(
+            "abort",
+            () => reject(signal.reason),
+            { once: true },
+          );
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+        });
+        __resetWhisperServerStateForTests({
+          proc: {
+            kill: () => {
+              kills++;
+            },
+          },
+          port: 5555,
+          pid: 123,
+        });
+
+        const startedAt = Date.now();
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+        ).rejects.toThrow("inference timeout");
+        expect(Date.now() - startedAt).toBeLessThan(250);
+        expect(attempts).toBe(1);
+        expect(kills).toBe(0);
       } finally {
         globalThis.fetch = originalFetch;
         __setWhisperServerTestHooksForTests({});

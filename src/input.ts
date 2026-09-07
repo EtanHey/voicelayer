@@ -100,6 +100,7 @@ import {
 import { recoverDefaultSTTPolishServerAfterFailure } from "./stt-polish-server";
 import {
   buildRecordingProvenance,
+  fallbackReasonFromBackend,
   type RecordingProvenance,
   type RecordingProvenanceProbe,
 } from "./recording-provenance";
@@ -3030,6 +3031,8 @@ export async function waitForInput(
       `[voicelayer] Transcribing with ${backend.name}${useChunkedTranscription ? " (chunked)" : ""}...`,
     );
     let finalized: FinalizedTranscriptionResult;
+    let sttBackendLabel = backend.name;
+    const chunkBackendLabels = new Set<string>();
 
     if (useChunkedTranscription) {
       chunkedSession.finalize();
@@ -3047,6 +3050,7 @@ export async function waitForInput(
             const result = await backend.transcribe(chunkPath, {
               promptOverride: prompt,
             });
+            chunkBackendLabels.add(result.backend);
             throwIfWaitForInputAborted(options.signal);
             return result.text;
           } finally {
@@ -3061,8 +3065,14 @@ export async function waitForInput(
         rawText,
         polishSurfaceForWaitOptions(options),
       );
+      if (chunkBackendLabels.size === 1) {
+        sttBackendLabel = [...chunkBackendLabels][0]!;
+      } else if (chunkBackendLabels.size > 1) {
+        sttBackendLabel = `mixed(${[...chunkBackendLabels].join("|")})`;
+      }
     } else {
       const result = await backend.transcribe(wavPath);
+      sttBackendLabel = result.backend;
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
       // whole-file VAD pass, and a cancelled voice_ask must settle now rather
@@ -3112,7 +3122,7 @@ export async function waitForInput(
         archivedRecordingPath = voiceAskArchivePath
           ? finalizeVoiceAskArchive(voiceAskArchivePath, {
               transcript: text,
-              backend: backend.name,
+              backend: sttBackendLabel,
               transcribedDurationMs: sttTrim.transcribedDurationMs,
               polishStatus: finalized.polishStatus,
             })
@@ -3124,7 +3134,7 @@ export async function waitForInput(
               pushToEnd,
               durationMs: sttTrim.rawDurationMs,
               transcribedDurationMs: sttTrim.transcribedDurationMs,
-              backend: backend.name,
+              backend: sttBackendLabel,
               polishStatus: finalized.polishStatus,
             });
       } catch (err) {
@@ -3261,6 +3271,8 @@ export function updateArchivedTranscript(
     if (provenance && typeof provenance === "object") {
       (provenance as Record<string, unknown>).whisper_backend =
         transcription.backend;
+      (provenance as Record<string, unknown>).fallback_reason =
+        fallbackReasonFromBackend(transcription.backend);
       (provenance as Record<string, unknown>).language_mode =
         transcription.languageMode;
     }
@@ -3673,10 +3685,11 @@ export async function retranscribeVoiceAskArchive(
       );
     }
     revalidateVoiceAskArchiveSnapshot(snapshot);
+    const languageMode = getLanguageModeFromEnv();
     const metadata: Record<string, unknown> = {
       ...snapshot.metadata,
-      backend: backend.name,
-      language_mode: getLanguageModeFromEnv(),
+      backend: result.backend,
+      language_mode: languageMode,
       transcription_status: "transcribed",
       transcribed_duration_ms: working.durationMs,
       voicelayer_transcript_chars: text.length,
@@ -3684,6 +3697,14 @@ export async function retranscribeVoiceAskArchive(
       audio_sha256: snapshot.audioHash,
       user_audio_sha256: snapshot.audioHash,
     };
+    if (metadata.provenance && typeof metadata.provenance === "object") {
+      metadata.provenance = {
+        ...(metadata.provenance as Record<string, unknown>),
+        whisper_backend: result.backend,
+        fallback_reason: fallbackReasonFromBackend(result.backend),
+        language_mode: languageMode,
+      };
+    }
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
     if (options.delivery === "history") {
       broadcast({
@@ -3832,7 +3853,7 @@ export async function retranscribeRecordingCapture(
 
       if (text) {
         updateArchivedTranscript(wavPath, text, {
-          backend: backend.name,
+          backend: result.backend,
           languageMode: getLanguageModeFromEnv(),
           transcribedDurationMs,
         });
@@ -3931,7 +3952,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
       if (text) {
         if (archivedAudioPath) {
           updateArchivedTranscript(archivedAudioPath, text, {
-            backend: backend.name,
+            backend: result.backend,
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs,
           });

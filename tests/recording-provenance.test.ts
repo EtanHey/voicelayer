@@ -457,6 +457,11 @@ describe("decorated backend names are normalised, not rejected", () => {
     expect(normalizeWhisperBackend("whisper-server+head+clean")).toBe("server");
     // "a->b" is a fallback chain: b produced the text.
     expect(normalizeWhisperBackend("whisper-server->whisper.cpp")).toBe("cli");
+    expect(
+      normalizeWhisperBackend(
+        "whisper-server+fallback-timeout->whisper.cpp",
+      ),
+    ).toBe("cli");
     expect(normalizeWhisperBackend("whisper-server->whisper.cpp+clean")).toBe(
       "cli",
     );
@@ -484,13 +489,14 @@ describe("decorated backend names are normalised, not rejected", () => {
 
   it("populates whisper fields for whisper-server->whisper.cpp", () => {
     const provenance = buildRecordingProvenance({
-      backend: "whisper-server->whisper.cpp",
+      backend: "whisper-server+fallback-timeout->whisper.cpp",
       languageMode: "auto",
       probe: PROBE,
     });
     expect(isWhisperBackend("whisper-server->whisper.cpp")).toBe(true);
     expect(provenance.whisper_model_path).toBe("/fake/model.bin");
     expect(provenance.whisper_cpp_version).toBe("1.7.4");
+    expect(provenance.fallback_reason).toBe("timeout");
   });
 });
 
