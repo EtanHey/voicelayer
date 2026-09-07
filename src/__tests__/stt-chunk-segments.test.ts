@@ -134,6 +134,66 @@ describe("chunk transcript segment stitching", () => {
     ]);
   });
 
+  test("pins silence-seam concatenation and its half-second timing bound", () => {
+    const repeatedEdge = [
+      {
+        text: "one two",
+        startSeconds: 0,
+        segments: [segment(" one", 20, 26), segment(" two", 26, 29)],
+      },
+      {
+        text: "two three",
+        startSeconds: 29.5,
+        segments: [segment(" two", 0, 3), segment(" three", 3, 6)],
+      },
+    ];
+    expect(
+      mergeChunkTranscriptsWithSegments(repeatedEdge, ["anchor", "silence"]),
+    ).toEqual({
+      text: "one two two three",
+      segments: [
+        segment("one", 20, 26),
+        segment("two", 26, 29),
+        segment("two", 29.5, 32.5),
+        segment("three", 32.5, 35.5),
+      ],
+    });
+    expect(
+      mergeChunkTranscriptsWithSegments(repeatedEdge, ["anchor", "anchor"]),
+    ).toEqual({
+      text: "one two three",
+      segments: [
+        segment("one", 20, 26),
+        segment("two", 26, 29),
+        segment("three", 32.5, 35.5),
+      ],
+    });
+
+    const overrun = [
+      {
+        text: "one two",
+        startSeconds: 0,
+        segments: [segment(" one", 20, 26), segment(" two", 26, 32)],
+      },
+      {
+        text: "three four",
+        startSeconds: 29.5,
+        segments: [segment(" three four", 0, 6)],
+      },
+    ];
+    expect(
+      mergeChunkTranscriptsWithSegments(overrun, ["anchor", "silence"])
+        .segments,
+    ).toEqual([]);
+    expect(
+      mergeChunkTranscriptsWithSegments(overrun, ["anchor", "anchor"])
+        .segments,
+    ).toEqual([
+      segment("one", 20, 26),
+      segment("two three four", 26, 35.5),
+    ]);
+  });
+
   test("still fails closed on an intra-chunk timestamp inversion", () => {
     const merged = mergeChunkTranscriptsWithSegments([
       {
