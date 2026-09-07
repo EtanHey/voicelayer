@@ -322,6 +322,7 @@ export function buildPolishSystemPrompt(
     "Input: why did it do that i am confused",
     "Output: Why did it do that? I am confused.",
     "Forbidden rewrite:",
+    "Never produce the following output; it invents certainty and changes meaning.",
     "Input: I think this might work.",
     "Output: This solution should work.",
     "Forbidden deletion:",
@@ -1048,28 +1049,6 @@ function withTerminalPunctuation(text: string, fallback: string): string {
     : `${trimmed}${fallback || "."}`;
 }
 
-function deterministicSelfCorrectionCandidate(cleanedText: string): string | null {
-  const repeatedNegated = cleanedText.match(
-    LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN,
-  );
-  if (repeatedNegated?.groups) {
-    return withTerminalPunctuation(
-      `${repeatedNegated.groups.prefix}${repeatedNegated.groups.replacement}`,
-      repeatedNegated.groups.ending ?? ".",
-    );
-  }
-
-  const wellReplacement = cleanedText.match(LETS_DO_WELL_REPLACEMENT_PATTERN);
-  if (wellReplacement?.groups) {
-    return withTerminalPunctuation(
-      `${wellReplacement.groups.prefix}${wellReplacement.groups.replacement}`,
-      wellReplacement.groups.ending ?? ".",
-    );
-  }
-
-  return null;
-}
-
 function isAllowedSpokenListRewrite(
   cleanedText: string,
   candidate: string,
@@ -1172,12 +1151,7 @@ function applyPolishCandidate(
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
-  const deterministicCandidate =
-    normalizedSimilarityText(cleanedText) ===
-    normalizedSimilarityText(trimmedPolishedText)
-      ? deterministicSelfCorrectionCandidate(cleanedText)
-      : null;
-  const candidateText = deterministicCandidate ?? trimmedPolishedText;
+  const candidateText = trimmedPolishedText;
   const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
   if (mode === "shadow") {
     return buildResult(

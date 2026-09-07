@@ -844,26 +844,31 @@ describe("stt-polish", () => {
     });
   });
 
-  it("documents the parked deterministic collapse when polish returns the candidate unchanged", async () => {
+  it("keeps self-corrections when polish returns the candidate unchanged", async () => {
     server = createMockPolishServer((request) => ({
       text: String(request.cleaned_text),
     }));
 
-    const result = await polishTranscriptionText({
-      rawText: "Okay, let's do a clawed deep, well, Gemini deep research.",
-      cleanedText: "Okay, let's do a Claude deep, well, Gemini deep research.",
-      env: {
-        QA_VOICE_STT_POLISH: "on",
-        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
-        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
-      },
-    });
+    for (const cleanedText of [
+      "Okay, let's do a Claude deep, well, Gemini deep research.",
+      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
+    ]) {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
 
-    expect(result).toMatchObject({
-      text: "Okay, let's do Gemini deep research.",
-      status: "applied",
-      changed: true,
-    });
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "applied",
+        changed: false,
+      });
+    }
   });
 
   it("rejects self-correction rewrites that introduce new content even with explicit cues", async () => {
