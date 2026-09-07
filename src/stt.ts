@@ -1666,8 +1666,8 @@ export class WhisperServerBackend implements STTBackend {
       const smartBoundaries = smartBoundariesEnabled(process.env);
       const outroGate = outroGateEnabled(process.env);
       let segments: TranscriptSegment[] | undefined;
-      // Either flag needs `verbose_json`; with both off the request stays
-      // byte-for-byte the shipped `json` one.
+      // Either feature needs `verbose_json`. The default-on outro gate makes
+      // that normal; explicitly disabling both preserves the old `json` shape.
       const text = await this.transcribeResident(wavData, {
         ...buildWhisperServerOptions(options),
         ...(smartBoundaries || outroGate

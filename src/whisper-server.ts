@@ -1037,10 +1037,9 @@ export interface WhisperServerTranscribeOptions {
   language?: string;
   prompt?: string;
   /**
-   * Opt in to segment timestamps. Set ONLY under
-   * `VOICELAYER_STT_SMART_BOUNDARIES=1` (`src/stt-sentence-boundaries.ts`):
-   * it switches the request to `response_format=verbose_json`, so with the flag
-   * off the request stays byte-for-byte the shipped `json` one.
+   * Request segment timestamps for smart boundaries or the outro gate. This
+   * switches the request to `response_format=verbose_json`; the default-on
+   * outro gate therefore makes that the normal single-pass request shape.
    *
    * AIDEV-NOTE: verbose_json also carries per-word times. Do NOT use them —
    * measured on `2026-09-06T12-56-44-855Z-28f3916c` they interpolate straight

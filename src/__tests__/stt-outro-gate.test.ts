@@ -849,13 +849,12 @@ describe("measureWavWindows", () => {
 });
 
 describe("outroGateEnabled", () => {
-  test("only an explicit opt-in turns it on", () => {
-    expect(outroGateEnabled({})).toBe(false);
-    expect(outroGateEnabled({ VOICELAYER_STT_OUTRO_GATE: "0" })).toBe(false);
-    expect(outroGateEnabled({ VOICELAYER_STT_OUTRO_GATE: "" })).toBe(false);
-    expect(outroGateEnabled({ VOICELAYER_STT_OUTRO_GATE: "1" })).toBe(true);
-    expect(outroGateEnabled({ VOICELAYER_STT_OUTRO_GATE: "true" })).toBe(true);
-  });
+  test.each([
+    [undefined, true], ["", true], ["unexpected", false],
+    ["0", false], ["false", false], ["off", false], ["no", false],
+    ["1", true], ["true", true], ["on", true], ["yes", true],
+    ["Off", false], ["TRUE", true], [" 0 ", false],
+  ])("maps %p to %p", (value, expected) => expect(outroGateEnabled({ VOICELAYER_STT_OUTRO_GATE: value })).toBe(expected));
 });
 
 // --- real speech: `say` a sentence, then pad it with silence ---
@@ -1221,8 +1220,8 @@ async function withOutroGate<T>(
   const savedBoundaries = process.env[SMART_BOUNDARIES_FLAG];
   if (value === undefined) delete process.env[OUTRO_FLAG];
   else process.env[OUTRO_FLAG] = value;
-  // Either flag requests verbose_json. Pin this off so "outro flag unset"
-  // actually means the request stays `json`.
+  // Both flags request verbose_json. Pin smart boundaries off so the outro flag
+  // alone decides the request shape — `"0"` yields `json`, unset `verbose_json`.
   delete process.env[SMART_BOUNDARIES_FLAG];
   try {
     return await body();
@@ -1266,7 +1265,7 @@ describe("WhisperServerBackend with the outro gate", () => {
   }
 
   test("drops the invented closer and says so in the backend string", async () => {
-    const { result, sawVerboseRequest } = await transcribeWith("1");
+    const { result, sawVerboseRequest } = await transcribeWith(undefined);
     expect(sawVerboseRequest).toBe(true);
     expect(result.text).toBe(SPOKEN);
     expect(result.backend).toContain("outro");
@@ -1310,7 +1309,7 @@ describe("WhisperServerBackend with the outro gate", () => {
   });
 
   test("with the flag off the text and the request are untouched", async () => {
-    const { result, sawVerboseRequest } = await transcribeWith(undefined);
+    const { result, sawVerboseRequest } = await transcribeWith("0");
     // No `onSegments` means the request stays the shipped `json` shape.
     expect(sawVerboseRequest).toBe(false);
     expect(result.text).toBe(`${SPOKEN} Thank you.`);
