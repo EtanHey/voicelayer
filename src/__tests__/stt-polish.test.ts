@@ -814,6 +814,29 @@ describe("stt-polish", () => {
     }
   });
 
+  it("allows removal of a quoted free-standing dialogue hyphen", async () => {
+    const cleanedText = 'He replied "- Okay."';
+    const polishedText = 'He replied "Okay."';
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
   it("allows removal of a free-standing prose hyphen", async () => {
     const cleanedText = "Keep this clause - and keep the next one.";
     const polishedText = "Keep this clause and keep the next one.";
