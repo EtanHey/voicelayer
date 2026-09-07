@@ -1295,14 +1295,18 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
 
   const removedWords: string[] = [];
   const items = heads.map((head, index) => {
-    if (head.conjunction) removedWords.push(head.conjunction);
+    if (head.conjunction && head.conjunction.toLowerCase() !== "or") {
+      removedWords.push(head.conjunction);
+    }
     if (head.qualifier) removedWords.push(head.qualifier);
     if (!head.keepHead) removedWords.push(...head.head.split(" "));
 
+    const keptConjunction =
+      head.conjunction?.toLowerCase() === "or" ? `${head.conjunction} ` : "";
     const keptHead = head.keepHead
       ? `${head.originalHead}${head.delimiter} `
       : "";
-    return `${index + 1}. ${keptHead}${clauses[index]}`;
+    return `${index + 1}. ${keptConjunction}${keptHead}${clauses[index]}`;
   });
 
   return {

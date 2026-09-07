@@ -99,6 +99,20 @@ describe("spoken enumerators -> deterministic numbered list", () => {
     );
   });
 
+  it("keeps 'or' when the numbered item is an alternative", () => {
+    expect(
+      applyRules(
+        "Choose one path. First, repair the existing installation. Or second, replace it completely.",
+      ),
+    ).toBe(
+      [
+        "Choose 1 path.",
+        "1. Repair the existing installation.",
+        "2. Or replace it completely.",
+      ].join("\n"),
+    );
+  });
+
   // Pending Etan digest: should content heads alone ever start a list?
   it.skip("keeps content-only heads as prose pending Etan's ruling", () => {
     expect(
