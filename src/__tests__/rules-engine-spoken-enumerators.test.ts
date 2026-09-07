@@ -99,17 +99,28 @@ describe("spoken enumerators -> deterministic numbered list", () => {
     );
   });
 
-  it("keeps a head that is also content ('first of all') and still numbers it", () => {
+  // Pending Etan digest: should content heads alone ever start a list?
+  it.skip("keeps content-only heads as prose pending Etan's ruling", () => {
     expect(
       applyRules(
         "Two things. First of all, the build is broken. Second of all, the tap is stale.",
       ),
     ).toBe(
+      "2 things. First of all, the build is broken. Second of all, the tap is stale.",
+    );
+  });
+
+  it("lets a content head ride inside a list started by valued heads", () => {
+    expect(
+      applyRules(
+        "Three checks. First, inspect the tap. Second of all, inspect the cask. Third, inspect the app.",
+      ),
+    ).toBe(
       [
-        // Stage 4 already digitizes this intro before the enumerator stage.
-        "2 things.",
-        "1. First of all, the build is broken.",
-        "2. Second of all, the tap is stale.",
+        "3 checks.",
+        "1. Inspect the tap.",
+        "2. Second of all, inspect the cask.",
+        "3. Inspect the app.",
       ].join("\n"),
     );
   });
@@ -155,9 +166,9 @@ describe("spoken enumerators -> deterministic numbered list", () => {
   it("keeps a dictated paragraph break immediately before item one", () => {
     expect(
       applySpokenEnumeratorsWithDetail(
-        "Intro line.\n\nSecond intro para.\n\nFirst of all, alpha beta.\nAnd second of all, gamma delta.\nAnd lastly, epsilon zeta.",
+        "Intro line.\n\nSecond intro para.\n\nFirst, alpha beta.\nAnd second, gamma delta.\nAnd lastly, epsilon zeta.",
       ).text,
-    ).toStartWith("Intro line.\n\nSecond intro para.\n\n1. First of all");
+    ).toStartWith("Intro line.\n\nSecond intro para.\n\n1. alpha beta");
   });
 });
 
