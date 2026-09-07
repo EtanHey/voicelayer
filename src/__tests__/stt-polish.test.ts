@@ -761,6 +761,22 @@ describe("stt-polish", () => {
         polishedText: "Pass s to skip perms.",
       },
       {
+        cleanedText: "Run `--verbose` after setup.",
+        polishedText: "Run `verbose` after setup.",
+      },
+      {
+        cleanedText: "Run `--dry-run` with `-n` after setup.",
+        polishedText: "Run `dry-run` with `n` after setup.",
+      },
+      {
+        cleanedText: 'Pass "--port" to the daemon.',
+        polishedText: 'Pass "port" to the daemon.',
+      },
+      {
+        cleanedText: "Pass (--force) if needed.",
+        polishedText: "Pass (force) if needed.",
+      },
+      {
         cleanedText: "The fast tier is -bo 1 and accurate is -bo 5.",
         polishedText: "The fast tier is bo 1 and accurate is bo 5.",
       },

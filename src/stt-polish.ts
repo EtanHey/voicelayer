@@ -779,12 +779,14 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
   // AIDEV-NOTE: Only hyphens inside alphanumeric tokens are code punctuation.
   // Free-standing and false-start hyphens are prose; counting them here rejected
   // an otherwise safe polish whenever it rendered or removed that punctuation.
+  // Option prefixes may sit after a delimiter (`--verbose`, "(--port)"), not
+  // only after whitespace; requiring `(?<!\S)` dropped backtick-wrapped flags.
   const internalTokenHyphenCount = countMatches(
     normalized,
     /(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu,
   );
   const optionPrefixHyphenCount = Array.from(
-    normalized.matchAll(/(?<!\S)(-+)(?=[\p{L}\p{N}])/gu),
+    normalized.matchAll(/(?<![\p{L}\p{N}-])(-+)(?=[\p{L}\p{N}])/gu),
   ).reduce((count, match) => count + match[1].length, 0);
   const tokenHyphenCount =
     internalTokenHyphenCount + optionPrefixHyphenCount;
