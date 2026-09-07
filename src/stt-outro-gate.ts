@@ -273,13 +273,13 @@ export interface OutroGateOptions {
   segmentsText?: string;
 }
 
-/** `VOICELAYER_STT_OUTRO_GATE=1` opts in. Anything else stays off. */
+/** AIDEV-NOTE: unset/empty default on; unknown set values stay off for safety. */
 export function outroGateEnabled(env: {
   [key: string]: string | undefined;
   VOICELAYER_STT_OUTRO_GATE?: string;
 }): boolean {
   const raw = env.VOICELAYER_STT_OUTRO_GATE?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "on" || raw === "yes";
+  return raw === undefined || raw === "" || raw === "1" || raw === "true" || raw === "on" || raw === "yes";
 }
 
 /** Lowercase, drop everything that is not a letter, digit or space, collapse runs. */
