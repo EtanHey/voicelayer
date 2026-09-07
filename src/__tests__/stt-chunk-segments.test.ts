@@ -147,6 +147,78 @@ describe("chunk transcript segment stitching", () => {
     expect(merged.segments).toEqual([]);
   });
 
+  test("concatenates a silence seam instead of folding the repeated word", () => {
+    const chunks = [
+      {
+        text: "one two",
+        startSeconds: 0,
+        segments: [segment(" one", 20, 26), segment(" two", 26, 29)],
+      },
+      {
+        text: "two three",
+        startSeconds: 29.5,
+        segments: [segment(" two", 0, 3), segment(" three", 3, 6)],
+      },
+    ];
+
+    const silence = mergeChunkTranscriptsWithSegments(chunks, [
+      "anchor",
+      "silence",
+    ]);
+    expect(silence.text).toBe("one two two three");
+    expect(silence.segments).toEqual([
+      segment("one", 20, 26),
+      segment("two", 26, 29),
+      segment("two", 29.5, 32.5),
+      segment("three", 32.5, 35.5),
+    ]);
+
+    const anchor = mergeChunkTranscriptsWithSegments(chunks, [
+      "anchor",
+      "anchor",
+    ]);
+    expect(anchor.text).toBe("one two three");
+    expect(anchor.segments).toEqual([
+      segment("one", 20, 26),
+      segment("two", 26, 29),
+      segment("three", 32.5, 35.5),
+    ]);
+  });
+
+  test("fails closed when a silence-seam inversion sits outside the 0.5 s window", () => {
+    const chunks = [
+      {
+        text: "one two",
+        startSeconds: 0,
+        // Overruns the chunk end so the next start falls 2.5 s inside this span:
+        // inside the 5 s anchor window, outside the 0.5 s silence window.
+        segments: [segment(" one", 20, 26), segment(" two", 26, 32)],
+      },
+      {
+        text: "three four",
+        startSeconds: 29.5,
+        segments: [segment(" three four", 0, 6)],
+      },
+    ];
+
+    const silence = mergeChunkTranscriptsWithSegments(chunks, [
+      "anchor",
+      "silence",
+    ]);
+    expect(silence.text).toBe("one two three four");
+    expect(silence.segments).toEqual([]);
+
+    const anchor = mergeChunkTranscriptsWithSegments(chunks, [
+      "anchor",
+      "anchor",
+    ]);
+    expect(anchor.text).toBe("one two three four");
+    expect(anchor.segments).toEqual([
+      segment("one", 20, 26),
+      segment("two three four", 26, 35.5),
+    ]);
+  });
+
   test("keeps single-pass segment objects byte-identical", async () => {
     process.env[OUTRO_FLAG] = "1";
     delete process.env[BOUNDARIES_FLAG];
