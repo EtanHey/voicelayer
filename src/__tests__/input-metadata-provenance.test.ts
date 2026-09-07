@@ -60,6 +60,15 @@ const CLI_PROBE: RecordingProvenanceProbe = {
   whisperServerProcess: () => ({ pid: null, startedAt: null }),
 };
 
+const RETRANSCRIBE_MACHINE_PROBE: RecordingProvenanceProbe = {
+  ...CLI_PROBE,
+  machine: () => ({
+    host: "MacBook-Pro.local",
+    chip: null,
+    status: "ready",
+  }),
+};
+
 describe("recording provenance builder", () => {
   it("assembles every provenance field from injected probes", () => {
     const provenance = buildRecordingProvenance({
@@ -370,7 +379,7 @@ describe("older schema recordings stay loadable", () => {
     return dir;
   }
 
-  it("refreshes whisper_backend on retranscription of a provenance recording", () => {
+  it("restamps producer provenance on retranscription without rewriting capture host or chip", () => {
     const archivedPath = archiveVoiceBarRecording({
       audioBytes: createWavBuffer(new Uint8Array([3, 4])),
       transcript: "first pass",
@@ -386,7 +395,7 @@ describe("older schema recordings stay loadable", () => {
     updateArchivedTranscript(join(archivedPath!, "audio.wav"), "second pass", {
       backend: "whisper-server+fallback-timeout->whisper.cpp",
       languageMode: "hebrew",
-      provenanceProbe: CLI_PROBE,
+      provenanceProbe: RETRANSCRIBE_MACHINE_PROBE,
     });
 
     const provenance = (
@@ -402,7 +411,9 @@ describe("older schema recordings stay loadable", () => {
     expect(provenance.whisper_cpp_version).toBe("1.8.0");
     expect(provenance.whisper_server_args).toBeNull();
     expect(provenance.whisper_server_pid).toBeNull();
-    // The injected current-machine probe is retained for deterministic tests.
+    // Capture-time machine facts stay on the archive; only producer fields
+    // describe the machine that ran the second pass.
+    expect(provenance.host).toBe("test-mac");
     expect(provenance.chip).toBe("Apple M1 Pro");
   });
 

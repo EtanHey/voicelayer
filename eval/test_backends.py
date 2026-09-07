@@ -9,7 +9,7 @@ from backends import (
     WisprFlowBackend,
     get_available_backends,
 )
-from eval_stt import backend_matches_filter
+from eval_stt import backend_matches_filter, is_resident_fallback_label
 
 
 class TestWhisperCppBackend:
@@ -228,6 +228,19 @@ class TestVoiceLayerBackend:
         )
 
         assert backend.is_available() is False
+
+
+class TestResidentFallbackLabel:
+    def test_legacy_and_reason_encoded_fallback_chains_are_rejected(self):
+        assert is_resident_fallback_label("whisper-server->whisper.cpp")
+        assert is_resident_fallback_label(
+            "whisper-server+fallback-timeout->whisper.cpp"
+        )
+        assert is_resident_fallback_label(
+            "whisper-server+fallback-empty-response->whisper.cpp"
+        )
+        assert not is_resident_fallback_label("whisper-server")
+        assert not is_resident_fallback_label("whisper-server+chunks")
 
 
 class TestWisprFlowBackend:
