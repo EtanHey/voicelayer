@@ -45,6 +45,16 @@ def backend_matches_filter(backend, backend_filter: str) -> bool:
     return normalized == name or normalized in aliases or normalized in name
 
 
+def is_resident_fallback_label(observed_backend: str) -> bool:
+    """True when a voicelayer-resident sample actually came from a fallback chain.
+
+    Historical labels were `whisper-server->…`. Timeout/empty/error reasons are
+    now encoded on the left (`whisper-server+fallback-timeout->whisper.cpp`), so
+    a `whisper-server->` prefix check would count those as resident successes.
+    """
+    return "->" in observed_backend
+
+
 def run_evaluation(
     backend_filter: str | None = None,
     regenerate: bool = False,
@@ -117,7 +127,7 @@ def run_evaluation(
                 observed_backend = getattr(backend, "last_backend", None) or backend.name
                 if (
                     backend.name == "voicelayer-resident"
-                    and observed_backend.startswith("whisper-server->")
+                    and is_resident_fallback_label(observed_backend)
                 ):
                     raise RuntimeError(
                         f"resident backend fell back to {observed_backend}; "
