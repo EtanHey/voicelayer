@@ -776,6 +776,23 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
   );
   if (codeDotCount > 0) counts.set(".", codeDotCount);
 
+  // AIDEV-NOTE: Protect hyphens inside alphanumeric tokens and compact leading
+  // dash tokens, including flags/negative numbers after punctuation delimiters.
+  // Free-standing and attached false-start hyphens remain prose.
+  const internalTokenHyphenCount = countMatches(
+    normalized,
+    /(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu,
+  );
+  const optionPrefixHyphenCount = Array.from(
+    normalized.matchAll(
+      /(?<![\p{L}\p{N}-])(-+)(?=[\p{L}\p{N}]|\.\d)/gu,
+    ),
+  ).reduce((count, match) => count + match[1].length, 0);
+  const tokenHyphenCount =
+    internalTokenHyphenCount + optionPrefixHyphenCount;
+  if (tokenHyphenCount > 0) counts.set("-", tokenHyphenCount);
+  else counts.delete("-");
+
   return counts;
 }
 
