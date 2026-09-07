@@ -72,6 +72,25 @@ export interface STTResult extends TranscriptionResult {
   segmentsAudioSha256?: string;
 }
 
+function residentFallbackReason(
+  error: unknown,
+): "timeout" | "server-error" {
+  if (
+    (error instanceof Error && error.name === "TimeoutError") ||
+    /(?:timed? out|timeout|operation was aborted)/i.test(String(error))
+  ) {
+    return "timeout";
+  }
+  return "server-error";
+}
+
+function residentBackendWithFallbackReason(
+  backend: string,
+  reason: "timeout" | "empty-response" | "server-error",
+): string {
+  return `whisper-server+fallback-${reason}->${backend}`;
+}
+
 export interface STTTranscribeOptions extends TranscribeAudioOptions {
   promptOverride?: string;
 }
@@ -1688,7 +1707,10 @@ export class WhisperServerBackend implements STTBackend {
         );
         return {
           ...fallback,
-          backend: `${this.name}->${fallback.backend}`,
+          backend: residentBackendWithFallbackReason(
+            fallback.backend,
+            "empty-response",
+          ),
           durationMs: Date.now() - start,
         };
       }
@@ -1774,7 +1796,10 @@ export class WhisperServerBackend implements STTBackend {
       );
       return {
         ...fallback,
-        backend: `${this.name}->${fallback.backend}`,
+        backend: residentBackendWithFallbackReason(
+          fallback.backend,
+          residentFallbackReason(err),
+        ),
         durationMs: Date.now() - start,
       };
     }
@@ -1915,15 +1940,26 @@ export class WhisperServerBackend implements STTBackend {
     let nextSeamKind: ChunkSeamKind = "anchor";
     let witnessed = false;
     let scheduleShiftedByWitness = false;
-    let fullUnpromptedWitness: Promise<string> | null = null;
-    const getFullUnpromptedWitness = (): Promise<string> => {
+    let fullUnpromptedWitness: Promise<string | null> | null = null;
+    const fullWitnessTimeoutCeilingMs = 30_000;
+    const getFullUnpromptedWitness = (): Promise<string | null> => {
       fullUnpromptedWitness ??= this.transcribeResident(
         wavData,
-        buildWhisperServerOptions({
-          ...options,
-          promptOverride: undefined,
-        }),
-      );
+        {
+          ...buildWhisperServerOptions({
+            ...options,
+            promptOverride: undefined,
+          }),
+          timeoutCeilingMs: fullWitnessTimeoutCeilingMs,
+          preserveServerOnTimeout: true,
+        },
+      ).catch((err) => {
+        console.error(
+          `[voicelayer] full-window witness failed (${residentFallbackReason(err)}); ` +
+            "keeping decoded chunks without witness-authorized repair",
+        );
+        return null;
+      });
       return fullUnpromptedWitness;
     };
     // AIDEV-NOTE: the pause map is computed once per recording (Silero over the
@@ -2132,17 +2168,23 @@ export class WhisperServerBackend implements STTBackend {
             agreement = "extended-pair";
           } else {
             const fullWitness = await getFullUnpromptedWitness();
-            const fullSupportsPrompted =
-              promptedCovers && witnessesAgree(fullWitness, promptedWitness);
-            const fullSupportsUnprompted =
-              unpromptedCovers && witnessesAgree(fullWitness, unpromptedWitness);
+            const fullSupportsPrompted = Boolean(
+              fullWitness &&
+                promptedCovers &&
+                witnessesAgree(fullWitness, promptedWitness),
+            );
+            const fullSupportsUnprompted = Boolean(
+              fullWitness &&
+                unpromptedCovers &&
+                witnessesAgree(fullWitness, unpromptedWitness),
+            );
             if (fullSupportsPrompted !== fullSupportsUnprompted) {
               chosenWitness = fullSupportsPrompted
                 ? promptedWitness
                 : unpromptedWitness;
               supportingWitnesses = fullSupportsPrompted
-                ? [fullWitness, promptedWitness]
-                : [fullWitness, unpromptedWitness];
+                ? [fullWitness ?? "", promptedWitness]
+                : [fullWitness ?? "", unpromptedWitness];
               agreement = "full-window-third";
             } else if (fullSupportsPrompted && fullSupportsUnprompted) {
               chosenWitness = chooseWordPreservingWitness(
@@ -2150,7 +2192,7 @@ export class WhisperServerBackend implements STTBackend {
                 unpromptedWitness,
               );
               supportingWitnesses = [
-                fullWitness,
+                fullWitness!,
                 promptedWitness,
                 unpromptedWitness,
               ];

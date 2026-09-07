@@ -321,6 +321,11 @@ if [ "$VERIFY_MODE" = "corpus" ]; then
 
   export VOICELAYER_SOCKET_PATH="$corpus_work_dir/voicebar.sock"
   export VOICELAYER_MCP_SOCKET_PATH="$corpus_work_dir/mcp.sock"
+  voicebar_socket_bytes="$(LC_ALL=C printf '%s' "$VOICELAYER_SOCKET_PATH" | wc -c | tr -d '[:space:]')"
+  if [ "$voicebar_socket_bytes" -gt 100 ]; then
+    printf '[voicelayer-verify] isolated VoiceBar socket path is %s bytes (macOS cap: 104); retry with TMPDIR="$HOME/.vlv".\n' "$voicebar_socket_bytes" >&2
+    exit 1
+  fi
   # AIDEV-NOTE: R-014. Isolating the sockets was never enough: the corpus daemon
   # speaks, and TTS output lands in the ring buffer at /tmp/voicelayer-history*,
   # which is the LIVE replay buffer. Verified on 2026-09-06 — a --corpus run

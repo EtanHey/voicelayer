@@ -163,6 +163,7 @@ interface WhisperServerTestHooks {
   isPidAlive?: (pid: number) => boolean;
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
+  inferenceTimeoutMs?: (wavData: Uint8Array) => number;
 }
 
 let testHooks: WhisperServerTestHooks = {};
@@ -1030,12 +1031,103 @@ configureWhisperPerformanceRestart(stopServer);
  * @param wavData - Complete WAV file as Uint8Array (with header)
  * @returns Transcription text (may be empty for silence)
  */
-/** Inference timeout: 8s per request (generous for 3s audio windows). */
-const INFERENCE_TIMEOUT = 8000;
+/** Short requests still fail fast at the shipped eight-second floor. */
+const MIN_INFERENCE_TIMEOUT_MS = 8_000;
+/**
+ * Cold-start allowance before this process has measured the resident host.
+ * A quarter of real time gives the 30-35s chunk requests 8-8.75s while a
+ * full-recording witness receives time proportional to the audio it carries.
+ */
+const COLD_INFERENCE_RTF_MARGIN = 0.25;
+const OBSERVED_RTF_MULTIPLIER = 2.5;
+const MAX_INFERENCE_RTF_MARGIN = 1;
+const MAX_INFERENCE_TIMEOUT_MS = 120_000;
+const MAX_RECENT_INFERENCE_SAMPLES = 8;
+const recentInferenceRtfs: number[] = [];
+
+function wavDurationSeconds(wavData: Uint8Array): number | null {
+  if (wavData.byteLength < 44) return null;
+  const view = new DataView(
+    wavData.buffer,
+    wavData.byteOffset,
+    wavData.byteLength,
+  );
+  const ascii = (offset: number, length: number): string =>
+    String.fromCharCode(...wavData.subarray(offset, offset + length));
+  if (ascii(0, 4) !== "RIFF" || ascii(8, 4) !== "WAVE") return null;
+
+  let byteRate = 0;
+  let dataBytes = 0;
+  for (let offset = 12; offset + 8 <= wavData.byteLength; ) {
+    const id = ascii(offset, 4);
+    const size = view.getUint32(offset + 4, true);
+    const dataOffset = offset + 8;
+    if (dataOffset + size > wavData.byteLength) return null;
+    if (id === "fmt " && size >= 12) {
+      byteRate = view.getUint32(dataOffset + 8, true);
+    } else if (id === "data") {
+      dataBytes = size;
+    }
+    offset = dataOffset + size + (size % 2);
+  }
+  if (byteRate <= 0 || dataBytes <= 0) return null;
+  return dataBytes / byteRate;
+}
+
+/**
+ * Bound one inference from its own audio duration and this host's recent
+ * successful decode speed. The 1x-real-time ceiling still cuts off a hung
+ * server; the eight-second floor preserves fast failure for normal chunks.
+ */
+export function inferenceTimeoutMsForWav(
+  wavData: Uint8Array,
+  observedRtfs: readonly number[] = recentInferenceRtfs,
+): number {
+  const durationSeconds = wavDurationSeconds(wavData);
+  if (!durationSeconds) return MIN_INFERENCE_TIMEOUT_MS;
+  const validRtfs = observedRtfs.filter(
+    (rtf) => Number.isFinite(rtf) && rtf > 0,
+  );
+  const measuredMargin =
+    validRtfs.length > 0
+      ? Math.max(...validRtfs) * OBSERVED_RTF_MULTIPLIER
+      : COLD_INFERENCE_RTF_MARGIN;
+  const rtfMargin = Math.max(
+    COLD_INFERENCE_RTF_MARGIN,
+    Math.min(MAX_INFERENCE_RTF_MARGIN, measuredMargin),
+  );
+  return Math.min(
+    MAX_INFERENCE_TIMEOUT_MS,
+    Math.max(
+      MIN_INFERENCE_TIMEOUT_MS,
+      Math.ceil(durationSeconds * rtfMargin * 1_000),
+    ),
+  );
+}
+
+function isInferenceTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === "TimeoutError";
+}
+
+function recordSuccessfulInferenceRtf(
+  wavData: Uint8Array,
+  elapsedMs: number,
+): void {
+  const durationSeconds = wavDurationSeconds(wavData);
+  if (!durationSeconds || elapsedMs <= 0) return;
+  recentInferenceRtfs.push(elapsedMs / 1_000 / durationSeconds);
+  if (recentInferenceRtfs.length > MAX_RECENT_INFERENCE_SAMPLES) {
+    recentInferenceRtfs.shift();
+  }
+}
 
 export interface WhisperServerTranscribeOptions {
   language?: string;
   prompt?: string;
+  /** Optional request-specific cap, used by advisory work inside a larger deadline. */
+  timeoutCeilingMs?: number;
+  /** A timed-out advisory request must not retire a server healthy enough for primary work. */
+  preserveServerOnTimeout?: boolean;
   /**
    * Request segment timestamps for smart boundaries or the outro gate. This
    * switches the request to `response_format=verbose_json`; the default-on
@@ -1120,7 +1212,23 @@ async function transcribeViaServerAttempt(
   }
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), INFERENCE_TIMEOUT);
+  const scaledTimeoutMs =
+    testHooks.inferenceTimeoutMs?.(wavData) ??
+    inferenceTimeoutMsForWav(wavData);
+  const timeoutMs = Math.min(
+    scaledTimeoutMs,
+    options?.timeoutCeilingMs && options.timeoutCeilingMs > 0
+      ? options.timeoutCeilingMs
+      : scaledTimeoutMs,
+  );
+  const attemptStartedAt = Date.now();
+  const timer = setTimeout(() => {
+    const error = new Error(
+      `whisper-server inference timeout after ${timeoutMs}ms`,
+    );
+    error.name = "TimeoutError";
+    controller.abort(error);
+  }, timeoutMs);
   try {
     let resp: Response;
     try {
@@ -1130,6 +1238,20 @@ async function transcribeViaServerAttempt(
         signal: controller.signal,
       });
     } catch (err) {
+      // The request exceeded its audio/host-specific bound. That says nothing
+      // about server health: killing a process that just served adjacent
+      // chunks turns one oversized request into a needless model restart.
+      if (controller.signal.aborted || isInferenceTimeout(err)) {
+        if (options?.preserveServerOnTimeout) {
+          throw controller.signal.reason ?? err;
+        }
+        if (allowRetry) {
+          await markServerUnhealthy();
+          const retryPort = await ensureServer(port);
+          return transcribeViaServerAttempt(wavData, retryPort, false, options);
+        }
+        throw controller.signal.reason ?? err;
+      }
       if (allowRetry) {
         await markServerUnhealthy();
         const retryPort = await ensureServer(port);
@@ -1156,6 +1278,7 @@ async function transcribeViaServerAttempt(
     // Segments are advisory: a response without them still transcribes, the
     // boundary stage just gets nothing to judge and leaves the text alone.
     options?.onSegments?.(parseVerboseSegments(result));
+    recordSuccessfulInferenceRtf(wavData, Date.now() - attemptStartedAt);
     return normalizeTranscriptionText(result.text || "");
   } finally {
     clearTimeout(timer);
@@ -1179,6 +1302,7 @@ export function __resetWhisperServerStateForTests(
 ): void {
   serverState = state;
   launchPromises.clear();
+  recentInferenceRtfs.length = 0;
 }
 
 /** Check if whisper-server binary is available (for feature detection). */
