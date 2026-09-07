@@ -2962,6 +2962,8 @@ export async function waitForInput(
     return null;
   }
 
+  let detectedSpeechForSTT =
+    !pushToEnd && captureState.vadSpeechDetected === true;
   if (pushToEnd) {
     try {
       const pushToEndSpeechGate = await evaluatePushToEndSpeechGate(
@@ -2978,6 +2980,7 @@ export async function waitForInput(
         broadcast({ type: "state", state: "idle", source: "recording" });
         return null;
       }
+      detectedSpeechForSTT = true;
     } catch (err) {
       if (options.signal?.aborted) throw err;
       console.error(
@@ -3062,7 +3065,9 @@ export async function waitForInput(
         polishSurfaceForWaitOptions(options),
       );
     } else {
-      const result = await backend.transcribe(wavPath);
+      const result = await backend.transcribe(wavPath, {
+        hasSpeech: detectedSpeechForSTT,
+      });
       throwIfWaitForInputAborted(options.signal);
       // Built BEFORE the finalize call, and abortable: the pause map is a
       // whole-file VAD pass, and a cancelled voice_ask must settle now rather

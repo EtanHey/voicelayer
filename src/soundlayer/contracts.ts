@@ -13,6 +13,8 @@ export interface TranscriptionResult {
 
 export interface TranscribeAudioOptions {
   promptOverride?: string;
+  /** True only when capture-time speech detection positively found speech. */
+  hasSpeech?: boolean;
 }
 
 export interface SpeechToTextBackend {

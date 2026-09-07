@@ -76,6 +76,17 @@ export interface STTTranscribeOptions extends TranscribeAudioOptions {
   promptOverride?: string;
 }
 
+export const STT_DICTATION_SEED_PROMPT =
+  "The words colon, comma, period, new line, new paragraph, question mark, open paren, and close paren are clear.";
+
+export function sttSeedPromptEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return ["1", "true", "on", "yes"].includes(
+    env.VOICELAYER_STT_SEED_PROMPT?.trim().toLowerCase() ?? "",
+  );
+}
+
 export interface STTBackend extends SpeechToTextBackend {
   name: string;
   isAvailable(): Promise<boolean>;
@@ -1669,7 +1680,7 @@ export class WhisperServerBackend implements STTBackend {
       // Either flag needs `verbose_json`; with both off the request stays
       // byte-for-byte the shipped `json` one.
       const text = await this.transcribeResident(wavData, {
-        ...buildWhisperServerOptions(options),
+        ...buildSinglePassWhisperServerOptions(options),
         ...(smartBoundaries || outroGate
           ? {
               onSegments: (found: TranscriptSegment[]) => {
@@ -2437,6 +2448,20 @@ export function buildWhisperServerOptions(
     result.prompt = prompt;
   }
   return result.language || result.prompt ? result : undefined;
+}
+
+export function buildSinglePassWhisperServerOptions(
+  options?: STTTranscribeOptions,
+): WhisperServerTranscribeOptions | undefined {
+  const autoMode = getLanguageConfig(getLanguageModeFromEnv()).mode === "auto";
+  const promptOverride =
+    !options?.promptOverride &&
+    options?.hasSpeech === true &&
+    autoMode &&
+    sttSeedPromptEnabled()
+      ? STT_DICTATION_SEED_PROMPT
+      : options?.promptOverride;
+  return buildWhisperServerOptions({ ...options, promptOverride });
 }
 
 // --- Wispr Flow Backend ---
