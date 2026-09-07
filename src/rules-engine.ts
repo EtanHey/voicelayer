@@ -164,19 +164,17 @@ function removeFillers(text: string, aggressive: boolean): string {
 // clip 2026-09-05T11-46-00-495Z-81090f01), and "some space to think" lost the
 // word outright because "space" is the one command that deletes a word.
 // AGENTS.md law: a fix that loses Etan's words is worse than the bug. So the
-// map is split — ALWAYS entries are multi-word phrases or words nobody uses as
-// a noun mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours
-// prove the speaker dictated a symbol. See isSpokenAsNoun below.
+// map is split — ALWAYS entries are phrases or words nobody uses as a noun
+// mid-sentence; AMBIGUOUS entries stay verbatim unless their neighbours prove
+// the speaker dictated a symbol. That includes multi-word mark names such as
+// "question mark": they are commands in "is it done question mark", but nouns
+// in "that was a question mark". See the stricter mark-name evidence in
+// isSpokenAsNoun below.
 
 /** Never ordinary prose: multi-word phrases, or single words only ever dictated as symbols. */
 const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
   [/\bperiod\b/gi, "."],
-  [/\bfull stop\b/gi, "."],
   [/\bcomma\b/gi, ","],
-  [/\bquestionmark\b/gi, "?"],
-  [/\bquestion mark\b/gi, "?"],
-  [/\bexclamation mark\b/gi, "!"],
-  [/\bexclamation point\b/gi, "!"],
   [/\bopen paren\b/gi, "("],
   [/\bclose paren\b/gi, ")"],
   [/\bopen bracket\b/gi, "["],
@@ -214,6 +212,11 @@ const ALWAYS_PUNCTUATION_MAP: [RegExp, string][] = [
  * Etan effectively never dictates it as a command, so the word stays verbatim.
  */
 const AMBIGUOUS_PUNCTUATION_MAP: [RegExp, string][] = [
+  [/\bfull stop\b/gi, "."],
+  [/\bquestionmark\b/gi, "?"],
+  [/\bquestion mark\b/gi, "?"],
+  [/\bexclamation mark\b/gi, "!"],
+  [/\bexclamation point\b/gi, "!"],
   [/\bcolon\b/gi, ":"],
   [/\bdash\b/gi, "-"],
   [/\barrow\b/gi, "=>"],
@@ -597,6 +600,21 @@ function isMetaMention(text: string, start: number, end: number): boolean {
   return inList && hasAdjacentCommandInList(text, start, end);
 }
 
+/** Mark-name commands that can also be the object of ordinary prose. */
+const MARK_PHRASE_COMMANDS = new Set([
+  "full stop", "questionmark", "question mark", "exclamation mark",
+  "exclamation point",
+]);
+
+// Mark-name commands often sit at a sentence boundary, where the word before
+// or after belongs to the sentence itself: "digest this question mark" and
+// "good faith question mark is ..." are real corpus commands. The broader
+// determiner/follower sets therefore overfit this subset. An immediately
+// preceding article is the corpus-backed noun evidence: "a question mark",
+// "the exclamation mark". In the full shadow snapshot this rescues only the
+// five noun uses and changes zero command uses.
+const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
+
 /**
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
@@ -605,6 +623,10 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const before = wordBefore(text, start);
   const after = wordAfter(text, end);
   const command = text.slice(start, end).trim().toLowerCase();
+
+  if (MARK_PHRASE_COMMANDS.has(command)) {
+    return MARK_NOUN_ARTICLES.has(before);
+  }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"
   // is the left operand, not a determiner shielding a noun.

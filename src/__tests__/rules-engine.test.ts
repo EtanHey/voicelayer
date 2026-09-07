@@ -20,6 +20,9 @@ import {
   type RulesConfig,
 } from "../rules-engine";
 
+const wordCount = (text: string): number =>
+  text.match(/[\p{L}\p{N}][\p{L}\p{N}'’]*/gu)?.length ?? 0;
+
 describe("rules-engine", () => {
   // --- Stage 1: Filler removal ---
   describe("filler removal", () => {
@@ -92,6 +95,61 @@ describe("rules-engine", () => {
 
   // --- Stage 2: Spoken punctuation ---
   describe("spoken punctuation", () => {
+    it("keeps multi-word mark phrases when spoken as nouns", () => {
+      const cases: Array<[string, string]> = [
+        [
+          "That was supposed to be a question mark.",
+          "That was supposed to be a question mark.",
+        ],
+        [
+          "got a question mark at the end",
+          "Got a question mark at the end",
+        ],
+        [
+          "the exclamation mark was wrong",
+          "The exclamation mark was wrong",
+        ],
+      ];
+
+      for (const [raw, expected] of cases) {
+        const cleaned = applyRules(raw);
+        expect(cleaned, raw).toBe(expected);
+        expect(wordCount(cleaned), raw).toBe(wordCount(raw));
+      }
+    });
+
+    it("still converts multi-word mark phrases when spoken as commands", () => {
+      const cases: Array<[string, string, number]> = [
+        ["is it done question mark", "Is it done?", 2],
+        ["okay question mark", "Okay?", 2],
+        [
+          "can we proceed in good faith question mark is that clear",
+          "Can we proceed in good faith? Is that clear",
+          2,
+        ],
+        [
+          "quote digest this question mark unquote",
+          "Quote digest this? Unquote",
+          2,
+        ],
+      ];
+
+      for (const [raw, expected, commandWordCount] of cases) {
+        const cleaned = applyRules(raw);
+        expect(cleaned, raw).toBe(expected);
+        expect(wordCount(cleaned), raw).toBe(
+          wordCount(raw) - commandWordCount,
+        );
+      }
+    });
+
+    it("keeps the v2.2.12 comma-wrapped command shape", () => {
+      const raw = "Update, colon, Q3, new line, hey, Sarah, comma";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Update: Q3\nHey, Sarah,");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 4);
+    });
+
     it("converts period/full stop", () => {
       expect(applyRules("hello world period")).toBe("Hello world.");
     });
