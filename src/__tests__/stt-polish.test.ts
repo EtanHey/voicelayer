@@ -720,9 +720,9 @@ describe("stt-polish", () => {
     });
   });
 
-  it("allows explicit self-correction cleanup in dictation finalizer mode", async () => {
+  it("keeps an explicit self-correction in dictation finalizer mode", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do Claude deep research.",
+      text: "Okay, let's do Gemini deep, well no, Claude deep research.",
     }));
 
     const cleanedText = "Okay, let's do Gemini deep, well no, Claude deep research.";
@@ -737,19 +737,19 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do Claude deep research.",
+      text: cleanedText,
       status: "applied",
-      changed: true,
+      changed: false,
     });
   });
 
-  it("allows explicit self-correction cleanup when Whisper punctuates the cue", async () => {
+  it("removes a filler while keeping a self-correction that Whisper punctuates", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do Claude Deep Research.",
+      text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
     }));
 
     const cleanedText =
-      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.";
+      "Okay, um, let's do Gemini Deep, well, no, Claude Deep Research.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -761,7 +761,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do Claude Deep Research.",
+      text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
       status: "applied",
       changed: true,
     });
@@ -771,7 +771,8 @@ describe("stt-polish", () => {
     const polished =
       "I don't see, oh okay, now I see: codex lead austerity — should that one " +
       "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
-      "do you need me to make a codex effort ultra for you or not? Shit, look at this bs bs.";
+      "do you need me to make you, or sorry, to make a codex effort ultra for you or not? " +
+      "Shit, look at this bs bs.";
     server = createMockPolishServer(() => ({ text: polished }));
 
     const cleanedText =
@@ -795,15 +796,15 @@ describe("stt-polish", () => {
     });
   });
 
-  it("allows real correction-cue collapse that removes the rejected phrase and its no/not scaffolding", async () => {
+  it("allows filler and punctuation polish that keeps the rejected phrase and its no/not scaffolding", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do a Gemini deep research.",
+      text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
     }));
 
     const result = await polishTranscriptionText({
-      rawText: "okay let's do a Claude well no not Claude let's do a Gemini deep research",
+      rawText: "okay um let's do a Claude well no not Claude let's do a Gemini deep research",
       cleanedText:
-        "Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
+        "Okay um let's do a Claude well no not Claude let's do a Gemini deep research.",
       env: {
         QA_VOICE_STT_POLISH: "on",
         QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
@@ -812,7 +813,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do a Gemini deep research.",
+      text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
       status: "applied",
       changed: true,
     });
@@ -843,7 +844,7 @@ describe("stt-polish", () => {
     });
   });
 
-  it("collapses a real self-correction cue even when the polish model returns the candidate unchanged", async () => {
+  it("documents the parked deterministic collapse when polish returns the candidate unchanged", async () => {
     server = createMockPolishServer((request) => ({
       text: String(request.cleaned_text),
     }));
@@ -1095,7 +1096,7 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("third, I'm very frustrated");
       expect(messages[0].content).toContain("not Claude let's do a Gemini");
       expect(messages[0].content).toContain("Claude deep, well, Gemini");
-      expect(messages[0].content).toContain("did X");
+      expect(messages[0].content).toContain("did X ... no/actually Y");
       expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
@@ -2173,6 +2174,8 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     const text = prompt();
     expect(text).toContain("Format ANY ordinal sequence into numbered markdown lists.");
     expect(text).toContain("ANY ordinal sequence");
+    expect(text).toContain("1. So, I came back home right now.");
+    expect(text).toContain("2. And then, you've been paused.");
   });
 
   it("keeps the KEEP rule in both retry variants", () => {
