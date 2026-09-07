@@ -1,11 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import {
   evaluateDeployFreshness,
   formatDeployReport,
   type DeployProbe,
 } from "../deploy-check";
+import { readRepoGitCommit, readRepoMetadata } from "../deploy-check-cli";
 
 // Post-merge deploy freshness gate (Track 5 #1 — "deliver-the-artifact post-merge
 // deploy checklist"). The recurring regression: code merges to main but the
@@ -29,11 +30,107 @@ const FRESH: DeployProbe = {
   daemonChildStartedAtMs: 3_000,
 };
 
+function initRepo(root: string, packageName: string, message: string): string {
+  mkdirSync(root, { recursive: true });
+  expect(Bun.spawnSync(["git", "init", root]).exitCode).toBe(0);
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: packageName }));
+  expect(Bun.spawnSync(["git", "-C", root, "add", "package.json"]).exitCode).toBe(0);
+  expect(
+    Bun.spawnSync([
+      "git", "-C", root,
+      "-c", "user.name=VoiceLayer Test",
+      "-c", "user.email=voicelayer-test@example.invalid",
+      "commit", "-m", message,
+    ]).exitCode,
+  ).toBe(0);
+  return Bun.spawnSync(["git", "-C", root, "rev-parse", "HEAD"])
+    .stdout.toString().trim();
+}
+
+describe("readRepoGitCommit", () => {
+  it("returns null when the package directory is nested under an unrelated git repository", () => {
+    const testRoot = process.env.VOICELAYER_STATE_DIR;
+    expect(testRoot).toBeTruthy();
+    if (!testRoot) throw new Error("test preload did not set VOICELAYER_STATE_DIR");
+
+    const unrelatedRoot = join(testRoot, "unrelated-repo");
+    const packageRoot = join(unrelatedRoot, "cellar", "voicelayer", "libexec");
+    mkdirSync(packageRoot, { recursive: true });
+    initRepo(unrelatedRoot, "homebrew", "unrelated parent");
+
+    expect(readRepoGitCommit(packageRoot, undefined)).toBeNull();
+  });
+
+  it("returns HEAD when the package root is the VoiceLayer checkout", () => {
+    const checkoutRoot = join(import.meta.dir, "..", "..");
+    const expected = Bun.spawnSync([
+      "git",
+      "-C",
+      checkoutRoot,
+      "rev-parse",
+      "HEAD",
+    ]).stdout
+      .toString()
+      .trim();
+
+    expect(readRepoGitCommit(checkoutRoot, undefined)).toBe(expected);
+  });
+
+  it("uses a valid VOICELAYER_REPO_ROOT override before the package root", () => {
+    const checkoutRoot = join(import.meta.dir, "..", "..");
+    const testRoot = process.env.VOICELAYER_STATE_DIR;
+    expect(testRoot).toBeTruthy();
+    if (!testRoot) throw new Error("test preload did not set VOICELAYER_STATE_DIR");
+    const packageRoot = join(testRoot, "fallback-checkout");
+    const packageRootHead = initRepo(
+      packageRoot,
+      "voicelayer-mcp",
+      "fallback checkout",
+    );
+    const expected = Bun.spawnSync([
+      "git",
+      "-C",
+      checkoutRoot,
+      "rev-parse",
+      "HEAD",
+    ]).stdout
+      .toString()
+      .trim();
+    const checkoutVersion = (
+      JSON.parse(readFileSync(join(checkoutRoot, "package.json"), "utf8")) as {
+        version: string;
+      }
+    ).version;
+
+    expect(packageRootHead).not.toBe(expected);
+    expect(readRepoGitCommit(packageRoot, checkoutRoot)).toBe(expected);
+    expect(readRepoMetadata(packageRoot, checkoutRoot)).toEqual({
+      version: checkoutVersion,
+      gitCommit: expected,
+    });
+  });
+});
+
 describe("evaluateDeployFreshness — GREEN (genuinely deployed)", () => {
   it("passes when versions match and the stack is live", () => {
     const r = evaluateDeployFreshness(FRESH);
     expect(r.ok).toBe(true);
     expect(r.checks.every((c) => c.status === "pass")).toBe(true);
+  });
+
+  it("skips checkout comparison while showing the installed commit when no checkout exists", () => {
+    const installedGitCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const r = evaluateDeployFreshness({
+      ...FRESH,
+      repoGitCommit: null,
+      installedGitCommit,
+    });
+
+    expect(r.ok).toBe(true);
+    const c = r.checks.find((check) => check.name === "app-git-commit");
+    expect(c?.status).toBe("skip");
+    expect(c?.detail).toContain("n/a: no checkout on this machine");
+    expect(c?.detail).toContain(installedGitCommit);
   });
 });
 
@@ -299,5 +396,18 @@ describe("deploy-check CLI source contract", () => {
     expect(cliSource).toContain('"HEAD"');
     expect(cliSource).toContain("installedGitCommit");
     expect(cliSource).toContain("installedBuildTimeUTC");
+  });
+
+  it("accepts only an explicit VoiceLayer checkout root and never a parent repository", () => {
+    const cliSource = readFileSync(
+      join(import.meta.dir, "..", "deploy-check-cli.ts"),
+      "utf8",
+    );
+
+    expect(cliSource).toContain("VOICELAYER_REPO_ROOT");
+    expect(cliSource).toContain('"--show-toplevel"');
+    expect(cliSource).toContain("realpathSync");
+    expect(cliSource).toContain('name === "voicelayer-mcp"');
+    expect(cliSource).toContain("if (import.meta.main)");
   });
 });
