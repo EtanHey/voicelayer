@@ -720,9 +720,9 @@ describe("stt-polish", () => {
     });
   });
 
-  it("allows explicit self-correction cleanup in dictation finalizer mode", async () => {
+  it("keeps an explicit self-correction in dictation finalizer mode", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do Claude deep research.",
+      text: "Okay, let's do Gemini deep, well no, Claude deep research.",
     }));
 
     const cleanedText = "Okay, let's do Gemini deep, well no, Claude deep research.";
@@ -737,19 +737,19 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do Claude deep research.",
+      text: cleanedText,
       status: "applied",
-      changed: true,
+      changed: false,
     });
   });
 
-  it("allows explicit self-correction cleanup when Whisper punctuates the cue", async () => {
+  it("removes a filler while keeping a self-correction that Whisper punctuates", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do Claude Deep Research.",
+      text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
     }));
 
     const cleanedText =
-      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.";
+      "Okay, um, let's do Gemini Deep, well, no, Claude Deep Research.";
     const result = await polishTranscriptionText({
       rawText: cleanedText,
       cleanedText,
@@ -761,7 +761,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do Claude Deep Research.",
+      text: "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
       status: "applied",
       changed: true,
     });
@@ -771,7 +771,8 @@ describe("stt-polish", () => {
     const polished =
       "I don't see, oh okay, now I see: codex lead austerity — should that one " +
       "be pushed to an ultra-ultra effort? Maybe also, I don't think you answered: " +
-      "do you need me to make a codex effort ultra for you or not? Shit, look at this bs bs.";
+      "do you need me to make you, or sorry, to make a codex effort ultra for you or not? " +
+      "Shit, look at this bs bs.";
     server = createMockPolishServer(() => ({ text: polished }));
 
     const cleanedText =
@@ -795,15 +796,15 @@ describe("stt-polish", () => {
     });
   });
 
-  it("allows real correction-cue collapse that removes the rejected phrase and its no/not scaffolding", async () => {
+  it("allows filler and punctuation polish that keeps the rejected phrase and its no/not scaffolding", async () => {
     server = createMockPolishServer(() => ({
-      text: "Okay, let's do a Gemini deep research.",
+      text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
     }));
 
     const result = await polishTranscriptionText({
-      rawText: "okay let's do a Claude well no not Claude let's do a Gemini deep research",
+      rawText: "okay um let's do a Claude well no not Claude let's do a Gemini deep research",
       cleanedText:
-        "Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
+        "Okay um let's do a Claude well no not Claude let's do a Gemini deep research.",
       env: {
         QA_VOICE_STT_POLISH: "on",
         QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
@@ -812,7 +813,7 @@ describe("stt-polish", () => {
     });
 
     expect(result).toMatchObject({
-      text: "Okay, let's do a Gemini deep research.",
+      text: "Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
       status: "applied",
       changed: true,
     });
@@ -843,26 +844,31 @@ describe("stt-polish", () => {
     });
   });
 
-  it("collapses a real self-correction cue even when the polish model returns the candidate unchanged", async () => {
+  it("keeps self-corrections when polish returns the candidate unchanged", async () => {
     server = createMockPolishServer((request) => ({
       text: String(request.cleaned_text),
     }));
 
-    const result = await polishTranscriptionText({
-      rawText: "Okay, let's do a clawed deep, well, Gemini deep research.",
-      cleanedText: "Okay, let's do a Claude deep, well, Gemini deep research.",
-      env: {
-        QA_VOICE_STT_POLISH: "on",
-        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
-        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
-      },
-    });
+    for (const cleanedText of [
+      "Okay, let's do a Claude deep, well, Gemini deep research.",
+      "Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
+    ]) {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
 
-    expect(result).toMatchObject({
-      text: "Okay, let's do Gemini deep research.",
-      status: "applied",
-      changed: true,
-    });
+      expect(result).toMatchObject({
+        text: cleanedText,
+        status: "applied",
+        changed: false,
+      });
+    }
   });
 
   it("rejects self-correction rewrites that introduce new content even with explicit cues", async () => {
@@ -1095,7 +1101,7 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("third, I'm very frustrated");
       expect(messages[0].content).toContain("not Claude let's do a Gemini");
       expect(messages[0].content).toContain("Claude deep, well, Gemini");
-      expect(messages[0].content).toContain("did X");
+      expect(messages[0].content).toContain("did X ... no/actually Y");
       expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
@@ -2108,6 +2114,84 @@ describe("stt-polish", () => {
       );
     } finally {
       server.stop(true);
+    }
+  });
+});
+
+describe("stt-polish system prompt — false starts and retractions are KEPT", () => {
+  // Etan, 2026-09-06: "raw-ish, I guess. So my thinking process stays."
+  // AGENTS.md: "When I retract a word mid-sentence and say it again differently,
+  // hand over the full truth — retraction and all."
+  const prompt = () => sttPolish.buildPolishSystemPrompt();
+
+  it("states an explicit KEEP rule for false starts and self-corrections", () => {
+    const text = prompt();
+    expect(text).toContain("false start");
+    expect(text).toContain("self-correction");
+    expect(text.toLowerCase()).toContain("keep");
+    expect(text).toContain(
+      "Keep every clause the speaker said, including false starts, retractions, and self-corrections",
+    );
+  });
+
+  it("no longer permits deleting clauses superseded by a self-correction", () => {
+    const text = prompt();
+    expect(text).not.toContain("superseded by a self-correction");
+    expect(text).not.toContain("drop only the immediately superseded phrase");
+    expect(text).not.toContain("Collapse ANY mid-sentence self-correction");
+    expect(text).not.toContain("discarded correction scaffolding");
+  });
+
+  it("no longer carries collapse examples that delete the retracted phrase", () => {
+    const text = prompt();
+    expect(text).not.toContain("Output: Okay, let's do Claude deep research.");
+    expect(text).not.toContain(
+      "Output: Okay, so I just went to the supermarket and I now came back.",
+    );
+    expect(text).not.toContain("Output: I started the test suite and then came back.");
+  });
+
+  it("carries a worked example that preserves the retraction verbatim", () => {
+    const text = prompt();
+    expect(text).toContain(
+      "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
+    );
+    expect(text).toContain(
+      "Output: Okay, let's do Gemini deep, well no, Claude deep research.",
+    );
+  });
+
+  it("still allows filler removal and still restricts polish to formatting", () => {
+    const text = prompt();
+    // Etan: "keep filtering" um/uh — fillers remain explicitly removable.
+    expect(text).toContain(
+      "Beyond standalone filler sounds (um, uh, er, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words.",
+    );
+    expect(text).toContain("Keep the English discourse word ah");
+    expect(text).toContain(
+      "preserve all input content and spoken order",
+    );
+    expect(text).toContain(
+      "required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting",
+    );
+    expect(text).toContain(
+      "Never summarize, translate, add content, change tone, or invent code identifiers.",
+    );
+  });
+
+  it("keeps the ordinal → numbered list rule untouched", () => {
+    const text = prompt();
+    expect(text).toContain("Format ANY ordinal sequence into numbered markdown lists.");
+    expect(text).toContain("ANY ordinal sequence");
+  });
+
+  it("keeps the KEEP rule in both retry variants", () => {
+    for (const reason of ["noop", "rejected"] as const) {
+      const text = sttPolish.buildPolishSystemPrompt(reason);
+      expect(text).toContain(
+        "Keep every clause the speaker said, including false starts, retractions, and self-corrections",
+      );
+      expect(text).not.toContain("superseded by a self-correction");
     }
   });
 });

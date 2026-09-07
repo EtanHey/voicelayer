@@ -265,18 +265,23 @@ function getSTTPolishLogPath(env: STTPolishEnv = process.env): string {
 
 type STTPolishRetryReason = "noop" | "rejected";
 
-function buildPolishSystemPrompt(retryReason?: STTPolishRetryReason): string {
+// AIDEV-NOTE: exported for the lane-P2 prompt coverage in
+// src/__tests__/stt-polish.test.ts ("false starts and retractions are KEPT").
+// See docs.local/recon-2026-09-06/briefs/lane-p2-codex-2026-09-07.md.
+export function buildPolishSystemPrompt(
+  retryReason?: STTPolishRetryReason,
+): string {
   const lines = [
     "You are a dictation finalizer for local VoiceLayer voice dictation.",
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
-    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
+    "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, confirmed chunk-boundary duplicates, and Hebrew/English spacing. A confirmed chunk-boundary duplicate is a transcription artifact, not an intentional word the speaker repeated.",
     "Be decisive. When one of the dictation-finalizer patterns below appears, apply it instead of leaving the text unchanged.",
     "Format ANY ordinal sequence into numbered markdown lists. Ordinal cues include first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even with conversational framing such as so, okay, and then, or third without 'of all'.",
-    "Collapse ANY mid-sentence self-correction when the speaker replaces an earlier phrase with a later phrase. Explicit cues include well no, well, no, no wait, sorry, I mean, actually, rather, or scratch that. Also collapse semantic correction patterns such as 'did X ... no/actually Y', 'went to X ... no ... went to Y', or longer clause replacements. Keep the corrected later phrase and drop only the immediately superseded phrase.",
+    "Keep every clause the speaker said, including false starts, retractions, and self-corrections. When the speaker replaces an earlier phrase with a later one (cues: well no, well, no, no wait, sorry, I mean, actually, rather, scratch that, let me start over), keep BOTH the abandoned phrase and its replacement, in the order spoken. The thinking process is the content. Never collapse, merge, shorten, or delete a retracted phrase, and never resolve a 'did X ... no/actually Y' pattern down to Y.",
     "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
-    "Remove low-value disfluencies only when they are clearly process speech or discarded correction scaffolding, not semantic content.",
+    "Beyond standalone filler sounds (um, uh, er, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words. Everything else is content, including hedges, intensifiers, asides, words the speaker repeated, and abandoned clauses. Keep the English discourse word ah, as in 'Ah, I see.'",
     "Never summarize, translate, add content, change tone, or invent code identifiers.",
-    "Do not delete wanted content: keep every clause that is not clearly superseded by a self-correction or converted into a numbered list item.",
+    "Do not delete wanted content. Apart from standalone fillers, ordinal cues folded into numbered list items, and confirmed chunk-boundary transcription duplicates, preserve all input content and spoken order. Your remaining job is required identifier and slash-command normalization plus punctuation, capitalization, spacing, and formatting.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
     "Output only the corrected text.",
@@ -289,23 +294,27 @@ function buildPolishSystemPrompt(retryReason?: STTPolishRetryReason): string {
     "Input: תרים את ה handle socket command",
     "Output: תרים את ה-handleSocketCommand",
     "Input: Okay, let's do Gemini deep, well no, Claude deep research.",
-    "Output: Okay, let's do Claude deep research.",
+    "Output: Okay, let's do Gemini deep, well no, Claude deep research.",
     "Input: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
-    "Output: Okay, let's do Claude Deep Research.",
+    "Output: Okay, let's do Gemini Deep, well, no, Claude Deep Research.",
     "Input: Okay let's do a Claude well no not Claude let's do a Gemini deep research.",
-    "Output: Okay, let's do a Gemini deep research.",
+    "Output: Okay, let's do a Claude, well no, not Claude, let's do a Gemini deep research.",
     "Input: Okay, let's do a Claude deep, well, Gemini deep research.",
-    "Output: Okay, let's do Gemini deep research.",
+    "Output: Okay, let's do a Claude deep, well, Gemini deep research.",
     "Input: Okay, so I just went to the gym and, well, no, I just went to the supermarket and I now came back.",
-    "Output: Okay, so I just went to the supermarket and I now came back.",
+    "Output: Okay, so I just went to the gym and, well, no, I just went to the supermarket and I now came back.",
     "Input: I started a build, actually I started the test suite and then came back.",
-    "Output: I started the test suite and then came back.",
+    "Output: I started a build, actually I started the test suite and then came back.",
+    "Input: So um I think uh we should ship it.",
+    "Output: So, I think we should ship it.",
+    "Input: wait actually let me start over the recent benchmarks show a 20% no 22% drop",
+    "Output: Wait, actually, let me start over. The recent benchmarks show a 20%, no, 22% drop.",
     "Input: First of all, I wanted to do x, y, and z, and then second of all, I wanted to talk to him, and third of all, I wanted to go home.",
-    "Output:\n1. I wanted to do x, y, and z.\n2. I wanted to talk to him.\n3. I wanted to go home.",
+    "Output:\n1. I wanted to do x, y, and z.\n2. And then, I wanted to talk to him.\n3. And I wanted to go home.",
     "Input: So first of all, I came back home right now, and then second of all, you've been paused, third, I'm very frustrated.",
-    "Output:\n1. I came back home right now.\n2. You've been paused.\n3. I'm very frustrated.",
+    "Output:\n1. So, I came back home right now.\n2. And then, you've been paused.\n3. I'm very frustrated.",
     "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
-    "Output: Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    "Output: Or if I say, okay:\n1. I want to do x, y, z.\n2. And then, I want to do the other thing.\n3. And then, I want to do this, that, and this.",
     "Input: Also, if I say the .at file. Thank you.",
     "Output: Also, if I say the .at file. Thank you.",
     "Input: This is already good.",
@@ -313,8 +322,13 @@ function buildPolishSystemPrompt(retryReason?: STTPolishRetryReason): string {
     "Input: why did it do that i am confused",
     "Output: Why did it do that? I am confused.",
     "Forbidden rewrite:",
+    "Never produce the following output; it invents certainty and changes meaning.",
     "Input: I think this might work.",
     "Output: This solution should work.",
+    "Forbidden deletion:",
+    "Never produce the following output; it violates the KEEP rule.",
+    "Input: I went to the gym, no, the supermarket.",
+    "Output: I went to the supermarket.",
   ];
   if (retryReason === "noop") {
     lines.push(
@@ -1035,28 +1049,6 @@ function withTerminalPunctuation(text: string, fallback: string): string {
     : `${trimmed}${fallback || "."}`;
 }
 
-function deterministicSelfCorrectionCandidate(cleanedText: string): string | null {
-  const repeatedNegated = cleanedText.match(
-    LETS_DO_REPEATED_NEGATED_CORRECTION_PATTERN,
-  );
-  if (repeatedNegated?.groups) {
-    return withTerminalPunctuation(
-      `${repeatedNegated.groups.prefix}${repeatedNegated.groups.replacement}`,
-      repeatedNegated.groups.ending ?? ".",
-    );
-  }
-
-  const wellReplacement = cleanedText.match(LETS_DO_WELL_REPLACEMENT_PATTERN);
-  if (wellReplacement?.groups) {
-    return withTerminalPunctuation(
-      `${wellReplacement.groups.prefix}${wellReplacement.groups.replacement}`,
-      wellReplacement.groups.ending ?? ".",
-    );
-  }
-
-  return null;
-}
-
 function isAllowedSpokenListRewrite(
   cleanedText: string,
   candidate: string,
@@ -1159,12 +1151,7 @@ function applyPolishCandidate(
   retried = false,
 ): STTPolishResult {
   const trimmedPolishedText = polishedText.trim();
-  const deterministicCandidate =
-    normalizedSimilarityText(cleanedText) ===
-    normalizedSimilarityText(trimmedPolishedText)
-      ? deterministicSelfCorrectionCandidate(cleanedText)
-      : null;
-  const candidateText = deterministicCandidate ?? trimmedPolishedText;
+  const candidateText = trimmedPolishedText;
   const rejectionReason = validatePolishCandidate(cleanedText, candidateText);
   if (mode === "shadow") {
     return buildResult(
