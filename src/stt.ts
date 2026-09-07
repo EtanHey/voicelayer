@@ -599,12 +599,12 @@ interface WavPcmInfo {
   blockAlign: number;
 }
 
-const WAV_TAIL_VERIFY_MIN_SECONDS = 12.5;
+export const WAV_TAIL_VERIFY_MIN_SECONDS = 12.5;
 const WAV_TAIL_VERIFY_SECONDS = 12;
 const WAV_HEAD_VERIFY_SECONDS = 12;
 const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
-const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
-const WAV_CHUNK_SECONDS = 30;
+export const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
+export const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
 
 /**
@@ -1593,6 +1593,26 @@ interface WhisperServerBackendDeps {
   fallbackBackend?: STTBackend;
 }
 
+/**
+ * Next loop position after a chunk was skipped, or null when the skipped chunk
+ * already covered the end of the recording.
+ *
+ * The guarded smart schedule can deliberately plan the last chunk through EOF.
+ * Reusing its overlap-based next start after a skip would then revisit the same
+ * overlap forever. A skipped final chunk has no later audio to recover, so the
+ * loop must stop just as it does after a successfully decoded final chunk.
+ */
+export function nextStartAfterSkippedChunk(input: {
+  startSeconds: number;
+  chunkSeconds: number;
+  nextStartSeconds: number;
+  durationSeconds: number;
+}): number | null {
+  return input.startSeconds + input.chunkSeconds >= input.durationSeconds
+    ? null
+    : input.nextStartSeconds;
+}
+
 export class WhisperServerBackend implements STTBackend {
   name = "whisper-server";
   private readonly isResidentAvailable: () => boolean;
@@ -1951,10 +1971,22 @@ export class WhisperServerBackend implements STTBackend {
       // below reduces to the constant it used before.
       const plannedChunkSeconds =
         pauseMap.length > 0
-          ? chooseChunkEnd(startSeconds, pauseMap, {
-              min: SMART_CHUNK_MIN_SECONDS,
-              max: WAV_CHUNK_SECONDS,
-            }) - startSeconds
+          ? chooseChunkEnd(
+              startSeconds,
+              pauseMap,
+              { min: SMART_CHUNK_MIN_SECONDS, max: WAV_CHUNK_SECONDS },
+              // A recording ends in silence, so the last pause the boundary
+              // rule can see often ends a fraction of a second before the file
+              // does — and the scrap left behind is exactly what the very-short
+              // -final-chunk check below throws away, because a silence seam
+              // never has the overlap that check treats as evidence of health.
+              // Tell the boundary rule how much audio is left so it splits the
+              // remainder instead of stranding it.
+              {
+                durationS: info.durationSeconds,
+                minFinalSeconds: WAV_TAIL_VERIFY_MIN_SECONDS,
+              },
+            ) - startSeconds
           : WAV_CHUNK_SECONDS;
       // A cut inside a pause needs no anchor, so it keeps only enough overlap
       // to guarantee no gap. Everything else keeps the full re-decoded overlap.
@@ -1992,12 +2024,26 @@ export class WhisperServerBackend implements STTBackend {
       const segment = sliceWavSegment(wavData, startSeconds, chunkSeconds);
       if (!segment) {
         nextSeamKind = seamAfterSkip;
-        startSeconds = nextStartSeconds;
+        const advanced = nextStartAfterSkippedChunk({
+          startSeconds,
+          chunkSeconds,
+          nextStartSeconds,
+          durationSeconds: info.durationSeconds,
+        });
+        if (advanced === null) break;
+        startSeconds = advanced;
         continue;
       }
       if (isLowEnergyWavSegment(segment)) {
         nextSeamKind = seamAfterSkip;
-        startSeconds = nextStartSeconds;
+        const advanced = nextStartAfterSkippedChunk({
+          startSeconds,
+          chunkSeconds,
+          nextStartSeconds,
+          durationSeconds: info.durationSeconds,
+        });
+        if (advanced === null) break;
+        startSeconds = advanced;
         continue;
       }
 
