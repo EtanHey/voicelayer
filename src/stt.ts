@@ -2084,14 +2084,29 @@ export class WhisperServerBackend implements STTBackend {
       }
 
       const mergedSoFar = mergeChunkTranscripts(transcripts, seamKinds);
-      let text = await this.transcribeResident(
-        segment,
-        buildWhisperServerOptions({
-          promptOverride: mergedSoFar
-            ? combinePromptOverride(options?.promptOverride, mergedSoFar)
-            : options?.promptOverride,
-        }),
-      );
+      let text: string;
+      try {
+        text = await this.transcribeResident(
+          segment,
+          buildWhisperServerOptions({
+            promptOverride: mergedSoFar
+              ? combinePromptOverride(options?.promptOverride, mergedSoFar)
+              : options?.promptOverride,
+          }),
+        );
+      } catch (err) {
+        if (
+          residentFallbackReason(err) === "timeout" &&
+          transcripts.length > 0
+        ) {
+          console.error(
+            `[voicelayer] chunk decode timed out after ${transcripts.length} chunk(s); ` +
+              "keeping decoded chunks instead of falling back to whisper-cli",
+          );
+          break;
+        }
+        throw err;
+      }
       if (!text.trim()) return null;
       const suspectLoops = mergedSoFar ? findSuspectChunkLoops(text) : [];
       const suspectLoop = suspectLoops[0] ?? null;
@@ -2120,23 +2135,48 @@ export class WhisperServerBackend implements STTBackend {
           witnessInfo &&
           witnessInfo.durationSeconds > plannedChunkSeconds
         ) {
-          const promptedWitness = await this.transcribeResident(
-            witnessSegment,
-            buildWhisperServerOptions({
-              ...options,
-              promptOverride: combinePromptOverride(
-                options?.promptOverride,
-                mergedSoFar,
-              ),
-            }),
-          );
-          const unpromptedWitness = await this.transcribeResident(
-            witnessSegment,
-            buildWhisperServerOptions({
-              ...options,
-              promptOverride: undefined,
-            }),
-          );
+          let promptedWitness = "";
+          let unpromptedWitness = "";
+          let pairWitnessTimedOut = false;
+          try {
+            promptedWitness = await this.transcribeResident(
+              witnessSegment,
+              {
+                ...buildWhisperServerOptions({
+                  ...options,
+                  promptOverride: combinePromptOverride(
+                    options?.promptOverride,
+                    mergedSoFar,
+                  ),
+                }),
+                preserveServerOnTimeout: true,
+              },
+            );
+            unpromptedWitness = await this.transcribeResident(
+              witnessSegment,
+              {
+                ...buildWhisperServerOptions({
+                  ...options,
+                  promptOverride: undefined,
+                }),
+                preserveServerOnTimeout: true,
+              },
+            );
+          } catch (err) {
+            if (residentFallbackReason(err) === "timeout") {
+              pairWitnessTimedOut = true;
+              console.error(
+                `[voicelayer] extended witness pair timed out (${residentFallbackReason(err)}); ` +
+                  "keeping original chunk text without witness-authorized repair",
+              );
+            } else {
+              throw err;
+            }
+          }
+          if (pairWitnessTimedOut) {
+            // Original `text` is already decoded; skip repair rather than
+            // throwing into whisper-cli.
+          } else {
           const promptedCovers = suspectLoop
             ? suspectLoops.some((candidate) =>
                 witnessCoversSuspectContext(text, candidate, promptedWitness),
@@ -2372,6 +2412,7 @@ export class WhisperServerBackend implements STTBackend {
             seamKindAfterThisChunk = "anchor";
             nextStartSeconds =
               startSeconds + witnessSeconds - WAV_CHUNK_OVERLAP_SECONDS;
+          }
           }
         }
       }
