@@ -400,11 +400,14 @@ function wordAfterDelimiters(text: string, index: number): string {
  * unconditionally everywhere else, and gating them here would contradict the
  * #17/#20 policy rather than preserve it.
  *
- * AIDEV-NOTE: deliberately only the follower test, never NOUN_DETERMINERS_BEFORE.
- * At a run boundary whisper's comma sits between the determiner and the command,
- * so "a" in "a, colon, dash, b" is the left OPERAND, not an article shielding a
- * noun — reading it as a determiner is the exact bug #17's operand check exists
- * to prevent, and it re-broke that case here once.
+ * AIDEV-NOTE: ordinary ambiguous commands deliberately use only the follower
+ * test, never NOUN_DETERMINERS_BEFORE. At a run boundary whisper's comma sits
+ * between the determiner and the command, so "a" in "a, colon, dash, b" is the
+ * left OPERAND, not an article shielding a noun — reading it as a determiner is
+ * the exact bug #17's operand check exists to prevent, and it re-broke that
+ * case here once. Mark-name runs are the narrow exception: their case-aware
+ * preceding-article evidence is checked by markNounArticleBefore; no other
+ * determiner qualifies.
  */
 function runIsSpokenAsNoun(
   text: string,
@@ -415,16 +418,8 @@ function runIsSpokenAsNoun(
   const markPhraseCount = phrases.filter((phrase) =>
     MARK_PHRASE_COMMANDS.has(phrase)
   ).length;
-  if (markPhraseCount === phrases.length) {
-    return markPhraseIsSpokenAsNoun(
-      wordBeforeDelimiters(text, start),
-      wordAfterDelimiters(text, end),
-    );
-  }
-  // A mixed comma-wrapped run is command-shaped. Meta-mentions remain
-  // protected separately in unwrapCommaWrappedCommands.
   if (markPhraseCount > 0) {
-    return false;
+    return markNounArticleBefore(text, start);
   }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
     return false;
@@ -509,11 +504,21 @@ function unwrapCommaWrappedCommands(text: string): string {
         return match;
       }
       if (runIsSpokenAsNoun(text, phrases, offset, end)) {
-        // Remove Whisper's wrapper delimiters from a mark-name noun so the
-        // later ambiguous pass can see its article/follower evidence. Keeping
-        // the commas hides both neighbours and turns the words into a symbol.
         if (phrases.every((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
-          return ` ${phrases.join(" ")} `;
+          // This is ordinary prose that Whisper isolated with delimiters, not
+          // a command run. Keep it byte-for-byte for the later noun guard.
+          return match;
+        }
+        if (phrases.some((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+          // Preserve noun mark words while still executing neighbouring
+          // commands in a mixed run. Removing Whisper's wrapper delimiters
+          // lets the later ambiguous pass see the mark's noun evidence.
+          const guardedReplacements = phrases.map((phrase) =>
+            MARK_PHRASE_COMMANDS.has(phrase)
+              ? phrase
+              : placeholderFor(COMMAND_REPLACEMENTS.get(phrase) ?? phrase)
+          );
+          return ` ${guardedReplacements.join(" ")} `;
         }
         return match;
       }
@@ -634,15 +639,43 @@ const MARK_PHRASE_COMMANDS = new Set([
 // or after belongs to the sentence itself: "digest this question mark" and
 // "good faith question mark is ..." are real corpus commands. The broader
 // determiner/follower sets therefore overfit this subset when either cue acts
-// alone. An immediately preceding article is sufficient noun evidence; other
-// determiners require a noun follower too ("that question mark was wrong").
+// alone. Only an immediately preceding article is sufficient noun evidence.
 // In the full shadow snapshot this rescues only the five noun uses and changes
 // zero command uses.
 const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
 
-function markPhraseIsSpokenAsNoun(before: string, after: string): boolean {
-  if (MARK_NOUN_ARTICLES.has(before)) return true;
-  return NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after);
+/**
+ * A mark name is a noun only when an ARTICLE introduces it.
+ *
+ * AIDEV-NOTE: this used to fall back to
+ * `NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after)`.
+ * That cannot work: "that question mark was wrong" (noun) and "should we use
+ * this question mark is that right" (command) are the same shape, so the
+ * fallback only chose which one to break, and it broke the command — the one
+ * present in the real corpus (shadow 5025 "good faith question mark is ...",
+ * 6543-6547 "digest this question mark"). The noun reading it protected has
+ * not appeared in the full shadow corpus. Article-only follows the lead's
+ * ruling on PR #42.
+ *
+ * `raw` is the word as spoken, not lowercased: `wordBefore` lowercases, which
+ * made the identifier "A" in "option A question mark" indistinguishable from
+ * the article and killed that command (Codex, PR #42). A capitalised article
+ * is only an article at a sentence start; mid-sentence it is an option label.
+ */
+function markNounArticleBefore(text: string, start: number): boolean {
+  const match = /([\p{L}\p{N}][\p{L}\p{N}'\u2019]*)\s*[,.]?\s*$/u.exec(
+    text.slice(0, start),
+  );
+  if (!match) return false;
+  const raw = match[1];
+  if (!MARK_NOUN_ARTICLES.has(raw.toLowerCase())) return false;
+  if (raw === raw.toLowerCase()) return true;
+  const head = text.slice(0, start - match[0].length);
+  return (
+    head.trim() === "" ||
+    /\n\s*$/.test(head) ||
+    /[.!?]["'\u2019)\]]?\s*$/.test(head)
+  );
 }
 
 /**
@@ -655,7 +688,7 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const command = text.slice(start, end).trim().toLowerCase();
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
-    return markPhraseIsSpokenAsNoun(before, after);
+    return markNounArticleBefore(text, start);
   }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"
