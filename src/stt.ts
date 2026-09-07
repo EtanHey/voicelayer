@@ -1941,13 +1941,18 @@ export class WhisperServerBackend implements STTBackend {
     let witnessed = false;
     let scheduleShiftedByWitness = false;
     let fullUnpromptedWitness: Promise<string | null> | null = null;
+    const fullWitnessTimeoutCeilingMs = 30_000;
     const getFullUnpromptedWitness = (): Promise<string | null> => {
       fullUnpromptedWitness ??= this.transcribeResident(
         wavData,
-        buildWhisperServerOptions({
-          ...options,
-          promptOverride: undefined,
-        }),
+        {
+          ...buildWhisperServerOptions({
+            ...options,
+            promptOverride: undefined,
+          }),
+          timeoutCeilingMs: fullWitnessTimeoutCeilingMs,
+          preserveServerOnTimeout: true,
+        },
       ).catch((err) => {
         console.error(
           `[voicelayer] full-window witness failed (${residentFallbackReason(err)}); ` +
@@ -2163,21 +2168,23 @@ export class WhisperServerBackend implements STTBackend {
             agreement = "extended-pair";
           } else {
             const fullWitness = await getFullUnpromptedWitness();
-            const fullSupportsPrompted =
-              Boolean(fullWitness) &&
-              promptedCovers &&
-              witnessesAgree(fullWitness ?? "", promptedWitness);
-            const fullSupportsUnprompted =
-              Boolean(fullWitness) &&
-              unpromptedCovers &&
-              witnessesAgree(fullWitness ?? "", unpromptedWitness);
+            const fullSupportsPrompted = Boolean(
+              fullWitness &&
+                promptedCovers &&
+                witnessesAgree(fullWitness, promptedWitness),
+            );
+            const fullSupportsUnprompted = Boolean(
+              fullWitness &&
+                unpromptedCovers &&
+                witnessesAgree(fullWitness, unpromptedWitness),
+            );
             if (fullSupportsPrompted !== fullSupportsUnprompted) {
               chosenWitness = fullSupportsPrompted
                 ? promptedWitness
                 : unpromptedWitness;
               supportingWitnesses = fullSupportsPrompted
-                ? [fullWitness!, promptedWitness]
-                : [fullWitness!, unpromptedWitness];
+                ? [fullWitness ?? "", promptedWitness]
+                : [fullWitness ?? "", unpromptedWitness];
               agreement = "full-window-third";
             } else if (fullSupportsPrompted && fullSupportsUnprompted) {
               chosenWitness = chooseWordPreservingWitness(

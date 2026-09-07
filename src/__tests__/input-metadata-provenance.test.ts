@@ -53,6 +53,13 @@ const FAKE_PROBE: RecordingProvenanceProbe = {
   appVersion: () => ({ version: "9.9.9", source: "package.json" }),
 };
 
+const CLI_PROBE: RecordingProvenanceProbe = {
+  ...FAKE_PROBE,
+  whisperCppVersion: () => ({ version: "1.8.0", source: "binary-help" }),
+  whisperServerArgs: () => null,
+  whisperServerProcess: () => ({ pid: null, startedAt: null }),
+};
+
 describe("recording provenance builder", () => {
   it("assembles every provenance field from injected probes", () => {
     const provenance = buildRecordingProvenance({
@@ -379,6 +386,7 @@ describe("older schema recordings stay loadable", () => {
     updateArchivedTranscript(join(archivedPath!, "audio.wav"), "second pass", {
       backend: "whisper-server+fallback-timeout->whisper.cpp",
       languageMode: "hebrew",
+      provenanceProbe: CLI_PROBE,
     });
 
     const provenance = (
@@ -391,8 +399,10 @@ describe("older schema recordings stay loadable", () => {
     );
     expect(provenance.fallback_reason).toBe("timeout");
     expect(provenance.language_mode).toBe("hebrew");
-    // Machine facts are not re-probed on retranscription; they still describe
-    // the machine that captured the audio.
+    expect(provenance.whisper_cpp_version).toBe("1.8.0");
+    expect(provenance.whisper_server_args).toBeNull();
+    expect(provenance.whisper_server_pid).toBeNull();
+    // The injected current-machine probe is retained for deterministic tests.
     expect(provenance.chip).toBe("Apple M1 Pro");
   });
 

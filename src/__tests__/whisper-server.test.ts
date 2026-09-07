@@ -1206,7 +1206,7 @@ usage: whisper-server [options]
       }
     });
 
-    it("does not retire a healthy server when one inference times out", async () => {
+    it("does not retire a healthy server when an advisory inference times out", async () => {
       const originalFetch = globalThis.fetch;
       let attempts = 0;
       let kills = 0;
@@ -1247,7 +1247,9 @@ usage: whisper-server [options]
 
         const startedAt = Date.now();
         await expect(
-          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+          transcribeViaServer(new Uint8Array([1, 2]), 5555, {
+            preserveServerOnTimeout: true,
+          }),
         ).rejects.toThrow("inference timeout");
         expect(Date.now() - startedAt).toBeLessThan(250);
         expect(attempts).toBe(1);
@@ -1256,6 +1258,102 @@ usage: whisper-server [options]
         globalThis.fetch = originalFetch;
         __setWhisperServerTestHooksForTests({});
         __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("restarts and retries after a primary inference timeout", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let kills = 0;
+      let launches = 0;
+      let serverHealthy = false;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) => {
+        attempts++;
+        if (attempts === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(init.signal?.reason),
+              { once: true },
+            );
+          });
+        }
+        return new Response(JSON.stringify({ text: "after timeout restart" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      };
+
+      try {
+        __setWhisperServerTestHooksForTests({
+          inferenceTimeoutMs: () => 10,
+          findServerBinary: () => "/tmp/whisper-server",
+          findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+          spawn: () => {
+            launches++;
+            serverHealthy = true;
+            return { pid: 124, stderr: null, kill: () => {} };
+          },
+          isServerHealthy: async () => serverHealthy,
+          sleep: async () => {},
+          startupTimeoutMs: 25,
+        });
+        __resetWhisperServerStateForTests({
+          proc: {
+            kill: () => {
+              kills++;
+              serverHealthy = false;
+            },
+          },
+          port: 5555,
+          pid: 123,
+        });
+
+        await expect(
+          transcribeViaServer(new Uint8Array([1, 2]), 5555),
+        ).resolves.toBe("after timeout restart");
+        expect(attempts).toBe(2);
+        expect(kills).toBe(1);
+        expect(launches).toBe(1);
+      } finally {
+        globalThis.fetch = originalFetch;
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+      }
+    });
+
+    it("caps an advisory witness below the overall voice_ask return budget", async () => {
+      const originalFetch = globalThis.fetch;
+
+      // @ts-ignore - test double
+      globalThis.fetch = async (
+        _url: string | URL | Request,
+        init?: RequestInit,
+      ) =>
+        await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+
+      try {
+        const startedAt = Date.now();
+        await expect(
+          transcribeViaServer(makePcm16Wav(164.78), 5555, {
+            timeoutCeilingMs: 10,
+            preserveServerOnTimeout: true,
+          }),
+        ).rejects.toThrow("inference timeout after 10ms");
+        expect(Date.now() - startedAt).toBeLessThan(250);
+      } finally {
+        globalThis.fetch = originalFetch;
       }
     });
 

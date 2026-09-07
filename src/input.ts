@@ -3248,6 +3248,8 @@ export function updateArchivedTranscript(
     backend: string;
     languageMode: string;
     transcribedDurationMs?: number;
+    polishStatus?: STTPolishStatus | null;
+    provenanceProbe?: RecordingProvenanceProbe;
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
@@ -3269,12 +3271,12 @@ export function updateArchivedTranscript(
     // backfilling this machine's facts onto an old recording would be a lie.
     const provenance = metadata.provenance;
     if (provenance && typeof provenance === "object") {
-      (provenance as Record<string, unknown>).whisper_backend =
-        transcription.backend;
-      (provenance as Record<string, unknown>).fallback_reason =
-        fallbackReasonFromBackend(transcription.backend);
-      (provenance as Record<string, unknown>).language_mode =
-        transcription.languageMode;
+      metadata.provenance = buildRecordingProvenance({
+        backend: transcription.backend,
+        languageMode: transcription.languageMode,
+        polishStatus: transcription.polishStatus,
+        probe: transcription.provenanceProbe,
+      });
     }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
   });
@@ -3698,12 +3700,10 @@ export async function retranscribeVoiceAskArchive(
       user_audio_sha256: snapshot.audioHash,
     };
     if (metadata.provenance && typeof metadata.provenance === "object") {
-      metadata.provenance = {
-        ...(metadata.provenance as Record<string, unknown>),
-        whisper_backend: result.backend,
-        fallback_reason: fallbackReasonFromBackend(result.backend),
-        language_mode: languageMode,
-      };
+      metadata.provenance = buildRecordingProvenance({
+        backend: result.backend,
+        languageMode,
+      });
     }
     commitVoiceAskTranscriptPair(snapshot, text, metadata);
     if (options.delivery === "history") {
@@ -3856,6 +3856,7 @@ export async function retranscribeRecordingCapture(
           backend: result.backend,
           languageMode: getLanguageModeFromEnv(),
           transcribedDurationMs,
+          polishStatus: finalized.polishStatus,
         });
         broadcast({
           type: "transcription",
@@ -3955,6 +3956,7 @@ export async function retranscribeLastCapture(): Promise<string | null> {
             backend: result.backend,
             languageMode: getLanguageModeFromEnv(),
             transcribedDurationMs,
+            polishStatus: finalized.polishStatus,
           });
         }
         broadcast({

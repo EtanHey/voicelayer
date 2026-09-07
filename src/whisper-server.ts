@@ -1125,6 +1125,10 @@ function recordSuccessfulInferenceRtf(
 export interface WhisperServerTranscribeOptions {
   language?: string;
   prompt?: string;
+  /** Optional request-specific cap, used by advisory work inside a larger deadline. */
+  timeoutCeilingMs?: number;
+  /** A timed-out advisory request must not retire a server healthy enough for primary work. */
+  preserveServerOnTimeout?: boolean;
   /**
    * Request segment timestamps for smart boundaries or the outro gate. This
    * switches the request to `response_format=verbose_json`; the default-on
@@ -1209,9 +1213,15 @@ async function transcribeViaServerAttempt(
   }
 
   const controller = new AbortController();
-  const timeoutMs =
+  const scaledTimeoutMs =
     testHooks.inferenceTimeoutMs?.(wavData) ??
     inferenceTimeoutMsForWav(wavData);
+  const timeoutMs = Math.min(
+    scaledTimeoutMs,
+    options?.timeoutCeilingMs && options.timeoutCeilingMs > 0
+      ? options.timeoutCeilingMs
+      : scaledTimeoutMs,
+  );
   const attemptStartedAt = Date.now();
   const timer = setTimeout(() => {
     const error = new Error(
@@ -1233,6 +1243,14 @@ async function transcribeViaServerAttempt(
       // about server health: killing a process that just served adjacent
       // chunks turns one oversized request into a needless model restart.
       if (controller.signal.aborted || isInferenceTimeout(err)) {
+        if (options?.preserveServerOnTimeout) {
+          throw controller.signal.reason ?? err;
+        }
+        if (allowRetry) {
+          await markServerUnhealthy();
+          const retryPort = await ensureServer(port);
+          return transcribeViaServerAttempt(wavData, retryPort, false, options);
+        }
         throw controller.signal.reason ?? err;
       }
       if (allowRetry) {

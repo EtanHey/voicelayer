@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { join } from "path";
 import {
   WhisperCppBackend,
   WhisperServerBackend,
@@ -1862,22 +1863,31 @@ describe("STT backends", () => {
     });
 
     it("finishes the Hebrew chunk path when the full-WAV witness times out", async () => {
-      const wavPath =
-        "/tmp/voicelayer-whisper-server-hebrew-witness-timeout-test.wav";
+      const wavPath = join(
+        process.cwd(),
+        ".test-tmp",
+        String(process.pid),
+        "hebrew-witness-timeout.wav",
+      );
       const wav = makePcm16Wav(164.78);
       await Bun.write(wavPath, wav);
       const preservedClause = "בניתי לעצמי מערכת לשיחה";
       let calls = 0;
       let fallbackCalls = 0;
       let fullWitnessRequests = 0;
+      let fullWitnessTimeoutCeilingMs: number | undefined;
+      let preservesServerOnFullWitnessTimeout = false;
       const backend = new WhisperServerBackend({
         isServerAvailable: () => true,
-        transcribeViaServer: async (wavData) => {
+        transcribeViaServer: async (wavData, options) => {
           calls++;
           if (wavData.byteLength === wav.byteLength) {
             fullWitnessRequests++;
+            fullWitnessTimeoutCeilingMs = options?.timeoutCeilingMs;
+            preservesServerOnFullWitnessTimeout =
+              options?.preserveServerOnTimeout === true;
             const error = new Error("The operation was aborted.");
-            error.name = "AbortError";
+            error.name = "TimeoutError";
             throw error;
           }
           if (calls === 1) return "פתיח ארוך ואז המשכתי להסביר את המערכת";
@@ -1909,6 +1919,8 @@ describe("STT backends", () => {
       expect(result.backend).toStartWith("whisper-server+chunks");
       expect(calls).toBeGreaterThan(6);
       expect(fullWitnessRequests).toBe(1);
+      expect(fullWitnessTimeoutCeilingMs).toBe(30_000);
+      expect(preservesServerOnFullWitnessTimeout).toBe(true);
       expect(fallbackCalls).toBe(0);
     });
 
