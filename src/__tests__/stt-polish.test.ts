@@ -697,6 +697,179 @@ describe("stt-polish", () => {
     expect(result.error).toContain("removed code punctuation");
   });
 
+  it("allows whitespace-delimited hyphens to become em dashes", async () => {
+    const cleanedText =
+      "As in if Astra is actually usable for that I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet wait until you get all the sub-agents back and then everything at once or atomically but don't put things where I won't see them once your sub-ag ents come back okay - Okay.";
+    const polishedText =
+      "As in if Astra is actually usable for that, I think Astra should be it because it can also understand that we're working on d3 or d4 and what to leave for later and don't ask me questions yet — wait until you get all the sub-agents back and then everything at once or atomically, but don't put things where I won't see them once your sub-agents come back. Okay — Okay.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("still rejects removal of punctuation that belongs to code tokens", async () => {
+    const cases = [
+      {
+        cleanedText: "Run `large-v3-turbo` after setup.",
+        polishedText: "Run large-v3-turbo after setup.",
+      },
+      {
+        cleanedText: "Read /Users/etan/project/src/input.ts before editing.",
+        polishedText: "Read Users etan project src input.ts before editing.",
+      },
+      {
+        cleanedText: "Call `handleSocketCommand(socket)` after setup.",
+        polishedText: "Call handleSocketCommand socket after setup.",
+      },
+      {
+        cleanedText: "Keep the sub-agent on large-v3-turbo.",
+        polishedText: "Keep the sub agent on large v3 turbo.",
+      },
+      {
+        cleanedText: "Keep the sub-agents together.",
+        polishedText: "Keep the sub—agents together.",
+      },
+      {
+        cleanedText: "Run --dry-run with -n after setup.",
+        polishedText: "Run dry-run with n after setup.",
+      },
+      {
+        cleanedText: "Run it with --verbose to see more output.",
+        polishedText: "Run it with —verbose to see more output.",
+      },
+      {
+        cleanedText: "Run it with ---verbose to test the parser.",
+        polishedText: "Run it with verbose to test the parser.",
+      },
+      {
+        cleanedText: "Pass -s to skip perms.",
+        polishedText: "Pass s to skip perms.",
+      },
+      {
+        cleanedText: "The fast tier is -bo 1 and accurate is -bo 5.",
+        polishedText: "The fast tier is bo 1 and accurate is bo 5.",
+      },
+      {
+        cleanedText: "The floor sat at -53.2 dBFS.",
+        polishedText: "The floor sat at 53.2 dBFS.",
+      },
+      {
+        cleanedText:
+          "FYI, I was toggling it on and off, yeah, it wasn't flick ering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure, it's just how I was F5-ing on and off-ing.",
+        polishedText:
+          "FYI, I was toggling it on and off, yeah, it wasn't flickering, like, through all the states for no reason, it was me. Just wanted to make sure that you don't think that it's having a seizure—it's just how I was F5-ing on and off.",
+      },
+    ];
+    const responses = cases.map(({ polishedText }) => polishedText);
+    server = createMockPolishServer(() => ({ text: responses.shift() ?? "" }));
+
+    for (const { cleanedText, polishedText } of cases) {
+      const result = await polishTranscriptionText({
+        rawText: cleanedText,
+        cleanedText,
+        env: {
+          QA_VOICE_STT_POLISH: "on",
+          QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+          QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+        },
+      });
+
+      expect(result).toMatchObject({
+        text: cleanedText,
+        polishedText,
+        status: "rejected",
+        changed: false,
+      });
+    }
+  });
+
+  it("allows removal of a free-standing prose hyphen", async () => {
+    const cleanedText = "Keep this clause - and keep the next one.";
+    const polishedText = "Keep this clause and keep the next one.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("allows an attached false-start dash to become prose punctuation", async () => {
+    const cleanedText = "Keep going on--I have the next step.";
+    const polishedText = "Keep going on—I have the next step.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects a candidate that splits an in-token hyphen", async () => {
+    const cleanedText =
+      "Kind of yes. I want to make sure that our cc usage function, there's a cc-usage and just cc usage 1 word. 1 of them is our own function. 1 of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dorm ant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON-L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+    const polishedText =
+      "Kind of yes. I want to make sure that our cc usage function—there's a cc-usage and just cc usage, one word. One of them is our own function. One of them is someone else's function. I want to make sure both of them still read everything, so we need to somehow wire that upright. And I also want to understand how that all works. When I am speaking with you right now, the JSON-L watcher is supposed to watch every chunk that comes from you, basically every turn or every tool call, right? Or how does that work? Is it only when the session is dormant and then it goes over all the chunks? What happens when a conversation is compacted? Because I've been told lately that a compaction doesn't really delete everything before the compaction locally from the JSON- L, but it only creates a checkpoint where the compact happened, and then the summary is on top of it, and then the conversation kind of restarts, but everything before the checkpoint and compaction is still stored in the JSON-L. Can you send a brain worker or just a sub-agent to figure that out while we keep talking? Yes.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText,
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("removed code punctuation");
+  });
+
   it("allows slash command spacing cleanup when the slash is preserved", async () => {
     server = createMockPolishServer(() => ({
       text: "Also, do /whats-new and output that as your summary.",

@@ -776,6 +776,21 @@ function protectedCodePunctuationCounts(text: string): Map<string, number> {
   );
   if (codeDotCount > 0) counts.set(".", codeDotCount);
 
+  // AIDEV-NOTE: Only hyphens inside alphanumeric tokens are code punctuation.
+  // Free-standing and false-start hyphens are prose; counting them here rejected
+  // an otherwise safe polish whenever it rendered or removed that punctuation.
+  const internalTokenHyphenCount = countMatches(
+    normalized,
+    /(?<=[\p{L}\p{N}])-(?=[\p{L}\p{N}])/gu,
+  );
+  const optionPrefixHyphenCount = Array.from(
+    normalized.matchAll(/(?<!\S)(-+)(?=[\p{L}\p{N}])/gu),
+  ).reduce((count, match) => count + match[1].length, 0);
+  const tokenHyphenCount =
+    internalTokenHyphenCount + optionPrefixHyphenCount;
+  if (tokenHyphenCount > 0) counts.set("-", tokenHyphenCount);
+  else counts.delete("-");
+
   return counts;
 }
 
