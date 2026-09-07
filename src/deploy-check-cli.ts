@@ -17,7 +17,7 @@
  *   VOICEBAR_APP_PATH=/path/VoiceBar.app bun run src/deploy-check-cli.ts
  *   VOICELAYER_DEPLOY_CHECK_APPLICABLE=0 ...   # force inconclusive (off-target)
  */
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import {
   evaluateDeployFreshness,
@@ -63,11 +63,68 @@ function parseBuildTimeMs(buildTimeUTC: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function readRepoGitCommit(): string | null {
-  const out = Bun.spawnSync(["git", "-C", PACKAGE_ROOT, "rev-parse", "HEAD"]);
+function validVoiceLayerCheckoutRoot(candidateRoot: string): string | null {
+  try {
+    const candidateRealPath = realpathSync(candidateRoot);
+    const topLevel = Bun.spawnSync([
+      "git",
+      "-C",
+      candidateRealPath,
+      "rev-parse",
+      "--show-toplevel",
+    ]);
+    if (topLevel.exitCode !== 0) return null;
+
+    const topLevelPath = topLevel.stdout.toString().trim();
+    if (realpathSync(topLevelPath) !== candidateRealPath) return null;
+
+    const raw = readFileSync(join(candidateRealPath, "package.json"), "utf8");
+    const name = (JSON.parse(raw) as { name?: unknown }).name;
+    return name === "voicelayer-mcp" ? candidateRealPath : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveRepoRoot(
+  packageRoot = PACKAGE_ROOT,
+  override = process.env.VOICELAYER_REPO_ROOT,
+): string | null {
+  const overrideRoot = override?.trim();
+  if (overrideRoot) {
+    const validOverride = validVoiceLayerCheckoutRoot(overrideRoot);
+    if (validOverride) return validOverride;
+  }
+  return validVoiceLayerCheckoutRoot(packageRoot);
+}
+
+export function readRepoGitCommit(
+  packageRoot = PACKAGE_ROOT,
+  override = process.env.VOICELAYER_REPO_ROOT,
+): string | null {
+  const repoRoot = resolveRepoRoot(packageRoot, override);
+  return readGitCommitAtRoot(repoRoot);
+}
+
+function readGitCommitAtRoot(repoRoot: string | null): string | null {
+  if (repoRoot == null) return null;
+
+  const out = Bun.spawnSync(["git", "-C", repoRoot, "rev-parse", "HEAD"]);
   if (out.exitCode !== 0) return null;
   const commit = out.stdout.toString().trim();
   return /^[0-9a-f]{40}$/i.test(commit) ? commit : null;
+}
+
+export function readRepoMetadata(
+  packageRoot = PACKAGE_ROOT,
+  override = process.env.VOICELAYER_REPO_ROOT,
+): { version: string; gitCommit: string | null } {
+  const repoRoot = resolveRepoRoot(packageRoot, override);
+  return {
+    version:
+      readJsonVersion(join(repoRoot ?? packageRoot, "package.json")) ?? "unknown",
+    gitCommit: readGitCommitAtRoot(repoRoot),
+  };
 }
 
 interface ProcessRow {
@@ -144,9 +201,7 @@ function applicability(): boolean {
 }
 
 function gatherProbe(): DeployProbe {
-  const repoVersion =
-    readJsonVersion(join(PACKAGE_ROOT, "package.json")) ?? "unknown";
-  const repoGitCommit = readRepoGitCommit();
+  const { version: repoVersion, gitCommit: repoGitCommit } = readRepoMetadata();
   const applicable = applicability();
   if (!applicable) {
     return {
@@ -207,6 +262,8 @@ function gatherProbe(): DeployProbe {
   };
 }
 
-const assessment = evaluateDeployFreshness(gatherProbe());
-console.log(formatDeployReport(assessment));
-process.exit(assessment.ok ? 0 : 1);
+if (import.meta.main) {
+  const assessment = evaluateDeployFreshness(gatherProbe());
+  console.log(formatDeployReport(assessment));
+  process.exit(assessment.ok ? 0 : 1);
+}

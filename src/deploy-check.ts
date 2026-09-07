@@ -243,8 +243,7 @@ function gitCommitCheck(
     return {
       name: "app-git-commit",
       status: "skip",
-      detail:
-        "Current checkout commit is unavailable; package version and plist build time are still checked.",
+      detail: `n/a: no checkout on this machine; installed Info.plist GitCommit ${installedGitCommit ?? "unavailable"}. Compare it with the release tag; package version and plist build time are still checked.`,
     };
   }
   if (installedGitCommit == null) {
