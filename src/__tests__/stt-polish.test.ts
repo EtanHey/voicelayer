@@ -669,7 +669,154 @@ describe("stt-polish", () => {
       status: "rejected",
       changed: false,
     });
-    expect(result.error).toContain("changed negation");
+    expect(result.error).toBe("polish response changed negation");
+  });
+
+  it("keeps raw negated retraction wording despite the fluent-rewrite exemption", async () => {
+    const cleanedText = "Let's do Gemini Deep, well, no, Claude Deep Research.";
+    const polishedText = "Let's do Claude Deep Research.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText,
+      status: "rejected",
+      changed: false,
+      error: "polish response changed negation tokens",
+    });
+  });
+
+  it("rejects a negation inversion even when the total negation count is unchanged", async () => {
+    const cleanedText = "I don't have a session ID before today.";
+    const polishedText = "I have no session ID before today.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText,
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toBe("polish response changed negation tokens");
+  });
+
+  it("allows standalone filler removal despite the content-loss threshold", async () => {
+    const cleanedText = "Alpha um bravo charlie delta echo foxtrot golf.";
+    const polishedText = "Alpha, bravo charlie delta echo foxtrot golf.";
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: polishedText,
+      polishedText,
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects a deleted retraction even when its content loss is below two percent", async () => {
+    const prefix = "Context for the decision remains relevant. ".repeat(14);
+    const cleanedText = `${prefix}I'm signing- I'm starting the challenge soon.`;
+    const polishedText = `${prefix}I'm starting the challenge soon.`;
+    server = createMockPolishServer(() => ({ text: polishedText }));
+
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText,
+      status: "rejected",
+      changed: false,
+    });
+    expect(result.error).toContain("deleted retraction");
+  });
+
+  it("fails closed only when the retraction alignment exceeds its bound", async () => {
+    const fixture = (repetitions: number) => {
+      const context = "context ".repeat(repetitions).trimEnd();
+      return {
+        cleaned: `I'm signing- I'm starting soon. ${context} xy.`,
+        polished: `I'm signing- I'm starting soon. ${context}.`,
+      };
+    };
+    const overBound = fixture(500);
+    const underBound = fixture(50);
+    server = createMockPolishServer((request) => ({
+      text:
+        request.cleaned_text === overBound.cleaned
+          ? overBound.polished
+          : underBound.polished,
+    }));
+
+    const overBoundResult = await polishTranscriptionText({
+      rawText: overBound.cleaned,
+      cleanedText: overBound.cleaned,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(overBoundResult).toMatchObject({
+      polishedText: overBound.polished,
+      status: "rejected",
+      error: "polish response too long to verify retraction fidelity",
+    });
+
+    const underBoundResult = await polishTranscriptionText({
+      rawText: underBound.cleaned,
+      cleanedText: underBound.cleaned,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(underBoundResult).toMatchObject({
+      text: underBound.polished,
+      polishedText: underBound.polished,
+      status: "applied",
+      changed: true,
+    });
   });
 
   it("rejects polish candidates that remove code punctuation", async () => {

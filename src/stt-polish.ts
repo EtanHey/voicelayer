@@ -471,6 +471,11 @@ const POLISH_REJECTION_REASONS = {
   SELF_CORRECTION_UNGROUNDED:
     "polish response self-correction introduced new content",
   PROTECTED_TOKENS_CHANGED: "polish response changed protected tokens",
+  CHANGED_NEGATION: "polish response changed negation",
+  CHANGED_NEGATION_TOKENS: "polish response changed negation tokens",
+  DELETED_RETRACTION: "polish response deleted retraction content",
+  RETRACTION_CHECK_UNAVAILABLE:
+    "polish response too long to verify retraction fidelity",
   DROPPED_TOO_MUCH_TEXT: "polish response dropped too much text",
   DROPPED_TOO_MANY_WORDS: "polish response dropped too many words",
 } as const;
@@ -478,24 +483,177 @@ const POLISH_REJECTION_REASONS = {
 const RETRYABLE_POLISH_REJECTION_REASONS = new Set<string>([
   POLISH_REJECTION_REASONS.SELF_CORRECTION_UNGROUNDED,
   POLISH_REJECTION_REASONS.PROTECTED_TOKENS_CHANGED,
+  POLISH_REJECTION_REASONS.DELETED_RETRACTION,
   POLISH_REJECTION_REASONS.DROPPED_TOO_MUCH_TEXT,
   POLISH_REJECTION_REASONS.DROPPED_TOO_MANY_WORDS,
 ]);
 
-function negationCount(text: string): number {
-  return (
+function negationTokenCounts(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  const tokens =
     normalizeZeroQuantifierNegation(text)
       .normalize("NFKC")
       .toLowerCase()
-      .match(/[\p{L}\p{N}'’]+/gu)
-      ?.filter((token) =>
-        NEGATION_TOKENS.has(token.replace(/’/g, "'")),
-      ).length ?? 0
-  );
+      .match(/[\p{L}\p{N}'’]+/gu) ?? [];
+  for (const token of tokens) {
+    const normalized = token.replace(/’/g, "'");
+    if (!NEGATION_TOKENS.has(normalized)) continue;
+    counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function changedNegationTokens(cleanedText: string, candidate: string): boolean {
+  const cleanedCounts = negationTokenCounts(cleanedText);
+  const candidateCounts = negationTokenCounts(candidate);
+  if (cleanedCounts.size !== candidateCounts.size) return true;
+  for (const [token, count] of cleanedCounts) {
+    if (candidateCounts.get(token) !== count) return true;
+  }
+  return false;
+}
+
+function negationCount(text: string): number {
+  let count = 0;
+  for (const tokenCount of negationTokenCounts(text).values()) {
+    count += tokenCount;
+  }
+  return count;
 }
 
 function countMatches(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0;
+}
+
+const FALSE_START_MARKER_PATTERN =
+  /(?:[\p{L}\p{N}]-(?=\s|$)|(?<=^|\s)-(?=\s))/gu;
+const RETRACTION_DROP_WINDOW = 24;
+const RETRACTION_MIN_DROPPED_RUN = 4;
+const MAX_RETRACTION_ALIGNMENT_CELLS = 10_000_000;
+
+function letterDigitStream(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function falseStartMarkerStreamPositions(text: string): number[] {
+  const normalized = text.normalize("NFKC");
+  const streamPositionAtSourceIndex = new Array<number>(normalized.length);
+  let streamPosition = 0;
+  for (let index = 0; index < normalized.length; index++) {
+    streamPositionAtSourceIndex[index] = streamPosition;
+    if (/[\p{L}\p{N}]/u.test(normalized[index])) streamPosition++;
+  }
+  return Array.from(normalized.matchAll(FALSE_START_MARKER_PATTERN), (match) =>
+    streamPositionAtSourceIndex[match.index ?? 0] ?? 0,
+  );
+}
+
+function unmatchedCleanedLetterIndices(
+  cleanedStream: string,
+  candidateStream: string,
+): number[] | null {
+  const cleanedLength = cleanedStream.length;
+  const candidateLength = candidateStream.length;
+  if (cleanedLength === 0) return [];
+  if (candidateLength === 0) {
+    return Array.from({ length: cleanedLength }, (_, index) => index);
+  }
+
+  const width = candidateLength + 1;
+  // AIDEV-NOTE: This validator runs on user-sized dictations, so never let the
+  // quadratic LCS matrix grow without a bound. Callers fail closed when the
+  // comparison exceeds the 20 MB Uint16 budget: preserving raw words is safer
+  // than accepting polish whose retraction fidelity could not be checked.
+  if ((cleanedLength + 1) * width > MAX_RETRACTION_ALIGNMENT_CELLS) {
+    return null;
+  }
+  const lengths = new Uint16Array((cleanedLength + 1) * width);
+  for (let cleanedIndex = 1; cleanedIndex <= cleanedLength; cleanedIndex++) {
+    const cleanedChar = cleanedStream.charCodeAt(cleanedIndex - 1);
+    const row = cleanedIndex * width;
+    const previousRow = row - width;
+    for (
+      let candidateIndex = 1;
+      candidateIndex <= candidateLength;
+      candidateIndex++
+    ) {
+      lengths[row + candidateIndex] =
+        cleanedChar === candidateStream.charCodeAt(candidateIndex - 1)
+          ? lengths[previousRow + candidateIndex - 1] + 1
+          : Math.max(
+              lengths[previousRow + candidateIndex],
+              lengths[row + candidateIndex - 1],
+            );
+    }
+  }
+
+  const unmatched: number[] = [];
+  let cleanedIndex = cleanedLength;
+  let candidateIndex = candidateLength;
+  while (cleanedIndex > 0) {
+    if (
+      candidateIndex > 0 &&
+      cleanedStream.charCodeAt(cleanedIndex - 1) ===
+        candidateStream.charCodeAt(candidateIndex - 1)
+    ) {
+      cleanedIndex--;
+      candidateIndex--;
+    } else if (
+      candidateIndex > 0 &&
+      lengths[cleanedIndex * width + candidateIndex - 1] >=
+        lengths[(cleanedIndex - 1) * width + candidateIndex]
+    ) {
+      candidateIndex--;
+    } else {
+      unmatched.push(cleanedIndex - 1);
+      cleanedIndex--;
+    }
+  }
+  return unmatched.reverse();
+}
+
+function retractionContentLoss(
+  cleanedText: string,
+  candidate: string,
+): "deleted" | "unavailable" | null {
+  const markerPositions = falseStartMarkerStreamPositions(cleanedText);
+  if (markerPositions.length === 0) return null;
+
+  const cleanedStream = letterDigitStream(cleanedText);
+  const candidateStream = letterDigitStream(candidate);
+  if (cleanedStream === candidateStream) return null;
+  const unmatched = unmatchedCleanedLetterIndices(
+    cleanedStream,
+    candidateStream,
+  );
+  if (unmatched === null) return "unavailable";
+  let runStart = 0;
+  for (let index = 0; index <= unmatched.length; index++) {
+    const continuesRun =
+      index < unmatched.length &&
+      (index === runStart || unmatched[index] === unmatched[index - 1] + 1);
+    if (continuesRun) continue;
+
+    const runLength = index - runStart;
+    if (runLength >= RETRACTION_MIN_DROPPED_RUN) {
+      const start = unmatched[runStart];
+      const end = unmatched[index - 1];
+      if (
+        markerPositions.some(
+          (marker) =>
+            start <= marker + RETRACTION_DROP_WINDOW &&
+            end >= marker - RETRACTION_DROP_WINDOW,
+        )
+      ) {
+        return "deleted";
+      }
+    }
+    runStart = index;
+  }
+  return null;
 }
 
 function shouldRetryNoopPolish(cleanedText: string): boolean {
@@ -1121,7 +1279,7 @@ function validatePolishCandidate(
     negationCount(cleanedText) !== negationCount(candidate) &&
     !allowedSelfCorrectionRewrite
   ) {
-    return "polish response changed negation";
+    return POLISH_REJECTION_REASONS.CHANGED_NEGATION;
   }
   if (removedProtectedCodePunctuation(cleanedText, candidate)) {
     return "polish response removed code punctuation";
@@ -1155,6 +1313,27 @@ function validatePolishCandidate(
     }
   } else if (!allowsStructuredRewrite && normalizedSimilarity(cleanedText, candidate) < 0.72) {
     return "short polish response changed too much text";
+  }
+
+  // AIDEV-NOTE: Keep these surgical word-loss guards after the legacy checks.
+  // That makes them a net for candidates that previously shipped rather than
+  // reclassifying existing rejects and hiding changes in the reason table.
+  // A global letter-loss threshold disables valid polish repairs; only a
+  // dropped run next to the speaker's false-start marker is protected here.
+  const retractionLoss = retractionContentLoss(cleanedText, candidate);
+  if (retractionLoss === "unavailable") {
+    return POLISH_REJECTION_REASONS.RETRACTION_CHECK_UNAVAILABLE;
+  }
+  if (retractionLoss === "deleted") {
+    return POLISH_REJECTION_REASONS.DELETED_RETRACTION;
+  }
+  // AIDEV-NOTE: Counts alone let a removed "don't" be paid for by an invented
+  // "no", inverting meaning while keeping the total at one. Compare the token
+  // multiset so substitutions cannot balance each other. Deliberately do not
+  // honor allowedSelfCorrectionRewrite here: AGENTS.md's raw-accurate law says
+  // the speaker's retracted wording survives even when the rewrite is fluent.
+  if (changedNegationTokens(cleanedText, candidate)) {
+    return POLISH_REJECTION_REASONS.CHANGED_NEGATION_TOKENS;
   }
 
   return null;
