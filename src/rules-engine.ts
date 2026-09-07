@@ -1197,22 +1197,27 @@ function spokenEnumeratorValue(head: string): number | undefined {
 
 function findSpokenEnumeratorHeads(text: string): SpokenEnumeratorHead[] {
   SPOKEN_ENUMERATOR_HEAD_PATTERN.lastIndex = 0;
-  return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)].map((match) => {
-    const originalHead = match[6];
-    const head = originalHead.toLowerCase();
-    return {
-      start: match.index ?? 0,
-      end: (match.index ?? 0) + match[0].length,
-      boundary: match[2] ?? "",
-      conjunction: match[4],
-      qualifier: match[5],
-      head,
-      originalHead,
-      delimiter: match[7],
-      value: spokenEnumeratorValue(head),
-      keepHead: CONTENT_ENUMERATOR_HEADS.has(head),
-    };
-  });
+  return [...text.matchAll(SPOKEN_ENUMERATOR_HEAD_PATTERN)]
+    .filter((match) => {
+      const start = match.index ?? 0;
+      return match[2] !== "." || !/\d/u.test(text[start - 1] ?? "");
+    })
+    .map((match) => {
+      const originalHead = match[6];
+      const head = originalHead.toLowerCase();
+      return {
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+        boundary: match[2] ?? "",
+        conjunction: match[4],
+        qualifier: match[5],
+        head,
+        originalHead,
+        delimiter: match[7],
+        value: spokenEnumeratorValue(head),
+        keepHead: CONTENT_ENUMERATOR_HEADS.has(head),
+      };
+    });
 }
 
 function boundaryBelongsToPreviousClause(boundary: string): boolean {
@@ -1256,13 +1261,14 @@ export function applySpokenEnumeratorsWithDetail(text: string): {
   }
 
   const valuedHeads = heads.filter((head) => head.value !== undefined);
-  const contentLedThreeBeatList = heads.length >= 3 && heads[0].keepHead;
-  if (valuedHeads.length < 2 && !contentLedThreeBeatList) {
+  if (valuedHeads.length < 2) {
     return { text, removedWords: [] };
   }
   if (
     heads.some(
-      (head, index) => head.value !== undefined && head.value !== index + 1,
+      (head, index) =>
+        (head.value !== undefined && head.value !== index + 1) ||
+        (head.value === undefined && /^\d{1,2}$/u.test(head.head)),
     )
   ) {
     return { text, removedWords: [] };
