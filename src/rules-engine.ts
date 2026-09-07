@@ -312,6 +312,22 @@ const AMBIGUOUS_COMMAND_PHRASES: Set<string> = new Set(
   AMBIGUOUS_PUNCTUATION_MAP.map(([pattern]) => spokenPhraseOf(pattern)),
 );
 
+/** Mark-name commands that can also be the object of ordinary prose. */
+const MARK_PHRASE_COMMANDS = new Set([
+  "full stop", "questionmark", "question mark", "exclamation mark",
+  "exclamation point",
+]);
+
+// Mark-name commands often sit at a sentence boundary, where the word before
+// or after belongs to the sentence itself: "digest this question mark" and
+// "good faith question mark is ..." are real corpus commands. The broader
+// determiner/follower sets therefore overfit this subset when either cue acts
+// alone. An immediately preceding article is sufficient noun evidence; other
+// determiners require a noun follower too ("that question mark was wrong").
+// Whisper's comma isolation must not hide those neighbours — look past the
+// same delimiters the unwrap already skips.
+const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
+
 // Longest first so "new paragraph" is not matched as "new" would be, and
 // "question mark" wins over any shorter overlap.
 const COMMAND_ALTERNATION = [...COMMAND_REPLACEMENTS.keys()]
@@ -400,26 +416,35 @@ function wordAfterDelimiters(text: string, index: number): string {
  * unconditionally everywhere else, and gating them here would contradict the
  * #17/#20 policy rather than preserve it.
  *
- * AIDEV-NOTE: deliberately only the follower test, never NOUN_DETERMINERS_BEFORE.
- * At a run boundary whisper's comma sits between the determiner and the command,
- * so "a" in "a, colon, dash, b" is the left OPERAND, not an article shielding a
- * noun — reading it as a determiner is the exact bug #17's operand check exists
- * to prevent, and it re-broke that case here once.
+ * AIDEV-NOTE: for ordinary ambiguous commands this is deliberately only the
+ * follower test, never NOUN_DETERMINERS_BEFORE. At a run boundary whisper's
+ * comma sits between the determiner and the command, so "a" in
+ * "a, colon, dash, b" is the left OPERAND, not an article shielding a noun —
+ * reading it as a determiner is the exact bug #17's operand check exists to
+ * prevent, and it re-broke that case here once.
+ *
+ * Mark-name runs are the other way round. "question mark is" is a real
+ * command, so the follower test would suppress
+ * "good faith, question mark, is that clear". Noun evidence is the same as
+ * isSpokenAsNoun: an article before the leading delimiter, or a determiner
+ * before plus a noun follower after ("that, question mark, was wrong").
  */
 function runIsSpokenAsNoun(
   text: string,
   phrases: string[],
+  start: number,
   end: number,
 ): boolean {
-  // Whisper's two delimiters are stronger command evidence for mark names.
-  // Applying the broad follower guard here turns
-  // "good faith, question mark, is that clear" into "good faith,?, is...".
-  // Meta-mentions remain protected separately in unwrapCommaWrappedCommands.
-  if (phrases.some((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
-    return false;
-  }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
     return false;
+  }
+  if (phrases.every((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+    const before = wordBeforeDelimiters(text, start);
+    if (MARK_NOUN_ARTICLES.has(before)) return true;
+    return (
+      NOUN_DETERMINERS_BEFORE.has(before) &&
+      NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, end))
+    );
   }
   return NOUN_FOLLOWERS_AFTER.has(wordAfterDelimiters(text, end));
 }
@@ -497,7 +522,7 @@ function unwrapCommaWrappedCommands(text: string): string {
           offset + (phrase.index ?? 0) + phrase[0].length,
         ),
       );
-      if (runIsSpokenAsNoun(text, phrases, end) || anyMetaMention) {
+      if (runIsSpokenAsNoun(text, phrases, offset, end) || anyMetaMention) {
         return match;
       }
       const replacements = phrases
@@ -607,22 +632,6 @@ function isMetaMention(text: string, start: number, end: number): boolean {
   return inList && hasAdjacentCommandInList(text, start, end);
 }
 
-/** Mark-name commands that can also be the object of ordinary prose. */
-const MARK_PHRASE_COMMANDS = new Set([
-  "full stop", "questionmark", "question mark", "exclamation mark",
-  "exclamation point",
-]);
-
-// Mark-name commands often sit at a sentence boundary, where the word before
-// or after belongs to the sentence itself: "digest this question mark" and
-// "good faith question mark is ..." are real corpus commands. The broader
-// determiner/follower sets therefore overfit this subset when either cue acts
-// alone. An immediately preceding article is sufficient noun evidence; other
-// determiners require a noun follower too ("that question mark was wrong").
-// In the full shadow snapshot this rescues only the five noun uses and changes
-// zero command uses.
-const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
-
 /**
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
@@ -633,8 +642,13 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const command = text.slice(start, end).trim().toLowerCase();
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
-    if (MARK_NOUN_ARTICLES.has(before)) return true;
-    return NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after);
+    const beforeDelim = wordBeforeDelimiters(text, start);
+    const afterDelim = wordAfterDelimiters(text, end);
+    if (MARK_NOUN_ARTICLES.has(beforeDelim)) return true;
+    return (
+      NOUN_DETERMINERS_BEFORE.has(beforeDelim) &&
+      NOUN_FOLLOWERS_AFTER.has(afterDelim)
+    );
   }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"

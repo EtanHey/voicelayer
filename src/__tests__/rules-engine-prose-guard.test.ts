@@ -184,6 +184,9 @@ describe("spoken-command prose guard", () => {
       expect(applyRules("a full stop at the end")).toBe(
         "A full stop at the end",
       );
+      expect(applyRules("got a, question mark, at the end")).toBe(
+        "Got a, question mark, at the end",
+      );
     });
   });
 

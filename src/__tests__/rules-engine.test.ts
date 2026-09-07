@@ -119,6 +119,30 @@ describe("rules-engine", () => {
           "that question mark was wrong",
           "That question mark was wrong",
         ],
+        [
+          "got a, question mark, at the end",
+          "Got a, question mark, at the end",
+        ],
+        [
+          "That was supposed to be a, question mark.",
+          "That was supposed to be a, question mark.",
+        ],
+        [
+          "a, full stop, at the end",
+          "A, full stop, at the end",
+        ],
+        [
+          "the, exclamation mark, was wrong",
+          "The, exclamation mark, was wrong",
+        ],
+        [
+          "got an, exclamation point, at the end",
+          "Got an, exclamation point, at the end",
+        ],
+        [
+          "that, question mark, was wrong",
+          "That, question mark, was wrong",
+        ],
       ];
 
       for (const [raw, expected] of cases) {
@@ -143,6 +167,16 @@ describe("rules-engine", () => {
         ],
         [
           "quote digest this question mark unquote",
+          "Quote digest this? Unquote",
+          2,
+        ],
+        [
+          "can we proceed in good faith, question mark, is that clear",
+          "Can we proceed in good faith? Is that clear",
+          2,
+        ],
+        [
+          "quote digest this, question mark, unquote",
           "Quote digest this? Unquote",
           2,
         ],
