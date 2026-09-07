@@ -411,6 +411,13 @@ function runIsSpokenAsNoun(
   phrases: string[],
   end: number,
 ): boolean {
+  // Whisper's two delimiters are stronger command evidence for mark names.
+  // Applying the broad follower guard here turns
+  // "good faith, question mark, is that clear" into "good faith,?, is...".
+  // Meta-mentions remain protected separately in unwrapCommaWrappedCommands.
+  if (phrases.some((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+    return false;
+  }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
     return false;
   }

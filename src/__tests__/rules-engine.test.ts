@@ -97,6 +97,8 @@ describe("rules-engine", () => {
   describe("spoken punctuation", () => {
     it("keeps multi-word mark phrases when spoken as nouns", () => {
       const cases: Array<[string, string]> = [
+        ["a full stop at the end", "A full stop at the end"],
+        ["the questionmark was wrong", "The questionmark was wrong"],
         [
           "That was supposed to be a question mark.",
           "That was supposed to be a question mark.",
@@ -108,6 +110,10 @@ describe("rules-engine", () => {
         [
           "the exclamation mark was wrong",
           "The exclamation mark was wrong",
+        ],
+        [
+          "the exclamation point was wrong",
+          "The exclamation point was wrong",
         ],
         [
           "that question mark was wrong",
@@ -124,8 +130,12 @@ describe("rules-engine", () => {
 
     it("still converts multi-word mark phrases when spoken as commands", () => {
       const cases: Array<[string, string, number]> = [
+        ["end full stop", "End.", 2],
+        ["okay questionmark", "Okay?", 1],
         ["is it done question mark", "Is it done?", 2],
         ["okay question mark", "Okay?", 2],
+        ["wow exclamation mark", "Wow!", 2],
+        ["wow exclamation point", "Wow!", 2],
         [
           "can we proceed in good faith question mark is that clear",
           "Can we proceed in good faith? Is that clear",
@@ -152,6 +162,13 @@ describe("rules-engine", () => {
       const cleaned = applyRules(raw);
       expect(cleaned).toBe("Update: Q3\nHey, Sarah,");
       expect(wordCount(cleaned)).toBe(wordCount(raw) - 4);
+    });
+
+    it("unwraps a comma-wrapped mark-name command before noun guards", () => {
+      const raw = "good faith, question mark, is that clear";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Good faith? Is that clear");
+      expect(wordCount(cleaned)).toBe(wordCount(raw) - 2);
     });
 
     it("converts period/full stop", () => {
