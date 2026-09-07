@@ -409,13 +409,21 @@ function wordAfterDelimiters(text: string, index: number): string {
 function runIsSpokenAsNoun(
   text: string,
   phrases: string[],
+  start: number,
   end: number,
 ): boolean {
-  // Whisper's two delimiters are stronger command evidence for mark names.
-  // Applying the broad follower guard here turns
-  // "good faith, question mark, is that clear" into "good faith,?, is...".
-  // Meta-mentions remain protected separately in unwrapCommaWrappedCommands.
-  if (phrases.some((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+  const markPhraseCount = phrases.filter((phrase) =>
+    MARK_PHRASE_COMMANDS.has(phrase)
+  ).length;
+  if (markPhraseCount === phrases.length) {
+    return markPhraseIsSpokenAsNoun(
+      wordBeforeDelimiters(text, start),
+      wordAfterDelimiters(text, end),
+    );
+  }
+  // A mixed comma-wrapped run is command-shaped. Meta-mentions remain
+  // protected separately in unwrapCommaWrappedCommands.
+  if (markPhraseCount > 0) {
     return false;
   }
   if (!phrases.some((phrase) => AMBIGUOUS_COMMAND_PHRASES.has(phrase))) {
@@ -497,7 +505,16 @@ function unwrapCommaWrappedCommands(text: string): string {
           offset + (phrase.index ?? 0) + phrase[0].length,
         ),
       );
-      if (runIsSpokenAsNoun(text, phrases, end) || anyMetaMention) {
+      if (anyMetaMention) {
+        return match;
+      }
+      if (runIsSpokenAsNoun(text, phrases, offset, end)) {
+        // Remove Whisper's wrapper delimiters from a mark-name noun so the
+        // later ambiguous pass can see its article/follower evidence. Keeping
+        // the commas hides both neighbours and turns the words into a symbol.
+        if (phrases.every((phrase) => MARK_PHRASE_COMMANDS.has(phrase))) {
+          return ` ${phrases.join(" ")} `;
+        }
         return match;
       }
       const replacements = phrases
@@ -623,6 +640,11 @@ const MARK_PHRASE_COMMANDS = new Set([
 // zero command uses.
 const MARK_NOUN_ARTICLES = new Set(["a", "an", "the"]);
 
+function markPhraseIsSpokenAsNoun(before: string, after: string): boolean {
+  if (MARK_NOUN_ARTICLES.has(before)) return true;
+  return NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after);
+}
+
 /**
  * True when an ambiguous spoken command is being used as an ordinary noun and
  * must be left verbatim.
@@ -633,8 +655,7 @@ function isSpokenAsNoun(text: string, start: number, end: number): boolean {
   const command = text.slice(start, end).trim().toLowerCase();
 
   if (MARK_PHRASE_COMMANDS.has(command)) {
-    if (MARK_NOUN_ARTICLES.has(before)) return true;
-    return NOUN_DETERMINERS_BEFORE.has(before) && NOUN_FOLLOWERS_AFTER.has(after);
+    return markPhraseIsSpokenAsNoun(before, after);
   }
 
   // Operand context first: "a plus b" and "a equals b" are code, and the "a"

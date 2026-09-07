@@ -171,6 +171,13 @@ describe("rules-engine", () => {
       expect(wordCount(cleaned)).toBe(wordCount(raw) - 2);
     });
 
+    it("keeps a comma-wrapped mark name when the delimiters surround a noun", () => {
+      const raw = "got a, question mark, at the end";
+      const cleaned = applyRules(raw);
+      expect(cleaned).toBe("Got a question mark at the end");
+      expect(wordCount(cleaned)).toBe(wordCount(raw));
+    });
+
     it("converts period/full stop", () => {
       expect(applyRules("hello world period")).toBe("Hello world.");
     });
