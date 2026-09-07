@@ -2165,8 +2165,9 @@ describe("stt-polish system prompt — false starts and retractions are KEPT", (
     const text = prompt();
     // Etan: "keep filtering" um/uh — fillers remain explicitly removable.
     expect(text).toContain(
-      "Beyond standalone filler sounds (um, uh, er, ah, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words.",
+      "Beyond standalone filler sounds (um, uh, er, mm), ordinal cues folded into numbered list items, and confirmed chunk-boundary duplicates, you may not remove words.",
     );
+    expect(text).toContain("Keep the English discourse word ah");
     expect(text).toContain(
       "preserve all input content and spoken order",
     );
