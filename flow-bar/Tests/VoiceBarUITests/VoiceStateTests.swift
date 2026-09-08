@@ -64,6 +64,7 @@ final class VoiceStateTests: XCTestCase {
         state.retranscribeLastCapture()
 
         XCTAssertEqual(sentCommand?["cmd"] as? String, "retranscribe_last")
+        XCTAssertEqual(sentCommand?["force_recovery"] as? Bool, true)
         XCTAssertNotNil(sentCommand?["id"] as? String)
         XCTAssertEqual(state.pendingIntent?.command, .retranscribeLast)
         XCTAssertEqual(state.pendingIntent?.id, sentCommand?["id"] as? String)

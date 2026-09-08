@@ -447,6 +447,9 @@ const WAV_ADJACENT_ECHO_CLEANUP_MIN_SECONDS = 20;
 const WAV_CHUNKED_DECODE_MIN_SECONDS = 90;
 const WAV_CHUNK_SECONDS = 30;
 const WAV_CHUNK_OVERLAP_SECONDS = 5;
+const DEFAULT_RESIDENT_TRANSCRIPTION_TIMEOUT_MS = 60_000;
+const LONG_RESIDENT_TRANSCRIPTION_TIMEOUT_RATIO = 150;
+const MAX_RESIDENT_TRANSCRIPTION_TIMEOUT_MS = 840_000;
 
 function readAscii(bytes: Uint8Array, offset: number, length: number): string {
   return String.fromCharCode(...bytes.slice(offset, offset + length));
@@ -915,6 +918,7 @@ interface WhisperServerBackendDeps {
     options?: WhisperServerTranscribeOptions,
   ) => Promise<string>;
   fallbackBackend?: STTBackend;
+  residentTranscriptionTimeoutMs?: number;
 }
 
 export class WhisperServerBackend implements STTBackend {
@@ -925,6 +929,7 @@ export class WhisperServerBackend implements STTBackend {
     options?: WhisperServerTranscribeOptions,
   ) => Promise<string>;
   private readonly fallbackBackend: STTBackend;
+  private readonly residentTranscriptionTimeoutMs?: number;
 
   constructor(deps: WhisperServerBackendDeps = {}) {
     this.isResidentAvailable = deps.isServerAvailable ?? isServerAvailable;
@@ -932,6 +937,7 @@ export class WhisperServerBackend implements STTBackend {
       deps.transcribeViaServer ??
       ((wavData, options) => transcribeViaServer(wavData, undefined, options));
     this.fallbackBackend = deps.fallbackBackend ?? new WhisperCppBackend();
+    this.residentTranscriptionTimeoutMs = deps.residentTranscriptionTimeoutMs;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -946,9 +952,9 @@ export class WhisperServerBackend implements STTBackend {
     const wavData = new Uint8Array(await Bun.file(audioPath).arrayBuffer());
 
     try {
-      const chunkedResult = await this.transcribeChunkedLongRecording(
+      const chunkedResult = await this.withResidentTranscriptionTimeout(
         wavData,
-        options,
+        this.transcribeChunkedLongRecording(wavData, options),
       );
       if (chunkedResult) {
         const backendParts = [this.name, "chunks"];
@@ -961,9 +967,9 @@ export class WhisperServerBackend implements STTBackend {
         };
       }
 
-      const text = await this.transcribeResident(
+      const text = await this.withResidentTranscriptionTimeout(
         wavData,
-        buildWhisperServerOptions(options),
+        this.transcribeResident(wavData, buildWhisperServerOptions(options)),
       );
       if (!text.trim()) {
         console.error(
@@ -1019,6 +1025,57 @@ export class WhisperServerBackend implements STTBackend {
         backend: `${this.name}->${fallback.backend}`,
         durationMs: Date.now() - start,
       };
+    }
+  }
+
+  private residentTimeoutMs(wavData: Uint8Array): number {
+    if (this.residentTranscriptionTimeoutMs !== undefined) {
+      return this.residentTranscriptionTimeoutMs;
+    }
+
+    const envTimeout = Number.parseInt(
+      process.env.QA_VOICE_STT_RESIDENT_TIMEOUT_MS ?? "",
+      10,
+    );
+    if (Number.isFinite(envTimeout) && envTimeout > 0) {
+      return envTimeout;
+    }
+
+    const info = parseWavPcmInfo(wavData);
+    if (!info || info.durationSeconds < WAV_CHUNKED_DECODE_MIN_SECONDS) {
+      return DEFAULT_RESIDENT_TRANSCRIPTION_TIMEOUT_MS;
+    }
+
+    return Math.min(
+      MAX_RESIDENT_TRANSCRIPTION_TIMEOUT_MS,
+      Math.max(
+        DEFAULT_RESIDENT_TRANSCRIPTION_TIMEOUT_MS,
+        Math.ceil(info.durationSeconds * LONG_RESIDENT_TRANSCRIPTION_TIMEOUT_RATIO),
+      ),
+    );
+  }
+
+  private async withResidentTranscriptionTimeout<T>(
+    wavData: Uint8Array,
+    operation: Promise<T>,
+  ): Promise<T> {
+    const timeoutMs = this.residentTimeoutMs(wavData);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<T>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              new Error(
+                `whisper-server resident transcription timed out after ${Math.ceil(timeoutMs / 1000)}s`,
+              ),
+            );
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

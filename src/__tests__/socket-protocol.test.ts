@@ -221,6 +221,16 @@ describe("socket-protocol", () => {
       expect(result).toEqual({ cmd: "retranscribe_last" });
     });
 
+    it("parses retranscribe-last force recovery", () => {
+      const result = parseCommand(
+        '{"cmd":"retranscribe_last","force_recovery":true}',
+      );
+      expect(result).toEqual({
+        cmd: "retranscribe_last",
+        force_recovery: true,
+      });
+    });
+
     it("parses health command", () => {
       const result = parseCommand('{"cmd":"health"}');
       expect(result).toEqual({ cmd: "health" });

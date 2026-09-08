@@ -394,7 +394,7 @@ public final class VoiceState {
         pendingRecoveredTranscriptionPaste = true
         sendIntent(
             command: .retranscribeLast,
-            payload: ["cmd": "retranscribe_last"]
+            payload: ["cmd": "retranscribe_last", "force_recovery": true]
         )
     }
 

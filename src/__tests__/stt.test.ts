@@ -997,6 +997,40 @@ describe("STT backends", () => {
       expect(result.backend).toBe("whisper-server->whisper.cpp");
     });
 
+    it("falls back to whisper-cli when a long resident decode stalls before the bar timeout", async () => {
+      const wavPath = "/tmp/voicelayer-whisper-server-long-stall-fallback-test.wav";
+      await Bun.write(wavPath, makePcm16Wav(1187));
+      let fallbackCalls = 0;
+      const backend = new WhisperServerBackend({
+        isServerAvailable: () => true,
+        transcribeViaServer: async () => new Promise<string>(() => {}),
+        residentTranscriptionTimeoutMs: 5,
+        fallbackBackend: {
+          name: "whisper.cpp",
+          isAvailable: async () => true,
+          transcribe: async (_audioPath: string) => {
+            fallbackCalls++;
+            return {
+              text: "fallback recovered long recording",
+              backend: "whisper.cpp",
+              durationMs: 12,
+            };
+          },
+        },
+      } as any);
+
+      const result = await Promise.race([
+        backend.transcribe(wavPath),
+        Bun.sleep(100).then(() => {
+          throw new Error("timed out waiting for resident stall fallback");
+        }),
+      ]);
+
+      expect(result.text).toBe("fallback recovered long recording");
+      expect(result.backend).toBe("whisper-server->whisper.cpp");
+      expect(fallbackCalls).toBe(1);
+    });
+
     it("falls back to whisper-cli when resident inference returns empty text", async () => {
       const wavPath = "/tmp/voicelayer-whisper-server-empty-fallback-test.wav";
       await Bun.write(wavPath, new Uint8Array([7, 8]));

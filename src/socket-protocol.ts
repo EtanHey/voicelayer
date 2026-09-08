@@ -196,6 +196,7 @@ export interface ReplayCommand extends SocketCommandBase {
 
 export interface RetranscribeLastCommand extends SocketCommandBase {
   cmd: "retranscribe_last";
+  force_recovery?: boolean;
 }
 
 export interface ToggleCommand extends SocketCommandBase {
@@ -323,7 +324,11 @@ export function parseCommand(line: string): SocketCommand | null {
         return withCommandId<ReplayCommand>({ cmd: "replay" }, id);
       case "retranscribe_last":
         return withCommandId<RetranscribeLastCommand>(
-          { cmd: "retranscribe_last" },
+          {
+            cmd: "retranscribe_last",
+            force_recovery:
+              parsed.force_recovery === true ? true : undefined,
+          },
           id,
         );
       case "health":

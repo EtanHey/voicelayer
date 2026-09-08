@@ -114,9 +114,10 @@ export function handleSocketCommand(
       return buildAck(command, "noop", "nothing to replay");
     }
     case "retranscribe_last": {
+      const forceRecovery = command.force_recovery === true;
       if (
         recordingState === "recording" ||
-        recordingState === "transcribing" ||
+        (recordingState === "transcribing" && !forceRecovery) ||
         isSpeaking
       ) {
         return buildAck(command, "reject", "busy");

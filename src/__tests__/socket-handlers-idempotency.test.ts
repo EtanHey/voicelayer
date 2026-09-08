@@ -307,4 +307,22 @@ describe("socket handler idempotency matrix", () => {
     });
     expect(retranscribeLastCaptureSpy).not.toHaveBeenCalled();
   });
+
+  it("accepts forced retranscribe-last recovery while stale transcription is busy", () => {
+    recordingStateSpy.mockReturnValue("transcribing");
+
+    const response = handleSocketCommand({
+      cmd: "retranscribe_last",
+      id: "retranscribe-force",
+      force_recovery: true,
+    } as any);
+
+    expect(response).toEqual({
+      type: "ack",
+      command: "retranscribe_last",
+      outcome: "accept",
+      id: "retranscribe-force",
+    });
+    expect(retranscribeLastCaptureSpy).toHaveBeenCalled();
+  });
 });
