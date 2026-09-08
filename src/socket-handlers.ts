@@ -16,6 +16,7 @@ import {
 import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
 import {
   waitForInput,
+  transcribeExternalVoiceBarWav,
   hasRetainedRecording,
   retranscribeLastCapture,
   retranscribeRecordingCapture,
@@ -46,11 +47,26 @@ import {
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
+  setRecordingState,
 } from "./recording-state";
 import {
   restartWhisperServerForPerformanceChange,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
+import type { SilenceMode } from "./vad";
+import {
+  AndroidApplianceBridge,
+  resolveAndroidApplianceConfig,
+} from "./android-bridge";
+
+interface ActiveAndroidRecording {
+  bridge: AndroidApplianceBridge;
+  sessionId: string;
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+}
+
+let activeAndroidRecording: ActiveAndroidRecording | null = null;
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -61,6 +77,19 @@ export function handleSocketCommand(
 
   switch (command.cmd) {
     case "stop":
+      if (activeAndroidRecording) {
+        const active = activeAndroidRecording;
+        activeAndroidRecording = null;
+        stopAndroidRecording(active).catch((err) => {
+          console.error(
+            `[voicelayer] Android appliance stop failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+          setRecordingState("idle");
+          broadcast({ type: "state", state: "idle", source: "recording" });
+        });
+        stopPlayback();
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
       }
@@ -76,6 +105,19 @@ export function handleSocketCommand(
       stopPlayback();
       return buildAck(command, "accept");
     case "cancel":
+      if (activeAndroidRecording) {
+        const active = activeAndroidRecording;
+        activeAndroidRecording = null;
+        cancelAndroidRecording(active).catch((err) => {
+          console.error(
+            `[voicelayer] Android appliance cancel failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
+        setRecordingState("idle");
+        broadcast({ type: "state", state: "idle" });
+        stopPlayback();
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
       }
@@ -201,19 +243,7 @@ export function handleSocketCommand(
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
       const ptt = command.press_to_talk ?? false;
-      waitForInput(timeoutMs, silenceMode, ptt, {
-        archiveSource: "voicebar",
-      }).catch((err) => {
-        console.error(
-          `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        if (
-          !isRecordingConflictError(err) &&
-          getEffectiveRecordingState() === "idle"
-        ) {
-          broadcast({ type: "state", state: "idle", source: "recording" });
-        }
-      });
+      startAndroidOrLocalRecording(timeoutMs, silenceMode, ptt);
       return buildAck(command, "accept");
     }
     case "toggle": {
@@ -346,6 +376,99 @@ export function handleSocketCommand(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+  }
+}
+
+function startLocalVoiceBarRecording(
+  timeoutMs: number,
+  silenceMode: SilenceMode,
+  pressToTalk: boolean,
+): void {
+  waitForInput(timeoutMs, silenceMode, pressToTalk, {
+    archiveSource: "voicebar",
+  }).catch((err) => {
+    console.error(
+      `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    if (
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
+  });
+}
+
+function startAndroidOrLocalRecording(
+  timeoutMs: number,
+  silenceMode: SilenceMode,
+  pressToTalk: boolean,
+): void {
+  const config = resolveAndroidApplianceConfig();
+  if (!config.enabled) {
+    startLocalVoiceBarRecording(timeoutMs, silenceMode, pressToTalk);
+    return;
+  }
+
+  const bridge = new AndroidApplianceBridge({
+    baseUrl: config.baseUrl,
+    timeoutMs: config.timeoutMs,
+  });
+  bridge
+    .startRecording({ timeoutMs, pressToTalk })
+    .then((result) => {
+      if (!result.ok) {
+        console.error(
+          `[voicelayer] Android appliance unavailable (${result.reason}); falling back to local recording`,
+        );
+        startLocalVoiceBarRecording(timeoutMs, silenceMode, pressToTalk);
+        return;
+      }
+      activeAndroidRecording = {
+        bridge,
+        sessionId: result.sessionId,
+        silenceMode,
+        pressToTalk,
+      };
+      setRecordingState("recording");
+      broadcast({
+        type: "state",
+        state: "recording",
+        mode: pressToTalk ? "ptt" : "vad",
+        source: "android",
+      });
+    })
+    .catch((err) => {
+      console.error(
+        `[voicelayer] Android appliance start failed (${err instanceof Error ? err.message : String(err)}); falling back to local recording`,
+      );
+      startLocalVoiceBarRecording(timeoutMs, silenceMode, pressToTalk);
+    });
+}
+
+async function stopAndroidRecording(
+  active: ActiveAndroidRecording,
+): Promise<void> {
+  const stopped = await active.bridge.stopRecording(active.sessionId);
+  if (!stopped.ok) {
+    throw new Error(`stop failed: ${stopped.reason}`);
+  }
+  const audio = await active.bridge.pullAudio(active.sessionId);
+  if (!audio) {
+    throw new Error("pull_audio returned no audio");
+  }
+  await transcribeExternalVoiceBarWav(audio, {
+    silenceMode: active.silenceMode,
+    pressToTalk: active.pressToTalk,
+  });
+}
+
+async function cancelAndroidRecording(
+  active: ActiveAndroidRecording,
+): Promise<void> {
+  const cancelled = await active.bridge.cancelRecording(active.sessionId);
+  if (!cancelled.ok) {
+    throw new Error(`cancel failed: ${cancelled.reason}`);
   }
 }
 

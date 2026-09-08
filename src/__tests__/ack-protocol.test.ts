@@ -12,6 +12,7 @@ import * as actualPaths from "../paths";
 import * as input from "../input";
 import * as sessionBooking from "../session-booking";
 import * as socketClient from "../socket-client";
+import * as androidBridge from "../android-bridge";
 import {
   parseCommand,
   serializeEvent,
@@ -60,6 +61,16 @@ describe("ack protocol", () => {
   let hasRetainedRecordingSpy: ReturnType<typeof spyOn>;
   let retranscribeLastCaptureSpy: ReturnType<typeof spyOn>;
   let retranscribeRecordingCaptureSpy: ReturnType<typeof spyOn>;
+  let androidStartSpy: ReturnType<typeof spyOn>;
+  let androidStopSpy: ReturnType<typeof spyOn>;
+  let androidCancelSpy: ReturnType<typeof spyOn>;
+  let androidPullSpy: ReturnType<typeof spyOn>;
+  let transcribeExternalSpy: ReturnType<typeof spyOn>;
+  const originalAndroidApplianceFlag = process.env.QA_VOICE_ANDROID_APPLIANCE;
+  const originalAndroidApplianceUrl =
+    process.env.QA_VOICE_ANDROID_APPLIANCE_URL;
+  const originalAndroidApplianceTimeout =
+    process.env.QA_VOICE_ANDROID_APPLIANCE_TIMEOUT_MS;
 
   beforeEach(() => {
     cleanup();
@@ -102,6 +113,29 @@ describe("ack protocol", () => {
       input,
       "retranscribeRecordingCapture",
     ).mockResolvedValue("history retranscribed note");
+    androidStartSpy = spyOn(
+      androidBridge.AndroidApplianceBridge.prototype,
+      "startRecording",
+    ).mockResolvedValue({ ok: false, reason: "unhealthy" });
+    androidStopSpy = spyOn(
+      androidBridge.AndroidApplianceBridge.prototype,
+      "stopRecording",
+    ).mockResolvedValue({ ok: true, durationMs: 1200 });
+    androidCancelSpy = spyOn(
+      androidBridge.AndroidApplianceBridge.prototype,
+      "cancelRecording",
+    ).mockResolvedValue({ ok: true });
+    androidPullSpy = spyOn(
+      androidBridge.AndroidApplianceBridge.prototype,
+      "pullAudio",
+    ).mockResolvedValue(new Uint8Array([82, 73, 70, 70]));
+    transcribeExternalSpy = spyOn(
+      input,
+      "transcribeExternalVoiceBarWav",
+    ).mockResolvedValue("android transcript");
+    delete process.env.QA_VOICE_ANDROID_APPLIANCE;
+    delete process.env.QA_VOICE_ANDROID_APPLIANCE_URL;
+    delete process.env.QA_VOICE_ANDROID_APPLIANCE_TIMEOUT_MS;
     writeFileSync(TEST_REPLAY_FILE, "mp3");
   });
 
@@ -118,6 +152,27 @@ describe("ack protocol", () => {
     hasRetainedRecordingSpy.mockRestore();
     retranscribeLastCaptureSpy.mockRestore();
     retranscribeRecordingCaptureSpy.mockRestore();
+    androidStartSpy.mockRestore();
+    androidStopSpy.mockRestore();
+    androidCancelSpy.mockRestore();
+    androidPullSpy.mockRestore();
+    transcribeExternalSpy.mockRestore();
+    if (originalAndroidApplianceFlag === undefined) {
+      delete process.env.QA_VOICE_ANDROID_APPLIANCE;
+    } else {
+      process.env.QA_VOICE_ANDROID_APPLIANCE = originalAndroidApplianceFlag;
+    }
+    if (originalAndroidApplianceUrl === undefined) {
+      delete process.env.QA_VOICE_ANDROID_APPLIANCE_URL;
+    } else {
+      process.env.QA_VOICE_ANDROID_APPLIANCE_URL = originalAndroidApplianceUrl;
+    }
+    if (originalAndroidApplianceTimeout === undefined) {
+      delete process.env.QA_VOICE_ANDROID_APPLIANCE_TIMEOUT_MS;
+    } else {
+      process.env.QA_VOICE_ANDROID_APPLIANCE_TIMEOUT_MS =
+        originalAndroidApplianceTimeout;
+    }
     cleanup();
   });
 
@@ -172,6 +227,148 @@ describe("ack protocol", () => {
       command: "record",
       outcome: "accept",
       id: "record-1",
+    });
+  });
+
+  it("falls back to local recording when the Android appliance is unavailable", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    process.env.QA_VOICE_ANDROID_APPLIANCE = "1";
+    androidStartSpy.mockResolvedValueOnce({ ok: false, reason: "busy" });
+
+    const response = handleSocketCommand({
+      cmd: "record",
+      id: "record-android-fallback",
+      timeout_seconds: 30,
+      silence_mode: "standard",
+    } as unknown as SocketCommand);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(androidStartSpy).toHaveBeenCalledWith({
+      timeoutMs: 30000,
+      pressToTalk: false,
+    });
+    expect(waitForInputSpy).toHaveBeenCalledWith(30000, "standard", false, {
+      archiveSource: "voicebar",
+    });
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "record-android-fallback",
+    });
+  });
+
+  it("uses Android recording when the feature flag is enabled and start succeeds", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    process.env.QA_VOICE_ANDROID_APPLIANCE = "1";
+    androidStartSpy.mockResolvedValueOnce({
+      ok: true,
+      sessionId: "android-session",
+      source: "android",
+    });
+
+    const response = handleSocketCommand({
+      cmd: "record",
+      id: "record-android",
+      timeout_seconds: 30,
+      press_to_talk: true,
+    } as unknown as SocketCommand);
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(waitForInputSpy).not.toHaveBeenCalled();
+    expect(broadcastSpy).toHaveBeenCalledWith({
+      type: "state",
+      state: "recording",
+      mode: "ptt",
+      source: "android",
+    });
+    expect(response).toEqual({
+      type: "ack",
+      command: "record",
+      outcome: "accept",
+      id: "record-android",
+    });
+  });
+
+  it("stops an active Android recording and hands audio to Mac transcription", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    process.env.QA_VOICE_ANDROID_APPLIANCE = "1";
+    androidStartSpy.mockResolvedValueOnce({
+      ok: true,
+      sessionId: "android-session",
+      source: "android",
+    });
+
+    handleSocketCommand({
+      cmd: "record",
+      id: "record-android-stop",
+      timeout_seconds: 30,
+      silence_mode: "standard",
+      press_to_talk: true,
+    } as unknown as SocketCommand);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    recordingStateSpy.mockReturnValue("recording");
+    const response = handleSocketCommand({
+      cmd: "stop",
+      id: "stop-android",
+    } as unknown as SocketCommand);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(androidStopSpy).toHaveBeenCalledWith("android-session");
+    expect(androidPullSpy).toHaveBeenCalledWith("android-session");
+    expect(transcribeExternalSpy).toHaveBeenCalledWith(
+      new Uint8Array([82, 73, 70, 70]),
+      {
+        silenceMode: "standard",
+        pressToTalk: true,
+      },
+    );
+    expect(response).toEqual({
+      type: "ack",
+      command: "stop",
+      outcome: "accept",
+      id: "stop-android",
+    });
+  });
+
+  it("cancels an active Android recording without transcribing", async () => {
+    queueDepthSpy.mockReturnValue(0);
+    recordingStateSpy.mockReturnValue("idle");
+    process.env.QA_VOICE_ANDROID_APPLIANCE = "1";
+    androidStartSpy.mockResolvedValueOnce({
+      ok: true,
+      sessionId: "android-session-cancel",
+      source: "android",
+    });
+
+    handleSocketCommand({
+      cmd: "record",
+      id: "record-android-cancel",
+      timeout_seconds: 30,
+    } as unknown as SocketCommand);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    recordingStateSpy.mockReturnValue("recording");
+    const response = handleSocketCommand({
+      cmd: "cancel",
+      id: "cancel-android",
+    } as unknown as SocketCommand);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(androidCancelSpy).toHaveBeenCalledWith("android-session-cancel");
+    expect(androidPullSpy).not.toHaveBeenCalled();
+    expect(transcribeExternalSpy).not.toHaveBeenCalled();
+    expect(response).toEqual({
+      type: "ack",
+      command: "cancel",
+      outcome: "accept",
+      id: "cancel-android",
     });
   });
 

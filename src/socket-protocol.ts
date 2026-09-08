@@ -33,7 +33,7 @@ export interface StateEvent {
    * AIDEV-NOTE: Without this, a queued voice_speak audio finishing during a bar-initiated
    * recording resets barInitiatedRecording before the transcription arrives, killing paste.
    */
-  source?: "playback" | "recording";
+  source?: "playback" | "recording" | "android";
 }
 
 export interface SpeechEvent {
