@@ -2025,6 +2025,180 @@ export async function waitForInput(
   }
 }
 
+export interface ExternalVoiceBarWavOptions {
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+  applianceTranscript?: string | null;
+  androidSessionId?: string | null;
+}
+
+function wavDurationMs(wavData: Uint8Array): number {
+  if (wavData.length < 44) return 0;
+  const view = new DataView(
+    wavData.buffer,
+    wavData.byteOffset,
+    wavData.byteLength,
+  );
+  const riff =
+    String.fromCharCode(...wavData.slice(0, 4)) === "RIFF" &&
+    String.fromCharCode(...wavData.slice(8, 12)) === "WAVE";
+  if (!riff) return 0;
+  const channels = view.getUint16(22, true);
+  const sampleRate = view.getUint32(24, true);
+  const bitsPerSample = view.getUint16(34, true);
+  const dataSize = view.getUint32(40, true);
+  const bytesPerSecond = sampleRate * channels * (bitsPerSample / 8);
+  if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return 0;
+  return Math.round((dataSize / bytesPerSecond) * 1000);
+}
+
+export async function transcribeExternalVoiceBarWav(
+  wavData: Uint8Array,
+  options: ExternalVoiceBarWavOptions,
+): Promise<string | null> {
+  setRecordingState("transcribing");
+  broadcast({ type: "state", state: "transcribing" });
+  broadcast({
+    type: "transcription_status",
+    status: "warming",
+    message: "Loading speech model",
+  });
+
+  const wavPath = recordingFilePath(process.pid, Date.now());
+  try {
+    retainLastCaptureForRecovery(wavData, "dictation");
+    writeFileSync(wavPath, wavData);
+
+    const applianceTranscript = options.applianceTranscript?.trim();
+    const backend = applianceTranscript ? null : await getBackend();
+    if (!applianceTranscript) {
+      broadcast({
+        type: "transcription_status",
+        status: "transcribing",
+        message: "Transcribing",
+      });
+      console.error(
+        `[voicelayer] Transcribing Android appliance audio with ${backend!.name}...`,
+      );
+    }
+    const result = applianceTranscript
+      ? { text: applianceTranscript, backend: "android-speech" }
+      : await backend!.transcribe(wavPath);
+    const text = await finalizeTranscriptionTextForSurface(
+      result.text,
+      "dictation",
+    );
+    console.error(`[voicelayer] Android appliance transcription: ${text}`);
+
+    if (consumeCancelSignalForRecording()) {
+      console.error(
+        "[voicelayer] Android appliance recording cancelled during transcription; discarding transcript",
+      );
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return null;
+    }
+
+    let archivedRecordingPath: string | null = null;
+    if (text) {
+      try {
+        const durationMs = wavDurationMs(wavData);
+        archivedRecordingPath = archiveVoiceBarRecording({
+          audioBytes: wavData,
+          transcript: text,
+          source: "voicebar",
+          silenceMode: options.silenceMode,
+          pressToTalk: options.pressToTalk,
+          durationMs,
+          transcribedDurationMs: durationMs,
+          backend: result.backend,
+        });
+      } catch (err) {
+        console.error(
+          `[voicelayer] Failed to archive Android appliance recording: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    if (text) {
+      broadcast({
+        type: "transcription",
+        text,
+        ...(archivedRecordingPath
+          ? { recording_path: join(archivedRecordingPath, "audio.wav") }
+          : {}),
+      });
+    }
+    setRecordingState("idle");
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    return text || null;
+  } catch (err) {
+    setRecordingState("idle");
+    broadcast({
+      type: "error",
+      message: `Android appliance transcription failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw err;
+  } finally {
+    try {
+      if (existsSync(wavPath)) unlinkSync(wavPath);
+    } catch {}
+  }
+}
+
+export async function finalizeExternalVoiceBarTranscript(
+  transcript: string,
+  options: ExternalVoiceBarWavOptions,
+): Promise<string | null> {
+  const rawText = transcript.trim();
+  if (!rawText) return null;
+  setRecordingState("transcribing");
+  broadcast({ type: "state", state: "transcribing" });
+  broadcast({
+    type: "transcription_status",
+    status: "transcribing",
+    message: "Finalizing phone transcript",
+    source: "android",
+    ...(options.androidSessionId ? { session_id: options.androidSessionId } : {}),
+  });
+  try {
+    const text = await finalizeTranscriptionTextForSurface(rawText, "dictation");
+    if (consumeCancelSignalForRecording()) {
+      setRecordingState("idle");
+      broadcast({ type: "state", state: "idle", source: "recording" });
+      return null;
+    }
+    if (text) {
+      broadcast({
+        type: "transcription",
+        text,
+        source: "android",
+        ...(options.androidSessionId ? { session_id: options.androidSessionId } : {}),
+      });
+    }
+    setRecordingState("idle");
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    return text || null;
+  } catch (err) {
+    setRecordingState("idle");
+    broadcast({
+      type: "error",
+      message: `Android phone transcript finalization failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      recoverable: true,
+    });
+    broadcast({ type: "state", state: "idle", source: "recording" });
+    throw err;
+  }
+}
+
 /**
  * Clear input state — no-op in current architecture.
  * Kept for API compatibility with mcp-server.ts.

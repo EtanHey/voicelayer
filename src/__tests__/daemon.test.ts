@@ -172,6 +172,18 @@ describe("daemon socket path", () => {
       else delete process.env.QA_VOICE_SOCKET_PATH;
     }
   });
+
+  it("allows overriding the standalone daemon PID path for isolated dogfood", async () => {
+    const saved = process.env.QA_VOICE_DAEMON_PID_PATH;
+    process.env.QA_VOICE_DAEMON_PID_PATH = "/tmp/voicelayer-android-daemon.pid";
+    try {
+      const paths = await import(`../paths?daemon-pid-${Date.now()}`);
+      expect(paths.DAEMON_PID_FILE).toBe("/tmp/voicelayer-android-daemon.pid");
+    } finally {
+      if (saved) process.env.QA_VOICE_DAEMON_PID_PATH = saved;
+      else delete process.env.QA_VOICE_DAEMON_PID_PATH;
+    }
+  });
 });
 
 describe("CLI integration", () => {
@@ -188,6 +200,29 @@ describe("CLI integration", () => {
     expect(cliSrc).toContain('bash "$PACKAGE_ROOT/flow-bar/build-app.sh"');
     expect(cliSrc).toContain('open "/Applications/VoiceBar.app"');
     expect(cliSrc).not.toContain('exec ".build/release/VoiceBar"');
+  });
+
+  it("build-app can stamp an isolated VoiceBar Android bundle identity", async () => {
+    const buildAppSrc = await Bun.file("flow-bar/build-app.sh").text();
+
+    expect(buildAppSrc).toContain(
+      'VOICEBAR_BUNDLE_ID="${VOICEBAR_BUNDLE_ID:-com.voicelayer.voicebar}"',
+    );
+    expect(buildAppSrc).toContain(
+      'VOICEBAR_APP_NAME="${VOICEBAR_APP_NAME:-VoiceBar}"',
+    );
+    expect(buildAppSrc).toContain(
+      'VOICEBAR_APP_DISPLAY_NAME="${VOICEBAR_APP_DISPLAY_NAME:-$VOICEBAR_APP_NAME}"',
+    );
+    expect(buildAppSrc).toContain(
+      'plist_set_string "$plist_path" "CFBundleIdentifier" "$VOICEBAR_BUNDLE_ID"',
+    );
+    expect(buildAppSrc).toContain(
+      'plist_set_string "$plist_path" "CFBundleName" "$VOICEBAR_APP_NAME"',
+    );
+    expect(buildAppSrc).toContain(
+      'plist_set_string "$plist_path" "CFBundleDisplayName" "$VOICEBAR_APP_DISPLAY_NAME"',
+    );
   });
 
   it("voicelayer.sh help includes serve command", async () => {

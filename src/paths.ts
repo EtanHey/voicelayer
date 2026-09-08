@@ -25,6 +25,7 @@ const TMP = "/tmp";
 const VOICE_DISABLED_OVERRIDE_ENV = "QA_VOICE_DISABLE_FLAG_PATH";
 const SOCKET_OVERRIDE_ENV = "QA_VOICE_SOCKET_PATH";
 const MCP_SOCKET_OVERRIDE_ENV = "QA_VOICE_MCP_SOCKET_PATH";
+const DAEMON_PID_OVERRIDE_ENV = "QA_VOICE_DAEMON_PID_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 export const DISABLE_VOICELAYER = "DISABLE_VOICELAYER";
@@ -186,7 +187,10 @@ export const MCP_SOCKET_PATH = getMcpSocketPath();
  * Standalone daemon PID file.
  * Separate from MCP_PID_FILE so daemon and MCP can coexist.
  */
-export const DAEMON_PID_FILE = tmpPath("voicelayer-daemon.pid");
+export const DAEMON_PID_FILE = readOverride(
+  DAEMON_PID_OVERRIDE_ENV,
+  tmpPath("voicelayer-daemon.pid"),
+);
 
 /**
  * Safe write that refuses to follow symlinks.

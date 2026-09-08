@@ -95,14 +95,17 @@ async function main() {
 
   // 4. Connect to Voice Bar for UI state + command handling
   onCommand(handleSocketCommand);
-  connectToBar(getServeSocketPath(), {
+  const serveSocketPath = getServeSocketPath();
+  connectToBar(serveSocketPath, {
     role: "standalone-daemon",
     acceptsCommands: true,
   });
 
   console.error(`${LOG_PREFIX} Standalone daemon ready (PID ${process.pid})`);
   console.error(
-    `${LOG_PREFIX} Waiting for commands from Voice Bar on /tmp/voicelayer.sock`,
+    `${LOG_PREFIX} Waiting for commands from Voice Bar on ${
+      serveSocketPath ?? "/tmp/voicelayer.sock"
+    }`,
   );
 
   // 5. Graceful shutdown

@@ -63,7 +63,9 @@ describe("MCP daemon LaunchAgent install contract", () => {
     const signIndex = buildScript.indexOf("codesign --force --options runtime");
     const relaunchIndex = buildScript.lastIndexOf("relaunch_voicebar_app");
 
-    expect(buildScript).toContain('VOICEBAR_BUNDLE_ID="com.voicelayer.voicebar"');
+    expect(buildScript).toContain(
+      'VOICEBAR_BUNDLE_ID="${VOICEBAR_BUNDLE_ID:-com.voicelayer.voicebar}"',
+    );
     expect(buildScript).toContain("CFBundleIdentifier");
     expect(buildScript).toContain("voicebar_target_pids");
     expect(buildScript).toContain("voicebar_descendant_pids");

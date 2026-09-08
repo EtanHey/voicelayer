@@ -99,6 +99,38 @@ describe("socket-protocol", () => {
       expect(parsed.partial).toBe(true);
     });
 
+    it("serializes Android sourced transcript and status events", () => {
+      const transcript: SocketEvent = {
+        type: "transcription",
+        text: "phone words",
+        partial: true,
+        source: "android",
+        session_id: "android-session",
+      };
+      const status: SocketEvent = {
+        type: "transcription_status",
+        status: "recording",
+        message: "Phone recording",
+        source: "android",
+        session_id: "android-session",
+      };
+
+      expect(JSON.parse(serializeEvent(transcript).trim())).toMatchObject({
+        type: "transcription",
+        text: "phone words",
+        partial: true,
+        source: "android",
+        session_id: "android-session",
+      });
+      expect(JSON.parse(serializeEvent(status).trim())).toMatchObject({
+        type: "transcription_status",
+        status: "recording",
+        message: "Phone recording",
+        source: "android",
+        session_id: "android-session",
+      });
+    });
+
     it("serializes error event", () => {
       const event: SocketEvent = {
         type: "error",
@@ -269,6 +301,17 @@ describe("socket-protocol", () => {
     it("allows long VoiceBar recording timeouts", () => {
       const result = parseCommand('{"cmd":"record","timeout_seconds":3600}');
       expect(result).toEqual({ cmd: "record", timeout_seconds: 3600 });
+    });
+
+    it("parses Android input source for record commands", () => {
+      const result = parseCommand(
+        '{"cmd":"record","timeout_seconds":30,"input_source":"android"}',
+      );
+      expect(result).toEqual({
+        cmd: "record",
+        timeout_seconds: 30,
+        input_source: "android",
+      });
     });
 
     it("parses toggle command with all fields", () => {

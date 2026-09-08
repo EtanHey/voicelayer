@@ -33,7 +33,8 @@ export interface StateEvent {
    * AIDEV-NOTE: Without this, a queued voice_speak audio finishing during a bar-initiated
    * recording resets barInitiatedRecording before the transcription arrives, killing paste.
    */
-  source?: "playback" | "recording";
+  source?: "playback" | "recording" | "android";
+  session_id?: string;
 }
 
 export interface SpeechEvent {
@@ -49,12 +50,16 @@ export interface TranscriptionEvent {
   partial?: boolean;
   /** Archived VoiceBar recording audio used to produce this transcript. */
   recording_path?: string;
+  source?: "local" | "android";
+  session_id?: string;
 }
 
 export interface TranscriptionStatusEvent {
   type: "transcription_status";
-  status: "warming" | "transcribing";
+  status: "warming" | "recording" | "stopping" | "ready" | "transcribing";
   message: string;
+  source?: "local" | "android";
+  session_id?: string;
 }
 
 export interface AudioLevelEvent {
@@ -220,6 +225,8 @@ export interface RecordCommand extends SocketCommandBase {
   silence_mode?: "quick" | "standard" | "thoughtful";
   /** Push-to-talk mode — no VAD, stop via signal (default: false). */
   press_to_talk?: boolean;
+  /** Explicit capture source. Android mode fails loud instead of silently using Mac mic. */
+  input_source?: "default" | "local" | "android";
 }
 
 export interface HealthCommand extends SocketCommandBase {
@@ -497,6 +504,13 @@ export function parseCommand(line: string): SocketCommand | null {
         }
         if (parsed.press_to_talk === true) {
           command.press_to_talk = true;
+        }
+        if (
+          parsed.input_source === "default" ||
+          parsed.input_source === "local" ||
+          parsed.input_source === "android"
+        ) {
+          command.input_source = parsed.input_source;
         }
         return command;
       }

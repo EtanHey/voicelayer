@@ -16,6 +16,8 @@ import {
 import { getHistoryEntry, playAudioNonBlocking, stopPlayback } from "./tts";
 import {
   waitForInput,
+  transcribeExternalVoiceBarWav,
+  finalizeExternalVoiceBarTranscript,
   hasRetainedRecording,
   retranscribeLastCapture,
   retranscribeRecordingCapture,
@@ -46,11 +48,29 @@ import {
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
+  setRecordingState,
 } from "./recording-state";
 import {
   restartWhisperServerForPerformanceChange,
   setWhisperPerformanceEffort,
 } from "./whisper-performance";
+import type { SilenceMode } from "./vad";
+import {
+  AndroidApplianceBridge,
+  resolveAndroidApplianceConfig,
+  type AndroidResultEvent,
+  type AndroidTranscript,
+} from "./android-bridge";
+
+interface ActiveAndroidRecording {
+  bridge: AndroidApplianceBridge;
+  sessionId: string;
+  silenceMode: SilenceMode;
+  pressToTalk: boolean;
+  lastResultSeq: number;
+}
+
+let activeAndroidRecording: ActiveAndroidRecording | null = null;
 
 export function handleSocketCommand(
   command: SocketCommand,
@@ -61,6 +81,29 @@ export function handleSocketCommand(
 
   switch (command.cmd) {
     case "stop":
+      if (activeAndroidRecording) {
+        const active = activeAndroidRecording;
+        activeAndroidRecording = null;
+        stopAndroidRecording(active).catch((err) => {
+          console.error(
+            `[voicelayer] Android appliance stop failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          setRecordingState("idle");
+          broadcast({
+            type: "error",
+            message: `Android VoiceLayer stop failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            recoverable: true,
+            show_during_bar_recording: true,
+          });
+          broadcast({ type: "state", state: "idle", source: "android" });
+        });
+        stopPlayback();
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
       }
@@ -76,6 +119,21 @@ export function handleSocketCommand(
       stopPlayback();
       return buildAck(command, "accept");
     case "cancel":
+      if (activeAndroidRecording) {
+        const active = activeAndroidRecording;
+        activeAndroidRecording = null;
+        cancelAndroidRecording(active).catch((err) => {
+          console.error(
+            `[voicelayer] Android appliance cancel failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        });
+        setRecordingState("idle");
+        broadcast({ type: "state", state: "idle" });
+        stopPlayback();
+        return buildAck(command, "accept");
+      }
       if (recordingState === "idle" && playbackQueueDepth === 0) {
         return buildAck(command, "noop", "already idle");
       }
@@ -201,19 +259,12 @@ export function handleSocketCommand(
       const timeoutMs = (command.timeout_seconds ?? 30) * 1000;
       const silenceMode = command.silence_mode ?? "standard";
       const ptt = command.press_to_talk ?? false;
-      waitForInput(timeoutMs, silenceMode, ptt, {
-        archiveSource: "voicebar",
-      }).catch((err) => {
-        console.error(
-          `[voicelayer] Bar-initiated recording failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-        if (
-          !isRecordingConflictError(err) &&
-          getEffectiveRecordingState() === "idle"
-        ) {
-          broadcast({ type: "state", state: "idle", source: "recording" });
-        }
-      });
+      startAndroidOrLocalRecording(
+        timeoutMs,
+        silenceMode,
+        ptt,
+        command.input_source,
+      );
       return buildAck(command, "accept");
     }
     case "toggle": {
@@ -346,6 +397,193 @@ export function handleSocketCommand(
       } catch (error) {
         return buildAck(command, "reject", vocabularyErrorReason(error));
       }
+  }
+}
+
+function startLocalVoiceBarRecording(
+  timeoutMs: number,
+  silenceMode: SilenceMode,
+  pressToTalk: boolean,
+): void {
+  waitForInput(timeoutMs, silenceMode, pressToTalk, {
+    archiveSource: "voicebar",
+  }).catch((err) => {
+    console.error(
+      `[voicelayer] Bar-initiated recording failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    if (
+      !isRecordingConflictError(err) &&
+      getEffectiveRecordingState() === "idle"
+    ) {
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
+  });
+}
+
+function startAndroidOrLocalRecording(
+  timeoutMs: number,
+  silenceMode: SilenceMode,
+  pressToTalk: boolean,
+  inputSource: "default" | "local" | "android" | undefined,
+): void {
+  const config = resolveAndroidApplianceConfig();
+  const wantsAndroid = inputSource === "android" || config.enabled;
+  if (!wantsAndroid || inputSource === "local") {
+    startLocalVoiceBarRecording(timeoutMs, silenceMode, pressToTalk);
+    return;
+  }
+
+  if (!config.enabled && inputSource === "android") {
+    rejectAndroidRecording("disabled");
+    return;
+  }
+
+  const bridge = new AndroidApplianceBridge({
+    baseUrl: config.baseUrl,
+    timeoutMs: config.timeoutMs,
+  });
+  bridge
+    .startRecording({ timeoutMs, pressToTalk })
+    .then((result) => {
+      if (!result.ok) {
+        console.error(
+          `[voicelayer] Android appliance unavailable (${result.reason})`,
+        );
+        rejectAndroidRecording(result.reason);
+        return;
+      }
+      activeAndroidRecording = {
+        bridge,
+        sessionId: result.sessionId,
+        silenceMode,
+        pressToTalk,
+        lastResultSeq: 0,
+      };
+      setRecordingState("recording");
+      broadcast({
+        type: "state",
+        state: "recording",
+        mode: pressToTalk ? "ptt" : "vad",
+        source: "android",
+        session_id: result.sessionId,
+      });
+      broadcast({
+        type: "transcription_status",
+        status: "recording",
+        message: "Phone recording",
+        source: "android",
+        session_id: result.sessionId,
+      });
+    })
+    .catch((err) => {
+      console.error(
+        `[voicelayer] Android appliance start failed (${
+          err instanceof Error ? err.message : String(err)
+        })`,
+      );
+      rejectAndroidRecording("network");
+    });
+}
+
+function rejectAndroidRecording(reason: string): void {
+  setRecordingState("idle");
+  broadcast({
+    type: "error",
+    message: `Android VoiceLayer unavailable: ${reason}`,
+    recoverable: true,
+    show_during_bar_recording: true,
+  });
+  broadcast({ type: "state", state: "idle", source: "android" });
+}
+
+async function stopAndroidRecording(
+  active: ActiveAndroidRecording,
+): Promise<void> {
+  const stopped = await active.bridge.stopRecording(active.sessionId);
+  if (!stopped.ok) {
+    throw new Error(`stop failed: ${stopped.reason}`);
+  }
+  let transcript = finalTranscriptText(stopped.transcript);
+  const result = await active.bridge.getResult(
+    active.sessionId,
+    active.lastResultSeq,
+  );
+  if (result.ok) {
+    active.lastResultSeq = result.seq;
+    forwardAndroidEvents(result.events, active.sessionId);
+    transcript = transcript ?? finalTranscriptText(result.transcript);
+  }
+  const audio = await active.bridge.pullAudio(active.sessionId);
+  if (!audio.ok) {
+    if (transcript) {
+      await finalizeExternalVoiceBarTranscript(transcript, {
+        silenceMode: active.silenceMode,
+        pressToTalk: active.pressToTalk,
+        applianceTranscript: transcript,
+        androidSessionId: active.sessionId,
+      });
+      return;
+    }
+    if (process.env.QA_VOICE_ANDROID_ALLOW_LOCAL_FALLBACK !== "1") {
+      throw new Error("phone transcript missing");
+    }
+    throw new Error(`pull_audio failed: ${audio.reason}`);
+  }
+  await transcribeExternalVoiceBarWav(audio.bytes, {
+    silenceMode: active.silenceMode,
+    pressToTalk: active.pressToTalk,
+    applianceTranscript: transcript,
+    androidSessionId: active.sessionId,
+  });
+}
+
+async function cancelAndroidRecording(
+  active: ActiveAndroidRecording,
+): Promise<void> {
+  const cancelled = await active.bridge.cancelRecording(active.sessionId);
+  if (!cancelled.ok) {
+    throw new Error(`cancel failed: ${cancelled.reason}`);
+  }
+}
+
+function finalTranscriptText(transcript: AndroidTranscript | null | undefined): string | null {
+  if (!transcript || transcript.partial) return null;
+  const polished = transcript.polishedText?.trim();
+  if (polished) return polished;
+  const text = transcript.text.trim();
+  return text.length > 0 ? text : null;
+}
+
+function forwardAndroidEvents(
+  events: AndroidResultEvent[],
+  sessionId: string,
+): void {
+  for (const event of events) {
+    if (event.type === "transcription_status") {
+      broadcast({
+        type: "transcription_status",
+        status:
+          event.status === "recording" ||
+          event.status === "stopping" ||
+          event.status === "ready" ||
+          event.status === "transcribing"
+            ? event.status
+            : "recording",
+        message: event.message ?? "Phone recording",
+        source: "android",
+        session_id: sessionId,
+      });
+    } else if (event.type === "transcription" && event.text) {
+      broadcast({
+        type: "transcription",
+        text: event.polishedText?.trim() || event.text,
+        partial: event.partial,
+        source: "android",
+        session_id: sessionId,
+      });
+    }
   }
 }
 
