@@ -317,6 +317,41 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
     }
 
+    func testHeartbeatGapAboveHalfThresholdLogsSequencesAndElapsedTime() {
+        let process = ProcessSpy()
+        var sequence = 7
+        var now = Date(timeIntervalSince1970: 1000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        var loggedGaps: [(previous: Int, current: Int, elapsed: TimeInterval)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: {
+                VoiceBarDaemonHeartbeat(pid: process.processIdentifier, sequence: sequence)
+            },
+            heartbeatGapLogger: { previous, current, elapsed in
+                loggedGaps.append((previous, current, elapsed))
+            },
+            dateProvider: { now },
+            processFactory: { process },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[0].block()
+        now = now.addingTimeInterval(16)
+        sequence = 8
+        scheduledBlocks.filter { $0.delay == 5 }[1].block()
+
+        XCTAssertEqual(loggedGaps.count, 1)
+        XCTAssertEqual(loggedGaps[0].previous, 7)
+        XCTAssertEqual(loggedGaps[0].current, 8)
+        XCTAssertEqual(loggedGaps[0].elapsed, 16)
+        XCTAssertTrue(process.isRunning)
+    }
+
     func testStaleHeartbeatForceKillsAndRestartsOwnedChild() {
         let firstProcess = ProcessSpy(processIdentifier: 4321)
         firstProcess.ignoresTerminate = true
@@ -325,12 +360,16 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         var now = Date(timeIntervalSince1970: 2000)
         var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
         var forceKilledPIDs: [Int32] = []
+        var loggedGaps: [(previous: Int, current: Int, elapsed: TimeInterval)] = []
         let controller = VoiceBarDaemonController(
             executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
             configurationProvider: { _ in testLaunchConfiguration() },
             livenessProbe: { false },
             heartbeatReader: {
                 VoiceBarDaemonHeartbeat(pid: firstProcess.processIdentifier, sequence: 7)
+            },
+            heartbeatGapLogger: { previous, current, elapsed in
+                loggedGaps.append((previous, current, elapsed))
             },
             dateProvider: { now },
             processFactory: { processQueue.removeFirst() },
@@ -343,14 +382,22 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         )
         _ = controller.activateIfNeeded()
 
-        for index in 0 ..< 3 {
+        for index in 0 ..< 6 {
             now = now.addingTimeInterval(5)
             scheduledBlocks.filter { $0.delay == 5 }[index].block()
         }
+        XCTAssertFalse(firstProcess.didReceiveTerminate)
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[6].block()
         scheduledBlocks.first(where: { $0.delay == 1 })?.block()
 
         XCTAssertTrue(firstProcess.didReceiveTerminate)
         XCTAssertEqual(forceKilledPIDs, [firstProcess.processIdentifier])
+        XCTAssertEqual(loggedGaps.count, 1)
+        XCTAssertEqual(loggedGaps[0].previous, 7)
+        XCTAssertEqual(loggedGaps[0].current, 7)
+        XCTAssertEqual(loggedGaps[0].elapsed, 20)
         XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
         XCTAssertTrue(secondProcess.didRun)
         XCTAssertTrue(controller.ownsLaunchedProcess)
@@ -379,10 +426,14 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         )
         _ = controller.activateIfNeeded()
 
-        for index in 0 ..< 3 {
+        for index in 0 ..< 6 {
             now = now.addingTimeInterval(5)
             scheduledBlocks.filter { $0.delay == 5 }[index].block()
         }
+        XCTAssertFalse(firstProcess.didReceiveTerminate)
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[6].block()
 
         XCTAssertTrue(firstProcess.didReceiveTerminate)
         XCTAssertEqual(forceKilledPIDs, [firstProcess.processIdentifier])
@@ -390,7 +441,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertTrue(controller.ownsLaunchedProcess)
         XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
         XCTAssertFalse(secondProcess.didRun)
-        XCTAssertEqual(scheduledBlocks.filter { $0.delay == 5 }.count, 4)
+        XCTAssertEqual(scheduledBlocks.filter { $0.delay == 5 }.count, 8)
     }
 
     func testMissingHeartbeatUsesStartupGraceBeforeRestart() {

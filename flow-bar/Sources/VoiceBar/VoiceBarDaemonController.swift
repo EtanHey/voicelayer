@@ -338,12 +338,16 @@ final class VoiceBarDaemonController {
     typealias ForceKillProcess = (_ pid: Int32) -> Void
     typealias MicrophonePermissionPrompter = (_ message: String) -> Void
     typealias HeartbeatReader = () -> VoiceBarDaemonHeartbeat?
+    typealias HeartbeatGapLogger = (_ previousSequence: Int, _ currentSequence: Int, _ elapsed: TimeInterval) -> Void
     typealias DateProvider = () -> Date
 
     private static let stabilityResetDelay: TimeInterval = 300
     private static let gracefulStopTimeout: TimeInterval = 1.0
     private static let heartbeatCheckInterval: TimeInterval = 5
-    private static let heartbeatStaleAfter: TimeInterval = 10
+    // Provisional until gaps above 15s are measured from real-use logs. A
+    // permanent wedge tolerates this delay; a false positive loses live audio.
+    private static let heartbeatStaleAfter: TimeInterval = 30
+    private static let heartbeatGapLogThreshold = heartbeatStaleAfter / 2
     private static let heartbeatStartupGrace: TimeInterval = 30
 
     private let executableURLProvider: () -> URL?
@@ -355,6 +359,7 @@ final class VoiceBarDaemonController {
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private let livenessProbe: () -> Bool
     private let heartbeatReader: HeartbeatReader
+    private let heartbeatGapLogger: HeartbeatGapLogger
     private let dateProvider: DateProvider
     private var process: Process?
 
@@ -366,6 +371,7 @@ final class VoiceBarDaemonController {
     private var processLaunchedAt: Date?
     private var lastHeartbeatSequence: Int?
     private var lastHeartbeatAdvancedAt: Date?
+    private var lastLoggedHeartbeatGapSequence: Int?
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -392,6 +398,10 @@ final class VoiceBarDaemonController {
         heartbeatReader: @escaping HeartbeatReader = {
             VoiceBarDaemonHeartbeatReader.read()
         },
+        heartbeatGapLogger: @escaping HeartbeatGapLogger = { previousSequence, currentSequence, elapsed in
+            NSLog("[VoiceBar] Daemon heartbeat gap sequence %ld -> %ld: %.3fs",
+                  previousSequence, currentSequence, elapsed)
+        },
         dateProvider: @escaping DateProvider = { Date() },
         processFactory: @escaping () -> Process = { Process() },
         restartScheduler: @escaping RestartScheduler = { delay, block in
@@ -413,6 +423,7 @@ final class VoiceBarDaemonController {
         self.microphonePermissionPrompter = microphonePermissionPrompter
         self.livenessProbe = livenessProbe
         self.heartbeatReader = heartbeatReader
+        self.heartbeatGapLogger = heartbeatGapLogger
         self.dateProvider = dateProvider
     }
 
@@ -622,8 +633,25 @@ final class VoiceBarDaemonController {
             let heartbeat = heartbeatReader()
             if let heartbeat, heartbeat.pid == launchedProcess.processIdentifier {
                 if heartbeat.sequence != lastHeartbeatSequence {
+                    if let previousSequence = lastHeartbeatSequence,
+                       let lastHeartbeatAdvancedAt {
+                        let elapsed = now.timeIntervalSince(lastHeartbeatAdvancedAt)
+                        if elapsed > Self.heartbeatGapLogThreshold {
+                            heartbeatGapLogger(previousSequence, heartbeat.sequence, elapsed)
+                        }
+                    }
                     lastHeartbeatSequence = heartbeat.sequence
                     lastHeartbeatAdvancedAt = now
+                    lastLoggedHeartbeatGapSequence = nil
+                } else if let lastHeartbeatAdvancedAt,
+                          now.timeIntervalSince(lastHeartbeatAdvancedAt) > Self.heartbeatGapLogThreshold,
+                          lastLoggedHeartbeatGapSequence != heartbeat.sequence {
+                    heartbeatGapLogger(
+                        heartbeat.sequence,
+                        heartbeat.sequence,
+                        now.timeIntervalSince(lastHeartbeatAdvancedAt)
+                    )
+                    lastLoggedHeartbeatGapSequence = heartbeat.sequence
                 }
             }
 
@@ -654,6 +682,7 @@ final class VoiceBarDaemonController {
         processLaunchedAt = nil
         lastHeartbeatSequence = nil
         lastHeartbeatAdvancedAt = nil
+        lastLoggedHeartbeatGapSequence = nil
     }
 
     private func terminateOwnedChildForRespawn(reason: String) -> Bool {

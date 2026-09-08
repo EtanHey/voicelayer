@@ -50,4 +50,26 @@ describe("daemon event-loop heartbeat", () => {
     expect(existsSync(path)).toBeTrue();
     expect(JSON.parse(readFileSync(path, "utf8")).pid).toBe(9_876);
   });
+
+  it("logs a publish gap above half the watchdog threshold", async () => {
+    const path = testTmp(`daemon-heartbeat-${crypto.randomUUID()}.json`);
+    let nowMs = 0;
+    const logs: string[] = [];
+    const publisher = startDaemonHeartbeat({
+      path,
+      pid: 4_321,
+      intervalMs: 10,
+      gapLogThresholdMs: 15_000,
+      now: () => new Date(nowMs),
+      log: (message) => logs.push(message),
+    });
+    stopActivePublisher = publisher.stop;
+
+    nowMs = 16_000;
+    await Bun.sleep(15);
+
+    expect(logs).toEqual([
+      "[voicelayer-daemon] Heartbeat publish gap sequence 1 -> 2: 16.000s",
+    ]);
+  });
 });
