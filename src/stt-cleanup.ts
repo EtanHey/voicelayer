@@ -37,6 +37,14 @@ const BUILTIN_HEBREW_LATIN_ALIASES = vocabularyAliasesFromEntries(
 const BUILTIN_HEBREW_LATIN_ALIAS_SOURCES = new Set(
   BUILTIN_HEBREW_LATIN_ALIASES.map(({ from }) => from),
 );
+const CONTEXTUAL_HEBREW_TECH_ALIAS_SOURCES = new Set(["פרונט", "בק", "בבל"]);
+const HEBREW_TECH_CONTEXT_PATTERN =
+  /(?:פול סטאק|פרונט-אנד|בקאנד|בק'אנד|גאו|פיגמה|ריאקט נייטיב|סו ולט|קוברנטיס|Full Stack|Front-end|Back-end|Figma|React Native|Svelte|Next\.js|Kubernetes|\b(?:UX|API)\b)/iu;
+
+function shouldApplySTTAlias(source: string, text: string): boolean {
+  return !CONTEXTUAL_HEBREW_TECH_ALIAS_SOURCES.has(source) ||
+    HEBREW_TECH_CONTEXT_PATTERN.test(text);
+}
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   ...Object.fromEntries(
@@ -712,6 +720,7 @@ export function cleanupTranscriptionText(
   const rulesConfig: RulesConfig = {
     aliases,
     hebrewLatinAliasSources: BUILTIN_HEBREW_LATIN_ALIAS_SOURCES,
+    shouldApplyAlias: shouldApplySTTAlias,
     aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),
   };
   const cleaned = applyRules(trimmed, rulesConfig);

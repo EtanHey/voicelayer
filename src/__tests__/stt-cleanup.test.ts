@@ -500,10 +500,12 @@ describe("stt-cleanup", () => {
       ["פול סטאק", "Full Stack"],
       ["פרונט-אנד", "Front-end"],
       ["לפרונט-אנד", "ל-Front-end"],
-      ["פרונט", "Front"],
       ["בקאנד", "Back-end"],
       ["בבק'אנד", "ב-Back-end"],
-      ["בק", "Back"],
+      [
+        "הייתי Full Stack ועשיתי גם פרונט וגם בק",
+        "הייתי Full Stack ועשיתי גם Front וגם Back",
+      ],
       ["גאו", "Go"],
       ["בגאו", "ב-Go"],
       ["מגאו", "מ-Go"],
@@ -512,7 +514,7 @@ describe("stt-cleanup", () => {
       ["ובפיגמה", "וב-Figma"],
       ["ריאקט נייטיב", "React Native"],
       ["לסו ולט", "ל Svelte"],
-      ["בבל", "Bubble"],
+      ["עברנו מ-Svelte לבבל ואז ל-Next.js", "עברנו מ-Svelte ל-Bubble ואז ל-Next.js"],
       ["קוברנטיס", "Kubernetes"],
       ["ולפרונט-אנד", "ול-Front-end"],
     ];
@@ -535,6 +537,9 @@ describe("stt-cleanup", () => {
       "סופרונט-אנד ומגאומטריה",
     );
     expect(cleanupTranscriptionText("הפון ואורפסטא")).toBe("הפון ואורפסטא");
+    expect(cleanupTranscriptionText("נסענו לבבל העתיקה דרך הפרונט")).toBe(
+      "נסענו לבבל העתיקה דרך הפרונט",
+    );
     expect(
       cleanupTranscriptionText(
         "I use Full Stack, Front-end, Go, Figma, React Native, Svelte, Bubble, and Kubernetes",

@@ -17,6 +17,7 @@
 export interface RulesConfig {
   aliases?: Record<string, string>;
   hebrewLatinAliasSources?: ReadonlySet<string>;
+  shouldApplyAlias?: (source: string, text: string) => boolean;
   disabledStages?: Set<string>;
   aggressiveFillerRemoval?: boolean;
 }
@@ -51,6 +52,7 @@ export function applyRules(text: string, config?: RulesConfig): string {
       result,
       config.aliases,
       config.hebrewLatinAliasSources,
+      config.shouldApplyAlias,
     );
   }
 
@@ -1196,6 +1198,7 @@ function applyAliases(
   text: string,
   aliases: Record<string, string>,
   hebrewLatinAliasSources: ReadonlySet<string> = new Set(),
+  shouldApplyAlias?: (source: string, text: string) => boolean,
 ): string {
   let result = text;
   const prefixKey = [...hebrewLatinAliasSources].sort().join("\0");
@@ -1236,6 +1239,7 @@ function applyAliases(
   const lowerResult = result.toLowerCase();
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
+    if (shouldApplyAlias && !shouldApplyAlias(fromLower, result)) continue;
     result = result.replace(pattern, (_match, prefix?: string) => {
       if (!prefix || prefixMode === "plain") return to;
       return prefixMode === "separate-prefix"
