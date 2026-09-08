@@ -525,6 +525,11 @@ describe("stt-cleanup", () => {
     }
   });
 
+  it("maps the unprefixed split Svelte phonetic without requiring a proclitic", () => {
+    expect(cleanupTranscriptionText("סו ולט")).toBe("Svelte");
+    expect(cleanupTranscriptionText("לסו ולט")).toBe("ל Svelte");
+  });
+
   it("limits Hebrew-to-Latin aliases to whole known terms", () => {
     expect(
       cleanupTranscriptionText(

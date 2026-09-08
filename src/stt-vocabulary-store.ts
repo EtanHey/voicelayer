@@ -46,8 +46,8 @@ export const BUILTIN_STT_DICTIONARY_ENTRIES: readonly STTDictionaryEntry[] = [
   { canonical: "Go", variants: ["גאו"] },
   { canonical: "Figma", variants: ["פיגמה"] },
   { canonical: "React Native", variants: ["ריאקט נייטיב"] },
-  // The observed form is ל + a split phonetic rendering. The rules engine
-  // preserves that proclitic as a separate token so 2 input words stay 2.
+  // Whisper often splits this as two tokens. A glued proclitic (לסו ולט)
+  // stays a separate word; the unprefixed form maps to the one-word canonical.
   { canonical: "Svelte", variants: ["סו ולט"] },
   { canonical: "Bubble", variants: ["בבל"] },
   { canonical: "Kubernetes", variants: ["קוברנטיס"] },
