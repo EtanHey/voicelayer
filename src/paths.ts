@@ -42,6 +42,7 @@ const MCP_SOCKET_OVERRIDE_ENVS = [
   "QA_VOICE_MCP_SOCKET_PATH",
 ] as const;
 const MCP_HEARTBEAT_OVERRIDE_ENV = "QA_VOICE_MCP_HEARTBEAT_PATH";
+const MCP_PID_OVERRIDE_ENV = "QA_VOICE_MCP_PID_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 const RECORDING_HOLD_OVERRIDE_ENV = "QA_VOICE_RECORDING_HOLD_PATH";
@@ -146,15 +147,29 @@ export const STOP_FILE = join(STATE_DIR, `stop-${SESSION_TOKEN}`);
 /** Cancel signal file — set alongside STOP_FILE to discard recording (skip transcription). */
 export const CANCEL_FILE = join(STATE_DIR, `cancel-${SESSION_TOKEN}`);
 
-/** Event-loop heartbeat consumed by VoiceBar's owned-daemon watchdog. */
+function heartbeatPathBesidePid(pidPath: string): string {
+  return pidPath.endsWith(".pid")
+    ? `${pidPath.slice(0, -".pid".length)}.heartbeat`
+    : `${pidPath}.heartbeat`;
+}
+
+/**
+ * Event-loop heartbeat consumed by VoiceBar's owned-daemon watchdog.
+ *
+ * Isolated MCP sockets/PID files must not share the live heartbeat. A second
+ * writer on the production path looks like a frozen owned child, and VoiceBar
+ * will SIGKILL the daily-driver daemon.
+ */
 export function mcpHeartbeatFilePath(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return readOverride(
-    MCP_HEARTBEAT_OVERRIDE_ENV,
-    `${getStateDir(env)}/voicelayer-mcp.heartbeat`,
-    env,
-  );
+  const explicit = env[MCP_HEARTBEAT_OVERRIDE_ENV]?.trim();
+  if (explicit) return explicit;
+  const pidOverride = env[MCP_PID_OVERRIDE_ENV]?.trim();
+  if (pidOverride) return heartbeatPathBesidePid(pidOverride);
+  const socketOverride = firstOverrideValue(MCP_SOCKET_OVERRIDE_ENVS, env);
+  if (socketOverride) return `${socketOverride}.heartbeat`;
+  return `${getStateDir(env)}/voicelayer-mcp.heartbeat`;
 }
 
 /** Cross-process recording state — lets speaker output gates see VoiceBar captures. */

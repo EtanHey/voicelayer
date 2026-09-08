@@ -91,6 +91,7 @@ printf '\n== Bun MCP daemon boot ==\n'
   QA_VOICE_MCP_SOCKET_PATH="$MCP_SOCKET" \
     QA_VOICE_SOCKET_PATH="$VOICEBAR_SOCKET" \
     QA_VOICE_MCP_PID_PATH="$MCP_PID_FILE" \
+    QA_VOICE_MCP_HEARTBEAT_PATH="$RUN_DIR/voicelayer-mcp.heartbeat" \
     QA_VOICE_DISABLE_FLAG_PATH="$DISABLE_FLAG" \
     VOICELAYER_ALLOW_ORPHAN_DAEMON=1 \
     bun run src/mcp-server-daemon.ts

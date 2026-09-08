@@ -123,3 +123,45 @@ describe("VOICELAYER_SOCKET_PATH dev-socket isolation", () => {
     } as NodeJS.ProcessEnv)).toBe(false);
   });
 });
+
+describe("mcpHeartbeatFilePath isolation", () => {
+  const liveStateDir = "/Users/etan/.local/state/voicelayer";
+  const liveHeartbeat = `${liveStateDir}/voicelayer-mcp.heartbeat`;
+
+  it("keeps the live heartbeat under the state directory by default", () => {
+    expect(
+      paths.mcpHeartbeatFilePath({
+        VOICELAYER_STATE_DIR: liveStateDir,
+      } as NodeJS.ProcessEnv),
+    ).toBe(liveHeartbeat);
+  });
+
+  it("does not share the live heartbeat when the MCP PID file is isolated", () => {
+    expect(
+      paths.mcpHeartbeatFilePath({
+        VOICELAYER_STATE_DIR: liveStateDir,
+        QA_VOICE_MCP_PID_PATH: "/tmp/qa-run/voicelayer-mcp.pid",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/qa-run/voicelayer-mcp.heartbeat");
+  });
+
+  it("does not share the live heartbeat when only the MCP socket is isolated", () => {
+    expect(
+      paths.mcpHeartbeatFilePath({
+        VOICELAYER_STATE_DIR: liveStateDir,
+        VOICELAYER_MCP_SOCKET_PATH: "/tmp/qa-run/m.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/qa-run/m.sock.heartbeat");
+  });
+
+  it("lets an explicit heartbeat override win over PID and socket isolation", () => {
+    expect(
+      paths.mcpHeartbeatFilePath({
+        VOICELAYER_STATE_DIR: liveStateDir,
+        QA_VOICE_MCP_HEARTBEAT_PATH: "/tmp/explicit.heartbeat",
+        QA_VOICE_MCP_PID_PATH: "/tmp/qa-run/voicelayer-mcp.pid",
+        VOICELAYER_MCP_SOCKET_PATH: "/tmp/qa-run/m.sock",
+      } as NodeJS.ProcessEnv),
+    ).toBe("/tmp/explicit.heartbeat");
+  });
+});
