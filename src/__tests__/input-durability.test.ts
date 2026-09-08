@@ -440,6 +440,122 @@ describe("input recording durability", () => {
     }
   });
 
+  for (const pushToEnd of [true, false]) {
+    it(`keeps the event loop responsive when a ${pushToEnd ? "push-to-end" : "VAD"} recorder stalls without EOF`, async () => {
+      const chunks = Array.from({ length: 25 }, () => makePcmChunk(1800));
+      if (!pushToEnd) {
+        vadProbabilityForCall = () => 0.95;
+      }
+      const recorder = installFakeRecorder(chunks, true);
+      const { recordToBuffer } = await import("../input");
+      let intervalTicks = 0;
+      let stopWrittenAt = 0;
+      const interval = setInterval(() => {
+        intervalTicks += 1;
+        if (intervalTicks === 5) {
+          stopWrittenAt = Date.now();
+          writeFileSync(STOP_FILE, "stop");
+        }
+      }, 10);
+      const recording = recordToBuffer(2_000, "thoughtful", pushToEnd);
+
+      try {
+        await recorder.waitForSpawn();
+        await waitUntil(
+          () =>
+            existsSync(retainedPath) &&
+            readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * chunks.length,
+          "stalled recorder PCM persistence",
+        );
+        await waitUntil(
+          () => stopWrittenAt > 0 && !existsSync(STOP_FILE),
+          "event-loop stop poll during recorder stall",
+        );
+
+        expect(intervalTicks).toBeGreaterThanOrEqual(5);
+        expect(Date.now() - stopWrittenAt).toBeLessThan(200);
+        const captured = await Promise.race([
+          recording,
+          Bun.sleep(700).then(() => "timed-out" as const),
+        ]);
+        expect(captured).not.toBe("timed-out");
+        expect(captured).toBeInstanceOf(Uint8Array);
+        expect((captured as Uint8Array).byteLength).toBe(
+          VAD_CHUNK_BYTES * 25,
+        );
+      } finally {
+        clearInterval(interval);
+        writeFileSync(STOP_FILE, "stop");
+        await recording.catch(() => null);
+        clearStopSignal();
+      }
+    });
+  }
+
+  for (const pushToEnd of [true, false]) {
+    it(`keeps the event loop responsive when a real child pipe stalls in ${pushToEnd ? "push-to-end" : "VAD"} mode`, async () => {
+      if (!pushToEnd) {
+        vadProbabilityForCall = () => 0.95;
+      }
+      const savedFakeRecBin = process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+      process.env.VOICELAYER_TEST_FAKE_REC_BIN = join(
+        process.cwd(),
+        "src",
+        "__tests__",
+        "setup",
+        "fake-rec-stall.sh",
+      );
+      const { recordToBuffer } = await import("../input");
+      const recording = recordToBuffer(4_000, "thoughtful", pushToEnd);
+      let intervalTicks = 0;
+      let stopWrittenAt = 0;
+      let interval: ReturnType<typeof setInterval> | undefined;
+
+      try {
+        await waitUntil(
+          () =>
+            existsSync(retainedPath) &&
+            readWavDataSize(retainedPath) === VAD_CHUNK_BYTES * 25,
+          "real child recorder to enter its post-PCM stall",
+          5_000,
+        );
+        interval = setInterval(() => {
+          intervalTicks += 1;
+          if (intervalTicks === 5) {
+            stopWrittenAt = Date.now();
+            writeFileSync(STOP_FILE, "stop");
+          }
+        }, 10);
+        await waitUntil(
+          () => stopWrittenAt > 0 && !existsSync(STOP_FILE),
+          "event-loop stop poll during real child-pipe stall",
+        );
+
+        expect(intervalTicks).toBeGreaterThanOrEqual(5);
+        expect(Date.now() - stopWrittenAt).toBeLessThan(200);
+        const captured = await Promise.race([
+          recording,
+          Bun.sleep(700).then(() => "timed-out" as const),
+        ]);
+        expect(captured).not.toBe("timed-out");
+        expect(captured).toBeInstanceOf(Uint8Array);
+        expect((captured as Uint8Array).byteLength).toBe(
+          VAD_CHUNK_BYTES * 25,
+        );
+      } finally {
+        if (interval) clearInterval(interval);
+        if (savedFakeRecBin === undefined) {
+          delete process.env.VOICELAYER_TEST_FAKE_REC_BIN;
+        } else {
+          process.env.VOICELAYER_TEST_FAKE_REC_BIN = savedFakeRecBin;
+        }
+        writeFileSync(STOP_FILE, "stop");
+        await recording.catch(() => null);
+        clearStopSignal();
+      }
+    });
+  }
+
   it("keeps the absent push-to-end default on VAD and auto-closes after silence", async () => {
     const quickSilenceChunks = vad.silenceChunksForMode("quick");
     const chunks = [
