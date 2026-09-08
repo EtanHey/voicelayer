@@ -652,9 +652,9 @@ export interface VoiceBarRecordingArchiveInput {
 
 export interface VoiceBarUntranscribedRecordingArchiveInput extends Omit<
   VoiceBarRecordingArchiveInput,
-  "transcript" | "transcribedDurationMs"
+  "transcript"
 > {
-  reason: "cancelled";
+  reason: "cancelled" | "captured";
 }
 
 export interface WaitForInputOptions {
@@ -782,7 +782,7 @@ interface VoiceBarRecordingMetadata {
   backend: string;
   language_mode: string;
   voicelayer_transcript_chars: number;
-  transcription_status: "transcribed" | "cancelled";
+  transcription_status: "transcribed" | "cancelled" | "captured";
   audio_sha256: string;
   app_version: string | null;
   provenance: RecordingProvenance;
@@ -2739,38 +2739,57 @@ export async function waitForInput(
       pushToEnd,
       chunkedSession,
       options.signal,
-      options.archiveSource === "voice_ask",
+      options.archiveSource !== undefined,
       captureState,
     );
   } catch (err) {
     if (
       err instanceof RecordingFailureWithCapturedPcm &&
-      options.archiveSource === "voice_ask"
+      options.archiveSource !== undefined
     ) {
       const retainedWavData = createWavBuffer(err.pcmData);
       const durationMs = pcmDurationMs(err.pcmData);
       try {
-        const archivePath = archiveVoiceAskCapture({
+        const capture = {
           options,
           audioBytes: retainedWavData,
           silenceMode,
           pushToEnd,
           durationMs,
           transcribedDurationMs: durationMs,
-        });
+        };
+        const archivePath =
+          options.archiveSource === "voice_ask"
+            ? archiveVoiceAskCapture(capture)
+            : archiveVoiceBarUntranscribedRecording({
+                ...capture,
+                source: "voicebar",
+                backend: "not-transcribed",
+                reason: "captured",
+              });
+        if (options.archiveSource === "voicebar") {
+          try {
+            retainLastCaptureForRecovery(retainedWavData, "dictation");
+            linkRetainedCaptureToArchive(join(archivePath, "audio.wav"));
+          } catch (recoveryErr) {
+            console.error(
+              `[voicelayer] Failed to retain captured recording for retry: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+            );
+          }
+        }
         invokeArchiveCreatedObserver(archivePath, options.onArchiveCreated);
       } catch (archiveErr) {
         const detail =
           archiveErr instanceof Error ? archiveErr.message : String(archiveErr);
         appendControlLayerEvent("capture.archive_failed", {
-          archive_source: "voice_ask",
+          archive_source: options.archiveSource,
           duration_ms: durationMs,
           error: detail,
           recording_error: err.originalError.message,
         });
-        throw new Error(
-          `voice_ask archive failed after capture abort: ${detail}`,
-        );
+        const message = `${options.archiveSource} archive failed after capture abort: ${detail}`;
+        if (options.archiveSource === "voice_ask") throw new Error(message);
+        console.error(`[voicelayer] ${message}`);
       }
     }
     appendControlLayerEvent("capture.recording_failed", {
@@ -2805,6 +2824,39 @@ export async function waitForInput(
   const retainedWavData = createWavBuffer(pcmData);
   const sttTrim = trimTrailingSilenceForSTT(pcmData, pushToEnd);
   let voiceAskArchivePath: string | null = null;
+  let voiceBarArchivePath: string | null = null;
+  // P0: archive completed dictation before any callback, speech gate, or STT.
+  // The single retained WAV is overwritten by the next capture; it cannot be
+  // the only copy while a decoder is hung or after a failed/cancelled decode.
+  if (options.archiveSource === "voicebar") {
+    try {
+      voiceBarArchivePath = archiveVoiceBarUntranscribedRecording({
+        audioBytes: retainedWavData,
+        source: "voicebar",
+        silenceMode,
+        pushToEnd,
+        durationMs: sttTrim.rawDurationMs,
+        transcribedDurationMs: sttTrim.transcribedDurationMs,
+        backend: "not-transcribed",
+        reason: "captured",
+      });
+      // recordToBuffer's incremental writer already retained this capture.
+      // Link as soon as the row exists: callbacks, gates, aborts or a stalled
+      // decoder must not leave recovery unable to finalize the same row.
+      linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
+      invokeArchiveCreatedObserver(voiceBarArchivePath, options.onArchiveCreated);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      const message = `voicebar archive failed: ${detail}`;
+      appendControlLayerEvent("capture.archive_failed", {
+        archive_source: "voicebar",
+        duration_ms: sttTrim.rawDurationMs,
+        error: detail,
+      });
+      console.error(`[voicelayer] ${message}`);
+      broadcast({ type: "error", message, recoverable: true });
+    }
+  }
   if (options.archiveSource === "voice_ask") {
     try {
       voiceAskArchivePath = archiveVoiceAskCapture({
@@ -2866,23 +2918,12 @@ export async function waitForInput(
       retainedWavData,
       polishSurfaceForWaitOptions(options),
     );
-    if (options.archiveSource === "voicebar") {
-      try {
-        const cancelledArchivePath = archiveVoiceBarUntranscribedRecording({
-          audioBytes: retainedWavData,
-          source: options.archiveSource,
-          silenceMode,
-          pushToEnd,
-          durationMs: pcmDurationMs(pcmData),
-          backend: "not-transcribed",
-          reason: "cancelled",
-        });
-        linkRetainedCaptureToArchive(join(cancelledArchivePath, "audio.wav"));
-      } catch (err) {
-        console.error(
-          `[voicelayer] Failed to archive cancelled recording: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
+    if (voiceBarArchivePath) {
+      const audioPath = join(voiceBarArchivePath, "audio.wav");
+      updateArchivedRecordingMetadata(audioPath, (metadata) => {
+        metadata.transcription_status = "cancelled";
+      });
+      linkRetainedCaptureToArchive(audioPath);
     }
     console.error(
       "[voicelayer] Recording cancelled — retained audio for recovery",
@@ -3017,6 +3058,9 @@ export async function waitForInput(
       retainedWavData,
       polishSurfaceForWaitOptions(options),
     );
+    if (voiceBarArchivePath) {
+      linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
+    }
     writeFileSync(wavPath, sttWavData);
 
     // Transcribe with selected backend
@@ -3105,8 +3149,19 @@ export async function waitForInput(
       sttWavData,
       polishSurfaceForWaitOptions(options),
     );
+    if (voiceBarArchivePath) {
+      linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
+    }
 
     if (consumeCancelSignalForRecording()) {
+      if (voiceBarArchivePath) {
+        updateArchivedRecordingMetadata(
+          join(voiceBarArchivePath, "audio.wav"),
+          (metadata) => {
+            metadata.transcription_status = "cancelled";
+          },
+        );
+      }
       console.error(
         "[voicelayer] Recording cancelled during transcription — discarding transcript",
       );
@@ -3119,29 +3174,47 @@ export async function waitForInput(
     let archivedRecordingPath: string | null = null;
     if (text) {
       try {
-        archivedRecordingPath = voiceAskArchivePath
-          ? finalizeVoiceAskArchive(voiceAskArchivePath, {
-              transcript: text,
-              backend: sttBackendLabel,
-              transcribedDurationMs: sttTrim.transcribedDurationMs,
-              polishStatus: finalized.polishStatus,
-            })
-          : archiveWaitForInputRecording({
-              options,
-              audioBytes: retainedWavData,
-              transcript: text,
-              silenceMode,
-              pushToEnd,
-              durationMs: sttTrim.rawDurationMs,
-              transcribedDurationMs: sttTrim.transcribedDurationMs,
-              backend: sttBackendLabel,
-              polishStatus: finalized.polishStatus,
-            });
+        if (voiceBarArchivePath) {
+          updateArchivedTranscript(join(voiceBarArchivePath, "audio.wav"), text, {
+            backend: sttBackendLabel,
+            languageMode: getLanguageModeFromEnv(),
+            transcribedDurationMs: sttTrim.transcribedDurationMs,
+            polishStatus: finalized.polishStatus,
+            requireMetadataUpdate: true,
+          });
+          archivedRecordingPath = voiceBarArchivePath;
+        } else {
+          archivedRecordingPath = voiceAskArchivePath
+            ? finalizeVoiceAskArchive(voiceAskArchivePath, {
+                transcript: text,
+                backend: sttBackendLabel,
+                transcribedDurationMs: sttTrim.transcribedDurationMs,
+                polishStatus: finalized.polishStatus,
+              })
+            : archiveWaitForInputRecording({
+                options,
+                audioBytes: retainedWavData,
+                transcript: text,
+                silenceMode,
+                pushToEnd,
+                durationMs: sttTrim.rawDurationMs,
+                transcribedDurationMs: sttTrim.transcribedDurationMs,
+                backend: sttBackendLabel,
+                polishStatus: finalized.polishStatus,
+              });
+        }
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         console.error(`[voicelayer] Failed to archive recording: ${detail}`);
         if (options.archiveSource === "voice_ask") {
           throw new Error(`voice_ask archive failed: ${detail}`);
+        }
+        if (voiceBarArchivePath) {
+          broadcast({
+            type: "error",
+            message: `voicebar archive finalization failed: ${detail}`,
+            recoverable: true,
+          });
         }
       }
       if (archivedRecordingPath) {
@@ -3264,6 +3337,7 @@ export function updateArchivedTranscript(
     transcribedDurationMs?: number;
     polishStatus?: STTPolishStatus | null;
     provenanceProbe?: RecordingProvenanceProbe;
+    requireMetadataUpdate?: boolean;
   },
 ): void {
   const transcriptPath = join(dirname(audioPath), "voicelayer-transcript.txt");
@@ -3296,7 +3370,7 @@ export function updateArchivedTranscript(
       );
     }
     metadata.audio_sha256 = archivedAudioSha256(audioPath);
-  });
+  }, transcription.requireMetadataUpdate);
 }
 
 function archivedAudioSha256(audioPath: string): string {
@@ -3306,15 +3380,20 @@ function archivedAudioSha256(audioPath: string): string {
 function updateArchivedRecordingMetadata(
   audioPath: string,
   applyUpdates: (metadata: Record<string, unknown>) => void,
+  required = false,
 ): void {
   const metadataPath = join(dirname(audioPath), "metadata.json");
-  if (!existsSync(metadataPath)) return;
+  if (!existsSync(metadataPath)) {
+    if (required) throw new Error(`Missing archive metadata: ${metadataPath}`);
+    return;
+  }
 
   try {
     const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
     applyUpdates(metadata);
     atomicWriteFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
   } catch (err) {
+    if (required) throw err;
     console.error(
       `[voicelayer] Failed to update archived recording metadata: ${err instanceof Error ? err.message : String(err)}`,
     );
