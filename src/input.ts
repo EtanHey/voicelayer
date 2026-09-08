@@ -2767,6 +2767,16 @@ export async function waitForInput(
                 backend: "not-transcribed",
                 reason: "captured",
               });
+        if (options.archiveSource === "voicebar") {
+          try {
+            retainLastCaptureForRecovery(retainedWavData, "dictation");
+            linkRetainedCaptureToArchive(join(archivePath, "audio.wav"));
+          } catch (recoveryErr) {
+            console.error(
+              `[voicelayer] Failed to retain captured recording for retry: ${recoveryErr instanceof Error ? recoveryErr.message : String(recoveryErr)}`,
+            );
+          }
+        }
         invokeArchiveCreatedObserver(archivePath, options.onArchiveCreated);
       } catch (archiveErr) {
         const detail =
@@ -2830,6 +2840,10 @@ export async function waitForInput(
         backend: "not-transcribed",
         reason: "captured",
       });
+      // recordToBuffer's incremental writer already retained this capture.
+      // Link as soon as the row exists: callbacks, gates, aborts or a stalled
+      // decoder must not leave recovery unable to finalize the same row.
+      linkRetainedCaptureToArchive(join(voiceBarArchivePath, "audio.wav"));
       invokeArchiveCreatedObserver(voiceBarArchivePath, options.onArchiveCreated);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

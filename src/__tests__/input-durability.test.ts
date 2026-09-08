@@ -1128,6 +1128,12 @@ describe("input recording durability", () => {
     );
   }
 
+  function expectCaptureLinked(audioPath: string): void {
+    const metadata = JSON.parse(readFileSync(`${retainedPath}.metadata.json`, "utf8"));
+    expect(metadata.archive_audio_path).toBe(audioPath);
+    expect(metadata.audio_sha256).toBe(createHash("sha256").update(readFileSync(retainedPath)).digest("hex"));
+  }
+
   it("permanently archives failed VoiceBar STT before another capture overwrites recovery", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
     const chunks = Array.from({ length: 24 }, () => makePcmChunk(1800));
@@ -1141,6 +1147,7 @@ describe("input recording durability", () => {
     const archives = capturedVoiceBarAudio();
     expect(archives).toHaveLength(1);
     const preserved = readFileSync(archives[0]);
+    expectCaptureLinked(archives[0]);
     expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
     expect(JSON.parse(readFileSync(archives[0].replace("audio.wav", "metadata.json"), "utf8")))
       .toMatchObject({ source: "voicebar", transcription_status: "captured" });
@@ -1174,6 +1181,7 @@ describe("input recording durability", () => {
         if (termination === "abort") expect(result).toBeInstanceOf(Error);
         else expect(result).toBeNull();
         expect(capturedVoiceBarAudio()).toEqual(archives);
+        expectCaptureLinked(archives[0]);
         expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
       } finally {
         controller.abort(new Error("test cleanup"));
@@ -1194,6 +1202,7 @@ describe("input recording durability", () => {
         const archives = capturedVoiceBarAudio();
         expect(archives).toHaveLength(1);
         capturePath = archives[0];
+        expectCaptureLinked(capturePath);
       },
     })).resolves.toBe("Retained transcript.");
     expect(capturedVoiceBarAudio()).toEqual([capturePath]);
@@ -1207,14 +1216,42 @@ describe("input recording durability", () => {
   it("archives captured VoiceBar PCM when the recorder fails", async () => {
     vadMode = "throw";
     installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
-    const { waitForInput } = await import("../input");
+    const { waitForInput, retranscribeLastCapture } = await import("../input");
     await expect(waitForInput(2_000, "quick", false, {
       archiveSource: "voicebar",
     })).rejects.toThrow("vad exploded after capture");
     const archives = capturedVoiceBarAudio();
     expect(archives).toHaveLength(1);
     expectValidRetainedWav(archives[0]);
+    await expect(retranscribeLastCapture()).resolves.toBe("Retained transcript.");
+    expect(JSON.parse(readFileSync(archives[0].replace("audio.wav", "metadata.json"), "utf8")))
+      .toMatchObject({ transcription_status: "transcribed", backend: "fake-stt" });
+    expect(capturedVoiceBarAudio()).toEqual(archives);
+    expect(broadcasts).toContainEqual(expect.objectContaining({
+      type: "transcription", recording_path: archives[0],
+    }));
   });
+
+  for (const exit of ["cancel", "abort", "gate"] as const) {
+    it(`keeps the pre-STT VoiceBar archive linked after ${exit}`, async () => {
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(0)), false);
+      const { waitForInput } = await import("../input");
+      const controller = new AbortController();
+      const pending = waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar", signal: controller.signal,
+        onCaptureEnd: () => {
+          if (exit === "cancel") setCancelSignal();
+          if (exit === "abort") controller.abort(new Error("capture abort"));
+        },
+      });
+      if (exit === "abort") await expect(pending).rejects.toThrow("capture abort");
+      else await expect(pending).resolves.toBeNull();
+      const archives = capturedVoiceBarAudio();
+      expect(archives).toHaveLength(1);
+      expectCaptureLinked(archives[0]);
+      expect(backendTranscribeCalls).toBe(0);
+    });
+  }
 
   it("warns and delivers VoiceBar STT when its permanent capture archive cannot be written", async () => {
     vadProcessSpy!.mockResolvedValue(0.95);
