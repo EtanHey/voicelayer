@@ -194,10 +194,11 @@ function rewriteWavHeaderDataSize(path: string, dataSize: number): void {
 async function waitUntil(
   predicate: () => boolean,
   label: string,
+  timeoutMs = 500,
 ): Promise<void> {
   const startedAt = Date.now();
   while (!predicate()) {
-    if (Date.now() - startedAt > 500) {
+    if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for ${label}`);
     }
     await Bun.sleep(1);
@@ -1117,6 +1118,165 @@ describe("input recording durability", () => {
     );
     expect(readFileSync(retainedPath)).toEqual(Buffer.from(wav));
     expect(backendTranscribeCalls).toBe(0);
+  });
+
+  function capturedVoiceBarAudio(): string[] {
+    const root = process.env.QA_VOICE_RECORDINGS_DIR!;
+    if (!existsSync(root)) return [];
+    return Array.from(
+      new Bun.Glob("*/*/audio.wav").scanSync({ cwd: root, absolute: true }),
+    );
+  }
+
+  it("permanently archives failed VoiceBar STT before another capture overwrites recovery", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    const chunks = Array.from({ length: 24 }, () => makePcmChunk(1800));
+    installFakeRecorder(chunks, false);
+    backendMode = "throw-on-get";
+    const { waitForInput, recordToBuffer } = await import("../input");
+
+    await expect(waitForInput(2_000, "standard", true, {
+      archiveSource: "voicebar",
+    })).rejects.toThrow("whisper backend is still warming");
+    const archives = capturedVoiceBarAudio();
+    expect(archives).toHaveLength(1);
+    const preserved = readFileSync(archives[0]);
+    expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
+    expect(JSON.parse(readFileSync(archives[0].replace("audio.wav", "metadata.json"), "utf8")))
+      .toMatchObject({ source: "voicebar", transcription_status: "captured" });
+
+    installFakeRecorder([makePcmChunk(2500)], false);
+    await recordToBuffer(2_000, "standard", true);
+    expect(readFileSync(retainedPath)).not.toEqual(preserved);
+    expect(readFileSync(archives[0])).toEqual(preserved);
+  });
+
+  for (const termination of ["abort", "cancel"] as const) {
+    it(`publishes VoiceBar audio while STT hangs and keeps it after ${termination}`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      backendMode = "hang";
+      installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+      const { waitForInput } = await import("../input");
+      const controller = new AbortController();
+      const pending = waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar", signal: controller.signal,
+      });
+      const settled = pending.then(value => value, error => error);
+      try {
+        await waitUntil(() => backendTranscribeCalls === 1, "hung VoiceBar STT", 4_000);
+        const archives = capturedVoiceBarAudio();
+        expect(archives).toHaveLength(1);
+        expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
+        if (termination === "abort") controller.abort(new Error("STT deadline"));
+        else setCancelSignal();
+        finishHangingTranscription?.();
+        const result = await settled;
+        if (termination === "abort") expect(result).toBeInstanceOf(Error);
+        else expect(result).toBeNull();
+        expect(capturedVoiceBarAudio()).toEqual(archives);
+        expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
+      } finally {
+        controller.abort(new Error("test cleanup"));
+        finishHangingTranscription?.();
+        await settled;
+      }
+    });
+  }
+
+  it("finalizes the pre-STT VoiceBar archive in place without a duplicate row", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    let capturePath: string | undefined;
+    await expect(waitForInput(2_000, "standard", true, {
+      archiveSource: "voicebar",
+      onCaptureEnd: () => {
+        const archives = capturedVoiceBarAudio();
+        expect(archives).toHaveLength(1);
+        capturePath = archives[0];
+      },
+    })).resolves.toBe("Retained transcript.");
+    expect(capturedVoiceBarAudio()).toEqual([capturePath]);
+    if (!capturePath) throw new Error("no pre-STT archive");
+    expect(JSON.parse(readFileSync(capturePath.replace("audio.wav", "metadata.json"), "utf8")))
+      .toMatchObject({ transcription_status: "transcribed", backend: "fake-stt" });
+    expect(readFileSync(capturePath.replace("audio.wav", "voicelayer-transcript.txt"), "utf8"))
+      .toBe("Retained transcript.");
+  });
+
+  it("archives captured VoiceBar PCM when the recorder fails", async () => {
+    vadMode = "throw";
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    await expect(waitForInput(2_000, "quick", false, {
+      archiveSource: "voicebar",
+    })).rejects.toThrow("vad exploded after capture");
+    const archives = capturedVoiceBarAudio();
+    expect(archives).toHaveLength(1);
+    expectValidRetainedWav(archives[0]);
+  });
+
+  it("warns and delivers VoiceBar STT when its permanent capture archive cannot be written", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const root = join(tmpRoot, "archive-root-file");
+    writeFileSync(root, "not a directory");
+    process.env.QA_VOICE_RECORDINGS_DIR = root;
+    const { waitForInput } = await import("../input");
+    await expect(waitForInput(2_000, "standard", true, {
+      archiveSource: "voicebar",
+    })).resolves.toBe("Retained transcript.");
+    expect(backendTranscribeCalls).toBe(1);
+    expect(broadcasts).toContainEqual({
+      type: "error",
+      message: expect.stringContaining("voicebar archive failed"),
+      recoverable: true,
+    });
+    expect(broadcasts).toContainEqual(expect.objectContaining({
+      type: "transcription", text: "Retained transcript.",
+    }));
+    expectValidRetainedWav(retainedPath, 24 * VAD_CHUNK_BYTES);
+  });
+
+  it("publishes idle when both VoiceBar recording and archive creation fail", async () => {
+    vadMode = "throw";
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const root = join(tmpRoot, "archive-root-file");
+    writeFileSync(root, "not a directory");
+    process.env.QA_VOICE_RECORDINGS_DIR = root;
+    const { waitForInput } = await import("../input");
+    await expect(waitForInput(2_000, "quick", false, {
+      archiveSource: "voicebar",
+    })).rejects.toThrow("vad exploded after capture");
+    expect(broadcasts).toContainEqual(expect.objectContaining({
+      type: "error", recoverable: true,
+      message: expect.stringContaining("vad exploded after capture"),
+    }));
+    expect(broadcasts).toContainEqual({
+      type: "state", state: "idle", source: "recording",
+    });
+    expectValidRetainedWav(retainedPath);
+  });
+
+  it("delivers text without claiming archive finalization when metadata cannot be updated", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(Array.from({ length: 24 }, () => makePcmChunk(1800)), false);
+    const { waitForInput } = await import("../input");
+    await expect(waitForInput(2_000, "standard", true, {
+      archiveSource: "voicebar",
+      onCaptureEnd: () => {
+        const metadata = capturedVoiceBarAudio()[0].replace("audio.wav", "metadata.json");
+        rmSync(metadata);
+        mkdirSync(metadata);
+      },
+    })).resolves.toBe("Retained transcript.");
+    expect(broadcasts).toContainEqual(expect.objectContaining({
+      type: "error", message: expect.stringContaining("archive finalization failed"),
+    }));
+    const event = broadcasts.find((event) => event.type === "transcription");
+    expect(event?.text).toBe("Retained transcript.");
+    expect(event?.recording_path).toBeUndefined();
+    expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
   });
 
   it("runs production waitForInput through STT into an indefinite paired voice_ask archive", async () => {
