@@ -507,11 +507,14 @@ describe("stt-cleanup", () => {
       ["גאו", "Go"],
       ["בגאו", "ב-Go"],
       ["מגאו", "מ-Go"],
+      ["ובגאו", "וב-Go"],
       ["פיגמה", "Figma"],
+      ["ובפיגמה", "וב-Figma"],
       ["ריאקט נייטיב", "React Native"],
       ["לסו ולט", "ל Svelte"],
       ["בבל", "Bubble"],
       ["קוברנטיס", "Kubernetes"],
+      ["ולפרונט-אנד", "ול-Front-end"],
     ];
     const countWords = (text: string): number => text.trim().split(/\s+/u).length;
 

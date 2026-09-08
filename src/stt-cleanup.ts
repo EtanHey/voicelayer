@@ -31,12 +31,16 @@ type CanonicalTermPattern = [string, RegExp, string];
 const POST_DECODE_ONLY_CANONICAL_TERMS = new Set(
   canonicalTermsFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES),
 );
+const BUILTIN_HEBREW_LATIN_ALIASES = vocabularyAliasesFromEntries(
+  BUILTIN_STT_DICTIONARY_ENTRIES,
+);
+const BUILTIN_HEBREW_LATIN_ALIAS_SOURCES = new Set(
+  BUILTIN_HEBREW_LATIN_ALIASES.map(({ from }) => from),
+);
 
 const BUILTIN_STT_ALIASES: Record<string, string> = {
   ...Object.fromEntries(
-    vocabularyAliasesFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES).map(
-      ({ from, to }) => [from, to],
-    ),
+    BUILTIN_HEBREW_LATIN_ALIASES.map(({ from, to }) => [from, to]),
   ),
   // Constitution-gated Phase-0 aliases mined from the retranscription corpus.
   // Keep this block longest-first so the intended phrase wins even before the
@@ -707,6 +711,7 @@ export function cleanupTranscriptionText(
   const aliases = buildRuntimeAliases(env, snapshot);
   const rulesConfig: RulesConfig = {
     aliases,
+    hebrewLatinAliasSources: BUILTIN_HEBREW_LATIN_ALIAS_SOURCES,
     aggressiveFillerRemoval: isAggressiveFillerRemovalEnabled(env),
   };
   const cleaned = applyRules(trimmed, rulesConfig);
