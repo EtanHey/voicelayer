@@ -29,6 +29,7 @@ import {
   TTS_HISTORY_FILE,
   ttsHistoryFilePath,
   TTS_DISABLED_FILE,
+  isDefaultVoiceBarSocketPath,
 } from "./paths";
 import { hasClonedProfile, synthesizeCloned, loadProfile } from "./tts/qwen3";
 import { isF5TTSAvailable, synthesizeF5TTS } from "./tts/f5tts";
@@ -210,6 +211,35 @@ export function resolveVoice(name?: string): {
 }
 
 let ttsCounter = 0;
+
+/**
+ * AIDEV-NOTE: Playback is SILENT whenever this process is not the resident stack.
+ *
+ * On 2026-09-08 Etan heard the Swift replay fixtures out of his speakers twice in
+ * one afternoon — *"finished speech replay must... and the other audio shit is
+ * back, wtf?"* — because every harness that spawns a real daemon inherits the
+ * real TTS path, which ends in `afplay` at full volume.
+ *
+ * The discriminator is structural, not a flag somebody has to remember: a harness
+ * ALWAYS overrides the socket path (the bun preload redirects it;
+ * `corpus-replay-verify.ts:79-82` refuses to run against the live sockets at all).
+ * So "socket overridden" means "not the machine's real stack" and playback is
+ * muted. A harness cannot make itself audible without pointing at the live
+ * socket, which is independently refused — which is what makes this impossible to
+ * regress by forgetting an env var in a brief.
+ *
+ * `afplay -v 0` still spawns a real `afplay` child with the same name and parent,
+ * so the Swift assertions that count `afplay` children are unaffected. Muting is
+ * an audibility change only; nothing about what is verified changes.
+ */
+export function buildPlaybackArgv(
+  player: string,
+  audioFile: string,
+  isResidentStack: boolean = isDefaultVoiceBarSocketPath(),
+): string[] {
+  if (isResidentStack || player !== "afplay") return [player, audioFile];
+  return [player, "-v", "0", audioFile];
+}
 
 /** Get platform-appropriate audio player command for MP3 files. */
 function getAudioPlayer(): string {
@@ -1060,7 +1090,7 @@ class PlaybackQueueManager {
     next.playbackAmplitude = playbackAmplitude;
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn([getAudioPlayer(), next.audioFile], {
+      proc = Bun.spawn(buildPlaybackArgv(getAudioPlayer(), next.audioFile), {
         stdout: "ignore",
         stderr: "ignore",
       });
