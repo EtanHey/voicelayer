@@ -569,6 +569,30 @@ describe("rules-engine", () => {
       expect(applyRules("ריאקט נייטיב", config)).toBe("React");
       expect(applyRules("בריאקט נייטיב", config)).toBe("בריאקט נייטיב");
     });
+
+    it("reattaches Hebrew proclitics on opted-in Hebrew-to-Latin aliases", () => {
+      const config: RulesConfig = {
+        aliases: {
+          גאו: "Go",
+          "סו ולט": "Svelte",
+        },
+        hebrewLatinAliasSources: new Set(["גאו", "סו ולט"]),
+        disabledStages: new Set([
+          "fillers",
+          "punctuation",
+          "techVocab",
+          "codeTokens",
+          "caseFormatting",
+          "numbers",
+          "enumerators",
+          "capitalization",
+        ]),
+      };
+      expect(applyRules("גאו", config)).toBe("Go");
+      expect(applyRules("בגאו", config)).toBe("ב-Go");
+      expect(applyRules("סו ולט", config)).toBe("Svelte");
+      expect(applyRules("לסו ולט", config)).toBe("ל Svelte");
+    });
   });
 
   // --- Performance ---

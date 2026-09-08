@@ -1217,11 +1217,11 @@ function applyAliases(
         : isHebrewToLatin && sourceWords === targetWords + 1
           ? "separate-prefix"
           : "plain";
-      const source = prefixMode === "attached-prefix"
-        ? `(${HEBREW_PROCLITIC})?${escaped}`
-        : prefixMode === "separate-prefix"
-          ? `(${HEBREW_PROCLITIC})${escaped}`
-          : escaped;
+      // Optional proclitic on both prefix modes so the dictionary form
+      // ("סו ולט") still matches when Whisper does not glue ל/ב/מ onto it.
+      const source = prefixMode === "plain"
+        ? escaped
+        : `(${HEBREW_PROCLITIC})?${escaped}`;
       return [
         from.toLowerCase(),
         new RegExp(

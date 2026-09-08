@@ -527,6 +527,11 @@ describe("stt-cleanup", () => {
     }
   });
 
+  it("maps the unprefixed split Svelte phonetic without requiring a proclitic", () => {
+    expect(cleanupTranscriptionText("סו ולט")).toBe("Svelte");
+    expect(cleanupTranscriptionText("לסו ולט")).toBe("ל Svelte");
+  });
+
   it("limits Hebrew-to-Latin aliases to whole known terms", () => {
     expect(
       cleanupTranscriptionText(
@@ -546,6 +551,24 @@ describe("stt-cleanup", () => {
       ),
     ).toBe(
       "I use Full Stack, Front-end, Go, Figma, React Native, Svelte, Bubble, and Kubernetes",
+    );
+  });
+
+  it("recases distinctive Latin canonicals without rewriting ordinary English", () => {
+    expect(cleanupTranscriptionText("use figma and react native")).toBe(
+      "Use Figma and React Native",
+    );
+    expect(cleanupTranscriptionText("full stack with svelte")).toBe(
+      "Full Stack with Svelte",
+    );
+    expect(cleanupTranscriptionText("front-end and back-end")).toBe(
+      "Front-end and Back-end",
+    );
+    expect(cleanupTranscriptionText("we should go to the front and back")).toBe(
+      "We should go to the front and back",
+    );
+    expect(cleanupTranscriptionText("the bubble is small")).toBe(
+      "The bubble is small",
     );
   });
 
