@@ -560,6 +560,15 @@ describe("rules-engine", () => {
         applyRules("the brain layer is connected to voice bar", config),
       ).toBe("The BrainLayer is connected to VoiceBar");
     });
+
+    it("does not infer Hebrew proclitic rules for generic aliases", () => {
+      const config: RulesConfig = {
+        aliases: { "ריאקט נייטיב": "React" },
+      };
+
+      expect(applyRules("ריאקט נייטיב", config)).toBe("React");
+      expect(applyRules("בריאקט נייטיב", config)).toBe("בריאקט נייטיב");
+    });
   });
 
   // --- Performance ---

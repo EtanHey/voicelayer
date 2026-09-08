@@ -16,6 +16,8 @@
 
 export interface RulesConfig {
   aliases?: Record<string, string>;
+  hebrewLatinAliasSources?: ReadonlySet<string>;
+  shouldApplyAlias?: (source: string, text: string) => boolean;
   disabledStages?: Set<string>;
   aggressiveFillerRemoval?: boolean;
 }
@@ -46,7 +48,12 @@ export function applyRules(text: string, config?: RulesConfig): string {
 
   // Stage 7: Custom aliases (before tech vocab to allow user overrides)
   if (!disabled?.has("aliases") && config?.aliases) {
-    result = applyAliases(result, config.aliases);
+    result = applyAliases(
+      result,
+      config.aliases,
+      config.hebrewLatinAliasSources,
+      config.shouldApplyAlias,
+    );
   }
 
   // Stage 5: Tech vocabulary
@@ -1172,34 +1179,73 @@ function isLikelyCodeIdentifierI(source: string, offset: number): boolean {
 
 // --- Stage 7: Custom aliases ---
 
+type AliasPrefixMode = "plain" | "attached-prefix" | "separate-prefix";
+type AliasPattern = [string, RegExp, string, AliasPrefixMode];
+
 const ALIAS_PATTERN_CACHE = new WeakMap<
   Record<string, string>,
-  [string, RegExp, string][]
+  { prefixKey: string; patterns: AliasPattern[] }
 >();
 
-function applyAliases(text: string, aliases: Record<string, string>): string {
+// One ordinary Hebrew proclitic, optionally preceded by the conjunction ו.
+const HEBREW_PROCLITIC = "(?:ו[בהכלמש]?|[בהכלמש])";
+
+function aliasWordCount(value: string): number {
+  return value.trim().split(/\s+/u).length;
+}
+
+function applyAliases(
+  text: string,
+  aliases: Record<string, string>,
+  hebrewLatinAliasSources: ReadonlySet<string> = new Set(),
+  shouldApplyAlias?: (source: string, text: string) => boolean,
+): string {
   let result = text;
-  let patterns = ALIAS_PATTERN_CACHE.get(aliases);
-  if (!patterns) {
-    patterns = Object.entries(aliases).map(([from, to]) => {
+  const prefixKey = [...hebrewLatinAliasSources].sort().join("\0");
+  let cached = ALIAS_PATTERN_CACHE.get(aliases);
+  if (!cached || cached.prefixKey !== prefixKey) {
+    const patterns: AliasPattern[] = Object.entries(aliases).map(([from, to]) => {
       // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
       const escaped = escapeRegex(from);
+      const isHebrewToLatin = hebrewLatinAliasSources.has(from) &&
+        /\p{Script=Hebrew}/u.test(from) &&
+        /\p{Script=Latin}/u.test(to);
+      const sourceWords = aliasWordCount(from);
+      const targetWords = aliasWordCount(to);
+      const prefixMode = isHebrewToLatin && sourceWords === targetWords
+        ? "attached-prefix"
+        : isHebrewToLatin && sourceWords === targetWords + 1
+          ? "separate-prefix"
+          : "plain";
+      const source = prefixMode === "attached-prefix"
+        ? `(${HEBREW_PROCLITIC})?${escaped}`
+        : prefixMode === "separate-prefix"
+          ? `(${HEBREW_PROCLITIC})${escaped}`
+          : escaped;
       return [
         from.toLowerCase(),
         new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+          `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
           "giu",
         ),
         to,
+        prefixMode,
       ];
     });
-    ALIAS_PATTERN_CACHE.set(aliases, patterns);
+    cached = { prefixKey, patterns };
+    ALIAS_PATTERN_CACHE.set(aliases, cached);
   }
 
   const lowerResult = result.toLowerCase();
-  for (const [fromLower, pattern, to] of patterns) {
+  for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
-    result = result.replace(pattern, to);
+    if (shouldApplyAlias && !shouldApplyAlias(fromLower, result)) continue;
+    result = result.replace(pattern, (_match, prefix?: string) => {
+      if (!prefix || prefixMode === "plain") return to;
+      return prefixMode === "separate-prefix"
+        ? `${prefix} ${to}`
+        : `${prefix}-${to}`;
+    });
   }
   return result;
 }
