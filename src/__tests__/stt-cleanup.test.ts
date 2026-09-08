@@ -495,6 +495,72 @@ describe("stt-cleanup", () => {
     ).toBe("Use Domica and SongScript");
   });
 
+  it("renders known Hebrew phonetic tech terms in Latin without changing word count", () => {
+    const cases: Array<[string, string]> = [
+      ["פול סטאק", "Full Stack"],
+      ["פרונט-אנד", "Front-end"],
+      ["לפרונט-אנד", "ל-Front-end"],
+      ["פרונט", "Front"],
+      ["בקאנד", "Back-end"],
+      ["בבק'אנד", "ב-Back-end"],
+      ["בק", "Back"],
+      ["גאו", "Go"],
+      ["בגאו", "ב-Go"],
+      ["מגאו", "מ-Go"],
+      ["פיגמה", "Figma"],
+      ["ריאקט נייטיב", "React Native"],
+      ["לסו ולט", "ל Svelte"],
+      ["בבל", "Bubble"],
+      ["קוברנטיס", "Kubernetes"],
+    ];
+    const countWords = (text: string): number => text.trim().split(/\s+/u).length;
+
+    for (const [input, expected] of cases) {
+      const cleaned = cleanupTranscriptionText(input);
+      expect(cleaned, input).toBe(expected);
+      expect(countWords(cleaned), input).toBe(countWords(input));
+    }
+  });
+
+  it("limits Hebrew-to-Latin aliases to whole known terms", () => {
+    expect(
+      cleanupTranscriptionText(
+        "שלום הייתי מפתח פול סטאק עם פיגמה וכל הטקסט מסביב נשאר",
+      ),
+    ).toBe("שלום הייתי מפתח Full Stack עם Figma וכל הטקסט מסביב נשאר");
+    expect(cleanupTranscriptionText("סופרונט-אנד ומגאומטריה")).toBe(
+      "סופרונט-אנד ומגאומטריה",
+    );
+    expect(cleanupTranscriptionText("הפון ואורפסטא")).toBe("הפון ואורפסטא");
+    expect(
+      cleanupTranscriptionText(
+        "I use Full Stack, Front-end, Go, Figma, React Native, Svelte, Bubble, and Kubernetes",
+      ),
+    ).toBe(
+      "I use Full Stack, Front-end, Go, Figma, React Native, Svelte, Bubble, and Kubernetes",
+    );
+  });
+
+  it("keeps Hebrew-to-Latin cleanup aliases out of the decoder prompt", () => {
+    const prompt = getSTTVocabularyPrompt({
+      QA_VOICE_STT_VOCABULARY_PATH: "",
+      QA_VOICE_STT_COMMANDS_DIR: "",
+    });
+
+    for (const term of [
+      "Full Stack",
+      "Front-end",
+      "Back-end",
+      "Figma",
+      "React Native",
+      "Svelte",
+      "Bubble",
+      "Kubernetes",
+    ]) {
+      expect(prompt, term).not.toContain(term);
+    }
+  });
+
   it("loads an alias added after a missing snapshot on the next transcription", () => {
     const tempDir = mkdtempSync(
       join(tmpdir(), "voicelayer-stt-vocabulary-live-"),

@@ -3,6 +3,7 @@ import { homedir } from "os";
 import { join } from "path";
 import { applyRules, type RulesConfig } from "./rules-engine";
 import {
+  BUILTIN_STT_DICTIONARY_ENTRIES,
   canonicalTermsFromEntries,
   getSTTVocabularyPath,
   isUnsafeDynamicAliasSource,
@@ -27,7 +28,16 @@ interface STTVocabularySnapshot {
 
 type CanonicalTermPattern = [string, RegExp, string];
 
+const POST_DECODE_ONLY_CANONICAL_TERMS = new Set(
+  canonicalTermsFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES),
+);
+
 const BUILTIN_STT_ALIASES: Record<string, string> = {
+  ...Object.fromEntries(
+    vocabularyAliasesFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES).map(
+      ({ from, to }) => [from, to],
+    ),
+  ),
   // Constitution-gated Phase-0 aliases mined from the retranscription corpus.
   // Keep this block longest-first so the intended phrase wins even before the
   // runtime sort below. `tailscale` is omitted because it already exists.
@@ -218,6 +228,7 @@ const CLEANUP_ONLY_ALIAS_VALUES = new Set([
   "FTS5",
   "Benaya",
   "RRF",
+  ...canonicalTermsFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES),
 ]);
 const DUPLICATED_FUNCTION_WORD_PATTERN =
   /\b(the|an|and|to|of|a|i)\b(?:\s+\1\b)+/giu;
@@ -225,14 +236,19 @@ const DUPLICATED_FUNCTION_WORD_PATTERN =
 function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
 ): CanonicalTermPattern[] {
-  return [...new Set(Object.values(aliases))].map((term) => {
-    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return [
-      term.toLowerCase(),
-      new RegExp(`(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`, "giu"),
-      term,
-    ] as [string, RegExp, string];
-  });
+  return [...new Set(Object.values(aliases))]
+    .filter((term) => !POST_DECODE_ONLY_CANONICAL_TERMS.has(term))
+    .map((term) => {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return [
+        term.toLowerCase(),
+        new RegExp(
+          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+          "giu",
+        ),
+        term,
+      ] as [string, RegExp, string];
+    });
 }
 
 const BUILTIN_CANONICAL_TERM_PATTERNS = buildCanonicalTermPatterns(

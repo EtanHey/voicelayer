@@ -1174,8 +1174,14 @@ function isLikelyCodeIdentifierI(source: string, offset: number): boolean {
 
 const ALIAS_PATTERN_CACHE = new WeakMap<
   Record<string, string>,
-  [string, RegExp, string][]
+  [string, RegExp, string, "plain" | "attached-prefix" | "separate-prefix"][]
 >();
+
+const HEBREW_PROCLITIC = "[בהוכלמש]";
+
+function aliasWordCount(value: string): number {
+  return value.trim().split(/\s+/u).length;
+}
 
 function applyAliases(text: string, aliases: Record<string, string>): string {
   let result = text;
@@ -1184,22 +1190,42 @@ function applyAliases(text: string, aliases: Record<string, string>): string {
     patterns = Object.entries(aliases).map(([from, to]) => {
       // Use Unicode-aware word boundaries — \b doesn't work with Hebrew/Arabic
       const escaped = escapeRegex(from);
+      const isHebrewToLatin = /\p{Script=Hebrew}/u.test(from) &&
+        /\p{Script=Latin}/u.test(to);
+      const sourceWords = aliasWordCount(from);
+      const targetWords = aliasWordCount(to);
+      const prefixMode = isHebrewToLatin && sourceWords === targetWords
+        ? "attached-prefix"
+        : isHebrewToLatin && sourceWords === targetWords + 1
+          ? "separate-prefix"
+          : "plain";
+      const source = prefixMode === "attached-prefix"
+        ? `(${HEBREW_PROCLITIC})?${escaped}`
+        : prefixMode === "separate-prefix"
+          ? `(${HEBREW_PROCLITIC})${escaped}`
+          : escaped;
       return [
         from.toLowerCase(),
         new RegExp(
-          `(?<=^|\\s|[^\\p{L}])${escaped}(?=$|\\s|[^\\p{L}])`,
+          `(?<=^|\\s|[^\\p{L}])${source}(?=$|\\s|[^\\p{L}])`,
           "giu",
         ),
         to,
+        prefixMode,
       ];
     });
     ALIAS_PATTERN_CACHE.set(aliases, patterns);
   }
 
   const lowerResult = result.toLowerCase();
-  for (const [fromLower, pattern, to] of patterns) {
+  for (const [fromLower, pattern, to, prefixMode] of patterns) {
     if (!lowerResult.includes(fromLower)) continue;
-    result = result.replace(pattern, to);
+    result = result.replace(pattern, (_match, prefix?: string) => {
+      if (!prefix || prefixMode === "plain") return to;
+      return prefixMode === "separate-prefix"
+        ? `${prefix} ${to}`
+        : `${prefix}-${to}`;
+    });
   }
   return result;
 }

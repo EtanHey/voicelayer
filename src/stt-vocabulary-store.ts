@@ -34,6 +34,25 @@ export interface STTDictionaryEntry {
   variants: string[];
 }
 
+// Built-in post-decode vocabulary uses the same canonical-entry shape as the
+// persisted VoiceBar store. These Hebrew phonetic forms are cleanup aliases,
+// not decoder prompt seeds: auto mode must remain free of vocabulary bias.
+export const BUILTIN_STT_DICTIONARY_ENTRIES: readonly STTDictionaryEntry[] = [
+  { canonical: "Full Stack", variants: ["פול סטאק"] },
+  { canonical: "Front-end", variants: ["פרונט-אנד"] },
+  { canonical: "Front", variants: ["פרונט"] },
+  { canonical: "Back-end", variants: ["בקאנד", "בק'אנד"] },
+  { canonical: "Back", variants: ["בק"] },
+  { canonical: "Go", variants: ["גאו"] },
+  { canonical: "Figma", variants: ["פיגמה"] },
+  { canonical: "React Native", variants: ["ריאקט נייטיב"] },
+  // The observed form is ל + a split phonetic rendering. The rules engine
+  // preserves that proclitic as a separate token so 2 input words stay 2.
+  { canonical: "Svelte", variants: ["סו ולט"] },
+  { canonical: "Bubble", variants: ["בבל"] },
+  { canonical: "Kubernetes", variants: ["קוברנטיס"] },
+];
+
 export interface STTVocabularySnapshot {
   updated_at: string | null;
   entries: STTDictionaryEntry[];
@@ -332,7 +351,7 @@ function appendEntryVariant(
 }
 
 export function vocabularyAliasesFromEntries(
-  entries: STTDictionaryEntry[],
+  entries: readonly STTDictionaryEntry[],
 ): STTVocabularyAlias[] {
   const canonicalKeys = new Set(entries.map((entry) => aliasKey(entry.canonical)));
   return entries.flatMap((entry) =>
@@ -345,7 +364,9 @@ export function vocabularyAliasesFromEntries(
   );
 }
 
-export function canonicalTermsFromEntries(entries: STTDictionaryEntry[]): string[] {
+export function canonicalTermsFromEntries(
+  entries: readonly STTDictionaryEntry[],
+): string[] {
   return entries.map((entry) => entry.canonical);
 }
 
