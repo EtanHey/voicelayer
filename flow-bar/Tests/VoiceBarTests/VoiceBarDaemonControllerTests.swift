@@ -105,6 +105,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
             "QA_VOICE_CHUNKED_STT": ProcessInfo.processInfo.environment["QA_VOICE_CHUNKED_STT"],
             "QA_VOICE_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_SOCKET_PATH"],
             "QA_VOICE_MCP_SOCKET_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_SOCKET_PATH"],
+            "QA_VOICE_MCP_HEARTBEAT_PATH": ProcessInfo.processInfo.environment["QA_VOICE_MCP_HEARTBEAT_PATH"],
             "QA_VOICE_RECORDING_STATE_PATH": ProcessInfo.processInfo.environment["QA_VOICE_RECORDING_STATE_PATH"],
             "QA_VOICE_RECORDING_HOLD_PATH": ProcessInfo.processInfo.environment["QA_VOICE_RECORDING_HOLD_PATH"],
             "CODEX_CI": ProcessInfo.processInfo.environment["CODEX_CI"],
@@ -112,6 +113,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         setenv("QA_VOICE_CHUNKED_STT", "1", 1)
         setenv("QA_VOICE_SOCKET_PATH", "/tmp/test-voicebar.sock", 1)
         setenv("QA_VOICE_MCP_SOCKET_PATH", "/tmp/test-mcp.sock", 1)
+        setenv("QA_VOICE_MCP_HEARTBEAT_PATH", "/tmp/test-mcp.heartbeat", 1)
         setenv("QA_VOICE_RECORDING_STATE_PATH", "/tmp/test-recording-state.json", 1)
         setenv("QA_VOICE_RECORDING_HOLD_PATH", "/tmp/test-recording-hold", 1)
         setenv("CODEX_CI", "1", 1)
@@ -138,6 +140,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_CHUNKED_STT"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_SOCKET_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_SOCKET_PATH"])
+        XCTAssertNil(process.capturedEnvironment?["QA_VOICE_MCP_HEARTBEAT_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_RECORDING_STATE_PATH"])
         XCTAssertNil(process.capturedEnvironment?["QA_VOICE_RECORDING_HOLD_PATH"])
         XCTAssertNil(process.capturedEnvironment?["CODEX_CI"])
@@ -157,6 +160,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
                 "QA_VOICE_SOCKET_PATH": "/tmp/qa-voicebar.sock",
                 "QA_VOICE_MCP_SOCKET_PATH": "/tmp/qa-mcp.sock",
                 "QA_VOICE_MCP_PID_PATH": "/tmp/qa-mcp.pid",
+                "QA_VOICE_MCP_HEARTBEAT_PATH": "/tmp/qa-mcp.heartbeat",
                 "QA_VOICE_RECORDING_STATE_PATH": "/tmp/qa-recording-state.json",
                 "QA_VOICE_RECORDING_HOLD_PATH": "/tmp/qa-recording-hold",
                 "QA_VOICE_RETAINED_RECORDING_PATH": "/tmp/qa-last.wav",
@@ -172,6 +176,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(environment["QA_VOICE_SOCKET_PATH"], "/tmp/qa-voicebar.sock")
         XCTAssertEqual(environment["QA_VOICE_MCP_SOCKET_PATH"], "/tmp/qa-mcp.sock")
         XCTAssertEqual(environment["QA_VOICE_MCP_PID_PATH"], "/tmp/qa-mcp.pid")
+        XCTAssertEqual(environment["QA_VOICE_MCP_HEARTBEAT_PATH"], "/tmp/qa-mcp.heartbeat")
         XCTAssertEqual(environment["QA_VOICE_RECORDING_STATE_PATH"], "/tmp/qa-recording-state.json")
         XCTAssertEqual(environment["QA_VOICE_RECORDING_HOLD_PATH"], "/tmp/qa-recording-hold")
         XCTAssertEqual(environment["QA_VOICE_RETAINED_RECORDING_PATH"], "/tmp/qa-last.wav")
@@ -263,7 +268,7 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertFalse(controller.ownsLaunchedProcess)
     }
 
-    func testNoExternalDaemonStandDownCheckIsScheduled() {
+    func testHeartbeatCheckIsScheduledForOwnedChild() {
         let process = ProcessSpy()
         var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
         let controller = VoiceBarDaemonController(
@@ -276,9 +281,198 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
         _ = controller.activateIfNeeded()
 
-        XCTAssertFalse(scheduledBlocks.contains { $0.delay == 5 })
+        XCTAssertTrue(scheduledBlocks.contains { $0.delay == 5 })
         XCTAssertFalse(process.didReceiveTerminate)
         XCTAssertTrue(process.isRunning)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testAdvancingHeartbeatKeepsOwnedChildRunning() {
+        let process = ProcessSpy()
+        var sequence = 1
+        var now = Date(timeIntervalSince1970: 1000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: {
+                VoiceBarDaemonHeartbeat(pid: process.processIdentifier, sequence: sequence)
+            },
+            dateProvider: { now },
+            processFactory: { process },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        for index in 0 ..< 3 {
+            now = now.addingTimeInterval(5)
+            sequence += 1
+            scheduledBlocks.filter { $0.delay == 5 }[index].block()
+        }
+
+        XCTAssertFalse(process.didReceiveTerminate)
+        XCTAssertTrue(process.isRunning)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+        XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
+    }
+
+    func testHeartbeatGapAboveHalfThresholdLogsSequencesAndElapsedTime() {
+        let process = ProcessSpy()
+        var sequence = 7
+        var now = Date(timeIntervalSince1970: 1000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        var loggedGaps: [(previous: Int, current: Int, elapsed: TimeInterval)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: {
+                VoiceBarDaemonHeartbeat(pid: process.processIdentifier, sequence: sequence)
+            },
+            heartbeatGapLogger: { previous, current, elapsed in
+                loggedGaps.append((previous, current, elapsed))
+            },
+            dateProvider: { now },
+            processFactory: { process },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[0].block()
+        now = now.addingTimeInterval(16)
+        sequence = 8
+        scheduledBlocks.filter { $0.delay == 5 }[1].block()
+
+        XCTAssertEqual(loggedGaps.count, 1)
+        XCTAssertEqual(loggedGaps[0].previous, 7)
+        XCTAssertEqual(loggedGaps[0].current, 8)
+        XCTAssertEqual(loggedGaps[0].elapsed, 16)
+        XCTAssertTrue(process.isRunning)
+    }
+
+    func testStaleHeartbeatForceKillsAndRestartsOwnedChild() {
+        let firstProcess = ProcessSpy(processIdentifier: 4321)
+        firstProcess.ignoresTerminate = true
+        let secondProcess = ProcessSpy(processIdentifier: 4322)
+        var processQueue = [firstProcess, secondProcess]
+        var now = Date(timeIntervalSince1970: 2000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        var forceKilledPIDs: [Int32] = []
+        var loggedGaps: [(previous: Int, current: Int, elapsed: TimeInterval)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: {
+                VoiceBarDaemonHeartbeat(pid: firstProcess.processIdentifier, sequence: 7)
+            },
+            heartbeatGapLogger: { previous, current, elapsed in
+                loggedGaps.append((previous, current, elapsed))
+            },
+            dateProvider: { now },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
+            processExitWaiter: { _, _ in false },
+            forceKillProcess: { pid in
+                forceKilledPIDs.append(pid)
+                firstProcess.forceExit()
+            }
+        )
+        _ = controller.activateIfNeeded()
+
+        for index in 0 ..< 6 {
+            now = now.addingTimeInterval(5)
+            scheduledBlocks.filter { $0.delay == 5 }[index].block()
+        }
+        XCTAssertFalse(firstProcess.didReceiveTerminate)
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[6].block()
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertTrue(firstProcess.didReceiveTerminate)
+        XCTAssertEqual(forceKilledPIDs, [firstProcess.processIdentifier])
+        XCTAssertEqual(loggedGaps.count, 1)
+        XCTAssertEqual(loggedGaps[0].previous, 7)
+        XCTAssertEqual(loggedGaps[0].current, 7)
+        XCTAssertEqual(loggedGaps[0].elapsed, 20)
+        XCTAssertEqual(restartDelays(from: scheduledBlocks), [1])
+        XCTAssertTrue(secondProcess.didRun)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+    }
+
+    func testStaleHeartbeatDoesNotRestartWhenOwnedChildSurvivesForceKill() {
+        let firstProcess = ProcessSpy(processIdentifier: 4321)
+        firstProcess.ignoresTerminate = true
+        let secondProcess = ProcessSpy(processIdentifier: 4322)
+        var processQueue = [firstProcess, secondProcess]
+        var now = Date(timeIntervalSince1970: 2000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        var forceKilledPIDs: [Int32] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: {
+                VoiceBarDaemonHeartbeat(pid: firstProcess.processIdentifier, sequence: 7)
+            },
+            dateProvider: { now },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) },
+            processExitWaiter: { _, _ in false },
+            forceKillProcess: { pid in forceKilledPIDs.append(pid) }
+        )
+        _ = controller.activateIfNeeded()
+
+        for index in 0 ..< 6 {
+            now = now.addingTimeInterval(5)
+            scheduledBlocks.filter { $0.delay == 5 }[index].block()
+        }
+        XCTAssertFalse(firstProcess.didReceiveTerminate)
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[6].block()
+
+        XCTAssertTrue(firstProcess.didReceiveTerminate)
+        XCTAssertEqual(forceKilledPIDs, [firstProcess.processIdentifier])
+        XCTAssertTrue(firstProcess.isRunning)
+        XCTAssertTrue(controller.ownsLaunchedProcess)
+        XCTAssertTrue(restartDelays(from: scheduledBlocks).isEmpty)
+        XCTAssertFalse(secondProcess.didRun)
+        XCTAssertEqual(scheduledBlocks.filter { $0.delay == 5 }.count, 8)
+    }
+
+    func testMissingHeartbeatUsesStartupGraceBeforeRestart() {
+        let firstProcess = ProcessSpy()
+        let secondProcess = ProcessSpy()
+        var processQueue = [firstProcess, secondProcess]
+        var now = Date(timeIntervalSince1970: 3000)
+        var scheduledBlocks: [(delay: TimeInterval, block: () -> Void)] = []
+        let controller = VoiceBarDaemonController(
+            executableURLProvider: { URL(fileURLWithPath: "/tmp/voicelayer/flow-bar/.build/debug/VoiceBar") },
+            configurationProvider: { _ in testLaunchConfiguration() },
+            livenessProbe: { false },
+            heartbeatReader: { nil },
+            dateProvider: { now },
+            processFactory: { processQueue.removeFirst() },
+            restartScheduler: { delay, block in scheduledBlocks.append((delay, block)) }
+        )
+        _ = controller.activateIfNeeded()
+
+        for index in 0 ..< 5 {
+            now = now.addingTimeInterval(5)
+            scheduledBlocks.filter { $0.delay == 5 }[index].block()
+        }
+        XCTAssertFalse(firstProcess.didReceiveTerminate)
+
+        now = now.addingTimeInterval(5)
+        scheduledBlocks.filter { $0.delay == 5 }[5].block()
+        scheduledBlocks.first(where: { $0.delay == 1 })?.block()
+
+        XCTAssertTrue(firstProcess.didReceiveTerminate)
+        XCTAssertTrue(secondProcess.didRun)
         XCTAssertTrue(controller.ownsLaunchedProcess)
     }
 
@@ -629,18 +823,24 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
 
     func testVoiceLayerPathsRespectQAOverrides() {
         let previousValues: [String: String?] = [
+            VoiceLayerPaths.stateDirectoryOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.stateDirectoryOverrideEnvironmentVariable],
             VoiceLayerPaths.socketOverrideEnvironmentVariable: ProcessInfo.processInfo
                 .environment[VoiceLayerPaths.socketOverrideEnvironmentVariable],
             VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable: ProcessInfo.processInfo
                 .environment[VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable],
             VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable: ProcessInfo.processInfo
                 .environment[VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable],
+            VoiceLayerPaths.daemonHeartbeatOverrideEnvironmentVariable: ProcessInfo.processInfo
+                .environment[VoiceLayerPaths.daemonHeartbeatOverrideEnvironmentVariable],
             VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable: ProcessInfo.processInfo
                 .environment[VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable],
         ]
+        setenv(VoiceLayerPaths.stateDirectoryOverrideEnvironmentVariable, "/tmp/qa-state", 1)
         setenv(VoiceLayerPaths.socketOverrideEnvironmentVariable, "/tmp/qa-voicebar.sock", 1)
         setenv(VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable, "/tmp/qa-mcp.sock", 1)
         setenv(VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable, "/tmp/qa-mcp.pid", 1)
+        setenv(VoiceLayerPaths.daemonHeartbeatOverrideEnvironmentVariable, "/tmp/qa-mcp.heartbeat", 1)
         setenv(VoiceLayerPaths.retainedRecordingOverrideEnvironmentVariable, "/tmp/qa-last.wav", 1)
         defer {
             for (key, value) in previousValues {
@@ -655,8 +855,33 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
         XCTAssertEqual(VoiceLayerPaths.socketPath, "/tmp/qa-voicebar.sock")
         XCTAssertEqual(VoiceLayerPaths.mcpSocketPath, "/tmp/qa-mcp.sock")
         XCTAssertEqual(VoiceLayerPaths.daemonPIDPath, "/tmp/qa-mcp.pid")
+        XCTAssertEqual(VoiceLayerPaths.stateDirectory, "/tmp/qa-state")
+        XCTAssertEqual(VoiceLayerPaths.daemonHeartbeatPath, "/tmp/qa-mcp.heartbeat")
         XCTAssertEqual(VoiceLayerPaths.retainedRecordingPath, "/tmp/qa-last.wav")
         XCTAssertFalse(VoiceLayerPaths.enforcesSingletonInstance)
+    }
+
+    func testDaemonHeartbeatPathUsesOverriddenStateDirectoryByDefault() {
+        let stateKey = VoiceLayerPaths.stateDirectoryOverrideEnvironmentVariable
+        let heartbeatKey = VoiceLayerPaths.daemonHeartbeatOverrideEnvironmentVariable
+        let previousState = ProcessInfo.processInfo.environment[stateKey]
+        let previousHeartbeat = ProcessInfo.processInfo.environment[heartbeatKey]
+        setenv(stateKey, "/tmp/qa-state", 1)
+        unsetenv(heartbeatKey)
+        defer {
+            if let previousState {
+                setenv(stateKey, previousState, 1)
+            } else {
+                unsetenv(stateKey)
+            }
+            if let previousHeartbeat {
+                setenv(heartbeatKey, previousHeartbeat, 1)
+            } else {
+                unsetenv(heartbeatKey)
+            }
+        }
+
+        XCTAssertEqual(VoiceLayerPaths.daemonHeartbeatPath, "/tmp/qa-state/voicelayer-mcp.heartbeat")
     }
 
     func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {
@@ -772,6 +997,7 @@ private func drainMainQueue(
 }
 
 private final class ProcessSpy: Process, @unchecked Sendable {
+    private let stubProcessIdentifier: Int32
     var didRun = false
     var didTerminate = false
     var didReceiveTerminate = false
@@ -783,6 +1009,11 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     var capturedTerminationHandler: (@Sendable (Process) -> Void)?
     var capturedTerminationStatus: Int32 = 1
     var capturedTerminationReason: Process.TerminationReason = .exit
+
+    init(processIdentifier: Int32 = 4321) {
+        stubProcessIdentifier = processIdentifier
+        super.init()
+    }
 
     override var executableURL: URL? {
         get { capturedExecutableURL }
@@ -814,7 +1045,7 @@ private final class ProcessSpy: Process, @unchecked Sendable {
     }
 
     override var processIdentifier: Int32 {
-        4321
+        stubProcessIdentifier
     }
 
     override var terminationStatus: Int32 {

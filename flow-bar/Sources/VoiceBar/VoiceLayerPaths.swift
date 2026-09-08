@@ -5,11 +5,18 @@ import VoiceBarUI
 /// Must stay aligned with `src/paths.ts`.
 enum VoiceLayerPaths {
     static let tmpDirectory = "/tmp"
+    static let stateDirectoryOverrideEnvironmentVariable = "VOICELAYER_STATE_DIR"
+    static var stateDirectory: String {
+        environmentValue(stateDirectoryOverrideEnvironmentVariable) ??
+            NSHomeDirectory() + "/.local/state/voicelayer"
+    }
+
     static let disableEnvironmentVariable = "DISABLE_VOICELAYER"
     static let disableFlagOverrideEnvironmentVariable = "QA_VOICE_DISABLE_FLAG_PATH"
     static let socketOverrideEnvironmentVariable = "QA_VOICE_SOCKET_PATH"
     static let mcpSocketOverrideEnvironmentVariable = "QA_VOICE_MCP_SOCKET_PATH"
     static let daemonPIDOverrideEnvironmentVariable = "QA_VOICE_MCP_PID_PATH"
+    static let daemonHeartbeatOverrideEnvironmentVariable = "QA_VOICE_MCP_HEARTBEAT_PATH"
     static let retainedRecordingOverrideEnvironmentVariable = "QA_VOICE_RETAINED_RECORDING_PATH"
 
     static func tmpPath(_ name: String) -> String {
@@ -43,6 +50,11 @@ enum VoiceLayerPaths {
 
     static var daemonPIDPath: String {
         environmentValue(daemonPIDOverrideEnvironmentVariable) ?? tmpPath("voicelayer-mcp.pid")
+    }
+
+    static var daemonHeartbeatPath: String {
+        environmentValue(daemonHeartbeatOverrideEnvironmentVariable) ??
+            stateDirectory + "/voicelayer-mcp.heartbeat"
     }
 
     static var retainedRecordingPath: String {

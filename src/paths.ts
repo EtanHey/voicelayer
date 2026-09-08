@@ -41,6 +41,7 @@ const MCP_SOCKET_OVERRIDE_ENVS = [
   "VOICELAYER_MCP_SOCKET_PATH",
   "QA_VOICE_MCP_SOCKET_PATH",
 ] as const;
+const MCP_HEARTBEAT_OVERRIDE_ENV = "QA_VOICE_MCP_HEARTBEAT_PATH";
 const RETAINED_RECORDING_OVERRIDE_ENV = "QA_VOICE_RETAINED_RECORDING_PATH";
 const RECORDING_STATE_OVERRIDE_ENV = "QA_VOICE_RECORDING_STATE_PATH";
 const RECORDING_HOLD_OVERRIDE_ENV = "QA_VOICE_RECORDING_HOLD_PATH";
@@ -144,6 +145,17 @@ export const STOP_FILE = join(STATE_DIR, `stop-${SESSION_TOKEN}`);
 
 /** Cancel signal file — set alongside STOP_FILE to discard recording (skip transcription). */
 export const CANCEL_FILE = join(STATE_DIR, `cancel-${SESSION_TOKEN}`);
+
+/** Event-loop heartbeat consumed by VoiceBar's owned-daemon watchdog. */
+export function mcpHeartbeatFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return readOverride(
+    MCP_HEARTBEAT_OVERRIDE_ENV,
+    `${getStateDir(env)}/voicelayer-mcp.heartbeat`,
+    env,
+  );
+}
 
 /** Cross-process recording state — lets speaker output gates see VoiceBar captures. */
 export function recordingStateFilePath(
