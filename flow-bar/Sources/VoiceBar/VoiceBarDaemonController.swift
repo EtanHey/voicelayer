@@ -358,7 +358,7 @@ final class VoiceBarDaemonController {
     private let forceKillProcess: ForceKillProcess
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private let livenessProbe: () -> Bool
-    private let heartbeatReader: HeartbeatReader
+    private let heartbeatReader: HeartbeatReader?
     private let heartbeatGapLogger: HeartbeatGapLogger
     private let dateProvider: DateProvider
     private var process: Process?
@@ -372,6 +372,7 @@ final class VoiceBarDaemonController {
     private var lastHeartbeatSequence: Int?
     private var lastHeartbeatAdvancedAt: Date?
     private var lastLoggedHeartbeatGapSequence: Int?
+    private var monitoredHeartbeatPath = VoiceLayerPaths.daemonHeartbeatPath
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -395,9 +396,7 @@ final class VoiceBarDaemonController {
         livenessProbe: @escaping () -> Bool = {
             VoiceBarDaemonLivenessProbe.isDaemonRunning()
         },
-        heartbeatReader: @escaping HeartbeatReader = {
-            VoiceBarDaemonHeartbeatReader.read()
-        },
+        heartbeatReader: HeartbeatReader? = nil,
         heartbeatGapLogger: @escaping HeartbeatGapLogger = { previousSequence, currentSequence, elapsed in
             NSLog("[VoiceBar] Daemon heartbeat gap sequence %ld -> %ld: %.3fs",
                   previousSequence, currentSequence, elapsed)
@@ -499,6 +498,9 @@ final class VoiceBarDaemonController {
         var daemonEnvironment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(path: Self.daemonPATH)
         daemonEnvironment["VOICEBAR_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
         proc.environment = daemonEnvironment
+        // Watch the path the child will publish after env sanitization, not
+        // leftover QA overrides on the VoiceBar process itself.
+        monitoredHeartbeatPath = VoiceLayerPaths.mcpHeartbeatPath(environment: daemonEnvironment)
 
         // Monitor: every unexpected death restarts. Exit 0 is terminal only
         // when the explicit disable flag is present.
@@ -630,7 +632,11 @@ final class VoiceBarDaemonController {
             }
 
             let now = dateProvider()
-            let heartbeat = heartbeatReader()
+            let heartbeat: VoiceBarDaemonHeartbeat? = if let heartbeatReader {
+                heartbeatReader()
+            } else {
+                VoiceBarDaemonHeartbeatReader.read(at: monitoredHeartbeatPath)
+            }
             if let heartbeat, heartbeat.pid == launchedProcess.processIdentifier {
                 if heartbeat.sequence != lastHeartbeatSequence {
                     if let previousSequence = lastHeartbeatSequence,

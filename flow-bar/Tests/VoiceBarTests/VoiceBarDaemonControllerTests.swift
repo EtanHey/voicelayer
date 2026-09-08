@@ -864,24 +864,73 @@ final class VoiceBarDaemonControllerTests: XCTestCase {
     func testDaemonHeartbeatPathUsesOverriddenStateDirectoryByDefault() {
         let stateKey = VoiceLayerPaths.stateDirectoryOverrideEnvironmentVariable
         let heartbeatKey = VoiceLayerPaths.daemonHeartbeatOverrideEnvironmentVariable
-        let previousState = ProcessInfo.processInfo.environment[stateKey]
-        let previousHeartbeat = ProcessInfo.processInfo.environment[heartbeatKey]
+        let pidKey = VoiceLayerPaths.daemonPIDOverrideEnvironmentVariable
+        let socketKey = VoiceLayerPaths.mcpSocketOverrideEnvironmentVariable
+        let canonicalSocketKey = "VOICELAYER_MCP_SOCKET_PATH"
+        let previousValues: [String: String?] = [
+            stateKey: ProcessInfo.processInfo.environment[stateKey],
+            heartbeatKey: ProcessInfo.processInfo.environment[heartbeatKey],
+            pidKey: ProcessInfo.processInfo.environment[pidKey],
+            socketKey: ProcessInfo.processInfo.environment[socketKey],
+            canonicalSocketKey: ProcessInfo.processInfo.environment[canonicalSocketKey],
+        ]
         setenv(stateKey, "/tmp/qa-state", 1)
         unsetenv(heartbeatKey)
+        unsetenv(pidKey)
+        unsetenv(socketKey)
+        unsetenv(canonicalSocketKey)
         defer {
-            if let previousState {
-                setenv(stateKey, previousState, 1)
-            } else {
-                unsetenv(stateKey)
-            }
-            if let previousHeartbeat {
-                setenv(heartbeatKey, previousHeartbeat, 1)
-            } else {
-                unsetenv(heartbeatKey)
+            for (key, value) in previousValues {
+                if let value {
+                    setenv(key, value, 1)
+                } else {
+                    unsetenv(key)
+                }
             }
         }
 
         XCTAssertEqual(VoiceLayerPaths.daemonHeartbeatPath, "/tmp/qa-state/voicelayer-mcp.heartbeat")
+    }
+
+    func testDaemonHeartbeatPathFollowsIsolatedPidAndSocketOverrides() {
+        XCTAssertEqual(
+            VoiceLayerPaths.mcpHeartbeatPath(environment: [
+                "VOICELAYER_STATE_DIR": "/tmp/live-state",
+                "QA_VOICE_MCP_PID_PATH": "/tmp/qa-run/voicelayer-mcp.pid",
+            ]),
+            "/tmp/qa-run/voicelayer-mcp.heartbeat"
+        )
+        XCTAssertEqual(
+            VoiceLayerPaths.mcpHeartbeatPath(environment: [
+                "VOICELAYER_STATE_DIR": "/tmp/live-state",
+                "VOICELAYER_MCP_SOCKET_PATH": "/tmp/qa-run/m.sock",
+            ]),
+            "/tmp/qa-run/m.sock.heartbeat"
+        )
+        XCTAssertEqual(
+            VoiceLayerPaths.mcpHeartbeatPath(environment: [
+                "VOICELAYER_STATE_DIR": "/tmp/live-state",
+                "QA_VOICE_MCP_HEARTBEAT_PATH": "/tmp/explicit.heartbeat",
+                "QA_VOICE_MCP_PID_PATH": "/tmp/qa-run/voicelayer-mcp.pid",
+            ]),
+            "/tmp/explicit.heartbeat"
+        )
+    }
+
+    func testSanitizedChildHeartbeatPathIgnoresLeftoverVoiceBarHeartbeatOverride() {
+        let environment = VoiceBarDaemonEnvironment.sanitizedDaemonEnvironment(
+            from: [
+                "QA_VOICE_MCP_HEARTBEAT_PATH": "/tmp/leftover.heartbeat",
+                "VOICELAYER_STATE_DIR": "/tmp/qa-state",
+            ],
+            path: "/tmp/bin"
+        )
+
+        XCTAssertNil(environment["QA_VOICE_MCP_HEARTBEAT_PATH"])
+        XCTAssertEqual(
+            VoiceLayerPaths.mcpHeartbeatPath(environment: environment),
+            "/tmp/qa-state/voicelayer-mcp.heartbeat"
+        )
     }
 
     func testFreshSessionLivenessProbeRejectsAlivePidWithoutLiveSocket() throws {

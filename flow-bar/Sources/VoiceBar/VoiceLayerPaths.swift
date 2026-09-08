@@ -53,8 +53,43 @@ enum VoiceLayerPaths {
     }
 
     static var daemonHeartbeatPath: String {
-        environmentValue(daemonHeartbeatOverrideEnvironmentVariable) ??
-            stateDirectory + "/voicelayer-mcp.heartbeat"
+        mcpHeartbeatPath(value: environmentValue)
+    }
+
+    /// Heartbeat path the daemon will publish, given its environment.
+    /// Must match `mcpHeartbeatFilePath` in `src/paths.ts`.
+    static func mcpHeartbeatPath(environment: [String: String]) -> String {
+        mcpHeartbeatPath { key in
+            guard let rawValue = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !rawValue.isEmpty
+            else {
+                return nil
+            }
+            return rawValue
+        }
+    }
+
+    private static func mcpHeartbeatPath(value: (String) -> String?) -> String {
+        if let override = value(daemonHeartbeatOverrideEnvironmentVariable) {
+            return override
+        }
+        if let pidOverride = value(daemonPIDOverrideEnvironmentVariable) {
+            return heartbeatPath(besidePidPath: pidOverride)
+        }
+        if let socketOverride = value("VOICELAYER_MCP_SOCKET_PATH") ??
+            value(mcpSocketOverrideEnvironmentVariable)
+        {
+            return socketOverride + ".heartbeat"
+        }
+        return (value(stateDirectoryOverrideEnvironmentVariable) ??
+            NSHomeDirectory() + "/.local/state/voicelayer") + "/voicelayer-mcp.heartbeat"
+    }
+
+    private static func heartbeatPath(besidePidPath pidPath: String) -> String {
+        if pidPath.hasSuffix(".pid") {
+            return String(pidPath.dropLast(4)) + ".heartbeat"
+        }
+        return pidPath + ".heartbeat"
     }
 
     static var retainedRecordingPath: String {
