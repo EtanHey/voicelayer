@@ -257,6 +257,16 @@ if [ "${VOICELAYER_VERIFY_SKIP_BUILD:-0}" = "1" ]; then
 else
   printf '[voicelayer-verify] rebuilding VoiceBar.app...\n'
   (cd "$REPO_ROOT/flow-bar" && ./build-app.sh)
+
+  # Rebuilding changes the app's cdhash. VoiceBar is signed with an Apple Development
+  # cert, whose TCC grants are cdhash-keyed — so the rebuild SILENTLY invalidates the
+  # microphone grant and macOS feeds the recorder silence (rms=1, dbfs=-96) with no
+  # re-prompt. Reset the grant so the F5 smoke test re-prompts and binds to the fresh
+  # cdhash. (Root cause of the 2026-06-10 triple-verify incident.)
+  if command -v tccutil >/dev/null 2>&1; then
+    printf '[voicelayer-verify] resetting microphone TCC grant (rebuild changed cdhash)...\n'
+    tccutil reset Microphone com.voicelayer.voicebar >/dev/null 2>&1 || true
+  fi
 fi
 
 if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ]; then
@@ -276,11 +286,17 @@ if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ];
   stop_daemon_pids "$daemon_pids"
 
   if [ "$launchd_managed" -eq 1 ]; then
-    if ! new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
-      printf '[voicelayer-verify] launchd did not relaunch VoiceBar; no artifact written.\n' >&2
-      exit 1
+    if new_pids="$(wait_for_launchd_voicebar_relaunch "$running_pids")"; then
+      printf '[voicelayer-verify] launchd relaunched VoiceBar with PID(s): %s\n' "$new_pids"
+    else
+      # launchd did NOT bring VoiceBar back — the com.voicelayer.voicebar agent is
+      # loaded (so is_voicebar_launchd_managed is true) but VoiceBar actually runs via
+      # `open`/login-item, so killing it triggers no launchd relaunch. Relaunch the app
+      # ourselves instead of leaving the user at the F5 prompt with a dead bar (#275, 2026-06-10).
+      printf '[voicelayer-verify] launchd did not relaunch VoiceBar; relaunching the app directly.\n' >&2
+      open -a VoiceBar
+      sleep 1
     fi
-    printf '[voicelayer-verify] launchd relaunched VoiceBar with PID(s): %s\n' "$new_pids"
   else
     printf '[voicelayer-verify] relaunching VoiceBar.app...\n'
     open -a VoiceBar
@@ -288,7 +304,9 @@ if [ -n "$running_pids" ] && [ "${VOICELAYER_VERIFY_SKIP_RELAUNCH:-0}" != "1" ];
   fi
 fi
 
-printf "Press F5 in VoiceBar, speak 'verification test', release, confirm paste fired (Y/n) "
+printf "Press F5 in VoiceBar, speak 'verification test', release, confirm paste fired.\n"
+printf "(macOS may pop a 'VoiceBar wants to access the microphone' dialog — click Allow,\n"
+printf " then F5 again: the grant binds to the next capture.) (Y/n) "
 if ! IFS= read -r -t 300 answer; then
   printf '\n[voicelayer-verify] timed out waiting for runtime confirmation; no artifact written.\n' >&2
   exit 1

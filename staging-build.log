@@ -1,0 +1,20 @@
+[build-app] Building VoiceBar (release)...
+Building for production...
+[0/5] Write sources
+[2/5] Write swift-version--612961DECF7E78CD.txt
+[4/6] Compiling VoiceBarUI AudioLevelMonitor.swift
+[5/7] Compiling VoiceBar CommandModeAXHelper.swift
+[5/7] Write Objects.LinkFileList
+[6/7] Linking VoiceBar
+Build complete! (12.52s)
+[build-app] Creating .app bundle at /Users/etanheyman/Gits/voicelayer-wt/fix/daemon-app-child-watchdog/VoiceBar-staging.app...
+[build-app] VAD model bundled.
+[build-app] edge-tts synth script bundled.
+[build-app] Icon installed.
+[build-app] Signing...
+/Users/etanheyman/Gits/voicelayer-wt/fix/daemon-app-child-watchdog/VoiceBar-staging.app: replacing existing signature
+[build-app] Verifying signature...
+[build-app] Done: /Users/etanheyman/Gits/voicelayer-wt/fix/daemon-app-child-watchdog/VoiceBar-staging.app
+[build-app] Skipping retired MCP daemon LaunchAgent cleanup.
+[build-app] To add to Login Items: System Settings > General > Login Items > +
+[build-app] Or run: osascript -e 'tell application "System Events" to make login item at end with properties {path:"/Users/etanheyman/Gits/voicelayer-wt/fix/daemon-app-child-watchdog/VoiceBar-staging.app", hidden:true}'
