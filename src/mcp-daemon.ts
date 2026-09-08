@@ -42,6 +42,18 @@ interface ClientState {
   protocol: "mcp" | "ndjson" | "unknown";
   buffer: string;
   disconnected: boolean;
+  writeQueue: Uint8Array[];
+  writeOffset: number;
+  writeScheduled: boolean;
+}
+
+interface WritableClientSocket {
+  data: ClientState;
+  write: (
+    data: string | Uint8Array,
+    byteOffset?: number,
+    byteLength?: number,
+  ) => number;
 }
 
 /**
@@ -119,7 +131,14 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     unix: socketPath,
     socket: {
       open(socket) {
-        socket.data = { protocol: "unknown", buffer: "", disconnected: false };
+        socket.data = {
+          protocol: "unknown",
+          buffer: "",
+          disconnected: false,
+          writeQueue: [],
+          writeOffset: 0,
+          writeScheduled: false,
+        };
         onConnect();
       },
 
@@ -167,11 +186,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
     );
   }
 
-  function handleMcpData(socket: {
-    data: ClientState;
-    write: (data: string) => number;
-    end: () => void;
-  }) {
+  function handleMcpData(socket: WritableClientSocket) {
     // AIDEV-NOTE: Parse in a loop — on error, parseMcpFrames returns early
     // with a remainder that may still contain valid frames. Re-parse until
     // no more data can be extracted.
@@ -212,37 +227,25 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
             const frame = serializeMcpFrame(
               response as unknown as Record<string, unknown>,
             );
-            try {
-              socket.write(frame);
-            } catch {
-              // Client may have disconnected
-            }
+            queueSocketWrite(socket, frame);
           }
         })
         .catch((err) => {
           console.error(`[mcp-daemon] Unhandled error: ${err}`);
-          try {
-            const errResponse = serializeMcpFrame({
-              jsonrpc: "2.0",
-              id: (msg as Record<string, unknown>).id ?? null,
-              error: {
-                code: -32603,
-                message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
-              },
-            });
-            socket.write(errResponse);
-          } catch {
-            // Client already gone
-          }
+          const errResponse = serializeMcpFrame({
+            jsonrpc: "2.0",
+            id: (msg as Record<string, unknown>).id ?? null,
+            error: {
+              code: -32603,
+              message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          });
+          queueSocketWrite(socket, errResponse);
         });
     }
   }
 
-  function handleNdjsonData(socket: {
-    data: ClientState;
-    write: (data: string) => number;
-    end: () => void;
-  }) {
+  function handleNdjsonData(socket: WritableClientSocket) {
     const lines = socket.data.buffer.split("\n");
     socket.data.buffer = lines.pop() ?? "";
 
@@ -254,9 +257,7 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
         // Health check: ping → pong
         if (isPingRequest(msg)) {
           const pong = buildPongResponse();
-          try {
-            socket.write(JSON.stringify(pong) + "\n");
-          } catch {}
+          queueSocketWrite(socket, JSON.stringify(pong) + "\n");
           continue;
         }
 
@@ -280,25 +281,22 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
           )
             .then((response) => {
               if (response) {
-                try {
-                  socket.write(JSON.stringify(response) + "\n");
-                } catch {}
+                queueSocketWrite(socket, JSON.stringify(response) + "\n");
               }
             })
             .catch((err) => {
               console.error(`[mcp-daemon] MCP-over-NDJSON error: ${err}`);
-              try {
-                socket.write(
-                  JSON.stringify({
-                    jsonrpc: "2.0",
-                    id: msg.id ?? null,
-                    error: {
-                      code: -32603,
-                      message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
-                    },
-                  }) + "\n",
-                );
-              } catch {}
+              queueSocketWrite(
+                socket,
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: msg.id ?? null,
+                  error: {
+                    code: -32603,
+                    message: `Internal error: ${err instanceof Error ? err.message : String(err)}`,
+                  },
+                }) + "\n",
+              );
             });
           continue;
         }
@@ -318,4 +316,42 @@ export async function createMcpDaemon(options: McpDaemonOptions): Promise<{
       } catch {}
     },
   };
+}
+
+function queueSocketWrite(socket: WritableClientSocket, payload: string): void {
+  socket.data.writeQueue.push(Buffer.from(payload, "utf-8"));
+  flushSocketWrites(socket);
+}
+
+function flushSocketWrites(socket: WritableClientSocket): void {
+  socket.data.writeScheduled = false;
+
+  while (socket.data.writeQueue.length > 0) {
+    const current = socket.data.writeQueue[0];
+    const remaining = current.byteLength - socket.data.writeOffset;
+    const written = socket.write(current, socket.data.writeOffset, remaining);
+
+    if (written === -1) {
+      socket.data.writeQueue = [];
+      socket.data.writeOffset = 0;
+      return;
+    }
+
+    if (written === 0) {
+      scheduleSocketWriteFlush(socket);
+      return;
+    }
+
+    socket.data.writeOffset += written;
+    if (socket.data.writeOffset >= current.byteLength) {
+      socket.data.writeQueue.shift();
+      socket.data.writeOffset = 0;
+    }
+  }
+}
+
+function scheduleSocketWriteFlush(socket: WritableClientSocket): void {
+  if (socket.data.writeScheduled) return;
+  socket.data.writeScheduled = true;
+  setTimeout(() => flushSocketWrites(socket), 0);
 }

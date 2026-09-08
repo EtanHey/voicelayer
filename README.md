@@ -171,7 +171,7 @@ Grant microphone access to your terminal (macOS: System Settings > Privacy > Mic
 | Tool | Behavior | Blocking | readOnly | destructive | idempotent |
 |------|----------|:--------:|:--------:|:-----------:|:----------:|
 | **`voice_speak`** | TTS with auto-mode (announce/brief/consult/think), replay, toggle | No | false | false | true |
-| **`voice_ask`** | Speak question + record mic + transcribe response | Yes | false | false | false |
+| **`voice_ask`** | Speak question + collect/transcribe response via configured input backend | Yes | false | false | false |
 
 ### Backward-compatible aliases
 
@@ -193,9 +193,9 @@ All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/
 
 1. Waits for any playing `voice_speak` audio to finish
 2. Speaks the question via edge-tts (with retry on failure)
-3. Records mic at device native rate, resamples to 16kHz
-4. Silero VAD detects speech onset and silence end
-5. whisper.cpp transcribes locally (~200-400ms on Apple Silicon)
+3. Collects the response through the configured input backend
+4. Local backend: records mic at device native rate, resamples to 16kHz, runs Silero VAD, then transcribes with whisper.cpp
+5. Spokenly backend: delegates response capture to Spokenly's local MCP server while VoiceLayer keeps session booking, question TTS, and Voice Bar state
 6. Returns transcription to the AI agent
 
 ### Reliability Features
@@ -222,6 +222,17 @@ All 11 tools include MCP [ToolAnnotations](https://spec.modelcontextprotocol.io/
 | **Wispr Flow** | Cloud (fallback) | ~500ms + network | Set `QA_VOICE_WISPR_KEY` env var |
 
 Auto-detected. Override with `QA_VOICE_STT_BACKEND=whisper|wispr|auto`.
+
+### voice_ask Input Backend
+
+`voice_ask` defaults to VoiceLayer's local mic + STT pipeline. To stop owning dictation capture for agent Q&A, delegate only the response-capture step to Spokenly:
+
+```bash
+VOICELAYER_INPUT_BACKEND=spokenly
+VOICELAYER_SPOKENLY_MCP_URL=http://localhost:51089
+```
+
+`VOICELAYER_INPUT_BACKEND=auto` tries Spokenly first and falls back to local VoiceLayer STT if Spokenly is unavailable. Spokenly should be running with its local MCP server enabled; keep Spokenly's own "speak AI questions aloud" option off so VoiceLayer remains the single TTS/session owner.
 
 ## Voice Bar (macOS)
 
@@ -293,6 +304,8 @@ path. The daemon only accepts `Host: 127.0.0.1:8880` /
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `VOICELAYER_INPUT_BACKEND` | `local` | `voice_ask` response capture backend: `local`, `spokenly`, or `auto` |
+| `VOICELAYER_SPOKENLY_MCP_URL` | `http://localhost:51089` | Spokenly local MCP endpoint for `ask_user_dictation` |
 | `QA_VOICE_STT_BACKEND` | `auto` | STT backend: `whisper`, `wispr`, or `auto` |
 | `QA_VOICE_WHISPER_MODEL` | auto-detected | Path to whisper.cpp GGML model |
 | `QA_VOICE_WHISPER_PERFORMANCE_EFFORT` | `accurate` | STT decode effort: `fast`, `balanced`, or `accurate` |

@@ -38,7 +38,7 @@ Non-blocking text-to-speech. Speaks a message aloud or logs it silently. Auto-de
 
 ## voice_ask
 
-Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, then speaks a question aloud, records mic at device's native rate (auto-detected), resamples to 16kHz, transcribes via Silero VAD + whisper.cpp/Wispr Flow, returns text.
+Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, speaks a question aloud, then collects the user's response through the configured input backend. The default backend records mic audio locally and transcribes via Silero VAD + whisper.cpp/Wispr Flow; `VOICELAYER_INPUT_BACKEND=spokenly` delegates response capture to Spokenly's local MCP server.
 
 | Property | Value |
 |----------|-------|
@@ -72,6 +72,7 @@ Blocking voice Q&A. Auto-waits for any playing `voice_speak` audio to finish, th
 | sox not installed | `rec` command missing |
 | Mic permission denied | Terminal not authorized for mic |
 | No STT backend | Neither whisper.cpp nor Wispr available |
+| Spokenly MCP request failed | Spokenly input backend selected but local Spokenly MCP is unavailable |
 
 ---
 

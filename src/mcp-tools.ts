@@ -92,13 +92,14 @@ export function getToolDefinitions() {
       description:
         "Speak a question aloud and wait for the user's voice response. BLOCKING.\n" +
         "Auto-waits for any playing voice_speak audio to finish before speaking.\n\n" +
-        "Two recording modes:\n" +
+        "Input backend: local mic + STT by default; set VOICELAYER_INPUT_BACKEND=spokenly to delegate response capture to Spokenly local MCP.\n\n" +
+        "Local recording modes:\n" +
         "- VAD mode (default): Silero VAD detects speech, auto-stops on silence\n" +
         "- Push-to-talk (press_to_talk=true): Records until stop signal — best for noisy environments\n\n" +
         `User-controlled stop: touch ${STOP_FILE} to end recording.\n` +
         "Requires voice session booking — other sessions see 'line busy'.\n\n" +
         "Returns: transcribed text on success, status message on timeout, error if busy.\n" +
-        "Prerequisites: sox (recording), whisper.cpp or Wispr Flow (STT), python3 + edge-tts (TTS).",
+        "Prerequisites: python3 + edge-tts (TTS); local backend requires sox + whisper.cpp or Wispr Flow; Spokenly backend requires Spokenly local MCP.",
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -110,7 +111,8 @@ export function getToolDefinitions() {
         properties: {
           message: {
             type: "string",
-            description: "The question to speak aloud before recording",
+            description:
+              "The question to speak aloud before collecting the response",
           },
           timeout_seconds: {
             type: "number",

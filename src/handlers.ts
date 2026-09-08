@@ -14,7 +14,7 @@ import {
   playAudioNonBlocking,
   awaitCurrentPlayback,
 } from "./tts";
-import { waitForInput, clearInput } from "./input";
+import { clearInput } from "./input";
 import {
   getEffectiveRecordingState,
   isRecordingConflictError,
@@ -54,6 +54,10 @@ import {
   type ReplayArgs,
   type ToggleArgs,
 } from "./schemas/mcp-inputs";
+import {
+  collectVoiceInputWithSource,
+  getConfiguredVoiceInputBackend,
+} from "./voice-input-backend";
 
 // --- MCP result helper ---
 
@@ -302,13 +306,41 @@ export async function handleConverse(args: unknown): Promise<McpResult> {
       voice: voiceName,
     });
 
-    // Record mic audio, then transcribe with selected STT backend
+    // Record user input via the configured backend: local STT by default,
+    // or Spokenly MCP when VOICELAYER_INPUT_BACKEND=spokenly/auto.
     const pressToTalk = validated.press_to_talk ?? false;
-    const response = await waitForInput(
-      timeoutSeconds * 1000,
+    const inputBackend = getConfiguredVoiceInputBackend();
+    if (inputBackend !== "local") {
+      broadcast(
+        pressToTalk
+          ? { type: "state", state: "recording", mode: "ptt" }
+          : {
+              type: "state",
+              state: "recording",
+              mode: "vad",
+              silence_mode: silenceMode,
+            },
+      );
+    }
+
+    const input = await collectVoiceInputWithSource({
+      question: validated.message,
+      timeoutMs: timeoutSeconds * 1000,
       silenceMode,
       pressToTalk,
-    );
+    });
+    const response = input.transcript;
+
+    if (input.source === "spokenly") {
+      if (response) {
+        broadcast({
+          type: "transcription",
+          text: response,
+          partial: false,
+        });
+      }
+      broadcast({ type: "state", state: "idle", source: "recording" });
+    }
 
     if (response === null) {
       return textResult(formatAsk(null, { timeoutSeconds, pressToTalk }));
