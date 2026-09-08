@@ -110,11 +110,12 @@ function buildPolishSystemPrompt(): string {
     "Input is raw Whisper output after deterministic VoiceLayer cleanup.",
     "Fix obvious transcript artifacts: missing sentence punctuation, duplicate punctuation, missing sentence-start capitalization, high-confidence recognition errors, code identifier formatting, slash-command spacing, chunk-boundary duplicates, and Hebrew/English spacing.",
     "Be decisive. When one of the dictation-finalizer patterns below appears, apply it instead of leaving the text unchanged.",
-    "Format ANY ordinal sequence into numbered markdown lists. Ordinal cues include first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even with conversational framing such as so, okay, and then, or third without 'of all'.",
+    "Format ANY ordinal sequence into numbered markdown lists when the speaker is enumerating items. Ordinal cues include two things, first, first of all, second, second of all, third, third of all, fourth, number one, number two, and similar spoken ordering. This applies even inside long dictations and with conversational framing such as so, okay, and then, or third without 'of all'.",
     "Collapse ANY mid-sentence self-correction when the speaker replaces an earlier phrase with a later phrase. Explicit cues include well no, well, no, no wait, sorry, I mean, actually, rather, or scratch that. Also collapse semantic correction patterns such as 'did X ... no/actually Y', 'went to X ... no ... went to Y', or longer clause replacements. Keep the corrected later phrase and drop only the immediately superseded phrase.",
     "Preserve literal/code/path tokens exactly, including leading-dot tokens like .env, .at, and .gitignore. Do not attach a leading-dot token to the previous word.",
     "Remove low-value disfluencies only when they are clearly process speech or discarded correction scaffolding, not semantic content.",
     "Never summarize, translate, add content, change tone, or invent code identifiers.",
+    "Preserve names and product/tool spellings from the input unless there is a high-confidence known correction; do not guess unusual plurals or foreign-looking variants.",
     "Do not delete wanted content: keep every clause that is not clearly superseded by a self-correction or converted into a numbered list item.",
     "Preserve Hebrew as Hebrew and English/code terms as English.",
     "For already-good dictation with no applicable rule, output the cleaned text with only minimal punctuation/capitalization fixes.",
@@ -141,6 +142,8 @@ function buildPolishSystemPrompt(): string {
     "Output:\n1. I came back home right now.\n2. You've been paused.\n3. I'm very frustrated.",
     "Input: Or if I say, okay, first of all, I want to do x, y, z, and then second of all, I want to do the other thing, and then third of all, I want to do this, that, and this.",
     "Output: Okay:\n1. I want to do x, y, z.\n2. I want to do the other thing.\n3. I want to do this, that, and this.",
+    "Input: Two things first of all you forgot to put a slash loop second of all you opened an orc and you didn't check that I closed it.",
+    "Output:\n1. You forgot to put a /loop.\n2. You opened an orc, and you didn't check that I closed it.",
     "Input: Also, if I say the .at file. Thank you.",
     "Output: Also, if I say the .at file. Thank you.",
     "Input: This is already good.",
@@ -509,6 +512,93 @@ function hasNumberedMarkdownList(text: string): boolean {
   return /(?:^|\n)\s*1\.\s+\S/u.test(text) && /(?:^|\n)\s*2\.\s+\S/u.test(text);
 }
 
+function ensureTerminalPunctuation(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return trimmed;
+  return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+function capitalizeFirstLetter(text: string): string {
+  return text.replace(/^\p{Ll}/u, (letter) => letter.toUpperCase());
+}
+
+const HIGH_CONFIDENCE_LIST_START_PATTERN =
+  /^\s*(?:okay[,\s]+|so[,\s]+|or\s+if\s+i\s+say[,\s]+)*first\s+of\s+all\b/iu;
+const HIGH_CONFIDENCE_LIST_MID_PATTERN =
+  /\b(?:two\s+things|2\s+things)\b[\s\S]{0,120}\bfirst\s+of\s+all\b[\s\S]{0,400}\bsecond\s+of\s+all\b/iu;
+const HIGH_CONFIDENCE_LIST_OKAY_SO_PATTERN =
+  /\b(?:okay|so)[,\s]+(?:so[,\s]+)?first\s+of\s+all\b[\s\S]{0,400}\bsecond\s+of\s+all\b/iu;
+
+function hasHighConfidenceSpokenListStructure(text: string): boolean {
+  if (!/\bsecond\s+of\s+all\b/iu.test(text)) return false;
+  return (
+    HIGH_CONFIDENCE_LIST_START_PATTERN.test(text) ||
+    HIGH_CONFIDENCE_LIST_MID_PATTERN.test(text) ||
+    HIGH_CONFIDENCE_LIST_OKAY_SO_PATTERN.test(text)
+  );
+}
+
+function hasSpokenListItemContent(text: string): boolean {
+  const first = /\bfirst\s+of\s+all\b[,\s]*/iu.exec(text);
+  if (first?.index === undefined) return false;
+  const afterFirst = first.index + first[0].length;
+  const second = /\bsecond\s+of\s+all\b[,\s]*/iu.exec(text.slice(afterFirst));
+  if (second?.index === undefined) return false;
+  const firstItem = text.slice(afterFirst, afterFirst + second.index);
+  const secondStart = afterFirst + second.index + second[0].length;
+  const third = /\b(?:third\s+of\s+all|third)\b[,\s]*/iu.exec(text.slice(secondStart));
+  const secondItem = third?.index === undefined
+    ? text.slice(secondStart)
+    : text.slice(secondStart, secondStart + third.index);
+  return countWords(firstItem) >= 4 && countWords(secondItem) >= 4;
+}
+
+function cleanListPrefix(prefix: string): string {
+  return prefix
+    .replace(/\b(?:two\s+things|2\s+things)\b[,\s]*/giu, "")
+    .replace(/^\s*(?:okay[,\s]+|so[,\s]+|or\s+if\s+i\s+say[,\s]+)+/iu, "")
+    .trim();
+}
+
+function normalizeListItem(item: string): string {
+  return ensureTerminalPunctuation(
+    capitalizeFirstLetter(
+      item
+        .replace(/^\s*(?:and\s+then|then|and|okay|so)[,\s]+/iu, "")
+        .replace(/[ \t]+/gu, " ")
+        .trim(),
+    ),
+  );
+}
+
+function formatSpokenListDeterministically(text: string): string | null {
+  if (!hasHighConfidenceSpokenListStructure(text)) return null;
+
+  const cuePattern =
+    /\b(first\s+of\s+all|second\s+of\s+all|third\s+of\s+all|third)\b[,\s]*/giu;
+  const matches = [...text.matchAll(cuePattern)].filter(
+    (match) =>
+      !/^third$/iu.test(match[1]) ||
+      (match.index ?? 0) > 0,
+  );
+  if (matches.length < 2) return null;
+
+  const first = matches[0];
+  const prefix = cleanListPrefix(text.slice(0, first.index));
+  const items: string[] = [];
+  for (let index = 0; index < matches.length; index++) {
+    const match = matches[index];
+    const start = (match.index ?? 0) + match[0].length;
+    const end = matches[index + 1]?.index ?? text.length;
+    const item = normalizeListItem(text.slice(start, end));
+    if (item) items.push(item);
+  }
+  if (items.length < 2) return null;
+
+  const list = items.map((item, index) => `${index + 1}. ${item}`).join("\n");
+  return prefix ? `${ensureTerminalPunctuation(prefix)}\n${list}` : list;
+}
+
 function isAllowedSelfCorrectionRewrite(
   cleanedText: string,
   candidate: string,
@@ -523,6 +613,12 @@ function isAllowedSpokenListRewrite(
   candidate: string,
 ): boolean {
   if (!hasSpokenListCue(cleanedText) || !hasNumberedMarkdownList(candidate)) {
+    return false;
+  }
+  if (
+    !hasHighConfidenceSpokenListStructure(cleanedText) &&
+    !hasSpokenListItemContent(cleanedText)
+  ) {
     return false;
   }
   return normalizedSimilarity(cleanedText, candidate) >= SPOKEN_LIST_SIMILARITY_FLOOR;
@@ -614,6 +710,21 @@ function applyPolishCandidate(
     return buildResult(cleanedText, trimmedPolishedText, "rejected", rejectionReason);
   }
   return buildResult(trimmedPolishedText, trimmedPolishedText, "applied");
+}
+
+function applyDeterministicSpokenListFallback(
+  cleanedText: string,
+  mode: STTPolishMode,
+  buildResult: (
+    text: string,
+    polishedText: string | null,
+    status: STTPolishStatus,
+    error?: string,
+  ) => STTPolishResult,
+): STTPolishResult | null {
+  const candidate = formatSpokenListDeterministically(cleanedText);
+  if (!candidate) return null;
+  return applyPolishCandidate(cleanedText, candidate, mode, buildResult);
 }
 
 async function requestPolishOverHttp(
@@ -830,9 +941,25 @@ export async function polishTranscriptionText(
         mode,
         buildResult,
       );
+      const deterministicList = !hasNumberedMarkdownList(result.text)
+        ? applyDeterministicSpokenListFallback(input.cleanedText, mode, buildResult)
+        : null;
+      if (deterministicList?.status === "applied" || deterministicList?.status === "shadowed") {
+        writePolishLog(deterministicList, input.rawText, input.cleanedText, env);
+        return deterministicList;
+      }
       writePolishLog(result, input.rawText, input.cleanedText, env);
       return result;
     } catch (err) {
+      const deterministicList = applyDeterministicSpokenListFallback(
+        input.cleanedText,
+        mode,
+        buildResult,
+      );
+      if (deterministicList?.status === "applied" || deterministicList?.status === "shadowed") {
+        writePolishLog(deterministicList, input.rawText, input.cleanedText, env);
+        return deterministicList;
+      }
       const result = buildResult(
         input.cleanedText,
         null,
@@ -846,6 +973,15 @@ export async function polishTranscriptionText(
 
   const socketPath = getSTTPolishSocketPath(env);
   if (!existsSync(socketPath)) {
+    const deterministicList = applyDeterministicSpokenListFallback(
+      input.cleanedText,
+      mode,
+      buildResult,
+    );
+    if (deterministicList?.status === "applied" || deterministicList?.status === "shadowed") {
+      writePolishLog(deterministicList, input.rawText, input.cleanedText, env);
+      return deterministicList;
+    }
     const result = buildResult(input.cleanedText, null, "unavailable");
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;
@@ -868,9 +1004,25 @@ export async function polishTranscriptionText(
       mode,
       buildResult,
     );
+    const deterministicList = !hasNumberedMarkdownList(result.text)
+      ? applyDeterministicSpokenListFallback(input.cleanedText, mode, buildResult)
+      : null;
+    if (deterministicList?.status === "applied" || deterministicList?.status === "shadowed") {
+      writePolishLog(deterministicList, input.rawText, input.cleanedText, env);
+      return deterministicList;
+    }
     writePolishLog(result, input.rawText, input.cleanedText, env);
     return result;
   } catch (err) {
+    const deterministicList = applyDeterministicSpokenListFallback(
+      input.cleanedText,
+      mode,
+      buildResult,
+    );
+    if (deterministicList?.status === "applied" || deterministicList?.status === "shadowed") {
+      writePolishLog(deterministicList, input.rawText, input.cleanedText, env);
+      return deterministicList;
+    }
     const result = buildResult(
       input.cleanedText,
       null,

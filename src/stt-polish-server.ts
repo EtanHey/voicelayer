@@ -255,8 +255,10 @@ function findDefaultPolishPortOwnerPids(): number[] {
 }
 
 function findDefaultPolishPortOwnerPidsUnfiltered(): number[] {
+  const lsof = findLsofBinary();
+  if (!lsof) return [];
   const result = Bun.spawnSync(
-    ["lsof", "-nP", `-iTCP:${DEFAULT_POLISH_PORT}`, "-sTCP:LISTEN", "-t"],
+    [lsof, "-nP", `-iTCP:${DEFAULT_POLISH_PORT}`, "-sTCP:LISTEN", "-t"],
     { stdout: "pipe", stderr: "pipe" },
   );
   if (result.exitCode !== 0) return [];
@@ -265,6 +267,19 @@ function findDefaultPolishPortOwnerPidsUnfiltered(): number[] {
     .split(/\s+/u)
     .map((value) => Number(value))
     .filter((pid) => Number.isInteger(pid) && pid > 0);
+}
+
+function findLsofBinary(): string | null {
+  const knownCandidates = [
+    "/usr/sbin/lsof",
+    "/usr/bin/lsof",
+    "/opt/homebrew/bin/lsof",
+    "/usr/local/bin/lsof",
+  ];
+  for (const candidate of knownCandidates) {
+    if (isExecutableFile(candidate)) return candidate;
+  }
+  return resolveBinary("lsof", knownCandidates);
 }
 
 function isPolishServerPid(pid: number): boolean {

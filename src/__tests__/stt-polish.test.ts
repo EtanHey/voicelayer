@@ -521,6 +521,80 @@ describe("stt-polish", () => {
     });
   });
 
+  it("falls back to deterministic markdown for explicit two-things dictation", async () => {
+    server = createMockPolishServer(() => ({
+      text: "2 things first of all you forgot to put a /loop second of all you opened an orc and you didn't check I closed it.",
+    }));
+
+    const cleanedText =
+      "2 things first of all you forgot to put a /loop second of all you opened an orc and you didn't check I closed it.";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "1. You forgot to put a /loop.\n2. You opened an orc and you didn't check I closed it.",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("does not deterministically list-format ordinal prose without a high-confidence list shape", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Can I see the collab? First of all, second of all, can we try this?",
+    }));
+
+    const cleanedText =
+      "Can I see the collab that's first of all second of all can we try this?";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: "Can I see the collab? First of all, second of all, can we try this?",
+      status: "applied",
+      changed: true,
+    });
+  });
+
+  it("rejects model-produced numbered lists when ordinal prose has no item content", async () => {
+    server = createMockPolishServer(() => ({
+      text: "Can I see the collab that's\n1. first of all\n2. second of all\nCan we try this?",
+    }));
+
+    const cleanedText =
+      "Can I see the collab that's first of all second of all can we try this?";
+    const result = await polishTranscriptionText({
+      rawText: cleanedText,
+      cleanedText,
+      env: {
+        QA_VOICE_STT_POLISH: "on",
+        QA_VOICE_STT_POLISH_SOCKET: TEST_SOCKET,
+        QA_VOICE_STT_POLISH_LOG_PATH: TEST_LOG,
+      },
+    });
+
+    expect(result).toMatchObject({
+      text: cleanedText,
+      polishedText:
+        "Can I see the collab that's\n1. first of all\n2. second of all\nCan we try this?",
+      status: "rejected",
+      changed: false,
+    });
+  });
+
   it("rejects polish candidates that swap protected slash tokens", async () => {
     server = createMockPolishServer(() => ({
       text: "Run /deploy after the tests pass.",
@@ -693,12 +767,16 @@ describe("stt-polish", () => {
       expect(messages[0].content).toContain("well no");
       expect(messages[0].content).toContain("numbered markdown lists");
       expect(messages[0].content).toContain("ANY ordinal sequence");
+      expect(messages[0].content).toContain("two things");
       expect(messages[0].content).toContain("Input: So first of all");
       expect(messages[0].content).toContain("third, I'm very frustrated");
+      expect(messages[0].content).toContain("Input: Two things first of all");
+      expect(messages[0].content).toContain("You forgot to put a /loop");
       expect(messages[0].content).toContain("did X");
       expect(messages[0].content).toContain("I just went to the supermarket");
       expect(messages[0].content).toContain(".at");
       expect(messages[0].content).toContain("Preserve Hebrew");
+      expect(messages[0].content).toContain("Preserve names");
       expect(messages[0].content).not.toContain(
         "If unsure, return the input unchanged",
       );
