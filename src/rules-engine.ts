@@ -1239,7 +1239,9 @@ function applyAliases(
   const lowerResult = result.toLowerCase();
   for (const [fromLower, pattern, to, prefixMode] of cached.patterns) {
     if (!lowerResult.includes(fromLower)) continue;
-    if (shouldApplyAlias && !shouldApplyAlias(fromLower, result)) continue;
+    // Gate on the original utterance. `result` mutates as longer Hebrew
+    // cues (גאו → Go) are rewritten, which would drop later short aliases.
+    if (shouldApplyAlias && !shouldApplyAlias(fromLower, text)) continue;
     result = result.replace(pattern, (_match, prefix?: string) => {
       if (!prefix || prefixMode === "plain") return to;
       return prefixMode === "separate-prefix"
