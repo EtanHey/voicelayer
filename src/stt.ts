@@ -730,15 +730,65 @@ function hasDistinctSuspectSuffix(
 }
 
 function hasDetectableResidualLoop(suspect: SuspectChunkLoop): boolean {
-  let minimumStride = Number.POSITIVE_INFINITY;
   for (let index = 1; index < suspect.occurrenceStarts.length; index++) {
-    minimumStride = Math.min(
-      minimumStride,
-      suspect.occurrenceStarts[index] - suspect.occurrenceStarts[index - 1],
+    const residualWords =
+      suspect.occurrenceStarts[index] -
+      suspect.occurrenceStarts[index - 1] -
+      suspect.loopWordCount;
+    if (residualWords !== 0 && residualWords < MIN_SUSPECT_LOOP_WORDS) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function residualLoopIsWitnessed(
+  originalText: string,
+  suspect: SuspectChunkLoop,
+  witnesses: string[],
+): boolean {
+  const originalWords = normalizeChunkWords(originalText);
+  const residualKeys: string[] = [];
+  for (let index = 1; index < suspect.occurrenceStarts.length; index++) {
+    const residualStart =
+      suspect.occurrenceStarts[index - 1] + suspect.loopWordCount;
+    const residualEnd = suspect.occurrenceStarts[index];
+    if (residualStart === residualEnd) continue;
+    residualKeys.push(
+      canonicalWitnessText(
+        originalWords.slice(residualStart, residualEnd).join(" "),
+      ),
     );
   }
-  const residualWords = minimumStride - suspect.loopWordCount;
-  return residualWords === 0 || residualWords >= MIN_SUSPECT_LOOP_WORDS;
+  if (residualKeys.length === 0) return true;
+  const residualKey = residualKeys[0];
+  if (!residualKey || !residualKeys.every((key) => key === residualKey)) {
+    return false;
+  }
+  return witnesses.every((witness) =>
+    canonicalWitnessText(witness).includes(residualKey),
+  );
+}
+
+function extensionBoundaryOverlapsSuspectLoops(
+  originalText: string,
+  suspects: SuspectChunkLoop[],
+  extensionBoundaryText: string | null,
+): boolean {
+  const extensionBoundaryKey = canonicalWitnessText(
+    normalizeChunkWords(extensionBoundaryText ?? "")
+      .slice(0, EXTENSION_BOUNDARY_ANCHOR_WORDS)
+      .join(" "),
+  );
+  if (!extensionBoundaryKey) return false;
+  const originalWords = normalizeChunkWords(originalText);
+  return suspects.some((suspect) =>
+    canonicalWitnessText(
+      originalWords
+        .slice(suspect.firstOccurrence, suspect.lastOccurrenceEnd)
+        .join(" "),
+    ).includes(extensionBoundaryKey),
+  );
 }
 
 function countSuspectPhraseOccurrences(
@@ -746,6 +796,7 @@ function countSuspectPhraseOccurrences(
   suspect: SuspectChunkLoop,
   witnessText: string,
   extensionBoundaryText: string | null,
+  ambiguousExtensionBoundary: boolean,
 ): number | null {
   const originalWords = normalizeChunkWords(originalText);
   const phraseKey = canonicalWitnessText(
@@ -801,16 +852,9 @@ function countSuspectPhraseOccurrences(
   const extensionBoundaryWords = normalizeChunkWords(
     extensionBoundaryText ?? "",
   ).slice(0, EXTENSION_BOUNDARY_ANCHOR_WORDS);
-  const extensionBoundaryKey = canonicalWitnessText(
-    extensionBoundaryWords.join(" "),
-  );
-  const originalChunkKey = canonicalWitnessText(originalWords.join(" "));
   // If the extension begins with the loop itself, text cannot distinguish the
   // true time boundary from an in-chunk loop copy. Fail closed rather than
   // deleting a genuine repetition on an ambiguous acoustic boundary.
-  const ambiguousExtensionBoundary =
-    Boolean(extensionBoundaryKey) &&
-    originalChunkKey.includes(extensionBoundaryKey);
   // A loop at the original chunk tail has no textual suffix. Decode the
   // witness-only five seconds separately and use its first acoustic words as
   // the boundary instead. If that decode is empty or cannot be located, leave
@@ -1876,6 +1920,12 @@ export class WhisperServerBackend implements STTBackend {
               );
             }
           }
+          const ambiguousExtensionBoundary =
+            extensionBoundaryOverlapsSuspectLoops(
+              text,
+              suspectLoops,
+              extensionBoundaryText,
+            );
 
           if (
             chosenWitness &&
@@ -1895,6 +1945,7 @@ export class WhisperServerBackend implements STTBackend {
                 acousticOccurrences: number;
                 distinctSuffixBoundary: boolean;
                 detectableResidualLoop: boolean;
+                witnessedResidualLoop: boolean;
               }> = [];
               let failClosedOnCountDisagreement = false;
               for (const candidate of candidates) {
@@ -1905,6 +1956,7 @@ export class WhisperServerBackend implements STTBackend {
                         candidate,
                         witness,
                         extensionBoundaryText,
+                        ambiguousExtensionBoundary,
                       )
                     : null,
                 );
@@ -1928,6 +1980,11 @@ export class WhisperServerBackend implements STTBackend {
                   ),
                   detectableResidualLoop:
                     hasDetectableResidualLoop(candidate),
+                  witnessedResidualLoop: residualLoopIsWitnessed(
+                    text,
+                    candidate,
+                    supportingWitnesses,
+                  ),
                 });
               }
               if (failClosedOnCountDisagreement) {
@@ -1948,12 +2005,14 @@ export class WhisperServerBackend implements STTBackend {
                   return (
                     Number(right.detectableResidualLoop) -
                       Number(left.detectableResidualLoop) ||
+                    Number(right.witnessedResidualLoop) -
+                      Number(left.witnessedResidualLoop) ||
                     rightUnsupported - leftUnsupported ||
                     Number(right.distinctSuffixBoundary) -
                       Number(left.distinctSuffixBoundary) ||
-                    right.acousticOccurrences - left.acousticOccurrences ||
-                    right.candidate.loopWordCount -
-                      left.candidate.loopWordCount
+                    left.acousticOccurrences - right.acousticOccurrences ||
+                    left.candidate.loopWordCount -
+                      right.candidate.loopWordCount
                   );
                 },
               );
