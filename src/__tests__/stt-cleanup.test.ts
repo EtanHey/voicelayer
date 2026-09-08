@@ -549,6 +549,24 @@ describe("stt-cleanup", () => {
     );
   });
 
+  it("recases distinctive Latin canonicals without rewriting ordinary English", () => {
+    expect(cleanupTranscriptionText("use figma and react native")).toBe(
+      "Use Figma and React Native",
+    );
+    expect(cleanupTranscriptionText("full stack with svelte")).toBe(
+      "Full Stack with Svelte",
+    );
+    expect(cleanupTranscriptionText("front-end and back-end")).toBe(
+      "Front-end and Back-end",
+    );
+    expect(cleanupTranscriptionText("we should go to the front and back")).toBe(
+      "We should go to the front and back",
+    );
+    expect(cleanupTranscriptionText("the bubble is small")).toBe(
+      "The bubble is small",
+    );
+  });
+
   it("keeps Hebrew-to-Latin cleanup aliases out of the decoder prompt", () => {
     const prompt = getSTTVocabularyPrompt({
       QA_VOICE_STT_VOCABULARY_PATH: "",

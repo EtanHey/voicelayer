@@ -28,9 +28,15 @@ interface STTVocabularySnapshot {
 
 type CanonicalTermPattern = [string, RegExp, string];
 
-const POST_DECODE_ONLY_CANONICAL_TERMS = new Set(
-  canonicalTermsFromEntries(BUILTIN_STT_DICTIONARY_ENTRIES),
-);
+// Distinctive dictionary canonicals (Figma, React Native, …) still recase in
+// post-decode cleanup. These four are also ordinary English words — folding
+// them would rewrite "go to the front" into product names.
+const AMBIGUOUS_LATIN_CANONICAL_TERMS = new Set([
+  "Go",
+  "Front",
+  "Back",
+  "Bubble",
+]);
 const BUILTIN_HEBREW_LATIN_ALIASES = vocabularyAliasesFromEntries(
   BUILTIN_STT_DICTIONARY_ENTRIES,
 );
@@ -241,7 +247,7 @@ function buildCanonicalTermPatterns(
   aliases: Record<string, string>,
 ): CanonicalTermPattern[] {
   return [...new Set(Object.values(aliases))]
-    .filter((term) => !POST_DECODE_ONLY_CANONICAL_TERMS.has(term))
+    .filter((term) => !AMBIGUOUS_LATIN_CANONICAL_TERMS.has(term))
     .map((term) => {
       const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       return [
