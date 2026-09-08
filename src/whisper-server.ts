@@ -27,6 +27,10 @@ import {
   readWhisperServerOwnership,
   writeWhisperServerOwnership,
 } from "./whisper-server-ownership";
+import {
+  getVoiceBarSocketPath,
+  isDefaultVoiceBarSocketPath,
+} from "./paths";
 
 /** Default port for the whisper-server sidecar. */
 const DEFAULT_PORT = 8178;
@@ -164,6 +168,7 @@ interface WhisperServerTestHooks {
   sleep?: (ms: number) => Promise<void>;
   startupTimeoutMs?: number;
   inferenceTimeoutMs?: (wavData: Uint8Array) => number;
+  residentLiveStack?: () => boolean;
 }
 
 let testHooks: WhisperServerTestHooks = {};
@@ -791,6 +796,52 @@ export function ensureServer(portOverride?: number): Promise<number> {
   return launchPromise;
 }
 
+/**
+ * Is a resident VoiceLayer stack serving on this machine right now?
+ *
+ * The signal is the REAL VoiceBar socket: an isolated harness (the bun test
+ * preload, `corpus-replay-verify.ts`) points the socket env at its own root, so
+ * `isDefaultVoiceBarSocketPath()` is false there and this returns false. Only a
+ * process pointed at the daily driver's live socket, with that socket present,
+ * sees a resident stack.
+ */
+function residentLiveStack(): boolean {
+  if (testHooks.residentLiveStack) return testHooks.residentLiveStack();
+  return isDefaultVoiceBarSocketPath() && existsSync(getVoiceBarSocketPath());
+}
+
+/**
+ * AIDEV-NOTE: A bench must never load a second whisper model on the machine
+ * someone is dictating on.
+ *
+ * On 2026-09-08 three stray bench whisper-servers were spawned on Etan's daily
+ * driver in one afternoon (ports 8910, 8912, 8910). Each held a second
+ * large-v3-turbo resident — roughly 5 GB — and the first was still running when
+ * his MCP daemon wedged mid-recording at swap 94-96 %, costing him a 76-second
+ * dictation. The bench harness guarded the live PORT
+ * (`scripts/measure-smart-chunk-loss.ts` refuses 8178) and nothing guarded the
+ * live HOST, so any other port looked fine.
+ *
+ * This refuses at the launch site, which is the only place every bench passes
+ * through. Adoption of an already-healthy server is deliberately untouched:
+ * attaching to a server someone else is running costs nothing.
+ *
+ * `VOICELAYER_ALLOW_LOCAL_BENCH=1` is the deliberate override, matching the
+ * `VOICELAYER_ALLOW_PUSH_TO_END` shape. `corpus-replay-verify.ts` does not need
+ * it — its isolated socket root already makes `residentLiveStack()` false.
+ */
+function refuseBenchLaunchOnLiveHost(port: number): void {
+  if (port === DEFAULT_PORT) return;
+  if (process.env.VOICELAYER_ALLOW_LOCAL_BENCH === "1") return;
+  if (!residentLiveStack()) return;
+  throw new Error(
+    `refusing to launch a bench whisper-server on port ${port}: a live VoiceLayer ` +
+      `stack is resident on this host, and a second model competes for memory with ` +
+      `the dictation in progress. Run benches on the M1, or set ` +
+      `VOICELAYER_ALLOW_LOCAL_BENCH=1 to override deliberately.`,
+  );
+}
+
 async function ensureServerUnlocked(port: number): Promise<number> {
   // Already running?
   if (serverState && serverState.port === port) {
@@ -820,6 +871,8 @@ async function ensureServerUnlocked(port: number): Promise<number> {
       return port;
     }
   }
+
+  refuseBenchLaunchOnLiveHost(port);
 
   // Find binary and model
   const binary = testHooks.findServerBinary?.() ?? findServerBinary();

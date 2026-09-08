@@ -24,7 +24,12 @@
  *    observed cut schedule: HEAD if it starts within `SEAM_WINDOW_S` after a
  *    cut, TAIL if it ends within `SEAM_WINDOW_S` before one, else MID.
  *
- * Never touches the live stack: it runs its own whisper-server on `--port`
+ * Runs its own whisper-server on `--port`, never the live 8178. That isolates
+ * the SOCKET but not the MACHINE: a second large-v3-turbo is still ~5 GB of
+ * resident memory competing with whoever is dictating. `ensureServer()` now
+ * refuses a bench port outright while a live VoiceLayer stack is resident
+ * (see `refuseBenchLaunchOnLiveHost` in src/whisper-server.ts) — run this on
+ * the M1, or set VOICELAYER_ALLOW_LOCAL_BENCH=1 deliberately.
  * (default 51993, never 8178) and writes only where `--out` says.
  *
  * Usage:
