@@ -322,6 +322,65 @@ usage: whisper-server [options]
       }
     });
 
+    it("refuses to launch a bench port while the live VoiceBar stack is resident", async () => {
+      // The 2026-09-08 outage lane: three stray bench whisper-servers were
+      // spawned on Etan's daily driver in one afternoon (8910, 8912, 8910), each
+      // holding a second ~5 GB model resident while he dictated. The bench
+      // harness only ever guarded the live PORT (scripts/measure-smart-chunk-loss.ts
+      // refuses 8178); nothing guarded the live HOST.
+      const previousAllow = process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
+      delete process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        residentLiveStack: () => true,
+      });
+
+      try {
+        __clearWhisperServerLaunchRecordForTests();
+        await expect(ensureServer(8910)).rejects.toThrow(
+          /VOICELAYER_ALLOW_LOCAL_BENCH/,
+        );
+        expect(whisperServerLaunchRecord()).toBe(null);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+        if (previousAllow === undefined) {
+          delete process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
+        } else {
+          process.env.VOICELAYER_ALLOW_LOCAL_BENCH = previousAllow;
+        }
+      }
+    });
+
+    it("still launches a bench port when the operator opts in explicitly", async () => {
+      const previousAllow = process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
+      process.env.VOICELAYER_ALLOW_LOCAL_BENCH = "1";
+      __setWhisperServerTestHooksForTests({
+        findServerBinary: () => "/tmp/whisper-server",
+        findModel: () => "/tmp/ggml-large-v3-turbo.bin",
+        residentLiveStack: () => true,
+        spawn: () => ({ pid: 31337, stderr: null, kill: () => {}, exitCode: null }),
+        isServerHealthy: async () => true,
+        findPortListenerPids: () => [31337],
+        sleep: async () => {},
+      });
+      try {
+        __clearWhisperServerLaunchRecordForTests();
+        await expect(ensureServer(8911)).resolves.toBe(8911);
+      } finally {
+        __setWhisperServerTestHooksForTests({});
+        __resetWhisperServerStateForTests(null);
+        __clearWhisperServerLaunchRecordForTests();
+        if (previousAllow === undefined) {
+          delete process.env.VOICELAYER_ALLOW_LOCAL_BENCH;
+        } else {
+          process.env.VOICELAYER_ALLOW_LOCAL_BENCH = previousAllow;
+        }
+      }
+    });
+
     it("does not publish a launch record when another PID owns the healthy port", async () => {
       // Child still alive, but lsof says the listener is somebody else.
       let healthy = false;
