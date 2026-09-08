@@ -143,6 +143,7 @@ describe("stt-polish-server", () => {
     const result = await ensureSTTPolishServer({
       env: { QA_VOICE_STT_POLISH: "on" },
       findBinary: () => "/tmp/mlx_lm.server",
+      isResidentStack: () => true,
       findStalePortOwnerPids: () => [70870],
       killProcess: (pid, signal) => {
         killed.push({ pid, signal });
@@ -170,6 +171,37 @@ describe("stt-polish-server", () => {
     expect(events[0].payload).toMatchObject({ port: 8080, pids: [70870] });
   });
 
+  it("does NOT reap the live polish server when running under an isolated harness", async () => {
+    // 2026-09-08: corpus-replay-verify isolates sockets, roots and the whisper
+    // port, but the polish port is shared — so a harness daemon SIGTERMed Etan's
+    // live polish server twice in one afternoon, and the daemon only ensures
+    // polish at startup, so it stayed dead and every later dictation shipped
+    // unpolished. A harness always overrides the socket path; that is the signal.
+    resetSTTPolishServerManagerForTests();
+    const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
+    let readinessChecks = 0;
+    try {
+      const result = await ensureSTTPolishServer({
+        env: { QA_VOICE_STT_POLISH: "on" },
+        findBinary: () => "/tmp/mlx_lm.server",
+        isResidentStack: () => false,
+        findStalePortOwnerPids: () => [70870],
+        killProcess: (pid, signal) => {
+          killed.push({ pid, signal });
+        },
+        isEndpointReady: async () => ++readinessChecks >= 2,
+        spawn: () => ({ pid: 456, exited: new Promise(() => {}) }),
+        appendEvent: () => {},
+        sleep: async () => {},
+        startupTimeoutMs: 10_000,
+      });
+      expect(result).toMatchObject({ status: "ready" });
+      expect(killed).toEqual([]);
+    } finally {
+      resetSTTPolishServerManagerForTests();
+    }
+  });
+
   it("force-restarts a local polish owner even when health checks pass", async () => {
     resetSTTPolishServerManagerForTests();
     const killed: Array<{ pid: number; signal?: NodeJS.Signals }> = [];
@@ -179,6 +211,7 @@ describe("stt-polish-server", () => {
       env: { QA_VOICE_STT_POLISH: "on" },
       forceRestart: true,
       findBinary: () => "/tmp/mlx_lm.server",
+      isResidentStack: () => true,
       findStalePortOwnerPids: () => [8080],
       killProcess: (pid, signal) => {
         killed.push({ pid, signal });
@@ -207,6 +240,7 @@ describe("stt-polish-server", () => {
       env: { QA_VOICE_STT_POLISH: "on" },
       forceRestart: true,
       findBinary: () => "/tmp/mlx_lm.server",
+      isResidentStack: () => true,
       findStalePortOwnerPids: () => [70870],
       findPortOwnerPids: () => [70870],
       killProcess: (pid, signal) => {

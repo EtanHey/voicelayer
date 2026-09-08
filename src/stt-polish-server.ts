@@ -36,6 +36,13 @@ export type STTPolishServerStatus =
   | { status: "already-ready" | "ready" | "starting"; pid?: number };
 
 export interface EnsureSTTPolishServerOptions {
+  /**
+   * Is this process the machine's resident stack? An isolated harness must never
+   * reap the live polish server (see the note on the reaper). Defaults to the
+   * socket-override check; tests inject it so they are not at the mercy of the
+   * preload's own isolation.
+   */
+  isResidentStack?: () => boolean;
   env?: STTPolishEnv;
   forceRestart?: boolean;
   findBinary?: () => string | null;
@@ -55,6 +62,8 @@ export interface EnsureSTTPolishServerOptions {
 }
 
 const DEFAULT_POLISH_HOST = "127.0.0.1";
+import { isDefaultVoiceBarSocketPath } from "./paths";
+
 const DEFAULT_POLISH_PORT = 8080;
 const DEFAULT_STARTUP_TIMEOUT_MS = 120_000;
 
@@ -235,6 +244,20 @@ async function reapStaleDefaultPolishPortOwners(
   options: EnsureSTTPolishServerOptions,
   appendEvent: NonNullable<EnsureSTTPolishServerOptions["appendEvent"]>,
 ): Promise<void> {
+  // AIDEV-NOTE: An isolated harness must never reap the machine's live polish server.
+  //
+  // `corpus-replay-verify.ts` isolates sockets, roots and the whisper port, but the
+  // polish port is shared. So a harness daemon ran this reaper against the LIVE 8080
+  // and SIGTERMed the resident polish server. On 2026-09-08 two of my own release-gate
+  // runs killed Etan's polish mid-session that way, and because the daemon only ensures
+  // polish at startup (`mcp-server-daemon.ts:215`) it stayed dead until the child was
+  // restarted — every dictation in between shipped unpolished.
+  //
+  // The discriminator is the one a harness cannot fake and cannot forget: it always
+  // overrides the socket path, and `corpus-replay-verify.ts:79-82` refuses the live
+  // sockets outright. CI has no override, so CI still reaps normally.
+  if (!(options.isResidentStack ?? isDefaultVoiceBarSocketPath)()) return;
+
   const pids = getStaleDefaultPolishPortOwnerPids(options);
   const currentManagedPid = polishProcess?.pid;
   const reapablePids = [...new Set(pids)].filter(
