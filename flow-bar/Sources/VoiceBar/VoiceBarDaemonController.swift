@@ -174,6 +174,7 @@ enum VoiceBarDaemonEnvironment {
     private static let preservedQAOverrideAllowlist: Set<String> = [
         "QA_VOICE_DISABLE_FLAG_PATH",
         "QA_VOICE_MCP_PID_PATH",
+        "QA_VOICE_MCP_HEARTBEAT_PATH",
         "QA_VOICE_MCP_SOCKET_PATH",
         "QA_VOICE_RECORDING_HOLD_PATH",
         "QA_VOICE_RECORDING_STATE_PATH",
@@ -188,6 +189,7 @@ enum VoiceBarDaemonEnvironment {
         "QA_VOICE_CHUNKED_STT",
         "QA_VOICE_DISABLE_FLAG_PATH",
         "QA_VOICE_MCP_PID_PATH",
+        "QA_VOICE_MCP_HEARTBEAT_PATH",
         "QA_VOICE_MCP_SOCKET_PATH",
         "QA_VOICE_RECORDINGS_DIR",
         "QA_VOICE_RECORDING_HOLD_PATH",
@@ -304,6 +306,22 @@ enum VoiceBarDaemonLivenessProbe {
     }
 }
 
+struct VoiceBarDaemonHeartbeat: Decodable, Equatable {
+    let pid: Int32
+    let sequence: Int
+}
+
+enum VoiceBarDaemonHeartbeatReader {
+    static func read(
+        at path: String = VoiceLayerPaths.daemonHeartbeatPath
+    ) -> VoiceBarDaemonHeartbeat? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(VoiceBarDaemonHeartbeat.self, from: data)
+    }
+}
+
 // MARK: - Daemon Controller (Ollama pattern: spawn → monitor → restart)
 
 /// Manages the MCP daemon as a CHILD process of VoiceBar.
@@ -319,9 +337,14 @@ final class VoiceBarDaemonController {
     typealias ProcessExitWaiter = (_ process: Process, _ timeout: TimeInterval) -> Bool
     typealias ForceKillProcess = (_ pid: Int32) -> Void
     typealias MicrophonePermissionPrompter = (_ message: String) -> Void
+    typealias HeartbeatReader = () -> VoiceBarDaemonHeartbeat?
+    typealias DateProvider = () -> Date
 
     private static let stabilityResetDelay: TimeInterval = 300
     private static let gracefulStopTimeout: TimeInterval = 1.0
+    private static let heartbeatCheckInterval: TimeInterval = 5
+    private static let heartbeatStaleAfter: TimeInterval = 10
+    private static let heartbeatStartupGrace: TimeInterval = 30
 
     private let executableURLProvider: () -> URL?
     private let configurationProvider: (URL) -> VoiceBarDaemonLaunchConfiguration?
@@ -331,6 +354,8 @@ final class VoiceBarDaemonController {
     private let forceKillProcess: ForceKillProcess
     private let microphonePermissionPrompter: MicrophonePermissionPrompter
     private let livenessProbe: () -> Bool
+    private let heartbeatReader: HeartbeatReader
+    private let dateProvider: DateProvider
     private var process: Process?
 
     private(set) var ownsLaunchedProcess = false
@@ -338,6 +363,9 @@ final class VoiceBarDaemonController {
     private var isRestartScheduled = false
     private var consecutiveBrokenMicFailures = 0
     private var lastBrokenMicFailureAt: Date?
+    private var processLaunchedAt: Date?
+    private var lastHeartbeatSequence: Int?
+    private var lastHeartbeatAdvancedAt: Date?
     private var stopping = false
 
     /// Enriched PATH for daemon — includes Homebrew paths that launchd doesn't provide.
@@ -361,6 +389,10 @@ final class VoiceBarDaemonController {
         livenessProbe: @escaping () -> Bool = {
             VoiceBarDaemonLivenessProbe.isDaemonRunning()
         },
+        heartbeatReader: @escaping HeartbeatReader = {
+            VoiceBarDaemonHeartbeatReader.read()
+        },
+        dateProvider: @escaping DateProvider = { Date() },
         processFactory: @escaping () -> Process = { Process() },
         restartScheduler: @escaping RestartScheduler = { delay, block in
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block)
@@ -380,6 +412,8 @@ final class VoiceBarDaemonController {
         self.forceKillProcess = forceKillProcess
         self.microphonePermissionPrompter = microphonePermissionPrompter
         self.livenessProbe = livenessProbe
+        self.heartbeatReader = heartbeatReader
+        self.dateProvider = dateProvider
     }
 
     func activateIfNeeded() -> VoiceBarDaemonActivationResult {
@@ -425,8 +459,9 @@ final class VoiceBarDaemonController {
         }
 
         NSLog("[VoiceBar] Broken-mic capture failure — respawning child daemon to refresh microphone TCC")
-        terminateOwnedChildForRespawn()
-        scheduleRestart(exitKind: "broken-mic", code: 0, reason: .exit)
+        if terminateOwnedChildForRespawn(reason: "broken-mic") {
+            scheduleRestart(exitKind: "broken-mic", code: 0, reason: .exit)
+        }
     }
 
     private func launch() -> VoiceBarDaemonActivationResult {
@@ -464,6 +499,7 @@ final class VoiceBarDaemonController {
                 if process === terminated {
                     process = nil
                     ownsLaunchedProcess = false
+                    resetHeartbeatTracking()
                 }
 
                 if VoiceLayerPaths.isVoicelayerDisabled() {
@@ -487,7 +523,11 @@ final class VoiceBarDaemonController {
             process = proc
             ownsLaunchedProcess = true
             isRestartScheduled = false
+            processLaunchedAt = dateProvider()
+            lastHeartbeatSequence = nil
+            lastHeartbeatAdvancedAt = nil
             scheduleStabilityReset(for: proc)
+            scheduleHeartbeatCheck(for: proc)
             NSLog("[VoiceBar] Daemon launched as child (PID %d, PPID %d)",
                   proc.processIdentifier, ProcessInfo.processInfo.processIdentifier)
             return .launched
@@ -566,23 +606,81 @@ final class VoiceBarDaemonController {
         }
     }
 
-    private func terminateOwnedChildForRespawn() {
+    private func scheduleHeartbeatCheck(for launchedProcess: Process) {
+        restartScheduler(Self.heartbeatCheckInterval) { [weak self, weak launchedProcess] in
+            guard let self,
+                  !stopping,
+                  let launchedProcess,
+                  process === launchedProcess,
+                  ownsLaunchedProcess,
+                  launchedProcess.isRunning
+            else {
+                return
+            }
+
+            let now = dateProvider()
+            let heartbeat = heartbeatReader()
+            if let heartbeat, heartbeat.pid == launchedProcess.processIdentifier {
+                if heartbeat.sequence != lastHeartbeatSequence {
+                    lastHeartbeatSequence = heartbeat.sequence
+                    lastHeartbeatAdvancedAt = now
+                }
+            }
+
+            let stale: Bool = if let lastHeartbeatAdvancedAt {
+                now.timeIntervalSince(lastHeartbeatAdvancedAt) >= Self.heartbeatStaleAfter
+            } else if let processLaunchedAt {
+                now.timeIntervalSince(processLaunchedAt) >= Self.heartbeatStartupGrace
+            } else {
+                false
+            }
+
+            if stale {
+                NSLog("[VoiceBar] Daemon heartbeat stale for PID %d — force-restarting owned child",
+                      launchedProcess.processIdentifier)
+                if terminateOwnedChildForRespawn(reason: "stale-heartbeat") {
+                    scheduleRestart(exitKind: "heartbeat stale", code: 0, reason: .exit)
+                } else {
+                    scheduleHeartbeatCheck(for: launchedProcess)
+                }
+                return
+            }
+
+            scheduleHeartbeatCheck(for: launchedProcess)
+        }
+    }
+
+    private func resetHeartbeatTracking() {
+        processLaunchedAt = nil
+        lastHeartbeatSequence = nil
+        lastHeartbeatAdvancedAt = nil
+    }
+
+    private func terminateOwnedChildForRespawn(reason: String) -> Bool {
         guard ownsLaunchedProcess, let process else {
             ownsLaunchedProcess = false
             process = nil
-            return
+            resetHeartbeatTracking()
+            return true
         }
         if process.isRunning {
             process.terminate()
             if !processExitWaiter(process, Self.gracefulStopTimeout), process.isRunning {
-                NSLog("[VoiceBar] Daemon did not exit after broken-mic SIGTERM — sending SIGKILL to PID %d",
-                      process.processIdentifier)
+                NSLog("[VoiceBar] Daemon did not exit after %@ SIGTERM — sending SIGKILL to PID %d",
+                      reason, process.processIdentifier)
                 forceKillProcess(process.processIdentifier)
                 _ = processExitWaiter(process, Self.gracefulStopTimeout)
             }
         }
+        guard !process.isRunning else {
+            NSLog("[VoiceBar] Daemon PID %d survived %@ termination — retaining ownership and suppressing replacement",
+                  process.processIdentifier, reason)
+            return false
+        }
         self.process = nil
         ownsLaunchedProcess = false
+        resetHeartbeatTracking()
+        return true
     }
 
     func stop() {
@@ -600,6 +698,7 @@ final class VoiceBarDaemonController {
         }
         self.process = nil
         ownsLaunchedProcess = false
+        resetHeartbeatTracking()
     }
 
     private static func waitForProcessExit(_ process: Process, timeout: TimeInterval) -> Bool {

@@ -73,6 +73,10 @@ import {
 } from "./daemon-parent-watchdog";
 import { handleVoiceSpeak, handleVoiceAsk } from "./handlers";
 import type { VoiceToolContext } from "./mcp-notifications";
+import {
+  startDaemonHeartbeat,
+  type DaemonHeartbeatPublisher,
+} from "./daemon-heartbeat";
 
 // --- Tool dispatch table ---
 const DISABLE_POLL_INTERVAL_MS = 5000;
@@ -94,6 +98,7 @@ const toolDispatch: Record<
 // --- Startup ---
 
 const ALLOW_ORPHAN_DAEMON_ENV = "VOICELAYER_ALLOW_ORPHAN_DAEMON";
+let daemonHeartbeat: DaemonHeartbeatPublisher | null = null;
 
 async function main() {
   if (isVoicelayerDisabled()) {
@@ -183,6 +188,10 @@ async function main() {
       `[voicelayer-daemon] Killed orphan MCP server (PID ${killedStalePid})`,
     );
   }
+
+  // This sequence advances only when Bun's event loop runs. VoiceBar watches
+  // it independently and force-restarts an owned child that wedges in JS.
+  daemonHeartbeat = startDaemonHeartbeat();
 
   // Start log rotation (10MB threshold, 60s interval)
   startLogRotation();
@@ -298,6 +307,8 @@ async function main() {
       expected_parent_pid: resolveInitialParentPid(),
     });
     stopControlLayerHeartbeat();
+    daemonHeartbeat?.stop();
+    daemonHeartbeat = null;
     stopLogRotation();
     unsubscribePolishStatus();
     stopSTTPolishServer();
@@ -339,6 +350,8 @@ main().catch((err) => {
     error: err instanceof Error ? err.message : String(err),
   });
   stopControlLayerHeartbeat();
+  daemonHeartbeat?.stop();
+  daemonHeartbeat = null;
   stopLogRotation();
   disconnectFromBar();
   releaseProcessLock();
