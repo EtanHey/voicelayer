@@ -200,6 +200,44 @@ describe("findOutroCandidates", () => {
     }
   });
 
+  test("offers a comma-attached invented tail — Etan's 2026-09-09 specimen", () => {
+    // His words: 'never said "so." at the end there.... another voicelayer
+    // helucination'. Recording 2026-09-09T09-58-51-105Z-1828b4c3, 62.6 s, single
+    // whisper-server pass (NOT the chunked path — that starts at 90 s).
+    //
+    // "so" is already in OUTRO_SINGLE_TOKENS, and the audio under the tail is
+    // silence: floor -56.1 dBFS, speech -31.2 dBFS, and 0 of the last 30
+    // 0.1 s windows reach floor+16 dB. So both the lexicon and the acoustics
+    // would have removed it. It survived on SHAPE alone — whisper welded it to
+    // the previous sentence with a comma, so the final *sentence* is not
+    // lexicon-only and condition (a) never considered it.
+    const text =
+      "I don't think there's an actual reason for us to do Astra on extra high, pretty much anywhere, so.";
+    const candidate = findTrailingOutroCandidate(text);
+    expect(candidate?.phrase).toBe(", so");
+    expect(candidate?.isTail).toBe(true);
+    // And excising it must leave his sentence properly terminated — the closer
+    // must not carry the full stop off with it.
+    expect(
+      text.slice(0, candidate!.startIndex) + text.slice(candidate!.endIndex),
+    ).toBe(
+      "I don't think there's an actual reason for us to do Astra on extra high, pretty much anywhere.",
+    );
+  });
+
+  test("leaves a comma-attached tail alone when it is not lexicon-only", () => {
+    // The guard on the rule above: only a lexicon-only trailing clause is a
+    // candidate. Ordinary speech that ends on a comma clause must be untouched.
+    expect(
+      findTrailingOutroCandidate(
+        "We should ship it today, if the tests are green.",
+      ),
+    ).toBeNull();
+    expect(
+      findTrailingOutroCandidate("I will do it, so we can move on."),
+    ).toBeNull();
+  });
+
   test("offers the Hebrew closers, tail and mid-utterance alike", () => {
     expect(
       findTrailingOutroCandidate("כמו התחליף וויספר פלו שבניתי לעצמי. תודה.")
