@@ -2178,10 +2178,40 @@ public final class VoiceState {
                         return
                     }
                     let pasted = simulatedPasteHandler()
-                    scheduleClipboardRestoreIfNeeded(
-                        from: pasteboardSnapshot,
-                        expectedChangeCount: changeCountAfterWrite
-                    )
+                    // AIDEV-NOTE: The transcript STAYS on the pasteboard. Do not
+                    // restore the snapshot on a timer — that is the race.
+                    //
+                    // Etan, 2026-09-09: "the clipboard route has a race condition
+                    // where sometimes voicelayer would paste what I coppied
+                    // instead of the transcript… and even once I saw that it
+                    // pasted the transcript plus last copied thing on the
+                    // clipboard." Both shapes are `ClipboardPasteRaceTests`.
+                    //
+                    // The old code restored after `pasteboardRestoreDelay` (0.5 s),
+                    // guarded by `changeCount`. That guard proves nobody ELSE wrote
+                    // to the pasteboard; it proves NOTHING about whether the target
+                    // app has READ it. Cmd+V is delivered asynchronously to another
+                    // process, which reads whenever it gets around to it — late on a
+                    // busy app or a loaded machine. Read after the restore and he
+                    // gets his old clipboard; read twice across it and he gets the
+                    // transcript with his clipboard welded on.
+                    //
+                    // There is no signal for "another process has read the
+                    // pasteboard", so no delay is correct — only rarer. Leaving the
+                    // transcript costs him the clipboard slot; restoring costs him
+                    // the wrong text in his agents. He has told us which is worse.
+                    //
+                    // AX insertion is NOT the alternative here: terminals need a
+                    // bracketed paste or newlines submit the line (see
+                    // TerminalPasteTargets). Removing the clipboard from the path
+                    // entirely means synthesizing ESC[200~ … ESC[201~ ourselves,
+                    // which is the real fix and its own reviewed change.
+                    _ = pasteboardSnapshot
+                    logDiagnostic("paste_clipboard_left_in_place", details: [
+                        "plan": String(describing: plan),
+                        "targetApp": pasteTargetBundleID,
+                        "changeCountAfterWrite": String(changeCountAfterWrite),
+                    ])
                     logDiagnostic("paste_cmdv_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
@@ -2328,40 +2358,6 @@ public final class VoiceState {
         }
 
         return lhs.processIdentifier == rhs.processIdentifier
-    }
-
-    private func scheduleClipboardRestoreIfNeeded(
-        from snapshot: PasteboardSnapshot?,
-        expectedChangeCount: Int
-    ) {
-        guard snapshot != nil else { return }
-        pasteScheduler(pasteboardRestoreDelay) { [weak self] in
-            self?.restoreClipboardIfNeeded(
-                from: snapshot,
-                expectedChangeCount: expectedChangeCount
-            )
-        }
-    }
-
-    private func restoreClipboardIfNeeded(
-        from snapshot: PasteboardSnapshot?,
-        expectedChangeCount: Int
-    ) {
-        guard let snapshot else { return }
-
-        let currentChangeCount = pasteboardChangeCountProvider()
-        guard currentChangeCount == expectedChangeCount else {
-            logDiagnostic("paste_clipboard_restore_skipped", details: [
-                "expectedChangeCount": String(expectedChangeCount),
-                "currentChangeCount": String(currentChangeCount),
-            ])
-            return
-        }
-
-        pasteboardSnapshotRestorer(snapshot)
-        logDiagnostic("paste_clipboard_restored", details: [
-            "restoredItems": String(snapshot.items.count),
-        ])
     }
 
     private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
