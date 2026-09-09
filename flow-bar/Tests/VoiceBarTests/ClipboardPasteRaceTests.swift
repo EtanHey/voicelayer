@@ -30,7 +30,7 @@ final class ClipboardPasteRaceTests: XCTestCase {
         let harness = PasteRaceHarness(previousClipboard: "PREVIOUS COPY")
         harness.deliver(transcript: "the transcript he dictated")
 
-        harness.firePendingRestore()
+        harness.firePendingRestore() // no restore is scheduled any more
         let pasted = harness.targetAppReadsPasteboard()
 
         XCTAssertEqual(
@@ -61,7 +61,7 @@ final class ClipboardPasteRaceTests: XCTestCase {
         XCTAssertEqual(
             first + second,
             "the transcript he dictated" + "the transcript he dictated",
-            "a read after the restore appended his clipboard to the transcript"
+            "a second read saw something other than the transcript"
         )
     }
 }
