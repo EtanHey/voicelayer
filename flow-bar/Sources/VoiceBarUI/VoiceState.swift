@@ -487,6 +487,13 @@ public final class VoiceState {
     /// Test seam for the final Cmd+V event posting.
     public var simulatedPasteHandler: () -> Bool = { false }
 
+    /// Delivers dictated text by synthesizing keyboard input — NEVER the
+    /// pasteboard. `bracketed` wraps it in ESC[200~ … ESC[201~ so a terminal
+    /// composer keeps every newline literal instead of submitting the line.
+    /// Returns false when nothing was posted (e.g. Accessibility not granted).
+    /// See the AIDEV-NOTE at the paste call site for why this exists.
+    public var textTypingHandler: (_ text: String, _ bracketed: Bool) -> Bool = { _, _ in false }
+
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
 
@@ -2076,9 +2083,9 @@ public final class VoiceState {
                         ])
                     }
 
-                    // AIDEV-NOTE: terminals only ever get clipboard + Cmd+V. The AX path
-                    // delivers the text unbracketed, so each newline lands as a Return and
-                    // submits the line. See TerminalPasteTargets.
+                    // Terminals skip AX: AX insertion is unbracketed, so each newline lands
+                    // as a Return and submits the line. They get bracketed TYPING below —
+                    // see the AIDEV-NOTE there and TerminalPasteTargets.
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
                     if isTerminalTarget {
                         logDiagnostic("paste_ax_insert_skipped", details: [
@@ -2143,83 +2150,54 @@ public final class VoiceState {
                         "attemptedFreshInsertion": boolString(freshInsertionHandler != nil),
                         "axTrusted": boolString(accessibilityTrustChecker(false)),
                     ])
+                    // AIDEV-NOTE: Dictation NEVER touches the pasteboard. This is the third
+                    // attempt at this line and the first that does not trade one of Etan's
+                    // bugs for another, so the whole history lives here, at the call site:
+                    //
+                    //   1. AX insertion. Unbracketed, so in a terminal every newline lands as
+                    //      a Return and submits the line (2026-09-06, TerminalPasteTargets).
+                    //   2. Clipboard + Cmd+V, restoring his clipboard after 0.5 s. A race: the
+                    //      target reads the pasteboard whenever it gets to it, so it sometimes
+                    //      pasted his previous copy, once both concatenated (2026-09-09).
+                    //   3. #69 (v2.2.18): clipboard + Cmd+V, leave the transcript on the
+                    //      pasteboard. Removed the race by making it permanent: every Cmd+V
+                    //      after a dictation pasted the transcript, not what he copied.
+                    //      Etan, 2026-09-13: "the transcription is my paste instead of only
+                    //      Shift+F5 being paste of last transcript and Command+V being kept
+                    //      for only actual clipboard use."
+                    //
+                    // Each earlier fix recorded only the side it fixed. His spec, not
+                    // negotiable: Shift+F5 pastes the last transcript; Cmd+V is his clipboard
+                    // and only his clipboard; dictation never writes the pasteboard.
+                    //
+                    // So the transcript is TYPED into the target with synthesized keyboard
+                    // events. Terminals get it wrapped in ESC[200~ … ESC[201~ — the markers a
+                    // terminal adds to a real Cmd+V — so newlines stay literal. Non-terminals
+                    // already tried AX above; typing is their fallback. There is no clipboard
+                    // fallback anywhere, by design: a failed paste is recoverable with
+                    // Shift+F5, a paste over his clipboard is not.
+                    //
+                    // Known limit: the markers only mean "paste" to an app that has enabled
+                    // bracketed-paste mode (DECSET 2004). zsh, bash 5.1+ and Claude Code do;
+                    // an app that has not would show the markers as literal text.
                     logDiagnostic("paste_path", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "path": "clipboard",
+                        "path": isTerminalTarget ? "bracketed_typing" : "typing",
                         "terminalTarget": boolString(isTerminalTarget),
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
-                    let pasteboardSnapshot = pasteboardSnapshotter()
-                    let changeCountBeforeWrite = pasteboardChangeCountProvider()
-                    pasteboardWriter(deliveredText)
-                    let changeCountAfterWrite = pasteboardChangeCountProvider()
-                    let pasteboardTextAfterWrite = pasteboardStringProvider()
-                    let clipboardVerified = pasteboardTextAfterWrite == deliveredText
-                    logDiagnostic("paste_clipboard_write_result", details: [
+                    let typed = textTypingHandler(deliveredText, isTerminalTarget)
+                    logDiagnostic("paste_typing_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "verified": boolString(clipboardVerified),
-                        "changeCountBefore": String(changeCountBeforeWrite),
-                        "changeCountAfter": String(changeCountAfterWrite),
-                        "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                        "expectedTextLength": String(deliveredText.count),
-                    ])
-                    guard clipboardVerified else {
-                        logDiagnostic("paste_clipboard_write_failed", details: [
-                            "plan": String(describing: plan),
-                            "targetApp": pasteTargetBundleID,
-                            "changeCountBefore": String(changeCountBeforeWrite),
-                            "changeCountAfter": String(changeCountAfterWrite),
-                            "pasteboardTextLength": String(pasteboardTextAfterWrite?.count ?? 0),
-                            "expectedTextLength": String(deliveredText.count),
-                        ])
-                        finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: deliveredText)
-                        return
-                    }
-                    let pasted = simulatedPasteHandler()
-                    // AIDEV-NOTE: The transcript STAYS on the pasteboard. Do not
-                    // restore the snapshot on a timer — that is the race.
-                    //
-                    // Etan, 2026-09-09: "the clipboard route has a race condition
-                    // where sometimes voicelayer would paste what I coppied
-                    // instead of the transcript… and even once I saw that it
-                    // pasted the transcript plus last copied thing on the
-                    // clipboard." Both shapes are `ClipboardPasteRaceTests`.
-                    //
-                    // The old code restored after `pasteboardRestoreDelay` (0.5 s),
-                    // guarded by `changeCount`. That guard proves nobody ELSE wrote
-                    // to the pasteboard; it proves NOTHING about whether the target
-                    // app has READ it. Cmd+V is delivered asynchronously to another
-                    // process, which reads whenever it gets around to it — late on a
-                    // busy app or a loaded machine. Read after the restore and he
-                    // gets his old clipboard; read twice across it and he gets the
-                    // transcript with his clipboard welded on.
-                    //
-                    // There is no signal for "another process has read the
-                    // pasteboard", so no delay is correct — only rarer. Leaving the
-                    // transcript costs him the clipboard slot; restoring costs him
-                    // the wrong text in his agents. He has told us which is worse.
-                    //
-                    // AX insertion is NOT the alternative here: terminals need a
-                    // bracketed paste or newlines submit the line (see
-                    // TerminalPasteTargets). Removing the clipboard from the path
-                    // entirely means synthesizing ESC[200~ … ESC[201~ ourselves,
-                    // which is the real fix and its own reviewed change.
-                    _ = pasteboardSnapshot
-                    logDiagnostic("paste_clipboard_left_in_place", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "changeCountAfterWrite": String(changeCountAfterWrite),
-                    ])
-                    logDiagnostic("paste_cmdv_result", details: [
-                        "plan": String(describing: plan),
-                        "targetApp": pasteTargetBundleID,
-                        "pasted": boolString(pasted),
+                        "bracketed": boolString(isTerminalTarget),
+                        "typed": boolString(typed),
+                        "textLength": String(deliveredText.count),
                     ])
                     finishPasteConfirmation(
                         outcome: Self.pasteOutcome(
-                            pasted: pasted,
+                            pasted: typed,
                             plan: plan
                         ),
                         text: deliveredText

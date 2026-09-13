@@ -304,7 +304,21 @@ final class HotkeyManagerTests: XCTestCase {
         )
     }
 
-    func testShiftF5KeyDownDuringActiveHoldDoesNotRepastePreviousTranscript() {
+    /// AIDEV-NOTE: This test used to assert `.consume` — it was
+    /// `testShiftF5KeyDownDuringActiveHoldDoesNotRepastePreviousTranscript`, a RED
+    /// harvested from a crashed worker (`c2abf33`, 2026-07-15) for #344's guard.
+    /// That guard shipped in v2.1.15, silently removed Shift+F5 re-paste during
+    /// recording, and on 2026-07-22 Etan approved restoring it as the ONE change he
+    /// allowed when he halted VoiceLayer work. `1b8bcf5` removed the guard and wrote
+    /// "do not reintroduce it" in HotkeyManager; the test was never updated, so it
+    /// sat red on main from then on.
+    ///
+    /// The guard existed to stop a paste race. Since 2026-09-13 re-paste TYPES the
+    /// transcript and never touches the pasteboard, so that race no longer exists
+    /// in any form. A deliberate Shift+F5 during a locked recording pastes the last
+    /// COMPLETED transcript, never the in-flight one. Autorepeat while holding is
+    /// still consumed — see the next tests.
+    func testShiftF5KeyDownDuringActiveHoldStillRepastesTheLastCompletedTranscript() {
         XCTAssertEqual(
             hotkeyAction(
                 type: .keyDown,
@@ -315,7 +329,7 @@ final class HotkeyManagerTests: XCTestCase {
                 useModifierMode: false,
                 gestureIsActive: true
             ),
-            .consume
+            .pasteLastTranscript
         )
     }
 
