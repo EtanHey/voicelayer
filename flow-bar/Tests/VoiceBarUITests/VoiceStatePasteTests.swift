@@ -1365,7 +1365,7 @@ final class VoiceStatePasteTests: XCTestCase {
             return true
         }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -1537,8 +1537,9 @@ final class VoiceStatePasteTests: XCTestCase {
     // submitted itself. The AX insertion path delivers text unbracketed, so each
     // newline reached Claude Code's composer as a Return. Terminals therefore never
     // take AX. They took clipboard + Cmd+V until 2026-09-13; now the transcript is
-    // TYPED wrapped in ESC[200~ … ESC[201~ and the pasteboard is never touched
-    // (Etan's spec — see VoiceState's paste call site).
+    // TYPED — printable text, each line break as Shift+Return (SynthesizedTyping) —
+    // and the pasteboard is never touched (Etan's spec — see VoiceState's paste call
+    // site).
     private static let multiLineSpecimen = """
     So, here are a few things:
     1. I went there, and then I came back here.
@@ -1576,9 +1577,9 @@ final class VoiceStatePasteTests: XCTestCase {
             pasteShortcutPosted = true
             return true
         }
-        var typed: [(text: String, bracketed: Bool)] = []
-        state.textTypingHandler = { text, bracketed in
-            typed.append((text: text, bracketed: bracketed))
+        var typed: [String] = []
+        state.textTypingHandler = { text in
+            typed.append(text)
             return true
         }
 
@@ -1591,8 +1592,7 @@ final class VoiceStatePasteTests: XCTestCase {
         XCTAssertEqual(insertedTexts, [], "a terminal target must never take the AX path")
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
-        XCTAssertEqual(typed.map(\.text), [Self.multiLineSpecimen])
-        XCTAssertEqual(typed.map(\.bracketed), [true], "bracketed, so newlines stay literal")
+        XCTAssertEqual(typed, [Self.multiLineSpecimen])
         XCTAssertEqual(state.confirmationText, Self.multiLineSpecimen)
     }
 
@@ -1625,7 +1625,7 @@ final class VoiceStatePasteTests: XCTestCase {
         state.pasteboardStringProvider = { pasteboardString }
         state.simulatedPasteHandler = { true }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -1757,7 +1757,7 @@ final class VoiceStatePasteTests: XCTestCase {
             return true
         }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -1812,7 +1812,7 @@ final class VoiceStatePasteTests: XCTestCase {
             }
         }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -1918,7 +1918,7 @@ final class VoiceStatePasteTests: XCTestCase {
             return true
         }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -2065,7 +2065,7 @@ final class VoiceStatePasteTests: XCTestCase {
             return true
         }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -2105,7 +2105,7 @@ final class VoiceStatePasteTests: XCTestCase {
         // No AX handler exists here, so typing is the only delivery path this
         // test exercises — a succeeding handler models it rather than masking it.
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -2148,7 +2148,7 @@ final class VoiceStatePasteTests: XCTestCase {
             pasteShortcutPosted = true
             return true
         }
-        state.textTypingHandler = { _, _ in false }
+        state.textTypingHandler = { _ in false }
 
         state.record()
         state.handleEvent([
@@ -2210,7 +2210,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
 
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }
@@ -2279,7 +2279,7 @@ final class VoiceStatePasteTests: XCTestCase {
         }
         state.simulatedPasteHandler = { true }
         var typedTexts: [String] = []
-        state.textTypingHandler = { text, _ in
+        state.textTypingHandler = { text in
             typedTexts.append(text)
             return true
         }

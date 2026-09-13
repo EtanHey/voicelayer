@@ -488,11 +488,10 @@ public final class VoiceState {
     public var simulatedPasteHandler: () -> Bool = { false }
 
     /// Delivers dictated text by synthesizing keyboard input — NEVER the
-    /// pasteboard. `bracketed` wraps it in ESC[200~ … ESC[201~ so a terminal
-    /// composer keeps every newline literal instead of submitting the line.
-    /// Returns false when nothing was posted (e.g. Accessibility not granted).
-    /// See the AIDEV-NOTE at the paste call site for why this exists.
-    public var textTypingHandler: (_ text: String, _ bracketed: Bool) -> Bool = { _, _ in false }
+    /// pasteboard. Printable text only, line breaks as Shift+Return; see
+    /// `SynthesizedTyping`. Returns false when nothing was posted (e.g.
+    /// Accessibility not granted). See the AIDEV-NOTE at the paste call site.
+    public var textTypingHandler: (_ text: String) -> Bool = { _ in false }
 
     /// Test seam for Accessibility permission checks.
     public var accessibilityTrustChecker: (_ prompt: Bool) -> Bool = { _ in false }
@@ -2084,7 +2083,7 @@ public final class VoiceState {
                     }
 
                     // Terminals skip AX: AX insertion is unbracketed, so each newline lands
-                    // as a Return and submits the line. They get bracketed TYPING below —
+                    // as a Return and submits the line. They get TYPING below —
                     // see the AIDEV-NOTE there and TerminalPasteTargets.
                     let isTerminalTarget = TerminalPasteTargets.isTerminal(pasteTargetBundleID)
                     if isTerminalTarget {
@@ -2165,33 +2164,38 @@ public final class VoiceState {
                     //      Etan, 2026-09-13: "the transcription is my paste instead of only
                     //      Shift+F5 being paste of last transcript and Command+V being kept
                     //      for only actual clipboard use."
+                    //   4. v2.2.19: typed, wrapped in ESC[200~ … ESC[201~. A typed key event
+                    //      cannot carry an ESC into cmux: under the kitty keyboard protocol
+                    //      Claude Code and Codex turn on, Ghostty types the KEY in place of
+                    //      any text holding a control character, and the key was keycode 0,
+                    //      `a`. Every dictation arrived as "a…a" and lost the words in its
+                    //      first and last event. Etan, 2026-09-13: "keeps doing 'a' at the
+                    //      begining and 'a' at the end, or 'aa' for short ones."
                     //
                     // Each earlier fix recorded only the side it fixed. His spec, not
                     // negotiable: Shift+F5 pastes the last transcript; Cmd+V is his clipboard
                     // and only his clipboard; dictation never writes the pasteboard.
                     //
-                    // So the transcript is TYPED into the target with synthesized keyboard
-                    // events. Terminals get it wrapped in ESC[200~ … ESC[201~ — the markers a
-                    // terminal adds to a real Cmd+V — so newlines stay literal. Non-terminals
-                    // already tried AX above; typing is their fallback. There is no clipboard
-                    // fallback anywhere, by design: a failed paste is recoverable with
-                    // Shift+F5, a paste over his clipboard is not.
+                    // So the transcript is TYPED as printable text only, each line break sent
+                    // as Shift+Return (SynthesizedTyping): no control character ever rides in
+                    // a key event. Non-terminals already tried AX above; typing is their
+                    // fallback. There is no clipboard fallback anywhere, by design: a failed
+                    // paste is recoverable with Shift+F5, a paste over his clipboard is not.
                     //
-                    // Known limit: the markers only mean "paste" to an app that has enabled
-                    // bracketed-paste mode (DECSET 2004). zsh, bash 5.1+ and Claude Code do;
-                    // an app that has not would show the markers as literal text.
+                    // Known limit: Shift+Return is a new line only to an app that tells it
+                    // apart from Return — Claude Code and Codex in cmux do. A bare shell
+                    // prompt does not, so a multi-line dictation there submits at each break.
                     logDiagnostic("paste_path", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "path": isTerminalTarget ? "bracketed_typing" : "typing",
+                        "path": "typing",
                         "terminalTarget": boolString(isTerminalTarget),
                         "trailingNewlineStripped": boolString(deliveredText != text),
                     ])
-                    let typed = textTypingHandler(deliveredText, isTerminalTarget)
+                    let typed = textTypingHandler(deliveredText)
                     logDiagnostic("paste_typing_result", details: [
                         "plan": String(describing: plan),
                         "targetApp": pasteTargetBundleID,
-                        "bracketed": boolString(isTerminalTarget),
                         "typed": boolString(typed),
                         "textLength": String(deliveredText.count),
                     ])
