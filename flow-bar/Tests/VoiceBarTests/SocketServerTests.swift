@@ -611,8 +611,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
 
         // A terminal target never takes AX: AX insertion is unbracketed, so every
         // newline reaches the shell as a Return. Since 2026-09-13 it never takes
-        // the clipboard either — the transcript is TYPED as a bracketed paste and
-        // the pasteboard is untouched (Etan's spec, VoiceState's paste call site).
+        // the clipboard either — the transcript is TYPED (printable text, line breaks
+        // as Shift+Return) and the pasteboard is untouched (Etan's spec, VoiceState's
+        // paste call site).
         // This leg is the runtime proof that a real F5 capture lands in cmux that way.
         let cmux = ScratchCmuxApplication()
         var scratchTerminal: String?
@@ -638,9 +639,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             pasteShortcutPosted = true
             return true
         }
-        var typedDeliveries: [(text: String, bracketed: Bool)] = []
-        state.textTypingHandler = { text, bracketed in
-            typedDeliveries.append((text: text, bracketed: bracketed))
+        var typedDeliveries: [String] = []
+        state.textTypingHandler = { text in
+            typedDeliveries.append(text)
             scratchTerminal = text
             return true
         }
@@ -673,12 +674,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(
-            typedDeliveries.map(\.text),
+            typedDeliveries,
             [TerminalPasteTargets.strippingSingleTrailingNewline(state.transcript)],
             "the real captured transcript is typed into cmux verbatim, in one delivery"
         )
-        XCTAssertEqual(typedDeliveries.map(\.bracketed), [true], "as a bracketed paste")
-        XCTAssertEqual(scratchTerminal, typedDeliveries.last?.text)
+        XCTAssertEqual(scratchTerminal, typedDeliveries.last)
         XCTAssertEqual(state.lastTranscriptionPolished, true)
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
         try writeTerminalProof(
@@ -722,9 +722,9 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
             veryLongPastePosted = true
             return true
         }
-        var veryLongTyped: [(text: String, bracketed: Bool)] = []
-        veryLongState.textTypingHandler = { text, bracketed in
-            veryLongTyped.append((text: text, bracketed: bracketed))
+        var veryLongTyped: [String] = []
+        veryLongState.textTypingHandler = { text in
+            veryLongTyped.append(text)
             veryLongScratchTerminal = text
             return true
         }
@@ -738,11 +738,10 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         XCTAssertEqual(veryLongClipboardWrites, [], "a 10k+ transcript still never touches the pasteboard")
         XCTAssertFalse(veryLongPastePosted, "and never posts Cmd+V")
         XCTAssertEqual(
-            veryLongTyped.map(\.text),
+            veryLongTyped,
             [veryLongTranscript],
             "a 10k+ transcript is typed in exactly one delivery"
         )
-        XCTAssertEqual(veryLongTyped.map(\.bracketed), [true])
         XCTAssertEqual(veryLongScratchTerminal, veryLongTranscript)
         XCTAssertEqual(veryLongState.confirmationText, veryLongTranscript)
 

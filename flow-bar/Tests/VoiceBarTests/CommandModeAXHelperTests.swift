@@ -131,9 +131,9 @@ final class CommandModeAXHelperTests: XCTestCase {
     /// contract for cmux is unchanged and still covered by
     /// `testOrdinaryF5FinishIntoCmuxKeepsReliableValueRewritePlan`; what changed is
     /// which path a finished F5 transcript takes to get there. Since 2026-09-13 that
-    /// path is bracketed TYPING, never the clipboard: dictation must not touch the
+    /// path is TYPING, never the clipboard: dictation must not touch the
     /// pasteboard (Etan's spec — see VoiceState's paste call site).
-    func testF5FinishTranscriptionReachesCmuxByBracketedTypingNotTheClipboard() {
+    func testF5FinishTranscriptionReachesCmuxByTypingNotTheClipboard() {
         let state = VoiceState()
         let cmux = FakeRunningApplication()
         let transcript = "F5 completion must arrive in the focused cmux pane"
@@ -162,9 +162,9 @@ final class CommandModeAXHelperTests: XCTestCase {
             pasteShortcutPosted = true
             return true
         }
-        var typed: [(text: String, bracketed: Bool)] = []
-        state.textTypingHandler = { text, bracketed in
-            typed.append((text: text, bracketed: bracketed))
+        var typed: [String] = []
+        state.textTypingHandler = { text in
+            typed.append(text)
             return true
         }
 
@@ -175,8 +175,7 @@ final class CommandModeAXHelperTests: XCTestCase {
         XCTAssertEqual(insertionAttempts, 0, "a terminal target must never take the AX path")
         XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
-        XCTAssertEqual(typed.map(\.text), [transcript], "the transcript is typed into cmux verbatim")
-        XCTAssertEqual(typed.map(\.bracketed), [true], "as a bracketed paste, so newlines stay literal")
+        XCTAssertEqual(typed, [transcript], "the transcript is typed into cmux verbatim")
         XCTAssertEqual(state.confirmationText, transcript)
     }
 

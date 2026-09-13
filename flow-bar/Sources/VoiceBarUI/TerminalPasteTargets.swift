@@ -15,10 +15,11 @@ import Foundation
 ///     unbracketed text -> …  \n  …  \n  …                        (94 bytes)
 ///
 /// So these bundle identifiers never take the AX route. They used to take
-/// clipboard + Cmd+V instead; since 2026-09-13 they get the transcript TYPED,
-/// wrapped in the same ESC[200~ … ESC[201~ markers a real paste carries, so
-/// newlines stay literal AND his pasteboard is never touched. The full history
-/// of why is the AIDEV-NOTE at VoiceState's paste call site.
+/// clipboard + Cmd+V instead; since 2026-09-13 they get the transcript TYPED and
+/// his pasteboard is never touched. Typed ESC[200~ markers do not survive cmux
+/// (v2.2.19 turned them into a stray "a"), so line breaks go out as Shift+Return
+/// instead — see `SynthesizedTyping`. The full history of why is the AIDEV-NOTE
+/// at VoiceState's paste call site.
 public enum TerminalPasteTargets {
     /// Bundle identifiers that host a terminal emulator.
     public static let bundleIdentifiers: Set<String> = [
@@ -37,9 +38,9 @@ public enum TerminalPasteTargets {
     }
 
     /// Removes at most one trailing newline. Internal newlines are kept — they are
-    /// the user's line breaks and bracketed paste delivers them literally. A
-    /// *trailing* newline has nothing after it to bracket-protect it from the
-    /// composer, so it lands as a Return once the paste ends.
+    /// the user's line breaks and go out as Shift+Return. A *trailing* one has
+    /// nothing after it: at best it leaves the composer on an empty line, and an
+    /// app that reads Shift+Return as Return would submit.
     public static func strippingSingleTrailingNewline(_ text: String) -> String {
         // "\r\n" is a single Character in Swift, so one dropLast removes the whole pair.
         guard let last = text.last, trailingNewlines.contains(last) else { return text }

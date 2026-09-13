@@ -1059,8 +1059,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         voiceState.simulatedPasteHandler = {
             Self.simulatePaste()
         }
-        voiceState.textTypingHandler = { text, bracketed in
-            Self.typeText(text, bracketed: bracketed)
+        voiceState.textTypingHandler = { text in
+            Self.typeText(text)
         }
         voiceState.accessibilityTrustChecker = { prompt in
             Self.isAccessibilityTrusted(prompt: prompt)
@@ -1108,12 +1108,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    /// Type text into the focused app with Unicode keyboard events. Never touches
-    /// the pasteboard — see the AIDEV-NOTE at VoiceState's paste call site.
-    /// `bracketed` wraps the text in ESC[200~ … ESC[201~ (bracketed-paste, DECSET
-    /// 2004) so a terminal composer keeps newlines literal. Requires Accessibility.
+    /// Type text into the focused app with synthesized keyboard events. Never
+    /// touches the pasteboard — see the AIDEV-NOTE at VoiceState's paste call site.
+    /// What goes into each event, and why no control character may, is
+    /// `SynthesizedTyping`. Requires Accessibility.
     @discardableResult
-    private static func typeText(_ text: String, bracketed: Bool) -> Bool {
+    private static func typeText(_ text: String) -> Bool {
         guard isAccessibilityTrusted(prompt: false) else {
             NSLog("[VoiceBar] typeText: Accessibility not granted")
             return false
@@ -1122,38 +1122,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             NSLog("[VoiceBar] typeText: failed to create CGEventSource")
             return false
         }
-        // A real Cmd+V delivers newlines as CR; mirror that so the composer sees
-        // the same bytes it would from a paste.
-        let body = text
-            .replacingOccurrences(of: "\r\n", with: "\r")
-            .replacingOccurrences(of: "\n", with: "\r")
-        let payload = bracketed ? "\u{1B}[200~" + body + "\u{1B}[201~" : body
-        let units = Array(payload.utf16)
-        // A keyboard event carries at most ~20 UTF-16 units of text.
-        let chunkSize = 20
-        var index = 0
-        while index < units.count {
-            var end = min(index + chunkSize, units.count)
-            // Never split a surrogate pair across two events.
-            if end < units.count, UTF16.isLeadSurrogate(units[end - 1]) {
-                end -= 1
-            }
-            var chunk = Array(units[index ..< end])
-            guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-            else {
-                NSLog("[VoiceBar] typeText: failed to create CGEvent")
-                return false
-            }
-            // Explicitly no modifiers: Shift is physically held during a Shift+F5
-            // re-paste, and it must not ride along on the typed text.
-            down.flags = []
-            up.flags = []
-            down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
-            up.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: &chunk)
-            down.post(tap: .cghidEventTap)
-            up.post(tap: .cghidEventTap)
-            index = end
+        guard let events = SynthesizedTyping.events(
+            for: SynthesizedTyping.keystrokes(for: text),
+            source: source
+        ) else {
+            NSLog("[VoiceBar] typeText: failed to create CGEvent")
+            return false
+        }
+        for event in events {
+            event.post(tap: .cghidEventTap)
         }
         return true
     }

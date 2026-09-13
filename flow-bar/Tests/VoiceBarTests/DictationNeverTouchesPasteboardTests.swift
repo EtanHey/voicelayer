@@ -22,17 +22,15 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
         XCTAssertEqual(harness.pasteboardWrites, [], "dictation must never write the pasteboard")
         XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED", "Cmd+V must still give him what he copied")
         XCTAssertEqual(harness.typed.map(\.text), ["the transcript he dictated"])
-        XCTAssertEqual(harness.typed.map(\.bracketed), [true], "a terminal gets bracketed typing")
     }
 
     /// Newlines must not self-submit, and the pasteboard still holds what he copied.
-    func testMultiLineDictationIntoATerminalIsTypedAsOneBracketedPaste() {
+    func testMultiLineDictationIntoATerminalIsTypedAsOneDelivery() {
         let harness = PasteHarness(bundleIdentifier: "com.cmuxterm.app", pasteboard: "WHAT HE COPIED")
         harness.dictate("line one\nline two\nline three")
 
         XCTAssertEqual(harness.typed.count, 1, "one delivery, not one per line")
         XCTAssertEqual(harness.typed.first?.text, "line one\nline two\nline three")
-        XCTAssertEqual(harness.typed.first?.bracketed, true, "bracketed, so each newline stays literal")
         XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED")
         XCTAssertEqual(harness.pasteboardWrites, [])
     }
@@ -45,7 +43,6 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
         XCTAssertEqual(harness.pasteboardWrites, [], "the clipboard is never a fallback")
         XCTAssertEqual(harness.pasteboard, "WHAT HE COPIED")
         XCTAssertEqual(harness.typed.map(\.text), ["into an ordinary text field"])
-        XCTAssertEqual(harness.typed.map(\.bracketed), [false], "no paste markers outside a terminal")
     }
 
     /// Shift+F5 types the last transcript and leaves whatever he copied since alone.
@@ -64,7 +61,6 @@ final class DictationNeverTouchesPasteboardTests: XCTestCase {
 
 private struct TypedDelivery: Equatable {
     let text: String
-    let bracketed: Bool
 }
 
 /// Drives the REAL `VoiceState` paste flow. Any pasteboard write or Cmd+V fails.
@@ -92,8 +88,8 @@ private final class PasteHarness {
             XCTFail("dictation must never post Cmd+V")
             return false
         }
-        state.textTypingHandler = { [weak self] text, bracketed in
-            self?.typed.append(TypedDelivery(text: text, bracketed: bracketed))
+        state.textTypingHandler = { [weak self] text in
+            self?.typed.append(TypedDelivery(text: text))
             return true
         }
     }
