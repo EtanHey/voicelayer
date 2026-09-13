@@ -130,8 +130,10 @@ final class CommandModeAXHelperTests: XCTestCase {
     /// unbracketed and each newline arrives at the shell as a Return. The strategy
     /// contract for cmux is unchanged and still covered by
     /// `testOrdinaryF5FinishIntoCmuxKeepsReliableValueRewritePlan`; what changed is
-    /// which path a finished F5 transcript takes to get there.
-    func testF5FinishTranscriptionReachesCmuxThroughTheClipboardNotAX() {
+    /// which path a finished F5 transcript takes to get there. Since 2026-09-13 that
+    /// path is bracketed TYPING, never the clipboard: dictation must not touch the
+    /// pasteboard (Etan's spec — see VoiceState's paste call site).
+    func testF5FinishTranscriptionReachesCmuxByBracketedTypingNotTheClipboard() {
         let state = VoiceState()
         let cmux = FakeRunningApplication()
         let transcript = "F5 completion must arrive in the focused cmux pane"
@@ -160,14 +162,21 @@ final class CommandModeAXHelperTests: XCTestCase {
             pasteShortcutPosted = true
             return true
         }
+        var typed: [(text: String, bracketed: Bool)] = []
+        state.textTypingHandler = { text, bracketed in
+            typed.append((text: text, bracketed: bracketed))
+            return true
+        }
 
         state.record()
         state.handleEvent(["type": "state", "state": "transcribing"])
         state.handleEvent(["type": "transcription", "text": transcript])
 
         XCTAssertEqual(insertionAttempts, 0, "a terminal target must never take the AX path")
-        XCTAssertEqual(clipboardWrites, [transcript], "the transcript reaches cmux verbatim on the clipboard")
-        XCTAssertTrue(pasteShortcutPosted, "and is delivered by a bracketed Cmd+V")
+        XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
+        XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
+        XCTAssertEqual(typed.map(\.text), [transcript], "the transcript is typed into cmux verbatim")
+        XCTAssertEqual(typed.map(\.bracketed), [true], "as a bracketed paste, so newlines stay literal")
         XCTAssertEqual(state.confirmationText, transcript)
     }
 

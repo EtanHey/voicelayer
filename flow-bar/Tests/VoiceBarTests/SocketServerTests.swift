@@ -609,10 +609,11 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         dispatchRuntimeKey(virtualKey: 53, router: router)
         XCTAssertTrue(waitForCondition(timeout: 15) { idleTransitions >= 2 })
 
-        // A terminal target is clipboard-only since PR #24 (`0903372`): AX
-        // insertion is unbracketed, so every newline reaches the shell as a
-        // Return. This leg is the runtime proof that a real F5 capture lands
-        // in cmux by that path, not by an AX value rewrite.
+        // A terminal target never takes AX: AX insertion is unbracketed, so every
+        // newline reaches the shell as a Return. Since 2026-09-13 it never takes
+        // the clipboard either — the transcript is TYPED as a bracketed paste and
+        // the pasteboard is untouched (Etan's spec, VoiceState's paste call site).
+        // This leg is the runtime proof that a real F5 capture lands in cmux that way.
         let cmux = ScratchCmuxApplication()
         var scratchTerminal: String?
         var clipboardWrites: [String] = []
@@ -631,11 +632,16 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
         state.pasteboardWriter = {
             clipboardWrites.append($0)
-            scratchTerminal = $0
         }
-        state.pasteboardStringProvider = { scratchTerminal }
+        state.pasteboardStringProvider = { nil }
         state.simulatedPasteHandler = {
             pasteShortcutPosted = true
+            return true
+        }
+        var typedDeliveries: [(text: String, bracketed: Bool)] = []
+        state.textTypingHandler = { text, bracketed in
+            typedDeliveries.append((text: text, bracketed: bracketed))
+            scratchTerminal = text
             return true
         }
         recordingTransitions = 0
@@ -664,12 +670,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         // word boundaries are emitted by the separate TTS playback queue.
         XCTAssertTrue(waitForCondition(timeout: 240) { !state.transcript.isEmpty })
         XCTAssertFalse(axInsertionFired, "a terminal target must never take the AX path")
+        XCTAssertEqual(clipboardWrites, [], "dictation must never write the pasteboard")
+        XCTAssertFalse(pasteShortcutPosted, "and never posts Cmd+V")
         XCTAssertEqual(
-            clipboardWrites,
+            typedDeliveries.map(\.text),
             [TerminalPasteTargets.strippingSingleTrailingNewline(state.transcript)],
-            "the real captured transcript reaches cmux verbatim on the clipboard, in one write"
+            "the real captured transcript is typed into cmux verbatim, in one delivery"
         )
-        XCTAssertTrue(pasteShortcutPosted, "and is delivered by a bracketed Cmd+V")
+        XCTAssertEqual(typedDeliveries.map(\.bracketed), [true], "as a bracketed paste")
+        XCTAssertEqual(scratchTerminal, typedDeliveries.last?.text)
         XCTAssertEqual(state.lastTranscriptionPolished, true)
         XCTAssertTrue(waitForMode(state, mode: .idle, timeout: 15))
         try writeTerminalProof(
@@ -707,11 +716,16 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         }
         veryLongState.pasteboardWriter = {
             veryLongClipboardWrites.append($0)
-            veryLongScratchTerminal = $0
         }
-        veryLongState.pasteboardStringProvider = { veryLongScratchTerminal }
+        veryLongState.pasteboardStringProvider = { nil }
         veryLongState.simulatedPasteHandler = {
             veryLongPastePosted = true
+            return true
+        }
+        var veryLongTyped: [(text: String, bracketed: Bool)] = []
+        veryLongState.textTypingHandler = { text, bracketed in
+            veryLongTyped.append((text: text, bracketed: bracketed))
+            veryLongScratchTerminal = text
             return true
         }
 
@@ -721,12 +735,15 @@ final class CorpusReplayRuntimeInteractionTests: XCTestCase {
         veryLongState.handleEvent(["type": "transcription", "text": veryLongTranscript])
 
         XCTAssertEqual(veryLongInsertionAttempts, 0, "a terminal target must never take the AX path")
+        XCTAssertEqual(veryLongClipboardWrites, [], "a 10k+ transcript still never touches the pasteboard")
+        XCTAssertFalse(veryLongPastePosted, "and never posts Cmd+V")
         XCTAssertEqual(
-            veryLongClipboardWrites,
+            veryLongTyped.map(\.text),
             [veryLongTranscript],
-            "a 10k+ transcript still lands in exactly one clipboard write"
+            "a 10k+ transcript is typed in exactly one delivery"
         )
-        XCTAssertTrue(veryLongPastePosted)
+        XCTAssertEqual(veryLongTyped.map(\.bracketed), [true])
+        XCTAssertEqual(veryLongScratchTerminal, veryLongTranscript)
         XCTAssertEqual(veryLongState.confirmationText, veryLongTranscript)
 
         // The AX leg this harness used to prove for cmux still has to hold

@@ -14,8 +14,11 @@ import Foundation
 ///     clipboard paste  -> 033 [ 2 0 0 ~  … \n …  033 [ 2 0 1 ~   (94 + 12 bytes)
 ///     unbracketed text -> …  \n  …  \n  …                        (94 bytes)
 ///
-/// So for these bundle identifiers we always take the clipboard + Cmd+V route
-/// and never the AX/typed one.
+/// So these bundle identifiers never take the AX route. They used to take
+/// clipboard + Cmd+V instead; since 2026-09-13 they get the transcript TYPED,
+/// wrapped in the same ESC[200~ … ESC[201~ markers a real paste carries, so
+/// newlines stay literal AND his pasteboard is never touched. The full history
+/// of why is the AIDEV-NOTE at VoiceState's paste call site.
 public enum TerminalPasteTargets {
     /// Bundle identifiers that host a terminal emulator.
     public static let bundleIdentifiers: Set<String> = [
