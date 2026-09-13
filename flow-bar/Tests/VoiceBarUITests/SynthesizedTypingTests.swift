@@ -50,6 +50,32 @@ final class SynthesizedTypingTests: XCTestCase {
             XCTAssertFalse(payload.isEmpty)
         }
         XCTAssertEqual(Self.typed(keystrokes), mixed)
+        // Joining can hide a split; per-event Characters cannot. A grapheme cut across
+        // two events would show up here as two different Characters.
+        XCTAssertEqual(Self.payloads(keystrokes).flatMap { Array($0) }, Array(mixed))
+    }
+
+    /// Policy for a grapheme longer than one event (a letter under 20 combining
+    /// marks): it goes out scalar by scalar, in order, across consecutive events —
+    /// never dropped, never reordered. Every other grapheme stays whole in one event.
+    func testAGraphemeLongerThanOneEventIsSplitByScalarsInOrderAndNothingElseIs() {
+        let oversized = "a" + String(repeating: "\u{0301}", count: 20)
+        XCTAssertEqual(oversized.count, 1, "precondition: one Character")
+        XCTAssertGreaterThan(oversized.utf16.count, SynthesizedTyping.maxUTF16UnitsPerEvent)
+        let text = "before " + oversized + " after"
+
+        let payloads = Self.payloads(SynthesizedTyping.keystrokes(for: text))
+        for payload in payloads {
+            XCTAssertLessThanOrEqual(payload.utf16.count, SynthesizedTyping.maxUTF16UnitsPerEvent)
+        }
+        XCTAssertEqual(payloads.joined(), text)
+        XCTAssertEqual(
+            payloads.flatMap(\.unicodeScalars).map(\.value),
+            text.unicodeScalars.map(\.value),
+            "every scalar, in order"
+        )
+        XCTAssertTrue(payloads.first?.hasPrefix("before ") == true, "the words before it stay whole")
+        XCTAssertTrue(payloads.last?.hasSuffix(" after") == true, "the words after it stay whole")
     }
 
     func testTabsAreTypedAsSpacesNotDropped() {
@@ -128,6 +154,13 @@ final class SynthesizedTypingTests: XCTestCase {
         let units = Array(("\u{1B}[200~" + body + "\u{1B}[201~").utf16)
         return stride(from: 0, to: units.count, by: 20).map { start in
             .text(String(decoding: units[start ..< min(start + 20, units.count)], as: UTF16.self))
+        }
+    }
+
+    private static func payloads(_ keystrokes: [SynthesizedKeystroke]) -> [String] {
+        keystrokes.compactMap { keystroke in
+            if case let .text(payload) = keystroke { return payload }
+            return nil
         }
     }
 
