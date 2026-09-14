@@ -1483,6 +1483,29 @@ describe("stripHallucinatedOutro — a long hold with a short sentence", () => {
     expect(decision.text).toBe(`${spoken} Thank you.`);
   });
 
+  test("keeps a closer when a soft word reaches only just into the clearance zone", () => {
+    // Macroscope HIGH / CodeRabbit, PR #77: the quiet-word scan started exactly
+    // at the clearance edge (29.85 s here), so this soft word, which runs
+    // 29.55-29.87 s, left only two 20 ms windows inside it and read as a click.
+    // The span is the tail " Thank you." at 30-32 s.
+    const wav = makeWav(
+      32,
+      [
+        { startS: 22, endS: 24.5 },
+        { startS: 29.55, endS: 29.87, peak: 500 },
+      ],
+      130,
+    );
+    const windows = measureWavWindows(wav)!;
+    expect(windows.speechLevelDbfs).toBeLessThan(windows.speechThresholdDbfs);
+
+    const decision = stripHallucinatedOutro(`${spoken} Thank you.`, wav, {
+      segments: [segment(` ${spoken}`, 0, 26.48), segment(" Thank you.", 30, 32)],
+    });
+    expect(decision.removed).toEqual([]);
+    expect(decision.text).toBe(`${spoken} Thank you.`);
+  });
+
   clipTest(CLIP_LONG_HOLD)("drops the invented closer from his real recording", () => {
     const wav = readWav(CLIP_LONG_HOLD);
     // Segments are the daemon-shaped whisper-server decode of this WAV.

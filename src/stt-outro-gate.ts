@@ -683,12 +683,19 @@ function nearSpeechLevel(
     windows.speechLevelDbfs < windows.speechThresholdDbfs &&
     establishedSpeechSeconds(windows) >= ESTABLISHED_SPEECH_SECONDS
   ) {
+    // Widen by one window less than a sustained run, as `isClearOfSpeech`
+    // does, so a soft word crossing either clearance edge still counts as a
+    // run inside the scan. (Macroscope HIGH / CodeRabbit, PR #77.)
+    const context = Math.max(
+      0,
+      Math.round(MIN_SPEECH_RUN_SECONDS / windows.windowSeconds) - 1,
+    );
     return containsSustainedRunAbove(
       windows,
-      windowIndex(windows, Math.max(0, startS - marginSeconds)),
+      windowIndex(windows, Math.max(0, startS - marginSeconds)) - context,
       Math.min(
         windows.dbfs.length,
-        Math.ceil((endS + marginSeconds) / windows.windowSeconds),
+        Math.ceil((endS + marginSeconds) / windows.windowSeconds) + context,
       ),
       windows.floorDbfs + QUIET_WORD_OVER_FLOOR_DB,
     );
