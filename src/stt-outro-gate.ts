@@ -88,6 +88,20 @@ const SPEECH_THRESHOLD_MIN_DBFS = -50;
  * sit 15-30 dB under their clip's speech level, so 6 dB is a wide moat.
  */
 const SPEECH_LEVEL_GUARD_DB = 6;
+/**
+ * Sparse-speech hold (2026-09-14): when the 90th-percentile speech level is
+ * noise, a span counts as "near speech" only if it holds a sustained run this
+ * far over the floor — a word said softly, as opposed to a click or a breath.
+ * In `…fcd9b769` his quietest real second holds a 0.56 s run over floor + 8 dB;
+ * the invented closer's span holds none.
+ */
+const QUIET_WORD_OVER_FLOOR_DB = 8;
+/**
+ * Speech a recording has definitely established: this much audio in sustained
+ * runs over its speech threshold. `…fcd9b769` has 0.94 s; a low-gain recording,
+ * whose speech never reaches the threshold, has none.
+ */
+const ESTABLISHED_SPEECH_SECONDS = 0.5;
 
 /** Consecutive over-threshold audio that counts as a word rather than a click. */
 const MIN_SPEECH_RUN_SECONDS = 0.06;
@@ -601,6 +615,90 @@ function containsSustainedSpeech(
   return false;
 }
 
+/** Like `containsSustainedSpeech`, against an explicit level. */
+function containsSustainedRunAbove(
+  windows: WavWindows,
+  first: number,
+  last: number,
+  levelDbfs: number,
+): boolean {
+  const needed = Math.max(
+    1,
+    Math.round(MIN_SPEECH_RUN_SECONDS / windows.windowSeconds),
+  );
+  let run = 0;
+  for (let index = Math.max(0, first); index < last; index++) {
+    const level = windows.dbfs[index];
+    if (level === undefined || level < levelDbfs) {
+      run = 0;
+      continue;
+    }
+    run++;
+    if (run >= needed) return true;
+  }
+  return false;
+}
+
+/** Seconds of audio in sustained runs over the speech threshold. */
+function establishedSpeechSeconds(windows: WavWindows): number {
+  const needed = Math.max(
+    1,
+    Math.round(MIN_SPEECH_RUN_SECONDS / windows.windowSeconds),
+  );
+  let run = 0;
+  let total = 0;
+  for (let index = 0; index <= windows.dbfs.length; index++) {
+    if (index === windows.dbfs.length || isSilentWindow(windows, index)) {
+      if (run >= needed) total += run;
+      run = 0;
+      continue;
+    }
+    run++;
+  }
+  return total * windows.windowSeconds;
+}
+
+/**
+ * The speech-level backstop. Normally a span peaking within
+ * `SPEECH_LEVEL_GUARD_DB` of the recording's speech level is not silence.
+ *
+ * AIDEV-NOTE (2026-09-14): that assumes the 90th percentile IS his speech. In
+ * a long F5 hold holding a short sentence — speech under 10 % of the recording
+ * — it is the noise, so every silent span sat "within 6 dB of his speech" and
+ * an invented closer was kept (`…fcd9b769`, Etan: "never said thank you").
+ * When the level is provably noise — under the speech threshold although the
+ * recording has established speech — "near speech" instead means a sustained
+ * run `QUIET_WORD_OVER_FLOOR_DB` over the floor anywhere in the span or its
+ * clearance margin. A low-gain recording establishes no speech and keeps the
+ * original backstop, as does wall-to-wall speech.
+ */
+function nearSpeechLevel(
+  windows: WavWindows,
+  startS: number,
+  endS: number,
+  peakDbfs: number,
+  marginSeconds: number,
+): boolean {
+  if (
+    windows.speechLevelDbfs < windows.speechThresholdDbfs &&
+    establishedSpeechSeconds(windows) >= ESTABLISHED_SPEECH_SECONDS
+  ) {
+    return containsSustainedRunAbove(
+      windows,
+      windowIndex(windows, Math.max(0, startS - marginSeconds)),
+      Math.min(
+        windows.dbfs.length,
+        Math.ceil((endS + marginSeconds) / windows.windowSeconds),
+      ),
+      windows.floorDbfs + QUIET_WORD_OVER_FLOOR_DB,
+    );
+  }
+  return (
+    Number.isFinite(windows.speechLevelDbfs) &&
+    peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB
+  );
+}
+
 /**
  * Mean and peak dBFS across `[startS, endS)`, plus whether it carries a word.
  * Null when the span falls outside the audio entirely.
@@ -884,18 +982,24 @@ export function stripHallucinatedOutro(
     // threshold landed, a span as loud as this recording's own speech is not
     // silence. Protects the low-gain recording whose speech sits only a little
     // over its noise floor.
+    // See `nearSpeechLevel` for the sparse-speech hold.
+    const marginSeconds = candidate.isTail
+      ? SILENCE_MARGIN_SECONDS
+      : INTERNAL_SILENCE_MARGIN_SECONDS;
     if (
-      Number.isFinite(windows.speechLevelDbfs) &&
-      measured.peakDbfs >= windows.speechLevelDbfs - SPEECH_LEVEL_GUARD_DB
+      nearSpeechLevel(
+        windows,
+        span.startS,
+        span.endS,
+        measured.peakDbfs,
+        marginSeconds,
+      )
     ) {
       reason = "near-speech-level";
       recordEvaluation(reason);
       continue;
     }
     // (c) The silence must extend clear of the span on both sides.
-    const marginSeconds = candidate.isTail
-      ? SILENCE_MARGIN_SECONDS
-      : INTERNAL_SILENCE_MARGIN_SECONDS;
     if (!isClearOfSpeech(windows, span.startS, span.endS, marginSeconds)) {
       reason = "not-clear-of-speech";
       recordEvaluation(reason);

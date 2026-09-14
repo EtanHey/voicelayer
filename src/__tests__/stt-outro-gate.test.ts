@@ -1435,3 +1435,61 @@ describe("outro gate over the 2026-09-06 correction corpus", () => {
     expect(caught.length).toBeGreaterThanOrEqual(9);
   });
 });
+
+// --- a long F5 hold that holds only a short sentence (2026-09-14) ---
+//
+// Etan, on v2.2.20: "(never said thank you, thought we fixed that bs)". His
+// 32 s hold `…fcd9b769` carries ~1 s of speech; whisper put " Thank you." at
+// 30-32 s over pure noise, and the gate kept it as `near-speech-level`: its
+// "speech level" is the 90th percentile of ALL windows, and with speech under
+// 10 % of the recording that percentile is the noise itself.
+const CLIP_LONG_HOLD = join(
+  RECORDINGS,
+  "2026-09-14/2026-09-14T08-04-41-067Z-fcd9b769/audio.wav",
+);
+
+describe("stripHallucinatedOutro — a long hold with a short sentence", () => {
+  const spoken = "Okay, I did the Google Drive MCP authentication.";
+
+  test("drops a closer over silence when speech is under 10% of the hold", () => {
+    const wav = makeWav(32, [{ startS: 22, endS: 24.5 }], 130);
+    const windows = measureWavWindows(wav)!;
+    expect(windows.speechLevelDbfs).toBeLessThan(windows.speechThresholdDbfs);
+
+    const decision = stripHallucinatedOutro(`${spoken} Thank you.`, wav, {
+      segments: [segment(` ${spoken}`, 0, 26.48), segment(" Thank you.", 30, 32)],
+    });
+    expect(decision.reason).toBe("removed");
+    expect(decision.text).toBe(spoken);
+  });
+
+  test("keeps a closer he said softly at the end of a long hold", () => {
+    // Under the speech threshold, so only the quiet-word check can see it.
+    const wav = makeWav(
+      32,
+      [
+        { startS: 22, endS: 24.5 },
+        { startS: 30.3, endS: 30.8, peak: 400 },
+      ],
+      130,
+    );
+    const windows = measureWavWindows(wav)!;
+    expect(windows.speechLevelDbfs).toBeLessThan(windows.speechThresholdDbfs);
+
+    const decision = stripHallucinatedOutro(`${spoken} Thank you.`, wav, {
+      segments: [segment(` ${spoken}`, 0, 26.48), segment(" Thank you.", 30, 32)],
+    });
+    expect(decision.removed).toEqual([]);
+    expect(decision.text).toBe(`${spoken} Thank you.`);
+  });
+
+  clipTest(CLIP_LONG_HOLD)("drops the invented closer from his real recording", () => {
+    const wav = readWav(CLIP_LONG_HOLD);
+    // Segments are the daemon-shaped whisper-server decode of this WAV.
+    const decision = stripHallucinatedOutro(`${spoken} Thank you.`, wav, {
+      segments: [segment(` ${spoken}`, 0, 26.48), segment(" Thank you.", 30, 32)],
+    });
+    expect(decision.reason).toBe("removed");
+    expect(decision.text).toBe(spoken);
+  });
+});
