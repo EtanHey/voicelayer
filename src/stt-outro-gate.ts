@@ -409,12 +409,70 @@ export function findOutroCandidates(text: string): OutroCandidate[] {
 }
 
 /** The trailing candidate, if the last sentence is one. Kept for the tail-only callers. */
+/**
+ * AIDEV-NOTE: A hallucinated closer welded to a real sentence with a comma.
+ *
+ * 2026-09-09, Etan: *'never said "so." at the end there.... another voicelayer
+ * helucination'*. Recording `2026-09-09T09-58-51-105Z-1828b4c3`, 62.6 s, a single
+ * whisper-server pass — NOT the chunked path, which starts at 90 s. Whisper
+ * appended `, so.` to `...pretty much anywhere`.
+ *
+ * `so` was already in `OUTRO_SINGLE_TOKENS`, and the acoustics were unambiguous:
+ * floor -56.1 dBFS, speech -31.2 dBFS, and **0 of the last 30** 0.1 s windows
+ * reach floor+16 dB. Both the lexicon and condition (b) would have removed it.
+ * It survived on SHAPE: `findOutroCandidates` walks whole SENTENCES, and the
+ * final sentence here is a real one that merely ENDS in a lexicon clause, so it
+ * never normalised to a known key.
+ *
+ * This offers that trailing clause as a candidate. It is deliberately the
+ * narrowest extension that covers the specimen:
+ *   - the very END of the transcript only, never an internal clause — ordinary
+ *     speech is full of mid-sentence ", so," and none of it is a hallucination;
+ *   - the clause after the final comma must be lexicon-only, by the same exact
+ *     key match the sentence path uses;
+ *   - what precedes the comma must be real words, so `", so."` alone is not a
+ *     candidate;
+ *   - every punctuation veto is unchanged (no `?`/`!`, single `.`, no ellipsis).
+ *
+ * Condition (b) is untouched and still decides: the span must be silent. A real
+ * trailing "…, so." that he actually spoke has speech under it and is kept.
+ */
+function findCommaAttachedTailCandidate(text: string): OutroCandidate | null {
+  const trimmedEnd = text.trimEnd();
+  if (!/(?:^|[^.…])\.$/u.test(trimmedEnd)) return null;
+
+  const lastComma = trimmedEnd.lastIndexOf(",");
+  if (lastComma <= 0) return null;
+
+  const clause = trimmedEnd.slice(lastComma);
+  if (/[?!]/u.test(clause)) return null;
+
+  const key = normalizeOutroKey(clause);
+  if (!isKnownOutroKey(key)) return null;
+
+  // Something real has to precede it; a bare ", so." is not this shape.
+  if (!normalizeOutroKey(trimmedEnd.slice(0, lastComma))) return null;
+
+  // The span stops BEFORE the final full stop, so excising it leaves the real
+  // sentence properly terminated: `...pretty much anywhere.` rather than
+  // `...pretty much anywhere` with its punctuation carried off by the closer.
+  const terminalIndex = trimmedEnd.length - 1;
+  return {
+    phrase: trimmedEnd.slice(lastComma, terminalIndex),
+    key,
+    startIndex: lastComma,
+    endIndex: terminalIndex,
+    isTail: true,
+  };
+}
+
 export function findTrailingOutroCandidate(
   text: string,
 ): OutroCandidate | null {
   const candidates = findOutroCandidates(text);
   const last = candidates[candidates.length - 1];
-  return last?.isTail ? last : null;
+  if (last?.isTail) return last;
+  return findCommaAttachedTailCandidate(text);
 }
 
 export interface WavWindows {
@@ -756,6 +814,10 @@ function excise(text: string, startIndex: number, endIndex: number): string {
   const after = text.slice(endIndex).replace(/^\s+/u, "");
   if (!before) return after;
   if (!after) return before;
+  // A seam that closes onto punctuation takes no space: excising a
+  // comma-attached closer leaves the sentence's own full stop behind, and
+  // `anywhere .` would be a new defect in place of the old one.
+  if (/^[.,;:?!]/u.test(after)) return `${before}${after}`;
   return `${before} ${after}`;
 }
 
