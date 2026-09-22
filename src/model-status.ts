@@ -2,6 +2,7 @@ import { statSync } from "fs";
 import { basename } from "path";
 import {
   probeWhisperServerHealth,
+  probeWhisperServerListeners,
   resolveWhisperModelPath,
   verifiedWhisperServerLaunchRecord,
 } from "./whisper-server";
@@ -81,6 +82,9 @@ export async function readWhisperModelStatus(): Promise<WhisperModelStatus> {
   if (preference !== "wispr" && preference !== "whisper") {
     const port = Number.parseInt(process.env.QA_VOICE_WHISPER_SERVER_PORT ?? "", 10) || 8178;
     residentHealthy = await probeWhisperServerHealth(port);
+    if (residentHealthy === null && probeWhisperServerListeners(port)?.length === 0) {
+      residentHealthy = false;
+    }
     if (residentHealthy === true) {
       launchRecord = verifiedWhisperServerLaunchRecord(port);
     }

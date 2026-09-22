@@ -611,5 +611,14 @@ describe("socket-protocol", () => {
         parseCommand('{"cmd":"set_whisper_effort","effort":"slow"}'),
       ).toBeNull();
     });
+
+    it("accepts only explicit whisper residency actions", () => {
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"load","id":"r1"}'))
+        .toEqual({ cmd: "set_whisper_residency", action: "load", id: "r1" });
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"unload","id":"r2"}'))
+        .toEqual({ cmd: "set_whisper_residency", action: "unload", id: "r2" });
+      expect(parseCommand('{"cmd":"set_whisper_residency","action":"toggle"}'))
+        .toBeNull();
+    });
   });
 });

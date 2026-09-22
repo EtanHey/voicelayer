@@ -8,7 +8,7 @@
  */
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
-import type { WhisperModelStatus } from "./model-status";
+import type { WhisperModelResidency, WhisperModelStatus } from "./model-status";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
   type PlaybackAmplitudeEnvelope,
@@ -220,7 +220,8 @@ export type AckCommand =
   | "vocab_add_term"
   | "vocab_remove_term"
   | "set_recording_hold"
-  | "set_whisper_effort";
+  | "set_whisper_effort"
+  | "set_whisper_residency";
 
 export interface AckEvent {
   type: "ack";
@@ -228,6 +229,8 @@ export interface AckEvent {
   outcome: IntentOutcome;
   id?: string;
   reason?: string;
+  model_status?: WhisperModelStatus;
+  residency?: WhisperModelResidency;
 }
 
 export type SocketEvent =
@@ -340,6 +343,11 @@ export interface SetWhisperEffortCommand extends SocketCommandBase {
   effort: WhisperPerformanceEffort;
 }
 
+export interface SetWhisperResidencyCommand extends SocketCommandBase {
+  cmd: "set_whisper_residency";
+  action: "load" | "unload";
+}
+
 export interface SetRecordingHoldCommand extends SocketCommandBase {
   cmd: "set_recording_hold";
   engaged: boolean;
@@ -362,7 +370,8 @@ export type SocketCommand =
   | VocabAddTermCommand
   | VocabRemoveTermCommand
   | SetRecordingHoldCommand
-  | SetWhisperEffortCommand;
+  | SetWhisperEffortCommand
+  | SetWhisperResidencyCommand;
 
 export interface HealthResponse {
   type: "health";
@@ -652,6 +661,12 @@ export function parseCommand(line: string): SocketCommand | null {
             effort: parsed.effort,
           },
           id,
+        );
+      }
+      case "set_whisper_residency": {
+        if (parsed.action !== "load" && parsed.action !== "unload") return null;
+        return withCommandId<SetWhisperResidencyCommand>(
+          { cmd: "set_whisper_residency", action: parsed.action }, id,
         );
       }
       case "set_recording_hold": {
