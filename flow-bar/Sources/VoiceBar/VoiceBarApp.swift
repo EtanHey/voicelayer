@@ -2261,6 +2261,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    private func checkShortcutAsync(completion: @escaping (String) -> Void) {
+        let listenerEnabled = hotkeyEnabled
+        let permissions = missingHotkeyPermissions
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+            // Same read-only launchctl and hidutil probes as `voicelayer hotkey status`.
+            let status = currentRelaySetupStatus()
+            DispatchQueue.main.async { [weak self] in
+                self?.cachedRelaySetupStatus = status
+                completion(SettingsShortcutCheck.message(
+                    hotkeyEnabled: listenerEnabled,
+                    missingPermissions: permissions,
+                    relayReady: status.isReady,
+                    relaySummary: status.summary
+                ))
+            }
+        }
+    }
+
     private func currentRelaySetupStatus() -> RelaySetupStatus {
         let mappingStatus = relayMappingStatus()
         return RelaySetupStatus(
@@ -2370,8 +2389,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func currentVocabularyPreview() -> STTVocabularyPreview {
         STTVocabularyPreview(
             updatedAt: nil,
-            promptTerms: voiceState.transcriptionVocabularyTerms,
-            aliases: voiceState.transcriptionVocabularyAliases
+            entries: STTVocabularyPreview(
+                updatedAt: nil,
+                promptTerms: voiceState.transcriptionVocabularyTerms,
+                aliases: voiceState.transcriptionVocabularyAliases
+            ).entries,
+            displayEntries: voiceState.transcriptionVocabularyDisplayEntries
         )
     }
 
@@ -2564,6 +2587,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             },
             isHotkeyRemapActive: { [weak self] in
                 self?.cachedRelaySetupStatus.isReady ?? false
+            },
+            onCheckShortcut: { [weak self] completion in
+                self?.checkShortcutAsync(completion: completion)
+                    ?? completion("Shortcut check unavailable.")
             },
             isMicrophonePermissionGranted: { [weak self] in
                 self?.microphonePermissionGranted() ?? false

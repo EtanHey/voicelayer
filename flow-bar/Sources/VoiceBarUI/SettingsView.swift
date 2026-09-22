@@ -229,8 +229,14 @@ private enum DictionaryCardLayout {
 }
 
 private struct SettingsDictionarySection {
-    let source: SettingsDictionarySource
-    let entries: [STTDictionaryEntry]
+    let source: String
+    let entries: [STTDictionaryDisplayEntry]
+}
+
+enum SettingsDictionaryEditing {
+    static func isEditing(rowID: String, isEditable: Bool, activeRowID: String?) -> Bool {
+        isEditable && activeRowID == rowID
+    }
 }
 
 struct SettingsVocabularyRevisionObserver: ViewModifier {
@@ -261,6 +267,24 @@ struct SettingsHistoryLoadFence {
     }
 }
 
+public enum SettingsShortcutCheck {
+    public static func message(
+        hotkeyEnabled: Bool,
+        missingPermissions: [HotkeyPermission],
+        relayReady: Bool,
+        relaySummary: String
+    ) -> String {
+        if hotkeyEnabled, missingPermissions.isEmpty, relayReady {
+            return "Shortcut ready: F5 listener and relay are active."
+        }
+        var problems: [String] = []
+        if !hotkeyEnabled { problems.append("F5 listener unavailable") }
+        if !missingPermissions.isEmpty { problems.append("Required permissions missing") }
+        if !relayReady { problems.append(relaySummary) }
+        return "Shortcut needs attention: \(problems.joined(separator: "; "))."
+    }
+}
+
 public struct SettingsView: View {
     public let hotkeyEnabled: Bool
     public let missingPermissions: [HotkeyPermission]
@@ -285,6 +309,7 @@ public struct SettingsView: View {
     public let onAddPromptTerm: (String) -> Void
     public let onRemovePromptTerm: (String) -> Void
     public let isHotkeyRemapActive: () -> Bool
+    public let onCheckShortcut: (@escaping (String) -> Void) -> Void
     public let isMicrophonePermissionGranted: () -> Bool
     public let isVoiceBarHidden: () -> Bool
     public let onHideVoiceBar: () -> Void
@@ -303,7 +328,6 @@ public struct SettingsView: View {
     public let isRecordingActive: () -> Bool
     public let isTranscribingActive: () -> Bool
     public let onRevealHistoryFile: (URL) -> Void
-    public let dictionarySource: (STTDictionaryEntry) -> SettingsDictionarySource
     public let footerPresentation: () -> VoiceBarFooterPresentation
 
     private let latestHistoryAnchorID = "settings-history-latest-anchor"
@@ -336,8 +360,8 @@ public struct SettingsView: View {
     @State private var dictionarySearch = ""
     @State private var dictionaryVisibleLimit = Self.dictionaryPageSize
     @State private var localEntries: [STTDictionaryEntry]
-    @State private var dictionaryIndex: STTDictionaryIndex
-    @State private var editingCanonical: String?
+    @State private var dictionaryDisplayIndex: STTDictionaryDisplayIndex
+    @State private var editingRowID: String?
     @State private var editTermText = ""
     @State private var addingVariantFor: String?
     @State private var variantText = ""
@@ -345,6 +369,8 @@ public struct SettingsView: View {
     @State private var newTermText = ""
     @State private var relaySetupFeedback: String?
     @State private var relaySetupRunning = false
+    @State private var shortcutCheckRunning = false
+    @State private var shortcutCheckFeedback: String?
     @State private var microphoneSnapshot = MicrophonePrioritySnapshot.unavailable
     @FocusState private var focusedEditorField: DictEditorField?
 
@@ -374,6 +400,7 @@ public struct SettingsView: View {
         onAddPromptTerm: @escaping (String) -> Void = { _ in },
         onRemovePromptTerm: @escaping (String) -> Void = { _ in },
         isHotkeyRemapActive: @escaping () -> Bool = { false },
+        onCheckShortcut: @escaping (@escaping (String) -> Void) -> Void = { $0("Shortcut check unavailable.") },
         isMicrophonePermissionGranted: @escaping () -> Bool = { true },
         isVoiceBarHidden: @escaping () -> Bool = { false },
         onHideVoiceBar: @escaping () -> Void = {},
@@ -401,7 +428,6 @@ public struct SettingsView: View {
         isRecordingActive: @escaping () -> Bool = { false },
         isTranscribingActive: @escaping () -> Bool = { false },
         onRevealHistoryFile: @escaping (URL) -> Void = { _ in },
-        dictionarySource: @escaping (STTDictionaryEntry) -> SettingsDictionarySource = { _ in .unknown },
         footerPresentation: @escaping () -> VoiceBarFooterPresentation = {
             .resolve(
                 isConnected: false,
@@ -437,6 +463,7 @@ public struct SettingsView: View {
         self.onAddPromptTerm = onAddPromptTerm
         self.onRemovePromptTerm = onRemovePromptTerm
         self.isHotkeyRemapActive = isHotkeyRemapActive
+        self.onCheckShortcut = onCheckShortcut
         self.isMicrophonePermissionGranted = isMicrophonePermissionGranted
         self.isVoiceBarHidden = isVoiceBarHidden
         self.onHideVoiceBar = onHideVoiceBar
@@ -467,7 +494,6 @@ public struct SettingsView: View {
         self.isRecordingActive = isRecordingActive
         self.isTranscribingActive = isTranscribingActive
         self.onRevealHistoryFile = onRevealHistoryFile
-        self.dictionarySource = dictionarySource
         self.footerPresentation = footerPresentation
         let initialAnchorMode = anchorMode()
         let initialPerformanceEffort = performanceEffort()
@@ -490,7 +516,11 @@ public struct SettingsView: View {
         _historyLoadedEntryLimit = State(initialValue: initialHistoryLimit)
         _historyHasMore = State(initialValue: initialHistoryPage?.hasMore ?? false)
         _localEntries = State(initialValue: initialVocabulary.entries)
-        _dictionaryIndex = State(initialValue: STTDictionaryIndex(entries: initialVocabulary.entries))
+        _dictionaryDisplayIndex = State(initialValue: STTDictionaryDisplayIndex(
+            entries: initialVocabulary.displayEntries ?? initialVocabulary.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            }
+        ))
         _selectedAnchoredMode = State(
             initialValue: VoiceBarAnchorMode.anchoredPositionModes.contains(initialAnchorMode)
                 ? initialAnchorMode
@@ -524,7 +554,7 @@ public struct SettingsView: View {
         .modifier(
             SettingsVocabularyRevisionObserver(
                 revision: vocabularyRevision(),
-                onRefresh: { reconcileLocalEntries(with: vocabularyPreview().entries) }
+                onRefresh: { reconcileLocalEntries(with: vocabularyPreview()) }
             )
         )
         .onChange(of: selectedTab) { _, tab in
@@ -601,6 +631,24 @@ public struct SettingsView: View {
                             .frame(width: 8, height: 8)
                         Text(hotkeyStatusText)
                     }
+                }
+
+                LabeledContent("Shortcut check") {
+                    Button("Check shortcut") {
+                        shortcutCheckRunning = true
+                        onCheckShortcut { result in
+                            shortcutCheckFeedback = result
+                            shortcutCheckRunning = false
+                        }
+                    }
+                    .disabled(shortcutCheckRunning)
+                }
+                Text(
+                    "Set ‘Press Globe key to’ to ‘Do Nothing’ in Keyboard settings. Some keyboards do not report Fn to apps; try F5."
+                )
+                .font(.caption).foregroundStyle(.secondary)
+                if let shortcutCheckFeedback {
+                    Text(shortcutCheckFeedback).font(.caption).foregroundStyle(.secondary)
                 }
 
                 permissionRow(.microphone, isGranted: isMicrophonePermissionGranted())
@@ -1409,25 +1457,41 @@ public struct SettingsView: View {
 
     private var dictionaryTab: some View {
         ScrollView {
-            let page = dictionaryIndex.page(
+            let page = dictionaryDisplayIndex.page(
                 matching: dictionarySearch,
                 limit: dictionaryVisibleLimit
             )
             LazyVStack(alignment: .leading, spacing: 14) {
+                LabeledContent("Personal dictionary") { Text("✓ Always on") }
                 addTermRow
                 searchRow
 
+                if dictionaryDisplayIndex.personalCount == 0, dictionarySearch.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "text.book.closed").font(.largeTitle).foregroundStyle(.secondary)
+                        Text("No terms yet").font(.headline)
+                        Text("Add names, products, and other preferred spellings.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 170)
+                }
+
+                Text("\(dictionaryDisplayIndex.personalCount) words")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
                 ForEach(dictionarySections(for: page.entries), id: \.source) { section in
                     VStack(alignment: .leading, spacing: 0) {
-                        Text(section.source.title)
+                        Text(section.source == "personal" ? "Personal" : "Included")
                             .font(.headline)
                             .padding(.top, 4)
                             .padding(.bottom, 6)
 
-                        ForEach(Array(section.entries.enumerated()), id: \.element.canonical) { offset, entry in
+                        ForEach(Array(section.entries.enumerated()), id: \.element.rowID) { offset, row in
                             dictionaryEntryCard(
-                                entry,
-                                isEditable: section.source != .included
+                                row.entry,
+                                rowID: row.rowID,
+                                isEditable: row.isPersonal
                             )
                             if offset < section.entries.count - 1 {
                                 Divider()
@@ -1436,8 +1500,8 @@ public struct SettingsView: View {
                     }
                 }
 
-                if page.hasMore {
-                    Button("Show \(min(Self.dictionaryPageSize, page.totalMatchCount - page.entries.count)) more") {
+                if page.entries.count < page.total {
+                    Button("Show \(min(Self.dictionaryPageSize, page.total - page.entries.count)) more") {
                         dictionaryVisibleLimit += Self.dictionaryPageSize
                     }
                     .buttonStyle(.bordered)
@@ -1451,7 +1515,10 @@ public struct SettingsView: View {
             dictionaryVisibleLimit = Self.dictionaryPageSize
         }
         .onChange(of: localEntries) { _, entries in
-            dictionaryIndex = STTDictionaryIndex(entries: entries)
+            let bundled = dictionaryDisplayIndex.sortedEntries.filter { !$0.isPersonal }
+            dictionaryDisplayIndex = STTDictionaryDisplayIndex(entries: bundled + entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            })
         }
     }
 
@@ -1495,10 +1562,11 @@ public struct SettingsView: View {
 
     private func dictionaryEntryCard(
         _ entry: STTDictionaryEntry,
+        rowID: String,
         isEditable: Bool = true
     ) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            dictionaryEntryHeader(entry, isEditable: isEditable)
+            dictionaryEntryHeader(entry, rowID: rowID, isEditable: isEditable)
             Divider()
             variantChips(entry, isEditable: isEditable)
             if isEditable, addingVariantFor == entry.canonical {
@@ -1509,11 +1577,11 @@ public struct SettingsView: View {
     }
 
     private func dictionarySections(
-        for entries: [STTDictionaryEntry]
+        for entries: [STTDictionaryDisplayEntry]
     ) -> [SettingsDictionarySection] {
-        let orderedSources: [SettingsDictionarySource] = [.user, .included, .unknown]
+        let orderedSources = ["personal", "bundled"]
         return orderedSources.compactMap { source in
-            let matching = entries.filter { dictionarySource($0) == source }
+            let matching = entries.filter { $0.source == source }
             guard !matching.isEmpty else { return nil }
             return SettingsDictionarySection(source: source, entries: matching)
         }
@@ -1522,9 +1590,12 @@ public struct SettingsView: View {
     @ViewBuilder
     private func dictionaryEntryHeader(
         _ entry: STTDictionaryEntry,
+        rowID: String,
         isEditable: Bool
     ) -> some View {
-        if editingCanonical == entry.canonical {
+        if SettingsDictionaryEditing.isEditing(
+            rowID: rowID, isEditable: isEditable, activeRowID: editingRowID
+        ) {
             VStack(alignment: .leading, spacing: 10) {
                 TextField("Term", text: $editTermText)
                     .dictionaryTextField()
@@ -1556,7 +1627,7 @@ public struct SettingsView: View {
                         deleteDictionaryEntryButton(entry.canonical)
                     } else {
                         Button {
-                            beginTermRename(entry.canonical)
+                            beginTermRename(rowID: rowID, canonical: entry.canonical)
                         } label: {
                             Image(systemName: "pencil")
                         }
@@ -1976,26 +2047,31 @@ public struct SettingsView: View {
     }
 
     private var hasPendingDictionaryEdit: Bool {
-        editingCanonical != nil ||
+        editingRowID != nil ||
             addingVariantFor != nil ||
             pendingDeleteCanonical != nil ||
             !newTermText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    private func reconcileLocalEntries(with entries: [STTDictionaryEntry]) {
+    private func reconcileLocalEntries(with preview: STTVocabularyPreview) {
         guard !hasPendingDictionaryEdit else { return }
-        localEntries = entries
+        localEntries = preview.entries
+        dictionaryDisplayIndex = STTDictionaryDisplayIndex(
+            entries: preview.displayEntries ?? preview.entries.map {
+                STTDictionaryDisplayEntry(source: "personal", entry: $0)
+            }
+        )
     }
 
-    private func beginTermRename(_ canonical: String) {
-        editingCanonical = canonical
+    private func beginTermRename(rowID: String, canonical: String) {
+        editingRowID = rowID
         editTermText = canonical
         pendingDeleteCanonical = nil
         focusedEditorField = .editTerm
     }
 
     private func cancelTermRename() {
-        editingCanonical = nil
+        editingRowID = nil
         editTermText = ""
         focusedEditorField = nil
     }
@@ -2009,7 +2085,7 @@ public struct SettingsView: View {
             onRemovePromptTerm: onRemovePromptTerm,
             onAddVocabularyAlias: onAddVocabularyAlias
         )
-        editingCanonical = nil
+        editingRowID = nil
         focusedEditorField = nil
     }
 

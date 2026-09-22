@@ -20,17 +20,71 @@ public struct STTDictionaryEntry: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct STTDictionaryDisplayEntry: Equatable, Sendable {
+    public let rowID: String
+    public let source: String
+    public let entry: STTDictionaryEntry
+
+    public var isPersonal: Bool {
+        source == "personal"
+    }
+
+    public init?(eventRow: [String: Any]) {
+        guard let rowID = eventRow["row_id"] as? String,
+              let source = eventRow["source"] as? String,
+              source == "personal" || source == "bundled",
+              let canonical = eventRow["canonical"] as? String,
+              !canonical.isEmpty,
+              rowID == "\(source):\(canonical)"
+        else { return nil }
+        self.rowID = rowID
+        self.source = source
+        entry = STTDictionaryEntry(canonical: canonical, variants: eventRow["variants"] as? [String] ?? [])
+    }
+
+    public init(source: String, entry: STTDictionaryEntry) {
+        self.source = source
+        rowID = "\(source):\(entry.canonical)"
+        self.entry = entry
+    }
+}
+
+public struct STTDictionaryDisplayIndex {
+    public let sortedEntries: [STTDictionaryDisplayEntry]
+    public let personalCount: Int
+
+    public init(entries: [STTDictionaryDisplayEntry]) {
+        sortedEntries = entries.sorted {
+            if $0.source != $1.source { return $0.isPersonal }
+            return $0.entry.canonical.localizedCaseInsensitiveCompare($1.entry.canonical) == .orderedAscending
+        }
+        personalCount = entries.filter(\.isPersonal).count
+    }
+
+    public func page(matching query: String, limit: Int) -> (entries: [STTDictionaryDisplayEntry], total: Int) {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let matches = term.isEmpty ? sortedEntries : sortedEntries.filter {
+            $0.entry.canonical.localizedCaseInsensitiveContains(term) ||
+                $0.entry.variants.contains { $0.localizedCaseInsensitiveContains(term) }
+        }
+        return (Array(matches.prefix(max(0, limit))), matches.count)
+    }
+}
+
 public struct STTVocabularyPreview: Codable, Equatable, Sendable {
     public var updatedAt: String?
     public var entries: [STTDictionaryEntry]
+    public var displayEntries: [STTDictionaryDisplayEntry]?
 
-    public init(updatedAt: String?, entries: [STTDictionaryEntry]) {
+    public init(updatedAt: String?, entries: [STTDictionaryEntry], displayEntries: [STTDictionaryDisplayEntry]? = nil) {
         self.updatedAt = updatedAt
         self.entries = entries
+        self.displayEntries = displayEntries
     }
 
     public init(updatedAt: String?, promptTerms: [String], aliases: [STTVocabularyAliasPreview]) {
         self.updatedAt = updatedAt
+        displayEntries = nil
         var accumulator = EntryAccumulator()
         for term in promptTerms {
             accumulator.upsertEntry(canonical: term)
@@ -51,6 +105,7 @@ public struct STTVocabularyPreview: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        displayEntries = nil
         if let decodedEntries = try container.decodeIfPresent([STTDictionaryEntry].self, forKey: .entries) {
             entries = Self.normalizedEntries(decodedEntries)
             return
