@@ -9,6 +9,7 @@
 
 import type { WhisperPerformanceEffort } from "./whisper-performance";
 import type { WhisperModelStatus } from "./model-status";
+import type { DictationReceiptMetadata } from "./dictation-receipt";
 import type { STTDictionaryDisplayEntry } from "./stt-vocabulary-store";
 import {
   PLAYBACK_AMPLITUDE_MAX_EVENT_SAMPLES,
@@ -70,6 +71,8 @@ export interface TranscriptionEvent {
   partial?: boolean;
   /** Archived VoiceBar recording audio used to produce this transcript. */
   recording_path?: string;
+  /** Durations for a newly completed, archived VoiceBar dictation. */
+  dictation_receipt?: DictationReceiptMetadata;
   /** Whether the optional LLM polish layer produced the final candidate. */
   polished?: boolean;
   /** Outcome of the polish attempt; rejected means the safety gate kept cleaned text. */
