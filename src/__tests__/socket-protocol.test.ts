@@ -198,6 +198,20 @@ describe("socket-protocol", () => {
       expect(parsed.recording_path).toEndWith("/audio.wav");
     });
 
+    it("serializes completed dictation receipt durations additively", () => {
+      const event: SocketEvent = {
+        type: "transcription",
+        text: "Etan confirmed the fix.",
+        recording_path: "/recordings/dictation/audio.wav",
+        dictation_receipt: {
+          audio_duration_ms: 1_234,
+          processing_duration_ms: 226,
+        },
+      };
+
+      expect(JSON.parse(serializeEvent(event).trim())).toEqual(event);
+    });
+
     it("serializes explicit unpolished transcription honesty metadata", () => {
       const event: SocketEvent = {
         type: "transcription",

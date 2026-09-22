@@ -1296,6 +1296,7 @@ describe("input recording durability", () => {
         const result = await settled;
         if (termination === "abort") expect(result).toBeInstanceOf(Error);
         else expect(result).toBeNull();
+        expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
         expect(capturedVoiceBarAudio()).toEqual(archives);
         expectCaptureLinked(archives[0]);
         expectValidRetainedWav(archives[0], 24 * VAD_CHUNK_BYTES);
@@ -1366,6 +1367,7 @@ describe("input recording durability", () => {
       expect(archives).toHaveLength(1);
       expectCaptureLinked(archives[0]);
       expect(backendTranscribeCalls).toBe(0);
+      expect(broadcasts.some((event) => event.dictation_receipt)).toBe(false);
     });
   }
 
@@ -1388,6 +1390,9 @@ describe("input recording durability", () => {
     expect(broadcasts).toContainEqual(expect.objectContaining({
       type: "transcription", text: "Retained transcript.",
     }));
+    expect(
+      broadcasts.find((event) => event.type === "transcription")?.dictation_receipt,
+    ).toBeUndefined();
     expectValidRetainedWav(retainedPath, 24 * VAD_CHUNK_BYTES);
   });
 
@@ -1429,8 +1434,71 @@ describe("input recording durability", () => {
     const event = broadcasts.find((event) => event.type === "transcription");
     expect(event?.text).toBe("Retained transcript.");
     expect(event?.recording_path).toBeUndefined();
+    expect(event?.dictation_receipt).toBeUndefined();
     expectValidRetainedWav(capturedVoiceBarAudio()[0], 24 * VAD_CHUNK_BYTES);
   });
+
+  it("adds measured receipt metadata to the actual completed VoiceBar event", async () => {
+    vadProcessSpy!.mockResolvedValue(0.95);
+    installFakeRecorder(
+      Array.from({ length: 24 }, () => makePcmChunk(1800)),
+      false,
+    );
+    const { waitForInput } = await import("../input");
+    const clockValues = [1_000, 1_123.6];
+    let clockReads = 0;
+
+    await expect(
+      waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => clockValues[clockReads++]!,
+      }),
+    ).resolves.toBe("Retained transcript.");
+
+    const event = broadcasts.find(
+      (candidate) => candidate.type === "transcription",
+    );
+    expect(event).toEqual(
+      expect.objectContaining({
+        type: "transcription",
+        text: "Retained transcript.",
+        recording_path: capturedVoiceBarAudio()[0],
+        dictation_receipt: {
+          audio_duration_ms: 768,
+          processing_duration_ms: 124,
+        },
+      }),
+    );
+    expect(event?.partial).toBeUndefined();
+    expect(backendTranscribeCalls).toBe(1);
+    expect(clockReads).toBe(2);
+  });
+
+  for (const throwOnRead of [1, 2]) {
+    it(`preserves the completed VoiceBar transcript when receipt clock read ${throwOnRead} throws`, async () => {
+      vadProcessSpy!.mockResolvedValue(0.95);
+      installFakeRecorder(
+        Array.from({ length: 24 }, () => makePcmChunk(1800)),
+        false,
+      );
+      const { waitForInput } = await import("../input");
+      let clockReads = 0;
+
+      await expect(waitForInput(2_000, "standard", true, {
+        archiveSource: "voicebar",
+        monotonicNow: () => {
+          if (++clockReads === throwOnRead) throw new Error("receipt clock failed");
+          return 1_000 + clockReads;
+        },
+      })).resolves.toBe("Retained transcript.");
+
+      const event = broadcasts.find((candidate) => candidate.type === "transcription");
+      expect(event?.text).toBe("Retained transcript.");
+      expect(event?.recording_path).toBe(capturedVoiceBarAudio()[0]);
+      expect(event?.dictation_receipt).toBeUndefined();
+      expect(backendTranscribeCalls).toBe(1);
+    });
+  }
 
   it("runs production waitForInput through STT into an indefinite paired voice_ask archive", async () => {
     vadProcessSpy.mockResolvedValue(0.95);
@@ -1494,6 +1562,10 @@ describe("input recording durability", () => {
           event.recording_path === join(archiveDir, "audio.wav"),
       ),
     ).toBe(true);
+    expect(
+      broadcasts.find((event) => event.type === "transcription")
+        ?.dictation_receipt,
+    ).toBeUndefined();
   });
 
   it("reports an archived exact-silence voice_ask capture as no speech", async () => {
@@ -1980,6 +2052,10 @@ describe("input recording durability", () => {
           event.recording_path === archivedAudioPath,
       ),
     ).toBe(true);
+    expect(
+      broadcasts.find((event) => event.type === "transcription")
+        ?.dictation_receipt,
+    ).toBeUndefined();
   });
 
   it("retranscribeLastCapture ignores a non-string archive_audio_path instead of throwing", async () => {
