@@ -5,6 +5,8 @@ import { join } from "path";
 import {
   addAlias,
   addPromptTerm,
+  buildDictionaryDisplayEntries,
+  BUILTIN_STT_DICTIONARY_ENTRIES,
   listVocabulary,
   removeAlias,
   removePromptTerm,
@@ -29,6 +31,45 @@ describe("stt-vocabulary-store", () => {
       updated_at: null,
       entries: [],
     });
+  });
+
+  it("builds stable source-qualified display rows without mixing personal data into bundled rows", () => {
+    const personalEntries = [
+      { canonical: "Full Stack", variants: ["private pronunciation"] },
+      { canonical: "Private Customer", variants: ["private alias"] },
+    ];
+
+    const first = buildDictionaryDisplayEntries(personalEntries);
+    const second = buildDictionaryDisplayEntries(personalEntries);
+    const bundled = first.filter((entry) => entry.source === "bundled");
+    const personal = first.filter((entry) => entry.source === "personal");
+
+    expect(first.map((entry) => entry.row_id)).toEqual(
+      second.map((entry) => entry.row_id),
+    );
+    expect(bundled).toHaveLength(BUILTIN_STT_DICTIONARY_ENTRIES.length);
+    expect(bundled.map(({ canonical, variants }) => ({ canonical, variants })))
+      .toEqual(BUILTIN_STT_DICTIONARY_ENTRIES);
+    expect(bundled.some((entry) => entry.canonical === "Private Customer"))
+      .toBe(false);
+    expect(personal).toEqual([
+      {
+        row_id: "personal:Full Stack",
+        source: "personal",
+        canonical: "Full Stack",
+        variants: ["private pronunciation"],
+      },
+      {
+        row_id: "personal:Private Customer",
+        source: "personal",
+        canonical: "Private Customer",
+        variants: ["private alias"],
+      },
+    ]);
+    expect(
+      first.filter((entry) => entry.canonical === "Full Stack")
+        .map((entry) => entry.row_id),
+    ).toEqual(["bundled:Full Stack", "personal:Full Stack"]);
   });
 
   it("migrates old prompt_terms and aliases losslessly into canonical entries", () => {

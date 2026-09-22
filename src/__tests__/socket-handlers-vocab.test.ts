@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import * as input from "../input";
 import { handleSocketCommand } from "../socket-handlers";
+import type { VocabListResponse } from "../socket-protocol";
+import { cleanupTranscriptionText } from "../stt-cleanup";
 import * as tts from "../tts";
 import {
   addAlias,
@@ -107,12 +109,88 @@ describe("socket vocabulary commands", () => {
       id: "vocab-list-1",
     });
 
-    expect(response).toEqual({
+    const { display_entries, ...legacyResponse } = response as VocabListResponse;
+    expect(legacyResponse).toEqual({
       type: "vocab_list",
       id: "vocab-list-1",
       updated_at: expect.any(String),
       entries: [{ canonical: "Domica", variants: ["domekin"] }],
     });
+    expect(display_entries).toContainEqual({
+      row_id: "personal:Domica",
+      source: "personal",
+      canonical: "Domica",
+      variants: ["domekin"],
+    });
+  });
+
+  it("keeps same-name bundled and personal rows distinct across personal removal", () => {
+    addAlias({ from: "my full stack", to: "Full Stack" }, { path: vocabPath });
+
+    const listed = handleSocketCommand({
+      cmd: "vocab_list",
+      id: "vocab-list-provenance",
+    }) as VocabListResponse;
+    const sameNameRows = listed.display_entries.filter(
+      (entry) => entry.canonical === "Full Stack",
+    );
+
+    expect(listed.entries).toEqual([
+      { canonical: "Full Stack", variants: ["my full stack"] },
+    ]);
+    expect(sameNameRows).toEqual([
+      {
+        row_id: "bundled:Full Stack",
+        source: "bundled",
+        canonical: "Full Stack",
+        variants: ["פול סטאק"],
+      },
+      {
+        row_id: "personal:Full Stack",
+        source: "personal",
+        canonical: "Full Stack",
+        variants: ["my full stack"],
+      },
+    ]);
+
+    expect(
+      handleSocketCommand({
+        cmd: "vocab_remove_term",
+        id: "remove-personal-full-stack",
+        term: "Full Stack",
+      }),
+    ).toMatchObject({ outcome: "accept" });
+
+    const afterRemoval = handleSocketCommand({
+      cmd: "vocab_list",
+    }) as VocabListResponse;
+    expect(afterRemoval.entries).toEqual([]);
+    expect(
+      afterRemoval.display_entries.filter(
+        (entry) => entry.canonical === "Full Stack",
+      ),
+    ).toEqual([sameNameRows[0]]);
+    expect(
+      cleanupTranscriptionText("פול סטאק", {
+        QA_VOICE_STT_VOCABULARY_PATH: vocabPath,
+      }),
+    ).toBe("Full Stack");
+
+    const beforeBundledNoop = readFileSync(vocabPath, "utf8");
+    expect(
+      handleSocketCommand({
+        cmd: "vocab_remove_term",
+        id: "remove-bundled-only-full-stack",
+        term: "Full Stack",
+      }),
+    ).toEqual({
+      type: "ack",
+      command: "vocab_remove_term",
+      outcome: "noop",
+      id: "remove-bundled-only-full-stack",
+      reason: "not found",
+    });
+    expect(readFileSync(vocabPath, "utf8")).toBe(beforeBundledNoop);
   });
 
   it("removes an alias and returns noop when it is already absent", () => {
