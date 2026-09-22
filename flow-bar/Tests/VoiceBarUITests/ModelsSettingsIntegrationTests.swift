@@ -27,6 +27,29 @@ final class ModelsSettingsIntegrationTests: XCTestCase {
         XCTAssertNotEqual(try renderedPixels(host), availablePixels)
     }
 
+    func testProductionModelsViewRendersFreshPolishStatusAndClearsItOnDisconnect() throws {
+        let voiceState = VoiceState()
+        voiceState.setConnectionStatus(true)
+        var health = Self.availableHealth
+        health["polish_controls"] = [
+            "model_polish": ["source": "environment", "raw": "shadow", "effective": "shadow"],
+            "outro_gate": ["source": "default", "raw": NSNull(), "effective": true],
+            "smart_chunks": ["source": "default", "raw": NSNull(), "effective": false],
+            "smart_boundaries": ["source": "default", "raw": NSNull(), "effective": false],
+        ]
+        voiceState.handleEvent(health)
+        let host = NSHostingView(rootView: makeSettingsView(voiceState: voiceState))
+        host.frame = NSRect(origin: .zero, size: Self.productionHostSize)
+        settle(host)
+        XCTAssertEqual(voiceState.modelsSettingsState.polishControls?.modelPolish.effective.displayName, "Preview only")
+        let availablePixels = try renderedPixels(host)
+
+        voiceState.setConnectionStatus(false)
+        settle(host)
+        XCTAssertNil(voiceState.modelsSettingsState.polishControls)
+        XCTAssertNotEqual(try renderedPixels(host), availablePixels)
+    }
+
     func testProductionSettingsTracksLiveModelsStateAndRoutesEffortSelection() throws {
         let voiceState = VoiceState()
         voiceState.setConnectionStatus(true)

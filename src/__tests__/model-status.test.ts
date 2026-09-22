@@ -163,6 +163,45 @@ describe("resident whisper model identity", () => {
     expect(status.active_model).toBeNull();
   });
 
+  for (const adopted of [false, true]) {
+    for (const elapsedMs of [31_000, 31_500]) {
+      it(`keeps a healthy ${adopted ? "adopted" : "owned"} launch attributed at ${elapsedMs}ms`, async () => {
+        const record = { ...launchRecord(51_007), adopted };
+        __setWhisperServerLaunchRecordForTests(record);
+        __setWhisperServerTestHooksForTests({
+          findModel: () => configuredModel,
+          isServerHealthy: async () => true,
+          findPortListenerPids: () => [record.pid],
+          isPidAlive: () => true,
+          // The health probe can finish after the 30-second launch deadline.
+          processStartTimeMs: () => Date.parse(record.startedAt) - elapsedMs,
+        });
+
+        const status = await readWhisperModelStatus();
+        expectIndependentStatus(status);
+        expect(status.active_model).toBe("active");
+        expect(status.active_effort).toBe("balanced");
+      });
+    }
+  }
+
+  it("withholds a launch outside the health-check window", async () => {
+    const record = launchRecord(51_008);
+    __setWhisperServerLaunchRecordForTests(record);
+    __setWhisperServerTestHooksForTests({
+      findModel: () => configuredModel,
+      isServerHealthy: async () => true,
+      findPortListenerPids: () => [record.pid],
+      isPidAlive: () => true,
+      processStartTimeMs: () => Date.parse(record.startedAt) - 33_001,
+    });
+
+    const status = await readWhisperModelStatus();
+    expectIndependentStatus(status);
+    expect(status.active_model).toBeNull();
+    expect(status.active_effort).toBeNull();
+  });
+
   for (const processStartTimeMs of [
     () => Date.parse("2026-09-22T18:01:00.000Z"),
     () => null,

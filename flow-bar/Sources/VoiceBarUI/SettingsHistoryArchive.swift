@@ -16,6 +16,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
     /// The slice of that audio handed to speech-to-text. Shorter than `durationMs`
     /// when the trailing-silence trim fired.
     public let transcribedDurationMs: Int?
+    public let modelLabel: String?
+    public let inputDeviceLabel: String?
 
     public init(
         id: String,
@@ -25,7 +27,9 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         transcript: String,
         audioPath: URL,
         durationMs: Int? = nil,
-        transcribedDurationMs: Int? = nil
+        transcribedDurationMs: Int? = nil,
+        modelLabel: String? = nil,
+        inputDeviceLabel: String? = nil
     ) {
         self.id = id
         self.dayKey = dayKey
@@ -35,6 +39,8 @@ public struct SettingsHistoryEntry: Identifiable, Equatable, Sendable {
         self.audioPath = audioPath
         self.durationMs = durationMs
         self.transcribedDurationMs = transcribedDurationMs
+        self.modelLabel = modelLabel
+        self.inputDeviceLabel = inputDeviceLabel
     }
 
     public var durationLabel: String? {
@@ -181,7 +187,12 @@ public enum SettingsHistoryArchive {
             transcript: transcript,
             audioPath: audioURL,
             durationMs: metadata?.durationMs,
-            transcribedDurationMs: metadata?.transcribedDurationMs
+            transcribedDurationMs: metadata?.transcribedDurationMs,
+            modelLabel: metadata?.provenance?.whisperModelPath
+                .flatMap { URL(fileURLWithPath: $0).deletingPathExtension().lastPathComponent.settingsArchiveNilIfEmpty
+                },
+            inputDeviceLabel: metadata?.inputDeviceName?
+                .trimmingCharacters(in: .whitespacesAndNewlines).settingsArchiveNilIfEmpty
         )
     }
 

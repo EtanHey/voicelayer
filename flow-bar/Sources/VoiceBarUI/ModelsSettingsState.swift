@@ -22,6 +22,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
     public let configuredEffort: VoiceBarPerformanceEffort?
     public let activeEffort: VoiceBarPerformanceEffort?
     public let isBusy: Bool
+    public let polishControls: PolishControlsState?
 
     private init(availability: ModelsStatusAvailability) {
         self.availability = availability
@@ -33,6 +34,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         configuredEffort = nil
         activeEffort = nil
         isBusy = true
+        polishControls = nil
     }
 
     public static let loading = ModelsSettingsState(availability: .loading)
@@ -60,6 +62,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         activeEffort = (status["active_effort"] as? String).flatMap(VoiceBarPerformanceEffort.init)
         isBusy = healthEvent["recording_state"] as? String != "idle"
             || (healthEvent["queue_depth"] as? Int ?? 0) > 0
+        polishControls = PolishControlsState(healthEvent: healthEvent)
     }
 
     public static let unavailable = ModelsSettingsState(availability: .unavailable)
@@ -74,7 +77,8 @@ public struct ModelsSettingsState: Equatable, Sendable {
             activeModelName: activeModelName,
             configuredEffort: configuredEffort,
             activeEffort: activeEffort,
-            isBusy: isBusy
+            isBusy: isBusy,
+            polishControls: polishControls
         )
     }
 
@@ -87,7 +91,8 @@ public struct ModelsSettingsState: Equatable, Sendable {
         activeModelName: String?,
         configuredEffort: VoiceBarPerformanceEffort?,
         activeEffort: VoiceBarPerformanceEffort?,
-        isBusy: Bool
+        isBusy: Bool,
+        polishControls: PolishControlsState?
     ) {
         self.availability = availability
         self.configuredModelName = configuredModelName
@@ -98,6 +103,7 @@ public struct ModelsSettingsState: Equatable, Sendable {
         self.configuredEffort = configuredEffort
         self.activeEffort = activeEffort
         self.isBusy = isBusy
+        self.polishControls = polishControls
     }
 
     private static func nonempty(status value: Any?) -> String? {
