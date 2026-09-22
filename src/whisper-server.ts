@@ -163,7 +163,7 @@ interface WhisperServerTestHooks {
   findModel?: () => string | null;
   readHelpText?: (binary: string) => WhisperServerHelpProbeResult;
   spawn?: WhisperServerSpawn;
-  isServerHealthy?: (port: number) => Promise<boolean>;
+  isServerHealthy?: (port: number) => Promise<boolean | null>;
   findExternalWhisperServerPids?: (port: number) => number[];
   findPortListenerPids?: (port: number) => number[];
   killExternalPid?: (pid: number, signal: NodeJS.Signals) => void;
@@ -547,7 +547,7 @@ export async function isServerHealthy(port: number = DEFAULT_PORT): Promise<bool
 }
 
 async function checkServerHealthy(port: number): Promise<boolean> {
-  if (testHooks.isServerHealthy) return testHooks.isServerHealthy(port);
+  if (testHooks.isServerHealthy) return (await testHooks.isServerHealthy(port)) === true;
   return isServerHealthy(port);
 }
 
@@ -682,7 +682,7 @@ function findPortListenerPids(port: number): number[] {
 }
 
 /** Null means the listener probe failed; only a confirmed empty port is unloaded. */
-function postUnloadListeners(port: number): number[] | null {
+export function probeWhisperServerListeners(port: number): number[] | null {
   if (testHooks.postUnloadListeners) return testHooks.postUnloadListeners(port);
   try {
     const result = Bun.spawnSync(
@@ -1180,7 +1180,7 @@ export function unloadOwnedServer(isBusy: () => boolean): Promise<UnloadResult> 
           owner.started_at === record.startedAt) {
         clearWhisperServerOwnership(state.port);
       }
-      const listeners = postUnloadListeners(state.port);
+      const listeners = probeWhisperServerListeners(state.port);
       const healthy = await checkServerHealthy(state.port);
       if (listeners === null || listeners.length !== 0 || healthy) {
         throw new Error("fresh residency is not not_loaded");

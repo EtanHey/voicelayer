@@ -9,6 +9,8 @@ export class WhisperLifecycleGate {
   private release: (() => void) | null = null;
   private cleared: Promise<void> | null = null;
 
+  get isUnloading(): boolean { return this.unloading; }
+
   async use<T>(work: () => Promise<T>): Promise<T> {
     while (this.cleared) await this.cleared;
     this.users++;

@@ -2500,6 +2500,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             onRefreshModelsStatus: { [weak self] in
                 self?.voiceState.refreshModelsSettingsStatus()
             },
+            residencyNotice: { [weak self] in self?.voiceState.residencyNotice },
+            onSelectResidency: { [weak self] target in
+                self?.voiceState.setWhisperResidency(target)
+            },
             vocabularyPreview: { [weak self] in
                 self?.currentVocabularyPreview() ?? STTVocabularyPreview(
                     updatedAt: nil,

@@ -4,18 +4,24 @@ public struct ModelsSettingsView: View {
     public let state: ModelsSettingsState
     @Binding private var effort: VoiceBarPerformanceEffort
     private let notice: String?
+    private let residencyNotice: String?
     private let onSelectEffort: (VoiceBarPerformanceEffort) -> Void
+    private let onSelectResidency: ((VoiceModelResidency) -> Void)?
 
     public init(
         state: ModelsSettingsState,
         effort: Binding<VoiceBarPerformanceEffort>,
         notice: String? = nil,
-        onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void
+        onSelectEffort: @escaping (VoiceBarPerformanceEffort) -> Void,
+        residencyNotice: String? = nil,
+        onSelectResidency: ((VoiceModelResidency) -> Void)? = nil
     ) {
         self.state = state
         _effort = effort
         self.notice = notice
         self.onSelectEffort = onSelectEffort
+        self.residencyNotice = residencyNotice
+        self.onSelectResidency = onSelectResidency
     }
 
     public var body: some View {
@@ -36,6 +42,18 @@ public struct ModelsSettingsView: View {
                 LabeledContent("Active effort") {
                     Text(state.activeEffort?.displayName ?? "Unknown")
                         .accessibilityIdentifier("models-active-effort")
+                }
+                if state.availability == .available,
+                   let onSelectResidency,
+                   state.residency != .unknown {
+                    Button(state.residency == .loaded ? "Unload from memory" : "Load into memory") {
+                        onSelectResidency(state.residency == .loaded ? .notLoaded : .loaded)
+                    }
+                    .disabled(state.isBusy)
+                    .accessibilityIdentifier("models-residency-control")
+                }
+                if let residencyNotice {
+                    Text(residencyNotice).font(.caption).foregroundStyle(.orange)
                 }
             }
             Section("Transcription effort") {
