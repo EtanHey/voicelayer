@@ -338,6 +338,10 @@ public final class VoiceState {
         }
     }
 
+    public private(set) var latestDictationInsertionStatus: DictationInsertionStatus = .unverified
+    public private(set) var lastDictationCardEntry: RecentTranscriptionEntry?
+    private var latestDictationOperationID: UUID?
+
     /// Recent transcription text projection kept for older menu and hotkey paths.
     public var recentTranscriptions: [String] = [] {
         didSet { notifyPanelLayoutChangedIfNeeded(oldValue.isEmpty != recentTranscriptions.isEmpty) }
@@ -631,6 +635,7 @@ public final class VoiceState {
             recentTranscriptionEntriesLoader(),
             fallbackTexts: recentTranscriptionsLoader()
         )
+        lastDictationCardEntry = recentTranscriptionEntries.first { $0.dictationReceipt != nil }
         recentTranscriptions = recentTranscriptionEntries.map(\.text)
         transcriptionVocabularyTerms = Self.normalizeVocabularyTerms(transcriptionVocabularyLoader())
         transcriptionVocabularyAliases = Self.normalizeVocabularyAliases(
@@ -2009,6 +2014,19 @@ public final class VoiceState {
             pendingRecoveredTranscriptionPaste
                 && !remoteCaptureBlocksPaste
                 && !wasHistoryRetranscription
+        let normalizedRecordingPath = recordingPath?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cardIsThisDictation = !wasHistoryRetranscription && !remoteCaptureBlocksPaste
+            && (barInitiatedRecording || pendingRecoveredTranscriptionPaste || pendingRecordingIdleAfterFinal)
+            && recentTranscriptionEntries.first?.text == text.trimmingCharacters(in: .whitespacesAndNewlines)
+            && recentTranscriptionEntries.first?.recordingPath == (normalizedRecordingPath?.isEmpty == false
+                ? normalizedRecordingPath : nil)
+        let cardOperationID = cardIsThisDictation ? UUID() : nil
+        if let cardOperationID {
+            lastDictationCardEntry = recentTranscriptionEntries.first
+            latestDictationOperationID = cardOperationID
+            latestDictationInsertionStatus = shouldAutoPaste || shouldPasteRecoveredTranscription
+                ? .pending : .notInserted
+        }
         let shouldApplyPendingRecordingIdle = pendingRecordingIdleAfterFinal
         pendingRecordingIdleAfterFinal = false
         pendingRecoveredTranscriptionPaste = false
@@ -2022,9 +2040,19 @@ public final class VoiceState {
             barInitiatedRecording = false
             barInitiatedTimeout?.cancel()
             recordingIdleCleanupTask?.cancel()
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: false), plan: .autoPaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: false),
+                plan: .autoPaste,
+                operationID: cardOperationID
+            )
         } else if shouldPasteRecoveredTranscription {
-            pasteTranscript(text, for: resolvedPasteTarget(forRepaste: true), plan: .repaste)
+            pasteTranscript(
+                text,
+                for: resolvedPasteTarget(forRepaste: true),
+                plan: .repaste,
+                operationID: cardOperationID
+            )
         }
 
         if shouldApplyPendingRecordingIdle, !shouldAutoPaste, !shouldPasteRecoveredTranscription {
@@ -2104,7 +2132,8 @@ public final class VoiceState {
         _ text: String,
         for targetApp: NSRunningApplication?,
         plan: VoicePastePlan,
-        allowAXInsertion: Bool = false
+        allowAXInsertion: Bool = false,
+        operationID: UUID? = nil
     ) {
         let recordStartTargetApp = frontmostAppOnRecordStart
         let insertionHandler = plan == .autoPaste ? recordStartInsertionHandler : nil
@@ -2125,7 +2154,8 @@ public final class VoiceState {
             recordStartInsertionHandler = nil
             finishPasteConfirmation(
                 outcome: pasteHandler(text) ? .pasted : .failed(Self.genericPasteFailureMessage),
-                text: text
+                text: text,
+                operationID: operationID
             )
             return
         } else {
@@ -2136,7 +2166,10 @@ public final class VoiceState {
                     "plan": String(describing: plan),
                     "hasCapturedInsertion": boolString(insertionHandler != nil),
                 ])
-                finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                finishPasteConfirmation(
+                    outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                    operationID: operationID
+                )
                 return
             }
 
@@ -2166,7 +2199,10 @@ public final class VoiceState {
                         "plan": String(describing: plan),
                         "hasCapturedInsertion": boolString(capturedInsertionHandler != nil),
                     ])
-                    finishPasteConfirmation(outcome: .failed(Self.genericPasteFailureMessage), text: text)
+                    finishPasteConfirmation(
+                        outcome: .failed(Self.genericPasteFailureMessage), text: text,
+                        operationID: operationID
+                    )
                     return
                 }
 
@@ -2219,13 +2255,14 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "fresh"
+                            source: "fresh",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
@@ -2236,20 +2273,21 @@ public final class VoiceState {
                             text: text,
                             plan: plan,
                             targetBundleID: pasteTargetBundleID,
-                            source: "captured"
+                            source: "captured",
+                            operationID: operationID
                         )
                         if attempt == .started {
                             return
                         }
                         if attempt == .busy {
-                            rejectCompetingAXInsertion(text: text, plan: plan)
+                            rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                             return
                         }
                     }
 
                     if isAXInsertionInFlight,
                        activeAXInsertionTargetBundleID == pasteTargetBundleID {
-                        rejectCompetingAXInsertion(text: text, plan: plan)
+                        rejectCompetingAXInsertion(text: text, plan: plan, operationID: operationID)
                         return
                     }
 
@@ -2315,7 +2353,8 @@ public final class VoiceState {
                             pasted: typed,
                             plan: plan
                         ),
-                        text: deliveredText
+                        text: deliveredText,
+                        operationID: operationID
                     )
                 }
             }
@@ -2346,7 +2385,8 @@ public final class VoiceState {
         text: String,
         plan: VoicePastePlan,
         targetBundleID: String,
-        source: String
+        source: String,
+        operationID: UUID?
     ) -> AXInsertionAttempt {
         guard !isAXInsertionInFlight else {
             return .busy
@@ -2370,7 +2410,7 @@ public final class VoiceState {
                 "targetApp": targetBundleID,
                 "source": source,
             ])
-            finishPasteConfirmation(outcome: .insertedAtCursor, text: text)
+            finishPasteConfirmation(outcome: .insertedAtCursor, text: text, operationID: operationID)
         }
 
         let started = handler(text) {
@@ -2409,7 +2449,8 @@ public final class VoiceState {
                 ])
                 finishPasteConfirmation(
                     outcome: .failed("Text insertion timed out"),
-                    text: text
+                    text: text,
+                    operationID: operationID
                 )
             }
             axInsertionWatchdog = watchdog
@@ -2421,14 +2462,19 @@ public final class VoiceState {
         return .started
     }
 
-    private func rejectCompetingAXInsertion(text: String, plan: VoicePastePlan) {
+    private func rejectCompetingAXInsertion(
+        text: String,
+        plan: VoicePastePlan,
+        operationID: UUID?
+    ) {
         logDiagnostic("paste_ax_insert_busy", details: [
             "plan": String(describing: plan),
             "textLength": String(text.count),
         ])
         finishPasteConfirmation(
             outcome: .failed("Text insertion already in progress"),
-            text: text
+            text: text,
+            operationID: operationID
         )
     }
 
@@ -2453,7 +2499,18 @@ public final class VoiceState {
         return lhs.processIdentifier == rhs.processIdentifier
     }
 
-    private func finishPasteConfirmation(outcome: VoicePasteOutcome, text: String) {
+    private func finishPasteConfirmation(
+        outcome: VoicePasteOutcome,
+        text: String,
+        operationID: UUID? = nil
+    ) {
+        if let operationID, operationID == latestDictationOperationID {
+            latestDictationInsertionStatus = switch outcome {
+            case .insertedAtCursor: .insertedAtCursor
+            case .pasted: .pasted
+            case .failed: .failed
+            }
+        }
         logDiagnostic("paste_confirmation", details: [
             "outcome": String(describing: outcome),
         ])

@@ -288,6 +288,9 @@ public struct SettingsView: View {
     public let onHideVoiceBar: () -> Void
     public let onShowVoiceBar: () -> Void
     public let onRunRelaySetup: (@escaping (String) -> Void) -> Void
+    public let lastDictationEntry: () -> RecentTranscriptionEntry?
+    public let lastDictationInsertionStatus: () -> DictationInsertionStatus
+    public let onCopyLastDictation: (String) -> Void
     public let historyPage: @Sendable (Int) -> SettingsHistoryPage
     public let askHistoryPage: @Sendable (Int) -> SettingsAskHistoryPage
     public let onCopyHistoryTranscript: (String) -> Void
@@ -373,6 +376,9 @@ public struct SettingsView: View {
         onRunRelaySetup: @escaping (@escaping (String) -> Void) -> Void = { completion in
             completion("Relay setup requested.")
         },
+        lastDictationEntry: @escaping () -> RecentTranscriptionEntry? = { nil },
+        lastDictationInsertionStatus: @escaping () -> DictationInsertionStatus = { .unverified },
+        onCopyLastDictation: @escaping (String) -> Void = { _ in },
         historyPage: @escaping @Sendable (Int) -> SettingsHistoryPage = { limit in
             SettingsHistoryArchive.loadPage(limit: limit)
         },
@@ -429,6 +435,9 @@ public struct SettingsView: View {
         self.onHideVoiceBar = onHideVoiceBar
         self.onShowVoiceBar = onShowVoiceBar
         self.onRunRelaySetup = onRunRelaySetup
+        self.lastDictationEntry = lastDictationEntry
+        self.lastDictationInsertionStatus = lastDictationInsertionStatus
+        self.onCopyLastDictation = onCopyLastDictation
         if let historyGroups {
             self.historyPage = { limit in
                 let groups = Self.newestFirstHistoryGroups(historyGroups())
@@ -609,6 +618,23 @@ public struct SettingsView: View {
             }
 
             visibilitySection
+
+            Section("Last dictation") {
+                if let entry = lastDictationEntry() {
+                    DictationCard(
+                        entry: entry,
+                        insertionStatus: lastDictationInsertionStatus(),
+                        onCopy: onCopyLastDictation
+                    )
+                    Button("View history →") {
+                        selectedTab = .history
+                    }
+                    .buttonStyle(.link)
+                } else {
+                    Text("No dictation yet")
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Section("Gestures") {
                 LabeledContent("Single tap") {
